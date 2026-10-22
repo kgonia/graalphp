@@ -183,8 +183,9 @@ final class PcreFunctions {
             }
             long t0 = System.nanoTime();
             int rc = Native.match(regex.code, nativeSubject, subject.length, start, options, matchData);
-            long elapsed = System.nanoTime() - t0;
-            NativeClock.add(elapsed);
+            long t1 = System.nanoTime();
+            long elapsed = t1 - t0;
+            NativeClock.add(elapsed, System.nanoTime() - t1);
             if (DEBUG) {
                 regex.calls++;
                 regex.nanos += elapsed;
