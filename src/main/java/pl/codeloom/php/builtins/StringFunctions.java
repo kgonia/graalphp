@@ -17,9 +17,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /** ext/standard string functions, on bytes as php-src does (no locale: ASCII-only case mapping, as PHP 8.2+). */
 final class StringFunctions {
@@ -375,48 +373,101 @@ final class StringFunctions {
     /** strtr($s, $pairs): longest keys first at each position; replaced text is not rescanned. */
     @TruffleBoundary
     private static TruffleString strtrArray(TruffleString subject, PhpArray pairs) {
-        if (pairs.size() == 0) {
+        int n = pairs.size();
+        if (n == 0) {
             return subject;
         }
-        Map<Integer, Map<String, byte[]>> byLength = new HashMap<>();
-        int minLength = Integer.MAX_VALUE;
-        int maxLength = 0;
+        byte[][] keys = new byte[n][];
+        byte[][] values = new byte[n][];
+        boolean singleBytes = true;
+        int k = 0;
         for (int p = pairs.firstPosition(); p >= 0; p = pairs.nextPosition(p)) {
             byte[] key = Str.readBytes(Convert.toStr(pairs.keyAt(p)));
             if (key.length == 0) {
                 return subject;
             }
-            byLength.computeIfAbsent(key.length, k -> new HashMap<>())
-                    .put(new String(key, StandardCharsets.ISO_8859_1), Str.readBytes(Convert.toStr(pairs.valueAt(p))));
-            minLength = Math.min(minLength, key.length);
-            maxLength = Math.max(maxLength, key.length);
+            keys[k] = key;
+            values[k] = Str.readBytes(Convert.toStr(pairs.valueAt(p)));
+            singleBytes &= key.length == 1;
+            k++;
         }
         byte[] s = Str.readBytes(subject);
-        ByteBuilder out = new ByteBuilder(s.length);
+        return singleBytes ? strtrBytes(subject, s, keys, values) : strtrKeys(subject, s, keys, values);
+    }
+
+    /** strtr with one-byte keys only (escaping tables like kses's): a byte-indexed table, one pass. */
+    private static TruffleString strtrBytes(TruffleString subject, byte[] s, byte[][] keys, byte[][] values) {
+        byte[][] table = new byte[256][];
+        for (int k = 0; k < keys.length; k++) {
+            table[keys[k][0] & 0xff] = values[k];
+        }
         int i = 0;
-        boolean changed = false;
-        int[] lengths = byLength.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
+        while (i < s.length && table[s[i] & 0xff] == null) {
+            i++;
+        }
+        if (i == s.length) {
+            return subject;
+        }
+        ByteBuilder out = new ByteBuilder(s.length + 16);
+        out.write(s, 0, i);
+        for (; i < s.length; i++) {
+            byte[] value = table[s[i] & 0xff];
+            if (value == null) {
+                out.write(s[i]);
+            } else {
+                out.write(value, 0, value.length);
+            }
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /**
+     * strtr with keys of any length: at each position the longest key that matches wins, and replaced text is not
+     * rescanned. Keys are chained per first byte, longest first.
+     */
+    private static TruffleString strtrKeys(TruffleString subject, byte[] s, byte[][] keys, byte[][] values) {
+        Integer[] byLength = new Integer[keys.length];
+        for (int k = 0; k < keys.length; k++) {
+            byLength[k] = k;
+        }
+        Arrays.sort(byLength, (a, b) -> Integer.compare(keys[a].length, keys[b].length));
+        int[] head = new int[256];
+        Arrays.fill(head, -1);
+        int[] next = new int[keys.length];
+        for (int k : byLength) {
+            int first = keys[k][0] & 0xff;
+            next[k] = head[first];
+            head[first] = k;
+        }
+        ByteBuilder out = null;
+        int copied = 0;
+        int i = 0;
         while (i < s.length) {
-            boolean matched = false;
-            for (int k = lengths.length - 1; k >= 0; k--) {
-                int length = lengths[k];
-                if (i + length > s.length) {
-                    continue;
-                }
-                byte[] value = byLength.get(length).get(new String(s, i, length, StandardCharsets.ISO_8859_1));
-                if (value != null) {
-                    out.write(value, 0, value.length);
-                    i += length;
-                    matched = true;
-                    changed = true;
+            int found = -1;
+            for (int k = head[s[i] & 0xff]; k >= 0; k = next[k]) {
+                byte[] key = keys[k];
+                if (i + key.length <= s.length && Arrays.equals(s, i, i + key.length, key, 0, key.length)) {
+                    found = k;
                     break;
                 }
             }
-            if (!matched) {
-                out.write(s[i++]);
+            if (found < 0) {
+                i++;
+                continue;
             }
+            if (out == null) {
+                out = new ByteBuilder(s.length + 16);
+            }
+            out.write(s, copied, i - copied);
+            out.write(values[found], 0, values[found].length);
+            i += keys[found].length;
+            copied = i;
         }
-        return changed ? Str.of(out.toByteArray()) : subject;
+        if (out == null) {
+            return subject;
+        }
+        out.write(s, copied, s.length - copied);
+        return Str.of(out.toByteArray());
     }
 
     @TruffleBoundary

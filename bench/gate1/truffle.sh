@@ -7,4 +7,4 @@ version=8.5
 if [[ "${1:-}" =~ ^8\.[0-9]+$ ]]; then version=$1; shift; fi
 root=$(cd "$(dirname "$0")/../.." && pwd -W 2>/dev/null || pwd)
 MSYS_NO_PATHCONV=1 exec docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} \
-  -v "$root:/w" -w /w "gate1-truffle:$version" ./bin-php.sh --ast-root=target/ast "$@"
+  ${PHP_CLASSES:+-e PHP_CLASSES="$PHP_CLASSES"} -v "$root:/w" -w /w "gate1-truffle:$version" ./bin-php.sh --ast-root=target/ast "$@"
