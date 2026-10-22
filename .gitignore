@@ -5,3 +5,4 @@ target/
 *.class
 .idea/
 .claude/
+bench/gate1/data/

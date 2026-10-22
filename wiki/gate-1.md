@@ -1,9 +1,9 @@
-# Gate 1: does Graal beat PHP 8.4 JIT on real WordPress code?
+# Gate 1: does Graal beat PHP 8.5 JIT on real WordPress code?
 
 Started 2026-10-22. Decisions D4–D8 in [decisions.md](decisions.md) apply.
 
 ## Question
-Does a Truffle PHP, run on GraalVM, execute WordPress's own hot PHP functions clearly faster than PHP 8.4 with OPcache's tracing JIT, once warm? Does it get warm fast enough for a server?
+Does a Truffle PHP, run on GraalVM, execute WordPress's own hot PHP functions clearly faster than PHP 8.5 (and 8.4) with OPcache's tracing JIT, once warm? Does it get warm fast enough for a server?
 
 ## Kernels
 All kernels run **unmodified WordPress files**, fetched at a pinned commit by `bench/gate1/fetch.sh`, plus a small stub file for the functions they reach outside those files. Function bodies are translated to Truffle nodes on first call, so unsupported constructs in functions that never run don't block anything.
@@ -23,8 +23,8 @@ All kernels run **unmodified WordPress files**, fetched at a pinned commit by `b
 
 ## Method
 - **One PHP driver** (`bench/gate1/run.php`) runs on both engines. It loads the stubs and WordPress files, then runs each kernel for N iterations, timing each with `hrtime(true)`. Each iteration prints the time and a **checksum** of its output (length + `crc32`).
-- **Correctness:** checksums must equal PHP 8.4's on every iteration. A mismatch fails the kernel, whatever its speed.
-- **Reference:** `php:8.4-cli` + the `ast` extension, with `opcache.enable_cli=1`, `opcache.jit=tracing` and `opcache.jit_buffer_size=128M`. Also measured with JIT off.
+- **Correctness:** checksums must equal PHP 8.5's on every iteration. A mismatch fails the kernel, whatever its speed.
+- **Reference:** `php:8.5-cli` (newest stable; 8.4 measured too) + the `ast` extension, with `opcache.enable_cli=1`, `opcache.jit=tracing` and `opcache.jit_buffer_size=128M`. Also measured with JIT off.
 - **Truffle PHP:** Oracle GraalVM 25.0.4.1.1 (JVM mode first; the native standalone later).
 - **Runs:**
   - Linux Docker containers on the same cpuset, interleaved rounds (PHP, Truffle, PHP, Truffle…), 3 rounds.
@@ -35,13 +35,24 @@ All kernels run **unmodified WordPress files**, fetched at a pinned commit by `b
   - the **warmup curve**: time per iteration vs iteration, plus time to reach 90% of peak;
   - CPU time including Graal's compiler threads.
 
+### Native share (added 2026-10-22, after a side agent's note)
+Five kernels (wpautop, wptexturize, kses, blocks, slugs) lean on `preg_*`. Per D7, both engines run the same PCRE2 with its JIT, and the Truffle side caches compiled, JIT-ed patterns per pattern string as PHP does. The regex part therefore costs about the same on both sides and **caps the end-to-end speedup**: a kernel that spends 50% of its time in regex can't exceed 2× however fast Graal runs the rest.
+
+So the Truffle side times every native call (PCRE2 and any other FFM-bound built-in) per kernel. That gives **T_native**, which counts as equal on both engines. For a PHP-side cross-check, sample the PHP run with `perf` (`opcache.jit_debug` perf map) on the Linux host.
+
+**Reported per kernel:**
+- end-to-end speedup: T_php / T_truffle;
+- native share: T_native / T_php;
+- **PHP-code speedup**: (T_php − T_native) / (T_truffle − T_native). This is what Graal controls.
+
 ## Go / no-go
-- **Go** if the geometric mean of the steady-state speedup over K1–K7 against PHP 8.4 tracing JIT is **≥ 2×** (the owner may adjust the target), checksums are identical, and every kernel reaches 90% of its peak within seconds, not minutes.
-- **Rethink** if the speedup is under about 1.3×, or if it only shows after minutes of warmup.
-- **In between:** analyse where the time goes (e.g. regex-bound kernels cap the gain, since D7 binds the same PCRE2) before deciding.
+- **Go** if the geometric mean of the **PHP-code speedup** over K1–K7 against PHP 8.5 tracing JIT is **≥ 2×** (the owner may adjust the target), checksums are identical, and every kernel reaches 90% of its peak within seconds, not minutes.
+- End-to-end speedups are always reported next to it. The regex-light kernels (hooks, escape) are also shown as a separate group.
+- **Rethink** if the PHP-code speedup is under about 1.3×, or if it only shows after minutes of warmup.
+- **If the PHP-code speedup is high but end-to-end is capped by regex:** that's a finding for Gate 0's real-request profile and for a TRegex PCRE flavor (D7), not a no-go.
 
 ## Milestones
-1. **M1, reference and harness:** the PHP reference image, the php-ast JSON exporter, the WordPress fetch at a pinned commit, the corpus, and the driver producing PHP 8.4 baselines and checksums.
+1. **M1, reference and harness:** the PHP reference image, the php-ast JSON exporter, the WordPress fetch at a pinned commit, the corpus, and the driver producing PHP 8.5 and 8.4 baselines and checksums.
 2. **M2, Truffle skeleton:** the Maven project, `PhpLanguage`, a launcher, the zend_ast JSON loader, functions, ints, floats, strings, echo; K0 runs.
 3. **M3, value model:**
    - byte strings (`TruffleString`);

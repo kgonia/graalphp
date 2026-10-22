@@ -36,3 +36,7 @@ Gate 1 answers a peak-performance question, and AST and bytecode interpreters re
 - Package `pl.codeloom.php`.
 - The reference PHP runs in Docker (`php:8.4-cli` plus `ast`, OPcache JIT on).
 - Published Gate 1 numbers come from Linux with pinned cores, never from Windows.
+
+## D9: Gate 1 reference is PHP 8.5, and Go is judged on the PHP-code speedup (2026-10-22)
+- **PHP 8.5:** it is the newest stable release (8.5.12; 8.6 is at RC4), and the retro says to compare against the newest PHP. 8.4.27 is measured too.
+- **PHP-code speedup:** both engines run the same PCRE2, so regex time caps the end-to-end speedup regardless of Graal (side agent note, 2026-10-22). Gate 1 times native calls on the Truffle side and judges (T_php - T_native) / (T_truffle - T_native), with end-to-end reported next to it. Details in [gate-1.md](gate-1.md).
