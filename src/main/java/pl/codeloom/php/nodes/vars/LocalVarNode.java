@@ -130,6 +130,7 @@ public final class LocalVarNode extends LValueNode {
         }
     }
 
+    @Override
     public void writeDouble(VirtualFrame frame, double value) {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {

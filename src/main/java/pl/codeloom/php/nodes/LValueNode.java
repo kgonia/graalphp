@@ -16,6 +16,11 @@ public abstract class LValueNode extends ExprNode {
         write(frame, value);
     }
 
+    /** Writes a float; places that can store it unboxed (locals) override this. */
+    public void writeDouble(VirtualFrame frame, double value) {
+        write(frame, value);
+    }
+
     /** Whether int read-modify-write (`+=`, `++`) on this place may take the unboxed fast path. */
     public boolean hasLongFastPath() {
         return false;

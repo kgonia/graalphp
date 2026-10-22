@@ -103,37 +103,53 @@ public final class AssignNodes {
         @Child private TruffleString.ConcatNode concat = TruffleString.ConcatNode.create();
         private final int op;
 
-        /** For a local or property target and an int operator: the unboxed fast path, until a non-int shows up. */
+        /**
+         * For a local or property target and an arithmetic operator: unboxed fast paths. Ints first; a float
+         * operand or variable moves `+=`, `-=`, `*=` to the float path (and `/=` starts there), anything else, an
+         * int overflow or a division by zero to the generic path, for good.
+         */
         private final LValueNode local;
-        @CompilationFinal private boolean speculateLong;
+        @CompilationFinal private int mode;
+        private static final int LONG = 0;
+        private static final int DOUBLE = 1;
+        private static final int GENERIC = 2;
 
         public CompoundAssignNode(LValueNode target, ExprNode value, int op) {
             this.target = target;
             this.value = value;
             this.op = op;
             this.local = target.hasLongFastPath() ? target : null;
-            this.speculateLong = local != null && (op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11);
+            boolean intOp = op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11;
+            this.mode = local == null ? GENERIC : intOp ? LONG : op == 4 ? DOUBLE : GENERIC;
+        }
+
+        private boolean hasDoublePath() {
+            return op == 1 || op == 2 || op == 3 || op == 4;
+        }
+
+        /** Leaves the int path: to the float path when the value that broke it is a float, else to the generic one. */
+        private void leaveLong(Object culprit) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            mode = culprit instanceof Double && hasDoublePath() ? DOUBLE : GENERIC;
         }
 
         /**
          * `$local op= int`. php-src evaluates the right side before reading the variable, so this does too. An
-         * overflow or a non-int operand or variable leaves the fast path for good.
+         * overflow or a non-int operand or variable leaves the fast path.
          */
         private Object executeLocalLong(VirtualFrame frame) {
             long operand;
             try {
                 operand = value.executeLong(frame);
             } catch (UnexpectedResultException e) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                speculateLong = false;
+                leaveLong(e.getResult());
                 return finish(frame, target.execute(frame), e.getResult());
             }
             long current;
             try {
                 current = local.executeLong(frame);
             } catch (UnexpectedResultException e) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                speculateLong = false;
+                leaveLong(e.getResult());
                 return finish(frame, e.getResult(), operand);
             }
             try {
@@ -149,9 +165,45 @@ public final class AssignNodes {
                 return result;
             } catch (ArithmeticException e) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
-                speculateLong = false;
+                mode = GENERIC;
                 return finish(frame, current, operand);
             }
+        }
+
+        /** `$local op= number` on a float variable: right side first, as for ints; an int operand is widened. */
+        private Object executeLocalDouble(VirtualFrame frame) {
+            Object operandValue = value.execute(frame);
+            double operand;
+            if (operandValue instanceof Double d) {
+                operand = d;
+            } else if (operandValue instanceof Long l) {
+                operand = l;
+            } else {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                mode = GENERIC;
+                return finish(frame, target.execute(frame), operandValue);
+            }
+            double current;
+            try {
+                current = local.executeDouble(frame);
+            } catch (UnexpectedResultException e) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                mode = GENERIC;
+                return finish(frame, e.getResult(), operandValue);
+            }
+            if (op == 4 && operand == 0) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                mode = GENERIC;
+                return finish(frame, current, operandValue);
+            }
+            double result = switch (op) {
+                case 1 -> current + operand;
+                case 2 -> current - operand;
+                case 3 -> current * operand;
+                default -> current / operand;
+            };
+            local.writeDouble(frame, result);
+            return result;
         }
 
         private Object finish(VirtualFrame frame, Object current, Object operand) {
@@ -162,8 +214,11 @@ public final class AssignNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            if (local != null && speculateLong) {
+            if (mode == LONG) {
                 return executeLocalLong(frame);
+            }
+            if (mode == DOUBLE) {
+                return executeLocalDouble(frame);
             }
             if (op == COALESCE) {
                 Object current = target.readIfSet(frame);
