@@ -86,6 +86,19 @@ public final class Str {
         return s.copyToByteArrayUncached(ENC);
     }
 
+    /**
+     * The byte index of needle in haystack at or after from, or -1: TruffleString's vectorized search, several
+     * times faster than a byte loop over long subjects.
+     */
+    @TruffleBoundary
+    public static int indexOf(TruffleString haystack, TruffleString needle, int from) {
+        int length = length(haystack);
+        if (from > length - length(needle)) {
+            return -1;
+        }
+        return TruffleString.ByteIndexOfStringNode.getUncached().execute(haystack, needle, from, length, ENC);
+    }
+
     @TruffleBoundary
     public static int length(TruffleString s) {
         return s.byteLength(ENC);

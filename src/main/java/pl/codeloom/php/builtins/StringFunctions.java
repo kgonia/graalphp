@@ -347,15 +347,17 @@ final class StringFunctions {
 
     static TruffleString replaceAll(TruffleString subject, TruffleString search, TruffleString with,
                                     boolean ignoreCase, long[] count) {
-        byte[] s = Str.readBytes(subject);
-        byte[] f = Str.readBytes(search);
-        if (f.length == 0 || s.length < f.length) {
+        int searchLength = Str.length(search);
+        if (searchLength == 0 || Str.length(subject) < searchLength) {
             return subject;
         }
-        int index = indexOf(s, f, 0, ignoreCase);
+        int index = ignoreCase ? indexOf(Str.readBytes(subject), Str.readBytes(search), 0, true)
+                : Str.indexOf(subject, search, 0);
         if (index < 0) {
             return subject;
         }
+        byte[] s = Str.readBytes(subject);
+        byte[] f = Str.readBytes(search);
         byte[] w = Str.readBytes(with);
         ByteBuilder out = new ByteBuilder(s.length);
         int from = 0;
@@ -364,7 +366,7 @@ final class StringFunctions {
             out.write(w, 0, w.length);
             count[0]++;
             from = index + f.length;
-            index = indexOf(s, f, from, ignoreCase);
+            index = ignoreCase ? indexOf(s, f, from, true) : Str.indexOf(subject, search, from);
         }
         out.write(s, from, s.length - from);
         return Str.of(out.toByteArray());
