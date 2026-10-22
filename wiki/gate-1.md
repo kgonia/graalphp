@@ -122,3 +122,33 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - The `preg_*` wrappers' allocation, which decides wpautop/wptexturize PHP code.
     - Array element access (`PhpArray.find`).
     - WP_Hook's iteration bookkeeping (copy-on-write separation for `next()`).
+- **2026-10-22, M5 third pass.** `compare.sh` (pinned to 14–21) while the box was quiet, at 5–7% load:
+
+  | Kernel | PHP 8.5 | Truffle | End-to-end |
+  |---|---:|---:|---:|
+  | hooks | 7.1 ms | 9.3 ms | 0.77× |
+  | escape | 1.4 ms | 1.3 ms | 1.07× |
+  | slugs | 1.0 ms | 1.6 ms | 0.61× |
+  | wpautop | 2.7 ms | 3.8 ms | 0.71× |
+  | wptexturize | 1.5 ms | 3.2 ms | 0.48× |
+  | blocks | 3.7 ms | 6.7 ms | 0.55× |
+  | kses | 12.5 ms | 25.0 ms | 0.50× |
+
+  - **Geometric mean:** 0.64× end to end; 0.69× in the previous quiet run. All checksums are identical.
+  - **Measurement caveats, now the main uncertainty:**
+    - **Load moves PHP more than Truffle.** On a quiet box PHP's times drop 25–45% (kses 21.9 → 12.5 ms), Truffle's less, so the ratios measured under load (0.71–0.73×) flattered Truffle.
+    - **Truffle's steady state varies about ±15% between JVM runs** (blocks 5.5–6.7 ms quiet), presumably from different compilation decisions. A/B tests therefore take medians over alternating rounds.
+    - **The PHP-code metric is not trustworthy for the regex kernels.** The Truffle-side native estimate (timed downcalls, clock cost subtracted in place) includes FFM transitions and clock residue: for wpautop it is 95% of PHP's whole run, giving a meaningless 0.11×. The fix is to record the PCRE2 call sequence and replay it in C against PHP's pcre2lib, which gives one exact native time for both engines. To do before the Gate 1 report.
+  - **What mattered in this pass:**
+    - **Hash lookups out of line** (`PhpArray.hashGet`/`slotOf` as boundaries): the bucket walk had been inlined at every element read. hooks −33%, kses −26%.
+    - **`preg_*` with large subjects:** a fresh `Arena.ofAuto` segment per subject cost ~6 µs on a 10 KB post. Reusable buffers fixed that (the micro got 17× faster). Output builders are pooled, and matches use `pcre2_jit_match` like php-src.
+    - **Built-ins:**
+      - `implode` and `array_unique`/`diff`/`intersect` no longer convert through Java strings.
+      - `strtr` uses a byte table.
+      - `str_replace` uses a vectorized search.
+    - **Smaller compiled graphs:**
+      - Runtime throws transfer to the interpreter.
+      - Class profiles on `isset`/`empty`/`?:`/casts.
+      - An inline type check for typed parameters.
+  - **Tried and reverted:** packed-array growth out of line. The boundary stops escape analysis of short-lived arrays (slugs +27%, kses +16%). ParallelGC was mixed (hooks 2× worse).
+  - **Where the gap is now:** no single hotspot is left. The kses functions run at 0.6–0.9× each, and the rest is per-call overhead spread across array access, `preg_*` wrappers on short strings, and object creation (`new` is still 2–3× PHP's cost). Reaching the 2× go line on PHP code needs a structural change, not more trimming. Candidates: TRegex for the regexes it supports (D7), array storage specialized by shape, and a native image for steadier steady state.
