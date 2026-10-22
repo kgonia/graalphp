@@ -357,17 +357,21 @@ final class StringFunctions {
         byte[] s = Str.readBytes(subject);
         byte[] f = Str.readBytes(search);
         byte[] w = Str.readBytes(with);
-        ByteBuilder out = new ByteBuilder(s.length);
-        int from = 0;
-        while (index >= 0) {
-            out.write(s, from, index - from);
-            out.write(w, 0, w.length);
-            count[0]++;
-            from = index + f.length;
-            index = ignoreCase ? indexOf(s, f, from, true) : Str.indexOf(subject, search, from);
+        ByteBuilder out = ByteBuilder.borrow(s.length);
+        try {
+            int from = 0;
+            while (index >= 0) {
+                out.write(s, from, index - from);
+                out.write(w, 0, w.length);
+                count[0]++;
+                from = index + f.length;
+                index = ignoreCase ? indexOf(s, f, from, true) : Str.indexOf(subject, search, from);
+            }
+            out.write(s, from, s.length - from);
+            return Str.of(out.toByteArray());
+        } finally {
+            out.release();
         }
-        out.write(s, from, s.length - from);
-        return Str.of(out.toByteArray());
     }
 
     /** strtr($s, $pairs): longest keys first at each position; replaced text is not rescanned. */

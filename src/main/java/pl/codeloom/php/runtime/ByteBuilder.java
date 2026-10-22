@@ -4,6 +4,7 @@ import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 
 /**
@@ -20,6 +21,37 @@ public final class ByteBuilder {
 
     public ByteBuilder(int capacity) {
         this.buf = new byte[Math.max(capacity, 8)];
+    }
+
+    /**
+     * Builders kept for reuse by built-ins that build a document-sized string per call (preg_replace,
+     * str_replace): a fresh buffer is zeroed on allocation, which cost more than the copying itself on 10 KB
+     * posts. Small outputs take a fresh builder (cheaper than the pool). Borrowing nests (a preg_replace_callback
+     * callback may call them again); release() returns a pooled builder.
+     */
+    private static final ArrayDeque<ByteBuilder> POOL = new ArrayDeque<>();
+    private static final int POOLED_FROM = 4096;
+    private static final int POOLED_LIMIT = 1 << 22;
+    private boolean pooled;
+
+    /** An empty builder for about expected bytes; call release() once its bytes are copied out. */
+    public static ByteBuilder borrow(int expected) {
+        if (expected < POOLED_FROM) {
+            return new ByteBuilder(expected + 16);
+        }
+        ByteBuilder builder = POOL.pollFirst();
+        if (builder == null) {
+            builder = new ByteBuilder(expected + expected / 4);
+            builder.pooled = true;
+        }
+        builder.count = 0;
+        return builder;
+    }
+
+    public void release() {
+        if (pooled && buf.length <= POOLED_LIMIT && POOL.size() < 16) {
+            POOL.addFirst(this);
+        }
     }
 
     private void ensure(int extra) {

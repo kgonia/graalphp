@@ -99,56 +99,90 @@ final class PcreFunctions {
     }
 
     /**
-     * Where subjects live in native memory. Large ones are cached by the identity of their (never modified) byte
-     * arrays: the block parser and the tag processor call preg_match on one document thousands of times at growing
-     * offsets. Cached copies are GC-managed (Arena.ofAuto), so an evicted one is freed once unused. Small ones are
-     * copied into scratch buffers reused per nesting depth (a preg_replace_callback callback may call preg_*
-     * again), which avoids a GC-managed allocation per call.
+     * Where subjects live in native memory, cached by the identity of their (never modified) byte arrays: the block
+     * parser and the tag processor call preg_match on one document thousands of times at growing offsets, and it is
+     * copied once. Entries own reusable native buffers, so a new subject costs a copy, not an allocation: a fresh
+     * Arena.ofAuto segment per subject cost ~6 us for a 10 KB post (zeroing, cleaner, reference processing), thirty
+     * times the match itself, and preg_replace chains produce a new subject per call. An entry in use by an outer
+     * call (a preg_replace_callback callback calling preg_* again) is never reused. Small subjects (most calls)
+     * skip the cache: they are copied into a scratch buffer per nesting depth, slot -1 - depth.
      */
     private static final class SubjectCache {
-        private static final int SIZE = 4;
         private static final int LARGE = 4096;
         private static MemorySegment[] scratch = new MemorySegment[4];
         private static int depth;
+        private static byte[][] subjects = new byte[8][];
+        private static MemorySegment[] buffers = new MemorySegment[8];
+        private static Arena[] arenas = new Arena[8];
+        private static int[] users = new int[8];
+        private static int next;
 
-        static MemorySegment acquire(byte[] subject) {
-            if (subject.length >= LARGE) {
-                depth++;
-                return nativeCopy(subject);
+        /** The entry holding the subject's native copy (copied in unless already there); release it after use. */
+        static int acquire(byte[] subject) {
+            if (subject.length < LARGE) {
+                return acquireScratch(subject);
             }
+            for (int i = 0; i < subjects.length; i++) {
+                if (subjects[i] == subject) {
+                    users[i]++;
+                    return i;
+                }
+            }
+            int slot = unusedSlot();
+            if (buffers[slot] == null || buffers[slot].byteSize() < subject.length) {
+                if (arenas[slot] != null) {
+                    arenas[slot].close();
+                }
+                arenas[slot] = Arena.ofShared();
+                long size = Math.max(256, Integer.highestOneBit(Math.max(1, subject.length)) * 2L);
+                buffers[slot] = arenas[slot].allocate(size);
+            }
+            MemorySegment.copy(subject, 0, buffers[slot], ValueLayout.JAVA_BYTE, 0, subject.length);
+            subjects[slot] = subject;
+            users[slot] = 1;
+            return slot;
+        }
+
+        private static int acquireScratch(byte[] subject) {
             if (depth == scratch.length) {
                 scratch = Arrays.copyOf(scratch, depth * 2);
             }
             MemorySegment buffer = scratch[depth];
             if (buffer == null || buffer.byteSize() < subject.length) {
-                buffer = Arena.global().allocate(Math.max(256, Integer.highestOneBit(Math.max(1, subject.length)) * 2L));
+                buffer = Arena.global().allocate(LARGE);
                 scratch[depth] = buffer;
             }
-            depth++;
             MemorySegment.copy(subject, 0, buffer, ValueLayout.JAVA_BYTE, 0, subject.length);
-            return buffer;
+            return -1 - depth++;
         }
 
-        static void release() {
-            depth--;
+        static MemorySegment segment(int slot) {
+            return slot >= 0 ? buffers[slot] : scratch[-1 - slot];
         }
 
-        private static final byte[][] arrays = new byte[SIZE][];
-        private static final MemorySegment[] copies = new MemorySegment[SIZE];
-        private static int next;
+        static void release(int slot) {
+            if (slot >= 0) {
+                users[slot]--;
+            } else {
+                depth--;
+            }
+        }
 
-        private static MemorySegment nativeCopy(byte[] subject) {
-            for (int i = 0; i < SIZE; i++) {
-                if (arrays[i] == subject) {
-                    return copies[i];
+        private static int unusedSlot() {
+            for (int k = 0; k < users.length; k++) {
+                int i = (next + k) % users.length;
+                if (users[i] == 0) {
+                    next = (i + 1) % users.length;
+                    return i;
                 }
             }
-            MemorySegment copy = Arena.ofAuto().allocate(Math.max(1, subject.length));
-            MemorySegment.copy(subject, 0, copy, ValueLayout.JAVA_BYTE, 0, subject.length);
-            arrays[next] = subject;
-            copies[next] = copy;
-            next = (next + 1) % SIZE;
-            return copy;
+            int slot = users.length;
+            subjects = Arrays.copyOf(subjects, slot * 2);
+            buffers = Arrays.copyOf(buffers, slot * 2);
+            arenas = Arrays.copyOf(arenas, slot * 2);
+            users = Arrays.copyOf(users, slot * 2);
+            next = slot + 1;
+            return slot;
         }
     }
 
@@ -157,6 +191,7 @@ final class PcreFunctions {
         final Regex regex;
         final byte[] subject;
         final MemorySegment nativeSubject;
+        final int subjectSlot;
         final MemorySegment matchData;
         final MemorySegment ovector;
         final boolean ownsMatchData;
@@ -164,7 +199,8 @@ final class PcreFunctions {
         Matcher(Regex regex, byte[] subject) {
             this.regex = regex;
             this.subject = subject;
-            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : SubjectCache.acquire(subject);
+            this.subjectSlot = Native.CRITICAL ? -1 : SubjectCache.acquire(subject);
+            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : SubjectCache.segment(subjectSlot);
             if (regex.matchDataInUse) {
                 ownsMatchData = true;
                 matchData = Native.createMatchData(regex.code);
@@ -229,7 +265,7 @@ final class PcreFunctions {
                 regex.matchDataInUse = false;
             }
             if (!Native.CRITICAL) {
-                SubjectCache.release();
+                SubjectCache.release(subjectSlot);
             }
         }
     }
@@ -567,7 +603,7 @@ final class PcreFunctions {
             while (true) {
                 if (rc >= 0 && limit > 0) {
                     if (out == null) {
-                        out = new ByteBuilder(subject.length + 32);
+                        out = ByteBuilder.borrow(subject.length);
                     }
                     count[0]++;
                     int matchStart = m.start(0);
@@ -608,8 +644,12 @@ final class PcreFunctions {
                 return subjectString;
             }
             out.write(subject, lastEnd, subject.length - lastEnd);
+            return Str.of(out.toByteArray());
+        } finally {
+            if (out != null) {
+                out.release();
+            }
         }
-        return Str.of(out.toByteArray());
     }
 
     /**
