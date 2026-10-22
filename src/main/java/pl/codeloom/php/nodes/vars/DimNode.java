@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -27,6 +28,8 @@ public final class DimNode extends LValueNode {
     /** The container's class (array, string, ArrayAccess object): reads compile to the one case seen. */
     private final ValueProfile containerType = ValueProfile.createClassProfile();
     private final ValueProfile keyType = ValueProfile.createClassProfile();
+    /** Whether a write here has met an ArrayAccess object: until then compiled code leaves that path out. */
+    @CompilationFinal private boolean seenObjectWrite;
     /** Where a string key was found last time (PhpArray.slotOf); checked by identity before hashing. */
     private int slotGuess = -1;
 
@@ -115,6 +118,10 @@ public final class DimNode extends LValueNode {
         try {
             PhpArray array = place().arrayForWrite(frame);
             if (array == null) {
+                if (!seenObjectWrite) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    seenObjectWrite = true;
+                }
                 writeObject(frame, value);
             } else if (isAppend()) {
                 array.append(value);
