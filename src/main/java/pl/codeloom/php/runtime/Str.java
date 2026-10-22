@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PHP strings are byte strings, held as {@link TruffleString}s in the BYTES encoding. These helpers are for code
@@ -28,6 +29,16 @@ public final class Str {
 
     public static TruffleString singleByte(int b) {
         return SINGLE_BYTES[b & 0xFF];
+    }
+
+    /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
+    private static final ConcurrentHashMap<TruffleString, TruffleString> LITERALS = new ConcurrentHashMap<>();
+
+    /** The canonical instance of a literal string. */
+    @TruffleBoundary
+    public static TruffleString intern(TruffleString s) {
+        TruffleString existing = LITERALS.putIfAbsent(s, s);
+        return existing != null ? existing : s;
     }
 
     @TruffleBoundary

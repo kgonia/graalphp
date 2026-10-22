@@ -677,10 +677,10 @@ public final class Translator {
 
     private static TruffleString literal(Object value) {
         if (value instanceof String s) {
-            return Str.of(s);
+            return Str.intern(Str.of(s));
         }
         if (value instanceof byte[] bytes) {
-            return Str.of(bytes);
+            return Str.intern(Str.of(bytes));
         }
         throw new PhpError("not a string literal: " + value);
     }
@@ -1001,7 +1001,7 @@ public final class Translator {
     /** Concatenation of two literals folds to a literal (common in long split strings). */
     private static ExprNode foldConcat(ExprNode left, ExprNode right) {
         if (left.constantValue() instanceof TruffleString a && right.constantValue() instanceof TruffleString b) {
-            return new ConstNode(Str.concat(a, b));
+            return new ConstNode(Str.intern(Str.concat(a, b)));
         }
         return ArithmeticNodesFactory.ConcatNodeGen.create(left, right);
     }

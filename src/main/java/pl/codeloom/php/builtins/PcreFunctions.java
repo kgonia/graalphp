@@ -23,7 +23,9 @@ import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -500,7 +502,7 @@ final class PcreFunctions {
     private static TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
                                              TruffleString subjectString, long limit, long flags, long[] count) {
         byte[] subject = subjectBytes(subjectString);
-        byte[] template = callback ? null : Str.readBytes(Convert.toStr(replacement));
+        Template template = callback ? null : Template.of(Convert.toStr(replacement));
         ByteBuilder out = null;
         try (Matcher m = new Matcher(regex, subject)) {
             int lastEnd = 0;
@@ -520,7 +522,7 @@ final class PcreFunctions {
                         byte[] bytes = Str.readBytes(Convert.toStr(value));
                         out.write(bytes, 0, bytes.length);
                     } else {
-                        expand(out, template, m, rc);
+                        template.expand(out, m, rc);
                     }
                     limit--;
                     start = lastEnd = matchEnd;
@@ -555,60 +557,104 @@ final class PcreFunctions {
         return Str.of(out.toByteArray());
     }
 
-    /** Copies a replacement template, substituting \n, $n and ${n} (n up to 99), as php-src's preg_get_backref. */
-    private static void expand(ByteBuilder out, byte[] template, Matcher m, int count) {
-        byte[] buffer = new byte[template.length];
-        int length = 0;
-        int i = 0;
-        boolean lastWasBackslash = false;
-        while (i < template.length) {
-            byte c = template[i];
-            if (c == '\\' || c == '$') {
-                if (lastWasBackslash) {
-                    buffer[length - 1] = c;
-                    i++;
-                    lastWasBackslash = false;
-                    continue;
+    /**
+     * A replacement template parsed once: literal chunks and group references (\n, $n, ${n}, n up to 99, with
+     * php-src's preg_get_backref rules; a backslash before \ or $ makes it literal). ops holds a chunk length
+     * (>= 0, the next bytes of text) or -(group + 1).
+     */
+    private static final class Template {
+        private static final Map<TruffleString, Template> CACHE = new HashMap<>();
+
+        final byte[] text;
+        final int[] ops;
+
+        private Template(byte[] text, int[] ops) {
+            this.text = text;
+            this.ops = ops;
+        }
+
+        static Template of(TruffleString source) {
+            Template cached = CACHE.get(source);
+            if (cached == null) {
+                cached = parse(Str.readBytes(source));
+                if (CACHE.size() > 4096) {
+                    CACHE.clear();
                 }
-                int group = -1;
-                int j = i + 1;
-                boolean brace = c == '$' && j < template.length && template[j] == '{';
-                if (brace) {
-                    j++;
-                }
-                if (i + 1 < template.length && j < template.length && isDigit(template[j])) {
-                    group = template[j++] - '0';
-                    if (j < template.length && isDigit(template[j])) {
-                        group = group * 10 + template[j++] - '0';
+                CACHE.put(source, cached);
+            }
+            return cached;
+        }
+
+        private static Template parse(byte[] template) {
+            ByteBuilder text = new ByteBuilder(template.length);
+            List<Integer> ops = new ArrayList<>();
+            int chunkStart = 0;
+            int i = 0;
+            boolean lastWasBackslash = false;
+            while (i < template.length) {
+                byte c = template[i];
+                if (c == '\\' || c == '$') {
+                    if (lastWasBackslash) {
+                        // \\ or \$: the escaping backslash (already in text) becomes this character
+                        text.setLast(c);
+                        i++;
+                        lastWasBackslash = false;
+                        continue;
                     }
+                    int group = -1;
+                    int j = i + 1;
+                    boolean brace = c == '$' && j < template.length && template[j] == '{';
                     if (brace) {
-                        if (j < template.length && template[j] == '}') {
-                            j++;
-                        } else {
-                            group = -1;
+                        j++;
+                    }
+                    if (i + 1 < template.length && j < template.length && isDigit(template[j])) {
+                        group = template[j++] - '0';
+                        if (j < template.length && isDigit(template[j])) {
+                            group = group * 10 + template[j++] - '0';
+                        }
+                        if (brace) {
+                            if (j < template.length && template[j] == '}') {
+                                j++;
+                            } else {
+                                group = -1;
+                            }
                         }
                     }
+                    if (group >= 0) {
+                        ops.add(text.size() - chunkStart);
+                        chunkStart = text.size();
+                        ops.add(-(group + 1));
+                        i = j;
+                        lastWasBackslash = false;
+                        continue;
+                    }
                 }
-                if (group >= 0) {
-                    out.write(buffer, 0, length);
-                    length = 0;
+                text.write(c);
+                i++;
+                lastWasBackslash = c == '\\';
+            }
+            ops.add(text.size() - chunkStart);
+            int[] opArray = new int[ops.size()];
+            for (int k = 0; k < opArray.length; k++) {
+                opArray[k] = ops.get(k);
+            }
+            return new Template(text.toByteArray(), opArray);
+        }
+
+        void expand(ByteBuilder out, Matcher m, int count) {
+            int position = 0;
+            for (int op : ops) {
+                if (op >= 0) {
+                    out.write(text, position, op);
+                    position += op;
+                } else {
+                    int group = -op - 1;
                     if (group < count && m.start(group) >= 0) {
                         out.write(m.subject, m.start(group), m.end(group) - m.start(group));
                     }
-                    i = j;
-                    lastWasBackslash = false;
-                    continue;
                 }
             }
-            if (length == buffer.length) {
-                out.write(buffer, 0, length);
-                length = 0;
-            }
-            buffer[length++] = c;
-            i++;
-            lastWasBackslash = c == '\\';
         }
-        out.write(buffer, 0, length);
     }
 
     private static boolean isDigit(byte b) {

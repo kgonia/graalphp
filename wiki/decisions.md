@@ -30,12 +30,14 @@ Gate 1 answers a peak-performance question, and AST and bytecode interpreters re
 - **Fairness:** regex time is the same on both sides, so Gate 1 measures what Graal does to the PHP code around the regexes.
 - **Later:** a PCRE flavor for GraalVM's TRegex, which would make regexes compilable, is a separate later project.
 
-## D8: toolchain (2026-10-22)
-- Oracle GraalVM 25.0.4.1.1 (`~/.jdks/graalvm-25.4.4.1.1+1.1`), with Truffle `25.4.4.1.1` from Maven Central.
-- Maven (IntelliJ's bundled 3.x locally; the `maven:3.9.11-eclipse-temurin-25` image in Docker).
+## D8: toolchain (2026-10-22, revised the same day)
+- **Oracle GraalVM 25.0.4** with Truffle **25.0.4** from Maven Central, on both platforms (`~/.jdks/graalvm-jdk-25.0.4+7.1` on Windows; the Linux build in the `gate1-truffle` image).
+  - First choice was 25.4.4.1.1, but Oracle's newest Linux download is 25.0.4, and Truffle refuses to compile on a JDK older than itself ("Version check failed"; it falls back to the interpreter).
+- Maven (IntelliJ's bundled 3.x locally).
 - Package `pl.codeloom.php`.
-- The reference PHP runs in Docker (`php:8.4-cli` plus `ast`, OPcache JIT on).
-- Published Gate 1 numbers come from Linux with pinned cores, never from Windows.
+- The reference PHP runs in Docker (`php:8.5-cli` plus `ast`, OPcache tracing JIT on; 8.4 too, see D9).
+- **Truffle runs in Docker too:** `bench/truffle/Dockerfile` builds `gate1-truffle` on top of the PHP image (same Debian and CPU), adding Linux GraalVM and PHP's own bundled PCRE2 built as a shared library (`build-pcre2.sh`). `bench/gate1/truffle.sh` is the counterpart of `php.sh`.
+- Published Gate 1 numbers come from Linux with pinned cores, never from Windows. On Windows, Git's libpcre2 scans about 20× slower than PHP's, which makes regex kernels incomparable there.
 
 ## D9: Gate 1 reference is PHP 8.5, and Go is judged on the PHP-code speedup (2026-10-22)
 - **PHP 8.5:** it is the newest stable release (8.5.12; 8.6 is at RC4), and the retro says to compare against the newest PHP. 8.4.27 is measured too.

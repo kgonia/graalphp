@@ -44,6 +44,11 @@ public final class ByteBuilder {
         write(bytes, 0, bytes.length);
     }
 
+    /** Replaces the last byte written. */
+    public void setLast(int b) {
+        buf[count - 1] = (byte) b;
+    }
+
     public int size() {
         return count;
     }

@@ -170,6 +170,9 @@ final class StringFunctions {
         if (needle.length == 0) {
             return from <= haystack.length ? from : -1;
         }
+        if (!ignoreCase) {
+            return indexOfExact(haystack, needle, from);
+        }
         int last = haystack.length - needle.length;
         byte first = ignoreCase ? lowerByte(needle[0]) : needle[0];
         outer:
@@ -186,6 +189,20 @@ final class StringFunctions {
                 }
             }
             return i;
+        }
+        return -1;
+    }
+
+    /** Case-sensitive search: a tight scan for the first byte, then a (vectorized) range compare. */
+    private static int indexOfExact(byte[] haystack, byte[] needle, int from) {
+        byte first = needle[0];
+        int rest = needle.length - 1;
+        int last = haystack.length - needle.length;
+        for (int i = Math.max(from, 0); i <= last; i++) {
+            if (haystack[i] == first && (rest == 0
+                    || Arrays.equals(haystack, i + 1, i + 1 + rest, needle, 1, needle.length))) {
+                return i;
+            }
         }
         return -1;
     }
