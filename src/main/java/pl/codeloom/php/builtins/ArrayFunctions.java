@@ -423,12 +423,12 @@ final class ArrayFunctions {
 
     @TruffleBoundary
     private static PhpArray unique(PhpArray array) {
-        Set<String> seen = new HashSet<>();
+        // SORT_STRING: values compare by their string form; TruffleString hashes and compares bytes
+        Set<TruffleString> seen = new HashSet<>();
         PhpArray result = new PhpArray();
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object value = array.valueAt(p);
-            String text = Str.java(Convert.toStr(value));
-            if (seen.add(text)) {
+            if (seen.add(Convert.toStr(value))) {
                 result.put(array.keyAt(p), value);
             }
         }
@@ -438,18 +438,18 @@ final class ArrayFunctions {
     @TruffleBoundary
     private static PhpArray diffOrIntersect(Object[] a, boolean diff) {
         PhpArray first = Args.array(a, 0, diff ? "array_diff" : "array_intersect");
-        List<Set<String>> others = new ArrayList<>();
+        List<Set<TruffleString>> others = new ArrayList<>();
         for (int i = 1; i < Args.count(a); i++) {
-            Set<String> set = new HashSet<>();
+            Set<TruffleString> set = new HashSet<>();
             PhpArray other = Args.array(a, i, diff ? "array_diff" : "array_intersect");
             for (int p = other.firstPosition(); p >= 0; p = other.nextPosition(p)) {
-                set.add(Str.java(Convert.toStr(other.valueAt(p))));
+                set.add(Convert.toStr(other.valueAt(p)));
             }
             others.add(set);
         }
         PhpArray result = new PhpArray();
         for (int p = first.firstPosition(); p >= 0; p = first.nextPosition(p)) {
-            String text = Str.java(Convert.toStr(first.valueAt(p)));
+            TruffleString text = Convert.toStr(first.valueAt(p));
             boolean keep;
             if (diff) {
                 keep = others.stream().noneMatch(set -> set.contains(text));
