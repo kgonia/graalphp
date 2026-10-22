@@ -34,6 +34,8 @@ public final class ForeachNode extends StmtNode {
     private final boolean byRef;
     /** The auxiliary frame slot holding the array iteration's state (resolved on first execution). */
     @CompilationFinal private int stateSlot = -1;
+    /** Whether this loop has iterated an object: until it does, compiled code leaves the object path out. */
+    @CompilationFinal private boolean seenObject;
 
     public ForeachNode(ExprNode subject, LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList,
                        StmtNode body, boolean byRef) {
@@ -113,6 +115,10 @@ public final class ForeachNode extends StmtNode {
         if (value instanceof PhpArray array) {
             iterate(frame, array);
         } else if (value instanceof PhpObject object) {
+            if (!seenObject) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                seenObject = true;
+            }
             iterateObject(frame, object);
         }
     }

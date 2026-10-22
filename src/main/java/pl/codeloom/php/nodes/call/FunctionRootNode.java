@@ -154,9 +154,18 @@ public final class FunctionRootNode extends RootNode {
      * Values PHP would reject are passed through unchanged; this runtime doesn't raise TypeErrors.
      */
     static Object coerce(Object value, char type, boolean nullable, String what) {
-        if (value == PhpNull.NULL) {
+        boolean scalarType = type == 's' || type == 'i' || type == 'f' || type == 'b';
+        if (!scalarType || value == PhpNull.NULL || type == 's' && value instanceof TruffleString
+                || type == 'i' && value instanceof Long || type == 'f' && value instanceof Double
+                || type == 'b' && value instanceof Boolean) {
             return value;
         }
+        return convert(value, type);
+    }
+
+    /** Out of line: the conversions, inlined for every typed parameter, were a large part of compiled callers. */
+    @TruffleBoundary
+    private static Object convert(Object value, char type) {
         switch (type) {
             case 's':
                 if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
