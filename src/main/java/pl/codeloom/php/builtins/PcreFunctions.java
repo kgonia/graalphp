@@ -77,6 +77,8 @@ final class PcreFunctions {
     /** A compiled pattern with its group names and a reusable match block (php-src's mdata, guarded the same way). */
     private static final class Regex {
         final MemorySegment code;
+        /** JIT-compiled: matches without a UTF check go through pcre2_jit_match, as php-src does. */
+        final boolean jit;
         final boolean utf;
         final int groups;
         final TruffleString[] names;
@@ -88,8 +90,9 @@ final class PcreFunctions {
         long nanos;
         String source;
 
-        Regex(MemorySegment code, boolean utf, int groups, TruffleString[] names) {
+        Regex(MemorySegment code, boolean jit, boolean utf, int groups, TruffleString[] names) {
             this.code = code;
+            this.jit = jit;
             this.utf = utf;
             this.groups = groups;
             this.names = names;
@@ -215,10 +218,10 @@ final class PcreFunctions {
 
         int match(long start, int options) {
             if (!NativeClock.ENABLED && !DEBUG) {
-                return Native.match(regex.code, nativeSubject, subject.length, start, options, matchData);
+                return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData);
             }
             long t0 = System.nanoTime();
-            int rc = Native.match(regex.code, nativeSubject, subject.length, start, options, matchData);
+            int rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData);
             long t1 = System.nanoTime();
             long elapsed = t1 - t0;
             NativeClock.add(elapsed, System.nanoTime() - t1);
@@ -344,7 +347,8 @@ final class PcreFunctions {
         System.arraycopy(regex, patternStart, pattern, 0, pattern.length);
         MemorySegment code = Native.compile(pattern, options);
         int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
-        Regex compiled = new Regex(code, (options & UTF) != 0, groups, Native.names(code, groups));
+        Regex compiled = new Regex(code, Native.jitCompile(code), (options & UTF) != 0, groups,
+                Native.names(code, groups));
         if (DEBUG) {
             compiled.source = Str.java(regexString);
             if (CACHE.isEmpty()) {
@@ -912,6 +916,14 @@ final class PcreFunctions {
                 : handle("pcre2_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
                         ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
                         ValueLayout.ADDRESS);
+        /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
+        private static final MethodHandle JIT_MATCH = CRITICAL ? LINKER.downcallHandle(find("pcre2_jit_match_8"),
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS), Linker.Option.critical(true))
+                : handle("pcre2_jit_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS);
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,
@@ -980,13 +992,22 @@ final class PcreFunctions {
                     throw new PhpError("Warning: Compilation failed: " + message.getString(0) + " at offset "
                             + errorOffset.get(ValueLayout.JAVA_LONG, 0));
                 }
-                int jit = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
-                if (jit != 0) {
-                    System.err.println("warning: pcre2_jit_compile failed (" + jit + "), matching interpreted");
-                }
                 return code;
             } catch (PhpError e) {
                 throw e;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** JIT-compiles the pattern; false (with a warning) when JIT isn't available, so matching is interpreted. */
+        static boolean jitCompile(MemorySegment code) {
+            try {
+                int rc = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
+                if (rc != 0) {
+                    System.err.println("warning: pcre2_jit_compile failed (" + rc + "), matching interpreted");
+                }
+                return rc == 0;
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
@@ -1046,9 +1067,17 @@ final class PcreFunctions {
             }
         }
 
-        static int match(MemorySegment code, MemorySegment subject, long length, long start, int options,
-                         MemorySegment matchData) {
+        /**
+         * One match. Like php-src, a JIT-compiled pattern matched with no options but NO_UTF_CHECK takes
+         * pcre2_jit_match; the first UTF-checked match and anchored retries after an empty match take pcre2_match.
+         */
+        static int match(MemorySegment code, boolean jit, MemorySegment subject, long length, long start,
+                         int options, MemorySegment matchData) {
             try {
+                if (jit && options == NO_UTF_CHECK) {
+                    return (int) JIT_MATCH.invokeExact(code, subject, length, start, options, matchData,
+                            MATCH_CONTEXT_PTR);
+                }
                 return (int) MATCH.invokeExact(code, subject, length, start, options, matchData, MATCH_CONTEXT_PTR);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
