@@ -2,12 +2,12 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 /** strip_tags(): a port of php-src's php_strip_tags_ex state machine (ext/standard/string.c). */
@@ -17,10 +17,10 @@ final class StripTags {
 
     @TruffleBoundary
     static TruffleString strip(TruffleString text, Object allowed) {
-        byte[] buf = Str.bytes(text);
+        byte[] buf = Str.readBytes(text);
         String allow = allowedTags(allowed);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(buf.length);
-        ByteArrayOutputStream tag = allow == null ? null : new ByteArrayOutputStream();
+        ByteBuilder out = new ByteBuilder(buf.length);
+        ByteBuilder tag = allow == null ? null : new ByteBuilder();
         int depth = 0;
         int inQuote = 0;
         int state = 0;

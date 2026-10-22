@@ -2,10 +2,10 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -56,9 +56,9 @@ final class Html {
 
     @TruffleBoundary
     static TruffleString specialChars(TruffleString text, long flags, boolean doubleEncode) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         int doctype = (int) flags & DOCTYPE_MASK;
-        ByteArrayOutputStream out = null;
+        ByteBuilder out = null;
         int i = 0;
         int copied = 0;
         while (i < s.length) {
@@ -102,7 +102,7 @@ final class Html {
                 continue;
             }
             if (out == null) {
-                out = new ByteArrayOutputStream(s.length + 16);
+                out = new ByteBuilder(s.length + 16);
             }
             out.write(s, copied, i - copied);
             out.writeBytes(replacement.getBytes(StandardCharsets.UTF_8));
@@ -218,12 +218,12 @@ final class Html {
     /** html_entity_decode, or htmlspecialchars_decode when specialOnly. */
     @TruffleBoundary
     static TruffleString decode(TruffleString text, long flags, boolean specialOnly) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         int doctype = (int) flags & DOCTYPE_MASK;
         if (indexOfAmp(s) < 0) {
             return text;
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length);
+        ByteBuilder out = new ByteBuilder(s.length);
         int i = 0;
         while (i < s.length) {
             if (s[i] != '&') {

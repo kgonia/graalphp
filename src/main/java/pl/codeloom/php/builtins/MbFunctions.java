@@ -2,13 +2,13 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.util.Locale;
 
 /**
@@ -83,7 +83,7 @@ final class MbFunctions {
             }
             return true;
         }
-        byte[] s = Str.bytes(Convert.toStr(value));
+        byte[] s = Str.readBytes(Convert.toStr(value));
         if (encoding.equals("ASCII")) {
             for (byte b : s) {
                 if (b < 0) {
@@ -106,7 +106,7 @@ final class MbFunctions {
     /** mb_get_strlen for UTF-8: the bytes that aren't continuation bytes. */
     @TruffleBoundary
     private static long strlen(TruffleString text, String encoding) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         if (encoding.equals("ASCII")) {
             return s.length;
         }
@@ -142,7 +142,7 @@ final class MbFunctions {
 
     @TruffleBoundary
     private static TruffleString substr(TruffleString text, long start, Long length, String encoding) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         if (encoding.equals("ASCII")) {
             return StringFunctions.substr(text, start, length);
         }
@@ -226,7 +226,7 @@ final class MbFunctions {
         return java.util.Arrays.copyOf(out, n);
     }
 
-    private static void encode(ByteArrayOutputStream out, int cp) {
+    private static void encode(ByteBuilder out, int cp) {
         if (cp == -1) {
             if (substitute != -1) {
                 JsonFunctions.Utf8.encode(out, substitute);
@@ -238,8 +238,8 @@ final class MbFunctions {
 
     @TruffleBoundary
     private static TruffleString scrub(TruffleString text, String encoding) {
-        byte[] s = Str.bytes(text);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length);
+        byte[] s = Str.readBytes(text);
+        ByteBuilder out = new ByteBuilder(s.length);
         if (encoding.equals("ASCII")) {
             for (byte b : s) {
                 encode(out, b < 0 ? -1 : b);
@@ -254,7 +254,7 @@ final class MbFunctions {
 
     @TruffleBoundary
     private static TruffleString changeCase(TruffleString text, String encoding, boolean upper) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         StringBuilder chars = new StringBuilder(s.length);
         for (int cp : decode(s)) {
             if (cp == -1) {
@@ -265,7 +265,7 @@ final class MbFunctions {
             }
         }
         String mapped = upper ? chars.toString().toUpperCase(Locale.ROOT) : chars.toString().toLowerCase(Locale.ROOT);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length);
+        ByteBuilder out = new ByteBuilder(s.length);
         for (int i = 0; i < mapped.length(); ) {
             int cp = mapped.codePointAt(i);
             encode(out, cp == 0xFFFF ? -1 : cp);
@@ -276,7 +276,7 @@ final class MbFunctions {
 
     @TruffleBoundary
     private static Object ord(TruffleString text, String encoding) {
-        byte[] s = Str.bytes(text);
+        byte[] s = Str.readBytes(text);
         if (s.length == 0) {
             throw new PhpError("ValueError: mb_ord(): Argument #1 ($string) must not be empty");
         }
@@ -289,7 +289,7 @@ final class MbFunctions {
         if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
             return Boolean.FALSE;
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream(4);
+        ByteBuilder out = new ByteBuilder(4);
         JsonFunctions.Utf8.encode(out, (int) cp);
         return Str.of(out.toByteArray());
     }

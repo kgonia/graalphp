@@ -16,6 +16,7 @@ import pl.codeloom.php.nodes.ThunkRootNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
 import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.ClosureNode;
+import pl.codeloom.php.nodes.call.DynamicMethodCallNode;
 import pl.codeloom.php.nodes.call.FrameArgsNode;
 import pl.codeloom.php.nodes.call.FunctionCallNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
@@ -182,7 +183,16 @@ public final class Translator {
         return block(result);
     }
 
+    /** A statement, tagged with its source line for line-level tools. */
     private StmtNode statement(Ast node) {
+        StmtNode statement = statementNode(node);
+        if (!node.is("AST_STMT_LIST") && statement.getClass() != BasicStmts.BlockNode.class) {
+            statement.setLine(node.line);
+        }
+        return statement;
+    }
+
+    private StmtNode statementNode(Ast node) {
         switch (node.kind) {
             case "AST_STMT_LIST":
                 return statements(node);
@@ -748,6 +758,10 @@ public final class Translator {
             case "AST_CALL":
                 return call(node);
             case "AST_METHOD_CALL":
+                if (!(node.get("method") instanceof String)) {
+                    return new DynamicMethodCallNode(placeOrExpression(node.get("expr")), expression(node.get("method")),
+                            arguments(node.node("args")));
+                }
                 return new MethodCallNode(expression(node.get("expr")), methodName(node), arguments(node.node("args")));
             case "AST_STATIC_CALL": {
                 Ast classNode = node.node("class");

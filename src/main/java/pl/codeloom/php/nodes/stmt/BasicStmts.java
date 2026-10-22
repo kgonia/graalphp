@@ -125,6 +125,9 @@ public final class BasicStmts {
     public static final class GlobalNode extends StmtNode {
         @Child private LValueNode local;
         private final String name;
+        /** The global's reference, valid while the context's globals version is unchanged. */
+        private PhpRef cachedRef;
+        private int cachedVersion = -1;
 
         public GlobalNode(LValueNode local, String name) {
             this.local = local;
@@ -133,7 +136,15 @@ public final class BasicStmts {
 
         @Override
         public void execute(VirtualFrame frame) {
-            local.bindRef(frame, PhpContext.get(this).globalRef(name));
+            PhpContext context = PhpContext.get(this);
+            int version = context.globalsVersion();
+            PhpRef ref = cachedRef;
+            if (ref == null || cachedVersion != version) {
+                ref = context.globalRef(name);
+                cachedRef = ref;
+                cachedVersion = version;
+            }
+            local.bindRef(frame, ref);
         }
     }
 

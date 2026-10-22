@@ -95,10 +95,32 @@ public final class Callables {
         return target;
     }
 
+    /**
+     * The last callable resolved by {@link #call}: built-ins that call back in a loop (array_map, usort,
+     * preg_replace_callback) pass the same callable value every time. An array callable is re-checked element by
+     * element, since an unshared array can change in place. Gate 1 runs one context, so one entry is enough.
+     */
+    private static Object lastCallable;
+    private static Object lastFirst;
+    private static Object lastSecond;
+    private static Target lastTarget;
+
     /** Calls a callable from runtime code (array_map, usort, preg_replace_callback...): no inline caching. */
     @TruffleBoundary
     public static Object call(PhpContext context, Object callable, Object... values) {
-        Target target = resolveOrThrow(context, callable);
+        Target target;
+        if (callable == lastCallable && (!(callable instanceof PhpArray array)
+                || array.get(0L) == lastFirst && array.get(1L) == lastSecond)) {
+            target = lastTarget;
+        } else {
+            target = resolveOrThrow(context, callable);
+            lastCallable = callable;
+            lastTarget = target;
+            if (callable instanceof PhpArray array) {
+                lastFirst = array.get(0L);
+                lastSecond = array.get(1L);
+            }
+        }
         return target.function().getCallTarget().call(target.frameArguments(values));
     }
 

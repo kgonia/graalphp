@@ -77,7 +77,7 @@ public final class Convert {
 
     @TruffleBoundary
     public static long stringToLong(TruffleString s) {
-        Object number = parseNumber(Str.bytes(s), true);
+        Object number = parseNumber(Str.readBytes(s), true);
         if (number instanceof Long l) {
             return l;
         }
@@ -111,7 +111,7 @@ public final class Convert {
 
     @TruffleBoundary
     public static double stringToDouble(TruffleString s) {
-        Object number = parseNumber(Str.bytes(s), true);
+        Object number = parseNumber(Str.readBytes(s), true);
         if (number instanceof Long l) {
             return l;
         }
@@ -143,7 +143,7 @@ public final class Convert {
 
     @TruffleBoundary
     public static Object stringToNumber(TruffleString s) {
-        Object number = parseNumber(Str.bytes(s), true);
+        Object number = parseNumber(Str.readBytes(s), true);
         return number == null ? (Object) 0L : number;
     }
 
@@ -226,7 +226,7 @@ public final class Convert {
     /** is_numeric() and the numeric-string test of comparisons: the whole string, whitespace allowed around. */
     @TruffleBoundary
     public static Object numericValue(TruffleString s) {
-        return parseNumber(Str.bytes(s), false);
+        return parseNumber(Str.readBytes(s), false);
     }
 
     // ---- to string ----

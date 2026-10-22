@@ -12,6 +12,7 @@ import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -44,7 +45,7 @@ public final class PhpContext {
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Map<String, FileRootNode> files = new HashMap<>();
     private final Set<String> included = new HashSet<>();
-    private final java.util.ArrayDeque<java.io.ByteArrayOutputStream> buffers = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<ByteBuilder> buffers = new java.util.ArrayDeque<>();
     private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot) {
@@ -165,6 +166,8 @@ public final class PhpContext {
 
     // ---- global variables ----
 
+    private int globalsVersion;
+
     /** The global variable's reference, created (holding null) if absent: `global $x`, top-level code. */
     @TruffleBoundary
     public PhpRef globalRef(String name) {
@@ -179,11 +182,18 @@ public final class PhpContext {
     @TruffleBoundary
     public void bindGlobal(String name, PhpRef ref) {
         globals.put(name, ref);
+        globalsVersion++;
     }
 
     @TruffleBoundary
     public void unsetGlobal(String name) {
         globals.remove(name);
+        globalsVersion++;
+    }
+
+    /** Changes whenever a global variable is rebound or unset, so nodes may cache a global's reference. */
+    public int globalsVersion() {
+        return globalsVersion;
     }
 
     /** set_error_handler(): stores the handler and returns the previous one. This runtime raises no warnings. */
@@ -199,9 +209,9 @@ public final class PhpContext {
     public void write(TruffleString s) {
         try {
             if (buffers.isEmpty()) {
-                out.write(Str.bytes(s));
+                out.write(Str.readBytes(s));
             } else {
-                buffers.peek().write(Str.bytes(s));
+                buffers.peek().write(Str.readBytes(s));
             }
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());
@@ -211,7 +221,7 @@ public final class PhpContext {
     /** ob_start(). */
     @TruffleBoundary
     public void startBuffer() {
-        buffers.push(new java.io.ByteArrayOutputStream());
+        buffers.push(new ByteBuilder());
     }
 
     /** ob_get_contents(): the current buffer, or null if none. */

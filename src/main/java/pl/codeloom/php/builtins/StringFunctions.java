@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -11,7 +12,6 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -33,9 +33,9 @@ final class StringFunctions {
         r.fn("stripos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
         r.fn("strrpos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
         r.fn("strripos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
-        r.fn("str_contains", a -> indexOf(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), 0, false) >= 0);
-        r.fn("str_starts_with", a -> startsWith(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
-        r.fn("str_ends_with", a -> endsWith(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
+        r.fn("str_contains", a -> indexOf(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1)), 0, false) >= 0);
+        r.fn("str_starts_with", a -> startsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
+        r.fn("str_ends_with", a -> endsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
         r.fn("str_replace", "0001", a -> replace(a, false));
         r.fn("str_ireplace", "0001", a -> replace(a, true));
         r.fn("trim", a -> trim(Args.str(a, 0), Args.get(a, 1), 3));
@@ -69,11 +69,11 @@ final class StringFunctions {
         r.fn("substr_replace", a -> substrReplace(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0),
                 lengthArg(a, 3)));
         r.fn("strcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
-        r.fn("strcasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.bytes(Args.str(a, 0)),
-                Str.bytes(Args.str(a, 1)), Integer.MAX_VALUE)));
+        r.fn("strcasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
+                Str.readBytes(Args.str(a, 1)), Integer.MAX_VALUE)));
         r.fn("strncmp", a -> (long) Integer.signum(compareN(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0))));
-        r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.bytes(Args.str(a, 0)),
-                Str.bytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
+        r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
+                Str.readBytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
         r.fn("strnatcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
         r.fn("strrchr", a -> strrchr(Args.str(a, 0), Args.str(a, 1)));
         r.fn("strstr", a -> strstr(Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, false), false));
@@ -104,7 +104,7 @@ final class StringFunctions {
         r.fn("urlencode", a -> urlencode(Args.str(a, 0), false));
         r.fn("rawurldecode", a -> urldecode(Args.str(a, 0), false));
         r.fn("urldecode", a -> urldecode(Args.str(a, 0), true));
-        r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.bytes(Args.str(a, 0)))));
+        r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.readBytes(Args.str(a, 0)))));
         r.fn("chr", a -> Str.singleByte((int) Math.floorMod(Args.lng(a, 0, 0), 256)));
         r.fn("ord", a -> {
             TruffleString s = Args.str(a, 0);
@@ -192,7 +192,7 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static Object strpos(TruffleString haystack, TruffleString needle, long offset, boolean ignoreCase) {
-        byte[] h = Str.bytes(haystack);
+        byte[] h = Str.readBytes(haystack);
         if (offset < 0) {
             offset += h.length;
         }
@@ -200,14 +200,14 @@ final class StringFunctions {
             throw new PhpError("ValueError: strpos(): Argument #3 ($offset) must be contained in argument #1 "
                     + "($haystack)");
         }
-        int index = indexOf(h, Str.bytes(needle), (int) offset, ignoreCase);
+        int index = indexOf(h, Str.readBytes(needle), (int) offset, ignoreCase);
         return index < 0 ? (Object) Boolean.FALSE : (Object) (long) index;
     }
 
     @TruffleBoundary
     private static Object strrpos(TruffleString haystack, TruffleString needle, long offset, boolean ignoreCase) {
-        byte[] h = Str.bytes(haystack);
-        byte[] n = Str.bytes(needle);
+        byte[] h = Str.readBytes(haystack);
+        byte[] n = Str.readBytes(needle);
         int start;
         int limit;
         if (offset >= 0) {
@@ -251,8 +251,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static Object strrchr(TruffleString haystack, TruffleString needle) {
-        byte[] h = Str.bytes(haystack);
-        byte[] n = Str.bytes(needle);
+        byte[] h = Str.readBytes(haystack);
+        byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
             return Boolean.FALSE;
         }
@@ -266,8 +266,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static Object strstr(TruffleString haystack, TruffleString needle, boolean before, boolean ignoreCase) {
-        byte[] h = Str.bytes(haystack);
-        int index = indexOf(h, Str.bytes(needle), 0, ignoreCase);
+        byte[] h = Str.readBytes(haystack);
+        int index = indexOf(h, Str.readBytes(needle), 0, ignoreCase);
         if (index < 0) {
             return Boolean.FALSE;
         }
@@ -330,8 +330,8 @@ final class StringFunctions {
 
     static TruffleString replaceAll(TruffleString subject, TruffleString search, TruffleString with,
                                     boolean ignoreCase, long[] count) {
-        byte[] s = Str.bytes(subject);
-        byte[] f = Str.bytes(search);
+        byte[] s = Str.readBytes(subject);
+        byte[] f = Str.readBytes(search);
         if (f.length == 0 || s.length < f.length) {
             return subject;
         }
@@ -339,8 +339,8 @@ final class StringFunctions {
         if (index < 0) {
             return subject;
         }
-        byte[] w = Str.bytes(with);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length);
+        byte[] w = Str.readBytes(with);
+        ByteBuilder out = new ByteBuilder(s.length);
         int from = 0;
         while (index >= 0) {
             out.write(s, from, index - from);
@@ -363,17 +363,17 @@ final class StringFunctions {
         int minLength = Integer.MAX_VALUE;
         int maxLength = 0;
         for (int p = pairs.firstPosition(); p >= 0; p = pairs.nextPosition(p)) {
-            byte[] key = Str.bytes(Convert.toStr(pairs.keyAt(p)));
+            byte[] key = Str.readBytes(Convert.toStr(pairs.keyAt(p)));
             if (key.length == 0) {
                 return subject;
             }
             byLength.computeIfAbsent(key.length, k -> new HashMap<>())
-                    .put(new String(key, StandardCharsets.ISO_8859_1), Str.bytes(Convert.toStr(pairs.valueAt(p))));
+                    .put(new String(key, StandardCharsets.ISO_8859_1), Str.readBytes(Convert.toStr(pairs.valueAt(p))));
             minLength = Math.min(minLength, key.length);
             maxLength = Math.max(maxLength, key.length);
         }
-        byte[] s = Str.bytes(subject);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length);
+        byte[] s = Str.readBytes(subject);
+        ByteBuilder out = new ByteBuilder(s.length);
         int i = 0;
         boolean changed = false;
         int[] lengths = byLength.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
@@ -402,8 +402,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString strtrChars(TruffleString subject, TruffleString from, TruffleString to) {
-        byte[] f = Str.bytes(from);
-        byte[] t = Str.bytes(to);
+        byte[] f = Str.readBytes(from);
+        byte[] t = Str.readBytes(to);
         int n = Math.min(f.length, t.length);
         if (n == 0) {
             return subject;
@@ -426,7 +426,7 @@ final class StringFunctions {
     @TruffleBoundary
     private static TruffleString substrReplace(TruffleString s, TruffleString replacement, long offset,
                                                Long length) {
-        byte[] b = Str.bytes(s);
+        byte[] b = Str.readBytes(s);
         int n = b.length;
         long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
         long end;
@@ -437,7 +437,7 @@ final class StringFunctions {
         } else {
             end = Math.min(n, start + length);
         }
-        byte[] r = Str.bytes(replacement);
+        byte[] r = Str.readBytes(replacement);
         byte[] out = new byte[(int) (start + r.length + (n - end))];
         System.arraycopy(b, 0, out, 0, (int) start);
         System.arraycopy(r, 0, out, (int) start, r.length);
@@ -469,7 +469,7 @@ final class StringFunctions {
     /** mode bit 1 trims the left, bit 2 the right. */
     @TruffleBoundary
     private static TruffleString trim(TruffleString s, Object chars, int mode) {
-        boolean[] mask = chars == null ? DEFAULT_TRIM : charMask(Str.bytes(Convert.toStr(chars)));
+        boolean[] mask = chars == null ? DEFAULT_TRIM : charMask(Str.readBytes(Convert.toStr(chars)));
         int n = Str.length(s);
         int start = 0;
         int end = n;
@@ -499,28 +499,40 @@ final class StringFunctions {
 
     @TruffleBoundary
     static TruffleString lower(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        boolean changed = false;
-        for (int i = 0; i < b.length; i++) {
+        byte[] view = Str.readBytes(s);
+        int first = 0;
+        while (first < view.length && !(view[first] >= 'A' && view[first] <= 'Z')) {
+            first++;
+        }
+        if (first == view.length) {
+            return s;
+        }
+        byte[] b = view.clone();
+        for (int i = first; i < b.length; i++) {
             if (b[i] >= 'A' && b[i] <= 'Z') {
                 b[i] += 32;
-                changed = true;
             }
         }
-        return changed ? Str.of(b) : s;
+        return Str.of(b);
     }
 
     @TruffleBoundary
     static TruffleString upper(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        boolean changed = false;
-        for (int i = 0; i < b.length; i++) {
+        byte[] view = Str.readBytes(s);
+        int first = 0;
+        while (first < view.length && !(view[first] >= 'a' && view[first] <= 'z')) {
+            first++;
+        }
+        if (first == view.length) {
+            return s;
+        }
+        byte[] b = view.clone();
+        for (int i = first; i < b.length; i++) {
             if (b[i] >= 'a' && b[i] <= 'z') {
                 b[i] -= 32;
-                changed = true;
             }
         }
-        return changed ? Str.of(b) : s;
+        return Str.of(b);
     }
 
     @TruffleBoundary
@@ -539,7 +551,7 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString ucwords(TruffleString s, TruffleString delimiters) {
-        boolean[] mask = charMask(Str.bytes(delimiters));
+        boolean[] mask = charMask(Str.readBytes(delimiters));
         byte[] b = Str.bytes(s);
         boolean start = true;
         for (int i = 0; i < b.length; i++) {
@@ -565,8 +577,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static int compareN(TruffleString a, TruffleString b, long n) {
-        byte[] x = Str.bytes(a);
-        byte[] y = Str.bytes(b);
+        byte[] x = Str.readBytes(a);
+        byte[] y = Str.readBytes(b);
         int limit = (int) Math.min(n, Integer.MAX_VALUE);
         int m = Math.min(Math.min(x.length, y.length), limit);
         for (int i = 0; i < m; i++) {
@@ -581,11 +593,11 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static PhpArray explode(TruffleString separator, TruffleString s, long limit) {
-        byte[] sep = Str.bytes(separator);
+        byte[] sep = Str.readBytes(separator);
         if (sep.length == 0) {
             throw new PhpError("ValueError: explode(): Argument #1 ($separator) cannot be empty");
         }
-        byte[] b = Str.bytes(s);
+        byte[] b = Str.readBytes(s);
         List<TruffleString> parts = new ArrayList<>();
         int from = 0;
         int index = indexOf(b, sep, 0, false);
@@ -621,14 +633,14 @@ final class StringFunctions {
         } else {
             throw new PhpError("TypeError: implode(): Argument #2 ($array) must be of type ?array");
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] g = Str.bytes(glue);
+        ByteBuilder out = new ByteBuilder();
+        byte[] g = Str.readBytes(glue);
         boolean firstPiece = true;
         for (int p = pieces.firstPosition(); p >= 0; p = pieces.nextPosition(p)) {
             if (!firstPiece) {
                 out.write(g, 0, g.length);
             }
-            byte[] piece = Str.bytes(Convert.toStr(pieces.valueAt(p)));
+            byte[] piece = Str.readBytes(Convert.toStr(pieces.valueAt(p)));
             out.write(piece, 0, piece.length);
             firstPiece = false;
         }
@@ -640,7 +652,7 @@ final class StringFunctions {
         if (length < 1) {
             throw new PhpError("ValueError: str_split(): Argument #2 ($length) must be greater than 0");
         }
-        byte[] b = Str.bytes(s);
+        byte[] b = Str.readBytes(s);
         PhpArray result = new PhpArray();
         if (b.length == 0) {
             result.append(Str.EMPTY);
@@ -654,8 +666,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString strPad(TruffleString s, long length, TruffleString pad, long type) {
-        byte[] b = Str.bytes(s);
-        byte[] p = Str.bytes(pad);
+        byte[] b = Str.readBytes(s);
+        byte[] p = Str.readBytes(pad);
         if (length <= b.length || p.length == 0) {
             return s;
         }
@@ -678,7 +690,7 @@ final class StringFunctions {
         if (times < 0) {
             throw new PhpError("ValueError: str_repeat(): Argument #2 ($times) must be greater than or equal to 0");
         }
-        byte[] b = Str.bytes(s);
+        byte[] b = Str.readBytes(s);
         byte[] out = new byte[(int) (b.length * times)];
         for (int i = 0; i < times; i++) {
             System.arraycopy(b, 0, out, i * b.length, b.length);
@@ -688,9 +700,9 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static long span(TruffleString s, TruffleString mask, long offset, Long length, boolean accept) {
-        byte[] b = Str.bytes(s);
+        byte[] b = Str.readBytes(s);
         boolean[] set = new boolean[256];
-        for (byte m : Str.bytes(mask)) {
+        for (byte m : Str.readBytes(mask)) {
             set[m & 0xFF] = true;
         }
         int n = b.length;
@@ -705,8 +717,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static long substrCount(TruffleString haystack, TruffleString needle, long offset, Long length) {
-        byte[] h = Str.bytes(haystack);
-        byte[] n = Str.bytes(needle);
+        byte[] h = Str.readBytes(haystack);
+        byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
             throw new PhpError("ValueError: substr_count(): Argument #2 ($needle) cannot be empty");
         }
@@ -723,8 +735,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static Object substrCompare(Object[] a) {
-        byte[] main = Str.bytes(Args.str(a, 0));
-        byte[] other = Str.bytes(Args.str(a, 1));
+        byte[] main = Str.readBytes(Args.str(a, 0));
+        byte[] other = Str.readBytes(Args.str(a, 1));
         long offset = Args.lng(a, 2, 0);
         Long length = lengthArg(a, 3);
         boolean ignoreCase = Args.bool(a, 4, false);
@@ -753,8 +765,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString addslashes(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length + 8);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length + 8);
         for (byte c : b) {
             if (c == '\'' || c == '"' || c == '\\') {
                 out.write('\\');
@@ -771,8 +783,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString stripslashes(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length);
         for (int i = 0; i < b.length; i++) {
             if (b[i] == '\\') {
                 if (++i < b.length) {
@@ -787,9 +799,9 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString addcslashes(TruffleString s, TruffleString chars) {
-        boolean[] mask = charMask(Str.bytes(chars));
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length + 8);
+        boolean[] mask = charMask(Str.readBytes(chars));
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length + 8);
         for (byte c : b) {
             int u = c & 0xFF;
             if (!mask[u]) {
@@ -818,8 +830,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString stripcslashes(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length);
         for (int i = 0; i < b.length; i++) {
             if (b[i] != '\\' || i + 1 >= b.length) {
                 out.write(b[i]);
@@ -867,8 +879,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString nl2br(TruffleString s) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length + 16);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length + 16);
         for (int i = 0; i < b.length; i++) {
             if (b[i] == '\r' || b[i] == '\n') {
                 out.writeBytes("<br />".getBytes(StandardCharsets.ISO_8859_1));
@@ -885,8 +897,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString urlencode(TruffleString s, boolean raw) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length * 3 / 2);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length * 3 / 2);
         for (byte c : b) {
             int u = c & 0xFF;
             boolean safe = u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9' || u == '-' || u == '_'
@@ -906,8 +918,8 @@ final class StringFunctions {
 
     @TruffleBoundary
     static TruffleString urldecode(TruffleString s, boolean plusAsSpace) {
-        byte[] b = Str.bytes(s);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(b.length);
+        byte[] b = Str.readBytes(s);
+        ByteBuilder out = new ByteBuilder(b.length);
         for (int i = 0; i < b.length; i++) {
             if (b[i] == '+' && plusAsSpace) {
                 out.write(' ');
@@ -1045,7 +1057,7 @@ final class StringFunctions {
         if (!(value instanceof TruffleString s) || Str.length(s) == 0) {
             return false;
         }
-        for (byte b : Str.bytes(s)) {
+        for (byte b : Str.readBytes(s)) {
             int c = b & 0xFF;
             boolean ok = switch (kind) {
                 case "digit" -> c >= '0' && c <= '9';

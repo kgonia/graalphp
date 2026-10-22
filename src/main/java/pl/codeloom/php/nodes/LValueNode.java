@@ -11,6 +11,16 @@ import pl.codeloom.php.runtime.PhpRef;
 public abstract class LValueNode extends ExprNode {
     public abstract void write(VirtualFrame frame, Object value);
 
+    /** Writes an int; places that can store it unboxed (locals, properties) override this. */
+    public void writeLong(VirtualFrame frame, long value) {
+        write(frame, value);
+    }
+
+    /** Whether int read-modify-write (`+=`, `++`) on this place may take the unboxed fast path. */
+    public boolean hasLongFastPath() {
+        return false;
+    }
+
     /** The place's reference, converting it into one if needed (`&$x`, by-reference arguments). */
     public abstract PhpRef makeRef(VirtualFrame frame);
 

@@ -1,7 +1,9 @@
 package pl.codeloom.php.nodes.intrinsics;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -29,7 +31,7 @@ public final class Intrinsics {
     private static final Set<String> NAMES = Set.of("is_array", "is_string", "is_int", "is_integer", "is_long",
             "is_float", "is_double", "is_bool", "is_null", "is_object", "count", "sizeof", "strlen", "current",
             "pos", "key", "next", "prev", "reset", "end", "ord", "chr", "substr", "strpos", "str_contains",
-            "str_starts_with", "str_ends_with", "array_key_exists", "key_exists", "gettype");
+            "str_starts_with", "str_ends_with", "array_key_exists", "key_exists", "gettype", "strspn", "strcspn");
 
     private static final Set<String> BY_REF_FIRST = Set.of("next", "prev", "reset", "end");
 
@@ -97,6 +99,9 @@ public final class Intrinsics {
                 return n == 2 ? new KeyExistsNode(args[0], args[1]) : null;
             case "gettype":
                 return n == 1 ? new GettypeNode(args[0]) : null;
+            case "strspn":
+            case "strcspn":
+                return n >= 2 && n <= 4 ? new SpanNode(args, lowerName.equals("strspn")) : null;
             default:
                 return null;
         }
@@ -499,6 +504,77 @@ public final class Intrinsics {
                 return ARRAY;
             }
             return v == PhpNull.NULL ? NULL : OBJECT;
+        }
+    }
+
+    /**
+     * strspn / strcspn: the length of the run at offset made of (or free of) mask bytes. Scans the subject's
+     * bytes in place; a literal mask becomes a constant 256-entry table.
+     */
+    static final class SpanNode extends ExprNode {
+        @Child private ExprNode subject;
+        @Child private ExprNode mask;
+        @Child private ExprNode offset;
+        @Child private ExprNode length;
+        @Child private TruffleString.GetInternalByteArrayNode bytes = TruffleString.GetInternalByteArrayNode.create();
+        @CompilationFinal(dimensions = 1) private final boolean[] constantTable;
+        private final boolean accept;
+        private final String name;
+
+        SpanNode(ExprNode[] args, boolean accept) {
+            this.subject = args[0];
+            this.accept = accept;
+            this.name = accept ? "strspn" : "strcspn";
+            this.offset = args.length > 2 ? args[2] : null;
+            this.length = args.length > 3 ? args[3] : null;
+            Object constant = args[1].constantValue();
+            if (constant instanceof TruffleString maskString) {
+                this.constantTable = table(maskString);
+                this.mask = null;
+            } else {
+                this.constantTable = null;
+                this.mask = args[1];
+            }
+        }
+
+        @TruffleBoundary
+        private static boolean[] table(TruffleString mask) {
+            boolean[] set = new boolean[256];
+            for (byte b : Str.readBytes(mask)) {
+                set[b & 0xFF] = true;
+            }
+            return set;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return executeLong(frame);
+        }
+
+        @Override
+        public long executeLong(VirtualFrame frame) {
+            TruffleString s = string(subject.execute(frame), name, 1);
+            boolean[] set = constantTable != null ? constantTable : table(string(mask.execute(frame), name, 2));
+            long from = offset == null ? 0 : integer(offset.execute(frame));
+            Object lengthValue = length == null ? PhpNull.NULL : length.execute(frame);
+            InternalByteArray view = bytes.execute(s, Str.ENC);
+            int n = view.getLength();
+            long start = from < 0 ? Math.max(0, n + from) : Math.min(from, n);
+            long end;
+            if (lengthValue == PhpNull.NULL) {
+                end = n;
+            } else {
+                long len = integer(lengthValue);
+                end = len < 0 ? Math.max(start, n + len) : Math.min(n, start + len);
+            }
+            byte[] array = view.getArray();
+            int base = view.getOffset();
+            int i = (int) start;
+            int limit = (int) end;
+            while (i < limit && set[array[base + i] & 0xFF] == accept) {
+                i++;
+            }
+            return i - start;
         }
     }
 }

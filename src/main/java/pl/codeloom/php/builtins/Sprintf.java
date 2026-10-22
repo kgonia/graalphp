@@ -2,12 +2,12 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -38,8 +38,8 @@ final class Sprintf {
     }
 
     private static TruffleString format(TruffleString formatString, Object[] values) {
-        byte[] f = Str.bytes(formatString);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(f.length + 16);
+        byte[] f = Str.readBytes(formatString);
+        ByteBuilder out = new ByteBuilder(f.length + 16);
         int next = 0;
         int i = 0;
         while (i < f.length) {
@@ -112,7 +112,7 @@ final class Sprintf {
             boolean numeric = false;
             switch (spec) {
                 case 's': {
-                    byte[] s = Str.bytes(Convert.toStr(value));
+                    byte[] s = Str.readBytes(Convert.toStr(value));
                     if (precision >= 0 && precision < s.length) {
                         byte[] cut = new byte[precision];
                         System.arraycopy(s, 0, cut, 0, precision);
@@ -178,7 +178,7 @@ final class Sprintf {
     }
 
     /** Pads to width; zero padding of numbers goes after the sign, as php_sprintf_appendstring does. */
-    private static void pad(ByteArrayOutputStream out, byte[] text, int width, byte pad, boolean left,
+    private static void pad(ByteBuilder out, byte[] text, int width, byte pad, boolean left,
                             boolean numeric) {
         int missing = width - text.length;
         if (missing <= 0) {

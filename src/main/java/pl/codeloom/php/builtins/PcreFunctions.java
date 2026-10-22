@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.NativeClock;
@@ -13,7 +14,6 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -198,7 +198,7 @@ final class PcreFunctions {
         if (cached != null) {
             return cached;
         }
-        byte[] regex = Str.bytes(regexString);
+        byte[] regex = Str.readBytes(regexString);
         int p = 0;
         while (p < regex.length && isSpace(regex[p])) {
             p++;
@@ -500,8 +500,8 @@ final class PcreFunctions {
     private static TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
                                              TruffleString subjectString, long limit, long flags, long[] count) {
         byte[] subject = subjectBytes(subjectString);
-        byte[] template = callback ? null : Str.bytes(Convert.toStr(replacement));
-        ByteArrayOutputStream out = null;
+        byte[] template = callback ? null : Str.readBytes(Convert.toStr(replacement));
+        ByteBuilder out = null;
         try (Matcher m = new Matcher(regex, subject)) {
             int lastEnd = 0;
             long start = 0;
@@ -509,7 +509,7 @@ final class PcreFunctions {
             while (true) {
                 if (rc >= 0 && limit > 0) {
                     if (out == null) {
-                        out = new ByteArrayOutputStream(subject.length + 32);
+                        out = new ByteBuilder(subject.length + 32);
                     }
                     count[0]++;
                     int matchStart = m.start(0);
@@ -517,7 +517,7 @@ final class PcreFunctions {
                     out.write(subject, lastEnd, matchStart - lastEnd);
                     if (callback) {
                         Object value = Callables.call(context, replacement, groups(m, rc, flags));
-                        byte[] bytes = Str.bytes(Convert.toStr(value));
+                        byte[] bytes = Str.readBytes(Convert.toStr(value));
                         out.write(bytes, 0, bytes.length);
                     } else {
                         expand(out, template, m, rc);
@@ -556,7 +556,7 @@ final class PcreFunctions {
     }
 
     /** Copies a replacement template, substituting \n, $n and ${n} (n up to 99), as php-src's preg_get_backref. */
-    private static void expand(ByteArrayOutputStream out, byte[] template, Matcher m, int count) {
+    private static void expand(ByteBuilder out, byte[] template, Matcher m, int count) {
         byte[] buffer = new byte[template.length];
         int length = 0;
         int i = 0;
@@ -699,7 +699,7 @@ final class PcreFunctions {
 
     @TruffleBoundary
     private static TruffleString quote(TruffleString text, Object delimiter) {
-        byte[] bytes = Str.bytes(text);
+        byte[] bytes = Str.readBytes(text);
         int delim = -1;
         if (delimiter != null && delimiter != PhpNull.NULL) {
             TruffleString d = Convert.toStr(delimiter);
@@ -707,7 +707,7 @@ final class PcreFunctions {
                 delim = Str.byteAt(d, 0);
             }
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream(bytes.length + 8);
+        ByteBuilder out = new ByteBuilder(bytes.length + 8);
         for (byte b : bytes) {
             if (b == 0) {
                 out.writeBytes(new byte[]{'\\', '0', '0', '0'});

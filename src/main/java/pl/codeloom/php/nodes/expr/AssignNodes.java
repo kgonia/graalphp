@@ -9,7 +9,6 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
-import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpError;
@@ -25,14 +24,14 @@ public final class AssignNodes {
     public static final class AssignNode extends ExprNode {
         @Child private LValueNode target;
         @Child private ExprNode value;
-        /** For a local target: assume the value is an int until it isn't, so it stays unboxed. */
-        private final LocalVarNode local;
+        /** For a local or property target: assume the value is an int until it isn't, so it stays unboxed. */
+        private final LValueNode local;
         @CompilationFinal private boolean speculateLong = true;
 
         public AssignNode(LValueNode target, ExprNode value) {
             this.target = target;
             this.value = value;
-            this.local = target instanceof LocalVarNode l ? l : null;
+            this.local = target.hasLongFastPath() ? target : null;
         }
 
         @Override
@@ -104,15 +103,15 @@ public final class AssignNodes {
         @Child private TruffleString.ConcatNode concat = TruffleString.ConcatNode.create();
         private final int op;
 
-        /** For a local target and an int operator: the unboxed fast path, until a non-int shows up. */
-        private final LocalVarNode local;
+        /** For a local or property target and an int operator: the unboxed fast path, until a non-int shows up. */
+        private final LValueNode local;
         @CompilationFinal private boolean speculateLong;
 
         public CompoundAssignNode(LValueNode target, ExprNode value, int op) {
             this.target = target;
             this.value = value;
             this.op = op;
-            this.local = target instanceof LocalVarNode l ? l : null;
+            this.local = target.hasLongFastPath() ? target : null;
             this.speculateLong = local != null && (op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11);
         }
 
@@ -229,15 +228,15 @@ public final class AssignNodes {
         private final boolean increment;
         private final boolean prefix;
 
-        /** For a local target: the unboxed int fast path until a non-int or an overflow shows up. */
-        private final LocalVarNode local;
+        /** For a local or property target: the unboxed int fast path until a non-int or an overflow shows up. */
+        private final LValueNode local;
         @CompilationFinal private boolean speculateLong = true;
 
         public IncDecNode(LValueNode target, boolean increment, boolean prefix) {
             this.target = target;
             this.increment = increment;
             this.prefix = prefix;
-            this.local = target instanceof LocalVarNode l ? l : null;
+            this.local = target.hasLongFastPath() ? target : null;
         }
 
         @Override

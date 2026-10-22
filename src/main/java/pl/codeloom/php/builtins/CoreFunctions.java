@@ -456,14 +456,14 @@ final class CoreFunctions {
     @TruffleBoundary
     private static long crc32(TruffleString s) {
         CRC32 crc = new CRC32();
-        crc.update(Str.bytes(s));
+        crc.update(Str.readBytes(s));
         return crc.getValue();
     }
 
     @TruffleBoundary
     private static TruffleString digest(String algorithm, TruffleString s, boolean raw) {
         try {
-            byte[] hash = MessageDigest.getInstance(algorithm).digest(Str.bytes(s));
+            byte[] hash = MessageDigest.getInstance(algorithm).digest(Str.readBytes(s));
             return raw ? Str.of(hash) : Str.of(HexFormat.of().formatHex(hash));
         } catch (NoSuchAlgorithmException e) {
             throw new PhpError(algorithm + " unavailable");

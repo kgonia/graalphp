@@ -3,12 +3,12 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 
 /** pack/unpack for the byte formats WordPress uses ('C', 'c', 'n', 'N', 'v', 'V', with counts and '*'). */
 final class Pack {
@@ -18,7 +18,7 @@ final class Pack {
     @TruffleBoundary
     static TruffleString pack(Object[] a) {
         String format = Str.java(Args.str(a, 0));
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteBuilder out = new ByteBuilder();
         int arg = 1;
         int i = 0;
         while (i < format.length()) {
@@ -68,7 +68,7 @@ final class Pack {
     @TruffleBoundary
     static Object unpack(TruffleString formatString, TruffleString data, long offset) {
         String format = Str.java(formatString);
-        byte[] bytes = Str.bytes(data);
+        byte[] bytes = Str.readBytes(data);
         PhpArray result = new PhpArray();
         int position = (int) offset;
         for (String element : format.split("/")) {

@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -43,7 +44,43 @@ public final class PropNode extends LValueNode {
         if (value instanceof PhpObject phpObject) {
             return phpObject;
         }
-        throw new PhpError("Attempt to " + action + " property \"" + name + "\" on " + Convert.typeName(value));
+        throw notAnObject(action, name, value);
+    }
+
+    @TruffleBoundary
+    private static PhpError notAnObject(String action, String name, Object value) {
+        return new PhpError("Attempt to " + action + " property \"" + name + "\" on " + Convert.typeName(value));
+    }
+
+    /** An int property read without boxing when the object stores it in a long location. */
+    @Override
+    public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
+        Object value = object.execute(frame);
+        if (value instanceof PhpObject phpObject) {
+            return objects.getLongOrDefault(phpObject, name(frame), PhpNull.NULL);
+        }
+        throw new UnexpectedResultException(PhpNull.NULL);
+    }
+
+    @Override
+    public boolean hasLongFastPath() {
+        return isPure();
+    }
+
+    /** Stores an int unboxed (a long location), unless the property is a reference. */
+    @Override
+    public void writeLong(VirtualFrame frame, long value) {
+        String name = name(frame);
+        PhpObject phpObject = target(frame, name, "assign");
+        Object old = objects.getOrDefault(phpObject, name, null);
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        objects.putLong(phpObject, name, value);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
     }
 
     @Override
@@ -69,10 +106,14 @@ public final class PropNode extends LValueNode {
             ref.set(value);
             return;
         }
-        if (value instanceof PhpArray array) {
-            array.addHolder();
+        if (value instanceof Long l) {
+            objects.putLong(phpObject, name, l);
+        } else {
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            objects.put(phpObject, name, value);
         }
-        objects.put(phpObject, name, value);
         if (old instanceof PhpArray array && old != value) {
             array.removeHolder();
         }
@@ -132,7 +173,12 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpObject) {
             return null;
         }
-        throw new PhpError("Cannot use a scalar value as an array");
+        throw scalarAsArray();
+    }
+
+    @TruffleBoundary
+    private static PhpError scalarAsArray() {
+        return new PhpError("Cannot use a scalar value as an array");
     }
 
     @Override

@@ -1,6 +1,7 @@
 package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 
 import java.nio.charset.StandardCharsets;
@@ -45,8 +46,24 @@ public final class Str {
         return TruffleString.fromByteArrayUncached(bytes, offset, length, ENC, true);
     }
 
+    /** A fresh copy of the string's bytes, which the caller may modify. */
     @TruffleBoundary
     public static byte[] bytes(TruffleString s) {
+        return s.copyToByteArrayUncached(ENC);
+    }
+
+    /**
+     * The string's bytes for reading only: the string's own backing array when that holds exactly the string
+     * (no copy; never write to it, and don't wrap it in a new string), else a copy. Built-ins that scan big
+     * strings at an offset (strspn on a document) would otherwise copy the whole document per call.
+     */
+    @TruffleBoundary
+    public static byte[] readBytes(TruffleString s) {
+        InternalByteArray internal = s.getInternalByteArrayUncached(ENC);
+        byte[] array = internal.getArray();
+        if (internal.getOffset() == 0 && internal.getLength() == array.length) {
+            return array;
+        }
         return s.copyToByteArrayUncached(ENC);
     }
 

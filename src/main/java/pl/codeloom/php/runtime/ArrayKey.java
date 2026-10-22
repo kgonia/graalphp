@@ -39,7 +39,7 @@ public final class ArrayKey {
         if (!(first >= '0' && first <= '9' || first == '-')) {
             return s;
         }
-        byte[] bytes = Str.bytes(s);
+        byte[] bytes = Str.readBytes(s);
         int i = bytes[0] == '-' ? 1 : 0;
         if (i == length || bytes[i] == '0' && (length - i > 1 || i == 1)) {
             return s;

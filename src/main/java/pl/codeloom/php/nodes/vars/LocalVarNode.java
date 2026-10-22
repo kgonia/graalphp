@@ -104,6 +104,12 @@ public final class LocalVarNode extends LValueNode {
         }
     }
 
+    @Override
+    public boolean hasLongFastPath() {
+        return true;
+    }
+
+    @Override
     public void writeLong(VirtualFrame frame, long value) {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {

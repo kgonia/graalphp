@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -12,7 +13,6 @@ import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 /** json_encode/json_decode after ext/json: the same error codes, number rules and escaping. */
@@ -98,7 +98,7 @@ final class JsonFunctions {
     @TruffleBoundary
     private static Object decode(PhpContext context, TruffleString text, boolean assoc, int depth, long flags) {
         lastError = 0;
-        byte[] input = Str.bytes(text);
+        byte[] input = Str.readBytes(text);
         if (input.length == 0) {
             Object ignored = fail(ERROR_SYNTAX, flags);
             return PhpNull.NULL;
@@ -311,7 +311,7 @@ final class JsonFunctions {
 
         TruffleString string() {
             pos++;
-            ByteArrayOutputStream out = null;
+            ByteBuilder out = null;
             int runStart = pos;
             while (true) {
                 if (pos >= s.length) {
@@ -345,7 +345,7 @@ final class JsonFunctions {
                     continue;
                 }
                 if (out == null) {
-                    out = new ByteArrayOutputStream();
+                    out = new ByteBuilder();
                 }
                 out.write(s, runStart, pos - runStart);
                 pos++;
@@ -430,7 +430,7 @@ final class JsonFunctions {
     }
 
     private static final class Encoder {
-        final ByteArrayOutputStream out = new ByteArrayOutputStream();
+        final ByteBuilder out = new ByteBuilder();
         final long flags;
         final int maxDepth;
         int depth;
@@ -467,7 +467,7 @@ final class JsonFunctions {
             } else if (value instanceof Double d) {
                 number(d);
             } else if (value instanceof TruffleString s) {
-                string(Str.bytes(s));
+                string(Str.readBytes(s));
             } else if (value instanceof PhpArray array) {
                 array(array);
             } else if (value instanceof PhpObject object) {
@@ -532,7 +532,7 @@ final class JsonFunctions {
 
         void key(Object key) {
             string(key instanceof Long l ? Long.toString(l).getBytes(StandardCharsets.ISO_8859_1)
-                    : Str.bytes((TruffleString) key));
+                    : Str.readBytes((TruffleString) key));
             out.write(':');
             if ((flags & PRETTY_PRINT) != 0) {
                 out.write(' ');
@@ -704,7 +704,7 @@ final class JsonFunctions {
             return cp;
         }
 
-        static void encode(ByteArrayOutputStream out, int cp) {
+        static void encode(ByteBuilder out, int cp) {
             if (cp < 0x80) {
                 out.write(cp);
             } else if (cp < 0x800) {
