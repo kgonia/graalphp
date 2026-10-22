@@ -704,14 +704,17 @@ final class StringFunctions {
             throw new PhpError("TypeError: implode(): Argument #2 ($array) must be of type ?array");
         }
         ByteBuilder out = new ByteBuilder();
-        byte[] g = Str.readBytes(glue);
         boolean firstPiece = true;
         for (int p = pieces.firstPosition(); p >= 0; p = pieces.nextPosition(p)) {
             if (!firstPiece) {
-                out.write(g, 0, g.length);
+                out.write(glue);
             }
-            byte[] piece = Str.readBytes(Convert.toStr(pieces.valueAt(p)));
-            out.write(piece, 0, piece.length);
+            Object piece = pieces.valueAt(p);
+            if (piece instanceof Long l) {
+                out.writeLong(l);
+            } else {
+                out.write(piece instanceof TruffleString s ? s : Convert.toStr(piece));
+            }
             firstPiece = false;
         }
         return Str.of(out.toByteArray());

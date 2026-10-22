@@ -574,8 +574,7 @@ final class PcreFunctions {
                     out.write(subject, lastEnd, matchStart - lastEnd);
                     if (callback) {
                         Object value = Callables.call(context, replacement, groups(m, rc, flags));
-                        byte[] bytes = Str.readBytes(Convert.toStr(value));
-                        out.write(bytes, 0, bytes.length);
+                        out.write(Convert.toStr(value));
                     } else {
                         template.expand(out, m, rc);
                     }
