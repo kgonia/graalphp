@@ -1,0 +1,7 @@
+target/
+/bench/gate1/wordpress/
+/bench/gate1/corpus.php
+/bench/gate1/results/raw/
+*.class
+.idea/
+.claude/
