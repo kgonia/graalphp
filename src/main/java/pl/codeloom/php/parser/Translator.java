@@ -92,13 +92,13 @@ public final class Translator {
 
     /** A function's local variables: name to frame slot. */
     private static final class Scope {
-        final FrameDescriptor.Builder frame = FrameDescriptor.newBuilder();
+        final FrameDescriptor.Builder frame = FrameDescriptor.newBuilder().defaultValueIllegal();
         final Map<String, Integer> slots = new HashMap<>();
 
         int slot(String name) {
             Integer slot = slots.get(name);
             if (slot == null) {
-                slot = frame.addSlot(FrameSlotKind.Object, name, null);
+                slot = frame.addSlot(FrameSlotKind.Illegal, name, null);
                 slots.put(name, slot);
             }
             return slot;

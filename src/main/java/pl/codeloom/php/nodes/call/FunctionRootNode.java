@@ -12,6 +12,7 @@ import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.vars.FrameSlots;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
@@ -80,7 +81,7 @@ public final class FunctionRootNode extends RootNode {
             PhpFunction.Param param = params[i];
             int slot = paramSlots[i];
             if (param.variadic()) {
-                frame.setObject(slot, collectVariadic(arguments, i, given));
+                FrameSlots.setObject(frame, slot, collectVariadic(arguments, i, given));
                 continue;
             }
             Object value;
@@ -92,23 +93,17 @@ public final class FunctionRootNode extends RootNode {
                 throw tooFewArguments(given);
             }
             if (param.byRef()) {
-                frame.setObject(slot, value instanceof PhpRef ref ? ref : new PhpRef(value));
+                FrameSlots.setObject(frame, slot, value instanceof PhpRef ref ? ref : new PhpRef(value));
                 continue;
             }
             value = PhpRef.deref(value);
             if (param.coerce() != 0) {
                 value = coerce(value, param.coerce(), param.nullable(), param.name());
             }
-            if (value instanceof Long l) {
-                frame.setLong(slot, l);
-            } else if (value instanceof Double d) {
-                frame.setDouble(slot, d);
-            } else {
-                if (value instanceof PhpArray array) {
-                    array.addHolder();
-                }
-                frame.setObject(slot, value);
+            if (value instanceof PhpArray array) {
+                array.addHolder();
             }
+            FrameSlots.set(frame, slot, value);
         }
     }
 
@@ -141,7 +136,7 @@ public final class FunctionRootNode extends RootNode {
             if (!captureByRef[i] && captured instanceof PhpArray array) {
                 array.addHolder();
             }
-            frame.setObject(captureSlots[i], captured);
+            FrameSlots.setObject(frame, captureSlots[i], captured);
         }
     }
 
