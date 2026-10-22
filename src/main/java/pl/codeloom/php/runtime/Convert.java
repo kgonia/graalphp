@@ -1,5 +1,6 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 
@@ -136,6 +137,7 @@ public final class Convert {
             return stringToNumber(s);
         }
         if (value instanceof PhpArray) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Unsupported operand types: array");
         }
         return 1L;
@@ -254,6 +256,7 @@ public final class Convert {
         if (value instanceof PhpObject o) {
             return o.toPhpString();
         }
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot convert " + value + " to string");
     }
 

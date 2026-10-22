@@ -101,6 +101,7 @@ public final class PhpFunction {
         if (callTarget == null) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             if (isAbstract) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Cannot call abstract method " + displayName() + "()");
             }
             callTarget = factory.get();

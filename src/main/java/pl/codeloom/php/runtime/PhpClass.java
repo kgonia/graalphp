@@ -1,5 +1,6 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
@@ -156,6 +157,7 @@ public final class PhpClass {
     @TruffleBoundary
     public PhpObject instantiate() {
         if (!isInstantiable()) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
         PhpObject object = new PhpObject(rootShape, this);

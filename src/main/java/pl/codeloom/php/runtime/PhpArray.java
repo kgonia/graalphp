@@ -229,6 +229,7 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     private void appendSlow(Object value) {
         if (nextIndex == Long.MAX_VALUE && containsKey(Long.MAX_VALUE)) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot add element to the array as the next element is already occupied");
         }
         countIn(value);

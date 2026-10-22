@@ -1,5 +1,6 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 /**
@@ -150,6 +151,7 @@ public final class Operators {
 
     public static long shiftLeft(long a, long b) {
         if (b < 0) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("ArithmeticError: Bit shift by negative number");
         }
         return b >= 64 ? 0 : a << b;
@@ -157,6 +159,7 @@ public final class Operators {
 
     public static long shiftRight(long a, long b) {
         if (b < 0) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("ArithmeticError: Bit shift by negative number");
         }
         return b >= 64 ? (a < 0 ? -1 : 0) : a >> b;
