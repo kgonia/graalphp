@@ -211,6 +211,7 @@ public final class DimNode extends LValueNode {
     @Override
     public boolean isPure() {
         boolean containerPure = container instanceof LValueNode place && place.isPure();
-        return containerPure && (key == null || key instanceof LocalVarNode || key.constantValue() != null);
+        return containerPure && (key == null || key instanceof LocalVarNode || key instanceof GlobalVarNode
+                || key.constantValue() != null);
     }
 }

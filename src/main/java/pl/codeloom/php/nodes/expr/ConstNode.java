@@ -1,7 +1,9 @@
 package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 
 /**
@@ -11,17 +13,40 @@ import pl.codeloom.php.runtime.PhpArray;
  */
 public final class ConstNode extends ExprNode {
     private final Object value;
+    private final boolean truthy;
 
     public ConstNode(Object value) {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
         this.value = value;
+        this.truthy = Convert.toBool(value);
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
         return value;
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
+        if (value instanceof Long l) {
+            return l;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) throws UnexpectedResultException {
+        if (value instanceof Double d) {
+            return d;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        return truthy;
     }
 
     @Override

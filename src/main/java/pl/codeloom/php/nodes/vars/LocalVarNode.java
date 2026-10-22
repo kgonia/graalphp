@@ -1,6 +1,9 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -9,8 +12,10 @@ import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 
 /**
- * A function's local variable in a frame slot. The slot holds null (unset), a value, or a PhpRef when the
- * variable is a reference (by-ref parameter, `global`, `static`, by-ref capture, `$x = &...`).
+ * A function's local variable in a frame slot. An int or float is stored unboxed (a long or double slot tag),
+ * so loop counters and arithmetic stay primitive in compiled code; anything else is an Object slot holding null
+ * (unset), a value, or a PhpRef when the variable is a reference (by-ref parameter, `global`, `static`, by-ref
+ * capture, `$x = &...`). Partial evaluation knows the tags of a virtual frame, so the tag tests fold away.
  */
 public final class LocalVarNode extends LValueNode {
     private final int slot;
@@ -29,8 +34,16 @@ public final class LocalVarNode extends LValueNode {
         return name;
     }
 
+    // ---- reads ----
+
     @Override
     public Object execute(VirtualFrame frame) {
+        if (frame.isLong(slot)) {
+            return frame.getLong(slot);
+        }
+        if (frame.isDouble(slot)) {
+            return frame.getDouble(slot);
+        }
         Object value = frame.getObject(slot);
         if (value instanceof PhpRef ref) {
             return ref.get();
@@ -39,8 +52,84 @@ public final class LocalVarNode extends LValueNode {
     }
 
     @Override
+    public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
+        if (frame.isLong(slot)) {
+            return frame.getLong(slot);
+        }
+        Object value = execute(frame);
+        if (value instanceof Long l) {
+            return l;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) throws UnexpectedResultException {
+        if (frame.isDouble(slot)) {
+            return frame.getDouble(slot);
+        }
+        Object value = execute(frame);
+        if (value instanceof Double d) {
+            return d;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    /** The slot as stored (a PhpRef stays a PhpRef; primitives are boxed), for code that handles every case. */
+    public static Object raw(Frame frame, int slot) {
+        if (frame.isLong(slot)) {
+            return frame.getLong(slot);
+        }
+        if (frame.isDouble(slot)) {
+            return frame.getDouble(slot);
+        }
+        return frame.getObject(slot);
+    }
+
+    /** The Object stored in the slot, or null when it holds a primitive (which can't be a ref or an array). */
+    private Object storedObject(Frame frame) {
+        return frame.isObject(slot) ? frame.getObject(slot) : null;
+    }
+
+    // ---- writes ----
+
+    @Override
     public void write(VirtualFrame frame, Object value) {
-        Object old = frame.getObject(slot);
+        if (value instanceof Long l) {
+            writeLong(frame, l);
+        } else if (value instanceof Double d) {
+            writeDouble(frame, d);
+        } else {
+            writeObject(frame, value);
+        }
+    }
+
+    public void writeLong(VirtualFrame frame, long value) {
+        Object old = storedObject(frame);
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        frame.setLong(slot, value);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
+    }
+
+    public void writeDouble(VirtualFrame frame, double value) {
+        Object old = storedObject(frame);
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        frame.setDouble(slot, value);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
+    }
+
+    private void writeObject(VirtualFrame frame, Object value) {
+        Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
             ref.set(value);
             return;
@@ -54,9 +143,11 @@ public final class LocalVarNode extends LValueNode {
         }
     }
 
+    // ---- references and in-place updates ----
+
     @Override
     public PhpRef makeRef(VirtualFrame frame) {
-        Object value = frame.getObject(slot);
+        Object value = raw(frame, slot);
         if (value instanceof PhpRef ref) {
             return ref;
         }
@@ -70,8 +161,7 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        Object old = frame.getObject(slot);
-        if (old instanceof PhpArray array) {
+        if (storedObject(frame) instanceof PhpArray array) {
             array.removeHolder();
         }
         frame.setObject(slot, ref);
@@ -79,7 +169,7 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public PhpArray arrayForWrite(VirtualFrame frame) {
-        Object value = frame.getObject(slot);
+        Object value = raw(frame, slot);
         if (value instanceof PhpArray array) {
             if (array.isShared()) {
                 PhpArray copy = array.copy();
@@ -102,13 +192,17 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpObject) {
             return null;
         }
-        throw new PhpError("Cannot use a scalar value as an array");
+        throw scalarAsArray();
+    }
+
+    @TruffleBoundary
+    private static PhpError scalarAsArray() {
+        return new PhpError("Cannot use a scalar value as an array");
     }
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object old = frame.getObject(slot);
-        if (old instanceof PhpArray array) {
+        if (storedObject(frame) instanceof PhpArray array) {
             array.removeHolder();
         }
         frame.setObject(slot, null);
@@ -116,6 +210,9 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
+        if (!frame.isObject(slot)) {
+            return true;
+        }
         Object value = frame.getObject(slot);
         if (value instanceof PhpRef ref) {
             value = ref.get();
@@ -125,6 +222,9 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public Object readIfSet(VirtualFrame frame) {
+        if (!frame.isObject(slot)) {
+            return execute(frame);
+        }
         Object value = frame.getObject(slot);
         if (value instanceof PhpRef ref) {
             value = ref.get();

@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.source.SourceSection;
 import pl.codeloom.php.PhpLanguage;
 
 /**
@@ -14,8 +15,12 @@ public final class FileRootNode extends RootNode {
     @Child private StmtNode prologue;
     @Child private StmtNode body;
 
-    public FileRootNode(PhpLanguage language, String path, StmtNode prologue, StmtNode body) {
+    private final SourceSection sourceSection;
+
+    public FileRootNode(PhpLanguage language, String path, StmtNode prologue, StmtNode body,
+                        SourceSection sourceSection) {
         super(language, FrameDescriptor.newBuilder().build());
+        this.sourceSection = sourceSection;
         this.path = path;
         this.prologue = prologue;
         this.body = body;
@@ -34,6 +39,11 @@ public final class FileRootNode extends RootNode {
             return ret.value;
         }
         return 1L;
+    }
+
+    @Override
+    public SourceSection getSourceSection() {
+        return sourceSection;
     }
 
     @Override

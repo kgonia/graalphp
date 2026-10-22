@@ -1,6 +1,9 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
@@ -117,6 +120,9 @@ public final class CompareNodes {
         private final boolean orEqual;
         private final boolean swapped;
 
+        /** Ints on both sides until shown otherwise: loop conditions compare unboxed. */
+        @CompilationFinal private boolean speculateLong = true;
+
         public LessNode(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
             this.left = left;
             this.right = right;
@@ -131,8 +137,31 @@ public final class CompareNodes {
 
         @Override
         public boolean executeBoolean(VirtualFrame frame) {
-            Object first = left.execute(frame);
-            Object second = right.execute(frame);
+            if (speculateLong) {
+                long first;
+                try {
+                    first = left.executeLong(frame);
+                } catch (UnexpectedResultException e) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    speculateLong = false;
+                    return compareGeneric(e.getResult(), right.execute(frame));
+                }
+                long second;
+                try {
+                    second = right.executeLong(frame);
+                } catch (UnexpectedResultException e) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    speculateLong = false;
+                    return compareGeneric(first, e.getResult());
+                }
+                long a = swapped ? second : first;
+                long b = swapped ? first : second;
+                return orEqual ? a <= b : a < b;
+            }
+            return compareGeneric(left.execute(frame), right.execute(frame));
+        }
+
+        private boolean compareGeneric(Object first, Object second) {
             Object a = swapped ? second : first;
             Object b = swapped ? first : second;
             if (a instanceof Long x && b instanceof Long y) {

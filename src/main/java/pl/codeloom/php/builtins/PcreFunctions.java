@@ -1,6 +1,7 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Callables;
@@ -79,6 +80,10 @@ final class PcreFunctions {
         final MemorySegment matchData;
         final MemorySegment ovector;
         boolean matchDataInUse;
+        /** Debug statistics (-Dphp.pcre2.debug): matches run and their native time. */
+        long calls;
+        long nanos;
+        String source;
 
         Regex(MemorySegment code, boolean utf, int groups, TruffleString[] names) {
             this.code = code;
@@ -90,11 +95,13 @@ final class PcreFunctions {
         }
     }
 
-    /** One preg call's view of a subject: the native copy and the current match block. */
+    /**
+     * One preg call's view of a subject and the current match block. PCRE2 reads the subject's Java array in
+     * place (a critical downcall with heap access), so nothing is copied.
+     */
     private static final class Matcher implements AutoCloseable {
         final Regex regex;
         final byte[] subject;
-        final Arena arena = Arena.ofConfined();
         final MemorySegment nativeSubject;
         final MemorySegment matchData;
         final MemorySegment ovector;
@@ -103,8 +110,7 @@ final class PcreFunctions {
         Matcher(Regex regex, byte[] subject) {
             this.regex = regex;
             this.subject = subject;
-            this.nativeSubject = arena.allocate(Math.max(1, subject.length));
-            MemorySegment.copy(subject, 0, nativeSubject, ValueLayout.JAVA_BYTE, 0, subject.length);
+            this.nativeSubject = MemorySegment.ofArray(subject);
             if (regex.matchDataInUse) {
                 ownsMatchData = true;
                 matchData = Native.createMatchData(regex.code);
@@ -118,9 +124,17 @@ final class PcreFunctions {
         }
 
         int match(long start, int options) {
+            if (!NativeClock.ENABLED && !DEBUG) {
+                return Native.match(regex.code, nativeSubject, subject.length, start, options, matchData);
+            }
             long t0 = System.nanoTime();
             int rc = Native.match(regex.code, nativeSubject, subject.length, start, options, matchData);
-            NativeClock.add(System.nanoTime() - t0);
+            long elapsed = System.nanoTime() - t0;
+            NativeClock.add(elapsed);
+            if (DEBUG) {
+                regex.calls++;
+                regex.nanos += elapsed;
+            }
             return rc;
         }
 
@@ -159,7 +173,6 @@ final class PcreFunctions {
             if (!ownsMatchData) {
                 regex.matchDataInUse = false;
             }
-            arena.close();
         }
     }
 
@@ -238,8 +251,36 @@ final class PcreFunctions {
         MemorySegment code = Native.compile(pattern, options);
         int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
         Regex compiled = new Regex(code, (options & UTF) != 0, groups, Native.names(code, groups));
+        if (DEBUG) {
+            compiled.source = Str.java(regexString);
+            if (CACHE.isEmpty()) {
+                Runtime.getRuntime().addShutdownHook(new Thread(PcreFunctions::printStatistics));
+            }
+        }
         CACHE.put(regexString, compiled);
         return compiled;
+    }
+
+    /** The string's bytes: its own backing array when it has one of exactly its size (read-only!), else a copy. */
+    private static byte[] subjectBytes(TruffleString s) {
+        InternalByteArray internal = s.getInternalByteArrayUncached(Str.ENC);
+        if (internal.getOffset() == 0 && internal.getLength() == internal.getArray().length) {
+            return internal.getArray();
+        }
+        if (DEBUG) {
+            System.err.println("pcre subject copied: offset " + internal.getOffset() + " length " + internal.getLength()
+                    + " array " + internal.getArray().length);
+        }
+        return Str.bytes(s);
+    }
+
+    private static final boolean DEBUG = System.getProperty("php.pcre2.debug") != null;
+
+    private static void printStatistics() {
+        CACHE.values().stream().sorted((x, y) -> Long.compare(y.nanos, x.nanos)).limit(15).forEach(r ->
+                System.err.printf("pcre %8.1f ms %8d calls %7.0f ns/call  %s%n", r.nanos / 1e6, r.calls,
+                        r.calls == 0 ? 0.0 : (double) r.nanos / r.calls,
+                        r.source.length() > 90 ? r.source.substring(0, 90) + "..." : r.source));
     }
 
     private static boolean isSpace(byte b) {
@@ -301,7 +342,7 @@ final class PcreFunctions {
     @TruffleBoundary
     private static Object match(Object[] a, boolean global) {
         Regex regex = compile(Args.str(a, 0));
-        byte[] subject = Str.bytes(Args.str(a, 1));
+        byte[] subject = subjectBytes(Args.str(a, 1));
         PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
         long flags = Args.lng(a, 3, 0);
         long offset = Args.lng(a, 4, 0);
@@ -458,7 +499,7 @@ final class PcreFunctions {
     /** php_pcre_replace_impl and its callback twin; null on a match error. */
     private static TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
                                              TruffleString subjectString, long limit, long flags, long[] count) {
-        byte[] subject = Str.bytes(subjectString);
+        byte[] subject = subjectBytes(subjectString);
         byte[] template = callback ? null : Str.bytes(Convert.toStr(replacement));
         ByteArrayOutputStream out = null;
         try (Matcher m = new Matcher(regex, subject)) {
@@ -579,7 +620,7 @@ final class PcreFunctions {
     @TruffleBoundary
     private static Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
         Regex regex = compile(pattern);
-        byte[] subject = Str.bytes(subjectString);
+        byte[] subject = subjectBytes(subjectString);
         boolean noEmpty = (flags & SPLIT_NO_EMPTY) != 0;
         boolean delimCapture = (flags & SPLIT_DELIM_CAPTURE) != 0;
         boolean offsetCapture = (flags & SPLIT_OFFSET_CAPTURE) != 0;
@@ -689,7 +730,7 @@ final class PcreFunctions {
         for (int p = input.firstPosition(); p >= 0; p = input.nextPosition(p)) {
             Object value = input.valueAt(p);
             int rc;
-            try (Matcher m = new Matcher(regex, Str.bytes(Convert.toStr(value)))) {
+            try (Matcher m = new Matcher(regex, subjectBytes(Convert.toStr(value)))) {
                 rc = m.match(0, m.firstOptions());
             }
             if (rc < 0 && rc != ERROR_NOMATCH) {
@@ -716,9 +757,11 @@ final class PcreFunctions {
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
         private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        private static final MethodHandle MATCH = handle("pcre2_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        /** Critical with heap access: the subject is passed as a Java array segment; matching never calls back. */
+        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"),
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS), Linker.Option.critical(true));
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,
@@ -787,7 +830,10 @@ final class PcreFunctions {
                     throw new PhpError("Warning: Compilation failed: " + message.getString(0) + " at offset "
                             + errorOffset.get(ValueLayout.JAVA_LONG, 0));
                 }
-                int ignored = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
+                int jit = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
+                if (jit != 0) {
+                    System.err.println("warning: pcre2_jit_compile failed (" + jit + "), matching interpreted");
+                }
                 return code;
             } catch (PhpError e) {
                 throw e;

@@ -3,6 +3,8 @@ package pl.codeloom.php.parser;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
+import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
@@ -104,24 +106,33 @@ public final class Translator {
     private final PhpLanguage language;
     private final PhpContext context;
     private final String path;
+    /** The PHP file's source, for root nodes' source sections (profilers, stack traces); null if unreadable. */
+    private final Source source;
     private final ClassInfo classInfo;
     private final String functionName;
     private final PhpFunction function;
     private final Scope scope;
+    /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
+    private int hiddenCounter;
 
-    public Translator(PhpLanguage language, PhpContext context, String path) {
-        this(language, context, path, null, "", null, null);
+    public Translator(PhpLanguage language, PhpContext context, String path, Source source) {
+        this(language, context, path, source, null, "", null, null);
     }
 
-    private Translator(PhpLanguage language, PhpContext context, String path, ClassInfo classInfo,
+    private Translator(PhpLanguage language, PhpContext context, String path, Source source, ClassInfo classInfo,
                        String functionName, PhpFunction function, Scope scope) {
         this.language = language;
         this.context = context;
         this.path = path;
+        this.source = source;
         this.classInfo = classInfo;
         this.functionName = functionName;
         this.function = function;
         this.scope = scope;
+    }
+
+    private SourceSection lineSection(int line) {
+        return source == null || line < 1 || line > source.getLineCount() ? null : source.createSection(line);
     }
 
     private static PhpError unsupported(Ast node, String what) {
@@ -141,7 +152,8 @@ public final class Translator {
                 body.add(statement(statement));
             }
         }
-        return new FileRootNode(language, path, block(prologue), block(body));
+        return new FileRootNode(language, path, block(prologue), block(body),
+                source == null ? null : source.createSection(0, source.getLength()));
     }
 
     private static StmtNode block(List<StmtNode> statements) {
@@ -410,7 +422,7 @@ public final class Translator {
                                          PhpFunction.Param[] params, String[] captures, boolean[] captureByRef) {
         Scope bodyScope = new Scope();
         String display = owner == null ? name : owner.name() + "::" + name;
-        Translator body = new Translator(language, context, path, owner, display, target, bodyScope);
+        Translator body = new Translator(language, context, path, source, owner, display, target, bodyScope);
         Ast paramList = node.node("params");
         int[] paramSlots = new int[params.length];
         ExprNode[] defaults = new ExprNode[params.length];
@@ -448,7 +460,7 @@ public final class Translator {
         Ast returnType = node.node("returnType");
         FunctionRootNode root = new FunctionRootNode(language, bodyScope.frame.build(), display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
-                statements);
+                statements, lineSection(node.line));
         return root.getCallTarget();
     }
 
@@ -550,7 +562,7 @@ public final class Translator {
     }
 
     private void addMember(PhpClass phpClass, Ast member, ClassInfo info) {
-        Translator inClass = new Translator(language, context, path, info, "", null, null);
+        Translator inClass = new Translator(language, context, path, source, info, "", null, null);
         switch (member.kind) {
             case "AST_METHOD": {
                 PhpFunction method = inClass.declareFunction(member, info);
@@ -892,10 +904,22 @@ public final class Translator {
 
     private ExprNode compoundAssignment(Ast node) {
         LValueNode target = place(node.get("var"));
-        if (!target.isPure()) {
-            throw unsupported(node, "compound assignment to a place with side effects");
+        if (target.isPure()) {
+            return new AssignNodes.CompoundAssignNode(target, expression(node.get("expr")), node.flags);
         }
-        return new AssignNodes.CompoundAssignNode(target, expression(node.get("expr")), node.flags);
+        // `$a[f()] op= v` reads and writes the element: evaluate the key once, into a hidden variable
+        Ast dim = node.node("var");
+        if (dim.is("AST_DIM") && dim.get("dim") != null) {
+            String temp = "\0key" + hiddenCounter++;
+            LValueNode tempWrite = (LValueNode) variable(temp);
+            ExprNode keyInit = new AssignNodes.AssignNode(tempWrite, expression(dim.get("dim")));
+            LValueNode element = new DimNode(placeOrExpression(dim.get("expr")), variable(temp), null);
+            if (element.isPure()) {
+                return new AssignNodes.SequenceNode(keyInit,
+                        new AssignNodes.CompoundAssignNode(element, expression(node.get("expr")), node.flags));
+            }
+        }
+        throw unsupported(node, "compound assignment to a place with side effects");
     }
 
     // ---- operators ----

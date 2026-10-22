@@ -1,6 +1,13 @@
 package pl.codeloom.php.nodes.stmt;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.LoopNode;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RepeatingNode;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -23,7 +30,10 @@ public final class ForeachNode extends StmtNode {
     @Child private LValueNode valueTarget;
     @Child private ListAssignNode valueList;
     @Child private StmtNode body;
+    @Child private LoopNode arrayLoop;
     private final boolean byRef;
+    /** The auxiliary frame slot holding the array iteration's state (resolved on first execution). */
+    @CompilationFinal private int stateSlot = -1;
 
     public ForeachNode(ExprNode subject, LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList,
                        StmtNode body, boolean byRef) {
@@ -33,6 +43,64 @@ public final class ForeachNode extends StmtNode {
         this.valueList = valueList;
         this.body = body;
         this.byRef = byRef;
+        this.arrayLoop = Truffle.getRuntime().createLoopNode(new ArrayStep());
+    }
+
+    /** Where an array foreach is: the array and the next position. Lives in a frame slot so OSR can resume it. */
+    private static final class State {
+        final PhpArray array;
+        int position;
+
+        State(PhpArray array) {
+            this.array = array;
+            this.position = array.firstPosition();
+        }
+    }
+
+    private int stateSlot(VirtualFrame frame) {
+        if (stateSlot < 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            stateSlot = frame.getFrameDescriptor().findOrAddAuxiliarySlot(this);
+        }
+        return stateSlot;
+    }
+
+    /** One element of an array foreach: bind key and value (or the element's reference), run the body. */
+    private final class ArrayStep extends Node implements RepeatingNode {
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            State state = (State) frame.getAuxiliarySlot(stateSlot);
+            int p = state.position;
+            if (p < 0) {
+                return false;
+            }
+            PhpArray array = state.array;
+            if (keyTarget != null) {
+                keyTarget.write(frame, array.keyAt(p));
+            }
+            if (byRef) {
+                valueTarget.bindRef(frame, array.refAtPosition(p));
+            } else {
+                assignValue(frame, array.valueAt(p));
+            }
+            if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
+                return false;
+            }
+            state.position = array.nextPosition(p);
+            return state.position >= 0;
+        }
+    }
+
+    private void runArray(VirtualFrame frame, PhpArray array) {
+        int slot = stateSlot(frame);
+        Object outer = frame.getAuxiliarySlot(slot);
+        frame.setAuxiliarySlot(slot, new State(array));
+        try {
+            arrayLoop.execute(frame);
+        } finally {
+            // a recursive call of the same function has its own frame; restoring covers re-entry within one frame
+            frame.setAuxiliarySlot(slot, outer);
+        }
     }
 
     @Override
@@ -52,15 +120,7 @@ public final class ForeachNode extends StmtNode {
     private void iterate(VirtualFrame frame, PhpArray array) {
         array.addHolder();
         try {
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                if (keyTarget != null) {
-                    keyTarget.write(frame, array.keyAt(p));
-                }
-                assignValue(frame, array.valueAt(p));
-                if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
-                    return;
-                }
-            }
+            runArray(frame, array);
         } finally {
             array.removeHolder();
         }
@@ -82,29 +142,11 @@ public final class ForeachNode extends StmtNode {
         if (array == null) {
             throw new PhpError("foreach by reference over an object is not supported");
         }
-        int p = array.firstPosition();
-        while (p >= 0) {
-            PhpRef ref = array.refAtPosition(p);
-            if (keyTarget != null) {
-                keyTarget.write(frame, array.keyAt(p));
-            }
-            valueTarget.bindRef(frame, ref);
-            if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
-                return;
-            }
-            p = array.nextPosition(p);
-        }
+        runArray(frame, array);
     }
 
-    private void iterateObject(VirtualFrame frame, PhpObject object) {
-        if (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            Object inner = object.callMethod("getiterator");
-            if (inner instanceof PhpObject iterator) {
-                iterateObject(frame, iterator);
-                return;
-            }
-            throw new PhpError("getIterator() must return a Traversable");
-        }
+    private void iterateObject(VirtualFrame frame, PhpObject subject) {
+        PhpObject object = unwrapAggregates(subject);
         if (object.getPhpClass().isSubclassOf("iterator")) {
             object.callMethod("rewind");
             while (Convert.toBool(object.callMethod("valid"))) {
@@ -133,5 +175,17 @@ public final class ForeachNode extends StmtNode {
                 return;
             }
         }
+    }
+
+    /** Follows getIterator() to the Iterator (a loop, not recursion: partial evaluation would inline it forever). */
+    @TruffleBoundary
+    private static PhpObject unwrapAggregates(PhpObject object) {
+        while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
+            if (!(object.callMethod("getiterator") instanceof PhpObject inner)) {
+                throw new PhpError("getIterator() must return a Traversable");
+            }
+            object = inner;
+        }
+        return object;
     }
 }

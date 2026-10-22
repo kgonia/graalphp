@@ -5,6 +5,7 @@ import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.nodes.FileRootNode;
@@ -90,10 +91,18 @@ public final class PhpContext {
             } catch (IOException e) {
                 throw new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
             }
-            root = new Translator(language, this, canonical).translateFile(ast);
+            root = new Translator(language, this, canonical, phpSource(canonical)).translateFile(ast);
             files.put(canonical, root);
         }
         return root;
+    }
+
+    private Source phpSource(String canonical) {
+        try {
+            return Source.newBuilder(PhpLanguage.ID, env.getPublicTruffleFile(canonical)).build();
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     @TruffleBoundary

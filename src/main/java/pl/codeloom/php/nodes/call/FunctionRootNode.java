@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.call;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -35,10 +36,13 @@ public final class FunctionRootNode extends RootNode {
     private final boolean returnNullable;
     @Child private StmtNode body;
 
+    private final SourceSection sourceSection;
+
     public FunctionRootNode(PhpLanguage language, FrameDescriptor frame, String name, PhpFunction.Param[] params,
                             int[] paramSlots, ExprNode[] defaults, int[] captureSlots, boolean[] captureByRef,
-                            char returnCoerce, boolean returnNullable, StmtNode body) {
+                            char returnCoerce, boolean returnNullable, StmtNode body, SourceSection sourceSection) {
         super(language, frame);
+        this.sourceSection = sourceSection;
         this.name = name;
         this.params = params;
         this.paramSlots = paramSlots;
@@ -94,10 +98,16 @@ public final class FunctionRootNode extends RootNode {
             if (param.coerce() != 0) {
                 value = coerce(value, param.coerce(), param.nullable(), param.name());
             }
-            if (value instanceof PhpArray array) {
-                array.addHolder();
+            if (value instanceof Long l) {
+                frame.setLong(slot, l);
+            } else if (value instanceof Double d) {
+                frame.setDouble(slot, d);
+            } else {
+                if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+                frame.setObject(slot, value);
             }
-            frame.setObject(slot, value);
         }
     }
 
@@ -137,7 +147,7 @@ public final class FunctionRootNode extends RootNode {
     @ExplodeLoop
     private void releaseLocals(VirtualFrame frame) {
         for (int slot = 0; slot < localCount; slot++) {
-            if (frame.getObject(slot) instanceof PhpArray array) {
+            if (frame.isObject(slot) && frame.getObject(slot) instanceof PhpArray array) {
                 array.removeHolder();
             }
         }
@@ -206,5 +216,10 @@ public final class FunctionRootNode extends RootNode {
     @Override
     public String toString() {
         return name;
+    }
+
+    @Override
+    public SourceSection getSourceSection() {
+        return sourceSection;
     }
 }

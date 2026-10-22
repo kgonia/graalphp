@@ -6,3 +6,4 @@ target/
 .idea/
 .claude/
 bench/gate1/data/
+/bench/truffle/graalvm-linux.tar.gz

@@ -22,7 +22,13 @@ public final class ArithmeticNodes {
     }
 
     public abstract static class AddNode extends BinaryNode {
-        @Specialization
+        /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
+        @Specialization(rewriteOn = ArithmeticException.class)
+        protected long addExact(long a, long b) {
+            return Math.addExact(a, b);
+        }
+
+        @Specialization(replaces = "addExact")
         protected Object add(long a, long b) {
             return Operators.addLongs(a, b);
         }
@@ -44,7 +50,13 @@ public final class ArithmeticNodes {
     }
 
     public abstract static class SubNode extends BinaryNode {
-        @Specialization
+        /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
+        @Specialization(rewriteOn = ArithmeticException.class)
+        protected long subExact(long a, long b) {
+            return Math.subtractExact(a, b);
+        }
+
+        @Specialization(replaces = "subExact")
         protected Object sub(long a, long b) {
             return Operators.subLongs(a, b);
         }
@@ -61,7 +73,13 @@ public final class ArithmeticNodes {
     }
 
     public abstract static class MulNode extends BinaryNode {
-        @Specialization
+        /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
+        @Specialization(rewriteOn = ArithmeticException.class)
+        protected long mulExact(long a, long b) {
+            return Math.multiplyExact(a, b);
+        }
+
+        @Specialization(replaces = "mulExact")
         protected Object mul(long a, long b) {
             return Operators.mulLongs(a, b);
         }

@@ -1,7 +1,12 @@
 package pl.codeloom.php.nodes.stmt;
 
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.LoopNode;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.NodeUtil;
+import com.oracle.truffle.api.nodes.RepeatingNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -39,13 +44,13 @@ public final class LoopNodes {
 
     public static final class WhileNode extends StmtNode {
         @Child private ExprNode condition;
-        @Child private StmtNode body;
+        @Child private LoopNode loop;
         private final boolean checkFirst;
 
         /** checkFirst false makes it do-while. */
         public WhileNode(ExprNode condition, StmtNode body, boolean checkFirst) {
             this.condition = condition;
-            this.body = body;
+            this.loop = Truffle.getRuntime().createLoopNode(new WhileBody(condition, body));
             this.checkFirst = checkFirst;
         }
 
@@ -54,37 +59,62 @@ public final class LoopNodes {
             if (checkFirst && !condition.executeBoolean(frame)) {
                 return;
             }
-            do {
-                if (runBody(body, frame) == EXIT) {
-                    return;
-                }
-            } while (condition.executeBoolean(frame));
+            loop.execute(frame);
+        }
+    }
+
+    /** One iteration of while/do-while after the first test: the body, then the condition. */
+    private static final class WhileBody extends Node implements RepeatingNode {
+        @Child private ExprNode condition;
+        @Child private StmtNode body;
+
+        WhileBody(ExprNode condition, StmtNode body) {
+            this.condition = NodeUtil.cloneNode(condition);
+            this.body = body;
+        }
+
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            return runBody(body, frame) != EXIT && condition.executeBoolean(frame);
         }
     }
 
     /** for (init; cond; step): conditions are comma lists whose last expression decides. */
     public static final class ForNode extends StmtNode {
         @Children private final ExprNode[] init;
+        @Child private LoopNode loop;
+
+        public ForNode(ExprNode[] init, ExprNode[] condition, ExprNode[] step, StmtNode body) {
+            this.init = init;
+            this.loop = Truffle.getRuntime().createLoopNode(new ForBody(condition, step, body));
+        }
+
+        @Override
+        public void execute(VirtualFrame frame) {
+            runAll(init, frame);
+            loop.execute(frame);
+        }
+    }
+
+    /** One iteration of a for loop: test, body, step. */
+    private static final class ForBody extends Node implements RepeatingNode {
         @Children private final ExprNode[] condition;
         @Children private final ExprNode[] step;
         @Child private StmtNode body;
 
-        public ForNode(ExprNode[] init, ExprNode[] condition, ExprNode[] step, StmtNode body) {
-            this.init = init;
+        ForBody(ExprNode[] condition, ExprNode[] step, StmtNode body) {
             this.condition = condition;
             this.step = step;
             this.body = body;
         }
 
         @Override
-        public void execute(VirtualFrame frame) {
-            runAll(init, frame);
-            while (test(frame)) {
-                if (runBody(body, frame) == EXIT) {
-                    return;
-                }
-                runAll(step, frame);
+        public boolean executeRepeating(VirtualFrame frame) {
+            if (!test(frame) || runBody(body, frame) == EXIT) {
+                return false;
             }
+            runAll(step, frame);
+            return true;
         }
 
         @ExplodeLoop
@@ -95,12 +125,12 @@ public final class LoopNodes {
             }
             return result;
         }
+    }
 
-        @ExplodeLoop
-        private static void runAll(ExprNode[] expressions, VirtualFrame frame) {
-            for (ExprNode expression : expressions) {
-                expression.execute(frame);
-            }
+    @ExplodeLoop
+    private static void runAll(ExprNode[] expressions, VirtualFrame frame) {
+        for (ExprNode expression : expressions) {
+            expression.execute(frame);
         }
     }
 

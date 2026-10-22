@@ -1,10 +1,15 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
+import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpError;
@@ -20,14 +25,30 @@ public final class AssignNodes {
     public static final class AssignNode extends ExprNode {
         @Child private LValueNode target;
         @Child private ExprNode value;
+        /** For a local target: assume the value is an int until it isn't, so it stays unboxed. */
+        private final LocalVarNode local;
+        @CompilationFinal private boolean speculateLong = true;
 
         public AssignNode(LValueNode target, ExprNode value) {
             this.target = target;
             this.value = value;
+            this.local = target instanceof LocalVarNode l ? l : null;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
+            if (local != null && speculateLong) {
+                try {
+                    long result = value.executeLong(frame);
+                    local.writeLong(frame, result);
+                    return result;
+                } catch (UnexpectedResultException e) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    speculateLong = false;
+                    target.write(frame, e.getResult());
+                    return e.getResult();
+                }
+            }
             Object result = value.execute(frame);
             target.write(frame, result);
             return result;
@@ -83,14 +104,68 @@ public final class AssignNodes {
         @Child private TruffleString.ConcatNode concat = TruffleString.ConcatNode.create();
         private final int op;
 
+        /** For a local target and an int operator: the unboxed fast path, until a non-int shows up. */
+        private final LocalVarNode local;
+        @CompilationFinal private boolean speculateLong;
+
         public CompoundAssignNode(LValueNode target, ExprNode value, int op) {
             this.target = target;
             this.value = value;
             this.op = op;
+            this.local = target instanceof LocalVarNode l ? l : null;
+            this.speculateLong = local != null && (op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11);
+        }
+
+        /**
+         * `$local op= int`. php-src evaluates the right side before reading the variable, so this does too. An
+         * overflow or a non-int operand or variable leaves the fast path for good.
+         */
+        private Object executeLocalLong(VirtualFrame frame) {
+            long operand;
+            try {
+                operand = value.executeLong(frame);
+            } catch (UnexpectedResultException e) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                speculateLong = false;
+                return finish(frame, target.execute(frame), e.getResult());
+            }
+            long current;
+            try {
+                current = local.executeLong(frame);
+            } catch (UnexpectedResultException e) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                speculateLong = false;
+                return finish(frame, e.getResult(), operand);
+            }
+            try {
+                long result = switch (op) {
+                    case 1 -> Math.addExact(current, operand);
+                    case 2 -> Math.subtractExact(current, operand);
+                    case 3 -> Math.multiplyExact(current, operand);
+                    case 9 -> current | operand;
+                    case 10 -> current & operand;
+                    default -> current ^ operand;
+                };
+                local.writeLong(frame, result);
+                return result;
+            } catch (ArithmeticException e) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                speculateLong = false;
+                return finish(frame, current, operand);
+            }
+        }
+
+        private Object finish(VirtualFrame frame, Object current, Object operand) {
+            Object result = apply(current, operand);
+            target.write(frame, result);
+            return result;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
+            if (local != null && speculateLong) {
+                return executeLocalLong(frame);
+            }
             if (op == COALESCE) {
                 Object current = target.readIfSet(frame);
                 if (current != null) {
@@ -143,7 +218,7 @@ public final class AssignNodes {
                 case 7:
                     return Operators.shiftRight(Convert.toLong(a), Convert.toLong(b));
                 default:
-                    throw new PhpError("unsupported compound assignment operator " + op);
+                    throw unsupportedOperator(op);
             }
         }
     }
@@ -154,14 +229,34 @@ public final class AssignNodes {
         private final boolean increment;
         private final boolean prefix;
 
+        /** For a local target: the unboxed int fast path until a non-int or an overflow shows up. */
+        private final LocalVarNode local;
+        @CompilationFinal private boolean speculateLong = true;
+
         public IncDecNode(LValueNode target, boolean increment, boolean prefix) {
             this.target = target;
             this.increment = increment;
             this.prefix = prefix;
+            this.local = target instanceof LocalVarNode l ? l : null;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
+            if (local != null && speculateLong) {
+                try {
+                    long old = local.executeLong(frame);
+                    long updated = increment ? Math.addExact(old, 1) : Math.subtractExact(old, 1);
+                    local.writeLong(frame, updated);
+                    return prefix ? updated : old;
+                } catch (UnexpectedResultException | ArithmeticException e) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    speculateLong = false;
+                }
+            }
+            return executeGeneric(frame);
+        }
+
+        private Object executeGeneric(VirtualFrame frame) {
             Object old = target.execute(frame);
             Object updated;
             if (old instanceof Long l) {
@@ -176,10 +271,37 @@ public final class AssignNodes {
             } else if (old instanceof Boolean) {
                 updated = old;
             } else {
-                throw new PhpError("Increment/decrement of " + Convert.typeName(old) + " is not supported");
+                throw unsupportedIncrement(old);
             }
             target.write(frame, updated);
             return prefix ? updated : old;
         }
+    }
+
+    /** Evaluates first for its effect, then returns second's value (hoisted temporaries). */
+    public static final class SequenceNode extends ExprNode {
+        @Child private ExprNode first;
+        @Child private ExprNode second;
+
+        public SequenceNode(ExprNode first, ExprNode second) {
+            this.first = first;
+            this.second = second;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            first.execute(frame);
+            return second.execute(frame);
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpError unsupportedOperator(int op) {
+        return new PhpError("unsupported compound assignment operator " + op);
+    }
+
+    @TruffleBoundary
+    private static PhpError unsupportedIncrement(Object value) {
+        return new PhpError("Increment/decrement of " + Convert.typeName(value) + " is not supported");
     }
 }
