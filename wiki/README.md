@@ -18,7 +18,7 @@
 | Gate | State |
 |---|---|
 | Gate 0: Amdahl ceiling of WordPress on php-fpm | not started (can run in parallel with Gate 1) |
-| **Gate 1: Truffle core vs PHP 8.4 JIT on extracted WordPress hot functions** | **in progress since 2026-10-22** |
+| **Gate 1: Truffle core vs PHP 8.5 JIT on extracted WordPress hot functions** | **in progress: all 7 kernels correct; performance work next** |
 | Gate 2: WordPress boots and renders | — |
 | Gate 3: drop-in parity | — |
 | Gate 4: performance and publication | — |

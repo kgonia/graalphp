@@ -1,0 +1,54 @@
+package pl.codeloom.php.nodes.call;
+
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
+import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.vars.ClassRefNode;
+import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
+import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpObject;
+
+/**
+ * `function (...) use ($a, &$b) {...}` and `fn (...) => ...`: captures the use-variables (values, or references
+ * for &), $this unless static, and the class scope. A by-value captured array counts the closure as a holder
+ * for the closure's lifetime.
+ */
+public final class ClosureNode extends ExprNode {
+    private final PhpFunction function;
+    @Children private final ExprNode[] captures;
+    private final boolean[] byRef;
+    private final boolean isStatic;
+    @Child private ClassRefNode scope;
+
+    public ClosureNode(PhpFunction function, ExprNode[] captures, boolean[] byRef, boolean isStatic,
+                       ClassRefNode scope) {
+        this.function = function;
+        this.captures = captures;
+        this.byRef = byRef;
+        this.isStatic = isStatic;
+        this.scope = scope;
+    }
+
+    @Override
+    @ExplodeLoop
+    public Object execute(VirtualFrame frame) {
+        Object[] captured = new Object[captures.length];
+        for (int i = 0; i < captures.length; i++) {
+            if (byRef[i]) {
+                captured[i] = ((LValueNode) captures[i]).makeRef(frame);
+            } else {
+                Object value = captures[i].execute(frame);
+                if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+                captured[i] = value;
+            }
+        }
+        Object self = isStatic ? null : frame.getArguments()[PhpFunction.ARG_THIS];
+        PhpClass scopeClass = scope == null ? null : scope.resolve(frame);
+        return new PhpClosure(function, self instanceof PhpObject object ? object : null, scopeClass, captured);
+    }
+}

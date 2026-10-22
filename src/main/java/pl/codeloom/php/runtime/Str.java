@@ -1,0 +1,84 @@
+package pl.codeloom.php.runtime;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.TruffleString;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * PHP strings are byte strings, held as {@link TruffleString}s in the BYTES encoding. These helpers are for code
+ * outside compiled hot paths (built-ins, conversions); hot nodes use cached TruffleString nodes instead.
+ */
+public final class Str {
+    public static final TruffleString.Encoding ENC = TruffleString.Encoding.BYTES;
+    public static final TruffleString EMPTY = TruffleString.Encoding.BYTES.getEmpty();
+
+    /** One-byte strings for string offsets and chr(), shared so `$s[$i]` allocates nothing. */
+    private static final TruffleString[] SINGLE_BYTES = new TruffleString[256];
+
+    static {
+        for (int i = 0; i < 256; i++) {
+            SINGLE_BYTES[i] = TruffleString.fromByteArrayUncached(new byte[]{(byte) i}, ENC, false);
+        }
+    }
+
+    private Str() {
+    }
+
+    public static TruffleString singleByte(int b) {
+        return SINGLE_BYTES[b & 0xFF];
+    }
+
+    @TruffleBoundary
+    public static TruffleString of(String javaString) {
+        return TruffleString.fromByteArrayUncached(javaString.getBytes(StandardCharsets.UTF_8), ENC, false);
+    }
+
+    /** Wraps the array without copying; callers must not modify it afterwards. */
+    @TruffleBoundary
+    public static TruffleString of(byte[] bytes) {
+        return TruffleString.fromByteArrayUncached(bytes, ENC, false);
+    }
+
+    @TruffleBoundary
+    public static TruffleString of(byte[] bytes, int offset, int length) {
+        return TruffleString.fromByteArrayUncached(bytes, offset, length, ENC, true);
+    }
+
+    @TruffleBoundary
+    public static byte[] bytes(TruffleString s) {
+        return s.copyToByteArrayUncached(ENC);
+    }
+
+    @TruffleBoundary
+    public static int length(TruffleString s) {
+        return s.byteLength(ENC);
+    }
+
+    /** Decodes as UTF-8 for messages, names and Java-side lookups; invalid bytes become U+FFFD. */
+    @TruffleBoundary
+    public static String java(TruffleString s) {
+        return new String(bytes(s), StandardCharsets.UTF_8);
+    }
+
+    @TruffleBoundary
+    public static TruffleString concat(TruffleString a, TruffleString b) {
+        return a.concatUncached(b, ENC, true);
+    }
+
+    @TruffleBoundary
+    public static boolean equal(TruffleString a, TruffleString b) {
+        return a.equalsUncached(b, ENC);
+    }
+
+    /** Byte-wise comparison, as PHP's strcmp: negative, zero or positive. */
+    @TruffleBoundary
+    public static int compare(TruffleString a, TruffleString b) {
+        return a.compareBytesUncached(b, ENC);
+    }
+
+    @TruffleBoundary
+    public static int byteAt(TruffleString s, int index) {
+        return s.readByteUncached(index, ENC);
+    }
+}

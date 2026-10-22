@@ -1,6 +1,7 @@
 <?php
 // Exports php-src's own parse of a file (zend_ast via the php-ast extension) as JSON for the Truffle front end.
-// Usage: php ast-export.php <out-dir> <file.php>...   writes <out-dir>/<basename>.ast.json per input.
+// Usage: php ast-export.php <out-dir> <file.php>...   writes <out-dir>/<file path>.json per input, mirroring the
+// relative path so the runtime can find the AST of a file it is asked to include.
 //
 // Node:   {"k": kind name, "f": flags, "l": line, "c": children}; children is a list for list kinds, else an object.
 // Values: JSON strings for valid UTF-8, {"b": base64} for other byte strings, {"d": "1.5"} for floats
@@ -38,5 +39,7 @@ function export_value(mixed $v): mixed {
 foreach (array_slice($argv, 2) as $file) {
     $ast = ast\parse_file($file, AST_VERSION);
     $json = json_encode(export_value($ast), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    file_put_contents($outDir . '/' . basename($file) . '.ast.json', $json);
+    $target = $outDir . '/' . ltrim($file, '/') . '.json';
+    @mkdir(dirname($target), 0777, true);
+    file_put_contents($target, $json);
 }

@@ -1,7 +1,8 @@
 <?php
 // Gate 1 driver: runs WordPress kernels for N iterations and prints, per iteration,
-// "kernel iteration nanoseconds checksum". The same file runs on PHP and on the Truffle PHP.
-// Usage: php run.php <kernel,kernel,...|all> <iterations>
+// "kernel iteration nanoseconds checksum". The same file runs on PHP and on the Truffle PHP, which adds a fifth
+// column: the nanoseconds spent in native code (PCRE2) during the iteration, for the native-share accounting.
+// Usage: php run.php <kernel,kernel,...|all> <iterations> [dump]   (dump: also print each result's rendering)
 
 error_reporting(E_ALL);
 set_error_handler(static function (int $level, string $message, string $file, int $line): bool {
@@ -33,14 +34,21 @@ $kernels = require __DIR__ . '/kernels.php';
 
 $selected   = ($argv[1] ?? 'all') === 'all' ? array_keys($kernels) : explode(',', $argv[1]);
 $iterations = (int) ($argv[2] ?? 10);
+$dump       = ($argv[3] ?? '') === 'dump';
+$native     = function_exists('truffle_native_ns');
 
 foreach ($selected as $name) {
     $kernel = $kernels[$name];
     for ($i = 1; $i <= $iterations; $i++) {
-        $start  = hrtime(true);
-        $result = $kernel($corpus);
-        $ns     = hrtime(true) - $start;
-        echo $name, ' ', $i, ' ', $ns, ' ', bench_checksum($result), "\n";
+        $native0 = $native ? truffle_native_ns() : 0;
+        $start   = hrtime(true);
+        $result  = $kernel($corpus);
+        $ns      = hrtime(true) - $start;
+        $extra   = $native ? ' ' . (truffle_native_ns() - $native0) : '';
+        echo $name, ' ', $i, ' ', $ns, ' ', bench_checksum($result), $extra, "\n";
+        if ($dump) {
+            echo bench_render($result), "\n";
+        }
     }
 }
 
