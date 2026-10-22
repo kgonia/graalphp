@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.profiles.ValueProfile;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.Convert;
@@ -50,6 +51,8 @@ public final class TestNodes {
         }
 
         @Child private ExprNode operand;
+        /** Truthiness depends on the type; a site that sees one type compiles to that one test. */
+        private final ValueProfile type = ValueProfile.createClassProfile();
 
         public EmptyNode(ExprNode operand) {
             this.operand = operand;
@@ -64,9 +67,9 @@ public final class TestNodes {
         public boolean executeBoolean(VirtualFrame frame) {
             if (operand instanceof LValueNode place) {
                 Object value = place.readIfSet(frame);
-                return value == null || value == PhpNull.NULL || !Convert.toBool(value);
+                return value == null || value == PhpNull.NULL || !Convert.toBool(type.profile(value));
             }
-            return !Convert.toBool(operand.execute(frame));
+            return !Convert.toBool(type.profile(operand.execute(frame)));
         }
     }
 

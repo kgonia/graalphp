@@ -202,7 +202,8 @@ public final class DimNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
-        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
+        Object value = containerType.profile(
+                container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame));
         if (value instanceof PhpArray array) {
             Object element = lookup(array, normalizedKey(frame));
             return element != null && element != PhpNull.NULL;
@@ -224,7 +225,8 @@ public final class DimNode extends LValueNode {
 
     @Override
     public Object readIfSet(VirtualFrame frame) {
-        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
+        Object value = containerType.profile(
+                container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame));
         if (value instanceof PhpArray array) {
             Object element = lookup(array, normalizedKey(frame));
             return element == PhpNull.NULL ? null : element;

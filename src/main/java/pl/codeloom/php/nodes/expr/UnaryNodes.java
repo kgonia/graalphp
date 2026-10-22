@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.profiles.ValueProfile;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
@@ -77,6 +78,9 @@ public final class UnaryNodes {
         @Child private ExprNode operand;
         private final int type;
 
+        /** The operand's class: a cast site that sees one type compiles to that one conversion. */
+        private final ValueProfile valueType = ValueProfile.createClassProfile();
+
         public CastNode(ExprNode operand, int type) {
             this.operand = operand;
             this.type = type;
@@ -84,7 +88,7 @@ public final class UnaryNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            Object value = operand.execute(frame);
+            Object value = valueType.profile(operand.execute(frame));
             switch (type) {
                 case TO_LONG:
                     return Convert.toLong(value);

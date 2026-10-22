@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
+import com.oracle.truffle.api.profiles.ValueProfile;
 import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -99,6 +100,7 @@ public final class LogicNodes {
         @Child private ExprNode then;
         @Child private ExprNode otherwise;
         private final CountingConditionProfile profile = CountingConditionProfile.create();
+        private final ValueProfile type = ValueProfile.createClassProfile();
 
         public TernaryNode(ExprNode condition, ExprNode then, ExprNode otherwise) {
             this.condition = ConditionNode.of(condition);
@@ -109,7 +111,7 @@ public final class LogicNodes {
         @Override
         public Object execute(VirtualFrame frame) {
             if (then == null) {
-                Object value = condition.execute(frame);
+                Object value = type.profile(condition.execute(frame));
                 return profile.profile(pl.codeloom.php.runtime.Convert.toBool(value)) ? value : otherwise.execute(frame);
             }
             return profile.profile(condition.executeBoolean(frame)) ? then.execute(frame) : otherwise.execute(frame);
