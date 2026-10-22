@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.stmt;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -199,6 +200,7 @@ public final class BasicStmts {
             if (thrown instanceof PhpObject object && object.getPhpClass().isSubclassOf("throwable")) {
                 throw new PhpException(object);
             }
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Can only throw objects");
         }
     }

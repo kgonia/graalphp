@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -26,6 +27,8 @@ public final class DimNode extends LValueNode {
     /** The container's class (array, string, ArrayAccess object): reads compile to the one case seen. */
     private final ValueProfile containerType = ValueProfile.createClassProfile();
     private final ValueProfile keyType = ValueProfile.createClassProfile();
+    /** Where a string key was found last time (PhpArray.slotOf); checked by identity before hashing. */
+    private int slotGuess = -1;
 
     /** key and constantKey are both null for `$a[]`. */
     public DimNode(ExprNode container, ExprNode key, Object constantKey) {
@@ -50,17 +53,19 @@ public final class DimNode extends LValueNode {
         if (container instanceof LValueNode place) {
             return place;
         }
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use temporary expression in write context");
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
         if (isAppend()) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot use [] for reading");
         }
         Object value = containerType.profile(container.execute(frame));
         if (value instanceof PhpArray array) {
-            Object element = array.get(normalizedKey(frame));
+            Object element = lookup(array, normalizedKey(frame));
             return element == null ? PhpNull.NULL : element;
         }
         if (value instanceof TruffleString string) {
@@ -70,6 +75,22 @@ public final class DimNode extends LValueNode {
             return PhpRef.deref(object.callMethod("offsetget", rawKey(frame)));
         }
         return PhpNull.NULL;
+    }
+
+    /** The dereferenced element under a normalized key, or null when absent. */
+    private Object lookup(PhpArray array, Object k) {
+        if (k instanceof TruffleString) {
+            int slot = slotGuess;
+            if (!array.isKeyAt(slot, k)) {
+                slot = array.slotOf(k);
+                if (slot < 0) {
+                    return null;
+                }
+                slotGuess = slot;
+            }
+            return PhpRef.deref(array.rawAt(slot));
+        }
+        return array.get(k);
     }
 
     private TruffleString stringOffset(TruffleString string, Object offsetValue) {
@@ -113,6 +134,7 @@ public final class DimNode extends LValueNode {
             object.callMethod("offsetset", isAppend() ? PhpNull.NULL : rawKey(frame), value);
             return;
         }
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use object of type " + target + " as array");
     }
 
@@ -120,6 +142,7 @@ public final class DimNode extends LValueNode {
     public PhpRef makeRef(VirtualFrame frame) {
         PhpArray array = place().arrayForWrite(frame);
         if (array == null) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Indirect modification of overloaded element");
         }
         return isAppend() ? array.appendRef() : array.refAt(normalizedKey(frame));
@@ -129,6 +152,7 @@ public final class DimNode extends LValueNode {
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         PhpArray array = place().arrayForWrite(frame);
         if (array == null) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Indirect modification of overloaded element");
         }
         array.putRef(isAppend() ? (Object) array.nextIndex() : normalizedKey(frame), ref);
@@ -142,6 +166,7 @@ public final class DimNode extends LValueNode {
             if (target instanceof PhpObject object && object.isArrayAccess()) {
                 Object element = PhpRef.deref(object.callMethod("offsetget", rawKey(frame)));
                 if (element instanceof PhpArray) {
+                    CompilerDirectives.transferToInterpreter();
                     throw new PhpError("Indirect modification of overloaded element");
                 }
             }
@@ -155,6 +180,7 @@ public final class DimNode extends LValueNode {
         Object k = normalizedKey(frame);
         PhpArray nested = array.arrayForWrite(k);
         if (nested == null && !(array.get(k) instanceof PhpObject)) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot use a scalar value as an array");
         }
         return nested;
@@ -176,12 +202,9 @@ public final class DimNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
-        if (container instanceof LValueNode place && !place.isSet(frame)) {
-            return false;
-        }
-        Object value = container.execute(frame);
+        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray array) {
-            Object element = array.get(normalizedKey(frame));
+            Object element = lookup(array, normalizedKey(frame));
             return element != null && element != PhpNull.NULL;
         }
         if (value instanceof TruffleString string) {
@@ -203,7 +226,7 @@ public final class DimNode extends LValueNode {
     public Object readIfSet(VirtualFrame frame) {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray array) {
-            Object element = array.get(normalizedKey(frame));
+            Object element = lookup(array, normalizedKey(frame));
             return element == PhpNull.NULL ? null : element;
         }
         if (value == null || value == PhpNull.NULL) {

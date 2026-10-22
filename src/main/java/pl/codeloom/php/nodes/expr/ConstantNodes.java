@@ -29,6 +29,7 @@ public final class ConstantNodes {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 Object found = PhpContext.get(this).findConstant(name);
                 if (found == null) {
+                    CompilerDirectives.transferToInterpreter();
                     throw new PhpError("Undefined constant \"" + name + "\"");
                 }
                 value = found;
@@ -58,6 +59,7 @@ public final class ConstantNodes {
             PhpClass phpClass = classRef.resolve(frame);
             Object found = phpClass.getConstant(name);
             if (found == null) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
             }
             if (cacheable) {

@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.intrinsics;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -120,6 +121,7 @@ public final class Intrinsics {
     @TruffleBoundary
     private static TruffleString convertString(Object value, String function, int position) {
         if (value instanceof PhpArray) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("TypeError: " + function + "(): Argument #" + position + " must be of type string, "
                     + "array given");
         }
@@ -209,6 +211,7 @@ public final class Intrinsics {
             if (v instanceof PhpObject object && object.getPhpClass().isSubclassOf("countable")) {
                 return Convert.toLong(object.callMethod("count"));
             }
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("TypeError: count(): Argument #1 ($value) must be of type Countable|array, "
                     + Convert.typeName(v) + " given");
         }
@@ -480,6 +483,7 @@ public final class Intrinsics {
             if (c instanceof PhpObject object) {
                 return object.getProperty(Str.java(Convert.toStr(k))) != null;
             }
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("TypeError: array_key_exists(): Argument #2 ($array) must be of type array, "
                     + Convert.typeName(c) + " given");
         }

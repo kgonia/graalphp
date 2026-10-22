@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -82,6 +83,7 @@ public final class StaticCallNode extends ExprNode {
         protected PhpFunction find(PhpClass phpClass) {
             PhpFunction method = phpClass.findMethod(lowerName);
             if (method == null) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
             }
             return method;

@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
@@ -19,6 +20,7 @@ public final class StaticPropNode extends LValueNode {
     private PhpRef ref(VirtualFrame frame) {
         PhpRef ref = classRef.resolve(frame).getStaticProperty(name);
         if (ref == null) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Access to undeclared static property " + classRef.getName() + "::$" + name);
         }
         return ref;
@@ -41,6 +43,7 @@ public final class StaticPropNode extends LValueNode {
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Binding a static property by reference is not supported");
     }
 
@@ -51,6 +54,7 @@ public final class StaticPropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Attempt to unset static property " + classRef.getName() + "::$" + name);
     }
 

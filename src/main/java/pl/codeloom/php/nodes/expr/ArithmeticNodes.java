@@ -207,14 +207,14 @@ public final class ArithmeticNodes {
         protected TruffleString concat(TruffleString a, long b,
                                        @Cached TruffleString.FromLongNode fromLong,
                                        @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(a, fromLong.execute(b, Str.ENC, true), Str.ENC, true);
+            return concat.execute(a, fromLong.execute(b, Str.ENC, false), Str.ENC, true);
         }
 
         @Specialization
         protected TruffleString concat(long a, TruffleString b,
                                        @Cached TruffleString.FromLongNode fromLong,
                                        @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(fromLong.execute(a, Str.ENC, true), b, Str.ENC, true);
+            return concat.execute(fromLong.execute(a, Str.ENC, false), b, Str.ENC, true);
         }
 
         @Fallback

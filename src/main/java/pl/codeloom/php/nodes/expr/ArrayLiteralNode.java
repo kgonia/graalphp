@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -51,6 +52,7 @@ public final class ArrayLiteralNode extends ExprNode {
 
     private static void spread(PhpArray array, Object source) {
         if (!(source instanceof PhpArray items)) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Only arrays and Traversables can be unpacked");
         }
         for (int p = items.firstPosition(); p >= 0; p = items.nextPosition(p)) {

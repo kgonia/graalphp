@@ -136,10 +136,12 @@ public final class ForeachNode extends StmtNode {
 
     private void executeByRef(VirtualFrame frame) {
         if (!(subject instanceof LValueNode place)) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot iterate a temporary by reference");
         }
         PhpArray array = place.arrayForWrite(frame);
         if (array == null) {
+            CompilerDirectives.transferToInterpreter();
             throw new PhpError("foreach by reference over an object is not supported");
         }
         runArray(frame, array);
@@ -182,6 +184,7 @@ public final class ForeachNode extends StmtNode {
     private static PhpObject unwrapAggregates(PhpObject object) {
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
             if (!(object.callMethod("getiterator") instanceof PhpObject inner)) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

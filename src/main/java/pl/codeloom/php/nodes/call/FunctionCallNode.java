@@ -33,6 +33,7 @@ public final class FunctionCallNode extends ExprNode {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             PhpFunction found = PhpContext.get(this).findFunction(lowerName);
             if (found == null) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Call to undefined function " + displayName + "()");
             }
             call = insert(DirectCallNode.create(found.getCallTarget()));

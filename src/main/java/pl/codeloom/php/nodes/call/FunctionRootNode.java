@@ -124,9 +124,9 @@ public final class FunctionRootNode extends RootNode {
                 + " passed and at least " + required + " expected");
     }
 
-    @TruffleBoundary
+    /** Not a boundary: inlined into the caller, the array can be escape-analyzed away (apply_filters' ...$args). */
     private static PhpArray collectVariadic(Object[] arguments, int from, int given) {
-        PhpArray rest = new PhpArray();
+        PhpArray rest = PhpArray.ofCapacity(given - from);
         for (int i = from; i < given; i++) {
             rest.append(PhpRef.deref(arguments[PhpFunction.ARG_FIRST + i]));
         }

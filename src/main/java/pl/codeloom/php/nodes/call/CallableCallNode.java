@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.PhpArray;
@@ -28,6 +29,7 @@ public final class CallableCallNode extends ExprNode {
         if (argsArray != null) {
             Object array = argsArray.execute(frame);
             if (!(array instanceof PhpArray list)) {
+                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("call_user_func_array(): Argument #2 ($args) must be of type array");
             }
             values = toValues(list);

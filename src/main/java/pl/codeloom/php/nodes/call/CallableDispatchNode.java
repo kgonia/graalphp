@@ -18,8 +18,8 @@ import pl.codeloom.php.runtime.Str;
 
 /**
  * Calls a callable value with already-evaluated arguments: `$f(...)`, call_user_func(_array). Inline caches
- * per callable shape (closure function, function name, [object class, method name]) make the hot cases direct
- * calls; WP_Hook's dispatch of `$the_['function']` goes through here.
+ * per callable shape (closure function, function name, [object class, method name], [class name, method name])
+ * make the hot cases direct calls; WP_Hook's dispatch of `$the_['function']` goes through here.
  */
 public abstract class CallableDispatchNode extends Node {
     static final int LIMIT = 6;
@@ -56,7 +56,19 @@ public abstract class CallableDispatchNode extends Node {
         return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, cachedClass, null, values)));
     }
 
-    @Specialization(replaces = {"closure", "named", "objectMethod"})
+    @Specialization(guards = {"isClassMethod(callable)", "equalClass.execute(className(callable), cachedClassName, ENC)",
+            "equalMethod.execute(methodName(callable), cachedMethod, ENC)"}, limit = "LIMIT")
+    protected Object classMethod(PhpArray callable, Object[] values,
+                                 @Cached("className(callable)") TruffleString cachedClassName,
+                                 @Cached("methodName(callable)") TruffleString cachedMethod,
+                                 @Cached TruffleString.EqualNode equalClass,
+                                 @Cached TruffleString.EqualNode equalMethod,
+                                 @Cached("resolve(callable)") Callables.Target target,
+                                 @Cached("create(target.function().getCallTarget())") DirectCallNode call) {
+        return PhpRef.deref(call.call(target.frameArguments(values)));
+    }
+
+    @Specialization(replaces = {"closure", "named", "objectMethod", "classMethod"})
     protected Object generic(Object callable, Object[] values,
                              @Cached IndirectCallNode call) {
         Callables.Target target = Callables.resolveOrThrow(PhpContext.get(this), callable);
@@ -72,6 +84,15 @@ public abstract class CallableDispatchNode extends Node {
     protected static boolean isObjectMethod(PhpArray callable) {
         return callable.size() == 2 && callable.get(0L) instanceof PhpObject
                 && callable.get(1L) instanceof TruffleString;
+    }
+
+    protected static boolean isClassMethod(PhpArray callable) {
+        return callable.size() == 2 && callable.get(0L) instanceof TruffleString
+                && callable.get(1L) instanceof TruffleString;
+    }
+
+    protected static TruffleString className(PhpArray callable) {
+        return (TruffleString) callable.get(0L);
     }
 
     protected static PhpClass classOf(PhpArray callable) {

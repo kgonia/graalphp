@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -25,6 +26,7 @@ final class Places {
         if (inner instanceof PhpObject) {
             return null;
         }
+        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use a scalar value as an array");
     }
 }

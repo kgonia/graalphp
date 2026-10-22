@@ -143,6 +143,20 @@ public final class PhpArray implements TruffleObject {
         return getRaw(key) != null;
     }
 
+    /**
+     * The hash-layout slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} and {@link #rawAt}
+     * a lookup site can remember where a key was and confirm it next time with one identity check: arrays built
+     * the same way keep a key at the same slot.
+     */
+    public int slotOf(Object key) {
+        return packed != null ? -1 : find(key, hash(key));
+    }
+
+    /** Whether slot holds this very key instance (a cheap check of a remembered slotOf result). */
+    public boolean isKeyAt(int slot, Object key) {
+        return packed == null && slot >= 0 && slot < used && keys[slot] == key;
+    }
+
     private Object hashGet(Object key) {
         int slot = find(key, hash(key));
         return slot < 0 ? null : values[slot];
