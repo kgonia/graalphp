@@ -24,6 +24,7 @@ import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -98,9 +99,60 @@ final class PcreFunctions {
     }
 
     /**
-     * One preg call's view of a subject and the current match block. PCRE2 reads the subject's Java array in
-     * place (a critical downcall with heap access), so nothing is copied.
+     * Where subjects live in native memory. Large ones are cached by the identity of their (never modified) byte
+     * arrays: the block parser and the tag processor call preg_match on one document thousands of times at growing
+     * offsets. Cached copies are GC-managed (Arena.ofAuto), so an evicted one is freed once unused. Small ones are
+     * copied into scratch buffers reused per nesting depth (a preg_replace_callback callback may call preg_*
+     * again), which avoids a GC-managed allocation per call.
      */
+    private static final class SubjectCache {
+        private static final int SIZE = 4;
+        private static final int LARGE = 4096;
+        private static MemorySegment[] scratch = new MemorySegment[4];
+        private static int depth;
+
+        static MemorySegment acquire(byte[] subject) {
+            if (subject.length >= LARGE) {
+                depth++;
+                return nativeCopy(subject);
+            }
+            if (depth == scratch.length) {
+                scratch = Arrays.copyOf(scratch, depth * 2);
+            }
+            MemorySegment buffer = scratch[depth];
+            if (buffer == null || buffer.byteSize() < subject.length) {
+                buffer = Arena.global().allocate(Math.max(256, Integer.highestOneBit(Math.max(1, subject.length)) * 2L));
+                scratch[depth] = buffer;
+            }
+            depth++;
+            MemorySegment.copy(subject, 0, buffer, ValueLayout.JAVA_BYTE, 0, subject.length);
+            return buffer;
+        }
+
+        static void release() {
+            depth--;
+        }
+
+        private static final byte[][] arrays = new byte[SIZE][];
+        private static final MemorySegment[] copies = new MemorySegment[SIZE];
+        private static int next;
+
+        private static MemorySegment nativeCopy(byte[] subject) {
+            for (int i = 0; i < SIZE; i++) {
+                if (arrays[i] == subject) {
+                    return copies[i];
+                }
+            }
+            MemorySegment copy = Arena.ofAuto().allocate(Math.max(1, subject.length));
+            MemorySegment.copy(subject, 0, copy, ValueLayout.JAVA_BYTE, 0, subject.length);
+            arrays[next] = subject;
+            copies[next] = copy;
+            next = (next + 1) % SIZE;
+            return copy;
+        }
+    }
+
+    /** One preg call's view of a subject (its native copy) and the current match block. */
     private static final class Matcher implements AutoCloseable {
         final Regex regex;
         final byte[] subject;
@@ -112,7 +164,7 @@ final class PcreFunctions {
         Matcher(Regex regex, byte[] subject) {
             this.regex = regex;
             this.subject = subject;
-            this.nativeSubject = MemorySegment.ofArray(subject);
+            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : SubjectCache.acquire(subject);
             if (regex.matchDataInUse) {
                 ownsMatchData = true;
                 matchData = Native.createMatchData(regex.code);
@@ -174,6 +226,9 @@ final class PcreFunctions {
         public void close() {
             if (!ownsMatchData) {
                 regex.matchDataInUse = false;
+            }
+            if (!Native.CRITICAL) {
+                SubjectCache.release();
             }
         }
     }
@@ -804,10 +859,19 @@ final class PcreFunctions {
         private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
         /** Critical with heap access: the subject is passed as a Java array segment; matching never calls back. */
-        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"),
+        /**
+         * -Dphp.pcre2.critical=true passes subjects as Java arrays through a critical downcall. That avoids the
+         * copy but made allocation-heavy calls (preg_split, preg_match_all with matches) 2-3x slower: the GC has
+         * to pin the array for every call. The default copies subjects to native memory (SubjectCache).
+         */
+        static final boolean CRITICAL = Boolean.getBoolean("php.pcre2.critical");
+        private static final MethodHandle MATCH = CRITICAL ? LINKER.downcallHandle(find("pcre2_match_8"),
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
                         ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS), Linker.Option.critical(true));
+                        ValueLayout.ADDRESS), Linker.Option.critical(true))
+                : handle("pcre2_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS);
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,

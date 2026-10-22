@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -52,9 +53,16 @@ public final class Str {
         return TruffleString.fromByteArrayUncached(bytes, ENC, false);
     }
 
+    /**
+     * A new string holding a copy of the range. Copies with Arrays.copyOfRange and hands TruffleString an exact
+     * array: TruffleString's own copying path, called from host-compiled built-ins, profiled ~10x slower.
+     */
     @TruffleBoundary
     public static TruffleString of(byte[] bytes, int offset, int length) {
-        return TruffleString.fromByteArrayUncached(bytes, offset, length, ENC, true);
+        if (length == 1) {
+            return SINGLE_BYTES[bytes[offset] & 0xFF];
+        }
+        return TruffleString.fromByteArrayUncached(Arrays.copyOfRange(bytes, offset, offset + length), ENC, false);
     }
 
     /** A fresh copy of the string's bytes, which the caller may modify. */
