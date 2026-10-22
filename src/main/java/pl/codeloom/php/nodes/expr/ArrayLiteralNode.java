@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.nodes.ExprNode;
@@ -18,7 +19,7 @@ public final class ArrayLiteralNode extends ExprNode {
 
     @Children private final ExprNode[] keys;
     @Children private final ExprNode[] values;
-    private final byte[] kinds;
+    @CompilationFinal(dimensions = 1) private final byte[] kinds;
 
     public ArrayLiteralNode(ExprNode[] keys, ExprNode[] values, byte[] kinds) {
         this.keys = keys;

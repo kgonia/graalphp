@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -26,11 +27,11 @@ import pl.codeloom.php.runtime.PhpRef;
  */
 public final class FunctionRootNode extends RootNode {
     private final String name;
-    private final PhpFunction.Param[] params;
-    private final int[] paramSlots;
+    @CompilationFinal(dimensions = 1) private final PhpFunction.Param[] params;
+    @CompilationFinal(dimensions = 1) private final int[] paramSlots;
     @Children private final ExprNode[] defaults;
-    private final int[] captureSlots;
-    private final boolean[] captureByRef;
+    @CompilationFinal(dimensions = 1) private final int[] captureSlots;
+    @CompilationFinal(dimensions = 1) private final boolean[] captureByRef;
     private final int localCount;
     private final char returnCoerce;
     private final boolean returnNullable;

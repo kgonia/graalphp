@@ -34,6 +34,7 @@ import pl.codeloom.php.nodes.expr.LogicNodes;
 import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.expr.ThrowExprNode;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
+import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.LoopNodes;
@@ -1202,7 +1203,37 @@ public final class Translator {
             default:
                 break;
         }
+        ExprNode intrinsic = intrinsic(name.toLowerCase(), args);
+        if (intrinsic != null) {
+            return intrinsic;
+        }
         return new FunctionCallNode(name, arguments(args));
+    }
+
+    /** The in-place node for a small built-in (see {@link Intrinsics}), or null for a regular call. */
+    private ExprNode intrinsic(String lowerName, Ast args) {
+        if (!Intrinsics.handles(lowerName)) {
+            return null;
+        }
+        int count = args == null ? 0 : args.size();
+        ExprNode[] nodes = new ExprNode[count];
+        for (int i = 0; i < count; i++) {
+            Object arg = args.child(i);
+            if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
+                    || ast.is("AST_CALLABLE_CONVERT"))) {
+                return null;
+            }
+            if (Intrinsics.byRef(lowerName, i)) {
+                if (!(arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
+                        || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")))) {
+                    return null;
+                }
+                nodes[i] = place(arg);
+            } else {
+                nodes[i] = expression(arg);
+            }
+        }
+        return Intrinsics.create(lowerName, nodes);
     }
 
     private static Ast dropFirst(Ast list) {

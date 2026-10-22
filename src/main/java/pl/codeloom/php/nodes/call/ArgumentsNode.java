@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -20,7 +21,7 @@ import java.util.List;
  */
 public final class ArgumentsNode extends Node {
     @Children private final ExprNode[] args;
-    private final boolean[] spread;
+    @CompilationFinal(dimensions = 1) private final boolean[] spread;
     private final boolean hasSpread;
 
     public ArgumentsNode(ExprNode[] args, boolean[] spread) {

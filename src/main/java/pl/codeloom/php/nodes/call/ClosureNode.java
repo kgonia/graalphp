@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.nodes.ExprNode;
@@ -19,7 +20,7 @@ import pl.codeloom.php.runtime.PhpObject;
 public final class ClosureNode extends ExprNode {
     private final PhpFunction function;
     @Children private final ExprNode[] captures;
-    private final boolean[] byRef;
+    @CompilationFinal(dimensions = 1) private final boolean[] byRef;
     private final boolean isStatic;
     @Child private ClassRefNode scope;
 

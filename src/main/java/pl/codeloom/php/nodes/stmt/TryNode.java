@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.stmt;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.PhpContext;
@@ -16,7 +17,7 @@ import pl.codeloom.php.runtime.Str;
  */
 public final class TryNode extends StmtNode {
     @Child private StmtNode body;
-    private final String[][] catchTypes;
+    @CompilationFinal(dimensions = 2) private final String[][] catchTypes;
     @Children private final LValueNode[] catchTargets;
     @Children private final StmtNode[] catchBodies;
     @Child private StmtNode finallyBody;

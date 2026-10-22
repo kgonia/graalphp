@@ -27,8 +27,12 @@ public final class PhpArray implements TruffleObject {
     private Object[] packed;
     private int size;
 
-    /** Hash layout: slot keys (null = deleted), slot values, bucket heads and chains, slots used incl. deleted. */
+    /**
+     * Hash layout: slot keys (null = deleted), their hashes (compared before the keys), slot values, bucket heads
+     * and chains, and the slots used including deleted ones.
+     */
     private Object[] keys;
+    private int[] hashes;
     private Object[] values;
     private int[] buckets;
     private int[] chain;
@@ -94,6 +98,7 @@ public final class PhpArray implements TruffleObject {
         } else {
             copy.packed = null;
             copy.keys = keys.clone();
+            copy.hashes = hashes.clone();
             copy.values = values.clone();
             copy.buckets = buckets.clone();
             copy.chain = chain.clone();
@@ -138,7 +143,6 @@ public final class PhpArray implements TruffleObject {
         return getRaw(key) != null;
     }
 
-    @TruffleBoundary
     private Object hashGet(Object key) {
         int slot = find(key, hash(key));
         return slot < 0 ? null : values[slot];
@@ -466,6 +470,7 @@ public final class PhpArray implements TruffleObject {
         int count = size;
         int capacity = Integer.highestOneBit(Math.max(MIN_CAPACITY, count * 2) - 1) << 1;
         keys = new Object[capacity];
+        hashes = new int[capacity];
         values = new Object[capacity];
         chain = new int[capacity];
         buckets = new int[capacity];
@@ -485,6 +490,7 @@ public final class PhpArray implements TruffleObject {
         }
         int slot = used++;
         keys[slot] = key;
+        hashes[slot] = h;
         values[slot] = value;
         int bucket = h & (buckets.length - 1);
         chain[slot] = buckets[bucket];
@@ -499,10 +505,12 @@ public final class PhpArray implements TruffleObject {
     private void grow() {
         int capacity = size * 2 >= keys.length ? keys.length * 2 : keys.length;
         Object[] oldKeys = keys;
+        int[] oldHashes = hashes;
         Object[] oldValues = values;
         int oldUsed = used;
         int oldPointer = pointer;
         keys = new Object[capacity];
+        hashes = new int[capacity];
         values = new Object[capacity];
         chain = new int[capacity];
         buckets = new int[capacity];
@@ -516,7 +524,7 @@ public final class PhpArray implements TruffleObject {
                 if (i == oldPointer) {
                     pointer = used;
                 }
-                insert(oldKeys[i], hash(oldKeys[i]), oldValues[i]);
+                insert(oldKeys[i], oldHashes[i], oldValues[i]);
             }
         }
         nextIndex = savedNext;
@@ -524,7 +532,7 @@ public final class PhpArray implements TruffleObject {
 
     private int find(Object key, int h) {
         for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
-            if (keyEquals(keys[slot], key)) {
+            if (hashes[slot] == h && keyEquals(keys[slot], key)) {
                 return slot;
             }
         }
@@ -539,7 +547,8 @@ public final class PhpArray implements TruffleObject {
             v ^= v >>> 33;
             return (int) v;
         }
-        return ((TruffleString) key).hashCodeUncached(Str.ENC);
+        // TruffleString caches its hash code in the string, so repeated lookups with one key don't rehash
+        return key.hashCode();
     }
 
     private static boolean keyEquals(Object stored, Object key) {
@@ -547,7 +556,7 @@ public final class PhpArray implements TruffleObject {
             return key instanceof Long b && a.longValue() == b.longValue();
         }
         if (stored instanceof TruffleString a && key instanceof TruffleString b) {
-            return a.equalsUncached(b, Str.ENC);
+            return a == b || a.equals(b);
         }
         return false;
     }

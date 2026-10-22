@@ -31,7 +31,7 @@ public final class PhpFunction {
     }
 
     private final String name;
-    private final Param[] params;
+    @CompilationFinal(dimensions = 1) private final Param[] params;
     private final boolean returnsRef;
     private final boolean isStatic;
     private final boolean isPublic;
