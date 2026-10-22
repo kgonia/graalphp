@@ -31,6 +31,11 @@ public abstract class ExprNode extends Node {
         throw new UnexpectedResultException(value);
     }
 
+    /** Whether executeBoolean is this node's natural result (comparisons, tests, logic): no truthiness needed. */
+    public boolean isBooleanValued() {
+        return false;
+    }
+
     /** Constant expressions (literals, folded constants) return their value here; others return null. */
     public Object constantValue() {
         return null;

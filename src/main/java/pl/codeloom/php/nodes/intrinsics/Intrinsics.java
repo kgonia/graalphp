@@ -142,6 +142,11 @@ public final class Intrinsics {
 
     /** is_array() and friends. */
     static final class TypeTestNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         static final int ARRAY = 0;
         static final int STRING = 1;
         static final int INT = 2;
@@ -387,6 +392,11 @@ public final class Intrinsics {
 
     /** str_contains / str_starts_with / str_ends_with. */
     static final class ContainsNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         static final int CONTAINS = 0;
         static final int STARTS = 1;
         static final int ENDS = 2;
@@ -432,6 +442,11 @@ public final class Intrinsics {
     }
 
     static final class KeyExistsNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode key;
         @Child private ExprNode container;
 

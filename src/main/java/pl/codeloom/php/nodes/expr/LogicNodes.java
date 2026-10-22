@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
+import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpNull;
@@ -13,14 +14,19 @@ public final class LogicNodes {
 
     /** `&&` / `and`, or `||` / `or` with isOr. */
     public static final class AndOrNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode left;
         @Child private ExprNode right;
         private final boolean isOr;
         private final CountingConditionProfile shortCircuit = CountingConditionProfile.create();
 
         public AndOrNode(ExprNode left, ExprNode right, boolean isOr) {
-            this.left = left;
-            this.right = right;
+            this.left = ConditionNode.of(left);
+            this.right = ConditionNode.of(right);
             this.isOr = isOr;
         }
 
@@ -40,12 +46,17 @@ public final class LogicNodes {
     }
 
     public static final class XorNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode left;
         @Child private ExprNode right;
 
         public XorNode(ExprNode left, ExprNode right) {
-            this.left = left;
-            this.right = right;
+            this.left = ConditionNode.of(left);
+            this.right = ConditionNode.of(right);
         }
 
         @Override
@@ -60,10 +71,15 @@ public final class LogicNodes {
     }
 
     public static final class NotNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode operand;
 
         public NotNode(ExprNode operand) {
-            this.operand = operand;
+            this.operand = ConditionNode.of(operand);
         }
 
         @Override
@@ -85,7 +101,7 @@ public final class LogicNodes {
         private final CountingConditionProfile profile = CountingConditionProfile.create();
 
         public TernaryNode(ExprNode condition, ExprNode then, ExprNode otherwise) {
-            this.condition = condition;
+            this.condition = ConditionNode.of(condition);
             this.then = then;
             this.otherwise = otherwise;
         }

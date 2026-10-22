@@ -17,6 +17,7 @@ public final class NewNode extends ExprNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Construct construct = NewNodeFactory.ConstructNodeGen.create();
+    @Child private InstantiateNode instantiate = new InstantiateNode();
 
     public NewNode(ClassRefNode classRef, ArgumentsNode args) {
         this.classRef = classRef;
@@ -26,7 +27,7 @@ public final class NewNode extends ExprNode {
     @Override
     public Object execute(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
-        PhpObject object = phpClass.instantiate();
+        PhpObject object = instantiate.execute(phpClass);
         if (phpClass.getConstructor() != null) {
             construct.execute(frame, phpClass, object, args);
         }

@@ -15,6 +15,11 @@ public final class TestNodes {
     }
 
     public static final class IssetNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Children private final LValueNode[] places;
 
         public IssetNode(LValueNode[] places) {
@@ -39,6 +44,11 @@ public final class TestNodes {
     }
 
     public static final class EmptyNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode operand;
 
         public EmptyNode(ExprNode operand) {
@@ -62,6 +72,11 @@ public final class TestNodes {
 
     /** `$x instanceof Name`; the class need not be loaded (an unknown class matches nothing). */
     public static final class InstanceofNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode operand;
         private final String lowerClassName;
 

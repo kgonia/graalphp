@@ -6,6 +6,7 @@ import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -75,7 +76,7 @@ public final class BasicStmts {
         private final CountingConditionProfile profile = CountingConditionProfile.create();
 
         public IfNode(ExprNode condition, StmtNode then, StmtNode otherwise) {
-            this.condition = condition;
+            this.condition = ConditionNode.of(condition);
             this.then = then;
             this.otherwise = otherwise;
         }

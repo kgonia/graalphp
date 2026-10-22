@@ -155,11 +155,49 @@ public final class PhpClass {
     /** A new object with declared properties at their defaults, in declaration order (no constructor call). */
     @TruffleBoundary
     public PhpObject instantiate() {
-        if (isAbstract || isInterface) {
+        if (!isInstantiable()) {
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
         PhpObject object = new PhpObject(rootShape, this);
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        String[] names = declaredNames();
+        Object[] defaults = declaredDefaults();
+        for (int i = 0; i < names.length; i++) {
+            Object value = defaults[i];
+            if (value instanceof Long l) {
+                library.putLong(object, names[i], l);
+            } else {
+                if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+                library.put(object, names[i], value);
+            }
+        }
+        return object;
+    }
+
+    public boolean isInstantiable() {
+        return !isAbstract && !isInterface;
+    }
+
+    public Shape getRootShape() {
+        return rootShape;
+    }
+
+    /** Declared (and inherited) instance property names, in declaration order. */
+    @TruffleBoundary
+    public String[] declaredNames() {
+        return properties.keySet().toArray(new String[0]);
+    }
+
+    /**
+     * The properties' default values, in declaredNames order. Deferred defaults (constant expressions) are
+     * evaluated on first use and kept; an array default holds one reference for the declaration itself.
+     */
+    @TruffleBoundary
+    public Object[] declaredDefaults() {
+        Object[] values = new Object[properties.size()];
+        int i = 0;
         for (Map.Entry<String, PropertyDecl> entry : properties.entrySet()) {
             Object value = entry.getValue().defaultValue();
             if (value instanceof Thunk thunk) {
@@ -167,14 +205,11 @@ public final class PhpClass {
                 if (value instanceof PhpArray array) {
                     array.addHolder();
                 }
-                properties.put(entry.getKey(), new PropertyDecl(entry.getKey(), value, entry.getValue().isPublic()));
+                entry.setValue(new PropertyDecl(entry.getKey(), value, entry.getValue().isPublic()));
             }
-            if (value instanceof PhpArray array) {
-                array.addHolder();
-            }
-            library.put(object, entry.getKey(), value);
+            values[i++] = value;
         }
-        return object;
+        return values;
     }
 
     @Override

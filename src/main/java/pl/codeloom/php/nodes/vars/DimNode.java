@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -22,6 +23,9 @@ public final class DimNode extends LValueNode {
     @Child private ExprNode key;
     @Child private TruffleString.ReadByteNode readByte = TruffleString.ReadByteNode.create();
     private final Object constantKey;
+    /** The container's class (array, string, ArrayAccess object): reads compile to the one case seen. */
+    private final ValueProfile containerType = ValueProfile.createClassProfile();
+    private final ValueProfile keyType = ValueProfile.createClassProfile();
 
     /** key and constantKey are both null for `$a[]`. */
     public DimNode(ExprNode container, ExprNode key, Object constantKey) {
@@ -39,7 +43,7 @@ public final class DimNode extends LValueNode {
     }
 
     private Object normalizedKey(VirtualFrame frame) {
-        return constantKey != null ? constantKey : ArrayKey.of(key.execute(frame));
+        return constantKey != null ? constantKey : ArrayKey.of(keyType.profile(key.execute(frame)));
     }
 
     private LValueNode place() {
@@ -54,7 +58,7 @@ public final class DimNode extends LValueNode {
         if (isAppend()) {
             throw new PhpError("Cannot use [] for reading");
         }
-        Object value = container.execute(frame);
+        Object value = containerType.profile(container.execute(frame));
         if (value instanceof PhpArray array) {
             Object element = array.get(normalizedKey(frame));
             return element == null ? PhpNull.NULL : element;

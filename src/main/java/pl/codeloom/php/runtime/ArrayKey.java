@@ -14,6 +14,11 @@ public final class ArrayKey {
             return key;
         }
         if (key instanceof TruffleString s) {
+            int length = s.byteLength(Str.ENC);
+            // php-src's ZEND_HANDLE_NUMERIC_STR pre-check: only "-" or a digit can start an integer key
+            if (length == 0 || length > 20 || !mayStartInteger(s)) {
+                return s;
+            }
             return ofString(s);
         }
         if (key instanceof Boolean b) {
@@ -26,6 +31,12 @@ public final class ArrayKey {
             return Str.EMPTY;
         }
         throw new PhpError("Cannot access offset of type " + Convert.typeName(key) + " on array");
+    }
+
+    @TruffleBoundary
+    private static boolean mayStartInteger(TruffleString s) {
+        int first = Str.byteAt(s, 0);
+        return first >= '0' && first <= '9' || first == '-';
     }
 
     /** "123" and "-5" become ints; "0123", "1.5", " 1", "-0" and out-of-range digits stay strings. */

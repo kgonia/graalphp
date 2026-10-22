@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
+import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
@@ -20,9 +21,17 @@ public final class CompareNodes {
 
     /** `===`, or `!==` with negate. */
     public static final class IdenticalNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode left;
         @Child private ExprNode right;
         @Child private TruffleString.EqualNode equal = TruffleString.EqualNode.create();
+        /** Operand class profiles: a site comparing one type pair compiles to that comparison only. */
+        private final ValueProfile leftType = ValueProfile.createClassProfile();
+        private final ValueProfile rightType = ValueProfile.createClassProfile();
         private final boolean negate;
 
         public IdenticalNode(ExprNode left, ExprNode right, boolean negate) {
@@ -38,7 +47,7 @@ public final class CompareNodes {
 
         @Override
         public boolean executeBoolean(VirtualFrame frame) {
-            return identical(left.execute(frame), right.execute(frame)) != negate;
+            return identical(leftType.profile(left.execute(frame)), rightType.profile(right.execute(frame))) != negate;
         }
 
         private boolean identical(Object a, Object b) {
@@ -63,9 +72,17 @@ public final class CompareNodes {
 
     /** `==`, or `!=` with negate. */
     public static final class EqualNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode left;
         @Child private ExprNode right;
         @Child private TruffleString.EqualNode equal = TruffleString.EqualNode.create();
+        /** Operand class profiles: a site comparing one type pair compiles to that comparison only. */
+        private final ValueProfile leftType = ValueProfile.createClassProfile();
+        private final ValueProfile rightType = ValueProfile.createClassProfile();
         private final boolean negate;
 
         public EqualNode(ExprNode left, ExprNode right, boolean negate) {
@@ -81,7 +98,7 @@ public final class CompareNodes {
 
         @Override
         public boolean executeBoolean(VirtualFrame frame) {
-            return equals(left.execute(frame), right.execute(frame)) != negate;
+            return equals(leftType.profile(left.execute(frame)), rightType.profile(right.execute(frame))) != negate;
         }
 
         private boolean equals(Object a, Object b) {
@@ -115,6 +132,11 @@ public final class CompareNodes {
      * `<` and `<=` (orEqual); with swapped, `>` and `>=` as `right < left`. Operands still evaluate left first.
      */
     public static final class LessNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
         @Child private ExprNode left;
         @Child private ExprNode right;
         private final boolean orEqual;

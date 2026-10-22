@@ -7,6 +7,7 @@ import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.nodes.RepeatingNode;
+import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -49,8 +50,8 @@ public final class LoopNodes {
 
         /** checkFirst false makes it do-while. */
         public WhileNode(ExprNode condition, StmtNode body, boolean checkFirst) {
-            this.condition = condition;
-            this.loop = Truffle.getRuntime().createLoopNode(new WhileBody(condition, body));
+            this.condition = ConditionNode.of(condition);
+            this.loop = Truffle.getRuntime().createLoopNode(new WhileBody(this.condition, body));
             this.checkFirst = checkFirst;
         }
 
@@ -104,6 +105,9 @@ public final class LoopNodes {
 
         ForBody(ExprNode[] condition, ExprNode[] step, StmtNode body) {
             this.condition = condition;
+            if (condition.length > 0) {
+                condition[condition.length - 1] = ConditionNode.of(condition[condition.length - 1]);
+            }
             this.step = step;
             this.body = body;
         }
