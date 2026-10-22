@@ -95,4 +95,30 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - An unsynchronized byte builder.
   - **Why wpautop and wptexturize stay low:** in PHP they are almost all PCRE time, so only a few hundred µs of PHP's run is its own code. The PHP-code metric (D9) only reaches parity there if the Java around each regex call is about as lean as PHP's C wrapper. That gap is per-match allocation and copying in the `preg_*` built-ins, not the engine.
   - **Tools that worked:** `polyglot.cpusampler` (now that roots carry source sections), `compiler.TraceMethodExpansion` with `NodeSourcePositions` (it showed the unfolded arrays and the inlined error-message string building), and JFR for the Java runtime code that compiled PHP calls into.
+- **2026-10-22, M5 second pass, and a correction.** The 0.59× above compared Truffle against a PHP baseline recorded earlier, while other jobs loaded the box. Re-recorded on a quieter machine, PHP's own times dropped by about 30%. Every comparison now comes from `bench/gate1/compare.sh`: PHP, Truffle and the native-time run back to back on the same pinned cpuset (14–21; other jobs use cores 0–1, 10–13, 22–23).
 
+  | Kernel | PHP 8.5 | Truffle | End-to-end | Native share | PHP-code |
+  |---|---:|---:|---:|---:|---:|
+  | hooks | 12.8 ms | 18.6 ms | 0.69× | 0% | 0.69× |
+  | escape | 2.5 ms | 3.1 ms | 0.79× | 4% | 0.79× |
+  | slugs | 1.7 ms | 2.3 ms | 0.77× | 17% | 0.73× |
+  | wpautop | 5.0 ms | 7.9 ms | 0.63× | 66% | 0.36× |
+  | wptexturize | 2.8 ms | 4.9 ms | 0.57× | 41% | 0.44× |
+  | blocks | 8.2 ms | 8.4 ms | 0.98× | 9% | 0.98× |
+  | kses | 21.9 ms | 36.7 ms | 0.60× | 25% | 0.53× |
+
+  - **Geometric mean:** 0.71× end to end, 0.61× PHP code. All checksums are identical. Go needs 2× PHP code, so the gap is still about 3.3×.
+  - **What mattered in this pass:**
+    - **Throw paths out of compiled code.** Node code built `PhpError` messages with string concatenation, and partial evaluation compiled it in: two thirds of `WP_Hook::apply_filters`' graph was `DimNode`'s "Cannot use object of type … as array". A `transferToInterpreter()` before every node-level throw cut it.
+    - **One frame tag per local slot.** Writes picked `setLong`/`setDouble`/`setObject` by each value's runtime type, so the tags differed on the paths that merge after any write of statically unknown type. Graal then disables frame intrinsics for the whole function: 3588 "incompatible frame slot types at merge" warnings over the kernels. Slots now carry a kind in the frame descriptor (Illegal, then Long/Double, then Object, generalized once with a deopt, SL-style), and unwritten slots are illegal (`defaultValueIllegal`). That leaves 0 warnings.
+    - **Inline cache for `['Class', 'method']` callables.** Without it, one such hook callback made WP_Hook's dispatch generic for every callback.
+    - **Object creation:** a per-`new`-site initializer with cached shape stores (`new WP_HTML_Tag_Processor` 1113 → 239 ns; PHP 117 ns).
+    - **Built-ins:** a vectorized TruffleString search in `str_replace`, a byte table for `strtr` with one-byte keys (`wp_kses_hair`), and variadic arguments collected without a boundary.
+  - **Measuring lessons:**
+    - Micro-benchmarks shorter than about 1 s measure Truffle's warm-up, not its steady state. Run them on a time budget (2–3 s per case, median of the second half).
+    - A/B tests of a change run the two builds alternately (`PHP_CLASSES` picks a build in `bin-php.sh`) and take the best of 3 rounds. One run per build varied by ±15% on this box.
+  - **Next:**
+    - The per-call cost of built-ins (`BuiltinRootNode`: argument array, boundary). Its self time is 6% in kses.
+    - The `preg_*` wrappers' allocation, which decides wpautop/wptexturize PHP code.
+    - Array element access (`PhpArray.find`).
+    - WP_Hook's iteration bookkeeping (copy-on-write separation for `next()`).
