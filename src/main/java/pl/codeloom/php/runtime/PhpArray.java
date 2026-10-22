@@ -148,6 +148,7 @@ public final class PhpArray implements TruffleObject {
      * a lookup site can remember where a key was and confirm it next time with one identity check: arrays built
      * the same way keep a key at the same slot.
      */
+    @TruffleBoundary
     public int slotOf(Object key) {
         return packed != null ? -1 : find(key, hash(key));
     }
@@ -157,6 +158,11 @@ public final class PhpArray implements TruffleObject {
         return packed == null && slot >= 0 && slot < used && keys[slot] == key;
     }
 
+    /**
+     * Out of line: inlined, the bucket-chain walk with its key comparisons was the largest part of many compiled
+     * PHP functions, one copy per element read.
+     */
+    @TruffleBoundary
     private Object hashGet(Object key) {
         int slot = find(key, hash(key));
         return slot < 0 ? null : values[slot];
