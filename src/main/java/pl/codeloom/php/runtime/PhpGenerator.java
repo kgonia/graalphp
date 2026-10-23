@@ -97,13 +97,13 @@ public final class PhpGenerator {
     public void rewind() {
         start();
         if (advanced) {
-            throw new PhpError("Exception: Cannot rewind a generator that was already run");
+            throw new PhpError("Exception", "Cannot rewind a generator that was already run");
         }
     }
 
     public Object getReturn() {
         if (status != Status.DONE) {
-            throw new PhpError("Exception: Cannot get return value of a generator that hasn't returned");
+            throw new PhpError("Exception", "Cannot get return value of a generator that hasn't returned");
         }
         return returned;
     }

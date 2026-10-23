@@ -82,7 +82,7 @@ public final class BuiltinNodes {
 
     @TruffleBoundary
     static PhpError arrayTypeError(String function, Object value) {
-        return new PhpError("TypeError: " + function + "(): Argument #1 ($array) must be of type array, "
+        return new PhpError("TypeError", function + "(): Argument #1 ($array) must be of type array, "
                 + Convert.typeName(value) + " given");
     }
 

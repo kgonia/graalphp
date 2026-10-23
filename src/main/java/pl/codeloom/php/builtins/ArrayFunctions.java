@@ -129,7 +129,7 @@ final class ArrayFunctions {
             PhpArray keys = Args.array(a, 0, "array_combine");
             PhpArray values = Args.array(a, 1, "array_combine");
             if (keys.size() != values.size()) {
-                throw new PhpError("ValueError: array_combine(): Argument #1 ($keys) and argument #2 ($values) "
+                throw new PhpError("ValueError", "array_combine(): Argument #1 ($keys) and argument #2 ($values) "
                         + "must have the same number of elements");
             }
             PhpArray result = new PhpArray();
@@ -355,7 +355,7 @@ final class ArrayFunctions {
     @TruffleBoundary
     private static PhpArray chunk(PhpArray array, long length, boolean preserveKeys) {
         if (length < 1) {
-            throw new PhpError("ValueError: array_chunk(): Argument #2 ($length) must be greater than 0");
+            throw new PhpError("ValueError", "array_chunk(): Argument #2 ($length) must be greater than 0");
         }
         PhpArray result = new PhpArray();
         PhpArray chunk = null;
@@ -400,10 +400,10 @@ final class ArrayFunctions {
     @TruffleBoundary
     private static Object rand(PhpArray array, long count) {
         if (array.size() == 0) {
-            throw new PhpError("ValueError: array_rand(): Argument #1 ($array) cannot be empty");
+            throw new PhpError("ValueError", "array_rand(): Argument #1 ($array) cannot be empty");
         }
         if (count < 1 || count > array.size()) {
-            throw new PhpError("ValueError: array_rand(): Argument #2 ($num) must be between 1 and the number of "
+            throw new PhpError("ValueError", "array_rand(): Argument #2 ($num) must be between 1 and the number of "
                     + "elements in argument #1 ($array)");
         }
         List<Object> keys = new ArrayList<>();
@@ -435,7 +435,7 @@ final class ArrayFunctions {
             iterator = object.callMethod("getiterator");
         }
         if (!(iterator instanceof PhpObject object)) {
-            throw new PhpError("TypeError: iterator_to_array(): Argument #1 ($iterator) must be of type "
+            throw new PhpError("TypeError", "iterator_to_array(): Argument #1 ($iterator) must be of type "
                     + "Traversable|array, " + Convert.typeName(iterable) + " given");
         }
         PhpArray result = new PhpArray();
@@ -454,7 +454,7 @@ final class ArrayFunctions {
 
     private static PhpArray writable(PhpRef ref) {
         if (!(ref.get() instanceof PhpArray)) {
-            throw new PhpError("TypeError: Argument #1 ($array) must be of type array");
+            throw new PhpError("TypeError", "Argument #1 ($array) must be of type array");
         }
         return ref.arrayForWrite();
     }
@@ -576,7 +576,7 @@ final class ArrayFunctions {
         if (container instanceof PhpObject object) {
             return object.getProperty(Str.java(Convert.toStr(key))) != null;
         }
-        throw new PhpError("TypeError: array_key_exists(): Argument #2 ($array) must be of type array");
+        throw new PhpError("TypeError", "array_key_exists(): Argument #2 ($array) must be of type array");
     }
 
     @TruffleBoundary
@@ -852,7 +852,7 @@ final class ArrayFunctions {
     /** range() bounds must be finite (php-src 8.3). */
     private static void checkFinite(Object value, int position, String name) {
         if (value instanceof Double d && (d.isInfinite() || d.isNaN())) {
-            throw new PhpError("ValueError: range(): Argument #" + position + " ($" + name
+            throw new PhpError("ValueError", "range(): Argument #" + position + " ($" + name
                     + ") must be a finite number, " + (d.isNaN() ? "NAN" : "INF") + " provided");
         }
     }
@@ -880,7 +880,7 @@ final class ArrayFunctions {
             // php-src's RANGE_CHECK_LONG_INIT_ARRAY: the element count, unsigned, against HT_MAX_SIZE
             long size = Long.divideUnsigned(x <= y ? y - x : x - y, step);
             if (Long.compareUnsigned(size, MAX_ARRAY_SIZE - 1) >= 0) {
-                throw new PhpError("ValueError: The supplied range exceeds the maximum array size by "
+                throw new PhpError("ValueError", "The supplied range exceeds the maximum array size by "
                         + Long.toUnsignedString(size - MAX_ARRAY_SIZE + 1) + " elements: start=" + x + ", end=" + y
                         + ", step=" + step + ". Calculated size: " + Long.toUnsignedString(size)
                         + ". Maximum size: " + MAX_ARRAY_SIZE + ".");
@@ -895,7 +895,7 @@ final class ArrayFunctions {
         double step = Math.abs(((Number) stepNumber).doubleValue());
         double size = Math.floor(Math.abs(y - x) / step);
         if (size >= MAX_ARRAY_SIZE - 1) {
-            throw new PhpError("ValueError: The supplied range exceeds the maximum array size by "
+            throw new PhpError("ValueError", "The supplied range exceeds the maximum array size by "
                     + String.format("%.0f", size - MAX_ARRAY_SIZE + 1) + " elements: start="
                     + String.format("%.1f", x) + ", end=" + String.format("%.1f", y) + ", step="
                     + String.format("%.1f", step) + ". Calculated size: " + String.format("%.0f", size)
@@ -915,7 +915,7 @@ final class ArrayFunctions {
                 : (reverse ? (byKey ? "krsort" : keepKeys ? "arsort" : "rsort")
                 : (byKey ? "ksort" : keepKeys ? "asort" : "sort"));
         if (!(ref.get() instanceof PhpArray array)) {
-            throw new PhpError("TypeError: " + name + "(): Argument #1 ($array) must be of type array, "
+            throw new PhpError("TypeError", name + "(): Argument #1 ($array) must be of type array, "
                     + Convert.debugType(ref.get()) + " given");
         }
         List<Entry> entries = new ArrayList<>(array.size());

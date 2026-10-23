@@ -304,9 +304,13 @@ final class CoreFunctions {
         r.fn("intdiv", a -> {
             long divisor = Args.lng(a, 1, 1);
             if (divisor == 0) {
-                throw new PhpError("DivisionByZeroError: Division by zero");
+                throw new PhpError("DivisionByZeroError", "Division by zero");
             }
-            return Args.lng(a, 0, 0) / divisor;
+            long dividend = Args.lng(a, 0, 0);
+            if (dividend == Long.MIN_VALUE && divisor == -1) {
+                throw new PhpError("ArithmeticError", "Division of PHP_INT_MIN by -1 is not an integer");
+            }
+            return dividend / divisor;
         });
         r.fn("fmod", a -> Convert.toDouble(Args.get(a, 0)) % Convert.toDouble(Args.get(a, 1)));
         r.fn("dechex", a -> Str.of(Long.toHexString(Args.lng(a, 0, 0))));
@@ -357,7 +361,7 @@ final class CoreFunctions {
         if (value instanceof PhpObject object && object.getPhpClass().isSubclassOf("countable")) {
             return Convert.toLong(object.callMethod("count"));
         }
-        throw new PhpError("TypeError: count(): Argument #1 ($value) must be of type Countable|array, "
+        throw new PhpError("TypeError", "count(): Argument #1 ($value) must be of type Countable|array, "
                 + Convert.typeName(value == null ? PhpNull.NULL : value) + " given");
     }
 
@@ -368,7 +372,7 @@ final class CoreFunctions {
     @TruffleBoundary
     private static Object triggerError(PhpContext context, TruffleString message, long level) {
         if (level != 256 && level != 512 && level != 1024 && level != 16384) {
-            throw new PhpError("ValueError: trigger_error(): Argument #2 ($error_level) must be one of E_USER_ERROR,"
+            throw new PhpError("ValueError", "trigger_error(): Argument #2 ($error_level) must be one of E_USER_ERROR,"
                     + " E_USER_WARNING, E_USER_NOTICE, or E_USER_DEPRECATED");
         }
         Object handler = context.errorHandler();
@@ -481,7 +485,7 @@ final class CoreFunctions {
             }
         }
         if (values.length == 0) {
-            throw new PhpError("ValueError: " + (max ? "max" : "min") + "(): Argument #1 ($value) must contain at "
+            throw new PhpError("ValueError", (max ? "max" : "min") + "(): Argument #1 ($value) must contain at "
                     + "least one element");
         }
         Object best = values[0];

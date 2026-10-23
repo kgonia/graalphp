@@ -174,29 +174,29 @@ public final class CgiSapi {
         @TruffleBoundary
         String header(String function, boolean urlEncode) {
             if (name.length == 0) {
-                throw new PhpError("ValueError: " + function + "(): Argument #1 ($name) must not be empty");
+                throw new PhpError("ValueError", function + "(): Argument #1 ($name) must not be empty");
             }
             if (contains(name, "=" + ILLEGAL)) {
-                throw new PhpError("ValueError: " + function + "(): Argument #1 ($name) cannot contain \"=\", "
+                throw new PhpError("ValueError", function + "(): Argument #1 ($name) cannot contain \"=\", "
                         + ILLEGAL_LISTED);
             }
             if (!urlEncode && value != null && contains(value, ILLEGAL)) {
-                throw new PhpError("ValueError: " + function + "(): Argument #2 ($value) cannot contain "
+                throw new PhpError("ValueError", function + "(): Argument #2 ($value) cannot contain "
                         + ILLEGAL_LISTED);
             }
             if (path != null && contains(path, ILLEGAL)) {
-                throw new PhpError("ValueError: " + function + "(): \"path\" option cannot contain " + ILLEGAL_LISTED);
+                throw new PhpError("ValueError", function + "(): \"path\" option cannot contain " + ILLEGAL_LISTED);
             }
             if (domain != null && contains(domain, ILLEGAL)) {
-                throw new PhpError("ValueError: " + function + "(): \"domain\" option cannot contain "
+                throw new PhpError("ValueError", function + "(): \"domain\" option cannot contain "
                         + ILLEGAL_LISTED);
             }
             if (expires >= YEAR_10000) {
-                throw new PhpError("ValueError: " + function + "(): \"expires\" option cannot have a year greater "
+                throw new PhpError("ValueError", function + "(): \"expires\" option cannot have a year greater "
                         + "than 9999");
             }
             if (partitioned && !secure) {
-                throw new PhpError("ValueError: " + function + "(): \"partitioned\" option cannot be used without "
+                throw new PhpError("ValueError", function + "(): \"partitioned\" option cannot be used without "
                         + "\"secure\" option");
             }
             StringBuilder cookie = new StringBuilder("Set-Cookie: ").append(latin1(name)).append('=');

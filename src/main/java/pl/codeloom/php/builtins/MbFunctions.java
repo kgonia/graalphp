@@ -56,7 +56,7 @@ final class MbFunctions {
             }
             long cp = Convert.toLong(value);
             if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
-                throw new PhpError("ValueError: mb_substitute_character(): Argument #1 ($substitute_character) "
+                throw new PhpError("ValueError", "mb_substitute_character(): Argument #1 ($substitute_character) "
                         + "is not a valid codepoint");
             }
             state(context).substitute = (int) cp;
@@ -286,7 +286,7 @@ final class MbFunctions {
     private static Object ord(TruffleString text, String encoding) {
         byte[] s = Str.readBytes(text);
         if (s.length == 0) {
-            throw new PhpError("ValueError: mb_ord(): Argument #1 ($string) must not be empty");
+            throw new PhpError("ValueError", "mb_ord(): Argument #1 ($string) must not be empty");
         }
         int length = JsonFunctions.Utf8.sequenceLength(s, 0);
         return length == 0 ? (Object) Boolean.FALSE : (long) JsonFunctions.Utf8.decode(s, 0, length);

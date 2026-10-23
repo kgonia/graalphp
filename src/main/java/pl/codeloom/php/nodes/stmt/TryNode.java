@@ -88,18 +88,14 @@ public final class TryNode extends StmtNode {
         return false;
     }
 
+    /** The Throwable a catch block sees for an error the runtime raised: an object of its class. */
     @TruffleBoundary
     static PhpObject toErrorObject(PhpContext context, PhpError error) {
-        String message = error.getMessage();
-        String className = "Error";
-        int colon = message.indexOf(": ");
-        if (colon > 0 && message.substring(0, colon).matches("[A-Za-z]+Error")) {
-            className = message.substring(0, colon);
-            message = message.substring(colon + 2);
+        PhpObject object = context.getClass(error.getPhpClass()).instantiate();
+        object.setProperty("message", Str.of(error.getPhpMessage()));
+        if (error.getCode() != 0) {
+            object.setProperty("code", error.getCode());
         }
-        PhpObject object = (context.findClass(Str.lower(className)) != null
-                ? context.getClass(className) : context.getClass("Error")).instantiate();
-        object.setProperty("message", Str.of(message));
         return object;
     }
 }

@@ -997,7 +997,7 @@ final class FileFunctions {
             Stream stream = stream(a, "fread");
             long length = Args.lng(a, 1, 0);
             if (length <= 0) {
-                throw new PhpError("ValueError: fread(): Argument #2 ($length) must be greater than 0");
+                throw new PhpError("ValueError", "fread(): Argument #2 ($length) must be greater than 0");
             }
             byte[] bytes = stream.read((int) Math.min(length, Integer.MAX_VALUE - 8));
             return bytes == null ? (Object) Boolean.FALSE : Str.of(bytes);
@@ -1010,7 +1010,7 @@ final class FileFunctions {
             if (Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL) {
                 long length = Args.lng(a, 1, 0);
                 if (length <= 0) {
-                    throw new PhpError("ValueError: fgets(): Argument #2 ($length) must be greater than 0");
+                    throw new PhpError("ValueError", "fgets(): Argument #2 ($length) must be greater than 0");
                 }
                 limit = (int) Math.min(length - 1, Integer.MAX_VALUE - 8);
             }
@@ -1036,7 +1036,7 @@ final class FileFunctions {
         r.fn("ftruncate", a -> {
             long size = Args.lng(a, 1, 0);
             if (size < 0) {
-                throw new PhpError("ValueError: ftruncate(): Argument #2 ($size) must be greater than or equal to 0");
+                throw new PhpError("ValueError", "ftruncate(): Argument #2 ($size) must be greater than or equal to 0");
             }
             Stream stream = stream(a, "ftruncate");
             Boolean result = stream.truncate(size);
@@ -1045,7 +1045,7 @@ final class FileFunctions {
         r.fn("stream_get_contents", a -> {
             long length = Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL ? Args.lng(a, 1, -1) : -1;
             if (length < -1) {
-                throw new PhpError("ValueError: stream_get_contents(): Argument #2 ($length) must be greater than or "
+                throw new PhpError("ValueError", "stream_get_contents(): Argument #2 ($length) must be greater than or "
                         + "equal to -1");
             }
             Stream stream = stream(a, "stream_get_contents");
@@ -1236,11 +1236,11 @@ final class FileFunctions {
     private static PhpResource resource(Object[] a, int index, String function, String parameter, boolean open) {
         Object value = Args.get(a, index, PhpNull.NULL);
         if (!(value instanceof PhpResource resource)) {
-            throw new PhpError("TypeError: " + function + "(): Argument #" + (index + 1) + " ($" + parameter
+            throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " ($" + parameter
                     + ") must be of type resource, " + typeName(value) + " given");
         }
         if (open && resource.isClosed()) {
-            throw new PhpError("TypeError: " + function + "(): Argument #" + (index + 1) + " ($" + parameter
+            throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " ($" + parameter
                     + ") must be an open stream resource");
         }
         return resource;
@@ -1250,14 +1250,14 @@ final class FileFunctions {
         if (resource(a, 0, function, "stream").getHandle() instanceof Stream stream) {
             return stream;
         }
-        throw new PhpError("TypeError: " + function + "(): supplied resource is not a valid stream resource");
+        throw new PhpError("TypeError", function + "(): supplied resource is not a valid stream resource");
     }
 
     private static Directory directory(Object[] a, String function) {
         if (resource(a, 0, function, "dir_handle").getHandle() instanceof Directory directory) {
             return directory;
         }
-        throw new PhpError("TypeError: " + function + "(): Argument #1 ($dir_handle) must be a valid Directory "
+        throw new PhpError("TypeError", function + "(): Argument #1 ($dir_handle) must be a valid Directory "
                 + "resource");
     }
 
@@ -1284,7 +1284,7 @@ final class FileFunctions {
         long operation = Args.lng(a, 1, 0);
         int action = (int) (operation & 3);
         if (action == 0) {
-            throw new PhpError("ValueError: flock(): Argument #2 ($operation) must be one of LOCK_SH, LOCK_EX, "
+            throw new PhpError("ValueError", "flock(): Argument #2 ($operation) must be one of LOCK_SH, LOCK_EX, "
                     + "or LOCK_UN");
         }
         PhpRef wouldBlock = Args.has(a, 2) ? Args.ref(a, 2) : null;

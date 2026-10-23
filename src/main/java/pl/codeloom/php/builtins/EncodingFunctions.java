@@ -419,7 +419,7 @@ final class EncodingFunctions {
     @TruffleBoundary
     private static TruffleString baseConvert(String number, long from, long to) {
         if (from < 2 || from > 36 || to < 2 || to > 36) {
-            throw new PhpError("ValueError: base_convert(): Argument #2 ($from_base) must be between 2 and 36 "
+            throw new PhpError("ValueError", "base_convert(): Argument #2 ($from_base) must be between 2 and 36 "
                     + "(inclusive)");
         }
         StringBuilder digits = new StringBuilder();
@@ -437,7 +437,7 @@ final class EncodingFunctions {
     @TruffleBoundary
     private static long randomInt(long min, long max) {
         if (min > max) {
-            throw new PhpError("ValueError: random_int(): Argument #1 ($min) must be less than or equal to "
+            throw new PhpError("ValueError", "random_int(): Argument #1 ($min) must be less than or equal to "
                     + "argument #2 ($max)");
         }
         // bounded draws are uniform (RandomGenerator.nextLong(origin, bound)); max + 1 may overflow
@@ -481,7 +481,7 @@ final class EncodingFunctions {
         }
         String name = javaAlgorithm(algo);
         if (name == null) {
-            throw new PhpError("ValueError: hash(): Argument #1 ($algo) must be a valid hashing algorithm");
+            throw new PhpError("ValueError", "hash(): Argument #1 ($algo) must be a valid hashing algorithm");
         }
         return digest(name, data, binary);
     }
@@ -500,7 +500,7 @@ final class EncodingFunctions {
     private static Object hmac(String algo, byte[] data, byte[] key, boolean binary) {
         String name = javaAlgorithm(algo);
         if (name == null) {
-            throw new PhpError("ValueError: hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing "
+            throw new PhpError("ValueError", "hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing "
                     + "algorithm");
         }
         try {

@@ -32,7 +32,7 @@ public final class Args {
 
     public static Object required(Object[] arguments, int index, String function) {
         if (!has(arguments, index)) {
-            throw new PhpError("ArgumentCountError: " + function + "() expects at least " + (index + 1)
+            throw new PhpError("ArgumentCountError", function + "() expects at least " + (index + 1)
                     + " arguments, " + count(arguments) + " given");
         }
         return PhpRef.deref(arguments[PhpFunction.ARG_FIRST + index]);
@@ -62,7 +62,7 @@ public final class Args {
         if (value instanceof PhpArray array) {
             return array;
         }
-        throw new PhpError("TypeError: " + function + "(): Argument #" + (index + 1) + " must be of type array, "
+        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " must be of type array, "
                 + (value == null ? "none" : Convert.typeName(value)) + " given");
     }
 

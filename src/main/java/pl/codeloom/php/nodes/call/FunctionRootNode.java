@@ -153,7 +153,7 @@ public final class FunctionRootNode extends RootNode {
                 required++;
             }
         }
-        return new PhpError("ArgumentCountError: Too few arguments to function " + name + "(), " + given
+        return new PhpError("ArgumentCountError", "Too few arguments to function " + name + "(), " + given
                 + " passed and at least " + required + " expected");
     }
 

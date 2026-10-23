@@ -237,9 +237,9 @@ public final class Callables {
         Target target = resolve(context, callable, false);
         if (target == null) {
             if (parameter == null) {
-                throw new PhpError("Error: " + invalidReason(context, callable));
+                throw new PhpError(invalidReason(context, callable));
             }
-            throw new PhpError("TypeError: " + parameter.function() + "(): Argument #" + parameter.position()
+            throw new PhpError("TypeError", parameter.function() + "(): Argument #" + parameter.position()
                     + " ($callback) must be a valid callback" + (parameter.nullable() ? " or null" : "") + ", "
                     + invalidReason(context, callable));
         }

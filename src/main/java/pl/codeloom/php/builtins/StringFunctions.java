@@ -246,7 +246,7 @@ public final class StringFunctions {
             offset += h.length;
         }
         if (offset < 0 || offset > h.length) {
-            throw new PhpError("ValueError: strpos(): Argument #3 ($offset) must be contained in argument #1 "
+            throw new PhpError("ValueError", "strpos(): Argument #3 ($offset) must be contained in argument #1 "
                     + "($haystack)");
         }
         int index = indexOf(h, Str.readBytes(needle), (int) offset, ignoreCase);
@@ -354,7 +354,7 @@ public final class StringFunctions {
                                             boolean ignoreCase, long[] count) {
         if (!(search instanceof PhpArray searches)) {
             if (replacement instanceof PhpArray) {
-                throw new PhpError("TypeError: str_replace(): Argument #2 ($replace) must be of type string when "
+                throw new PhpError("TypeError", "str_replace(): Argument #2 ($replace) must be of type string when "
                         + "argument #1 ($search) is a string");
             }
             return replaceAll(subject, Convert.toStr(search), Convert.toStr(replacement), ignoreCase, count);
@@ -703,7 +703,7 @@ public final class StringFunctions {
     private static PhpArray explode(TruffleString separator, TruffleString s, long limit) {
         byte[] sep = Str.readBytes(separator);
         if (sep.length == 0) {
-            throw new PhpError("ValueError: explode(): Argument #1 ($separator) cannot be empty");
+            throw new PhpError("ValueError", "explode(): Argument #1 ($separator) cannot be empty");
         }
         byte[] b = Str.readBytes(s);
         List<TruffleString> parts = new ArrayList<>();
@@ -739,7 +739,7 @@ public final class StringFunctions {
             pieces = array;
             glue = Convert.toStr(first);
         } else {
-            throw new PhpError("TypeError: implode(): Argument #2 ($array) must be of type ?array");
+            throw new PhpError("TypeError", "implode(): Argument #2 ($array) must be of type ?array");
         }
         ByteBuilder out = new ByteBuilder();
         boolean firstPiece = true;
@@ -761,7 +761,7 @@ public final class StringFunctions {
     @TruffleBoundary
     private static PhpArray strSplit(TruffleString s, long length) {
         if (length < 1) {
-            throw new PhpError("ValueError: str_split(): Argument #2 ($length) must be greater than 0");
+            throw new PhpError("ValueError", "str_split(): Argument #2 ($length) must be greater than 0");
         }
         byte[] b = Str.readBytes(s);
         PhpArray result = new PhpArray();
@@ -799,7 +799,7 @@ public final class StringFunctions {
     @TruffleBoundary
     private static TruffleString repeat(TruffleString s, long times) {
         if (times < 0) {
-            throw new PhpError("ValueError: str_repeat(): Argument #2 ($times) must be greater than or equal to 0");
+            throw new PhpError("ValueError", "str_repeat(): Argument #2 ($times) must be greater than or equal to 0");
         }
         byte[] b = Str.readBytes(s);
         byte[] out = new byte[(int) (b.length * times)];
@@ -831,7 +831,7 @@ public final class StringFunctions {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
-            throw new PhpError("ValueError: substr_count(): Argument #2 ($needle) cannot be empty");
+            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) cannot be empty");
         }
         int start = (int) (offset < 0 ? h.length + offset : offset);
         int end = length == null ? h.length : (int) (length < 0 ? h.length + length : start + length);
@@ -855,7 +855,7 @@ public final class StringFunctions {
             offset = Math.max(0, main.length + offset);
         }
         if (offset > main.length) {
-            throw new PhpError("ValueError: substr_compare(): Argument #3 ($offset) must be contained in argument "
+            throw new PhpError("ValueError", "substr_compare(): Argument #3 ($offset) must be contained in argument "
                     + "#1 ($haystack)");
         }
         int limit = length == null ? Math.max(main.length - (int) offset, other.length) : (int) (long) length;
@@ -1068,10 +1068,10 @@ public final class StringFunctions {
         String text = Str.java(s);
         String breakText = Str.java(brk);
         if (breakText.isEmpty()) {
-            throw new PhpError("ValueError: wordwrap(): Argument #3 ($break) must not be empty");
+            throw new PhpError("ValueError", "wordwrap(): Argument #3 ($break) must not be empty");
         }
         if (width == 0 && cut) {
-            throw new PhpError("ValueError: wordwrap(): Argument #4 ($cut_long_words) cannot be true when "
+            throw new PhpError("ValueError", "wordwrap(): Argument #4 ($cut_long_words) cannot be true when "
                     + "argument #2 ($width) is 0");
         }
         StringBuilder out = new StringBuilder();

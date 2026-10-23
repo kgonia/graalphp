@@ -8,7 +8,6 @@ import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.NativeClock;
 import pl.codeloom.php.runtime.PhpArray;
-import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
@@ -370,6 +369,16 @@ public final class PcreFunctions {
 
     // ---- compiling ----
 
+    /** A pattern php-src refuses to compile; the message is its warning's. */
+    private static final class BadPattern extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        BadPattern(String message) {
+            super(message, null, false, false);
+        }
+    }
+
+    /** The compiled pattern, or null (preg_last_error() PREG_INTERNAL_ERROR) for one that doesn't compile. */
     @TruffleBoundary
     private Regex compile(TruffleString regexString) {
         Regex cached = regexes.get(regexString);
@@ -379,7 +388,13 @@ public final class PcreFunctions {
         Patterns patterns = PhpContext.get(null).getLanguage().pcrePatterns();
         Compiled compiled = patterns.compiled.get(regexString);
         if (compiled == null) {
-            compiled = compileNew(regexString, patterns.compiled.size() < Patterns.LIMIT);
+            try {
+                compiled = compileNew(regexString, patterns.compiled.size() < Patterns.LIMIT);
+            } catch (BadPattern e) {
+                // php-src warns (this runtime raises no warnings) and the preg_* call fails
+                lastError = 1;
+                return null;
+            }
             if (compiled.shared()) {
                 Compiled raced = patterns.compiled.putIfAbsent(regexString, compiled);
                 if (raced != null) {
@@ -400,11 +415,11 @@ public final class PcreFunctions {
             p++;
         }
         if (p == regex.length) {
-            throw new PhpError("Warning: preg_match(): Empty regular expression");
+            throw new BadPattern("Empty regular expression");
         }
         byte startDelimiter = regex[p];
         if (Character.isLetterOrDigit(startDelimiter) || startDelimiter == '\\' || startDelimiter == 0) {
-            throw new PhpError("Warning: Delimiter must not be alphanumeric, backslash, or NUL byte");
+            throw new BadPattern("Delimiter must not be alphanumeric, backslash, or NUL byte");
         }
         int bracket = "([{<".indexOf(startDelimiter);
         byte endDelimiter = bracket >= 0 ? (byte) ")]}>".charAt(bracket) : startDelimiter;
@@ -421,7 +436,7 @@ public final class PcreFunctions {
             p++;
         }
         if (p >= regex.length) {
-            throw new PhpError("Warning: No ending delimiter '" + (char) endDelimiter + "' found");
+            throw new BadPattern("No ending delimiter '" + (char) endDelimiter + "' found");
         }
         int patternEnd = p++;
         int options = 0;
@@ -439,7 +454,7 @@ public final class PcreFunctions {
                 case 'n' -> options |= NO_AUTO_CAPTURE;
                 case 'S', 'X', ' ', '\n', '\r' -> {
                 }
-                default -> throw new PhpError("Warning: Unknown modifier '" + (char) regex[p] + "'");
+                default -> throw new BadPattern("Unknown modifier '" + (char) regex[p] + "'");
             }
         }
         byte[] pattern = new byte[patternEnd - patternStart];
@@ -509,6 +524,9 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object match(Object[] a, boolean global) {
         Regex regex = compile(Args.str(a, 0));
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
         byte[] subject = Str.readBytes(Args.str(a, 1));
         PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
         long flags = Args.lng(a, 3, 0);
@@ -645,8 +663,9 @@ public final class PcreFunctions {
     private TruffleString replaceOne(PhpContext context, Object pattern, Object replacement, boolean callback,
                                             TruffleString subject, long limit, long flags, long[] count) {
         if (!(pattern instanceof PhpArray patterns)) {
-            return replaceWith(context, compile(Convert.toStr(pattern)), replacement, callback, subject, limit, flags,
-                    count);
+            Regex regex = compile(Convert.toStr(pattern));
+            return regex == null ? null
+                    : replaceWith(context, regex, replacement, callback, subject, limit, flags, count);
         }
         PhpArray replacements = !callback && replacement instanceof PhpArray array ? array : null;
         int r = replacements == null ? -1 : replacements.firstPosition();
@@ -657,8 +676,9 @@ public final class PcreFunctions {
                 with = r >= 0 ? replacements.valueAt(r) : Str.EMPTY;
                 r = r >= 0 ? replacements.nextPosition(r) : -1;
             }
-            current = replaceWith(context, compile(Convert.toStr(patterns.valueAt(p))), with, callback, current, limit,
-                    flags, count);
+            Regex regex = compile(Convert.toStr(patterns.valueAt(p)));
+            current = regex == null ? null
+                    : replaceWith(context, regex, with, callback, current, limit, flags, count);
             if (current == null) {
                 return null;
             }
@@ -823,6 +843,9 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
         Regex regex = compile(pattern);
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
         byte[] subject = Str.readBytes(subjectString);
         boolean noEmpty = (flags & SPLIT_NO_EMPTY) != 0;
         boolean delimCapture = (flags & SPLIT_DELIM_CAPTURE) != 0;
@@ -925,8 +948,11 @@ public final class PcreFunctions {
     }
 
     @TruffleBoundary
-    private PhpArray grep(TruffleString pattern, PhpArray input, long flags) {
+    private Object grep(TruffleString pattern, PhpArray input, long flags) {
         Regex regex = compile(pattern);
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
         boolean invert = (flags & 1) != 0;
         lastError = 0;
         PhpArray result = new PhpArray();
@@ -1060,11 +1086,11 @@ public final class PcreFunctions {
                     MemorySegment message = arena.allocate(256);
                     int ignored = (int) ERROR_MESSAGE.invokeExact(errorCode.get(ValueLayout.JAVA_INT, 0), message,
                             256L);
-                    throw new PhpError("Warning: Compilation failed: " + message.getString(0) + " at offset "
+                    throw new BadPattern("Compilation failed: " + message.getString(0) + " at offset "
                             + errorOffset.get(ValueLayout.JAVA_LONG, 0));
                 }
                 return code;
-            } catch (PhpError e) {
+            } catch (BadPattern e) {
                 throw e;
             } catch (Throwable t) {
                 throw new IllegalStateException(t);

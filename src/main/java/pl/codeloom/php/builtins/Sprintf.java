@@ -99,12 +99,12 @@ final class Sprintf {
                 }
             }
             if (i >= f.length) {
-                throw new PhpError("ValueError: Missing format specifier at end of string");
+                throw new PhpError("ValueError", "Missing format specifier at end of string");
             }
             byte spec = f[i++];
             int index = argIndex >= 0 ? argIndex : next++;
             if (index >= values.length) {
-                throw new PhpError("ArgumentCountError: " + (values.length + 1) + " arguments are required, "
+                throw new PhpError("ArgumentCountError", (values.length + 1) + " arguments are required, "
                         + (index + 2) + " given");
             }
             Object value = values[index];
@@ -170,7 +170,7 @@ final class Sprintf {
                     break;
                 }
                 default:
-                    throw new PhpError("ValueError: Unknown format specifier \"" + (char) spec + "\"");
+                    throw new PhpError("ValueError", "Unknown format specifier \"" + (char) spec + "\"");
             }
             pad(out, text.getBytes(StandardCharsets.ISO_8859_1), width, pad, left, numeric);
         }

@@ -201,12 +201,12 @@ final class RuntimeFunctions {
                 Args.has(a, 1) ? Str.bytes(Args.str(a, 1)) : null);
         if (Args.get(a, 2, PhpNull.NULL) instanceof PhpArray options) {
             if (Args.count(a) > 3) {
-                throw new PhpError("ArgumentCountError: " + function + "(): Expects exactly 3 arguments when "
+                throw new PhpError("ArgumentCountError", function + "(): Expects exactly 3 arguments when "
                         + "argument #3 ($expires_or_options) is an array");
             }
             for (int p = options.firstPosition(); p >= 0; p = options.nextPosition(p)) {
                 if (!(options.keyAt(p) instanceof TruffleString key)) {
-                    throw new PhpError("ValueError: " + function + "(): option array cannot have numeric keys");
+                    throw new PhpError("ValueError", function + "(): option array cannot have numeric keys");
                 }
                 Object option = options.valueAt(p);
                 switch (Str.lower(Str.java(key))) {
@@ -217,7 +217,7 @@ final class RuntimeFunctions {
                     case "httponly" -> cookie.httpOnly = Convert.toBool(option);
                     case "samesite" -> cookie.sameSite = Str.bytes(Convert.toStr(option));
                     case "partitioned" -> cookie.partitioned = Convert.toBool(option);
-                    default -> throw new PhpError("ValueError: " + function + "(): option \"" + Str.java(key)
+                    default -> throw new PhpError("ValueError", function + "(): option \"" + Str.java(key)
                             + "\" is invalid");
                 }
             }

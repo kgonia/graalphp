@@ -83,7 +83,7 @@ final class JsonFunctions {
 
     private static Object fail(State state, int code, long flags) {
         if ((flags & THROW_ON_ERROR) != 0) {
-            throw new PhpError("JsonException: " + message(code));
+            throw new PhpError("JsonException", message(code), code);
         }
         state.lastError = code;
         return null;

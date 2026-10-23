@@ -185,7 +185,7 @@ public final class Intrinsics {
     @TruffleBoundary
     private static TruffleString convertString(Object value, String function, int position) {
         if (value instanceof PhpArray) {
-            throw new PhpError("TypeError: " + function + "(): Argument #" + position + " must be of type string, "
+            throw new PhpError("TypeError", function + "(): Argument #" + position + " must be of type string, "
                     + "array given");
         }
         return Convert.toStr(value);

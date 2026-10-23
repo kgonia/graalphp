@@ -117,7 +117,7 @@ final class DateFunctions {
     @TruffleBoundary
     private static Object method(Object[] a, String method) {
         if (!(Args.get(a, 0) instanceof PhpObject object)) {
-            throw new PhpError("TypeError: Argument #1 must be a date object");
+            throw new PhpError("TypeError", "Argument #1 must be a date object");
         }
         return object.callMethod(method, arguments(a, 1));
     }

@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
@@ -68,7 +69,7 @@ final class MysqliFunctions {
 
     static void register(Registry r) {
         r.fn("mysqli_init", (context, a) -> newLink(context));
-        r.fn("mysqli_real_connect", (context, a) -> connect(context, link(a, 0), a, 1));
+        r.fn("mysqli_real_connect", (context, a) -> connect(context, link(a, 0, "mysqli_real_connect"), a, 1));
         r.fn("mysqli_connect", (context, a) -> {
             PhpObject object = newLink(context);
             return connect(context, object, a, 0) ? (Object) object : Boolean.FALSE;
@@ -76,35 +77,37 @@ final class MysqliFunctions {
         r.fn("mysqli_connect_errno", (context, a) -> (long) context.builtinState().mysqliConnectErrno);
         r.fn("mysqli_connect_error", (context, a) -> context.builtinState().mysqliConnectError == null
                 ? PhpNull.NULL : Str.of(context.builtinState().mysqliConnectError));
-        r.fn("mysqli_query", (context, a) -> query(context, link(a, 0), Str.bytes(Args.str(a, 1))));
-        r.fn("mysqli_real_escape_string", a -> escape(link(a, 0), Str.bytes(Args.str(a, 1))));
-        r.fn("mysqli_escape_string", a -> escape(link(a, 0), Str.bytes(Args.str(a, 1))));
-        r.fn("mysqli_set_charset", (context, a) -> setCharset(link(a, 0), Str.java(Args.str(a, 1))));
-        r.fn("mysqli_character_set_name", a -> Str.of(state(link(a, 0)).charset));
-        r.fn("mysqli_select_db", a -> selectDb(link(a, 0), Str.java(Args.str(a, 1))));
-        r.fn("mysqli_error", a -> Str.of(state(link(a, 0)).error));
-        r.fn("mysqli_errno", a -> (long) state(link(a, 0)).errno);
-        r.fn("mysqli_affected_rows", a -> state(link(a, 0)).affectedRows);
-        r.fn("mysqli_insert_id", a -> state(link(a, 0)).insertId);
-        r.fn("mysqli_get_server_info", a -> serverInfo(link(a, 0)));
+        r.fn("mysqli_query", (context, a) -> query(context, link(a, 0, "mysqli_query"), Str.bytes(Args.str(a, 1))));
+        r.fn("mysqli_real_escape_string",
+                a -> escape(link(a, 0, "mysqli_real_escape_string"), Str.bytes(Args.str(a, 1))));
+        r.fn("mysqli_escape_string", a -> escape(link(a, 0, "mysqli_escape_string"), Str.bytes(Args.str(a, 1))));
+        r.fn("mysqli_set_charset",
+                (context, a) -> setCharset(link(a, 0, "mysqli_set_charset"), Str.java(Args.str(a, 1))));
+        r.fn("mysqli_character_set_name", a -> Str.of(state(link(a, 0, "mysqli_character_set_name")).charset));
+        r.fn("mysqli_select_db", a -> selectDb(link(a, 0, "mysqli_select_db"), Str.java(Args.str(a, 1))));
+        r.fn("mysqli_error", a -> Str.of(state(link(a, 0, "mysqli_error")).error));
+        r.fn("mysqli_errno", a -> (long) state(link(a, 0, "mysqli_errno")).errno);
+        r.fn("mysqli_affected_rows", a -> state(link(a, 0, "mysqli_affected_rows")).affectedRows);
+        r.fn("mysqli_insert_id", a -> state(link(a, 0, "mysqli_insert_id")).insertId);
+        r.fn("mysqli_get_server_info", a -> serverInfo(link(a, 0, "mysqli_get_server_info")));
         r.fn("mysqli_get_client_info", a -> Str.of("mysqlnd 8.5.12"));
-        r.fn("mysqli_ping", a -> ping(link(a, 0)));
-        r.fn("mysqli_close", a -> close(link(a, 0)));
+        r.fn("mysqli_ping", a -> ping(link(a, 0, "mysqli_ping")));
+        r.fn("mysqli_close", a -> close(link(a, 0, "mysqli_close")));
         r.fn("mysqli_report", (context, a) -> {
             context.builtinState().mysqliReport = Args.lng(a, 0, 0);
             return Boolean.TRUE;
         });
         r.fn("mysqli_more_results", a -> Boolean.FALSE);
         r.fn("mysqli_next_result", a -> Boolean.FALSE);
-        r.fn("mysqli_num_fields", a -> (long) result(a, 0).names.length);
-        r.fn("mysqli_num_rows", a -> (long) result(a, 0).rows.size());
-        r.fn("mysqli_fetch_field", (context, a) -> fetchField(context, result(a, 0)));
-        r.fn("mysqli_fetch_object", (context, a) -> fetchObject(context, result(a, 0)));
-        r.fn("mysqli_fetch_array", a -> fetchArray(result(a, 0), Args.lng(a, 1, ASSOC | NUM)));
-        r.fn("mysqli_fetch_assoc", a -> fetchArray(result(a, 0), ASSOC));
-        r.fn("mysqli_fetch_row", a -> fetchArray(result(a, 0), NUM));
+        r.fn("mysqli_num_fields", a -> (long) result(a, 0, "mysqli_num_fields").names.length);
+        r.fn("mysqli_num_rows", a -> (long) result(a, 0, "mysqli_num_rows").rows.size());
+        r.fn("mysqli_fetch_field", (context, a) -> fetchField(context, result(a, 0, "mysqli_fetch_field")));
+        r.fn("mysqli_fetch_object", (context, a) -> fetchObject(context, result(a, 0, "mysqli_fetch_object")));
+        r.fn("mysqli_fetch_array", a -> fetchArray(result(a, 0, "mysqli_fetch_array"), Args.lng(a, 1, ASSOC | NUM)));
+        r.fn("mysqli_fetch_assoc", a -> fetchArray(result(a, 0, "mysqli_fetch_assoc"), ASSOC));
+        r.fn("mysqli_fetch_row", a -> fetchArray(result(a, 0, "mysqli_fetch_row"), NUM));
         r.fn("mysqli_data_seek", a -> {
-            Result result = result(a, 0);
+            Result result = result(a, 0, "mysqli_data_seek");
             long row = Args.lng(a, 1, 0);
             if (row < 0 || row >= result.rows.size()) {
                 return Boolean.FALSE;
@@ -125,22 +128,25 @@ final class MysqliFunctions {
         return object;
     }
 
-    private static PhpObject link(Object[] a, int index) {
+    private static PhpObject link(Object[] a, int index, String function) {
         if (Args.get(a, index) instanceof PhpObject object && object.getInternal() instanceof Link) {
             return object;
         }
-        throw new PhpError("mysqli: Argument #" + (index + 1) + " ($mysql) must be of type mysqli");
+        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " ($mysql) must be of type mysqli, "
+                + Convert.debugType(Args.get(a, index, PhpNull.NULL)) + " given");
     }
 
     private static Link state(PhpObject object) {
         return (Link) object.getInternal();
     }
 
-    private static Result result(Object[] a, int index) {
+    private static Result result(Object[] a, int index, String function) {
         if (Args.get(a, index) instanceof PhpObject object && object.getInternal() instanceof Result result) {
             return result;
         }
-        throw new PhpError("mysqli: Argument #" + (index + 1) + " ($result) must be of type mysqli_result");
+        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1)
+                + " ($result) must be of type mysqli_result, " + Convert.debugType(Args.get(a, index, PhpNull.NULL))
+                + " given");
     }
 
     /** mysqli's properties mirror the last operation (wpdb reads $dbh->connect_errno). */

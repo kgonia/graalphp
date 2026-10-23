@@ -49,7 +49,7 @@ public final class ExtractNode extends ExprNode {
         long mode = flags == null ? OVERWRITE : Convert.toLong(flags.execute(frame)) & 0xff;
         String prefixText = prefix == null ? "" : Str.java(Convert.toStr(prefix.execute(frame)));
         if (!(source instanceof PhpArray values)) {
-            throw new PhpError("TypeError: extract(): Argument #1 ($array) must be of type array");
+            throw new PhpError("TypeError", "extract(): Argument #1 ($array) must be of type array");
         }
         return extract(frame.materialize(), values, mode, prefixText, slots,
                 slots == null ? PhpContext.get(this) : null);

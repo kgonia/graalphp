@@ -102,7 +102,7 @@ final class VersionCompare {
             case "!=", "<>", "ne":
                 return c != 0;
             default:
-                throw new PhpError("ValueError: version_compare(): Argument #3 ($operator) must be a valid comparison"
+                throw new PhpError("ValueError", "version_compare(): Argument #3 ($operator) must be a valid comparison"
                         + " operator");
         }
     }
