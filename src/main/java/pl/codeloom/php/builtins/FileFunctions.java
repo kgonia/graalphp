@@ -983,12 +983,13 @@ final class FileFunctions {
     static void register(Registry r) {
         // ---- streams ----
         r.fn("fopen", (context, a) -> open(context, Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1))));
-        r.fn("fclose", a -> {
+        r.fn("fclose", (context, a) -> {
             Stream stream = stream(a, "fclose");
             if (stream instanceof Directory) {
                 return Boolean.FALSE; // "cannot close the provided stream, as it must not be manually closed"
             }
             PhpResource resource = resource(a, 0, "fclose", "stream");
+            context.builtinState().openStreams.remove(stream);
             closeStream(stream);
             resource.close();
             return Boolean.TRUE;
@@ -1323,7 +1324,7 @@ final class FileFunctions {
     }
 
     @TruffleBoundary
-    private static void closeStream(Stream stream) {
+    static void closeStream(Stream stream) {
         try {
             stream.close();
         } catch (IOException e) {
@@ -1351,7 +1352,15 @@ final class FileFunctions {
     @TruffleBoundary
     private static Object open(PhpContext context, String name, String mode) {
         Stream stream = openStream(context, name, mode);
-        return stream == null ? Boolean.FALSE : new PhpResource(context.nextResourceId(), "stream", stream);
+        return stream == null ? Boolean.FALSE : resource(context, stream);
+    }
+
+    /** A stream's resource; the context closes the stream at its end if the script doesn't. */
+    private static PhpResource resource(PhpContext context, Stream stream) {
+        if (stream instanceof FileStream) {
+            context.builtinState().openStreams.add(stream);
+        }
+        return new PhpResource(context.nextResourceId(), "stream", stream);
     }
 
     private static Stream openStream(PhpContext context, String name, String mode) {
@@ -1427,8 +1436,7 @@ final class FileFunctions {
         TruffleFile file = context.getEnv().createTempFile(null, "php", null);
         Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE,
                 StandardOpenOption.DELETE_ON_CLOSE);
-        return new PhpResource(context.nextResourceId(), "stream",
-                new FileStream(file, file.newByteChannel(options), false, "r+b", file.getPath()));
+        return resource(context, new FileStream(file, file.newByteChannel(options), false, "r+b", file.getPath()));
     }
 
     @TruffleBoundary

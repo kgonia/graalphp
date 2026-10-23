@@ -18,9 +18,20 @@ public final class BuiltinState {
     String mysqliConnectError;
     /** Database connections this context opened, closed when it is finalized. */
     final java.util.List<java.sql.Connection> openConnections = new java.util.ArrayList<>();
+    /**
+     * Streams this context opened and hasn't closed, closed (releasing their flock()s) when it is finalized, as php
+     * closes a request's resources at its end. Held weakly: php frees a stream nothing refers to, and an
+     * unreachable stream's channel is closed by the JDK's cleaner.
+     */
+    final java.util.Set<FileFunctions.Stream> openStreams =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     /** Closes what the context left open. */
     public void close() {
+        for (FileFunctions.Stream stream : new java.util.ArrayList<>(openStreams)) {
+            FileFunctions.closeStream(stream);
+        }
+        openStreams.clear();
         pcre.close();
         for (java.sql.Connection connection : openConnections) {
             try {
