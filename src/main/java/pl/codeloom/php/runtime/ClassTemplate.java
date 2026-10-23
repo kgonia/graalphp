@@ -57,6 +57,15 @@ public final class ClassTemplate {
         return name;
     }
 
+    public List<Member> getMembers() {
+        return members;
+    }
+
+    /** Why the translator couldn't handle a member, or null. */
+    public String getUnsupported() {
+        return unsupported;
+    }
+
     /** This context's class for the declaration: parent and interfaces resolved by name in the context. */
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {

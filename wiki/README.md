@@ -11,6 +11,7 @@
 | [decisions.md](decisions.md) | Numbered decisions with the reason for each |
 | [graalphp-assessment.md](graalphp-assessment.md) | Why graalphp is a reference, not a base to fork |
 | [gate-1.md](gate-1.md) | Gate 1 spec, method, go/no-go criteria and status log |
+| [gate-2.md](gate-2.md) | Gate 2 probe: syntax and built-in gaps of WordPress core |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
@@ -21,7 +22,7 @@
 | Gate 0: Amdahl ceiling of WordPress on php-fpm | not started (can run in parallel with Gate 1) |
 | **Gate 0.5: idiomatic Truffle structure ([D10](decisions.md))** | **done: steps 1–4 landed (per-context state; hot built-ins as DSL nodes; core nodes on the DSL; context-independent ASTs and `ContextPolicy.SHARED`, with class caches on language-level keys and frozen shared arrays). Step 4 cost 5–10% in a single context (hooks, wptexturize), spread over its commits at 1–3% each; server mode (2 contexts) is within 0–20% of single** |
 | **Gate 1: Truffle core vs PHP 8.5 JIT on extracted WordPress hot functions** | **in progress: all 7 kernels correct; steady state 0.70× of PHP 8.5 JIT end to end, 0.58× on PHP code (go needs 2×; exact regex time from a C replay); plateau after 250–300 iterations (3–7 s); K0 arithmetic kernels 1.96×; php-src tests 27.8% passing** |
-| Gate 2: WordPress boots and renders | — |
+| Gate 2: WordPress boots and renders ([gate-2.md](gate-2.md)) | probe done: 601 of 2080 core files hit a syntax gap (namespaces, superglobals, `compact`/`extract`, `goto`, …); 355 of 572 built-in functions used are missing, plus `mysqli` |
 | Gate 3: drop-in parity | — |
 | Gate 4: performance and publication | — |
 

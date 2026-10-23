@@ -48,6 +48,7 @@ public final class Builtins {
         PcreFunctions.register(registry);
         JsonFunctions.register(registry);
         MbFunctions.register(registry);
+        DebugFunctions.register(registry);
         return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry));
     }
 

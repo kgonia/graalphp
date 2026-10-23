@@ -33,6 +33,10 @@ public final class ClosureNode extends ExprNode {
         this.scope = scope;
     }
 
+    public PhpFunction getFunction() {
+        return function;
+    }
+
     @Override
     @ExplodeLoop
     public Object execute(VirtualFrame frame) {

@@ -22,6 +22,10 @@ public final class DeclareNodes {
             this.function = function;
         }
 
+        public PhpFunction getFunction() {
+            return function;
+        }
+
         @Override
         public void execute(VirtualFrame frame) {
             declare(PhpContext.get(this), function);
@@ -38,6 +42,10 @@ public final class DeclareNodes {
 
         public DeclareClassNode(ClassTemplate template) {
             this.template = template;
+        }
+
+        public ClassTemplate getTemplate() {
+            return template;
         }
 
         @Override
