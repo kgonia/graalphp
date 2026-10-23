@@ -43,7 +43,8 @@ public final class Builtins {
         }
     }
 
-    public static Table build(PhpLanguage language) {
+    /** The built-in functions; debug adds the runtime's own tools (DebugFunctions, the PCRE measurements). */
+    public static Table build(PhpLanguage language, boolean debug) {
         Registry registry = new Registry(language);
         CoreFunctions.register(registry);
         StringFunctions.register(registry);
@@ -56,7 +57,10 @@ public final class Builtins {
         EncodingFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
-        DebugFunctions.register(registry);
+        if (debug) {
+            DebugFunctions.register(registry);
+            PcreFunctions.registerDebug(registry);
+        }
         return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry),
                 generatorMethods(registry));
     }

@@ -342,6 +342,10 @@ public final class PcreFunctions {
         r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
         r.fn("preg_last_error", (context, a) -> (long) pcre(context).lastError);
         r.fn("preg_last_error_msg", (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError]));
+    }
+
+    /** The measurement functions of bench/gate1/run.php (php.Debug). */
+    static void registerDebug(Registry r) {
         r.fn("truffle_native_ns", a -> NativeClock.nanos());
         if (PcreRecorder.ENABLED) {
             r.fn("truffle_pcre_record", a -> {

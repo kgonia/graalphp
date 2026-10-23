@@ -753,15 +753,11 @@ public final class Translator {
         return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))));
     }
 
-    /** Numbers the anonymous classes, as php-src's runtime-definition keys keep their names apart. */
-    private static final java.util.concurrent.atomic.AtomicInteger ANONYMOUS_CLASSES =
-            new java.util.concurrent.atomic.AtomicInteger();
-
     /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
     private ExprNode newAnonymousClass(Ast node, Ast classNode) {
         String parent = classNode.get("extends") == null ? "class" : className(classNode.node("extends"));
         String name = parent + "@anonymous\0" + path + ":" + classNode.line + "$"
-                + Integer.toHexString(ANONYMOUS_CLASSES.getAndIncrement());
+                + Integer.toHexString(language.nextAnonymousClass());
         ClassTemplate template = classTemplate(classNode, name);
         return new DeclareNodes.NewAnonymousClassNode(template,
                 new NewNode(ClassRefNode.named(name), arguments(node.node("args"))));
@@ -939,12 +935,12 @@ public final class Translator {
         return result;
     }
 
-    private static TruffleString literal(Object value) {
+    private TruffleString literal(Object value) {
         if (value instanceof String s) {
-            return Str.intern(Str.of(s));
+            return language.intern(Str.of(s));
         }
         if (value instanceof byte[] bytes) {
-            return Str.intern(Str.of(bytes));
+            return language.intern(Str.of(bytes));
         }
         throw new PhpError("not a string literal: " + value);
     }
@@ -1284,9 +1280,9 @@ public final class Translator {
     }
 
     /** Concatenation of two literals folds to a literal (common in long split strings). */
-    private static ExprNode foldConcat(ExprNode left, ExprNode right) {
+    private ExprNode foldConcat(ExprNode left, ExprNode right) {
         if (left.constantValue() instanceof TruffleString a && right.constantValue() instanceof TruffleString b) {
-            return new ConstNode(Str.intern(Str.concat(a, b)));
+            return new ConstNode(language.intern(Str.concat(a, b)));
         }
         return ArithmeticNodesFactory.ConcatNodeGen.create(left, right);
     }
@@ -1516,7 +1512,7 @@ public final class Translator {
                     TruffleString[] keys = new TruffleString[variableNames.size()];
                     LValueNode[] variables = new LValueNode[keys.length];
                     for (int i = 0; i < keys.length; i++) {
-                        keys[i] = Str.intern(Str.of(variableNames.get(i)));
+                        keys[i] = language.intern(Str.of(variableNames.get(i)));
                         variables[i] = (LValueNode) variable(variableNames.get(i));
                     }
                     return new CompactNode(keys, variables);

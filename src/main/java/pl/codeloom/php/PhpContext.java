@@ -43,16 +43,19 @@ public final class PhpContext {
     private final Path sourceRoot;
     private final OutputStream out;
 
-    private final Map<String, PhpFunction> functions = new HashMap<>();
+    /** The declared functions by lowercase name, in declaration order, as php-src's function table. */
+    private final Map<String, PhpFunction> functions = new java.util.LinkedHashMap<>();
     /** The declared functions by their name's language-level id (null: not declared here). */
     private PhpFunction[] functionSlots = new PhpFunction[256];
-    private final Map<String, PhpClass> classes = new HashMap<>();
+    /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
+    private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
     private final List<Object> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
     /** The declared classes by their lowercase name's language-level id (null: not declared here). */
     private PhpClass[] classSlots = new PhpClass[256];
-    private final Map<String, Object> constants = new HashMap<>();
+    /** The defined constants by name, in definition order (get_defined_constants). */
+    private final Map<String, Object> constants = new java.util.LinkedHashMap<>();
     /** The defined constants by their name's language-level id (null: not defined here). */
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
@@ -73,13 +76,14 @@ public final class PhpContext {
     /** The request body (php://input): stdin under the CGI SAPI, empty under the CLI. */
     private final byte[] requestBody;
 
-    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi) {
+    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
+                      boolean debug) {
         this.language = language;
         this.env = env;
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
-        Builtins.install(this, language.builtins());
+        Builtins.install(this, language.builtins(debug));
         PhpArray argv = new PhpArray();
         for (String argument : env.getApplicationArguments()) {
             argv.append(Str.of(argument));

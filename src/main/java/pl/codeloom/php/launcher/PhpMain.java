@@ -50,7 +50,7 @@ public final class PhpMain {
             run(Context.newBuilder("php"), source, astRoot, sourceRoot, phpArgs, true);
             return;
         }
-        try (Engine engine = Engine.create("php")) {
+        try (Engine engine = Engine.newBuilder("php").allowExperimentalOptions(true).build()) {
             for (int n = 1; n <= contexts; n++) {
                 run(Context.newBuilder("php").engine(engine), source, astRoot, sourceRoot, phpArgs, n == contexts);
             }

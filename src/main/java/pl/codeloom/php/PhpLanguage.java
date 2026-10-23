@@ -7,6 +7,7 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.Shape;
+import com.oracle.truffle.api.strings.TruffleString;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
@@ -21,6 +22,9 @@ import pl.codeloom.php.runtime.PhpObject;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
@@ -46,6 +50,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
 
+    @Option(help = "Declares the runtime's debugging functions for its own tools (truffle_translate, "
+            + "truffle_native_ns, truffle_pcre_record); PHP has none of them.", category = OptionCategory.INTERNAL,
+            stability = OptionStability.EXPERIMENTAL)
+    static final OptionKey<Boolean> Debug = new OptionKey<>(false);
+
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 
     private final Shape rootShape = Shape.newBuilder().layout(PhpObject.class, java.lang.invoke.MethodHandles.lookup())
@@ -64,9 +73,27 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final Prelude prelude = new Prelude();
 
     /** A translation and the AST export version (modification time and size) it was made from. */
-    private record CachedFile(FileRootNode root, long modified, long size) {
+    /** A file's translation for one version of its AST export, made once by the first context to need it. */
+    private record CachedFile(FutureTask<FileRootNode> translation, long modified, long size) {
         boolean isFor(long otherModified, long otherSize) {
             return modified == otherModified && size == otherSize;
+        }
+
+        FileRootNode root() {
+            try {
+                return translation.get();
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof RuntimeException runtime) {
+                    throw runtime;
+                }
+                if (e.getCause() instanceof Error error) {
+                    throw error;
+                }
+                throw new IllegalStateException(e.getCause());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
         }
     }
 
@@ -83,6 +110,10 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final NameIds classIds = new NameIds();
     /** Interned class identities (see ClassKey). */
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
+    /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
+    private final Map<TruffleString, TruffleString> literals = new ConcurrentHashMap<>();
+    /** Numbers the anonymous classes, as php-src's runtime-definition keys keep their names apart. */
+    private final AtomicInteger anonymousClasses = new AtomicInteger();
     /** Compiled regular expressions, shared by the contexts (and threads) of the engine. */
     private final pl.codeloom.php.builtins.PcreFunctions.Patterns pcrePatterns =
             new pl.codeloom.php.builtins.PcreFunctions.Patterns();
@@ -94,13 +125,23 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return rootShape;
     }
 
+    /** The built-in functions, as the first context built them (a translation always follows a context). */
     public Builtins.Table builtins() {
+        Builtins.Table table = builtins;
+        if (table == null) {
+            throw new IllegalStateException("built-ins read before any context was created");
+        }
+        return table;
+    }
+
+    /** The built-in functions, with the debugging ones when debug is set (the same for every context). */
+    public Builtins.Table builtins(boolean debug) {
         Builtins.Table table = builtins;
         if (table == null) {
             synchronized (this) {
                 table = builtins;
                 if (table == null) {
-                    table = Builtins.build(this);
+                    table = Builtins.build(this, debug);
                     builtins = table;
                 }
             }
@@ -111,7 +152,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected PhpContext createContext(Env env) {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
-                env.getOptions().get(Sapi).equals("cgi"));
+                env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug));
     }
 
     /** The id of a function name (lowercase); a context keeps its functions by id. */
@@ -145,15 +186,36 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     /**
      * A file's translation for the given version of its AST export, made by translate when there is none for
-     * that version (once, also when contexts race).
+     * that version: once, also when contexts race (the others wait for it), and outside the map's lock, so
+     * translating one file doesn't hold up others. A failed translation isn't kept.
      */
     public FileRootNode file(String canonical, long modified, long size, Supplier<FileRootNode> translate) {
         CachedFile cached = files.get(canonical);
         if (cached == null || !cached.isFor(modified, size)) {
+            CachedFile fresh = new CachedFile(new FutureTask<>(translate::get), modified, size);
             cached = files.compute(canonical, (path, current) -> current != null && current.isFor(modified, size)
-                    ? current : new CachedFile(translate.get(), modified, size));
+                    ? current : fresh);
+            if (cached == fresh) {
+                fresh.translation().run();
+            }
         }
-        return cached.root();
+        try {
+            return cached.root();
+        } catch (RuntimeException | Error failed) {
+            files.remove(canonical, cached);
+            throw failed;
+        }
+    }
+
+    /** The canonical instance of a literal string. */
+    public TruffleString intern(TruffleString literal) {
+        TruffleString existing = literals.putIfAbsent(literal, literal);
+        return existing != null ? existing : literal;
+    }
+
+    /** The next anonymous class number (class@anonymous names). */
+    public int nextAnonymousClass() {
+        return anonymousClasses.getAndIncrement();
     }
 
     /** The prelude file declaring a built-in class written in PHP, or null (see {@link Prelude}). */
@@ -170,7 +232,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected boolean areOptionsCompatible(OptionValues firstOptions, OptionValues newOptions) {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
-                && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot));
+                && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
+                && firstOptions.get(Debug).equals(newOptions.get(Debug));
     }
 
     @Override
