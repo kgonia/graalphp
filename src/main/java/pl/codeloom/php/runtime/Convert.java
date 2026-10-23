@@ -65,6 +65,9 @@ public final class Convert {
         if (value instanceof PhpArray a) {
             return a.size() > 0 ? 1 : 0;
         }
+        if (value instanceof PhpResource r) {
+            return r.getId();
+        }
         return 1;
     }
 
@@ -106,6 +109,9 @@ public final class Convert {
         }
         if (value instanceof PhpArray a) {
             return a.size() > 0 ? 1 : 0;
+        }
+        if (value instanceof PhpResource r) {
+            return r.getId();
         }
         return 1;
     }
@@ -255,6 +261,9 @@ public final class Convert {
         }
         if (value instanceof PhpObject o) {
             return o.toPhpString();
+        }
+        if (value instanceof PhpResource r) {
+            return Str.of("Resource id #" + r.getId());
         }
         CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot convert " + value + " to string");
@@ -475,6 +484,9 @@ public final class Convert {
         }
         if (value == PhpNull.NULL) {
             return "NULL";
+        }
+        if (value instanceof PhpResource r) {
+            return r.isClosed() ? "resource (closed)" : "resource";
         }
         return "object";
     }

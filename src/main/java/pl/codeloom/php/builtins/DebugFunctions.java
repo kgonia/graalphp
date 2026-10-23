@@ -51,8 +51,10 @@ final class DebugFunctions {
                     body(declaration.getFunction(), seen, roots, errors);
                 } else if (node instanceof ClosureNode closure) {
                     body(closure.getFunction(), seen, roots, errors);
-                } else if (node instanceof DeclareNodes.DeclareClassNode declaration) {
-                    ClassTemplate template = declaration.getTemplate();
+                } else if (node instanceof DeclareNodes.DeclareClassNode
+                        || node instanceof DeclareNodes.NewAnonymousClassNode) {
+                    ClassTemplate template = node instanceof DeclareNodes.DeclareClassNode declaration
+                            ? declaration.getTemplate() : ((DeclareNodes.NewAnonymousClassNode) node).getTemplate();
                     if (template.getUnsupported() != null) {
                         errors.append(Str.of(template.getUnsupported()));
                     }

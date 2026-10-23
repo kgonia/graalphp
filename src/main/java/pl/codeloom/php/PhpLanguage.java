@@ -167,5 +167,6 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected void finalizeContext(PhpContext context) {
         context.flush();
+        context.builtinState().close();
     }
 }

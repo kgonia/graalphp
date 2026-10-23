@@ -6,6 +6,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -14,10 +15,13 @@ import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /** ext/standard array functions. Sorts are stable, as php-src's zend_sort is since PHP 8.0. */
 final class ArrayFunctions {
@@ -189,6 +193,53 @@ final class ArrayFunctions {
             return true;
         });
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
+        r.fn("array_reduce", (context, a) -> {
+            PhpArray array = Args.array(a, 0, "array_reduce");
+            Object carry = Args.get(a, 2, PhpNull.NULL);
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                carry = Callables.call(context, Args.get(a, 1), carry, array.valueAt(p));
+            }
+            return carry;
+        });
+        r.fn("array_walk_recursive", "1", (context, a) -> {
+            walkRecursive(context, writable(Args.ref(a, 0)), Args.get(a, 1), Args.has(a, 2) ? Args.get(a, 2) : null);
+            return true;
+        });
+        r.fn("array_replace", a -> replace(a, false));
+        r.fn("array_replace_recursive", a -> replace(a, true));
+        r.fn("array_merge_recursive", a -> {
+            PhpArray result = new PhpArray();
+            for (int i = 0; i < Args.count(a); i++) {
+                mergeRecursive(result, Args.array(a, i, "array_merge_recursive"));
+            }
+            return result;
+        });
+        r.fn("array_change_key_case", a -> changeKeyCase(Args.array(a, 0, "array_change_key_case"),
+                Args.lng(a, 1, 0) == 1));
+        r.fn("array_chunk", a -> chunk(Args.array(a, 0, "array_chunk"), Args.lng(a, 1, 0), Args.bool(a, 2, false)));
+        r.fn("array_product", a -> {
+            PhpArray array = Args.array(a, 0, "array_product");
+            Object product = 1L;
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                product = Operators.mul(product, Convert.toNumber(array.valueAt(p)));
+            }
+            return product;
+        });
+        r.fn("array_diff_assoc", a -> diffAssoc(a, true));
+        r.fn("array_intersect_assoc", a -> diffAssoc(a, false));
+        r.fn("array_rand", a -> rand(Args.array(a, 0, "array_rand"), Args.lng(a, 1, 1)));
+        r.fn("shuffle", "1", a -> {
+            PhpRef ref = Args.ref(a, 0);
+            List<Object> values = new ArrayList<>();
+            PhpArray array = writable(ref);
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                values.add(array.valueAt(p));
+            }
+            Collections.shuffle(values);
+            ref.set(PhpArray.list(values.toArray()));
+            return true;
+        });
+        r.fn("iterator_to_array", a -> iteratorToArray(Args.get(a, 0), Args.bool(a, 1, true)));
 
         // ---- sorting ----
         r.fn("sort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, false));
@@ -216,6 +267,180 @@ final class ArrayFunctions {
     }
 
     // ---- helpers ----
+
+    @TruffleBoundary
+    private static void walkRecursive(PhpContext context, PhpArray array, Object callback, Object extra) {
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            PhpRef element = array.refAtPosition(p);
+            if (element.get() instanceof PhpArray) {
+                walkRecursive(context, element.arrayForWrite(), callback, extra);
+            } else if (extra != null) {
+                Callables.call(context, callback, element, array.keyAt(p), extra);
+            } else {
+                Callables.call(context, callback, element, array.keyAt(p));
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpArray replace(Object[] a, boolean recursive) {
+        String function = recursive ? "array_replace_recursive" : "array_replace";
+        PhpArray result = Args.array(a, 0, function).copy();
+        for (int i = 1; i < Args.count(a); i++) {
+            replaceInto(result, Args.array(a, i, function), recursive);
+        }
+        return result;
+    }
+
+    private static void replaceInto(PhpArray target, PhpArray source, boolean recursive) {
+        for (int p = source.firstPosition(); p >= 0; p = source.nextPosition(p)) {
+            Object key = source.keyAt(p);
+            Object value = source.valueAt(p);
+            if (recursive && value instanceof PhpArray replacement && target.get(key) instanceof PhpArray current) {
+                PhpArray merged = current.copy();
+                replaceInto(merged, replacement, true);
+                target.put(key, merged);
+            } else {
+                target.put(key, value);
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private static void mergeRecursive(PhpArray target, PhpArray source) {
+        for (int p = source.firstPosition(); p >= 0; p = source.nextPosition(p)) {
+            Object key = source.keyAt(p);
+            Object value = source.valueAt(p);
+            Object current = key instanceof Long ? null : target.get(key);
+            if (key instanceof Long) {
+                target.append(value);
+            } else if (current == null) {
+                target.put(key, value);
+            } else {
+                PhpArray merged = current instanceof PhpArray existing ? existing.copy() : PhpArray.list(current);
+                if (value instanceof PhpArray nested) {
+                    mergeRecursive(merged, nested);
+                } else {
+                    merged.append(value);
+                }
+                target.put(key, merged);
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpArray changeKeyCase(PhpArray array, boolean upper) {
+        PhpArray result = PhpArray.ofCapacity(array.size());
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            Object key = array.keyAt(p);
+            if (key instanceof TruffleString name) {
+                String text = Str.java(name);
+                key = ArrayKey.of(Str.of(upper ? text.toUpperCase(Locale.ROOT) : text.toLowerCase(Locale.ROOT)));
+            }
+            result.put(key, array.valueAt(p));
+        }
+        return result;
+    }
+
+    @TruffleBoundary
+    private static PhpArray chunk(PhpArray array, long length, boolean preserveKeys) {
+        if (length < 1) {
+            throw new PhpError("ValueError: array_chunk(): Argument #2 ($length) must be greater than 0");
+        }
+        PhpArray result = new PhpArray();
+        PhpArray chunk = null;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            if (chunk == null || chunk.size() == length) {
+                chunk = new PhpArray();
+                result.append(chunk);
+            }
+            if (preserveKeys) {
+                chunk.put(array.keyAt(p), array.valueAt(p));
+            } else {
+                chunk.append(array.valueAt(p));
+            }
+        }
+        return result;
+    }
+
+    /** Values compared as strings, keys strictly: array_diff_assoc keeps the first array's pairs absent elsewhere. */
+    @TruffleBoundary
+    private static PhpArray diffAssoc(Object[] a, boolean diff) {
+        String function = diff ? "array_diff_assoc" : "array_intersect_assoc";
+        PhpArray first = Args.array(a, 0, function);
+        PhpArray result = new PhpArray();
+        for (int p = first.firstPosition(); p >= 0; p = first.nextPosition(p)) {
+            Object key = first.keyAt(p);
+            TruffleString value = Convert.toStr(first.valueAt(p));
+            boolean inAll = true;
+            boolean inAny = false;
+            for (int i = 1; i < Args.count(a); i++) {
+                Object other = Args.array(a, i, function).get(key);
+                boolean found = other != null && Str.compare(Convert.toStr(other), value) == 0;
+                inAll &= found;
+                inAny |= found;
+            }
+            if (diff ? !inAny : inAll) {
+                result.put(key, first.valueAt(p));
+            }
+        }
+        return result;
+    }
+
+    @TruffleBoundary
+    private static Object rand(PhpArray array, long count) {
+        if (array.size() == 0) {
+            throw new PhpError("ValueError: array_rand(): Argument #1 ($array) cannot be empty");
+        }
+        if (count < 1 || count > array.size()) {
+            throw new PhpError("ValueError: array_rand(): Argument #2 ($num) must be between 1 and the number of "
+                    + "elements in argument #1 ($array)");
+        }
+        List<Object> keys = new ArrayList<>();
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            keys.add(array.keyAt(p));
+        }
+        if (count == 1) {
+            return keys.get(ThreadLocalRandom.current().nextInt(keys.size()));
+        }
+        List<Object> picked = new ArrayList<>(keys);
+        Collections.shuffle(picked);
+        Set<Object> chosen = new HashSet<>(picked.subList(0, (int) count));
+        PhpArray result = new PhpArray();
+        for (Object key : keys) {
+            if (chosen.contains(key)) {
+                result.append(key);
+            }
+        }
+        return result;
+    }
+
+    @TruffleBoundary
+    private static PhpArray iteratorToArray(Object iterable, boolean preserveKeys) {
+        if (iterable instanceof PhpArray array) {
+            return preserveKeys ? array.copy() : values(array);
+        }
+        Object iterator = iterable;
+        while (iterator instanceof PhpObject object && object.getPhpClass().isSubclassOf("iteratoraggregate")) {
+            iterator = object.callMethod("getiterator");
+        }
+        if (!(iterator instanceof PhpObject object)) {
+            throw new PhpError("TypeError: iterator_to_array(): Argument #1 ($iterator) must be of type "
+                    + "Traversable|array, " + Convert.typeName(iterable) + " given");
+        }
+        PhpArray result = new PhpArray();
+        object.callMethod("rewind");
+        while (Convert.toBool(object.callMethod("valid"))) {
+            Object value = object.callMethod("current");
+            if (preserveKeys) {
+                result.put(ArrayKey.of(object.callMethod("key")), value);
+            } else {
+                result.append(value);
+            }
+            object.callMethod("next");
+        }
+        return result;
+    }
 
     private static PhpArray writable(PhpRef ref) {
         if (!(ref.get() instanceof PhpArray)) {

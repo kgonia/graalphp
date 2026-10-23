@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -56,6 +57,39 @@ public final class DeclareNodes {
         @TruffleBoundary
         private static void declare(PhpContext context, ClassTemplate template) {
             context.declareClass(template.instantiate(context));
+        }
+    }
+
+    /**
+     * `new class(...) {...}`: declares the anonymous class the first time the context runs the expression, then
+     * instantiates it. The name, as in php-src, is "class@anonymous", a NUL and the declaration's place.
+     */
+    public static final class NewAnonymousClassNode extends ExprNode {
+        private final ClassTemplate template;
+        private final String lowerName;
+        @Child private ExprNode instantiate;
+
+        public NewAnonymousClassNode(ClassTemplate template, ExprNode instantiate) {
+            this.template = template;
+            this.lowerName = template.getName().toLowerCase();
+            this.instantiate = instantiate;
+        }
+
+        public ClassTemplate getTemplate() {
+            return template;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            declareOnce(PhpContext.get(this), template, lowerName);
+            return instantiate.execute(frame);
+        }
+
+        @TruffleBoundary
+        private static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
+            if (context.findClass(lowerName) == null) {
+                context.declareClass(template.instantiate(context));
+            }
         }
     }
 }

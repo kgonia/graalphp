@@ -57,3 +57,30 @@ The boot path needs, at least:
 - a database.
 
 The probe can't say which of the 355 missing functions the boot actually reaches. Running the boot will show that.
+
+## Milestone 1 (2026-10-23): `wp-load.php` boots in CLI
+
+`tests/gate2/boot.sh` boots WordPress 7.2-beta1 on Truffle PHP against MariaDB (`tests/gate2/db.sh`, installed once by `tests/gate2/install.sh` with wp-cli on regular PHP). It then runs `tests/gate2/query.php` on both engines and diffs the output:
+- options (`get_option`);
+- raw `wpdb` reads (`get_var`, `get_col`, `get_row`);
+- `WP_Query`;
+- `get_categories`.
+
+The two outputs are identical. The reference is the `wordpress:cli-php8.4` image, because the PHP 8.5 oracle image has no mysqli.
+
+What the boot needed, in the order the boot loop hit it:
+1. superglobals, `$GLOBALS`, autoloading, namespaces, `exit`, `clone`, `compact`, the date and encoding built-ins (commit `62e3403`);
+2. **mysqli on JDBC** (`builtins/MysqliFunctions.java`, MariaDB Connector/J):
+   - the procedural API `wpdb` calls;
+   - results read eagerly as mysqlnd returns them without `MYSQLI_OPT_INT_AND_FLOAT_NATIVE`: every value is the column's bytes or null;
+   - the connection lives in the object's `internal` slot;
+3. file and stream functions with a `resource` type (`builtins/FileFunctions.java`), plus output-buffer levels, math, missing array and string functions, and the standard constants;
+4. anonymous classes, declared once per context when first evaluated;
+5. `array(&$this)`, which becomes a by-value element;
+6. **traits**:
+   - a trait's members are re-translated from its AST for each class that uses it, so `self`, `parent` and `__CLASS__` are that class's;
+   - the translation is cached in the using class's template, shared by all contexts;
+   - `insteadof` and `as` aliases are supported;
+7. `compact()` with names computed at run time: frame slots looked up by name, behind a boundary.
+
+The next milestones are the installer and the home page over HTTP. The census above still lists the gaps the boot path doesn't reach: `goto`, generators, `extract`, DOM, Reflection, and others.

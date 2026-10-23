@@ -103,8 +103,18 @@ public final class PhpClass {
         }
     }
 
+    /** What declared this class: its ClassTemplate, or a built-in class's name. */
+    public Object getDeclaration() {
+        return declaration;
+    }
+
     public void addMethod(PhpFunction method) {
-        String key = method.getName().toLowerCase();
+        addMethod(method.getName(), method);
+    }
+
+    /** Adds a method under a name: its own, or a trait alias (`use T { m as n; }`). */
+    public void addMethod(String name, PhpFunction method) {
+        String key = name.toLowerCase();
         methods.put(key, method);
         if (key.equals("__construct")) {
             constructor = method;

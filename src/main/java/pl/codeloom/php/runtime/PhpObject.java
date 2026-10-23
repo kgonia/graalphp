@@ -14,12 +14,22 @@ import com.oracle.truffle.api.strings.TruffleString;
 public final class PhpObject extends DynamicObject {
     private final PhpClass phpClass;
     private final int id;
+    /** Native state of a built-in class's instance (a mysqli connection, a query result), or null. */
+    private Object internal;
 
     /** id: var_dump's #n and spl_object_id(), from {@code PhpContext.nextObjectId()}. */
     public PhpObject(Shape shape, PhpClass phpClass, int id) {
         super(shape);
         this.phpClass = phpClass;
         this.id = id;
+    }
+
+    public Object getInternal() {
+        return internal;
+    }
+
+    public void setInternal(Object internal) {
+        this.internal = internal;
     }
 
     public PhpClass getPhpClass() {

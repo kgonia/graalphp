@@ -173,6 +173,45 @@ final class CoreFunctions {
             return contents;
         });
         r.fn("ob_end_clean", (context, a) -> context.endBuffer());
+        r.fn("ob_clean", (context, a) -> {
+            if (context.bufferLevel() == 0) {
+                return false;
+            }
+            context.endBuffer();
+            context.startBuffer();
+            return true;
+        });
+        r.fn("ob_end_flush", (context, a) -> context.flushBuffer());
+        r.fn("ob_get_flush", (context, a) -> {
+            TruffleString contents = context.bufferContents();
+            if (contents == null) {
+                return Boolean.FALSE;
+            }
+            context.flushBuffer();
+            return contents;
+        });
+        r.fn("ob_flush", (context, a) -> {
+            TruffleString contents = context.bufferContents();
+            if (contents == null) {
+                return false;
+            }
+            context.flushBuffer();
+            context.startBuffer();
+            return true;
+        });
+        r.fn("ob_get_level", (context, a) -> (long) context.bufferLevel());
+        r.fn("ob_get_length", (context, a) -> {
+            TruffleString contents = context.bufferContents();
+            return contents == null ? (Object) Boolean.FALSE : (long) Str.length(contents);
+        });
+        r.fn("ob_implicit_flush", a -> PhpNull.NULL);
+        r.fn("ob_list_handlers", (context, a) -> {
+            PhpArray handlers = new PhpArray();
+            for (int i = 0; i < context.bufferLevel(); i++) {
+                handlers.append(Str.of("default output handler"));
+            }
+            return handlers;
+        });
         r.fn("var_dump", (context, a) -> {
             for (int i = 0; i < Args.count(a); i++) {
                 context.write(Str.of(Dump.varDump(Args.get(a, i), 0)));
@@ -246,6 +285,16 @@ final class CoreFunctions {
         r.fn("ceil", a -> Math.ceil(Convert.toDouble(Args.get(a, 0))));
         r.fn("round", a -> round(Convert.toNumber(Args.get(a, 0)), Args.lng(a, 1, 0)));
         r.fn("sqrt", a -> Math.sqrt(Convert.toDouble(Args.get(a, 0))));
+        r.fn("log", a -> Args.has(a, 1) ? Math.log(Convert.toDouble(Args.get(a, 0)))
+                / Math.log(Convert.toDouble(Args.get(a, 1))) : Math.log(Convert.toDouble(Args.get(a, 0))));
+        r.fn("log10", a -> Math.log10(Convert.toDouble(Args.get(a, 0))));
+        r.fn("log2", a -> Math.log(Convert.toDouble(Args.get(a, 0))) / Math.log(2));
+        r.fn("exp", a -> Math.exp(Convert.toDouble(Args.get(a, 0))));
+        r.fn("pi", a -> Math.PI);
+        r.fn("bindec", a -> Long.parseUnsignedLong("0" + Str.java(Args.str(a, 0)).replaceAll("[^01]", ""), 2));
+        r.fn("mt_getrandmax", a -> 2147483647L);
+        r.fn("getrandmax", a -> 2147483647L);
+        r.fn("lcg_value", a -> Math.random());
         r.fn("pow", a -> pl.codeloom.php.runtime.Operators.pow(Args.get(a, 0), Args.get(a, 1)));
         r.fn("intdiv", a -> {
             long divisor = Args.lng(a, 1, 1);

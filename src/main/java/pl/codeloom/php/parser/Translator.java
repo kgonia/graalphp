@@ -44,6 +44,7 @@ import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.CompactNode;
 import pl.codeloom.php.nodes.vars.DimNode;
+import pl.codeloom.php.nodes.vars.DynamicCompactNode;
 import pl.codeloom.php.nodes.vars.GlobalVarNode;
 import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
@@ -144,8 +145,8 @@ public final class Translator {
         return source == null || line < 1 || line > source.getLineCount() ? null : source.createSection(line);
     }
 
-    private static PhpError unsupported(Ast node, String what) {
-        return new PhpError("Unsupported " + what + " (" + node.kind + " at line " + node.line + ")");
+    private PhpError unsupported(Ast node, String what) {
+        return new PhpError("Unsupported " + what + " (" + node.kind + " at " + path + ":" + node.line + ")");
     }
 
     // ---- files ----
@@ -595,9 +596,26 @@ public final class Translator {
     // ---- classes ----
 
     private StmtNode classDeclaration(Ast node) {
-        String name = names.declared((String) node.get("name"));
+        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))));
+    }
+
+    /** Numbers the anonymous classes, as php-src's runtime-definition keys keep their names apart. */
+    private static final java.util.concurrent.atomic.AtomicInteger ANONYMOUS_CLASSES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
+    private ExprNode newAnonymousClass(Ast node, Ast classNode) {
+        String parent = classNode.get("extends") == null ? "class" : className(classNode.node("extends"));
+        String name = parent + "@anonymous\0" + path + ":" + classNode.line + "$"
+                + Integer.toHexString(ANONYMOUS_CLASSES.getAndIncrement());
+        ClassTemplate template = classTemplate(classNode, name);
+        return new DeclareNodes.NewAnonymousClassNode(template,
+                new NewNode(ClassRefNode.named(name), arguments(node.node("args"))));
+    }
+
+    private ClassTemplate classTemplate(Ast node, String name) {
         if ((node.flags & CLASS_TRAIT) != 0) {
-            throw unsupported(node, "trait declaration");
+            return traitTemplate(node, name);
         }
         String parentName = node.get("extends") == null ? null : className(node.node("extends"));
         List<String> interfaces = new ArrayList<>();
@@ -620,8 +638,51 @@ public final class Translator {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
             unsupported = error.getMessage();
         }
-        return new DeclareNodes.DeclareClassNode(
-                new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members, unsupported));
+        return new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members, unsupported);
+    }
+
+    /** A trait: its members are translated for each class that uses it, on that class's first declaration. */
+    private ClassTemplate traitTemplate(Ast node, String name) {
+        Ast statements = node.node("stmts");
+        Names declaredNames = names;
+        ClassTemplate.TraitBody body = (className, parentName) -> {
+            ClassInfo info = new ClassInfo(className, parentName);
+            Translator inClass = new Translator(language, path, source, info, "", null, null, declaredNames);
+            List<ClassTemplate.Member> members = new ArrayList<>();
+            for (Object child : statements.children()) {
+                inClass.addMember(members, (Ast) child, className, info);
+            }
+            return members;
+        };
+        return new ClassTemplate(name, null, List.of(), false, true, List.of(), null, body);
+    }
+
+    private ClassTemplate.TraitUse traitUse(Ast node) {
+        List<String> traits = new ArrayList<>();
+        for (Object child : node.node("traits").children()) {
+            traits.add(className((Ast) child));
+        }
+        List<ClassTemplate.Alias> aliases = new ArrayList<>();
+        List<ClassTemplate.Exclusion> exclusions = new ArrayList<>();
+        if (node.node("adaptations") != null) {
+            for (Object child : node.node("adaptations").children()) {
+                Ast adaptation = (Ast) child;
+                Ast reference = adaptation.node("method");
+                String trait = reference.get("class") == null ? null : className(reference.node("class"));
+                String method = ((String) reference.get("method")).toLowerCase();
+                if (adaptation.is("AST_TRAIT_PRECEDENCE")) {
+                    List<String> excluded = new ArrayList<>();
+                    for (Object other : adaptation.node("insteadof").children()) {
+                        excluded.add(className((Ast) other));
+                    }
+                    exclusions.add(new ClassTemplate.Exclusion(trait, method, excluded));
+                } else {
+                    aliases.add(new ClassTemplate.Alias(trait, method,
+                            adaptation.get("alias") instanceof String alias ? alias : null));
+                }
+            }
+        }
+        return new ClassTemplate.TraitUse(traits, aliases, exclusions);
     }
 
     private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info) {
@@ -664,7 +725,8 @@ public final class Translator {
                 break;
             }
             case "AST_USE_TRAIT":
-                throw unsupported(member, "trait use");
+                members.add(traitUse(member));
+                break;
             default:
                 throw unsupported(member, "class member");
         }
@@ -820,7 +882,7 @@ public final class Translator {
             }
             case "AST_NEW":
                 if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
-                    throw unsupported(node, "anonymous class");
+                    return newAnonymousClass(node, classNode);
                 }
                 return new NewNode(classRef(node.get("class")), arguments(node.node("args")));
             case "AST_CLOSURE":
@@ -1093,7 +1155,7 @@ public final class Translator {
     private ExprNode constant(Ast node) {
         Ast nameNode = node.node("name");
         String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
-        // true, false and null, and the predefined constants, are global; a namespace can't shadow them here
+        // true, false and null are global; a namespace can't declare them
         String name = resolved[1] != null ? resolved[1] : resolved[0];
         switch (name.toLowerCase()) {
             case "true":
@@ -1105,7 +1167,8 @@ public final class Translator {
             default:
                 break;
         }
-        Object known = language.builtins().constant(name);
+        // a predefined constant folds where the name can't mean a namespace's own (`namespace N; const INI_ALL = 0;`)
+        Object known = resolved[1] == null ? language.builtins().constant(name) : null;
         if (known != null) {
             return new ConstNode(known);
         }
@@ -1185,7 +1248,10 @@ public final class Translator {
                 continue;
             }
             keys[i] = element.get("key") == null ? null : expression(element.get("key"));
-            if ((element.flags & ARRAY_ELEM_REF) != 0) {
+            // array(&$this) (WordPress's do_action_ref_array): $this can't be rebound, so a copy behaves the same
+            boolean refToThis = element.get("value") instanceof Ast value && value.is("AST_VAR")
+                    && "this".equals(value.get("name"));
+            if ((element.flags & ARRAY_ELEM_REF) != 0 && !refToThis) {
                 kinds[i] = ArrayLiteralNode.REF;
                 values[i] = place(element.get("value"));
                 constant = false;
@@ -1288,7 +1354,7 @@ public final class Translator {
                     }
                     return new CompactNode(keys, variables);
                 }
-                throw unsupported(node, "compact() with names computed at run time");
+                return new DynamicCompactNode(expressionList(args), scope == null ? null : scope.slots);
             }
             case "extract":
             case "get_defined_vars":

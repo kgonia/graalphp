@@ -115,6 +115,13 @@ public final class PhpContext {
         return CONTEXT.get(node);
     }
 
+    /** get_resource_id()'s numbering: 1-3 are STDIN, STDOUT and STDERR in php-cli. */
+    private int nextResourceId = 4;
+
+    public int nextResourceId() {
+        return nextResourceId++;
+    }
+
     public int nextObjectId() {
         return nextObjectId++;
     }
@@ -472,6 +479,22 @@ public final class PhpContext {
     @TruffleBoundary
     public TruffleString bufferContents() {
         return buffers.isEmpty() ? null : Str.of(buffers.peek().toByteArray());
+    }
+
+    /** ob_get_level(). */
+    public int bufferLevel() {
+        return buffers.size();
+    }
+
+    /** Ends the current buffer, passing its contents to the next level (ob_end_flush); false if there was none. */
+    @TruffleBoundary
+    public boolean flushBuffer() {
+        ByteBuilder top = buffers.poll();
+        if (top == null) {
+            return false;
+        }
+        write(Str.of(top.toByteArray()));
+        return true;
     }
 
     /** Discards the current buffer (ob_end_clean); false if there was none. */

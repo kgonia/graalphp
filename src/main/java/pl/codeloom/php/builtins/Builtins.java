@@ -51,6 +51,8 @@ public final class Builtins {
         RuntimeFunctions.register(registry);
         DateFunctions.register(registry);
         EncodingFunctions.register(registry);
+        FileFunctions.register(registry);
+        MysqliFunctions.register(registry);
         DebugFunctions.register(registry);
         return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry));
     }
@@ -109,6 +111,37 @@ public final class Builtins {
                 {"PHP_ROUND_HALF_EVEN", 3L}, {"PHP_ROUND_HALF_ODD", 4L},
                 {"MB_CASE_UPPER", 0L}, {"MB_CASE_LOWER", 1L}, {"MB_CASE_TITLE", 2L},
                 {"LC_CTYPE", 0L}, {"LC_ALL", 6L},
+                {"PHP_SAPI", Str.of("cli")}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
+                {"PHP_MAXPATHLEN", 4096L}, {"PHP_DEBUG", 0L}, {"PHP_ZTS", 0L}, {"PHP_EXTRA_VERSION", Str.EMPTY},
+                {"PHP_FLOAT_DIG", 15L}, {"M_E", Math.E}, {"M_SQRT2", Math.sqrt(2)},
+                {"FILE_USE_INCLUDE_PATH", 1L}, {"FILE_IGNORE_NEW_LINES", 2L}, {"FILE_SKIP_EMPTY_LINES", 4L},
+                {"FILE_APPEND", 8L}, {"FILE_NO_DEFAULT_CONTEXT", 16L}, {"LOCK_SH", 1L}, {"LOCK_EX", 2L},
+                {"LOCK_UN", 3L}, {"LOCK_NB", 4L}, {"SEEK_SET", 0L}, {"SEEK_CUR", 1L}, {"SEEK_END", 2L},
+                {"GLOB_MARK", 2L}, {"GLOB_NOSORT", 4L}, {"GLOB_NOCHECK", 16L}, {"GLOB_NOESCAPE", 64L},
+                {"GLOB_ERR", 1L}, {"GLOB_BRACE", 1024L}, {"GLOB_ONLYDIR", 8192L}, {"GLOB_AVAILABLE_FLAGS", 9303L},
+                {"SCANDIR_SORT_ASCENDING", 0L}, {"SCANDIR_SORT_DESCENDING", 1L}, {"SCANDIR_SORT_NONE", 2L},
+                {"CASE_LOWER", 0L}, {"CASE_UPPER", 1L}, {"EXTR_OVERWRITE", 0L}, {"EXTR_SKIP", 1L},
+                {"EXTR_PREFIX_SAME", 2L}, {"EXTR_PREFIX_ALL", 3L}, {"EXTR_IF_EXISTS", 6L}, {"EXTR_REFS", 256L},
+                {"PHP_OUTPUT_HANDLER_STDFLAGS", 112L}, {"PHP_OUTPUT_HANDLER_CLEANABLE", 16L},
+                {"PHP_OUTPUT_HANDLER_FLUSHABLE", 32L}, {"PHP_OUTPUT_HANDLER_REMOVABLE", 64L},
+                {"CRYPT_BLOWFISH", 1L}, {"PASSWORD_DEFAULT", Str.of("2y")}, {"PASSWORD_BCRYPT", Str.of("2y")},
+                {"PASSWORD_BCRYPT_DEFAULT_COST", 10L},
+                {"INI_USER", 1L}, {"INI_PERDIR", 2L}, {"INI_SYSTEM", 4L}, {"INI_ALL", 7L},
+                {"DATE_ATOM", Str.of("Y-m-d\\TH:i:sP")}, {"DATE_RFC2822", Str.of("D, d M Y H:i:s O")},
+                {"DATE_RFC3339", Str.of("Y-m-d\\TH:i:sP")}, {"DATE_ISO8601", Str.of("Y-m-d\\TH:i:sO")},
+                {"DATE_COOKIE", Str.of("l, d-M-Y H:i:s T")}, {"DATE_RSS", Str.of("D, d M Y H:i:s O")},
+                {"DATE_W3C", Str.of("Y-m-d\\TH:i:sP")}, {"DATE_RFC7231", Str.of("D, d M Y H:i:s \\G\\M\\T")},
+                {"PREG_INTERNAL_ERROR", 1L}, {"PREG_BACKTRACK_LIMIT_ERROR", 2L}, {"PREG_RECURSION_LIMIT_ERROR", 3L},
+                {"PREG_BAD_UTF8_ERROR", 4L}, {"PREG_BAD_UTF8_OFFSET_ERROR", 5L}, {"PREG_JIT_STACKLIMIT_ERROR", 6L},
+                {"JSON_ERROR_CTRL_CHAR", 3L}, {"JSON_ERROR_STATE_MISMATCH", 2L}, {"JSON_ERROR_RECURSION", 6L},
+                {"JSON_ERROR_INF_OR_NAN", 7L}, {"JSON_ERROR_UNSUPPORTED_TYPE", 8L},
+                {"MB_CASE_FOLD", 3L}, {"MB_CASE_UPPER_SIMPLE", 4L}, {"MB_CASE_LOWER_SIMPLE", 5L},
+                {"MB_CASE_TITLE_SIMPLE", 6L}, {"MB_CASE_FOLD_SIMPLE", 7L},
+                {"LC_NUMERIC", 1L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L}, {"LC_TIME", 2L}, {"LC_MESSAGES", 5L},
+                {"MYSQLI_REPORT_OFF", 0L}, {"MYSQLI_REPORT_ERROR", 1L}, {"MYSQLI_REPORT_STRICT", 2L},
+                {"MYSQLI_REPORT_INDEX", 4L}, {"MYSQLI_REPORT_ALL", 255L}, {"MYSQLI_ASSOC", 1L}, {"MYSQLI_NUM", 2L},
+                {"MYSQLI_BOTH", 3L}, {"MYSQLI_STORE_RESULT", 0L}, {"MYSQLI_USE_RESULT", 1L},
+                {"MYSQLI_CLIENT_COMPRESS", 32L}, {"MYSQLI_CLIENT_SSL", 2048L}, {"MYSQLI_CLIENT_FOUND_ROWS", 2L},
         };
         Map<String, Object> constants = new LinkedHashMap<>();
         for (Object[] entry : table) {
@@ -130,6 +163,8 @@ public final class Builtins {
         PhpClass throwable = declare(context, "Throwable", null, true);
         throwable.addInterface(stringable);
         declare(context, "stdClass", null, false);
+        declare(context, "mysqli", null, false);
+        declare(context, "mysqli_result", null, false);
 
         PhpClass exception = throwableClass(context, table, "Exception", throwable);
         PhpClass error = throwableClass(context, table, "Error", throwable);

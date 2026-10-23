@@ -71,7 +71,44 @@ public final class StringFunctions {
         r.fn("strncmp", a -> (long) Integer.signum(compareN(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0))));
         r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
                 Str.readBytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
-        r.fn("strnatcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
+        r.fn("strnatcmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), false));
+        r.fn("strnatcasecmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)),
+                true));
+        r.fn("strtok", (context, a) -> strtok(context.builtinState(), a));
+        r.fn("strpbrk", a -> {
+            byte[] haystack = Str.bytes(Args.str(a, 0));
+            byte[] chars = Str.bytes(Args.str(a, 1));
+            for (int i = 0; i < haystack.length; i++) {
+                for (byte c : chars) {
+                    if (haystack[i] == c) {
+                        return Str.of(haystack, i, haystack.length - i);
+                    }
+                }
+            }
+            return Boolean.FALSE;
+        });
+        r.fn("chunk_split", a -> {
+            byte[] body = Str.bytes(Args.str(a, 0));
+            int length = (int) Args.lng(a, 1, 76);
+            byte[] end = Str.bytes(Args.str(a, 2, Str.of("\r\n")));
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            for (int i = 0; i < body.length; i += length) {
+                out.write(body, i, Math.min(length, body.length - i));
+                out.writeBytes(end);
+            }
+            return Str.of(out.toByteArray());
+        });
+        r.fn("quotemeta", a -> {
+            byte[] input = Str.bytes(Args.str(a, 0));
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            for (byte b : input) {
+                if (".\\+*?[^]$()".indexOf(b) >= 0) {
+                    out.write('\\');
+                }
+                out.write(b);
+            }
+            return Str.of(out.toByteArray());
+        });
         r.fn("strrchr", a -> strrchr(Args.str(a, 0), Args.str(a, 1)));
         r.fn("strstr", a -> strstr(Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, false), false));
         r.fn("stristr", a -> strstr(Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, false), true));
@@ -1177,5 +1214,152 @@ public final class StringFunctions {
 
     static Object deref(Object value) {
         return PhpRef.deref(value);
+    }
+    /**
+     * php-src's strnatcmp_ex: leading zeros are skipped at the start only, whitespace is skipped, digit runs
+     * compare as numbers (right-aligned) or, when one starts with 0, as fractions (left-aligned).
+     */
+    @TruffleBoundary
+    static int naturalCompare(byte[] a, byte[] b, boolean foldCase) {
+        if (a.length == 0 || b.length == 0) {
+            return a.length == b.length ? 0 : a.length > b.length ? 1 : -1;
+        }
+        int[] ap = {0};
+        int[] bp = {0};
+        boolean leading = true;
+        while (true) {
+            int ca = at(a, ap[0]);
+            int cb = at(b, bp[0]);
+            while (leading && ca == '0' && ap[0] + 1 < a.length && isDigit(a[ap[0] + 1])) {
+                ca = at(a, ++ap[0]);
+            }
+            while (leading && cb == '0' && bp[0] + 1 < b.length && isDigit(b[bp[0] + 1])) {
+                cb = at(b, ++bp[0]);
+            }
+            leading = false;
+            while (isSpace(ca)) {
+                ca = at(a, ++ap[0]);
+            }
+            while (isSpace(cb)) {
+                cb = at(b, ++bp[0]);
+            }
+            if (isDigit((byte) ca) && isDigit((byte) cb)) {
+                int result = ca == '0' || cb == '0' ? compareLeft(a, ap, b, bp) : compareRight(a, ap, b, bp);
+                if (result != 0) {
+                    return result;
+                } else if (ap[0] >= a.length && bp[0] >= b.length) {
+                    return 0;
+                } else if (ap[0] >= a.length) {
+                    return -1;
+                } else if (bp[0] >= b.length) {
+                    return 1;
+                }
+                ca = at(a, ap[0]);
+                cb = at(b, bp[0]);
+            }
+            if (foldCase) {
+                ca = Character.toUpperCase(ca);
+                cb = Character.toUpperCase(cb);
+            }
+            if (ca != cb) {
+                return ca < cb ? -1 : 1;
+            }
+            ap[0]++;
+            bp[0]++;
+            if (ap[0] >= a.length && bp[0] >= b.length) {
+                return 0;
+            } else if (ap[0] >= a.length) {
+                return -1;
+            } else if (bp[0] >= b.length) {
+                return 1;
+            }
+        }
+    }
+
+    /** Right-aligned digit runs: the longer run wins, else the first differing digit (kept as the bias). */
+    private static int compareRight(byte[] a, int[] ap, byte[] b, int[] bp) {
+        int bias = 0;
+        for (;; ap[0]++, bp[0]++) {
+            boolean aEnd = ap[0] >= a.length || !isDigit(a[ap[0]]);
+            boolean bEnd = bp[0] >= b.length || !isDigit(b[bp[0]]);
+            if (aEnd && bEnd) {
+                return bias;
+            } else if (aEnd) {
+                return -1;
+            } else if (bEnd) {
+                return 1;
+            } else if (bias == 0 && a[ap[0]] != b[bp[0]]) {
+                bias = a[ap[0]] < b[bp[0]] ? -1 : 1;
+            }
+        }
+    }
+
+    /** Left-aligned (fractional) digit runs: the first differing digit wins. */
+    private static int compareLeft(byte[] a, int[] ap, byte[] b, int[] bp) {
+        for (;; ap[0]++, bp[0]++) {
+            boolean aEnd = ap[0] >= a.length || !isDigit(a[ap[0]]);
+            boolean bEnd = bp[0] >= b.length || !isDigit(b[bp[0]]);
+            if (aEnd && bEnd) {
+                return 0;
+            } else if (aEnd) {
+                return -1;
+            } else if (bEnd) {
+                return 1;
+            } else if (a[ap[0]] != b[bp[0]]) {
+                return a[ap[0]] < b[bp[0]] ? -1 : 1;
+            }
+        }
+    }
+
+    private static int at(byte[] bytes, int index) {
+        return index < bytes.length ? bytes[index] & 0xff : 0;
+    }
+
+    private static boolean isSpace(int c) {
+        return c == ' ' || c >= 9 && c <= 13;
+    }
+
+    private static boolean isDigit(byte b) {
+        return b >= '0' && b <= '9';
+    }
+
+    /** strtok($string, $token) starts over; strtok($token) continues the context's last string. */
+    @TruffleBoundary
+    private static Object strtok(BuiltinState state, Object[] a) {
+        byte[] token;
+        if (Args.has(a, 1)) {
+            state.strtok = Str.bytes(Args.str(a, 0));
+            state.strtokPosition = 0;
+            token = Str.bytes(Args.str(a, 1));
+        } else {
+            token = Str.bytes(Args.str(a, 0));
+        }
+        byte[] input = state.strtok;
+        if (input == null) {
+            return Boolean.FALSE;
+        }
+        int start = state.strtokPosition;
+        while (start < input.length && contains(token, input[start])) {
+            start++;
+        }
+        if (start >= input.length) {
+            state.strtok = null;
+            return Boolean.FALSE;
+        }
+        int end = start;
+        while (end < input.length && !contains(token, input[end])) {
+            end++;
+        }
+        state.strtokPosition = end + 1;
+        return Str.of(input, start, end - start);
+    }
+
+    private static boolean contains(byte[] set, byte b) {
+        for (byte c : set) {
+            if (c == b) {
+                return true;
+            }
+        }
+        return false;
     }
 }
