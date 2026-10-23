@@ -30,7 +30,8 @@ import java.util.concurrent.Executors;
  * compiled code is shared, the PHP state is not), on a pool of threads. The language runs under its CGI SAPI:
  * the request goes in as CGI variables and stdin, the response comes back as a CGI response.
  *
- * <p>{@code HttpMain [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir] [--source-root=dir]}. Routing is
+ * <p>{@code HttpMain [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir] [--source-root=dir]
+ * [--server-name=name]}: SERVER_NAME is the request's host unless set. Routing is
  * php -S's: an existing .php file runs, another existing file is served as is, a directory runs its index.php,
  * and anything else runs the document root's index.php (a front controller, as WordPress's permalinks need).
  */
@@ -47,8 +48,10 @@ public final class HttpMain {
     private final String astRoot;
     private final String sourceRoot;
     private final int port;
+    private final String serverName;
 
-    private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port) {
+    private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName) {
+        this.serverName = serverName;
         this.engine = engine;
         this.docroot = docroot;
         this.astRoot = astRoot;
@@ -62,6 +65,7 @@ public final class HttpMain {
         String docroot = ".";
         String astRoot = "target/ast";
         String sourceRoot = ".";
+        String serverName = null;
         for (String arg : args) {
             String value = arg.substring(arg.indexOf('=') + 1);
             if (arg.startsWith("--port=")) {
@@ -74,15 +78,17 @@ public final class HttpMain {
                 astRoot = value;
             } else if (arg.startsWith("--source-root=")) {
                 sourceRoot = value;
+            } else if (arg.startsWith("--server-name=")) {
+                serverName = value;
             } else {
                 System.err.println("usage: HttpMain [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir] "
-                        + "[--source-root=dir]");
+                        + "[--source-root=dir] [--server-name=name]");
                 System.exit(2);
             }
         }
         Engine engine = Engine.create("php");
         HttpMain server = new HttpMain(engine, Path.of(docroot).toAbsolutePath().normalize(), astRoot, sourceRoot,
-                port);
+                port, serverName);
         HttpServer http = HttpServer.create(new InetSocketAddress(port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
@@ -169,7 +175,7 @@ public final class HttpMain {
         env.put("GATEWAY_INTERFACE", "CGI/1.1");
         env.put("SERVER_SOFTWARE", "Truffle PHP");
         env.put("SERVER_PROTOCOL", exchange.getProtocol());
-        env.put("SERVER_NAME", hostName);
+        env.put("SERVER_NAME", serverName != null ? serverName : hostName);
         env.put("SERVER_ADDR", exchange.getLocalAddress().getAddress().getHostAddress());
         env.put("SERVER_PORT", Integer.toString(port));
         env.put("REMOTE_ADDR", exchange.getRemoteAddress().getAddress().getHostAddress());

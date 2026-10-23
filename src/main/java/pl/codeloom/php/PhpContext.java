@@ -57,7 +57,7 @@ public final class PhpContext {
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
-    private final java.util.ArrayDeque<ByteBuilder> buffers = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
     private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
@@ -530,23 +530,50 @@ public final class PhpContext {
                 }
                 out.write(Str.readBytes(s));
             } else {
-                buffers.peek().write(Str.readBytes(s));
+                buffers.peek().bytes.write(Str.readBytes(s));
             }
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());
         }
     }
 
-    /** ob_start(). */
+    // the phases a buffer's handler is called in, and the flags of what a buffer allows (PHP_OUTPUT_HANDLER_*)
+    private static final int PHASE_START = 1;
+    private static final int PHASE_CLEAN = 2;
+    private static final int PHASE_FLUSH = 4;
+    private static final int PHASE_FINAL = 8;
+    public static final long CLEANABLE = 16;
+    public static final long FLUSHABLE = 32;
+    public static final long REMOVABLE = 64;
+
+    /** An ob_start() level: what was written to it, and the handler its contents pass through (or null). */
+    private static final class OutputBuffer {
+        final ByteBuilder bytes = new ByteBuilder();
+        final Object handler;
+        final long flags;
+        boolean started;
+
+        OutputBuffer(Object handler, long flags) {
+            this.handler = handler;
+            this.flags = flags;
+        }
+    }
+
+    /** ob_start($handler, 0, $flags); handler is null for none. */
     @TruffleBoundary
+    public void startBuffer(Object handler, long flags) {
+        buffers.push(new OutputBuffer(handler, flags));
+    }
+
+    /** ob_start() with no handler, everything allowed. */
     public void startBuffer() {
-        buffers.push(new ByteBuilder());
+        startBuffer(null, CLEANABLE | FLUSHABLE | REMOVABLE);
     }
 
     /** ob_get_contents(): the current buffer, or null if none. */
     @TruffleBoundary
     public TruffleString bufferContents() {
-        return buffers.isEmpty() ? null : Str.of(buffers.peek().toByteArray());
+        return buffers.isEmpty() ? null : Str.of(buffers.peek().bytes.toByteArray());
     }
 
     /** ob_get_level(). */
@@ -554,15 +581,66 @@ public final class PhpContext {
         return buffers.size();
     }
 
+    /** ob_list_handlers(): the handlers' names, outermost first. */
+    @TruffleBoundary
+    public List<String> bufferHandlerNames() {
+        List<String> names = new java.util.ArrayList<>();
+        for (java.util.Iterator<OutputBuffer> it = buffers.descendingIterator(); it.hasNext(); ) {
+            Object handler = it.next().handler;
+            names.add(handler == null ? "default output handler"
+                    : handler instanceof TruffleString name ? Str.java(name) : "Closure::__invoke");
+        }
+        return names;
+    }
+
+    /** Whether the current buffer allows an operation (one of the flags); false if there is no buffer. */
+    @TruffleBoundary
+    public boolean bufferAllows(long flag) {
+        return !buffers.isEmpty() && (buffers.peek().flags & flag) != 0;
+    }
+
+    /** A buffer's contents through its handler, in a phase; false from the handler passes them unchanged. */
+    private TruffleString process(OutputBuffer buffer, int phase) {
+        TruffleString contents = Str.of(buffer.bytes.toByteArray());
+        if (buffer.handler == null) {
+            return contents;
+        }
+        int mode = buffer.started ? phase : phase | PHASE_START;
+        buffer.started = true;
+        Object result = pl.codeloom.php.runtime.Callables.call(this, buffer.handler, contents, (long) mode);
+        return result == Boolean.FALSE ? contents : pl.codeloom.php.runtime.Convert.toStr(result);
+    }
+
     /** Ends the current buffer, passing its contents to the next level (ob_end_flush); false if there was none. */
     @TruffleBoundary
     public boolean flushBuffer() {
-        ByteBuilder top = buffers.poll();
+        OutputBuffer top = buffers.peek();
         if (top == null) {
             return false;
         }
-        write(Str.of(top.toByteArray()));
+        TruffleString output = process(top, PHASE_FINAL);
+        buffers.poll();
+        write(output);
         return true;
+    }
+
+    /** ob_flush(): the current buffer's contents go to the next level, the buffer stays (empty). */
+    @TruffleBoundary
+    public void flushBufferContents() {
+        OutputBuffer top = buffers.peek();
+        TruffleString output = process(top, PHASE_FLUSH);
+        top.bytes.reset();
+        buffers.poll();
+        write(output);
+        buffers.push(top);
+    }
+
+    /** ob_clean(): the current buffer's contents are discarded (its handler still sees them), the buffer stays. */
+    @TruffleBoundary
+    public void cleanBuffer() {
+        OutputBuffer top = buffers.peek();
+        process(top, PHASE_CLEAN);
+        top.bytes.reset();
     }
 
     /** The end of the script or request: open output buffers are flushed, then the output (and headers). */
@@ -574,10 +652,16 @@ public final class PhpContext {
         flush();
     }
 
-    /** Discards the current buffer (ob_end_clean); false if there was none. */
+    /** Discards the current buffer (ob_end_clean); its handler sees the contents last. False if there was none. */
     @TruffleBoundary
     public boolean endBuffer() {
-        return buffers.poll() != null;
+        OutputBuffer top = buffers.peek();
+        if (top == null) {
+            return false;
+        }
+        process(top, PHASE_CLEAN | PHASE_FINAL);
+        buffers.poll();
+        return true;
     }
 
     @TruffleBoundary

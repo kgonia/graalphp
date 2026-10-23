@@ -293,7 +293,15 @@ final class FileFunctions {
         r.fn("get_resource_id", a -> (long) resource(a, 0).getId());
 
         // ---- whole files ----
-        r.fn("file_put_contents", a -> putContents(Str.java(Args.str(a, 0)), Args.get(a, 1), Args.lng(a, 2, 0)));
+        r.fn("file_put_contents", (context, a) -> {
+            String name = Str.java(Args.str(a, 0));
+            if (name.equals("php://stdout") || name.equals("php://output") || name.equals("php://stderr")) {
+                PhpResource stream = (PhpResource) open(context, name, "w");
+                return io(() -> (long) ((Stream) stream.getHandle()).write(
+                        Str.bytes(Convert.toStr(Args.get(a, 1)))));
+            }
+            return putContents(name, Args.get(a, 1), Args.lng(a, 2, 0));
+        });
         r.fn("file", a -> lines(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
         r.fn("readfile", (context, a) -> {
             byte[] bytes = readAll(Str.java(Args.str(a, 0)));

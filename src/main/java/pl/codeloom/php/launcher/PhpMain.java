@@ -71,10 +71,21 @@ public final class PhpMain {
             context.eval(source);
         } catch (PolyglotException e) {
             if (e.isExit()) {
-                System.exit(e.getExitStatus());
+                // exit() ends this run; an earlier run of --contexts=n goes on to the next
+                if (keepOutput) {
+                    System.exit(e.getExitStatus());
+                }
+                return;
             }
             System.out.flush();
             System.err.println("PHP Fatal error:  " + e.getMessage());
+            if (System.getenv("PHP_TRACE") != null) {
+                for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
+                    if (frame.isGuestFrame()) {
+                        System.err.println("  at " + frame);
+                    }
+                }
+            }
             if (e.isInternalError() || !e.isGuestException()) {
                 e.printStackTrace();
             }

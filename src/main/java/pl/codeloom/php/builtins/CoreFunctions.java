@@ -157,7 +157,10 @@ final class CoreFunctions {
 
         // ---- output ----
         r.fn("ob_start", (context, a) -> {
-            context.startBuffer();
+            Object handler = Args.get(a, 0);
+            context.startBuffer(handler == null || handler == PhpNull.NULL ? null : handler,
+                    Args.count(a) > 2 ? Convert.toLong(Args.get(a, 2))
+                            : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE);
             return true;
         });
         r.fn("ob_get_contents", (context, a) -> {
@@ -166,37 +169,34 @@ final class CoreFunctions {
         });
         r.fn("ob_get_clean", (context, a) -> {
             TruffleString contents = context.bufferContents();
-            if (contents == null) {
+            if (contents == null || !context.bufferAllows(PhpContext.REMOVABLE)) {
                 return Boolean.FALSE;
             }
             context.endBuffer();
             return contents;
         });
-        r.fn("ob_end_clean", (context, a) -> context.endBuffer());
+        r.fn("ob_end_clean", (context, a) -> context.bufferAllows(PhpContext.REMOVABLE) && context.endBuffer());
         r.fn("ob_clean", (context, a) -> {
-            if (context.bufferLevel() == 0) {
+            if (!context.bufferAllows(PhpContext.CLEANABLE)) {
                 return false;
             }
-            context.endBuffer();
-            context.startBuffer();
+            context.cleanBuffer();
             return true;
         });
-        r.fn("ob_end_flush", (context, a) -> context.flushBuffer());
+        r.fn("ob_end_flush", (context, a) -> context.bufferAllows(PhpContext.REMOVABLE) && context.flushBuffer());
         r.fn("ob_get_flush", (context, a) -> {
             TruffleString contents = context.bufferContents();
-            if (contents == null) {
+            if (contents == null || !context.bufferAllows(PhpContext.REMOVABLE)) {
                 return Boolean.FALSE;
             }
             context.flushBuffer();
             return contents;
         });
         r.fn("ob_flush", (context, a) -> {
-            TruffleString contents = context.bufferContents();
-            if (contents == null) {
+            if (!context.bufferAllows(PhpContext.FLUSHABLE)) {
                 return false;
             }
-            context.flushBuffer();
-            context.startBuffer();
+            context.flushBufferContents();
             return true;
         });
         r.fn("ob_get_level", (context, a) -> (long) context.bufferLevel());
@@ -207,8 +207,8 @@ final class CoreFunctions {
         r.fn("ob_implicit_flush", a -> PhpNull.NULL);
         r.fn("ob_list_handlers", (context, a) -> {
             PhpArray handlers = new PhpArray();
-            for (int i = 0; i < context.bufferLevel(); i++) {
-                handlers.append(Str.of("default output handler"));
+            for (String name : context.bufferHandlerNames()) {
+                handlers.append(Str.of(name));
             }
             return handlers;
         });
