@@ -1,6 +1,8 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleFile;
+import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
@@ -8,19 +10,29 @@ import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.Str;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.NonReadableChannelException;
+import java.nio.channels.NonWritableChannelException;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystems;
-import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
@@ -28,191 +40,749 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
- * The filesystem and stream functions: plain files and php://memory, php://temp, php://stdout, php://output and
- * php://stderr. A stream or directory handle is a {@link PhpResource}.
+ * The filesystem and stream functions: plain files and php://memory, php://temp, php://input, php://stdin,
+ * php://stdout, php://stderr and php://output. A stream or directory handle is a {@link PhpResource}. Files are
+ * reached through the context's {@link TruffleLanguage.Env} ({@link TruffleFile}), so the embedder's IO policy and
+ * file system apply; the standard streams are the Env's.
  */
 final class FileFunctions {
     private FileFunctions() {
     }
 
-    /** An open stream: a file, an in-memory buffer or one of the process's standard streams. */
+    /** php-src's stream chunk size: a stream's read buffer fills this much at a time. */
+    private static final int CHUNK = 8192;
+    private static final int SEEK_SET = 0;
+    private static final int SEEK_CUR = 1;
+    private static final int SEEK_END = 2;
+    private static final byte[] EMPTY = new byte[0];
+
+    /**
+     * An open stream, as php-src's php_stream (main/streams/streams.c): a read buffer and a logical position over
+     * the wrapper's raw operations. Reads fill the buffer a chunk at a time; fgets, fread, fseek, ftell, feof and
+     * writes after reads behave as php-src's, including what stays buffered when the file changes underneath.
+     */
     abstract static class Stream {
+        final String mode;
+        final String uri;
+        private byte[] buffer = EMPTY;
+        private int readPos;
+        private int writePos;
+        /** stream->position: ftell(); -1 after some failed seeks, as in php-src. */
+        long position;
+        /** stream->eof: set when a raw read returns nothing. */
         boolean eof;
 
-        abstract byte[] read(int length) throws IOException;
-
-        abstract int write(byte[] bytes) throws IOException;
-
-        abstract boolean seek(long offset, int whence) throws IOException;
-
-        abstract long tell() throws IOException;
-
-        void close() throws IOException {
+        Stream(String mode, String uri) {
+            this.mode = mode;
+            this.uri = uri;
         }
 
-        /** fgets: up to and including the next \n, or length - 1 bytes. */
-        byte[] readLine(int max) throws IOException {
-            ByteArrayOutputStream line = new ByteArrayOutputStream();
-            while (line.size() < max) {
-                byte[] next = read(1);
-                if (next.length == 0) {
-                    break;
-                }
-                line.write(next[0]);
-                if (next[0] == '\n') {
-                    break;
-                }
-            }
-            return line.toByteArray();
-        }
-    }
+        // ---- the wrapper's operations (php_stream_ops) ----
 
-    static final class FileStream extends Stream {
-        final RandomAccessFile file;
-        final boolean append;
+        /** read(2): the count read, 0 at the end of the data (setting eof), or -1 on an error. */
+        abstract int rawRead(byte[] into, int offset, int length);
 
-        FileStream(RandomAccessFile file, boolean append) {
-            this.file = file;
-            this.append = append;
+        /** write(2): the count written, or -1 on an error. */
+        abstract int rawWrite(byte[] bytes, int offset, int length);
+
+        /** lseek for SEEK_SET or SEEK_END: 0 with position updated, or -1. Only called when seekable. */
+        int rawSeek(long offset, int whence) {
+            return -1;
         }
 
-        @Override
-        byte[] read(int length) throws IOException {
-            byte[] buffer = new byte[(int) Math.min(length, Math.max(0, file.length() - file.getFilePointer()))];
-            int n = buffer.length == 0 ? -1 : file.read(buffer);
-            if (n < length) {
-                eof = true;
-            }
-            return n <= 0 ? new byte[0] : n == buffer.length ? buffer : Arrays.copyOf(buffer, n);
+        boolean seekable() {
+            return false;
         }
 
-        @Override
-        int write(byte[] bytes) throws IOException {
-            if (append) {
-                file.seek(file.length());
-            }
-            file.write(bytes);
-            return bytes.length;
+        /** Reads bypass the buffer, as php-src's PHP_STREAM_FLAG_NO_BUFFER (memory and temp streams). */
+        boolean unbuffered() {
+            return false;
         }
 
-        @Override
-        boolean seek(long offset, int whence) throws IOException {
-            long base = whence == 1 ? file.getFilePointer() : whence == 2 ? file.length() : 0;
-            file.seek(base + offset);
-            eof = false;
+        /** fread keeps reading to the length asked, as php-src does only for plain files, memory and temp. */
+        boolean greedy() {
             return true;
         }
 
-        @Override
-        long tell() throws IOException {
-            return file.getFilePointer();
+        void rawClose() throws IOException {
         }
 
-        @Override
-        void close() throws IOException {
-            file.close();
+        abstract String wrapperType();
+
+        abstract String streamType();
+
+        /** ftruncate(): true, false, or null if the stream can't be truncated ("Can't truncate this stream!"). */
+        Boolean truncate(long size) {
+            return null;
         }
-    }
 
-    static final class MemoryStream extends Stream {
-        byte[] data = new byte[0];
-        int size;
-        int position;
+        /** fstat(), or null when the stream has no stat. */
+        Object stat() {
+            return null;
+        }
 
-        @Override
-        byte[] read(int length) {
-            int n = Math.min(length, size - position);
-            if (n < length) {
-                eof = true;
+        /** flock() support: false for streams without locking (php://memory, php://output, ...). */
+        boolean lockable() {
+            return false;
+        }
+
+        // ---- php-src's buffered layer ----
+
+        final boolean atEof() {
+            return writePos - readPos <= 0 && eof;
+        }
+
+        final int unreadBytes() {
+            return writePos - readPos;
+        }
+
+        /** _php_stream_fill_read_buffer: makes size bytes available if the wrapper has them; false on an error. */
+        private boolean fill(int size) {
+            if (writePos - readPos >= size) {
+                return true;
             }
-            byte[] out = Arrays.copyOfRange(data, position, position + Math.max(n, 0));
-            position += Math.max(n, 0);
-            return out;
-        }
-
-        @Override
-        int write(byte[] bytes) {
-            if (position + bytes.length > data.length) {
-                data = Arrays.copyOf(data, Math.max(data.length * 2, position + bytes.length));
+            if (buffer.length - writePos < CHUNK) {
+                if (writePos > readPos) {
+                    System.arraycopy(buffer, readPos, buffer, 0, writePos - readPos);
+                }
+                writePos -= readPos;
+                readPos = 0;
             }
-            System.arraycopy(bytes, 0, data, position, bytes.length);
-            position += bytes.length;
-            size = Math.max(size, position);
-            return bytes.length;
-        }
-
-        @Override
-        boolean seek(long offset, int whence) {
-            long target = (whence == 1 ? position : whence == 2 ? size : 0) + offset;
-            if (target < 0) {
+            if (buffer.length - writePos < CHUNK) {
+                buffer = Arrays.copyOf(buffer, buffer.length + CHUNK);
+            }
+            int n = rawRead(buffer, writePos, buffer.length - writePos);
+            if (n < 0) {
                 return false;
             }
-            position = (int) target;
-            eof = false;
+            writePos += n;
+            return true;
+        }
+
+        /** _php_stream_read: up to size bytes, or null if the first read failed. */
+        final byte[] read(int size) {
+            byte[] out = new byte[Math.min(size, CHUNK)];
+            int didread = 0;
+            while (size > 0) {
+                int available = writePos - readPos;
+                if (available > 0) {
+                    int n = Math.min(available, size);
+                    out = room(out, didread + n);
+                    System.arraycopy(buffer, readPos, out, didread, n);
+                    readPos += n;
+                    size -= n;
+                    didread += n;
+                }
+                if (size == 0) {
+                    break;
+                }
+                int got;
+                if (unbuffered()) {
+                    int want = Math.min(size, Math.max(CHUNK, out.length - didread));
+                    out = room(out, didread + want);
+                    got = rawRead(out, didread, want);
+                    if (got < 0) {
+                        if (didread == 0) {
+                            return null;
+                        }
+                        break;
+                    }
+                } else {
+                    if (!fill(size)) {
+                        if (didread == 0) {
+                            return null;
+                        }
+                        break;
+                    }
+                    got = Math.min(writePos - readPos, size);
+                    if (got > 0) {
+                        out = room(out, didread + got);
+                        System.arraycopy(buffer, readPos, out, didread, got);
+                        readPos += got;
+                    }
+                }
+                if (got <= 0) {
+                    break;
+                }
+                didread += got;
+                size -= got;
+                if (!greedy()) {
+                    break;
+                }
+            }
+            position += didread;
+            return didread == out.length ? out : Arrays.copyOf(out, didread);
+        }
+
+        /** _php_stream_get_line: up to and including \n, at most limit bytes (-1: no limit); null if none. */
+        final byte[] readLine(int limit) {
+            byte[] line = EMPTY;
+            int total = 0;
+            for (;;) {
+                int available = writePos - readPos;
+                if (available > 0) {
+                    int n = available;
+                    boolean done = false;
+                    for (int i = readPos; i < writePos; i++) {
+                        if (buffer[i] == '\n') {
+                            n = i - readPos + 1;
+                            done = true;
+                            break;
+                        }
+                    }
+                    if (limit >= 0 && n >= limit - total) {
+                        n = limit - total;
+                        done = true;
+                    }
+                    line = room(line, total + n);
+                    System.arraycopy(buffer, readPos, line, total, n);
+                    position += n;
+                    readPos += n;
+                    total += n;
+                    if (done) {
+                        break;
+                    }
+                } else if (eof) {
+                    break;
+                } else {
+                    fill(limit < 0 ? CHUNK : Math.min(limit - total, CHUNK));
+                    if (writePos - readPos == 0) {
+                        break;
+                    }
+                }
+            }
+            return total == 0 ? null : total == line.length ? line : Arrays.copyOf(line, total);
+        }
+
+        /** _php_stream_write: the count written, or -1 if nothing could be. */
+        final int write(byte[] bytes) {
+            if (bytes.length == 0) {
+                return 0;
+            }
+            if (seekable() && readPos != writePos) {
+                readPos = 0;
+                writePos = 0;
+                rawSeek(position, SEEK_SET);
+            }
+            int done = 0;
+            while (done < bytes.length) {
+                int n = rawWrite(bytes, done, bytes.length - done);
+                if (n <= 0) {
+                    return done == 0 ? n : done;
+                }
+                done += n;
+                position += n;
+            }
+            return done;
+        }
+
+        /** _php_stream_seek: 0 or -1. */
+        final int seek(long offset, int whence) {
+            if (!unbuffered()) {
+                if (whence == SEEK_CUR && offset > 0 && offset <= writePos - readPos) {
+                    readPos += (int) offset;
+                    position += offset;
+                    eof = false;
+                    return 0;
+                }
+                if (whence == SEEK_SET && offset > position && offset <= position + writePos - readPos) {
+                    readPos += (int) (offset - position);
+                    position = offset;
+                    eof = false;
+                    return 0;
+                }
+            }
+            if (seekable()) {
+                long target = offset;
+                int mode = whence;
+                if (whence == SEEK_CUR) {
+                    target = position + offset;
+                    mode = SEEK_SET;
+                }
+                int result = rawSeek(target, mode);
+                if (result == 0) {
+                    eof = false;
+                }
+                readPos = 0;
+                writePos = 0;
+                return result;
+            }
+            if (whence == SEEK_CUR && offset >= 0) {
+                long left = offset;
+                while (left > 0) {
+                    byte[] skipped = read((int) Math.min(left, 1024));
+                    if (skipped == null || skipped.length == 0) {
+                        return -1;
+                    }
+                    left -= skipped.length;
+                }
+                eof = false;
+                return 0;
+            }
+            return -1;
+        }
+
+        /** _php_stream_copy_to_mem: up to maxLength bytes (-1: to the end). */
+        final byte[] readAll(long maxLength) {
+            if (maxLength == 0) {
+                return EMPTY;
+            }
+            boolean small = maxLength > 0 && maxLength < 4 * CHUNK;
+            byte[] out = EMPTY;
+            int length = 0;
+            while (maxLength < 0 || length < maxLength) {
+                if (small && atEof()) {
+                    break;
+                }
+                long want = maxLength < 0 ? Integer.MAX_VALUE - 8 - length : maxLength - length;
+                byte[] got = read((int) Math.min(want, Integer.MAX_VALUE - 8 - length));
+                if (got == null || got.length == 0) {
+                    break;
+                }
+                out = room(out, length + got.length);
+                System.arraycopy(got, 0, out, length, got.length);
+                length += got.length;
+            }
+            return length == out.length ? out : Arrays.copyOf(out, length);
+        }
+
+        /** Discards what is buffered (the wrapper's data changed under it). */
+        final void dropBuffer() {
+            readPos = 0;
+            writePos = 0;
+        }
+
+        final void close() throws IOException {
+            buffer = EMPTY;
+            rawClose();
+        }
+
+        private static byte[] room(byte[] array, int needed) {
+            return needed <= array.length ? array : Arrays.copyOf(array, Math.max(needed, array.length * 2));
+        }
+    }
+
+    /** A plain file (php-src's plain_wrapper): a channel from the file's {@link TruffleFile}. */
+    static final class FileStream extends Stream {
+        final TruffleFile file;
+        final SeekableByteChannel channel;
+        /** a+: the channel can't both read and append, so each write moves to the end first (O_APPEND). */
+        private final boolean appendOnWrite;
+
+        FileStream(TruffleFile file, SeekableByteChannel channel, boolean appendOnWrite, String mode, String uri) {
+            super(mode, uri);
+            this.file = file;
+            this.channel = channel;
+            this.appendOnWrite = appendOnWrite;
+        }
+
+        @Override
+        int rawRead(byte[] into, int offset, int length) {
+            try {
+                int n = channel.read(ByteBuffer.wrap(into, offset, length));
+                if (n <= 0) {
+                    eof = true;
+                    return 0;
+                }
+                return n;
+            } catch (NonReadableChannelException e) {
+                return -1; // EBADF: php-src leaves eof unset
+            } catch (IOException e) {
+                eof = true;
+                return -1;
+            }
+        }
+
+        @Override
+        int rawWrite(byte[] bytes, int offset, int length) {
+            try {
+                if (appendOnWrite) {
+                    channel.position(channel.size());
+                }
+                return channel.write(ByteBuffer.wrap(bytes, offset, length));
+            } catch (NonWritableChannelException | IOException e) {
+                return -1;
+            }
+        }
+
+        @Override
+        int rawSeek(long offset, int whence) {
+            try {
+                long target = whence == SEEK_SET ? offset : whence == SEEK_END ? channel.size() + offset : -1;
+                if (target < 0) {
+                    return -1;
+                }
+                channel.position(target);
+                position = target;
+                return 0;
+            } catch (IOException e) {
+                return -1;
+            }
+        }
+
+        @Override
+        boolean seekable() {
             return true;
         }
 
         @Override
-        long tell() {
-            return position;
+        void rawClose() throws IOException {
+            channel.close();
+        }
+
+        @Override
+        String wrapperType() {
+            return "plainfile";
+        }
+
+        @Override
+        String streamType() {
+            return "STDIO";
+        }
+
+        /** ftruncate(2): the file offset stays where it was, so a later write past the end leaves a hole. */
+        @Override
+        Boolean truncate(long size) {
+            try {
+                long offset = channel.position();
+                long current = channel.size();
+                if (size < current) {
+                    channel.truncate(size);
+                } else if (size > current) {
+                    ByteBuffer zero = ByteBuffer.wrap(new byte[1]);
+                    if (channel instanceof FileChannel fileChannel) {
+                        fileChannel.write(zero, size - 1);
+                    } else {
+                        channel.position(size - 1);
+                        channel.write(zero);
+                    }
+                }
+                channel.position(offset);
+                return Boolean.TRUE;
+            } catch (NonWritableChannelException | IOException e) {
+                return Boolean.FALSE;
+            }
+        }
+
+        @Override
+        Object stat() {
+            try {
+                return FileFunctions.stat(file, true);
+            } catch (IOException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        @Override
+        boolean lockable() {
+            return true;
         }
     }
 
-    /** php://stdout and php://output write to the script's output; php://stderr and php://stdin are the process's. */
-    static final class StdStream extends Stream {
-        final PhpContext context;
-        final int fd;
+    /**
+     * php://memory and php://temp (php-src's memory streams; a temp stream never spills to a file here), and the
+     * read-only php://input over the request body.
+     */
+    static final class MemoryStream extends Stream {
+        private final String type;
+        private final boolean readOnly;
+        private final boolean append;
+        private byte[] data;
+        private int size;
+        /** ms->fpos: the memory's own offset, which the buffered layer's position may differ from. */
+        private int offset;
 
-        StdStream(PhpContext context, int fd) {
+        MemoryStream(String type, String mode, String uri, boolean readOnly, boolean append, byte[] contents) {
+            super(mode, uri);
+            this.type = type;
+            this.readOnly = readOnly;
+            this.append = append;
+            this.data = contents;
+            this.size = contents.length;
+        }
+
+        /** php://memory or php://temp opened with the fopen mode: read-only without w, a or +; a appends. */
+        static MemoryStream open(String type, String fopenMode, String uri) {
+            boolean append = fopenMode.indexOf('a') >= 0;
+            boolean readOnly = !append && fopenMode.indexOf('w') < 0 && fopenMode.indexOf('+') < 0;
+            return new MemoryStream(type, readOnly ? "rb" : append ? "a+b" : "w+b", uri, readOnly, append, EMPTY);
+        }
+
+        @Override
+        int rawRead(byte[] into, int at, int length) {
+            if (offset >= size) {
+                eof = true;
+                return 0;
+            }
+            int n = Math.min(length, size - offset);
+            System.arraycopy(data, offset, into, at, n);
+            offset += n;
+            return n;
+        }
+
+        @Override
+        int rawWrite(byte[] bytes, int at, int length) {
+            if (readOnly) {
+                return -1;
+            }
+            if (append) {
+                offset = size;
+            }
+            if (offset + length > data.length) {
+                data = Arrays.copyOf(data, Math.max(data.length * 2, offset + length));
+            }
+            if (offset > size) {
+                Arrays.fill(data, size, offset, (byte) 0);
+            }
+            System.arraycopy(bytes, at, data, offset, length);
+            offset += length;
+            size = Math.max(size, offset);
+            return length;
+        }
+
+        /** php_stream_memory_seek: past the end is allowed; before the start fails (SEEK_END also resets). */
+        @Override
+        int rawSeek(long target, int whence) {
+            if (whence == SEEK_SET) {
+                if (target < 0 || target > Integer.MAX_VALUE - 8) {
+                    return -1;
+                }
+                offset = (int) target;
+            } else if (whence == SEEK_END) {
+                if (target < 0 && -target > size) {
+                    offset = 0;
+                    position = -1;
+                    return -1;
+                }
+                offset = (int) (size + target);
+            } else {
+                return -1;
+            }
+            position = offset;
+            return 0;
+        }
+
+        @Override
+        boolean seekable() {
+            return true;
+        }
+
+        @Override
+        boolean unbuffered() {
+            return !type.equals("Input");
+        }
+
+        @Override
+        String wrapperType() {
+            return "PHP";
+        }
+
+        @Override
+        String streamType() {
+            return type;
+        }
+
+        @Override
+        Boolean truncate(long newSize) {
+            if (type.equals("Input")) {
+                return null;
+            }
+            if (readOnly || newSize > Integer.MAX_VALUE - 8) {
+                return Boolean.FALSE;
+            }
+            int target = (int) newSize;
+            if (target <= size) {
+                offset = Math.min(offset, target);
+            } else {
+                if (target > data.length) {
+                    data = Arrays.copyOf(data, target);
+                }
+                Arrays.fill(data, size, target, (byte) 0);
+            }
+            size = target;
+            return Boolean.TRUE;
+        }
+
+        /** php_stream_memory_stat: a regular file of the memory's size, rw (or r) for everyone, no times. */
+        @Override
+        Object stat() {
+            if (type.equals("Input")) {
+                return null;
+            }
+            long[] values = {0xC, 0, (readOnly ? 0444 : 0666) | 0100000, 1, 0, 0, -1, size, 0, 0, 0, -1, -1};
+            return statArray(values);
+        }
+    }
+
+    /** php://stdin, php://stdout and php://stderr: the context's standard streams (unseekable, as pipes). */
+    static final class StdStream extends Stream {
+        private final PhpContext context;
+        private final int fd;
+
+        StdStream(PhpContext context, int fd, String mode, String uri) {
+            super(mode, uri);
             this.context = context;
             this.fd = fd;
         }
 
         @Override
-        byte[] read(int length) throws IOException {
+        int rawRead(byte[] into, int offset, int length) {
             if (fd != 0) {
-                return new byte[0];
+                return -1;
             }
-            byte[] bytes = System.in.readNBytes(length);
-            if (bytes.length < length) {
+            try {
+                int n = context.getEnv().in().read(into, offset, length);
+                if (n <= 0) {
+                    eof = true;
+                    return 0;
+                }
+                return n;
+            } catch (IOException e) {
                 eof = true;
+                return -1;
             }
-            return bytes;
+        }
+
+        /**
+         * php://stdout bypasses output buffering, as php-src's write to fd 1; what echo wrote goes out first. Under
+         * php-cli, which writes echo unbuffered, that holds for stderr too (under CGI stderr is the server's log, and
+         * flushing would send the headers).
+         */
+        @Override
+        int rawWrite(byte[] bytes, int offset, int length) {
+            if (fd == 0) {
+                return -1;
+            }
+            try {
+                if (fd == 1 || context.response() == null) {
+                    context.flush();
+                }
+                OutputStream out = fd == 1 ? context.getEnv().out() : context.getEnv().err();
+                out.write(bytes, offset, length);
+                out.flush();
+                return length;
+            } catch (IOException e) {
+                return -1;
+            }
         }
 
         @Override
-        int write(byte[] bytes) {
-            if (fd == 2) {
-                System.err.write(bytes, 0, bytes.length);
-                System.err.flush();
-            } else if (fd == 1) {
-                context.write(Str.of(bytes));
-            }
-            return bytes.length;
-        }
-
-        @Override
-        boolean seek(long offset, int whence) {
+        boolean greedy() {
             return false;
         }
 
         @Override
-        long tell() {
-            return 0;
+        String wrapperType() {
+            return "PHP";
+        }
+
+        @Override
+        String streamType() {
+            return "STDIO";
+        }
+
+        @Override
+        Boolean truncate(long size) {
+            return Boolean.FALSE;
+        }
+
+        @Override
+        boolean lockable() {
+            return true;
         }
     }
 
-    /** opendir's handle: the entries, read in order. */
-    static final class Directory {
-        final List<String> entries;
-        int position;
+    /** php://output: writes go through the output layer (output buffers, then the response). */
+    static final class OutputStreamWrapper extends Stream {
+        private final PhpContext context;
 
-        Directory(List<String> entries) {
+        OutputStreamWrapper(PhpContext context, String uri) {
+            super("wb", uri);
+            this.context = context;
+        }
+
+        @Override
+        int rawRead(byte[] into, int offset, int length) {
+            eof = true;
+            return -1;
+        }
+
+        @Override
+        int rawWrite(byte[] bytes, int offset, int length) {
+            context.write(Str.of(Arrays.copyOfRange(bytes, offset, offset + length)));
+            return length;
+        }
+
+        @Override
+        boolean greedy() {
+            return false;
+        }
+
+        @Override
+        String wrapperType() {
+            return "PHP";
+        }
+
+        @Override
+        String streamType() {
+            return "Output";
+        }
+    }
+
+    /**
+     * opendir's handle: the entries, read in order by readdir. php-src's directory streams are streams too, whose
+     * byte reads and writes fail and whose seek to 0 is rewinddir.
+     */
+    static final class Directory extends Stream {
+        final List<String> entries;
+        int next;
+
+        Directory(List<String> entries, String uri) {
+            super("r", uri);
             this.entries = entries;
+        }
+
+        @Override
+        int rawRead(byte[] into, int offset, int length) {
+            return -1;
+        }
+
+        @Override
+        int rawWrite(byte[] bytes, int offset, int length) {
+            return -1;
+        }
+
+        @Override
+        int rawSeek(long offset, int whence) {
+            if (offset != 0 || whence != SEEK_SET) {
+                return -1;
+            }
+            next = 0;
+            position = 0;
+            return 0;
+        }
+
+        @Override
+        boolean seekable() {
+            return true;
+        }
+
+        @Override
+        String wrapperType() {
+            return "plainfile";
+        }
+
+        @Override
+        String streamType() {
+            return "dir";
         }
     }
 
@@ -220,192 +790,207 @@ final class FileFunctions {
         // ---- streams ----
         r.fn("fopen", (context, a) -> open(context, Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1))));
         r.fn("fclose", a -> {
-            PhpResource resource = resource(a, 0);
-            try {
-                ((Stream) resource.getHandle()).close();
-            } catch (IOException e) {
-                return Boolean.FALSE;
+            Stream stream = stream(a, "fclose");
+            if (stream instanceof Directory) {
+                return Boolean.FALSE; // "cannot close the provided stream, as it must not be manually closed"
             }
+            PhpResource resource = resource(a, 0, "fclose", "stream");
+            closeStream(stream);
             resource.close();
             return Boolean.TRUE;
         });
-        r.fn("fread", a -> io(() -> Str.of(stream(a, 0).read((int) Args.lng(a, 1, 8192)))));
-        r.fn("fwrite", a -> io(() -> (long) stream(a, 0).write(writeBytes(a))));
-        r.fn("fputs", a -> io(() -> (long) stream(a, 0).write(writeBytes(a))));
-        r.fn("fgets", a -> io(() -> {
-            byte[] line = stream(a, 0).readLine(Args.has(a, 1) ? (int) Args.lng(a, 1, 0) - 1 : Integer.MAX_VALUE);
-            return line.length == 0 ? (Object) Boolean.FALSE : Str.of(line);
-        }));
-        r.fn("fgetc", a -> io(() -> {
-            byte[] c = stream(a, 0).read(1);
-            return c.length == 0 ? (Object) Boolean.FALSE : Str.of(c);
-        }));
-        r.fn("feof", a -> stream(a, 0).eof);
-        r.fn("fseek", a -> io(() -> stream(a, 0).seek(Args.lng(a, 1, 0), (int) Args.lng(a, 2, 0)) ? 0L : -1L));
-        r.fn("ftell", a -> io(() -> stream(a, 0).tell()));
-        r.fn("rewind", a -> io(() -> stream(a, 0).seek(0, 0)));
-        r.fn("fflush", a -> Boolean.TRUE);
-        r.fn("flock", a -> Boolean.TRUE);
-        r.fn("ftruncate", a -> io(() -> {
-            if (stream(a, 0) instanceof FileStream file) {
-                file.file.setLength(Args.lng(a, 1, 0));
-                return Boolean.TRUE;
+        r.fn("fread", a -> {
+            Stream stream = stream(a, "fread");
+            long length = Args.lng(a, 1, 0);
+            if (length <= 0) {
+                throw new PhpError("ValueError: fread(): Argument #2 ($length) must be greater than 0");
             }
-            if (stream(a, 0) instanceof MemoryStream memory) {
-                memory.size = (int) Math.min(memory.size, Args.lng(a, 1, 0));
-                return Boolean.TRUE;
-            }
-            return Boolean.FALSE;
-        }));
-        r.fn("stream_get_contents", a -> io(() -> {
-            Stream stream = stream(a, 0);
-            long length = Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL ? Args.lng(a, 1, -1) : -1;
-            if (Args.has(a, 2) && Args.lng(a, 2, -1) >= 0) {
-                stream.seek(Args.lng(a, 2, 0), 0);
-            }
-            return Str.of(stream.read(length < 0 ? Integer.MAX_VALUE - 8 : (int) length));
-        }));
-        r.fn("stream_get_meta_data", a -> {
-            Stream stream = stream(a, 0);
-            PhpArray meta = new PhpArray();
-            meta.put(key("timed_out"), Boolean.FALSE);
-            meta.put(key("blocked"), Boolean.TRUE);
-            meta.put(key("eof"), stream.eof);
-            meta.put(key("wrapper_type"), Str.of(stream instanceof FileStream ? "plainfile" : "PHP"));
-            meta.put(key("stream_type"), Str.of(stream instanceof MemoryStream ? "MEMORY" : "STDIO"));
-            meta.put(key("mode"), Str.of("r+"));
-            meta.put(key("unread_bytes"), 0L);
-            meta.put(key("seekable"), !(stream instanceof StdStream));
-            return meta;
+            byte[] bytes = stream.read((int) Math.min(length, Integer.MAX_VALUE - 8));
+            return bytes == null ? (Object) Boolean.FALSE : Str.of(bytes);
         });
+        r.fn("fwrite", a -> write(a, "fwrite"));
+        r.fn("fputs", a -> write(a, "fputs"));
+        r.fn("fgets", a -> {
+            Stream stream = stream(a, "fgets");
+            int limit = -1;
+            if (Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL) {
+                long length = Args.lng(a, 1, 0);
+                if (length <= 0) {
+                    throw new PhpError("ValueError: fgets(): Argument #2 ($length) must be greater than 0");
+                }
+                limit = (int) Math.min(length - 1, Integer.MAX_VALUE - 8);
+            }
+            byte[] line = stream.readLine(limit);
+            return line == null ? (Object) Boolean.FALSE : Str.of(line);
+        });
+        r.fn("fgetc", a -> {
+            byte[] c = stream(a, "fgetc").read(1);
+            return c == null || c.length == 0 ? (Object) Boolean.FALSE : Str.of(c);
+        });
+        r.fn("feof", a -> stream(a, "feof").atEof());
+        r.fn("fseek", a -> (long) stream(a, "fseek").seek(Args.lng(a, 1, 0), (int) Args.lng(a, 2, SEEK_SET)));
+        r.fn("ftell", a -> {
+            long position = stream(a, "ftell").position;
+            return position < 0 ? (Object) Boolean.FALSE : (Object) position;
+        });
+        r.fn("rewind", a -> stream(a, "rewind").seek(0, SEEK_SET) == 0);
+        r.fn("fflush", a -> {
+            stream(a, "fflush");
+            return Boolean.TRUE;
+        });
+        r.fn("flock", a -> {
+            Stream stream = stream(a, "flock");
+            long operation = Args.lng(a, 1, 0);
+            if ((operation & 3) == 0) {
+                throw new PhpError("ValueError: flock(): Argument #2 ($operation) must be one of LOCK_SH, LOCK_EX, "
+                        + "or LOCK_UN");
+            }
+            return stream.lockable();
+        });
+        r.fn("ftruncate", a -> {
+            long size = Args.lng(a, 1, 0);
+            if (size < 0) {
+                throw new PhpError("ValueError: ftruncate(): Argument #2 ($size) must be greater than or equal to 0");
+            }
+            Stream stream = stream(a, "ftruncate");
+            Boolean result = stream.truncate(size);
+            return result == null ? Boolean.FALSE : result;
+        });
+        r.fn("stream_get_contents", a -> {
+            long length = Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL ? Args.lng(a, 1, -1) : -1;
+            if (length < -1) {
+                throw new PhpError("ValueError: stream_get_contents(): Argument #2 ($length) must be greater than or "
+                        + "equal to -1");
+            }
+            Stream stream = stream(a, "stream_get_contents");
+            long offset = Args.lng(a, 2, -1);
+            if (offset >= 0) {
+                long position = stream.position;
+                int result = 0;
+                if (position >= 0 && offset > position) {
+                    result = stream.seek(offset - position, SEEK_CUR);
+                } else if (offset < position) {
+                    result = stream.seek(offset, SEEK_SET);
+                }
+                if (result != 0) {
+                    return Boolean.FALSE; // "Failed to seek to position %d in the stream"
+                }
+            }
+            return Str.of(stream.readAll(length));
+        });
+        r.fn("stream_get_meta_data", a -> meta(stream(a, "stream_get_meta_data")));
         r.fn("stream_set_timeout", a -> Boolean.TRUE);
         r.fn("stream_set_blocking", a -> Boolean.TRUE);
         r.fn("stream_context_create", (context, a) -> new PhpResource(context.nextResourceId(), "stream-context",
                 Args.get(a, 0, new PhpArray())));
         r.fn("stream_context_get_options", a -> {
-            Object options = resource(a, 0).getHandle();
+            Object options = resource(a, 0, "stream_context_get_options", "stream_or_context").getHandle();
             return options instanceof PhpArray array ? array : new PhpArray();
         });
         r.fn("stream_get_wrappers", a -> list(List.of("php", "file")));
         r.fn("stream_is_local", a -> Boolean.TRUE);
         r.fn("is_resource", a -> Args.get(a, 0) instanceof PhpResource resource && !resource.isClosed());
-        r.fn("get_resource_type", a -> Str.of(resource(a, 0).getType()));
-        r.fn("get_resource_id", a -> (long) resource(a, 0).getId());
+        r.fn("get_resource_type", a -> Str.of(resource(a, 0, "get_resource_type", "resource", false).getType()));
+        r.fn("get_resource_id", a -> (long) resource(a, 0, "get_resource_id", "resource", false).getId());
 
         // ---- whole files ----
-        r.fn("file_put_contents", (context, a) -> {
-            String name = Str.java(Args.str(a, 0));
-            if (name.equals("php://stdout") || name.equals("php://output") || name.equals("php://stderr")) {
-                PhpResource stream = (PhpResource) open(context, name, "w");
-                return io(() -> (long) ((Stream) stream.getHandle()).write(
-                        Str.bytes(Convert.toStr(Args.get(a, 1)))));
-            }
-            return putContents(name, Args.get(a, 1), Args.lng(a, 2, 0));
-        });
-        r.fn("file", a -> lines(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("file_put_contents", (context, a) -> putContents(context, Str.java(Args.str(a, 0)), Args.get(a, 1),
+                Args.lng(a, 2, 0)));
+        r.fn("file", (context, a) -> lines(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
         r.fn("readfile", (context, a) -> {
-            byte[] bytes = readAll(Str.java(Args.str(a, 0)));
+            byte[] bytes = readAll(context, Str.java(Args.str(a, 0)));
             if (bytes == null) {
                 return Boolean.FALSE;
             }
             context.write(Str.of(bytes));
             return (long) bytes.length;
         });
-        r.fn("md5_file", a -> digestFile("MD5", a));
-        r.fn("sha1_file", a -> digestFile("SHA-1", a));
+        r.fn("md5_file", (context, a) -> digestFile(context, "MD5", a));
+        r.fn("sha1_file", (context, a) -> digestFile(context, "SHA-1", a));
 
         // ---- metadata ----
-        r.fn("is_readable", a -> Files.isReadable(path(a, 0)));
-        r.fn("is_writable", a -> Files.isWritable(path(a, 0)));
-        r.fn("is_writeable", a -> Files.isWritable(path(a, 0)));
-        r.fn("is_executable", a -> Files.isRegularFile(path(a, 0)) && Files.isExecutable(path(a, 0)));
-        r.fn("is_link", a -> Files.isSymbolicLink(path(a, 0)));
-        r.fn("filesize", a -> io(() -> Files.size(path(a, 0))));
-        r.fn("filemtime", a -> io(() -> Files.getLastModifiedTime(path(a, 0)).toMillis() / 1000));
-        r.fn("fileatime", a -> io(() -> Files.getLastModifiedTime(path(a, 0)).toMillis() / 1000));
-        r.fn("filectime", a -> io(() -> Files.getLastModifiedTime(path(a, 0)).toMillis() / 1000));
-        r.fn("fileperms", a -> io(() -> mode(path(a, 0), true)));
-        r.fn("stat", a -> io(() -> stat(path(a, 0), true)));
-        r.fn("lstat", a -> io(() -> stat(path(a, 0), false)));
+        r.fn("is_readable", (context, a) -> test(context, a, file -> file.isReadable()));
+        r.fn("is_writable", (context, a) -> test(context, a, file -> file.isWritable()));
+        r.fn("is_writeable", (context, a) -> test(context, a, file -> file.isWritable()));
+        r.fn("is_executable", (context, a) -> test(context, a, file -> file.isRegularFile() && file.isExecutable()));
+        r.fn("is_link", (context, a) -> test(context, a, file -> file.isSymbolicLink()));
+        r.fn("filesize", (context, a) -> io(() -> file(context, a, 0).size()));
+        r.fn("filemtime", (context, a) -> io(() -> seconds(file(context, a, 0).getLastModifiedTime())));
+        r.fn("fileatime", (context, a) -> io(() -> seconds(file(context, a, 0).getLastAccessTime())));
+        r.fn("filectime", (context, a) -> io(() -> seconds(file(context, a, 0).getLastModifiedTime())));
+        r.fn("fileperms", (context, a) -> io(() -> mode(file(context, a, 0), true)));
+        r.fn("stat", (context, a) -> io(() -> stat(file(context, a, 0), true)));
+        r.fn("lstat", (context, a) -> io(() -> stat(file(context, a, 0), false)));
         r.fn("fstat", a -> {
-            if (stream(a, 0) instanceof MemoryStream memory) {
-                PhpArray stat = new PhpArray();
-                stat.put(key("size"), (long) memory.size);
-                return stat;
-            }
-            return Boolean.FALSE;
+            Object stat = stream(a, "fstat").stat();
+            return stat == null ? Boolean.FALSE : stat;
         });
         r.fn("clearstatcache", a -> PhpNull.NULL);
-        r.fn("disk_free_space", a -> io(() -> (double) Files.getFileStore(path(a, 0)).getUsableSpace()));
+        r.fn("disk_free_space", (context, a) -> io(() -> (double) file(context, a, 0).getFileStoreInfo()
+                .getUsableSpace()));
 
         // ---- changes ----
-        r.fn("touch", a -> io(() -> {
-            Path path = path(a, 0);
-            if (!Files.exists(path)) {
-                Files.createFile(path);
-            }
-            long time = Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL ? Args.lng(a, 1, 0) * 1000
-                    : System.currentTimeMillis();
-            Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.fromMillis(time));
-            return Boolean.TRUE;
-        }));
-        r.fn("unlink", a -> io(() -> Files.deleteIfExists(path(a, 0))));
-        r.fn("mkdir", a -> io(() -> {
-            Path path = path(a, 0);
-            if (Files.exists(path)) {
+        r.fn("touch", (context, a) -> io(() -> touch(file(context, a, 0), a)));
+        r.fn("unlink", (context, a) -> io(() -> {
+            TruffleFile file = file(context, a, 0);
+            if (!file.exists(LinkOption.NOFOLLOW_LINKS) || file.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
                 return Boolean.FALSE;
             }
-            if (Args.bool(a, 2, false)) {
-                Files.createDirectories(path);
-            } else {
-                Files.createDirectory(path);
+            file.delete();
+            return Boolean.TRUE;
+        }));
+        r.fn("mkdir", (context, a) -> io(() -> mkdir(file(context, a, 0), Args.lng(a, 1, 0777),
+                Args.bool(a, 2, false))));
+        r.fn("rmdir", (context, a) -> io(() -> {
+            TruffleFile file = file(context, a, 0);
+            if (!file.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
+                return Boolean.FALSE;
             }
+            file.delete();
             return Boolean.TRUE;
         }));
-        r.fn("rmdir", a -> io(() -> Files.deleteIfExists(path(a, 0))));
-        r.fn("rename", a -> io(() -> {
-            Files.move(path(a, 0), path(a, 1), StandardCopyOption.REPLACE_EXISTING);
+        r.fn("rename", (context, a) -> io(() -> {
+            file(context, a, 0).move(file(context, a, 1), StandardCopyOption.REPLACE_EXISTING);
             return Boolean.TRUE;
         }));
-        r.fn("copy", a -> io(() -> {
-            Files.copy(path(a, 0), path(a, 1), StandardCopyOption.REPLACE_EXISTING);
-            return Boolean.TRUE;
-        }));
-        r.fn("chmod", a -> io(() -> {
-            Files.setPosixFilePermissions(path(a, 0), permissions(Args.lng(a, 1, 0)));
+        r.fn("copy", (context, a) -> io(() -> copy(file(context, a, 0), file(context, a, 1))));
+        r.fn("chmod", (context, a) -> io(() -> {
+            file(context, a, 0).setPosixPermissions(permissions(Args.lng(a, 1, 0)));
             return Boolean.TRUE;
         }));
         r.fn("umask", a -> 18L);
         r.fn("sys_get_temp_dir", a -> Str.of(System.getProperty("java.io.tmpdir").replaceAll("[/\\\\]$", "")));
-        r.fn("tempnam", a -> io(() -> Str.of(Files.createTempFile(path(a, 0), Str.java(Args.str(a, 1, Str.EMPTY)),
-                "").toString())));
-        r.fn("tmpfile", (context, a) -> new PhpResource(context.nextResourceId(), "stream", new MemoryStream()));
+        r.fn("tempnam", (context, a) -> io(() -> Str.of(context.getEnv().createTempFile(file(context, a, 0),
+                Str.java(Args.str(a, 1, Str.EMPTY)), "").getPath())));
+        r.fn("tmpfile", (context, a) -> io(() -> tmpfile(context)));
 
         // ---- directories ----
-        r.fn("scandir", a -> io(() -> {
-            List<String> names = entries(path(a, 0), true);
-            if (Args.lng(a, 1, 0) == 1) {
+        r.fn("scandir", (context, a) -> io(() -> {
+            long order = Args.lng(a, 1, 0);
+            List<String> names = entries(file(context, a, 0), order != 2);
+            if (order == 1) {
                 Collections.reverse(names);
             }
             return list(names);
         }));
-        r.fn("glob", a -> glob(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("glob", (context, a) -> glob(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
         r.fn("opendir", (context, a) -> io(() -> new PhpResource(context.nextResourceId(), "stream",
-                new Directory(entries(path(a, 0), false)))));
+                new Directory(entries(file(context, a, 0), false), Str.java(Args.str(a, 0))))));
         r.fn("readdir", a -> {
-            Directory directory = (Directory) resource(a, 0).getHandle();
-            return directory.position < directory.entries.size()
-                    ? (Object) Str.of(directory.entries.get(directory.position++)) : Boolean.FALSE;
+            Directory directory = directory(a, "readdir");
+            return directory.next < directory.entries.size()
+                    ? (Object) Str.of(directory.entries.get(directory.next++)) : Boolean.FALSE;
         });
         r.fn("rewinddir", a -> {
-            ((Directory) resource(a, 0).getHandle()).position = 0;
+            directory(a, "rewinddir").seek(0, SEEK_SET);
             return PhpNull.NULL;
         });
         r.fn("closedir", a -> {
-            resource(a, 0).close();
+            directory(a, "closedir");
+            resource(a, 0, "closedir", "dir_handle").close();
             return PhpNull.NULL;
         });
-        r.fn("getcwd", a -> Str.of(Path.of("").toAbsolutePath().toString()));
+        r.fn("getcwd", (context, a) -> Str.of(context.getEnv().getCurrentWorkingDirectory().getPath()));
     }
 
     // ---- helpers ----
@@ -414,209 +999,379 @@ final class FileFunctions {
         Object run() throws IOException;
     }
 
-    /** Runs an I/O operation; a failure is PHP's false (the warning is not reported). */
+    interface FileTest {
+        boolean test(TruffleFile file);
+    }
+
+    /**
+     * Runs an I/O operation; a failure is PHP's false (the warning is not reported). SecurityException is the
+     * embedder's IO policy refusing the access; IllegalArgumentException a path the file system can't represent.
+     */
     @TruffleBoundary
     private static Object io(IoBody body) {
         try {
             return body.run();
-        } catch (IOException | UnsupportedOperationException | SecurityException e) {
+        } catch (IOException | UnsupportedOperationException | SecurityException | IllegalArgumentException e) {
             return Boolean.FALSE;
         }
     }
 
     @TruffleBoundary
-    private static Path path(Object[] a, int index) {
-        return Path.of(Str.java(Args.str(a, index)));
+    private static Object test(PhpContext context, Object[] a, FileTest test) {
+        try {
+            return test.test(file(context, a, 0));
+        } catch (UnsupportedOperationException | SecurityException | IllegalArgumentException e) {
+            return Boolean.FALSE;
+        }
+    }
+
+    @TruffleBoundary
+    private static TruffleFile file(PhpContext context, Object[] a, int index) {
+        return file(context, Str.java(Args.str(a, index)));
+    }
+
+    private static TruffleFile file(PhpContext context, String name) {
+        return context.getEnv().getPublicTruffleFile(name);
+    }
+
+    private static long seconds(FileTime time) {
+        return time.toMillis() / 1000;
     }
 
     private static Object key(String name) {
         return ArrayKey.of(Str.of(name));
     }
 
-    private static PhpResource resource(Object[] a, int index) {
-        if (Args.get(a, index) instanceof PhpResource resource && !resource.isClosed()) {
-            return resource;
+    /** The argument as an open resource, with php-src's TypeErrors. */
+    private static PhpResource resource(Object[] a, int index, String function, String parameter) {
+        return resource(a, index, function, parameter, true);
+    }
+
+    private static PhpResource resource(Object[] a, int index, String function, String parameter, boolean open) {
+        Object value = Args.get(a, index, PhpNull.NULL);
+        if (!(value instanceof PhpResource resource)) {
+            throw new PhpError("TypeError: " + function + "(): Argument #" + (index + 1) + " ($" + parameter
+                    + ") must be of type resource, " + typeName(value) + " given");
         }
-        throw new PhpError("TypeError: Argument #" + (index + 1) + " ($stream) must be an open resource, "
-                + Convert.typeName(Args.get(a, index, PhpNull.NULL)) + " given");
+        if (open && resource.isClosed()) {
+            throw new PhpError("TypeError: " + function + "(): Argument #" + (index + 1) + " ($" + parameter
+                    + ") must be an open stream resource");
+        }
+        return resource;
     }
 
-    private static Stream stream(Object[] a, int index) {
-        return (Stream) resource(a, index).getHandle();
+    private static Stream stream(Object[] a, String function) {
+        if (resource(a, 0, function, "stream").getHandle() instanceof Stream stream) {
+            return stream;
+        }
+        throw new PhpError("TypeError: " + function + "(): supplied resource is not a valid stream resource");
     }
 
-    private static byte[] writeBytes(Object[] a) {
+    private static Directory directory(Object[] a, String function) {
+        if (resource(a, 0, function, "dir_handle").getHandle() instanceof Directory directory) {
+            return directory;
+        }
+        throw new PhpError("TypeError: " + function + "(): Argument #1 ($dir_handle) must be a valid Directory "
+                + "resource");
+    }
+
+    /** zend_zval_type_name, for TypeError messages. */
+    private static String typeName(Object value) {
+        if (value instanceof PhpObject object) {
+            return object.getPhpClass().getName();
+        }
+        return switch (Convert.typeName(value)) {
+            case "integer" -> "int";
+            case "double" -> "float";
+            case "boolean" -> "bool";
+            case "NULL" -> "null";
+            default -> Convert.typeName(value);
+        };
+    }
+
+    /** fwrite(stream, data, length = null). */
+    private static Object write(Object[] a, String function) {
+        Stream stream = stream(a, function);
         byte[] bytes = Str.bytes(Convert.toStr(Args.get(a, 1)));
         if (Args.has(a, 2) && Args.get(a, 2) != PhpNull.NULL) {
-            return Arrays.copyOf(bytes, (int) Math.min(bytes.length, Math.max(0, Args.lng(a, 2, 0))));
+            bytes = Arrays.copyOf(bytes, (int) Math.min(bytes.length, Math.max(0, Args.lng(a, 2, 0))));
         }
-        return bytes;
+        if (bytes.length == 0) {
+            return 0L;
+        }
+        int written = stream.write(bytes);
+        return written < 0 ? (Object) Boolean.FALSE : (Object) (long) written;
     }
 
     @TruffleBoundary
-    private static Object open(PhpContext context, String name, String mode) {
-        Stream stream;
-        switch (name) {
-            case "php://memory", "php://temp" -> stream = new MemoryStream();
-            case "php://input" -> {
-                MemoryStream input = new MemoryStream();
-                input.write(context.requestBody());
-                input.position = 0;
-                stream = input;
-            }
-            case "php://stdin" -> stream = new StdStream(context, 0);
-            case "php://stdout", "php://output" -> stream = new StdStream(context, 1);
-            case "php://stderr" -> stream = new StdStream(context, 2);
-            default -> {
-                if (name.startsWith("php://temp/")) {
-                    stream = new MemoryStream();
-                    break;
-                }
-                if (name.contains("://") && !name.startsWith("file://")) {
-                    return Boolean.FALSE;
-                }
-                stream = openFile(Path.of(name.startsWith("file://") ? name.substring(7) : name), mode);
-                if (stream == null) {
-                    return Boolean.FALSE;
-                }
-            }
+    private static void closeStream(Stream stream) {
+        try {
+            stream.close();
+        } catch (IOException e) {
+            // php-src's fclose returns true whatever close(2) says
         }
-        return new PhpResource(context.nextResourceId(), "stream", stream);
     }
 
-    private static Stream openFile(Path path, String mode) {
-        char kind = mode.isEmpty() ? 'r' : mode.charAt(0);
-        boolean plus = mode.indexOf('+') >= 0;
+    private static PhpArray meta(Stream stream) {
+        PhpArray meta = new PhpArray();
+        if (!stream.streamType().equals("TEMP")) {
+            meta.put(key("timed_out"), Boolean.FALSE);
+            meta.put(key("blocked"), Boolean.TRUE);
+            meta.put(key("eof"), stream.atEof());
+        }
+        meta.put(key("wrapper_type"), Str.of(stream.wrapperType()));
+        meta.put(key("stream_type"), Str.of(stream.streamType()));
+        meta.put(key("mode"), Str.of(stream.mode));
+        meta.put(key("unread_bytes"), (long) stream.unreadBytes());
+        meta.put(key("seekable"), stream.seekable());
+        meta.put(key("uri"), Str.of(stream.uri));
+        return meta;
+    }
+
+    /** fopen(): a php:// stream or a plain file; false if it can't be opened. */
+    @TruffleBoundary
+    private static Object open(PhpContext context, String name, String mode) {
+        Stream stream = openStream(context, name, mode);
+        return stream == null ? Boolean.FALSE : new PhpResource(context.nextResourceId(), "stream", stream);
+    }
+
+    private static Stream openStream(PhpContext context, String name, String mode) {
+        if (name.regionMatches(true, 0, "php://", 0, 6)) {
+            String target = name.substring(6).toLowerCase(Locale.ROOT);
+            return switch (target) {
+                case "memory" -> MemoryStream.open("MEMORY", mode, name);
+                case "temp" -> MemoryStream.open("TEMP", mode, name);
+                case "input" -> new MemoryStream("Input", "rb", name, true, false, context.requestBody());
+                case "stdin" -> new StdStream(context, 0, mode, name);
+                case "stdout" -> new StdStream(context, 1, mode, name);
+                case "stderr" -> new StdStream(context, 2, mode, name);
+                case "output" -> new OutputStreamWrapper(context, name);
+                default -> target.startsWith("temp/") ? MemoryStream.open("TEMP", mode, name) : null;
+            };
+        }
+        String path = name;
+        if (name.regionMatches(true, 0, "file://", 0, 7)) {
+            path = name.substring(7);
+        } else if (name.contains("://")) {
+            return null;
+        }
         try {
-            switch (kind) {
-                case 'r' -> {
-                    if (!Files.isRegularFile(path)) {
-                        return null;
-                    }
-                    return new FileStream(new RandomAccessFile(path.toFile(), plus ? "rw" : "r"), false);
-                }
-                case 'w' -> {
-                    RandomAccessFile file = new RandomAccessFile(path.toFile(), "rw");
-                    file.setLength(0);
-                    return new FileStream(file, false);
-                }
-                case 'a' -> {
-                    RandomAccessFile file = new RandomAccessFile(path.toFile(), "rw");
-                    file.seek(file.length());
-                    return new FileStream(file, true);
-                }
-                case 'x' -> {
-                    if (Files.exists(path)) {
-                        return null;
-                    }
-                    return new FileStream(new RandomAccessFile(path.toFile(), "rw"), false);
-                }
-                case 'c' -> {
-                    return new FileStream(new RandomAccessFile(path.toFile(), "rw"), false);
-                }
-                default -> {
+            return openFile(file(context, path), mode, name);
+        } catch (IOException | UnsupportedOperationException | SecurityException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * php_stream_parse_fopen_modes: r, w (truncate), a (append), x (create, failing if the file exists: atomic, as
+     * O_EXCL), c (create, no truncation); + adds the other direction. Null for an unknown mode.
+     */
+    private static Stream openFile(TruffleFile file, String mode, String uri) throws IOException {
+        char kind = mode.isEmpty() ? 0 : mode.charAt(0);
+        boolean plus = mode.indexOf('+') >= 0;
+        Set<OpenOption> options = new HashSet<>();
+        switch (kind) {
+            case 'r' -> {
+                if (!file.isRegularFile()) {
                     return null;
                 }
             }
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    @TruffleBoundary
-    private static byte[] readAll(String name) {
-        try {
-            return Files.readAllBytes(Path.of(name));
-        } catch (IOException | RuntimeException e) {
-            return null;
-        }
-    }
-
-    /** FILE_APPEND = 8; data may be a string, an array of strings or a stream. */
-    @TruffleBoundary
-    private static Object putContents(String name, Object data, long flags) {
-        byte[] bytes;
-        if (data instanceof PhpArray array) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                out.writeBytes(Str.bytes(Convert.toStr(array.valueAt(p))));
+            case 'w' -> {
+                options.add(StandardOpenOption.CREATE);
+                options.add(StandardOpenOption.TRUNCATE_EXISTING);
             }
-            bytes = out.toByteArray();
-        } else if (data instanceof PhpResource resource && resource.getHandle() instanceof Stream stream) {
-            try {
-                bytes = stream.read(Integer.MAX_VALUE - 8);
-            } catch (IOException e) {
-                return Boolean.FALSE;
+            case 'a' -> options.add(StandardOpenOption.CREATE);
+            case 'x' -> options.add(StandardOpenOption.CREATE_NEW);
+            case 'c' -> options.add(StandardOpenOption.CREATE);
+            default -> {
+                return null;
             }
+        }
+        boolean appendOnWrite = false;
+        if (plus) {
+            options.add(StandardOpenOption.READ);
+            options.add(StandardOpenOption.WRITE);
+            appendOnWrite = kind == 'a';
+        } else if (kind == 'r') {
+            options.add(StandardOpenOption.READ);
         } else {
-            bytes = Str.bytes(Convert.toStr(data));
-        }
-        try {
-            if ((flags & 8) != 0) {
-                Files.write(Path.of(name), bytes, java.nio.file.StandardOpenOption.CREATE,
-                        java.nio.file.StandardOpenOption.APPEND);
-            } else {
-                Files.write(Path.of(name), bytes);
+            options.add(StandardOpenOption.WRITE);
+            if (kind == 'a') {
+                options.add(StandardOpenOption.APPEND);
             }
-            return (long) bytes.length;
+        }
+        return new FileStream(file, file.newByteChannel(options), appendOnWrite, mode, uri);
+    }
+
+    /** tmpfile(): a new file in the temporary directory, "r+b", deleted when closed. */
+    private static Object tmpfile(PhpContext context) throws IOException {
+        TruffleFile file = context.getEnv().createTempFile(null, "php", null);
+        Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE,
+                StandardOpenOption.DELETE_ON_CLOSE);
+        return new PhpResource(context.nextResourceId(), "stream",
+                new FileStream(file, file.newByteChannel(options), false, "r+b", file.getPath()));
+    }
+
+    @TruffleBoundary
+    private static byte[] readAll(PhpContext context, String name) {
+        try {
+            return file(context, name).readAllBytes();
         } catch (IOException | RuntimeException e) {
-            return Boolean.FALSE;
+            return null;
         }
     }
 
-    /** file(): FILE_IGNORE_NEW_LINES = 2, FILE_SKIP_EMPTY_LINES = 4. */
+    /**
+     * file_put_contents(): opens with "wb" ("ab" with FILE_APPEND = 8) through the stream layer, so php:// targets
+     * work too; data may be a string, an array of strings or a stream. False if it can't be opened or written.
+     */
     @TruffleBoundary
-    private static Object lines(String name, long flags) {
-        byte[] bytes = readAll(name);
-        if (bytes == null) {
+    private static Object putContents(PhpContext context, String name, Object data, long flags) {
+        Stream stream = openStream(context, name, (flags & 8) != 0 ? "ab" : "wb");
+        if (stream == null) {
             return Boolean.FALSE;
         }
+        try {
+            long written = 0;
+            if (data instanceof PhpResource resource && resource.getHandle() instanceof Stream source) {
+                byte[] bytes = source.readAll(-1);
+                if (bytes.length > 0 && stream.write(bytes) != bytes.length) {
+                    return Boolean.FALSE;
+                }
+                written = bytes.length;
+            } else if (data instanceof PhpArray array) {
+                for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                    byte[] bytes = Str.bytes(Convert.toStr(array.valueAt(p)));
+                    if (bytes.length > 0 && stream.write(bytes) != bytes.length) {
+                        return Boolean.FALSE;
+                    }
+                    written += bytes.length;
+                }
+            } else {
+                byte[] bytes = Str.bytes(Convert.toStr(data));
+                if (bytes.length > 0 && stream.write(bytes) != bytes.length) {
+                    return Boolean.FALSE;
+                }
+                written = bytes.length;
+            }
+            return written;
+        } finally {
+            closeStream(stream);
+        }
+    }
+
+    /**
+     * file(): the lines with their \n. FILE_IGNORE_NEW_LINES (2) drops the \n and a \r before it (not on a last
+     * line without \n); with it, FILE_SKIP_EMPTY_LINES (4) leaves out the empty lines. As php-src's file().
+     */
+    @TruffleBoundary
+    private static Object lines(PhpContext context, String name, long flags) {
+        Stream stream = openStream(context, name, "rb");
+        if (stream == null) {
+            return Boolean.FALSE;
+        }
+        byte[] bytes;
+        try {
+            bytes = stream.readAll(-1);
+        } finally {
+            closeStream(stream);
+        }
+        boolean ignoreNewLines = (flags & 2) != 0;
+        boolean skipEmpty = (flags & 4) != 0;
         PhpArray lines = new PhpArray();
         int start = 0;
-        for (int i = 0; i <= bytes.length; i++) {
-            if (i == bytes.length || bytes[i] == '\n') {
-                if (i == bytes.length && start == i) {
-                    break;
-                }
-                int end = i < bytes.length && (flags & 2) == 0 ? i + 1 : i;
-                byte[] line = Arrays.copyOfRange(bytes, start, end);
-                if ((flags & 4) == 0 || line.length > 0) {
-                    lines.append(Str.of(line));
-                }
-                start = i + 1;
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] != '\n') {
+                continue;
             }
+            if (!ignoreNewLines) {
+                lines.append(Str.of(Arrays.copyOfRange(bytes, start, i + 1)));
+            } else {
+                int end = i > 0 && bytes[i - 1] == '\r' ? i - 1 : i;
+                if (!skipEmpty || end > start) {
+                    lines.append(Str.of(Arrays.copyOfRange(bytes, start, Math.max(start, end))));
+                }
+            }
+            start = i + 1;
+        }
+        if (start < bytes.length) {
+            lines.append(Str.of(Arrays.copyOfRange(bytes, start, bytes.length)));
         }
         return lines;
     }
 
     @TruffleBoundary
-    private static Object digestFile(String algorithm, Object[] a) {
-        byte[] bytes = readAll(Str.java(Args.str(a, 0)));
+    private static Object digestFile(PhpContext context, String algorithm, Object[] a) {
+        byte[] bytes = readAll(context, Str.java(Args.str(a, 0)));
         if (bytes == null) {
             return Boolean.FALSE;
         }
         try {
             byte[] digest = MessageDigest.getInstance(algorithm).digest(bytes);
-            if (Args.bool(a, 1, false)) {
-                return Str.of(digest);
-            }
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) {
-                hex.append(String.format("%02x", b & 0xff));
-            }
-            return Str.of(hex.toString());
+            return Args.bool(a, 1, false) ? Str.of(digest) : Str.of(HexFormat.of().formatHex(digest));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
     }
 
-    private static long mode(Path path, boolean follow) throws IOException {
+    /** touch(filename, mtime = now, atime = mtime): creates the file if it doesn't exist. */
+    private static Object touch(TruffleFile file, Object[] a) throws IOException {
+        if (!file.exists()) {
+            try {
+                file.createFile();
+            } catch (FileAlreadyExistsException e) {
+                // created meanwhile: touch it
+            }
+        }
+        long mtime = Args.has(a, 1) && Args.get(a, 1) != PhpNull.NULL ? Args.lng(a, 1, 0) * 1000
+                : System.currentTimeMillis();
+        long atime = Args.has(a, 2) && Args.get(a, 2) != PhpNull.NULL ? Args.lng(a, 2, 0) * 1000 : mtime;
+        file.setLastModifiedTime(FileTime.fromMillis(mtime));
+        file.setLastAccessTime(FileTime.fromMillis(atime));
+        return Boolean.TRUE;
+    }
+
+    /** mkdir(directory, permissions = 0777, recursive = false): false if it exists; permissions pass the umask. */
+    private static Object mkdir(TruffleFile file, long permissions, boolean recursive) throws IOException {
+        if (file.exists()) {
+            return Boolean.FALSE;
+        }
+        FileAttribute<?>[] attributes = {PosixFilePermissions.asFileAttribute(permissions(permissions))};
+        try {
+            create(file, recursive, attributes);
+        } catch (UnsupportedOperationException e) {
+            create(file, recursive);
+        }
+        return Boolean.TRUE;
+    }
+
+    private static void create(TruffleFile file, boolean recursive, FileAttribute<?>... attributes)
+            throws IOException {
+        if (recursive) {
+            file.createDirectories(attributes);
+        } else {
+            file.createDirectory(attributes);
+        }
+    }
+
+    /** copy(): the source's bytes into the target, created or truncated; neither may be a directory. */
+    private static Object copy(TruffleFile from, TruffleFile to) throws IOException {
+        if (from.isDirectory() || to.isDirectory()) {
+            return Boolean.FALSE;
+        }
+        try (InputStream in = from.newInputStream();
+             OutputStream out = to.newOutputStream()) {
+            in.transferTo(out);
+        }
+        return Boolean.TRUE;
+    }
+
+    private static long mode(TruffleFile file, boolean follow) throws IOException {
         LinkOption[] options = follow ? new LinkOption[0] : new LinkOption[] {LinkOption.NOFOLLOW_LINKS};
-        long type = Files.isDirectory(path, options) ? 0040000 : Files.isSymbolicLink(path) && !follow ? 0120000
-                : 0100000;
+        long type = file.isDirectory(options) ? 0040000 : file.isSymbolicLink() && !follow ? 0120000 : 0100000;
         try {
             long bits = 0;
-            for (PosixFilePermission permission : Files.getPosixFilePermissions(path, options)) {
+            for (PosixFilePermission permission : file.getPosixPermissions(options)) {
                 bits |= 1L << (8 - permission.ordinal());
             }
             return type | bits;
@@ -625,22 +1380,28 @@ final class FileFunctions {
         }
     }
 
-    private static Object stat(Path path, boolean follow) throws IOException {
+    private static Object stat(TruffleFile file, boolean follow) throws IOException {
         LinkOption[] options = follow ? new LinkOption[0] : new LinkOption[] {LinkOption.NOFOLLOW_LINKS};
-        if (!Files.exists(path, options)) {
+        if (!file.exists(options)) {
             return Boolean.FALSE;
         }
-        long size = Files.isDirectory(path, options) ? 4096 : Files.size(path);
-        long mtime = Files.getLastModifiedTime(path, options).toMillis() / 1000;
-        Object[][] fields = {{"dev", 0L}, {"ino", 0L}, {"mode", mode(path, follow)}, {"nlink", 1L}, {"uid", 0L},
-                {"gid", 0L}, {"rdev", 0L}, {"size", size}, {"atime", mtime}, {"mtime", mtime}, {"ctime", mtime},
-                {"blksize", 4096L}, {"blocks", (size + 511) / 512}};
+        long size = file.isDirectory(options) ? 4096 : file.size(options);
+        long mtime = seconds(file.getLastModifiedTime(options));
+        long[] values = {0, 0, mode(file, follow), 1, 0, 0, 0, size, mtime, mtime, mtime, 4096, (size + 511) / 512};
+        return statArray(values);
+    }
+
+    private static final String[] STAT_KEYS = {"dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime",
+            "mtime", "ctime", "blksize", "blocks"};
+
+    /** stat()'s array: the 13 values by index, then by name. */
+    private static PhpArray statArray(long[] values) {
         PhpArray stat = new PhpArray();
-        for (int i = 0; i < fields.length; i++) {
-            stat.put((long) i, fields[i][1]);
+        for (int i = 0; i < values.length; i++) {
+            stat.put((long) i, values[i]);
         }
-        for (Object[] field : fields) {
-            stat.put(key((String) field[0]), field[1]);
+        for (int i = 0; i < values.length; i++) {
+            stat.put(key(STAT_KEYS[i]), values[i]);
         }
         return stat;
     }
@@ -655,13 +1416,13 @@ final class FileFunctions {
     }
 
     /** A directory's entries with . and ..: sorted (scandir), or in the file system's order (readdir). */
-    private static List<String> entries(Path directory, boolean sorted) throws IOException {
+    private static List<String> entries(TruffleFile directory, boolean sorted) throws IOException {
         List<String> names = new ArrayList<>();
         names.add(".");
         names.add("..");
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
-            for (Path entry : stream) {
-                names.add(entry.getFileName().toString());
+        try (DirectoryStream<TruffleFile> stream = directory.newDirectoryStream()) {
+            for (TruffleFile entry : stream) {
+                names.add(entry.getName());
             }
         }
         if (sorted) {
@@ -672,16 +1433,16 @@ final class FileFunctions {
 
     /** glob(): GLOB_MARK = 2, GLOB_NOSORT = 4, GLOB_ONLYDIR = 0x2000 (Linux), GLOB_BRACE = 0x400. */
     @TruffleBoundary
-    private static Object glob(String pattern, long flags) {
+    private static Object glob(PhpContext context, String pattern, long flags) {
         int slash = pattern.lastIndexOf('/');
         String directory = slash < 0 ? "." : slash == 0 ? "/" : pattern.substring(0, slash);
         String filePattern = pattern.substring(slash + 1);
         List<String> found = new ArrayList<>();
         if (directory.matches(".*[*?\\[].*")) {
-            Object parents = glob(directory, 0x2000);
+            Object parents = glob(context, directory, 0x2000);
             if (parents instanceof PhpArray array) {
                 for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                    Object sub = glob(Str.java((TruffleString) array.valueAt(p)) + "/" + filePattern, flags);
+                    Object sub = glob(context, Str.java((TruffleString) array.valueAt(p)) + "/" + filePattern, flags);
                     if (sub instanceof PhpArray subArray) {
                         for (int q = subArray.firstPosition(); q >= 0; q = subArray.nextPosition(q)) {
                             found.add(Str.java((TruffleString) subArray.valueAt(q)));
@@ -693,16 +1454,16 @@ final class FileFunctions {
         }
         String syntax = (flags & 0x400) != 0 ? filePattern : filePattern.replace("{", "\\{").replace("}", "\\}");
         PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + syntax);
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Path.of(directory))) {
-            for (Path entry : stream) {
-                String name = entry.getFileName().toString();
+        try (DirectoryStream<TruffleFile> stream = file(context, directory).newDirectoryStream()) {
+            for (TruffleFile entry : stream) {
+                String name = entry.getName();
                 if (name.startsWith(".") && !filePattern.startsWith(".")) {
                     continue;
                 }
-                if (!matcher.matches(entry.getFileName())) {
+                if (!matcher.matches(Path.of(name))) {
                     continue;
                 }
-                boolean isDirectory = Files.isDirectory(entry);
+                boolean isDirectory = entry.isDirectory();
                 if ((flags & 0x2000) != 0 && !isDirectory) {
                     continue;
                 }

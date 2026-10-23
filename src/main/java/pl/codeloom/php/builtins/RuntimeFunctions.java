@@ -13,6 +13,8 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
@@ -99,10 +101,7 @@ final class RuntimeFunctions {
         r.fn("ini_get_all", a -> new PhpArray());
         r.fn("error_get_last", a -> PhpNull.NULL);
         r.fn("error_clear_last", a -> PhpNull.NULL);
-        r.fn("error_log", (context, a) -> {
-            System.err.println(Str.java(Args.str(a, 0)));
-            return Boolean.TRUE;
-        });
+        r.fn("error_log", (context, a) -> errorLog(context, Str.bytes(Args.str(a, 0))));
         r.fn("debug_backtrace", a -> new PhpArray());
         r.fn("get_defined_constants", (context, a) -> context.constantsArray());
         r.fn("gc_collect_cycles", a -> 0L);
@@ -121,7 +120,24 @@ final class RuntimeFunctions {
         return PhpNull.NULL;
     }
 
-    /** `clone $object`: a shallow copy (arrays copy on write), then __clone() on the copy. */
+    /** error_log() with no error_log ini: the SAPI's logger, which in php-cli writes the message and \n to stderr. */
+    @TruffleBoundary
+    private static Object errorLog(PhpContext context, byte[] message) {
+        try {
+            if (context.response() == null) {
+                context.flush(); // php-cli writes echo unbuffered, so it comes before the message
+            }
+            OutputStream err = context.getEnv().err();
+            err.write(message);
+            err.write('\n');
+            err.flush();
+            return Boolean.TRUE;
+        } catch (IOException e) {
+            return Boolean.FALSE;
+        }
+    }
+
+    /** `clone $object`:a shallow copy (arrays copy on write), then __clone() on the copy. */
     @TruffleBoundary
     private static Object cloneObject(PhpContext context, Object value, Object withProperties) {
         if (!(value instanceof PhpObject object)) {
