@@ -119,25 +119,38 @@ public final class PhpContext {
 
     /**
      * The translated top-level code of a PHP file. Translations are language-level: the first context to load a
-     * file reads its AST export and translates it, and every context shares the result.
+     * file reads its AST export and translates it, and every context shares the result until the export
+     * changes (checked at each load, as opcache's timestamp validation).
      */
     @TruffleBoundary
     public FileRootNode loadFile(String path) {
         String canonical = canonicalPath(path);
-        return language.file(canonical, () -> translate(path, canonical));
-    }
-
-    private FileRootNode translate(String path, String canonical) {
         Path relative = sourceRoot.relativize(Path.of(canonical));
         Path json = astRoot.resolve(relative.toString() + ".json");
         TruffleFile file = env.getPublicTruffleFile(json.toString());
+        long modified;
+        long size;
+        try {
+            modified = file.getLastModifiedTime().toMillis();
+            size = file.size();
+        } catch (IOException | SecurityException e) {
+            throw noExport(path, json);
+        }
+        return language.file(canonical, modified, size, () -> translate(path, canonical, file, json));
+    }
+
+    private FileRootNode translate(String path, String canonical, TruffleFile file, Path json) {
         Ast ast;
         try (InputStream in = file.newInputStream()) {
             ast = AstReader.read(in);
         } catch (IOException e) {
-            throw new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
+            throw noExport(path, json);
         }
         return new Translator(language, canonical, phpSource(canonical)).translateFile(ast);
+    }
+
+    private static PhpError noExport(String path, Path json) {
+        return new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
     }
 
     private Source phpSource(String canonical) {

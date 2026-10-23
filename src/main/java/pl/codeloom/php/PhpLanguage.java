@@ -47,10 +47,18 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     }
 
     /**
-     * Translated files by canonical path, shared by the contexts of this language. Files are taken not to change
-     * while the engine runs (opcache with timestamp validation off).
+     * Translated files by canonical path, shared by the contexts of this language, with the version of the AST
+     * export they were translated from (as opcache with timestamp validation): a file rewritten while the
+     * engine runs (a plugin or core update) is translated again on its next include.
      */
-    private final Map<String, FileRootNode> files = new ConcurrentHashMap<>();
+    private final Map<String, CachedFile> files = new ConcurrentHashMap<>();
+
+    /** A translation and the AST export version (modification time and size) it was made from. */
+    private record CachedFile(FileRootNode root, long modified, long size) {
+        boolean isFor(long otherModified, long otherSize) {
+            return modified == otherModified && size == otherSize;
+        }
+    }
 
     /**
      * Valid while this language instance serves one context. Until then a node may keep what it looked up in the
@@ -121,13 +129,17 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         singleContext.invalidate();
     }
 
-    /** A file's translation, made by translate on first use (once, also when contexts race). */
-    public FileRootNode file(String canonical, Supplier<FileRootNode> translate) {
-        FileRootNode root = files.get(canonical);
-        if (root == null) {
-            root = files.computeIfAbsent(canonical, path -> translate.get());
+    /**
+     * A file's translation for the given version of its AST export, made by translate when there is none for
+     * that version (once, also when contexts race).
+     */
+    public FileRootNode file(String canonical, long modified, long size, Supplier<FileRootNode> translate) {
+        CachedFile cached = files.get(canonical);
+        if (cached == null || !cached.isFor(modified, size)) {
+            cached = files.compute(canonical, (path, current) -> current != null && current.isFor(modified, size)
+                    ? current : new CachedFile(translate.get(), modified, size));
         }
-        return root;
+        return cached.root();
     }
 
     /** Contexts share translated files only when they read the same AST exports. */
