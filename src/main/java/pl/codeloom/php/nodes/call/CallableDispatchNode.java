@@ -48,32 +48,35 @@ public abstract class CallableDispatchNode extends Node {
      * (language-level) function under it. "Cls::m" strings take the generic path.
      */
     @Specialization(guards = {"equal.execute(callable, cachedName, ENC)", "functionId >= 0",
-            "functionAt(functionId) == target.function()"}, limit = "LIMIT")
+            "functionAt(functionId) == function"}, limit = "LIMIT")
     protected Object named(TruffleString callable, Object[] values,
                            @Cached("callable") TruffleString cachedName,
                            @Cached TruffleString.EqualNode equal,
-                           @Cached("resolve(callable)") Callables.Target target,
-                           @Cached("functionId(target)") int functionId,
-                           @Cached("create(target.function().getCallTarget())") DirectCallNode call) {
-        return PhpRef.deref(call.call(target.frameArguments(values)));
+                           @Cached("resolve(callable).function()") PhpFunction function,
+                           @Cached("functionId(callable)") int functionId,
+                           @Cached("create(function.getCallTarget())") DirectCallNode call) {
+        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(null, null, null, values)));
     }
 
-    /** `[$object, 'method']`, keyed on the object's class key: the same entry serves every context. */
+    /**
+     * `[$object, 'method']`, keyed on the object's class key: the same entry serves every context. The entry
+     * keeps the method only (a language-level object); the receiver and its class are the current call's.
+     */
     @Specialization(guards = {"isObjectMethod(callable)", "classOf(callable).getKey() == cachedKey",
             "equal.execute(methodName(callable), cachedMethod, ENC)"}, limit = "LIMIT")
     protected Object objectMethod(PhpArray callable, Object[] values,
                                   @Cached("classOf(callable).getKey()") ClassKey cachedKey,
                                   @Cached("methodName(callable)") TruffleString cachedMethod,
                                   @Cached TruffleString.EqualNode equal,
-                                  @Cached("resolve(callable)") Callables.Target target,
-                                  @Cached("create(target.function().getCallTarget())") DirectCallNode call) {
-        Object self = target.function().isStatic() ? null : callable.get(0L);
+                                  @Cached("resolve(callable).function()") PhpFunction method,
+                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
+        Object self = method.isStatic() ? null : callable.get(0L);
         return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, values)));
     }
 
     /**
-     * `['Cls', 'method']`: the class is the calling context's, looked up by name id and checked by key. A
-     * 'parent::method' name resolves to another class and takes the generic path.
+     * `['Cls', 'method']`: the class is the calling context's, looked up by name id and checked by key; there is
+     * no receiver. A 'parent::method' name resolves to another class and takes the generic path.
      */
     @Specialization(guards = {"isClassMethod(callable)", "equalClass.execute(className(callable), cachedClassName, ENC)",
             "equalMethod.execute(methodName(callable), cachedMethod, ENC)", "classId >= 0",
@@ -83,11 +86,11 @@ public abstract class CallableDispatchNode extends Node {
                                  @Cached("methodName(callable)") TruffleString cachedMethod,
                                  @Cached TruffleString.EqualNode equalClass,
                                  @Cached TruffleString.EqualNode equalMethod,
-                                 @Cached("resolve(callable)") Callables.Target target,
+                                 @Cached("resolve(callable).function()") PhpFunction method,
                                  @Cached("classId(cachedClassName, cachedMethod)") int classId,
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
-                                 @Cached("create(target.function().getCallTarget())") DirectCallNode call) {
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(target.thisObject(),
+                                 @Cached("create(method.getCallTarget())") DirectCallNode call) {
+        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(null,
                 PhpContext.get(this).classAt(classId), null, values)));
     }
 
@@ -102,8 +105,9 @@ public abstract class CallableDispatchNode extends Node {
         return Callables.resolveOrThrow(PhpContext.get(this), callable);
     }
 
-    /** The function name id of a plain function target, or -1 for a method or closure. */
-    protected int functionId(Callables.Target target) {
+    /** The function name id of a callable naming a plain function, or -1 for a method ("Cls::m"). */
+    protected int functionId(Object callable) {
+        Callables.Target target = resolve(callable);
         if (target.thisObject() != null || target.staticClass() != null || target.closure() != null) {
             return -1;
         }
