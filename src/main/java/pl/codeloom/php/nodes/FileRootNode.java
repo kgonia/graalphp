@@ -17,9 +17,9 @@ public final class FileRootNode extends RootNode {
 
     private final SourceSection sourceSection;
 
-    public FileRootNode(PhpLanguage language, String path, StmtNode prologue, StmtNode body,
+    public FileRootNode(PhpLanguage language, FrameDescriptor frame, String path, StmtNode prologue, StmtNode body,
                         SourceSection sourceSection) {
-        super(language, FrameDescriptor.newBuilder().build());
+        super(language, frame);
         this.sourceSection = sourceSection;
         this.path = path;
         this.prologue = prologue;

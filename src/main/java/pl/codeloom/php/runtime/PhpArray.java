@@ -571,6 +571,28 @@ public final class PhpArray implements TruffleObject {
         return PhpRef.deref(rawAt(position));
     }
 
+    // ---- per-layout iteration, for sites that profile the layout (foreach); callers check the layout first ----
+
+    /** Whether the array is packed with an Object[] (not the int strategy, not hashed). */
+    public boolean holdsObjects() {
+        return packed != null;
+    }
+
+    /** The raw element at a position of an Object[]-packed array. */
+    public Object packedAt(int position) {
+        return packed[position];
+    }
+
+    /** The key at a position of a hashed array. */
+    public Object hashKeyAt(int position) {
+        return keys[position];
+    }
+
+    /** The raw value at a position of a hashed array. */
+    public Object hashValueAt(int position) {
+        return values[position];
+    }
+
     /** Makes the element at a position a reference and returns it (foreach by reference). */
     @TruffleBoundary
     public PhpRef refAtPosition(int position) {

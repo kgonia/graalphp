@@ -116,6 +116,8 @@ public final class Translator {
     private final Scope scope;
     /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
     private int hiddenCounter;
+    /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
+    private final Scope fileSlots = new Scope();
 
     public Translator(PhpLanguage language, PhpContext context, String path, Source source) {
         this(language, context, path, source, null, "", null, null);
@@ -154,7 +156,7 @@ public final class Translator {
                 body.add(statement(statement));
             }
         }
-        return new FileRootNode(language, path, block(prologue), block(body),
+        return new FileRootNode(language, fileSlots.frame.build(), path, block(prologue), block(body),
                 source == null ? null : source.createSection(0, source.getLength()));
     }
 
@@ -270,9 +272,11 @@ public final class Translator {
         LValueNode key = node.get("key") == null ? null : place(node.get("key"));
         StmtNode body = statements(node.node("stmts"));
         if (value.is("AST_ARRAY")) {
-            return new ForeachNode(subject, key, null, listTarget(value), body, false);
+            return new ForeachNode(subject, key, null, listTarget(value), body, false, hiddenSlot("array"),
+                    hiddenSlot("position"));
         }
-        return new ForeachNode(subject, key, place(value), null, body, byRef);
+        return new ForeachNode(subject, key, place(value), null, body, byRef, hiddenSlot("array"),
+                hiddenSlot("position"));
     }
 
     private StmtNode switchStatement(Ast node) {
@@ -872,6 +876,11 @@ public final class Translator {
             return new ThisNode();
         }
         return expression(value);
+    }
+
+    /** A frame slot for a node's own state, in the function's frame or the file's; no PHP variable can name it. */
+    private int hiddenSlot(String purpose) {
+        return (scope != null ? scope : fileSlots).slot("\0" + purpose + hiddenCounter++);
     }
 
     private ExprNode variable(String name) {

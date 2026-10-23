@@ -24,6 +24,15 @@ function m_variadic($first, ...$rest) {
     return $first + count($rest);
 }
 
+/** An array built at run time: PHP's optimizer folds lookups in literal arrays, which no real code gets. */
+function m_row(array $pairs): array {
+    $row = [];
+    foreach ($pairs as $key => $value) {
+        $row[$key] = $value;
+    }
+    return $row;
+}
+
 const M_N = 200000;
 
 return [
@@ -105,7 +114,7 @@ return [
     },
     // arrays
     'array_str_read' => static function (): int {
-        $a = ['id' => 1, 'title' => 2, 'content' => 3, 'status' => 4, 'author' => 5, 'date' => 6];
+        $a = m_row(['id' => 1, 'title' => 2, 'content' => 3, 'status' => 4, 'author' => 5, 'date' => 6]);
         $keys = ['id', 'title', 'content', 'status', 'author', 'date'];
         $s = 0;
         for ($i = 0; $i < M_N; $i++) {
@@ -114,7 +123,7 @@ return [
         return $s;
     },
     'array_str_literal' => static function (): int {
-        $a = ['id' => 1, 'title' => 2, 'content' => 3];
+        $a = m_row(['id' => 1, 'title' => 2, 'content' => 3]);
         $s = 0;
         for ($i = 0; $i < M_N; $i++) {
             $s += $a['title'] + $a['content'];
@@ -137,7 +146,7 @@ return [
         return $s;
     },
     'isset_str' => static function (): int {
-        $a = ['a' => 1, 'b' => null, 'c' => 3];
+        $a = m_row(['a' => 1, 'b' => null, 'c' => 3]);
         $s = 0;
         for ($i = 0; $i < M_N; $i++) {
             $s += isset($a['a']) + isset($a['b']) + isset($a['zz']) + ($a['c'] ?? 0);
@@ -168,7 +177,7 @@ return [
         return $s;
     },
     'array_copy_write' => static function (): int {
-        $base = ['a' => 1, 'b' => 2, 'c' => 3, 'd' => 4];
+        $base = m_row(['a' => 1, 'b' => 2, 'c' => 3, 'd' => 4]);
         $s = 0;
         for ($i = 0; $i < M_N / 4; $i++) {
             $copy = $base;

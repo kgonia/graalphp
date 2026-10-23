@@ -32,76 +32,105 @@ public final class ForeachNode extends StmtNode {
     @Child private StmtNode body;
     @Child private LoopNode arrayLoop;
     private final boolean byRef;
-    /** The auxiliary frame slot holding the array iteration's state (resolved on first execution). */
-    @CompilationFinal private int stateSlot = -1;
+    /**
+     * Hidden frame slots holding the iterated array and the next position, so the loop state is plain frame
+     * values (registers, once compiled) rather than a heap object updated at each step. Cleared after the loop,
+     * so paths with and without it merge with the same slot tags.
+     */
+    private final int arraySlot;
+    private final int positionSlot;
     /** Whether this loop has iterated an object: until it does, compiled code leaves the object path out. */
     @CompilationFinal private boolean seenObject;
+    /**
+     * The array layouts this loop has iterated by value. Compiled code has a path only for those: an int list
+     * binds its values unboxed, and no layout pays for the others' checks.
+     */
+    @CompilationFinal private byte seenLayouts;
+    private static final byte LONGS = 1;
+    private static final byte OBJECTS = 2;
+    private static final byte HASH = 4;
 
     public ForeachNode(ExprNode subject, LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList,
-                       StmtNode body, boolean byRef) {
+                       StmtNode body, boolean byRef, int arraySlot, int positionSlot) {
         this.subject = subject;
         this.keyTarget = keyTarget;
         this.valueTarget = valueTarget;
         this.valueList = valueList;
         this.body = body;
         this.byRef = byRef;
+        this.arraySlot = arraySlot;
+        this.positionSlot = positionSlot;
         this.arrayLoop = Truffle.getRuntime().createLoopNode(new ArrayStep());
-    }
-
-    /** Where an array foreach is: the array and the next position. Lives in a frame slot so OSR can resume it. */
-    private static final class State {
-        final PhpArray array;
-        int position;
-
-        State(PhpArray array) {
-            this.array = array;
-            this.position = array.firstPosition();
-        }
-    }
-
-    private int stateSlot(VirtualFrame frame) {
-        if (stateSlot < 0) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            stateSlot = frame.getFrameDescriptor().findOrAddAuxiliarySlot(this);
-        }
-        return stateSlot;
     }
 
     /** One element of an array foreach: bind key and value (or the element's reference), run the body. */
     private final class ArrayStep extends Node implements RepeatingNode {
         @Override
         public boolean executeRepeating(VirtualFrame frame) {
-            State state = (State) frame.getAuxiliarySlot(stateSlot);
-            int p = state.position;
+            int p = frame.getInt(positionSlot);
             if (p < 0) {
                 return false;
             }
-            PhpArray array = state.array;
-            if (keyTarget != null) {
-                keyTarget.write(frame, array.keyAt(p));
-            }
+            PhpArray array = (PhpArray) frame.getObject(arraySlot);
             if (byRef) {
+                if (keyTarget != null) {
+                    keyTarget.write(frame, array.keyAt(p));
+                }
                 valueTarget.bindRef(frame, array.refAtPosition(p));
             } else {
-                assignValue(frame, array.valueAt(p));
+                bind(frame, array, p);
             }
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return false;
             }
-            state.position = array.nextPosition(p);
-            return state.position >= 0;
+            int next = array.nextPosition(p);
+            frame.setInt(positionSlot, next);
+            return next >= 0;
+        }
+    }
+
+    /** Binds key and value of the element at position p, by the array's layout. */
+    private void bind(VirtualFrame frame, PhpArray array, int p) {
+        if (array.holdsLongs()) {
+            seen(LONGS);
+            if (keyTarget != null) {
+                keyTarget.writeLong(frame, p);
+            }
+            if (valueList == null) {
+                valueTarget.writeLong(frame, array.longAt(p));
+            } else {
+                valueList.assign(frame, array.longAt(p));
+            }
+        } else if (array.holdsObjects()) {
+            seen(OBJECTS);
+            if (keyTarget != null) {
+                keyTarget.writeLong(frame, p);
+            }
+            assignValue(frame, PhpRef.deref(array.packedAt(p)));
+        } else {
+            seen(HASH);
+            if (keyTarget != null) {
+                keyTarget.write(frame, array.hashKeyAt(p));
+            }
+            assignValue(frame, PhpRef.deref(array.hashValueAt(p)));
+        }
+    }
+
+    private void seen(byte layout) {
+        if ((seenLayouts & layout) == 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seenLayouts |= layout;
         }
     }
 
     private void runArray(VirtualFrame frame, PhpArray array) {
-        int slot = stateSlot(frame);
-        Object outer = frame.getAuxiliarySlot(slot);
-        frame.setAuxiliarySlot(slot, new State(array));
+        frame.setObject(arraySlot, array);
+        frame.setInt(positionSlot, array.firstPosition());
         try {
             arrayLoop.execute(frame);
         } finally {
-            // a recursive call of the same function has its own frame; restoring covers re-entry within one frame
-            frame.setAuxiliarySlot(slot, outer);
+            frame.clear(arraySlot);
+            frame.clear(positionSlot);
         }
     }
 
