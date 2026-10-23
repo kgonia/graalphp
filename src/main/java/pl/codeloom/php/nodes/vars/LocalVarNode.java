@@ -167,15 +167,20 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpArray array) {
             array.removeHolder();
         }
+        ref.bind();
         FrameSlots.setObject(frame, slot, ref);
         return ref;
     }
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        if (storedObject(frame) instanceof PhpArray array) {
+        Object old = storedObject(frame);
+        if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpRef previous) {
+            previous.unbind();
         }
+        ref.bind();
         FrameSlots.setObject(frame, slot, ref);
     }
 
@@ -226,8 +231,11 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        if (storedObject(frame) instanceof PhpArray array) {
+        Object old = storedObject(frame);
+        if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpRef ref) {
+            ref.unbind();
         }
         frame.clear(slot);
     }

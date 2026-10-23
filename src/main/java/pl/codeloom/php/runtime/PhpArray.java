@@ -127,7 +127,10 @@ public final class PhpArray implements TruffleObject {
         } else if (packed != null) {
             copy.packed = Arrays.copyOf(packed, Math.max(packed.length, MIN_CAPACITY));
             for (int i = 0; i < size; i++) {
-                if (packed[i] instanceof PhpArray nested) {
+                if (packed[i] instanceof PhpRef ref) {
+                    copy.packed[i] = ref.copyElement(this);
+                }
+                if (copy.packed[i] instanceof PhpArray nested) {
                     nested.addHolder();
                 }
             }
@@ -140,7 +143,10 @@ public final class PhpArray implements TruffleObject {
             copy.chain = chain.clone();
             copy.used = used;
             for (int i = 0; i < used; i++) {
-                if (keys[i] != null && values[i] instanceof PhpArray nested) {
+                if (keys[i] != null && values[i] instanceof PhpRef ref) {
+                    copy.values[i] = ref.copyElement(this);
+                }
+                if (keys[i] != null && copy.values[i] instanceof PhpArray nested) {
                     nested.addHolder();
                 }
             }
@@ -292,6 +298,7 @@ public final class PhpArray implements TruffleObject {
     /** Stores a PhpRef (or replaces whatever is there) under a normalized key: `$a[k] = &$x`. */
     @TruffleBoundary
     public void putRef(Object key, PhpRef ref) {
+        ref.bind();
         if (longs != null) {
             toObjects();
         }
@@ -734,6 +741,10 @@ public final class PhpArray implements TruffleObject {
             return ref;
         }
         PhpRef ref = new PhpRef(raw);
+        ref.bind();
+        if (raw instanceof PhpArray array) {
+            array.removeHolder();
+        }
         if (longs != null) {
             toObjects();
         }

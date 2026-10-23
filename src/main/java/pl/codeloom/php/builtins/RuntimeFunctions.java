@@ -139,11 +139,12 @@ final class RuntimeFunctions {
         return copy;
     }
 
+    /** The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. */
     private static Object[] positional(PhpArray arguments) {
         Object[] values = new Object[arguments.size()];
         int i = 0;
         for (int p = arguments.firstPosition(); p >= 0; p = arguments.nextPosition(p)) {
-            values[i++] = arguments.valueAt(p);
+            values[i++] = arguments.rawAt(p);
         }
         return values;
     }

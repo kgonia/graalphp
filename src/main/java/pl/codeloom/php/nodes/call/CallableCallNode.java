@@ -39,11 +39,12 @@ public final class CallableCallNode extends ExprNode {
         return dispatch.execute(target, values);
     }
 
+    /** The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. */
     private static Object[] toValues(PhpArray list) {
         Object[] values = new Object[list.size()];
         int i = 0;
         for (int p = list.firstPosition(); p >= 0; p = list.nextPosition(p)) {
-            values[i++] = list.valueAt(p);
+            values[i++] = list.rawAt(p);
         }
         return values;
     }

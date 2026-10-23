@@ -180,6 +180,7 @@ public final class PhpContext {
     @TruffleBoundary
     public PhpRef createStaticVariable(PhpFunction function, String name, Object initial) {
         PhpRef ref = new PhpRef(initial);
+        ref.bind();
         staticVariables.computeIfAbsent(function, f -> new HashMap<>()).put(name, ref);
         return ref;
     }
@@ -409,7 +410,11 @@ public final class PhpContext {
     /** The global variable's reference, created (holding null) if absent: `global $x`, top-level code. */
     @TruffleBoundary
     public PhpRef globalRef(String name) {
-        return globals.computeIfAbsent(name, n -> new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL));
+        return globals.computeIfAbsent(name, n -> {
+            PhpRef ref = new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL);
+            ref.bind();
+            return ref;
+        });
     }
 
     @TruffleBoundary
@@ -419,18 +424,25 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void bindGlobal(String name, PhpRef ref) {
-        globals.put(name, ref);
+        ref.bind();
+        PhpRef old = globals.put(name, ref);
+        if (old != null) {
+            old.unbind();
+        }
         globalsVersion++;
     }
 
     @TruffleBoundary
     public void unsetGlobal(String name) {
-        globals.remove(name);
+        PhpRef old = globals.remove(name);
+        if (old != null) {
+            old.unbind();
+        }
         globalsVersion++;
     }
 
     /** date_default_timezone_set(); UTC until set, as php.ini's date.timezone default. */
-    private java.time.ZoneId timezone = java.time.ZoneOffset.UTC;
+    private java.time.ZoneId timezone = java.time.ZoneId.of("UTC");
 
     public java.time.ZoneId timezone() {
         return timezone;

@@ -11,6 +11,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 
 /**
  * `function (...) use ($a, &$b) {...}` and `fn (...) => ...`: captures the use-variables (values, or references
@@ -43,7 +44,9 @@ public final class ClosureNode extends ExprNode {
         Object[] captured = new Object[captures.length];
         for (int i = 0; i < captures.length; i++) {
             if (byRef[i]) {
-                captured[i] = ((LValueNode) captures[i]).makeRef(frame);
+                PhpRef ref = ((LValueNode) captures[i]).makeRef(frame);
+                ref.bind();
+                captured[i] = ref;
             } else {
                 Object value = captures[i].execute(frame);
                 if (value instanceof PhpArray array) {

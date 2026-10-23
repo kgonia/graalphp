@@ -146,7 +146,9 @@ public final class PhpClass {
     }
 
     public void addStaticProperty(String propertyName, Object initial) {
-        staticProperties.put(propertyName, new PhpRef(initial));
+        PhpRef ref = new PhpRef(initial);
+        ref.bind();
+        staticProperties.put(propertyName, ref);
     }
 
     @TruffleBoundary

@@ -93,7 +93,9 @@ public final class FunctionRootNode extends RootNode {
                 throw tooFewArguments(given);
             }
             if (param.byRef()) {
-                FrameSlots.setObject(frame, slot, value instanceof PhpRef ref ? ref : new PhpRef(value));
+                PhpRef ref = value instanceof PhpRef passed ? passed : new PhpRef(value);
+                ref.bind();
+                FrameSlots.setObject(frame, slot, ref);
                 continue;
             }
             value = PhpRef.deref(value);
@@ -135,6 +137,8 @@ public final class FunctionRootNode extends RootNode {
             Object captured = closure.getCaptured(i);
             if (!captureByRef[i] && captured instanceof PhpArray array) {
                 array.addHolder();
+            } else if (captured instanceof PhpRef ref) {
+                ref.bind();
             }
             FrameSlots.setObject(frame, captureSlots[i], captured);
         }
@@ -143,8 +147,13 @@ public final class FunctionRootNode extends RootNode {
     @ExplodeLoop
     private void releaseLocals(VirtualFrame frame) {
         for (int slot = 0; slot < localCount; slot++) {
-            if (frame.isObject(slot) && frame.getObject(slot) instanceof PhpArray array) {
-                array.removeHolder();
+            if (frame.isObject(slot)) {
+                Object value = frame.getObject(slot);
+                if (value instanceof PhpArray array) {
+                    array.removeHolder();
+                } else if (value instanceof PhpRef ref) {
+                    ref.unbind();
+                }
             }
         }
     }

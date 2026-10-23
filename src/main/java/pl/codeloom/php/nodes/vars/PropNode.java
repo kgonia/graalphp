@@ -126,6 +126,7 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpArray array) {
             array.removeHolder();
         }
+        ref.bind();
         objects.put(phpObject, name, ref);
         return ref;
     }
@@ -137,7 +138,10 @@ public final class PropNode extends LValueNode {
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpRef previous) {
+            previous.unbind();
         }
+        ref.bind();
         objects.put(phpObject, name, ref);
     }
 
