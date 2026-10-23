@@ -16,6 +16,7 @@ import pl.codeloom.php.runtime.Str;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -188,46 +189,57 @@ final class RuntimeFunctions {
         return value == null ? (Object) Boolean.FALSE : Str.of(value);
     }
 
-    /** setcookie(name, value, expires_or_options, path, domain, secure, httponly). */
+    /**
+     * setcookie()/setrawcookie(name, value = "", expires_or_options = 0, path = "", domain = "", secure = false,
+     * httponly = false): php-src's php_setcookie_common. The options array takes expires, path, domain, secure,
+     * httponly, samesite and partitioned (case-insensitive); the parts are checked before any header is set, under
+     * php-cli too (which sends no headers).
+     */
     @TruffleBoundary
     private static Object cookie(PhpContext context, Object[] a, boolean raw) {
+        String function = raw ? "setrawcookie" : "setcookie";
+        CgiSapi.Cookie cookie = new CgiSapi.Cookie(Str.bytes(Args.str(a, 0)),
+                Args.has(a, 1) ? Str.bytes(Args.str(a, 1)) : null);
+        if (Args.get(a, 2, PhpNull.NULL) instanceof PhpArray options) {
+            if (Args.count(a) > 3) {
+                throw new PhpError("ArgumentCountError: " + function + "(): Expects exactly 3 arguments when "
+                        + "argument #3 ($expires_or_options) is an array");
+            }
+            for (int p = options.firstPosition(); p >= 0; p = options.nextPosition(p)) {
+                if (!(options.keyAt(p) instanceof TruffleString key)) {
+                    throw new PhpError("ValueError: " + function + "(): option array cannot have numeric keys");
+                }
+                Object option = options.valueAt(p);
+                switch (Str.java(key).toLowerCase(Locale.ROOT)) {
+                    case "expires" -> cookie.expires = Convert.toLong(option);
+                    case "path" -> cookie.path = Str.bytes(Convert.toStr(option));
+                    case "domain" -> cookie.domain = Str.bytes(Convert.toStr(option));
+                    case "secure" -> cookie.secure = Convert.toBool(option);
+                    case "httponly" -> cookie.httpOnly = Convert.toBool(option);
+                    case "samesite" -> cookie.sameSite = Str.bytes(Convert.toStr(option));
+                    case "partitioned" -> cookie.partitioned = Convert.toBool(option);
+                    default -> throw new PhpError("ValueError: " + function + "(): option \"" + Str.java(key)
+                            + "\" is invalid");
+                }
+            }
+        } else {
+            cookie.expires = Args.lng(a, 2, 0);
+            cookie.path = Args.has(a, 3) ? Str.bytes(Args.str(a, 3)) : null;
+            cookie.domain = Args.has(a, 4) ? Str.bytes(Args.str(a, 4)) : null;
+            cookie.secure = Args.bool(a, 5, false);
+            cookie.httpOnly = Args.bool(a, 6, false);
+        }
+        String header = cookie.header(function, !raw);
+        if (header.indexOf('\0') >= 0 || header.indexOf('\r') >= 0 || header.indexOf('\n') >= 0) {
+            return Boolean.FALSE; // sapi_header_op: "Header may not contain NUL bytes" (or a new line)
+        }
         if (context.response() == null) {
             return Boolean.TRUE;
         }
         if (context.response().isSent()) {
             return Boolean.FALSE;
         }
-        String name = Str.java(Args.str(a, 0));
-        byte[] value = Str.bytes(Args.str(a, 1, Str.EMPTY));
-        long expires = 0;
-        String path = "";
-        String domain = "";
-        boolean secure = false;
-        boolean httpOnly = false;
-        String sameSite = "";
-        if (Args.get(a, 2, PhpNull.NULL) instanceof PhpArray options) {
-            for (int p = options.firstPosition(); p >= 0; p = options.nextPosition(p)) {
-                Object option = options.valueAt(p);
-                switch (Str.java(Convert.toStr(options.keyAt(p))).toLowerCase()) {
-                    case "expires" -> expires = Convert.toLong(option);
-                    case "path" -> path = Str.java(Convert.toStr(option));
-                    case "domain" -> domain = Str.java(Convert.toStr(option));
-                    case "secure" -> secure = Convert.toBool(option);
-                    case "httponly" -> httpOnly = Convert.toBool(option);
-                    case "samesite" -> sameSite = Str.java(Convert.toStr(option));
-                    default -> throw new PhpError("ValueError: setcookie(): option \"" + options.keyAt(p)
-                            + "\" is invalid");
-                }
-            }
-        } else {
-            expires = Args.lng(a, 2, 0);
-            path = Str.java(Args.str(a, 3, Str.EMPTY));
-            domain = Str.java(Args.str(a, 4, Str.EMPTY));
-            secure = Args.bool(a, 5, false);
-            httpOnly = Args.bool(a, 6, false);
-        }
-        context.response().header(CgiSapi.cookieHeader(name, value, raw, expires, path, domain, secure, httpOnly,
-                sameSite), false, 0);
+        context.response().header(header, false, 0);
         return Boolean.TRUE;
     }
 

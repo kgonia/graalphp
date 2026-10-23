@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -142,37 +143,110 @@ public final class CgiSapi {
     private static final DateTimeFormatter COOKIE_DATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US).withZone(ZoneOffset.UTC);
 
-    /** setcookie()/setrawcookie(): php-src's php_setcookie header. */
-    @TruffleBoundary
-    static String cookieHeader(String name, byte[] value, boolean raw, long expires, String path, String domain,
-                               boolean secure, boolean httpOnly, String sameSite) {
-        StringBuilder cookie = new StringBuilder("Set-Cookie: ").append(name).append('=');
-        if (value.length == 0) {
-            cookie.append("deleted; expires=").append(COOKIE_DATE.format(Instant.ofEpochSecond(1)))
-                    .append("; Max-Age=0");
-        } else {
-            cookie.append(raw ? new String(value, StandardCharsets.ISO_8859_1)
-                    : Str.java(StringFunctions.urlencode(Str.of(value), false)));
-            if (expires > 0) {
-                cookie.append("; expires=").append(COOKIE_DATE.format(Instant.ofEpochSecond(expires)))
-                        .append("; Max-Age=").append(Math.max(0, expires - Instant.now().getEpochSecond()));
+    /** The characters a cookie's parts can't contain (php-src's ILLEGAL_COOKIE_CHARACTER), and their listing. */
+    private static final String ILLEGAL = ",; \t\r\n\u000b\u000c";
+    private static final String ILLEGAL_LISTED = "\",\", \";\", \" \", \"\\t\", \"\\r\", \"\\n\", \"\\013\", or \"\\014\"";
+    /** 10000-01-01T00:00:00Z: expires must stay within four-digit years. */
+    private static final long YEAR_10000 = 253402300800L;
+
+    /** A setcookie()/setrawcookie() call's parts, as bytes (a null part was not given). */
+    static final class Cookie {
+        final byte[] name;
+        final byte[] value;
+        long expires;
+        byte[] path;
+        byte[] domain;
+        boolean secure;
+        boolean httpOnly;
+        byte[] sameSite;
+        boolean partitioned;
+
+        Cookie(byte[] name, byte[] value) {
+            this.name = name;
+            this.value = value;
+        }
+
+        /**
+         * php-src's php_setcookie: the Set-Cookie header line, after its ValueErrors for an empty name, illegal
+         * characters in the name, a raw value, the path or the domain, an expiry after year 9999 and Partitioned
+         * without Secure. An empty value deletes the cookie; setcookie() rawurlencodes the value.
+         */
+        @TruffleBoundary
+        String header(String function, boolean urlEncode) {
+            if (name.length == 0) {
+                throw new PhpError("ValueError: " + function + "(): Argument #1 ($name) must not be empty");
             }
+            if (contains(name, "=" + ILLEGAL)) {
+                throw new PhpError("ValueError: " + function + "(): Argument #1 ($name) cannot contain \"=\", "
+                        + ILLEGAL_LISTED);
+            }
+            if (!urlEncode && value != null && contains(value, ILLEGAL)) {
+                throw new PhpError("ValueError: " + function + "(): Argument #2 ($value) cannot contain "
+                        + ILLEGAL_LISTED);
+            }
+            if (path != null && contains(path, ILLEGAL)) {
+                throw new PhpError("ValueError: " + function + "(): \"path\" option cannot contain " + ILLEGAL_LISTED);
+            }
+            if (domain != null && contains(domain, ILLEGAL)) {
+                throw new PhpError("ValueError: " + function + "(): \"domain\" option cannot contain "
+                        + ILLEGAL_LISTED);
+            }
+            if (expires >= YEAR_10000) {
+                throw new PhpError("ValueError: " + function + "(): \"expires\" option cannot have a year greater "
+                        + "than 9999");
+            }
+            if (partitioned && !secure) {
+                throw new PhpError("ValueError: " + function + "(): \"partitioned\" option cannot be used without "
+                        + "\"secure\" option");
+            }
+            StringBuilder cookie = new StringBuilder("Set-Cookie: ").append(latin1(name)).append('=');
+            if (value == null || value.length == 0) {
+                cookie.append("deleted; expires=").append(COOKIE_DATE.format(Instant.ofEpochSecond(1)))
+                        .append("; Max-Age=0");
+            } else {
+                cookie.append(urlEncode ? Str.java(StringFunctions.urlencode(Str.of(value), true)) : latin1(value));
+                if (expires > 0) {
+                    cookie.append("; expires=").append(COOKIE_DATE.format(Instant.ofEpochSecond(expires)))
+                            .append("; Max-Age=").append(Math.max(0, expires - Instant.now().getEpochSecond()));
+                }
+            }
+            if (path != null && path.length > 0) {
+                cookie.append("; path=").append(latin1(path));
+            }
+            if (domain != null && domain.length > 0) {
+                cookie.append("; domain=").append(latin1(domain));
+            }
+            if (secure) {
+                cookie.append("; secure");
+            }
+            if (httpOnly) {
+                cookie.append("; HttpOnly");
+            }
+            if (sameSite != null && sameSite.length > 0) {
+                cookie.append("; SameSite=").append(latin1(sameSite));
+            }
+            if (partitioned) {
+                cookie.append("; Partitioned");
+            }
+            return cookie.toString();
         }
-        if (!path.isEmpty()) {
-            cookie.append("; path=").append(path);
+
+        /** strpbrk: whether any of the characters occurs before the first NUL. */
+        private static boolean contains(byte[] bytes, String characters) {
+            for (byte b : bytes) {
+                if (b == 0) {
+                    return false;
+                }
+                if (characters.indexOf(b & 0xff) >= 0) {
+                    return true;
+                }
+            }
+            return false;
         }
-        if (!domain.isEmpty()) {
-            cookie.append("; domain=").append(domain);
+
+        /** The header keeps the bytes: Response.block() writes the line as ISO-8859-1. */
+        private static String latin1(byte[] bytes) {
+            return new String(bytes, StandardCharsets.ISO_8859_1);
         }
-        if (secure) {
-            cookie.append("; secure");
-        }
-        if (httpOnly) {
-            cookie.append("; HttpOnly");
-        }
-        if (!sameSite.isEmpty()) {
-            cookie.append("; SameSite=").append(sameSite);
-        }
-        return cookie.toString();
     }
 }
