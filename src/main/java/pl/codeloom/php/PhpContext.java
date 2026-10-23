@@ -263,7 +263,7 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void declareFunction(PhpFunction function) {
-        String key = function.getName().toLowerCase();
+        String key = Str.lower(function.getName());
         if (functions.putIfAbsent(key, function) != null) {
             throw new PhpError("Cannot redeclare function " + function.getName() + "()");
         }
@@ -317,7 +317,7 @@ public final class PhpContext {
     @TruffleBoundary
     public PhpClass findClassAutoloading(String name) {
         String className = stripSlash(name);
-        String lowerName = className.toLowerCase();
+        String lowerName = Str.lower(className);
         PhpClass phpClass = findClass(lowerName);
         if (phpClass != null || autoloaders.isEmpty() || !autoloading.add(lowerName)) {
             return phpClass;

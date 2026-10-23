@@ -138,7 +138,7 @@ public abstract class CallableDispatchNode extends Node {
         if (target.thisObject() != null || target.staticClass() != null || target.closure() != null) {
             return -1;
         }
-        return PhpLanguage.get(this).functionId(target.function().getName().toLowerCase());
+        return PhpLanguage.get(this).functionId(Str.lower(target.function().getName()));
     }
 
     protected PhpFunction functionAt(int id) {

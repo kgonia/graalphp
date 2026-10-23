@@ -172,7 +172,7 @@ final class EncodingFunctions {
                 allowedClasses = new java.util.HashSet<>();
                 if (allowed instanceof PhpArray names) {
                     for (int p = names.firstPosition(); p >= 0; p = names.nextPosition(p)) {
-                        allowedClasses.add(Str.java(Convert.toStr(names.valueAt(p))).toLowerCase(Locale.ROOT));
+                        allowedClasses.add(Str.lower(Str.java(Convert.toStr(names.valueAt(p)))));
                     }
                 }
             }
@@ -271,7 +271,7 @@ final class EncodingFunctions {
             long count = number(':');
             expect("{");
             enter(count);
-            boolean allowed = allowedClasses == null || allowedClasses.contains(className.toLowerCase(Locale.ROOT));
+            boolean allowed = allowedClasses == null || allowedClasses.contains(Str.lower(className));
             PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
             PhpObject object;
             if (phpClass != null) {
@@ -423,7 +423,7 @@ final class EncodingFunctions {
                     + "(inclusive)");
         }
         StringBuilder digits = new StringBuilder();
-        for (char c : number.toLowerCase(Locale.ROOT).toCharArray()) {
+        for (char c : Str.lower(number).toCharArray()) {
             if (Character.digit(c, (int) from) >= 0) {
                 digits.append(c);
             }
@@ -458,7 +458,7 @@ final class EncodingFunctions {
     }
 
     private static String javaAlgorithm(String algo) {
-        return switch (algo.toLowerCase(Locale.ROOT)) {
+        return switch (Str.lower(algo)) {
             case "md5" -> "MD5";
             case "sha1" -> "SHA-1";
             case "sha224" -> "SHA-224";

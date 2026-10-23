@@ -71,7 +71,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -421,7 +420,7 @@ public final class Translator {
             Ast classes = handler.node("class");
             types[i] = new String[classes.size()];
             for (int j = 0; j < classes.size(); j++) {
-                types[i][j] = className((Ast) classes.child(j)).toLowerCase();
+                types[i][j] = Str.lower(className((Ast) classes.child(j)));
             }
             targets[i] = handler.get("var") == null ? null : place(handler.get("var"));
             bodies[i] = statements(handler.node("stmts"));
@@ -514,7 +513,7 @@ public final class Translator {
             Ast classes = handler.node("class");
             types[i] = new String[classes.size()];
             for (int j = 0; j < classes.size(); j++) {
-                types[i][j] = className((Ast) classes.child(j)).toLowerCase();
+                types[i][j] = Str.lower(className((Ast) classes.child(j)));
             }
             targets[i] = handler.get("var") == null ? null : place(handler.get("var"));
             bodies[i] = statements(handler.node("stmts"));
@@ -672,7 +671,7 @@ public final class Translator {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
                     defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(),
                     lineSection(node.line));
-            String scope = owner == null ? null : owner.name().toLowerCase(Locale.ROOT);
+            String scope = owner == null ? null : Str.lower(owner.name());
             root.setScopeName(scope);
             root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display, scope)
                     .getCallTarget(), body.generatorSlot);
@@ -681,7 +680,7 @@ public final class Translator {
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
                 statements, lineSection(node.line));
-        root.setScopeName(owner == null ? null : owner.name().toLowerCase(Locale.ROOT));
+        root.setScopeName(owner == null ? null : Str.lower(owner.name()));
         return root.getCallTarget();
     }
 
@@ -824,7 +823,7 @@ public final class Translator {
                 Ast adaptation = (Ast) child;
                 Ast reference = adaptation.node("method");
                 String trait = reference.get("class") == null ? null : className(reference.node("class"));
-                String method = ((String) reference.get("method")).toLowerCase();
+                String method = Str.lower((String) reference.get("method"));
                 if (adaptation.is("AST_TRAIT_PRECEDENCE")) {
                     List<String> excluded = new ArrayList<>();
                     for (Object other : adaptation.node("insteadof").children()) {
@@ -908,7 +907,7 @@ public final class Translator {
             return ClassRefNode.dynamic(expression(nameNode));
         }
         String name = className(ast);
-        switch (name.toLowerCase()) {
+        switch (Str.lower(name)) {
             case "self":
                 return ClassRefNode.named(requireClass(ast).name());
             case "parent":
@@ -1028,7 +1027,7 @@ public final class Translator {
                 if (name.equalsIgnoreCase("self") || name.equalsIgnoreCase("static")) {
                     name = requireClass(node).name();
                 }
-                return new TestNodes.InstanceofNode(expression(node.get("expr")), name.toLowerCase());
+                return new TestNodes.InstanceofNode(expression(node.get("expr")), Str.lower(name));
             }
             case "AST_CALL":
                 return call(node);
@@ -1040,7 +1039,7 @@ public final class Translator {
                 return new MethodCallNode(expression(node.get("expr")), methodName(node), arguments(node.node("args")));
             case "AST_STATIC_CALL": {
                 Ast classNode = node.node("class");
-                String name = classNode != null && classNode.is("AST_NAME") ? className(classNode).toLowerCase() : "";
+                String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
                 boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
                 return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
                         forwarding);
@@ -1342,7 +1341,7 @@ public final class Translator {
         String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
         // true, false and null are global; a namespace can't declare them
         String name = resolved[1] != null ? resolved[1] : resolved[0];
-        switch (name.toLowerCase()) {
+        switch (Str.lower(name)) {
             case "true":
                 return new ConstNode(Boolean.TRUE);
             case "false":
@@ -1377,7 +1376,7 @@ public final class Translator {
         Object classNode = node.get("class");
         if (classNode instanceof Ast ast && ast.is("AST_NAME")) {
             String name = className(ast);
-            switch (name.toLowerCase()) {
+            switch (Str.lower(name)) {
                 case "self":
                     return new ConstNode(Str.of(requireClass(node).name()));
                 case "parent":
@@ -1507,7 +1506,7 @@ public final class Translator {
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)
         String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
-        switch (name.toLowerCase()) {
+        switch (Str.lower(name)) {
             case "func_get_args":
                 return new FrameArgsNode(false);
             case "func_num_args":
@@ -1556,12 +1555,12 @@ public final class Translator {
             default:
                 break;
         }
-        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(name.toLowerCase(), args);
+        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args);
         if (intrinsic != null) {
             return intrinsic;
         }
-        return new FunctionCallNode(resolved[0], language.functionId(resolved[0].toLowerCase()),
-                resolved[1] == null ? -1 : language.functionId(resolved[1].toLowerCase()), arguments(args));
+        return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
+                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args));
     }
 
     /** compact()'s variable names when they are string literals or arrays of them; false otherwise. */

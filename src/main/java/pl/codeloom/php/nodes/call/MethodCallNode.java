@@ -35,7 +35,7 @@ public final class MethodCallNode extends ExprNode {
     public MethodCallNode(ExprNode receiver, String methodName, ArgumentsNode args) {
         this.receiver = receiver;
         this.args = args;
-        this.lowerName = methodName.toLowerCase();
+        this.lowerName = Str.lower(methodName);
         this.dispatch = MethodCallNodeFactory.DispatchNodeGen.create(lowerName, Str.of(methodName));
     }
 

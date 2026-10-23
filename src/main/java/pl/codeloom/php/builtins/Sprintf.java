@@ -134,7 +134,7 @@ final class Sprintf {
                     text = Long.toHexString(Convert.toLong(value));
                     break;
                 case 'X':
-                    text = Long.toHexString(Convert.toLong(value)).toUpperCase();
+                    text = Str.upper(Long.toHexString(Convert.toLong(value)));
                     break;
                 case 'o':
                     text = Long.toOctalString(Convert.toLong(value));
@@ -164,7 +164,7 @@ final class Sprintf {
                     double v = Convert.toDouble(value);
                     text = Convert.doubleToString(v);
                     if (spec == 'G') {
-                        text = text.toUpperCase();
+                        text = Str.upper(text);
                     }
                     numeric = true;
                     break;

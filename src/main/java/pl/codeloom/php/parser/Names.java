@@ -1,5 +1,7 @@
 package pl.codeloom.php.parser;
 
+import pl.codeloom.php.runtime.Str;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -48,12 +50,12 @@ final class Names {
         String name = stripSlash(target);
         String as = alias != null ? alias : name.substring(name.lastIndexOf('\\') + 1);
         if (kind == USE_FUNCTION) {
-            return new Names(namespace, classes, with(functions, as.toLowerCase(), name), constants);
+            return new Names(namespace, classes, with(functions, Str.lower(as), name), constants);
         }
         if (kind == USE_CONST) {
             return new Names(namespace, classes, functions, with(constants, as, name));
         }
-        return new Names(namespace, with(classes, as.toLowerCase(), name), functions, constants);
+        return new Names(namespace, with(classes, Str.lower(as), name), functions, constants);
     }
 
     private static Map<String, String> with(Map<String, String> map, String key, String value) {
@@ -76,7 +78,7 @@ final class Names {
         if (flags == NAME_RELATIVE) {
             return declared(name);
         }
-        String lower = name.toLowerCase();
+        String lower = Str.lower(name);
         if (lower.equals("self") || lower.equals("parent") || lower.equals("static")) {
             return name;
         }
@@ -106,7 +108,7 @@ final class Names {
         if (name.indexOf('\\') >= 0) {
             return new String[] {qualified(name), null};
         }
-        String imported = imports.get(caseless ? name.toLowerCase() : name);
+        String imported = imports.get(caseless ? Str.lower(name) : name);
         if (imported != null) {
             return new String[] {imported, null};
         }
@@ -117,7 +119,7 @@ final class Names {
     private String qualified(String name) {
         int separator = name.indexOf('\\');
         String first = separator < 0 ? name : name.substring(0, separator);
-        String imported = classes.get(first.toLowerCase());
+        String imported = classes.get(Str.lower(first));
         if (imported != null) {
             return separator < 0 ? imported : imported + name.substring(separator);
         }

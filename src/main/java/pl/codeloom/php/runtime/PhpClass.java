@@ -52,7 +52,7 @@ public final class PhpClass {
                     Object declaration) {
         this.declaration = declaration;
         this.name = name;
-        this.lowerName = name.toLowerCase();
+        this.lowerName = Str.lower(name);
         this.parent = parent;
         this.isInterface = isInterface;
         this.isAbstract = isAbstract;
@@ -121,7 +121,7 @@ public final class PhpClass {
 
     /** Adds a method under a name: its own, or a trait alias (`use T { m as n; }`). */
     public void addMethod(String name, PhpFunction method) {
-        String key = name.toLowerCase();
+        String key = Str.lower(name);
         methods.put(key, method);
         if (key.equals("__construct")) {
             constructor = method;

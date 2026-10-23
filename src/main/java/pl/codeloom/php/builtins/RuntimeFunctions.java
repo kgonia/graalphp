@@ -16,7 +16,6 @@ import pl.codeloom.php.runtime.Str;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Arrays;
-import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -210,7 +209,7 @@ final class RuntimeFunctions {
                     throw new PhpError("ValueError: " + function + "(): option array cannot have numeric keys");
                 }
                 Object option = options.valueAt(p);
-                switch (Str.java(key).toLowerCase(Locale.ROOT)) {
+                switch (Str.lower(Str.java(key))) {
                     case "expires" -> cookie.expires = Convert.toLong(option);
                     case "path" -> cookie.path = Str.bytes(Convert.toStr(option));
                     case "domain" -> cookie.domain = Str.bytes(Convert.toStr(option));

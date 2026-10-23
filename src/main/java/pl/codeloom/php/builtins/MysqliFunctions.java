@@ -215,7 +215,7 @@ final class MysqliFunctions {
         }
         try (Statement statement = link.connection.createStatement()) {
             statement.execute("SET NAMES " + charset);
-            link.charset = charset.toLowerCase(java.util.Locale.ROOT);
+            link.charset = Str.lower(charset);
             return true;
         } catch (SQLException e) {
             failed(object, e);

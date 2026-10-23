@@ -93,6 +93,45 @@ public final class Str {
         return s.byteLength(ENC);
     }
 
+    /**
+     * Lowercases ASCII letters only, as php-src folds names, keywords and protocol tokens (zend_str_tolower):
+     * String.toLowerCase would fold other letters too, and by the default locale.
+     */
+    public static String lower(String s) {
+        int i = 0;
+        while (i < s.length() && !(s.charAt(i) >= 'A' && s.charAt(i) <= 'Z')) {
+            i++;
+        }
+        if (i == s.length()) {
+            return s;
+        }
+        char[] chars = s.toCharArray();
+        for (; i < chars.length; i++) {
+            if (chars[i] >= 'A' && chars[i] <= 'Z') {
+                chars[i] += 'a' - 'A';
+            }
+        }
+        return new String(chars);
+    }
+
+    /** Uppercases ASCII letters only (zend_str_toupper). */
+    public static String upper(String s) {
+        int i = 0;
+        while (i < s.length() && !(s.charAt(i) >= 'a' && s.charAt(i) <= 'z')) {
+            i++;
+        }
+        if (i == s.length()) {
+            return s;
+        }
+        char[] chars = s.toCharArray();
+        for (; i < chars.length; i++) {
+            if (chars[i] >= 'a' && chars[i] <= 'z') {
+                chars[i] -= 'a' - 'A';
+            }
+        }
+        return new String(chars);
+    }
+
     /** Decodes as UTF-8 for messages, names and Java-side lookups; invalid bytes become U+FFFD. */
     @TruffleBoundary
     public static String java(TruffleString s) {

@@ -10,6 +10,7 @@ import org.graalvm.polyglot.io.IOAccess;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -84,7 +85,9 @@ public final class PhpMain {
                 return;
             }
             System.out.flush();
-            System.err.println("PHP Fatal error:  " + e.getMessage());
+            // UTF-8 as PHP's names are, not the console's code page
+            System.err.writeBytes(("PHP Fatal error:  " + e.getMessage() + "\n").getBytes(StandardCharsets.UTF_8));
+            System.err.flush();
             if (System.getenv("PHP_TRACE") != null) {
                 for (PolyglotException.StackFrame frame : e.getPolyglotStackTrace()) {
                     if (frame.isGuestFrame()) {

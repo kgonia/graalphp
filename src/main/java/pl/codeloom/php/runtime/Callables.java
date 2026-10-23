@@ -6,7 +6,6 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.FrameInstance;
 import com.oracle.truffle.api.nodes.RootNode;
 
-import java.util.Locale;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 
@@ -61,7 +60,7 @@ public final class Callables {
                 return method(namedClass(context, text.substring(0, separator), direct), null,
                         text.substring(separator + 2), direct);
             }
-            PhpFunction function = context.findFunction(stripNamespace(text).toLowerCase());
+            PhpFunction function = context.findFunction(Str.lower(stripNamespace(text)));
             return function == null ? null : new Target(function, null, null, null);
         }
         if (callable instanceof PhpArray array && array.size() == 2) {
@@ -98,7 +97,7 @@ public final class Callables {
     /** The lowercase name a class-name callable (`['Cls', 'm']`) is looked up by. */
     @TruffleBoundary
     public static String className(TruffleString name) {
-        return stripNamespace(Str.java(name)).toLowerCase();
+        return Str.lower(stripNamespace(Str.java(name)));
     }
 
     private static Target method(PhpClass phpClass, PhpObject object, String methodName, boolean direct) {
@@ -112,7 +111,7 @@ public final class Callables {
                 return null;
             }
         }
-        PhpFunction method = phpClass.findMethod(methodName.toLowerCase(Locale.ROOT));
+        PhpFunction method = phpClass.findMethod(Str.lower(methodName));
         if (!direct && object == null && (method == null || !method.isStatic())) {
             // a class callable reached from code running on an instance of the class binds that $this
             // (zend_is_callable_check_func), for a non-static method or __call
@@ -145,7 +144,7 @@ public final class Callables {
      * honoured) are the calling code's declaring class, its parent, and the called class.
      */
     private static PhpClass namedClass(PhpContext context, String name, boolean direct) {
-        String lower = stripNamespace(name).toLowerCase(Locale.ROOT);
+        String lower = Str.lower(stripNamespace(name));
         if (direct) {
             return context.findClass(lower);
         }
@@ -283,7 +282,7 @@ public final class Callables {
         if (phpClass == null) {
             return "class \"" + className + "\" not found";
         }
-        PhpFunction method = phpClass.findMethod(methodName.toLowerCase(Locale.ROOT));
+        PhpFunction method = phpClass.findMethod(Str.lower(methodName));
         if (method != null && !method.isStatic()) {
             return "non-static method " + phpClass.getName() + "::" + method.getName() + "() cannot be called "
                     + "statically";
@@ -329,7 +328,7 @@ public final class Callables {
         if (phpClass == null) {
             return "Class \"" + className + "\" not found";
         }
-        PhpFunction method = phpClass.findMethod(methodName.toLowerCase(Locale.ROOT));
+        PhpFunction method = phpClass.findMethod(Str.lower(methodName));
         if (method != null && !method.isStatic() || method == null && callsNonStaticMagic(phpClass)) {
             return "Non-static method " + phpClass.getName() + "::" + (method != null ? method.getName() : methodName)
                     + "() cannot be called statically";

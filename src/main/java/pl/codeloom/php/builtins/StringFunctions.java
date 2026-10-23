@@ -1249,8 +1249,9 @@ public final class StringFunctions {
                 cb = at(b, bp[0]);
             }
             if (foldCase) {
-                ca = Character.toUpperCase(ca);
-                cb = Character.toUpperCase(cb);
+                // zend_toupper_ascii: ASCII letters only
+                ca = ca >= 'a' && ca <= 'z' ? ca - ('a' - 'A') : ca;
+                cb = cb >= 'a' && cb <= 'z' ? cb - ('a' - 'A') : cb;
             }
             if (ca != cb) {
                 return ca < cb ? -1 : 1;

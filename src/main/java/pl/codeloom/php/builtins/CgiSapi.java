@@ -30,7 +30,7 @@ public final class CgiSapi {
     public static void installRequest(PhpContext context, Map<String, String> environment, byte[] body) {
         PhpArray get = UrlFunctions.parseQuery(Str.of(environment.getOrDefault("QUERY_STRING", "")));
         PhpArray post = new PhpArray();
-        String contentType = environment.getOrDefault("CONTENT_TYPE", "").toLowerCase(Locale.ROOT);
+        String contentType = Str.lower(environment.getOrDefault("CONTENT_TYPE", ""));
         if (contentType.startsWith("application/x-www-form-urlencoded")) {
             post = UrlFunctions.parseQuery(Str.of(body));
         }

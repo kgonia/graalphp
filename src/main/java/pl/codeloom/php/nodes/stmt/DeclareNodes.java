@@ -7,6 +7,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * Function and class declarations. The translator makes the language-level declaration (a PhpFunction or a
@@ -71,7 +72,7 @@ public final class DeclareNodes {
 
         public NewAnonymousClassNode(ClassTemplate template, ExprNode instantiate) {
             this.template = template;
-            this.lowerName = template.getName().toLowerCase();
+            this.lowerName = Str.lower(template.getName());
             this.instantiate = instantiate;
         }
 

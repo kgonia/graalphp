@@ -37,7 +37,7 @@ public final class StaticCallNode extends ExprNode {
         this.classRef = classRef;
         this.args = args;
         this.forwarding = forwarding;
-        this.dispatch = StaticCallNodeFactory.DispatchNodeGen.create(methodName.toLowerCase(), Str.of(methodName));
+        this.dispatch = StaticCallNodeFactory.DispatchNodeGen.create(Str.lower(methodName), Str.of(methodName));
     }
 
     @Override

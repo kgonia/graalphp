@@ -19,7 +19,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -338,8 +337,15 @@ final class ArrayFunctions {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object key = array.keyAt(p);
             if (key instanceof TruffleString name) {
-                String text = Str.java(name);
-                key = ArrayKey.of(Str.of(upper ? text.toUpperCase(Locale.ROOT) : text.toLowerCase(Locale.ROOT)));
+                // php-src's zend_string_tolower/toupper: ASCII letters of the bytes, the rest kept as they are
+                byte[] bytes = Str.bytes(name);
+                for (int i = 0; i < bytes.length; i++) {
+                    byte b = bytes[i];
+                    if (upper ? b >= 'a' && b <= 'z' : b >= 'A' && b <= 'Z') {
+                        bytes[i] = (byte) (upper ? b - ('a' - 'A') : b + ('a' - 'A'));
+                    }
+                }
+                key = ArrayKey.of(Str.of(bytes));
             }
             result.put(key, array.valueAt(p));
         }

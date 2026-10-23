@@ -48,7 +48,6 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -1365,7 +1364,7 @@ final class FileFunctions {
 
     private static Stream openStream(PhpContext context, String name, String mode) {
         if (name.regionMatches(true, 0, "php://", 0, 6)) {
-            String target = name.substring(6).toLowerCase(Locale.ROOT);
+            String target = Str.lower(name.substring(6));
             return switch (target) {
                 case "memory" -> MemoryStream.open("MEMORY", mode, name);
                 case "temp" -> MemoryStream.open("TEMP", mode, name);

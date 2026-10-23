@@ -97,7 +97,7 @@ public final class ClassRefNode extends Node {
         }
 
         protected int classId() {
-            return PhpLanguage.get(this).classId(name.toLowerCase());
+            return PhpLanguage.get(this).classId(Str.lower(name));
         }
 
         protected Assumption singleContext() {

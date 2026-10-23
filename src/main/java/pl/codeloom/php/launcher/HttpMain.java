@@ -1,5 +1,7 @@
 package pl.codeloom.php.launcher;
 
+import pl.codeloom.php.runtime.Str;
+
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -21,7 +23,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -142,7 +143,7 @@ public final class HttpMain {
             }
         } else if (Files.isRegularFile(target)) {
             String name = target.getFileName().toString();
-            String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            String extension = Str.lower(name.substring(name.lastIndexOf('.') + 1));
             if (extension.equals("php")) {
                 runScript(exchange, target, path);
             } else {
@@ -215,7 +216,7 @@ public final class HttpMain {
             env.put("CONTENT_LENGTH", Integer.toString(length));
         }
         for (Map.Entry<String, List<String>> header : exchange.getRequestHeaders().entrySet()) {
-            String name = header.getKey().toUpperCase(Locale.ROOT).replace('-', '_');
+            String name = Str.upper(header.getKey()).replace('-', '_');
             String value = String.join(", ", header.getValue());
             if (name.equals("CONTENT_TYPE")) {
                 env.put("CONTENT_TYPE", value);

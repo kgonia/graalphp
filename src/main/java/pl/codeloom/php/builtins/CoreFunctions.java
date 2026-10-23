@@ -66,7 +66,7 @@ final class CoreFunctions {
         r.fn("boolval", a -> Convert.toBool(Args.get(a, 0)));
         r.fn("settype", "1", a -> {
             PhpRef ref = Args.ref(a, 0);
-            String type = Str.java(Args.str(a, 1)).toLowerCase();
+            String type = Str.lower(Str.java(Args.str(a, 1)));
             Object v = ref.get();
             switch (type) {
                 case "int", "integer" -> ref.set(Convert.toLong(v));
@@ -112,7 +112,7 @@ final class CoreFunctions {
             Object target = Args.get(a, 0);
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
                     : context.findClass(lowerName(Convert.toStr(target)));
-            return phpClass != null && phpClass.findMethod(Str.java(Args.str(a, 1)).toLowerCase()) != null;
+            return phpClass != null && phpClass.findMethod(Str.lower(Str.java(Args.str(a, 1)))) != null;
         });
         r.fn("property_exists", (context, a) -> {
             Object target = Args.get(a, 0);
@@ -248,7 +248,7 @@ final class CoreFunctions {
         r.fn("restore_error_handler", a -> true);
         r.fn("trigger_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
         r.fn("user_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
-        r.fn("extension_loaded", a -> RuntimeFunctions.EXTENSIONS.contains(Str.java(Args.str(a, 0)).toLowerCase()));
+        r.fn("extension_loaded", a -> RuntimeFunctions.EXTENSIONS.contains(Str.lower(Str.java(Args.str(a, 0)))));
         r.fn("ini_get", a -> Boolean.FALSE);
         r.fn("ini_set", a -> Boolean.FALSE);
         r.fn("version_compare", a -> {
@@ -386,7 +386,7 @@ final class CoreFunctions {
     @TruffleBoundary
     private static String lowerName(TruffleString name) {
         String text = Str.java(name);
-        return (text.startsWith("\\") ? text.substring(1) : text).toLowerCase();
+        return Str.lower(text.startsWith("\\") ? text.substring(1) : text);
     }
 
     private static boolean classExists(PhpContext context, TruffleString name, boolean wantInterface,
@@ -443,7 +443,7 @@ final class CoreFunctions {
     @TruffleBoundary
     private static Object intval(Object value, long base) {
         if (base != 10 && value instanceof TruffleString s) {
-            String text = Str.java(s).trim().toLowerCase();
+            String text = Str.lower(Str.java(s).trim());
             boolean negative = text.startsWith("-");
             if (negative || text.startsWith("+")) {
                 text = text.substring(1);

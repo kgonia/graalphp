@@ -9,6 +9,7 @@ import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.Str;
 
 /** isset(), empty() and instanceof. */
 public final class TestNodes {
@@ -106,7 +107,7 @@ public final class TestNodes {
                 lowerClassName = object.getPhpClass().getLowerName();
             } else if (target instanceof com.oracle.truffle.api.strings.TruffleString name) {
                 String text = name.toJavaStringUncached();
-                lowerClassName = (text.startsWith("\\") ? text.substring(1) : text).toLowerCase();
+                lowerClassName = Str.lower(text.startsWith("\\") ? text.substring(1) : text);
             } else {
                 throw new pl.codeloom.php.runtime.PhpError("Class name must be a valid object or a string");
             }

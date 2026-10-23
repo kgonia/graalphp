@@ -505,7 +505,7 @@ final class DateFunctions {
     /** The formats WordPress uses: ISO dates and times, RFC 2822, @timestamp, now/today/…, relative offsets. */
     @TruffleBoundary
     static Long strtotime(String input, long base, ZoneId zone) {
-        String text = input.trim().toLowerCase(Locale.ROOT);
+        String text = Str.lower(input.trim());
         if (text.isEmpty()) {
             return null;
         }
@@ -599,7 +599,7 @@ final class DateFunctions {
 
     private static int monthNumber(String name) {
         String months = "janfebmaraprmayjunjulaugsepoctnovdec";
-        int index = months.indexOf(name.toLowerCase(Locale.ROOT).substring(0, 3));
+        int index = months.indexOf(Str.lower(name).substring(0, 3));
         return index < 0 || index % 3 != 0 ? 0 : index / 3 + 1;
     }
 }

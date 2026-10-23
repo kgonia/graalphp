@@ -198,7 +198,7 @@ final class StripTags {
     }
 
     private static boolean doctype(byte[] b, int p) {
-        String before = new String(b, p - 6, 6, StandardCharsets.ISO_8859_1).toLowerCase();
+        String before = Str.lower(new String(b, p - 6, 6, StandardCharsets.ISO_8859_1));
         return before.equals("doctyp");
     }
 
@@ -213,11 +213,16 @@ final class StripTags {
         if (allowed instanceof PhpArray array) {
             StringBuilder tags = new StringBuilder();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                tags.append('<').append(Str.java(Convert.toStr(array.valueAt(p))).toLowerCase()).append('>');
+                tags.append('<').append(Str.lower(latin1(Convert.toStr(array.valueAt(p))))).append('>');
             }
             return tags.toString();
         }
-        return Str.java(Convert.toStr(allowed)).toLowerCase();
+        return Str.lower(latin1(Convert.toStr(allowed)));
+    }
+
+    /** One char per byte, as tagAllowed reads the tag: the allow list is compared byte for byte. */
+    private static String latin1(TruffleString s) {
+        return new String(Str.bytes(s), StandardCharsets.ISO_8859_1);
     }
 
     /** php_tag_find: the tag's name, normalized to "<name>", must appear in the allow list. */
@@ -235,7 +240,7 @@ final class StripTags {
             if (c == '<' || c == '>' || isSpace(tag[i]) || c == '/') {
                 break;
             }
-            norm.append(Character.toLowerCase(c));
+            norm.append(c >= 'A' && c <= 'Z' ? (char) (c + ('a' - 'A')) : c);
             i++;
         }
         norm.append('>');

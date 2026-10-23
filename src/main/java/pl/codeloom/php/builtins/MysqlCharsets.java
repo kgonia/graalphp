@@ -1,7 +1,8 @@
 package pl.codeloom.php.builtins;
 
+import pl.codeloom.php.runtime.Str;
+
 import java.io.ByteArrayOutputStream;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -53,7 +54,7 @@ final class MysqlCharsets {
 
     /** The charset mysqlnd knows by this name (case-insensitive), or null. */
     static Encoding find(String name) {
-        return CHARSETS.get(name.toLowerCase(Locale.ROOT));
+        return CHARSETS.get(Str.lower(name));
     }
 
     /** mysqlnd_cset_escape_slashes: backslash before NUL, \n, \r, \, ', ", Ctrl-Z and invalid lead bytes. */

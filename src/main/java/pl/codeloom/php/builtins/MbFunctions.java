@@ -47,7 +47,7 @@ final class MbFunctions {
             }
             Object value = Args.get(a, 0);
             if (value instanceof TruffleString s) {
-                String name = Str.java(s).toLowerCase(Locale.ROOT);
+                String name = Str.lower(Str.java(s));
                 if (name.equals("none")) {
                     state(context).substitute = -1;
                     return true;
@@ -70,7 +70,7 @@ final class MbFunctions {
         if (value == PhpNull.NULL) {
             return "UTF-8";
         }
-        String name = Str.java(Convert.toStr(value)).toUpperCase(Locale.ROOT);
+        String name = Str.upper(Str.java(Convert.toStr(value)));
         return switch (name) {
             case "UTF-8", "UTF8" -> "UTF-8";
             case "ASCII", "US-ASCII" -> "ASCII";

@@ -97,7 +97,7 @@ public final class TryNode extends StmtNode {
             className = message.substring(0, colon);
             message = message.substring(colon + 2);
         }
-        PhpObject object = (context.findClass(className.toLowerCase()) != null
+        PhpObject object = (context.findClass(Str.lower(className)) != null
                 ? context.getClass(className) : context.getClass("Error")).instantiate();
         object.setProperty("message", Str.of(message));
         return object;

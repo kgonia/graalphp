@@ -118,7 +118,7 @@ public final class ClassTemplate {
         Set<String> own = new HashSet<>();
         for (Member member : members) {
             if (member instanceof Method method) {
-                own.add(method.function().getName().toLowerCase());
+                own.add(Str.lower(method.function().getName()));
             }
             add(phpClass, member);
         }
@@ -165,7 +165,7 @@ public final class ClassTemplate {
             for (Member member : imported) {
                 if (member instanceof Method method) {
                     PhpFunction function = method.function();
-                    String lower = function.getName().toLowerCase();
+                    String lower = Str.lower(function.getName());
                     for (Alias alias : use.aliases()) {
                         if (alias.alias() != null && alias.method().equals(lower)
                                 && (alias.trait() == null || alias.trait().equalsIgnoreCase(traitLower))) {
