@@ -656,7 +656,7 @@ public final class Translator {
             List<StmtNode> promoted = new ArrayList<>();
             for (int i = 0; i < params.length; i++) {
                 if ((((Ast) paramList.child(i)).flags & PROMOTED) != 0) {
-                    promoted.add(new BasicStmts.PromoteNode(params[i].name().intern(),
+                    promoted.add(new BasicStmts.PromoteNode(Str.sourceKey(params[i].name()),
                             new LocalVarNode(paramSlots[i], params[i].name())));
                 }
             }
@@ -849,7 +849,7 @@ public final class Translator {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
                             boolean isPublic = (param.flags & 6) == 0;
-                            promoted.add(new PhpClass.PropertyDecl(((String) param.get("name")).intern(),
+                            promoted.add(new PhpClass.PropertyDecl(Str.sourceKey((String) param.get("name")),
                                     PhpNull.NULL, isPublic));
                         }
                     }
@@ -871,7 +871,7 @@ public final class Translator {
                 boolean isPublic = (member.flags & 7) == 0 || (member.flags & MODIFIER_PUBLIC) != 0;
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
-                    String propertyName = ((String) element.get("name")).intern();
+                    String propertyName = Str.sourceKey((String) element.get("name"));
                     Object initial = element.get("default") == null ? PhpNull.NULL
                             : constantOrDeferred(element.get("default"));
                     members.add(new ClassTemplate.Property(propertyName, initial, isPublic, isStatic));
@@ -1145,7 +1145,7 @@ public final class Translator {
                 ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
-                    return new PropNode(object, name.intern(), null);
+                    return new PropNode(object, Str.sourceKey(name), null);
                 }
                 return new PropNode(object, null, expression(prop));
             }
@@ -1153,7 +1153,7 @@ public final class Translator {
                 if (!(node.get("prop") instanceof String name)) {
                     throw unsupported(node, "dynamic static property name");
                 }
-                return new StaticPropNode(classRef(node.get("class")), name);
+                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name));
             }
             default:
                 throw unsupported(node, "assignment target");

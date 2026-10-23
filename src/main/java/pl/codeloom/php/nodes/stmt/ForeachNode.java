@@ -215,7 +215,7 @@ public final class ForeachNode extends StmtNode {
             if (!object.getPhpClass().isPublicProperty(property)) {
                 continue;
             }
-            bind.writeKey(frame, Str.of(property));
+            bind.writeKey(frame, Str.ofKey(property));
             bind.assignValue(frame, PhpRef.deref(object.getProperty(property)));
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;

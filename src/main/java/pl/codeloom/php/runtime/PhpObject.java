@@ -44,7 +44,7 @@ public final class PhpObject extends DynamicObject {
         }
         try {
             Object[] arguments = new Object[args.length + 1];
-            arguments[0] = Str.of(name);
+            arguments[0] = Str.ofKey(name);
             System.arraycopy(args, 0, arguments, 1, args.length);
             return callMethod(lowerMethod, arguments);
         } finally {

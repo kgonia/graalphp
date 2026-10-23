@@ -574,7 +574,7 @@ final class ArrayFunctions {
             return array.containsKey(ArrayKey.of(key == null ? PhpNull.NULL : key));
         }
         if (container instanceof PhpObject object) {
-            return object.getProperty(Str.java(Convert.toStr(key))) != null;
+            return object.getProperty(Str.key(Convert.toStr(key))) != null;
         }
         throw new PhpError("TypeError", "array_key_exists(): Argument #2 ($array) must be of type array");
     }
@@ -752,7 +752,7 @@ final class ArrayFunctions {
             return array.get(ArrayKey.of(key));
         }
         if (row instanceof PhpObject object) {
-            return PhpRef.deref(object.getProperty(Str.java(Convert.toStr(key))));
+            return PhpRef.deref(object.getProperty(Str.key(Convert.toStr(key))));
         }
         return null;
     }

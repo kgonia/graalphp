@@ -132,6 +132,39 @@ public final class Str {
         return new String(chars);
     }
 
+    /**
+     * The key an object stores a property under: one char per byte of the name (ISO-8859-1), so every byte
+     * string, valid UTF-8 or not, has a key of its own and gets its bytes back from it (ofKey). An ASCII name is
+     * its own key. Interned, as property lookups compare keys by identity first.
+     */
+    @TruffleBoundary
+    public static String key(TruffleString name) {
+        return new String(readBytes(name), StandardCharsets.ISO_8859_1).intern();
+    }
+
+    /** The key of a property name written in the source, which the parser gives as text (UTF-8 decoded). */
+    @TruffleBoundary
+    public static String sourceKey(String name) {
+        for (int i = 0; i < name.length(); i++) {
+            if (name.charAt(i) >= 0x80) {
+                return new String(name.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1).intern();
+            }
+        }
+        return name.intern();
+    }
+
+    /** The name a property key stands for, as a PHP string. */
+    @TruffleBoundary
+    public static TruffleString ofKey(String key) {
+        return of(key.getBytes(StandardCharsets.ISO_8859_1));
+    }
+
+    /** A property key as text, for messages. */
+    @TruffleBoundary
+    public static String keyText(String key) {
+        return new String(key.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8);
+    }
+
     /** Decodes as UTF-8 for messages, names and Java-side lookups; invalid bytes become U+FFFD. */
     @TruffleBoundary
     public static String java(TruffleString s) {

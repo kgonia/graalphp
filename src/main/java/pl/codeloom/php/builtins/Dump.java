@@ -127,7 +127,7 @@ final class Dump {
             for (Object name : names) {
                 spaces(level + 1);
                 ascii("[\"");
-                utf8((String) name);
+                out.write(Str.ofKey((String) name));
                 ascii("\"]=>\n");
                 varDump(object.getProperty((String) name), level + 2);
             }
@@ -220,7 +220,7 @@ final class Dump {
             }
             for (Object name : object.propertyNames()) {
                 spaces(level + 2);
-                exportString(Str.of((String) name));
+                exportString(Str.ofKey((String) name));
                 ascii(" => ");
                 varExport(object.getProperty((String) name), level + 2);
                 ascii(",\n");
@@ -304,7 +304,7 @@ final class Dump {
             for (Object name : object.propertyNames()) {
                 spaces(indent + 4);
                 out.write('[');
-                utf8((String) name);
+                out.write(Str.ofKey((String) name));
                 ascii("] => ");
                 printR(object.getProperty((String) name), indent + 8);
                 out.write('\n');

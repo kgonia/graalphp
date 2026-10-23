@@ -12,6 +12,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * `$obj->name` (or `$obj->$name`). Properties are read and written through a shape-dispatched object library,
@@ -36,7 +37,7 @@ public final class PropNode extends LValueNode {
 
     @TruffleBoundary
     private static String dynamicName(Object value) {
-        return Convert.toStr(value).toJavaStringUncached().intern();
+        return Str.key(Convert.toStr(value));
     }
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
@@ -49,7 +50,8 @@ public final class PropNode extends LValueNode {
 
     @TruffleBoundary
     private static PhpError notAnObject(String action, String name, Object value) {
-        return new PhpError("Attempt to " + action + " property \"" + name + "\" on " + Convert.typeName(value));
+        return new PhpError("Attempt to " + action + " property \"" + Str.keyText(name) + "\" on "
+                + Convert.typeName(value));
     }
 
     /** An int property read without boxing when the object stores it in a long location. */

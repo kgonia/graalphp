@@ -243,7 +243,7 @@ final class JsonFunctions {
                     if (value instanceof PhpArray nested) {
                         nested.addHolder();
                     }
-                    object.setProperty(Str.java(key).intern(), value);
+                    object.setProperty(Str.key(key), value);
                 }
                 skipSpace();
                 if (pos >= s.length) {
@@ -575,7 +575,7 @@ final class JsonFunctions {
                 }
                 first = false;
                 newline();
-                key(Str.of((String) name));
+                key(Str.ofKey((String) name));
                 value(object.getProperty((String) name));
             }
             depth--;

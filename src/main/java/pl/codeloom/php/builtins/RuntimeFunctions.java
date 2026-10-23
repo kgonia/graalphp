@@ -155,7 +155,7 @@ final class RuntimeFunctions {
         }
         if (withProperties instanceof PhpArray properties) {
             for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
-                copy.setProperty(Str.java(Convert.toStr(properties.keyAt(p))), properties.valueAt(p));
+                copy.setProperty(Str.key(Convert.toStr(properties.keyAt(p))), properties.valueAt(p));
             }
         }
         if (copy.getPhpClass().findMethod("__clone") != null) {

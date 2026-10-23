@@ -201,7 +201,7 @@ public final class UnaryNodes {
             if (value instanceof PhpObject object) {
                 PhpArray array = new PhpArray();
                 for (Object name : object.propertyNames()) {
-                    array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of((String) name)),
+                    array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.ofKey((String) name)),
                             PhpRef.deref(object.getProperty((String) name)));
                 }
                 return array;
@@ -229,7 +229,7 @@ public final class UnaryNodes {
                 if (value instanceof PhpArray nested) {
                     nested.addHolder();
                 }
-                object.setProperty(Convert.toStr(array.keyAt(p)).toJavaStringUncached().intern(), value);
+                object.setProperty(Str.key(Convert.toStr(array.keyAt(p))), value);
             }
         }
     }

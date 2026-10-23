@@ -116,7 +116,7 @@ final class CoreFunctions {
         });
         r.fn("property_exists", (context, a) -> {
             Object target = Args.get(a, 0);
-            String name = Str.java(Args.str(a, 1));
+            String name = Str.key(Args.str(a, 1));
             if (target instanceof PhpObject o) {
                 return o.getProperty(name) != null || hasDeclared(o.getPhpClass(), name);
             }
@@ -417,7 +417,7 @@ final class CoreFunctions {
             for (Object name : object.propertyNames()) {
                 String property = (String) name;
                 if (object.getPhpClass().isPublicProperty(property)) {
-                    result.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(property)),
+                    result.put(pl.codeloom.php.runtime.ArrayKey.of(Str.ofKey(property)),
                             PhpRef.deref(object.getProperty(property)));
                 }
             }

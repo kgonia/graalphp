@@ -113,7 +113,7 @@ final class EncodingFunctions {
                     .append(":\"").append(className).append("\":")
                     .append(Integer.toString(names.length)).append(":{");
             for (Object name : names) {
-                string(out, Str.of((String) name));
+                string(out, Str.ofKey((String) name));
                 serialize(out, PhpRef.deref(object.getProperty((String) name)));
             }
             out.append("}");
@@ -289,12 +289,12 @@ final class EncodingFunctions {
                 container.array.put(ArrayKey.of(key), value);
                 return;
             }
-            String name = Str.java(Convert.toStr(key));
+            String name = Str.key(Convert.toStr(key));
             // private and protected properties are serialized as "\0Class\0name" and "\0*\0name"
             if (name.startsWith("\0")) {
                 name = name.substring(name.indexOf('\0', 1) + 1);
             }
-            container.object.setProperty(name.intern(), value);
+            container.object.setProperty(name, value);
         }
 
         /** The closing brace: the array, or the object (woken if its class has __wakeup). */

@@ -13,6 +13,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Str;
 
 /** `Cls::$name`: a static property, which is always a reference shared by the class (and subclasses). */
 public final class StaticPropNode extends LValueNode {
@@ -30,7 +31,7 @@ public final class StaticPropNode extends LValueNode {
         PhpRef ref = lookup.execute(classRef.resolve(frame));
         if (ref == null) {
             CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Access to undeclared static property " + classRef.getName() + "::$" + name);
+            throw new PhpError("Access to undeclared static property " + classRef.getName() + "::$" + Str.keyText(name));
         }
         return ref;
     }
@@ -64,7 +65,7 @@ public final class StaticPropNode extends LValueNode {
     @Override
     public void unset(VirtualFrame frame) {
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Attempt to unset static property " + classRef.getName() + "::$" + name);
+        throw new PhpError("Attempt to unset static property " + classRef.getName() + "::$" + Str.keyText(name));
     }
 
     @Override

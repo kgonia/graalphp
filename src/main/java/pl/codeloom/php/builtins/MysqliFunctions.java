@@ -461,7 +461,7 @@ final class MysqliFunctions {
         byte[][] row = result.rows.get(result.position++);
         PhpObject object = context.getClass("stdClass").instantiate();
         for (int i = 0; i < row.length; i++) {
-            object.setProperty(result.names[i].intern(), value(row[i]));
+            object.setProperty(Str.sourceKey(result.names[i]), value(row[i]));
         }
         return object;
     }
