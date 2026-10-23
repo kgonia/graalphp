@@ -732,13 +732,13 @@ public final class Translator {
             case "AST_UNARY_OP":
                 return unary(node);
             case "AST_PRE_INC":
-                return new AssignNodes.IncDecNode(place(node.get("var")), true, true);
+                return AssignNodes.IncDecNode.create(place(node.get("var")), true, true);
             case "AST_PRE_DEC":
-                return new AssignNodes.IncDecNode(place(node.get("var")), false, true);
+                return AssignNodes.IncDecNode.create(place(node.get("var")), false, true);
             case "AST_POST_INC":
-                return new AssignNodes.IncDecNode(place(node.get("var")), true, false);
+                return AssignNodes.IncDecNode.create(place(node.get("var")), true, false);
             case "AST_POST_DEC":
-                return new AssignNodes.IncDecNode(place(node.get("var")), false, false);
+                return AssignNodes.IncDecNode.create(place(node.get("var")), false, false);
             case "AST_CONDITIONAL":
                 return new LogicNodes.TernaryNode(expression(node.get("cond")),
                         node.get("true") == null ? null : expression(node.get("true")), expression(node.get("false")));
@@ -923,24 +923,24 @@ public final class Translator {
         if (target.is("AST_ARRAY")) {
             return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
         }
-        return new AssignNodes.AssignNode(place(target), expression(node.get("expr")));
+        return AssignNodes.AssignNode.create(place(target), expression(node.get("expr")));
     }
 
     private ExprNode compoundAssignment(Ast node) {
         LValueNode target = place(node.get("var"));
         if (target.isPure()) {
-            return new AssignNodes.CompoundAssignNode(target, expression(node.get("expr")), node.flags);
+            return AssignNodes.CompoundAssignNode.create(target, expression(node.get("expr")), node.flags);
         }
         // `$a[f()] op= v` reads and writes the element: evaluate the key once, into a hidden variable
         Ast dim = node.node("var");
         if (dim.is("AST_DIM") && dim.get("dim") != null) {
             String temp = "\0key" + hiddenCounter++;
             LValueNode tempWrite = (LValueNode) variable(temp);
-            ExprNode keyInit = new AssignNodes.AssignNode(tempWrite, expression(dim.get("dim")));
+            ExprNode keyInit = AssignNodes.AssignNode.create(tempWrite, expression(dim.get("dim")));
             LValueNode element = new DimNode(placeOrExpression(dim.get("expr")), variable(temp), null);
             if (element.isPure()) {
                 return new AssignNodes.SequenceNode(keyInit,
-                        new AssignNodes.CompoundAssignNode(element, expression(node.get("expr")), node.flags));
+                        AssignNodes.CompoundAssignNode.create(element, expression(node.get("expr")), node.flags));
             }
         }
         throw unsupported(node, "compound assignment to a place with side effects");

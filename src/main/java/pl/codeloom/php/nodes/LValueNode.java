@@ -21,16 +21,6 @@ public abstract class LValueNode extends ExprNode {
         write(frame, value);
     }
 
-    /** Whether int read-modify-write (`+=`, `++`) on this place may take the unboxed fast path. */
-    public boolean hasLongFastPath() {
-        return false;
-    }
-
-    /** Whether plain assignment of an int should use writeLong (the place stores ints unboxed). */
-    public boolean hasLongWrite() {
-        return hasLongFastPath();
-    }
-
     /** The place's reference, converting it into one if needed (`&$x`, by-reference arguments). */
     public abstract PhpRef makeRef(VirtualFrame frame);
 

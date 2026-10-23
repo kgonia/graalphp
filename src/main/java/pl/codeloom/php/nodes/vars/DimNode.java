@@ -173,16 +173,6 @@ public final class DimNode extends LValueNode {
         }
     }
 
-    @Override
-    public boolean hasLongWrite() {
-        return true;
-    }
-
-    @Override
-    public boolean hasLongFastPath() {
-        return isPure();
-    }
-
     /** Stores an int unboxed while the array holds only ints. */
     @Override
     public void writeLong(VirtualFrame frame, long value) {

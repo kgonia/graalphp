@@ -62,11 +62,6 @@ public final class PropNode extends LValueNode {
         throw new UnexpectedResultException(PhpNull.NULL);
     }
 
-    @Override
-    public boolean hasLongFastPath() {
-        return isPure();
-    }
-
     /** Stores an int unboxed (a long location), unless the property is a reference. */
     @Override
     public void writeLong(VirtualFrame frame, long value) {

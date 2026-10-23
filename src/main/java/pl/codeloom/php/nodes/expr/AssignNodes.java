@@ -1,10 +1,11 @@
 package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.dsl.NodeChild;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.UnexpectedResultException;
+
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -21,36 +22,38 @@ public final class AssignNodes {
     private AssignNodes() {
     }
 
-    public static final class AssignNode extends ExprNode {
+    /**
+     * `$target = value`. The value is a DSL child: an int or float is written unboxed (writeLong / writeDouble), and
+     * a site that has seen several value types keeps one specialization per type.
+     */
+    @NodeChild(value = "value", type = ExprNode.class)
+    public abstract static class AssignNode extends ExprNode {
         @Child private LValueNode target;
-        @Child private ExprNode value;
-        /** For a local, property or element target: assume the value is an int until it isn't, so it stays unboxed. */
-        private final LValueNode local;
-        @CompilationFinal private boolean speculateLong = true;
 
-        public AssignNode(LValueNode target, ExprNode value) {
+        protected AssignNode(LValueNode target) {
             this.target = target;
-            this.value = value;
-            this.local = target.hasLongWrite() ? target : null;
         }
 
-        @Override
-        public Object execute(VirtualFrame frame) {
-            if (local != null && speculateLong) {
-                try {
-                    long result = value.executeLong(frame);
-                    local.writeLong(frame, result);
-                    return result;
-                } catch (UnexpectedResultException e) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    speculateLong = false;
-                    target.write(frame, e.getResult());
-                    return e.getResult();
-                }
-            }
-            Object result = value.execute(frame);
-            target.write(frame, result);
-            return result;
+        public static AssignNode create(LValueNode target, ExprNode value) {
+            return AssignNodesFactory.AssignNodeGen.create(target, value);
+        }
+
+        @Specialization
+        protected long assignLong(VirtualFrame frame, long value) {
+            target.writeLong(frame, value);
+            return value;
+        }
+
+        @Specialization
+        protected double assignDouble(VirtualFrame frame, double value) {
+            target.writeDouble(frame, value);
+            return value;
+        }
+
+        @Specialization(replaces = {"assignLong", "assignDouble"})
+        protected Object assign(VirtualFrame frame, Object value) {
+            target.write(frame, value);
+            return value;
         }
     }
 
@@ -91,110 +94,72 @@ public final class AssignNodes {
     }
 
     /**
-     * `$x op= value`, with op as a php-ast BINARY_* flag. The place is read and then written, so the translator
-     * only builds this for places that are pure (re-evaluating them has no side effects).
+     * `$target op= value` (the target is pure: the translator moves a key with side effects into a hidden
+     * variable). Both the value and the target's current content are DSL children, in php-src's order: the right
+     * side first. A site compiles the type pairs it has met: two ints unboxed until an overflow (then PHP's float
+     * result comes from longPair), ints and floats mixed as floats, anything else through the generic operators.
+     * `??=` is {@link CoalesceAssignNode}: it evaluates its right side only when needed.
      */
-    public static final class CompoundAssignNode extends ExprNode {
+    @NodeChild(value = "value", type = ExprNode.class)
+    @NodeChild(value = "target", type = LValueNode.class)
+    public abstract static class CompoundAssignNode extends ExprNode {
         public static final int CONCAT = 8;
         public static final int COALESCE = 260;
 
-        @Child private LValueNode target;
-        @Child private ExprNode value;
         @Child private TruffleString.ConcatNode concat = TruffleString.ConcatNode.create();
         private final int op;
 
-        /**
-         * For a local or property target and an arithmetic operator: unboxed fast paths. Ints first; a float
-         * operand or variable moves `+=`, `-=`, `*=` to the float path (and `/=` starts there), anything else, an
-         * int overflow or a division by zero to the generic path, for good.
-         */
-        private final LValueNode local;
-        @CompilationFinal private int mode;
-        private static final int LONG = 0;
-        private static final int DOUBLE = 1;
-        private static final int GENERIC = 2;
-
-        public CompoundAssignNode(LValueNode target, ExprNode value, int op) {
-            this.target = target;
-            this.value = value;
+        protected CompoundAssignNode(int op) {
             this.op = op;
-            this.local = target.hasLongFastPath() ? target : null;
-            boolean intOp = op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11;
-            this.mode = local == null ? GENERIC : intOp ? LONG : op == 4 ? DOUBLE : GENERIC;
         }
 
-        private boolean hasDoublePath() {
+        public static ExprNode create(LValueNode target, ExprNode value, int op) {
+            if (op == COALESCE) {
+                return new CoalesceAssignNode(target, value);
+            }
+            return AssignNodesFactory.CompoundAssignNodeGen.create(op, value, target);
+        }
+
+        protected abstract LValueNode getTarget();
+
+        protected boolean isIntOperator() {
+            return op == 1 || op == 2 || op == 3 || op == 9 || op == 10 || op == 11;
+        }
+
+        protected boolean isFloatOperator() {
             return op == 1 || op == 2 || op == 3 || op == 4;
         }
 
-        /** Leaves the int path: to the float path when the value that broke it is a float, else to the generic one. */
-        private void leaveLong(Object culprit) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            mode = culprit instanceof Double && hasDoublePath() ? DOUBLE : GENERIC;
+        @Specialization(guards = "isIntOperator()", rewriteOn = ArithmeticException.class)
+        protected long longs(VirtualFrame frame, long operand, long current) {
+            long result = switch (op) {
+                case 1 -> Math.addExact(current, operand);
+                case 2 -> Math.subtractExact(current, operand);
+                case 3 -> Math.multiplyExact(current, operand);
+                case 9 -> current | operand;
+                case 10 -> current & operand;
+                default -> current ^ operand;
+            };
+            getTarget().writeLong(frame, result);
+            return result;
         }
 
         /**
-         * `$local op= int`. php-src evaluates the right side before reading the variable, so this does too. An
-         * overflow or a non-int operand or variable leaves the fast path.
+         * Two ints that longs doesn't take (an overflow, or an operator such as / whose result may be a float).
+         * Declared before doubles, which the implicit int-to-float cast would otherwise let take them.
          */
-        private Object executeLocalLong(VirtualFrame frame) {
-            long operand;
-            try {
-                operand = value.executeLong(frame);
-            } catch (UnexpectedResultException e) {
-                leaveLong(e.getResult());
-                return finish(frame, target.execute(frame), e.getResult());
-            }
-            long current;
-            try {
-                current = local.executeLong(frame);
-            } catch (UnexpectedResultException e) {
-                leaveLong(e.getResult());
-                return finish(frame, e.getResult(), operand);
-            }
-            try {
-                long result = switch (op) {
-                    case 1 -> Math.addExact(current, operand);
-                    case 2 -> Math.subtractExact(current, operand);
-                    case 3 -> Math.multiplyExact(current, operand);
-                    case 9 -> current | operand;
-                    case 10 -> current & operand;
-                    default -> current ^ operand;
-                };
-                local.writeLong(frame, result);
-                return result;
-            } catch (ArithmeticException e) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                mode = GENERIC;
-                return finish(frame, current, operand);
-            }
+        @Specialization
+        protected Object longPair(VirtualFrame frame, long operand, long current) {
+            Object result = apply(current, operand);
+            getTarget().write(frame, result);
+            return result;
         }
 
-        /** `$local op= number` on a float variable: right side first, as for ints; an int operand is widened. */
-        private Object executeLocalDouble(VirtualFrame frame) {
-            Object operandValue = value.execute(frame);
-            double operand;
-            if (operandValue instanceof Double d) {
-                operand = d;
-            } else if (operandValue instanceof Long l) {
-                operand = l;
-            } else {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                mode = GENERIC;
-                return finish(frame, target.execute(frame), operandValue);
-            }
-            double current;
-            try {
-                current = local.executeDouble(frame);
-            } catch (UnexpectedResultException e) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                mode = GENERIC;
-                return finish(frame, e.getResult(), operandValue);
-            }
+        @Specialization(guards = "isFloatOperator()")
+        protected double doubles(VirtualFrame frame, double operand, double current) {
             if (op == 4 && operand == 0) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                mode = GENERIC;
-                return finish(frame, current, operandValue);
+                CompilerDirectives.transferToInterpreter();
+                Operators.div(current, operand); // throws DivisionByZeroError
             }
             double result = switch (op) {
                 case 1 -> current + operand;
@@ -202,37 +167,14 @@ public final class AssignNodes {
                 case 3 -> current * operand;
                 default -> current / operand;
             };
-            local.writeDouble(frame, result);
+            getTarget().writeDouble(frame, result);
             return result;
         }
 
-        private Object finish(VirtualFrame frame, Object current, Object operand) {
+        @Specialization(replaces = {"longs", "longPair", "doubles"})
+        protected Object generic(VirtualFrame frame, Object operand, Object current) {
             Object result = apply(current, operand);
-            target.write(frame, result);
-            return result;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            if (mode == LONG) {
-                return executeLocalLong(frame);
-            }
-            if (mode == DOUBLE) {
-                return executeLocalDouble(frame);
-            }
-            if (op == COALESCE) {
-                Object current = target.readIfSet(frame);
-                if (current != null) {
-                    return current;
-                }
-                Object result = value.execute(frame);
-                target.write(frame, result);
-                return result;
-            }
-            Object current = target.execute(frame);
-            Object operand = value.execute(frame);
-            Object result = apply(current, operand);
-            target.write(frame, result);
+            getTarget().write(frame, result);
             return result;
         }
 
@@ -277,41 +219,57 @@ public final class AssignNodes {
         }
     }
 
-    /** `++$x`, `$x++`, `--$x`, `$x--`. */
-    public static final class IncDecNode extends ExprNode {
+    /** `$target ??= value`: the right side is evaluated only when the target is unset or null. */
+    public static final class CoalesceAssignNode extends ExprNode {
         @Child private LValueNode target;
-        private final boolean increment;
-        private final boolean prefix;
+        @Child private ExprNode value;
 
-        /** For a local or property target: the unboxed int fast path until a non-int or an overflow shows up. */
-        private final LValueNode local;
-        @CompilationFinal private boolean speculateLong = true;
-
-        public IncDecNode(LValueNode target, boolean increment, boolean prefix) {
+        CoalesceAssignNode(LValueNode target, ExprNode value) {
             this.target = target;
-            this.increment = increment;
-            this.prefix = prefix;
-            this.local = target.hasLongFastPath() ? target : null;
+            this.value = value;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
-            if (local != null && speculateLong) {
-                try {
-                    long old = local.executeLong(frame);
-                    long updated = increment ? Math.addExact(old, 1) : Math.subtractExact(old, 1);
-                    local.writeLong(frame, updated);
-                    return prefix ? updated : old;
-                } catch (UnexpectedResultException | ArithmeticException e) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    speculateLong = false;
-                }
+            Object current = target.readIfSet(frame);
+            if (current != null) {
+                return current;
             }
-            return executeGeneric(frame);
+            Object result = value.execute(frame);
+            target.write(frame, result);
+            return result;
+        }
+    }
+
+    /**
+     * `++$x`, `$x++`, `--$x`, `$x--`. The target is the DSL child (it is read first): ints step unboxed until an
+     * overflow, which PHP turns into a float, rewrites the node to the generic specialization.
+     */
+    @NodeChild(value = "target", type = LValueNode.class)
+    public abstract static class IncDecNode extends ExprNode {
+        private final boolean increment;
+        private final boolean prefix;
+
+        protected IncDecNode(boolean increment, boolean prefix) {
+            this.increment = increment;
+            this.prefix = prefix;
         }
 
-        private Object executeGeneric(VirtualFrame frame) {
-            Object old = target.execute(frame);
+        public static IncDecNode create(LValueNode target, boolean increment, boolean prefix) {
+            return AssignNodesFactory.IncDecNodeGen.create(increment, prefix, target);
+        }
+
+        protected abstract LValueNode getTarget();
+
+        @Specialization(rewriteOn = ArithmeticException.class)
+        protected long longs(VirtualFrame frame, long old) {
+            long updated = increment ? Math.addExact(old, 1) : Math.subtractExact(old, 1);
+            getTarget().writeLong(frame, updated);
+            return prefix ? updated : old;
+        }
+
+        @Specialization(replaces = "longs")
+        protected Object generic(VirtualFrame frame, Object old) {
             Object updated;
             if (old instanceof Long l) {
                 updated = increment ? Operators.addLongs(l, 1) : Operators.subLongs(l, 1);
@@ -327,7 +285,7 @@ public final class AssignNodes {
             } else {
                 throw unsupportedIncrement(old);
             }
-            target.write(frame, updated);
+            getTarget().write(frame, updated);
             return prefix ? updated : old;
         }
     }
