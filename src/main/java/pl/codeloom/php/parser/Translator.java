@@ -1135,7 +1135,12 @@ public final class Translator {
             }
         }
         if (constant) {
-            PhpArray array = PhpArray.ofCapacity(count);
+            boolean ints = true;
+            for (int i = 0; i < count; i++) {
+                ints &= values[i].constantValue() instanceof Long;
+            }
+            // an int list starts in the int strategy; anything else is sized for its elements
+            PhpArray array = ints ? new PhpArray() : PhpArray.ofCapacity(count);
             for (int i = 0; i < count; i++) {
                 Object item = values[i].constantValue();
                 if (keys[i] == null) {

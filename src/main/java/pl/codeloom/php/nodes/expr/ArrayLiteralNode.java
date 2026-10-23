@@ -21,6 +21,11 @@ public final class ArrayLiteralNode extends ExprNode {
     @Children private final ExprNode[] keys;
     @Children private final ExprNode[] values;
     @CompilationFinal(dimensions = 1) private final byte[] kinds;
+    /**
+     * Whether arrays built here have held anything but ints. Until then they start in the int strategy; after,
+     * as an Object[] sized for the elements.
+     */
+    @CompilationFinal private boolean seenObjects;
 
     public ArrayLiteralNode(ExprNode[] keys, ExprNode[] values, byte[] kinds) {
         this.keys = keys;
@@ -31,7 +36,7 @@ public final class ArrayLiteralNode extends ExprNode {
     @Override
     @ExplodeLoop
     public Object execute(VirtualFrame frame) {
-        PhpArray array = PhpArray.ofCapacity(values.length);
+        PhpArray array = seenObjects ? PhpArray.ofCapacity(values.length) : new PhpArray();
         for (int i = 0; i < values.length; i++) {
             if (kinds[i] == SPREAD) {
                 spread(array, values[i].execute(frame));
@@ -46,6 +51,10 @@ public final class ArrayLiteralNode extends ExprNode {
             } else {
                 array.put(key, values[i].execute(frame));
             }
+        }
+        if (!seenObjects && !array.holdsLongs()) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seenObjects = true;
         }
         return array;
     }

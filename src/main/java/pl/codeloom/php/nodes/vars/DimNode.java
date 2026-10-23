@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
@@ -30,6 +31,12 @@ public final class DimNode extends LValueNode {
     private final ValueProfile keyType = ValueProfile.createClassProfile();
     /** Whether a write here has met an ArrayAccess object: until then compiled code leaves that path out. */
     @CompilationFinal private boolean seenObjectWrite;
+    /**
+     * Whether an int read or write here has met anything but an element of an int-strategy array. Until then
+     * compiled code holds only that case: no calls or field writes on other paths, so a loop can keep the
+     * array's fields in registers instead of reloading them at every access.
+     */
+    @CompilationFinal private boolean seenLongMiss;
     /** Where a string key was found last time (PhpArray.slotOf); checked by identity before hashing. */
     private int slotGuess = -1;
 
@@ -71,6 +78,37 @@ public final class DimNode extends LValueNode {
             Object element = lookup(array, normalizedKey(frame));
             return element == null ? PhpNull.NULL : element;
         }
+        return readOther(frame, value);
+    }
+
+    /** An int element of an int-strategy array is read without boxing. */
+    @Override
+    public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
+        if (isAppend()) {
+            return super.executeLong(frame);
+        }
+        Object value = containerType.profile(container.execute(frame));
+        Object result;
+        if (value instanceof PhpArray array) {
+            Object k = normalizedKey(frame);
+            if (k instanceof Long index && array.holdsLongAt(index)) {
+                return array.longAt(index);
+            }
+            longMiss();
+            Object element = lookup(array, k);
+            result = element == null ? PhpNull.NULL : element;
+        } else {
+            longMiss();
+            result = readOther(frame, value);
+        }
+        if (result instanceof Long number) {
+            return number;
+        }
+        throw new UnexpectedResultException(result);
+    }
+
+    /** A read from a container that isn't an array. */
+    private Object readOther(VirtualFrame frame, Object value) {
         if (value instanceof TruffleString string) {
             return stringOffset(string, rawKey(frame));
         }
@@ -132,6 +170,51 @@ public final class DimNode extends LValueNode {
             if (held != null) {
                 held.removeHolder();
             }
+        }
+    }
+
+    @Override
+    public boolean hasLongWrite() {
+        return true;
+    }
+
+    @Override
+    public boolean hasLongFastPath() {
+        return isPure();
+    }
+
+    /** Stores an int unboxed while the array holds only ints. */
+    @Override
+    public void writeLong(VirtualFrame frame, long value) {
+        PhpArray array = place().arrayForWrite(frame);
+        if (array != null && !isAppend()) {
+            Object k = normalizedKey(frame);
+            if (k instanceof Long index && array.holdsLongAt(index)) {
+                array.setLongAt(index, value);
+                return;
+            }
+            longMiss();
+            array.putLong(k, value);
+            return;
+        }
+        longMiss();
+        if (array == null) {
+            if (!seenObjectWrite) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                seenObjectWrite = true;
+            }
+            writeObject(frame, value);
+        } else if (isAppend()) {
+            array.appendLong(value);
+        } else {
+            array.putLong(normalizedKey(frame), value);
+        }
+    }
+
+    private void longMiss() {
+        if (!seenLongMiss) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seenLongMiss = true;
         }
     }
 

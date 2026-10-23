@@ -26,6 +26,11 @@ public abstract class LValueNode extends ExprNode {
         return false;
     }
 
+    /** Whether plain assignment of an int should use writeLong (the place stores ints unboxed). */
+    public boolean hasLongWrite() {
+        return hasLongFastPath();
+    }
+
     /** The place's reference, converting it into one if needed (`&$x`, by-reference arguments). */
     public abstract PhpRef makeRef(VirtualFrame frame);
 

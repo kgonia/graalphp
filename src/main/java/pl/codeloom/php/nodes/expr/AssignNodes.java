@@ -24,14 +24,14 @@ public final class AssignNodes {
     public static final class AssignNode extends ExprNode {
         @Child private LValueNode target;
         @Child private ExprNode value;
-        /** For a local or property target: assume the value is an int until it isn't, so it stays unboxed. */
+        /** For a local, property or element target: assume the value is an int until it isn't, so it stays unboxed. */
         private final LValueNode local;
         @CompilationFinal private boolean speculateLong = true;
 
         public AssignNode(LValueNode target, ExprNode value) {
             this.target = target;
             this.value = value;
-            this.local = target.hasLongFastPath() ? target : null;
+            this.local = target.hasLongWrite() ? target : null;
         }
 
         @Override
