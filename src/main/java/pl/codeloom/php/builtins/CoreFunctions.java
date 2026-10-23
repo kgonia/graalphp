@@ -19,9 +19,6 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.zip.CRC32;
 
 /** Types, constants, classes and objects, output, time, math and error handling. */
@@ -317,8 +314,8 @@ final class CoreFunctions {
 
         // ---- hashing ----
         r.fn("crc32", a -> crc32(Args.str(a, 0)));
-        r.fn("md5", a -> digest("MD5", Args.str(a, 0), Args.bool(a, 1, false)));
-        r.fn("sha1", a -> digest("SHA-1", Args.str(a, 0), Args.bool(a, 1, false)));
+        r.fn("md5", a -> EncodingFunctions.digest("MD5", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
+        r.fn("sha1", a -> EncodingFunctions.digest("SHA-1", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
 
         // ---- files (read-only, for the benchmark driver) ----
         r.fn("file_exists", a -> Files.exists(Path.of(Str.java(Args.str(a, 0)))));
@@ -536,16 +533,6 @@ final class CoreFunctions {
         CRC32 crc = new CRC32();
         crc.update(Str.readBytes(s));
         return crc.getValue();
-    }
-
-    @TruffleBoundary
-    private static TruffleString digest(String algorithm, TruffleString s, boolean raw) {
-        try {
-            byte[] hash = MessageDigest.getInstance(algorithm).digest(Str.readBytes(s));
-            return raw ? Str.of(hash) : Str.of(HexFormat.of().formatHex(hash));
-        } catch (NoSuchAlgorithmException e) {
-            throw new PhpError(algorithm + " unavailable");
-        }
     }
 
     @TruffleBoundary

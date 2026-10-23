@@ -19,7 +19,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Locale;
+import java.util.zip.CRC32;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -35,7 +37,7 @@ final class EncodingFunctions {
         r.fn("unserialize", (context, a) -> unserialize(context, Str.bytes(Args.str(a, 0)), Args.get(a, 1)));
         r.fn("base64_encode", a -> Str.of(Base64.getEncoder().encode(Str.bytes(Args.str(a, 0)))));
         r.fn("base64_decode", a -> base64Decode(Str.bytes(Args.str(a, 0)), Args.bool(a, 1, false)));
-        r.fn("hex2bin", a -> hex2bin(Str.java(Args.str(a, 0))));
+        r.fn("hex2bin", a -> hex2bin(Str.readBytes(Args.str(a, 0))));
         r.fn("base_convert", a -> baseConvert(Str.java(Convert.toStr(Args.get(a, 0))), Args.lng(a, 1, 10),
                 Args.lng(a, 2, 10)));
         r.fn("random_bytes", a -> {
@@ -414,21 +416,14 @@ final class EncodingFunctions {
         }
     }
 
+    /** False for an odd length or a byte outside [0-9A-Fa-f] (PHP also warns); HexFormat rejects exactly those. */
     @TruffleBoundary
-    private static Object hex2bin(String hex) {
-        if (hex.length() % 2 != 0) {
+    private static Object hex2bin(byte[] hex) {
+        try {
+            return Str.of(HexFormat.of().parseHex(new String(hex, StandardCharsets.ISO_8859_1)));
+        } catch (IllegalArgumentException e) {
             return Boolean.FALSE;
         }
-        byte[] out = new byte[hex.length() / 2];
-        for (int i = 0; i < out.length; i++) {
-            int high = Character.digit(hex.charAt(2 * i), 16);
-            int low = Character.digit(hex.charAt(2 * i + 1), 16);
-            if (high < 0 || low < 0) {
-                return Boolean.FALSE;
-            }
-            out[i] = (byte) (high << 4 | low);
-        }
-        return Str.of(out);
     }
 
     @TruffleBoundary
@@ -485,19 +480,27 @@ final class EncodingFunctions {
     }
 
     @TruffleBoundary
-    static Object hash(String algo, byte[] data, boolean binary) {
+    private static TruffleString hash(String algo, byte[] data, boolean binary) {
         if (algo.equalsIgnoreCase("crc32b")) {
-            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            CRC32 crc = new CRC32();
             crc.update(data);
-            String hex = String.format("%08x", crc.getValue());
-            return binary ? hex2bin(hex) : Str.of(hex);
+            // the checksum's four bytes, most significant first: the hex form is "%08x" of the value
+            int value = (int) crc.getValue();
+            return digestResult(new byte[] {(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8),
+                    (byte) value}, binary);
         }
         String name = javaAlgorithm(algo);
         if (name == null) {
             throw new PhpError("ValueError: hash(): Argument #1 ($algo) must be a valid hashing algorithm");
         }
+        return digest(name, data, binary);
+    }
+
+    /** md5(), sha1() and hash(): the digest under its Java name, raw or as lowercase hex. */
+    @TruffleBoundary
+    static TruffleString digest(String javaAlgorithm, byte[] data, boolean binary) {
         try {
-            return digestResult(MessageDigest.getInstance(name).digest(data), binary);
+            return digestResult(MessageDigest.getInstance(javaAlgorithm).digest(data), binary);
         } catch (NoSuchAlgorithmException e) {
             throw new PhpError("hash(): " + e.getMessage());
         }
@@ -522,13 +525,6 @@ final class EncodingFunctions {
     }
 
     private static TruffleString digestResult(byte[] digest, boolean binary) {
-        if (binary) {
-            return Str.of(digest);
-        }
-        StringBuilder hex = new StringBuilder(digest.length * 2);
-        for (byte b : digest) {
-            hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
-        }
-        return Str.of(hex.toString());
+        return binary ? Str.of(digest) : Str.of(HexFormat.of().formatHex(digest));
     }
 }
