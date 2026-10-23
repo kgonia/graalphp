@@ -9,6 +9,8 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.runtime.PhpFunction;
 
+import java.util.concurrent.locks.Lock;
+
 /**
  * The entry script: calls its file with the standard frame arguments (no $this, no static class, no closure).
  * Parsing may happen without a context, so the file is loaded when the script first runs; translations are
@@ -25,10 +27,25 @@ public final class ScriptRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        if (file == null) {
+        DirectCallNode call = file;
+        if (call == null) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
-            file = insert(DirectCallNode.create(PhpContext.get(this).loadFile(path).getCallTarget()));
+            call = fileCall();
         }
-        return file.call(new Object[PhpFunction.ARG_FIRST]);
+        return call.call(new Object[PhpFunction.ARG_FIRST]);
+    }
+
+    /** Inserted under the AST lock: contexts on several threads may run the script first at the same time. */
+    private DirectCallNode fileCall() {
+        Lock lock = getLock();
+        lock.lock();
+        try {
+            if (file == null) {
+                file = insert(DirectCallNode.create(PhpContext.get(this).loadFile(path).getCallTarget()));
+            }
+            return file;
+        } finally {
+            lock.unlock();
+        }
     }
 }

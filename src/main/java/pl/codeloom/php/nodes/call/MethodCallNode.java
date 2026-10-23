@@ -18,6 +18,8 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 
+import java.util.concurrent.locks.Lock;
+
 /** `$obj->name(args)`, inline-cached on the receiver's class. */
 public final class MethodCallNode extends ExprNode {
     @Child private ExprNode receiver;
@@ -40,12 +42,28 @@ public final class MethodCallNode extends ExprNode {
             return dispatch.execute(frame, object, args);
         }
         if (target instanceof PhpClosure closure && lowerName.equals("__invoke")) {
+            CallableDispatchNode call = closureCall;
+            if (call == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                call = closureCall();
+            }
+            return call.execute(closure, args.values(frame));
+        }
+        throw memberOnNonObject(target);
+    }
+
+    /** Inserted under the AST lock: the AST is shared by contexts that may run on several threads. */
+    private CallableDispatchNode closureCall() {
+        Lock lock = getLock();
+        lock.lock();
+        try {
             if (closureCall == null) {
                 closureCall = insert(CallableDispatchNodeGen.create());
             }
-            return closureCall.execute(closure, args.values(frame));
+            return closureCall;
+        } finally {
+            lock.unlock();
         }
-        throw memberOnNonObject(target);
     }
 
     @TruffleBoundary

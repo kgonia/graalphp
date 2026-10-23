@@ -23,8 +23,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
+/**
+ * PHP as a Truffle language. The policy is SHARED: contexts on one engine (a server's requests) share this
+ * instance, so its translated files, built-in functions and compiled code are reused; per-request state lives in
+ * {@link PhpContext}.
+ */
 @TruffleLanguage.Registration(id = PhpLanguage.ID, name = "PHP", version = "8.5", defaultMimeType = PhpLanguage.MIME,
-        characterMimeTypes = PhpLanguage.MIME)
+        characterMimeTypes = PhpLanguage.MIME, contextPolicy = TruffleLanguage.ContextPolicy.SHARED)
 public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     public static final String ID = "php";
     public static final String MIME = "application/x-php";

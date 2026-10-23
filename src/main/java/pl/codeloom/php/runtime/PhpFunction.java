@@ -103,10 +103,18 @@ public final class PhpFunction {
     }
 
     public RootCallTarget getCallTarget() {
-        if (callTarget == null) {
+        RootCallTarget target = callTarget;
+        if (target == null) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
+            target = createCallTarget();
+        }
+        return target;
+    }
+
+    /** Once, also when contexts on several threads call the function first at the same time. */
+    private synchronized RootCallTarget createCallTarget() {
+        if (callTarget == null) {
             if (isAbstract) {
-                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Cannot call abstract method " + displayName() + "()");
             }
             callTarget = factory.get();
