@@ -11,7 +11,7 @@ import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
-import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.nodes.expr.CompareNodes;
 
 /**
  * while, do-while, for and switch. `break n` / `continue n` unwind with a level count: each loop (and switch)
@@ -140,12 +140,14 @@ public final class LoopNodes {
     }
 
     /**
-     * switch: cases compare loosely (==) in order; matching falls through until break. `continue` inside a
-     * switch acts on the switch like `break`, as PHP does.
+     * switch: cases compare loosely (==) in order, each with its own `==` node, so a case compiles only the type
+     * pairs it has met; matching falls through until break. `continue` inside a switch acts on the switch like
+     * `break`, as PHP does.
      */
     public static final class SwitchNode extends StmtNode {
         @Child private ExprNode subject;
         @Children private final ExprNode[] cases;
+        @Children private final CompareNodes.EqualNode[] equals;
         @Children private final StmtNode[] bodies;
         private final int defaultIndex;
 
@@ -153,6 +155,12 @@ public final class LoopNodes {
         public SwitchNode(ExprNode subject, ExprNode[] cases, StmtNode[] bodies, int defaultIndex) {
             this.subject = subject;
             this.cases = cases;
+            this.equals = new CompareNodes.EqualNode[cases.length];
+            for (int i = 0; i < cases.length; i++) {
+                if (cases[i] != null) {
+                    equals[i] = CompareNodes.EqualNode.createEvaluated();
+                }
+            }
             this.bodies = bodies;
             this.defaultIndex = defaultIndex;
         }
@@ -180,7 +188,7 @@ public final class LoopNodes {
         @ExplodeLoop
         private int match(VirtualFrame frame, Object value) {
             for (int i = 0; i < cases.length; i++) {
-                if (cases[i] != null && Convert.looseEquals(value, cases[i].execute(frame))) {
+                if (cases[i] != null && equals[i].executeEquals(value, cases[i].execute(frame))) {
                     return i;
                 }
             }

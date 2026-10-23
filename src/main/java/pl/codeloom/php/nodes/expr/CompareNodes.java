@@ -92,6 +92,14 @@ public final class CompareNodes {
             return CompareNodesFactory.EqualNodeGen.create(negate, left, right);
         }
 
+        /** `==` on values already evaluated (switch cases): use {@link #executeEquals}, not execute. */
+        public static EqualNode createEvaluated() {
+            return CompareNodesFactory.EqualNodeGen.create(false, null, null);
+        }
+
+        /** The comparison of two evaluated operands. */
+        public abstract boolean executeEquals(Object left, Object right);
+
         @Specialization
         protected boolean longs(long a, long b) {
             return (a == b) != negate;
@@ -103,9 +111,10 @@ public final class CompareNodes {
         }
 
         @Specialization
-        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
+        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
+                                  @Cached TruffleString.ReadByteNode readByte) {
             boolean result = equal.execute(a, b, Str.ENC)
-                    || mayBeNumeric(a) && mayBeNumeric(b) && Convert.looseEquals(a, b);
+                    || mayBeNumeric(a, readByte) && mayBeNumeric(b, readByte) && Convert.looseEquals(a, b);
             return result != negate;
         }
 
@@ -120,11 +129,11 @@ public final class CompareNodes {
         }
 
         /** Cheap pre-check: a numeric string starts with whitespace, a sign, a digit or a dot. */
-        private static boolean mayBeNumeric(TruffleString s) {
+        private static boolean mayBeNumeric(TruffleString s, TruffleString.ReadByteNode readByte) {
             if (s.byteLength(Str.ENC) == 0) {
                 return false;
             }
-            int first = Str.byteAt(s, 0);
+            int first = readByte.execute(s, 0, Str.ENC);
             return first >= '0' && first <= '9' || first == '-' || first == '+' || first == '.' || first == ' '
                     || first == '\t' || first == '\n' || first == '\r' || first == 0x0B || first == '\f';
         }
