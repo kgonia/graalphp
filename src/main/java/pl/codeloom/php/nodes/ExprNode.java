@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes;
 
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.TypeSystemReference;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
@@ -8,6 +9,7 @@ import pl.codeloom.php.runtime.Convert;
 
 /** An expression. execute() returns a dereferenced PHP value, never a PhpRef or Java null. */
 @TypeSystemReference(PhpTypes.class)
+@ReportPolymorphism
 public abstract class ExprNode extends Node {
     public abstract Object execute(VirtualFrame frame);
 

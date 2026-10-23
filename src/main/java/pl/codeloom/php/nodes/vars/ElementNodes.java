@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -24,6 +25,7 @@ public final class ElementNodes {
     }
 
     /** Normalizes an array key ({@link ArrayKey}); a site that always sees one string instance does it once. */
+    @ReportPolymorphism
     public abstract static class ArrayKeyNode extends Node {
         public abstract Object execute(Object key);
 
@@ -85,6 +87,7 @@ public final class ElementNodes {
      * `$container[key]` read: the dereferenced element, a string's byte or an ArrayAccess object's offsetGet();
      * PhpNull.NULL when there is none. The key comes as written: arrays normalize it, the others take it as is.
      */
+    @ReportPolymorphism
     public abstract static class ElementReadNode extends Node {
         public abstract Object execute(Object container, Object key);
 
@@ -134,6 +137,7 @@ public final class ElementNodes {
     }
 
     /** `$array[key] = value` into an array the caller has made writable; the key comes as written. */
+    @ReportPolymorphism
     public abstract static class ElementWriteNode extends Node {
         public abstract void execute(PhpArray array, Object key, Object value);
 

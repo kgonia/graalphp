@@ -72,6 +72,11 @@ public final class GeneratorNodes {
         }
 
         @Override
+        public boolean isCloningAllowed() {
+            return true;
+        }
+
+        @Override
         public String getName() {
             return name;
         }

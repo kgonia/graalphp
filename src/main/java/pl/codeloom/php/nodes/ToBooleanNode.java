@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes;
 
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -13,6 +14,7 @@ import pl.codeloom.php.runtime.Str;
  * PHP truthiness ({@link pl.codeloom.php.runtime.Convert#toBool}), specialized on the value's type: a site that
  * sees one type (nearly all of them) compiles to that one test.
  */
+@ReportPolymorphism
 public abstract class ToBooleanNode extends Node {
     public abstract boolean execute(Object value);
 

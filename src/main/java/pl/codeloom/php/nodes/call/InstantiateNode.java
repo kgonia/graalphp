@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -21,6 +22,7 @@ import pl.codeloom.php.runtime.PhpObject;
  * are compile-time constants; with several, the cache keys on the class's language-level identity and reads the
  * calling context's defaults. Other classes take the generic path.
  */
+@ReportPolymorphism
 public abstract class InstantiateNode extends Node {
     public abstract PhpObject execute(PhpClass phpClass);
 

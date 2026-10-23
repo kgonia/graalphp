@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.Truffle;
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.LoopNode;
@@ -80,6 +81,7 @@ public final class ForeachNode extends StmtNode {
      * The loop variables (key, and value or list) and the binding of an array element to them, by the array's
      * layout: compiled code has a path only for the layouts the loop has met, and an int list binds unboxed.
      */
+    @ReportPolymorphism
     abstract static class BindNode extends Node {
         @Child private LValueNode keyTarget;
         @Child private LValueNode valueTarget;

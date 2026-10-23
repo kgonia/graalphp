@@ -42,8 +42,8 @@ public final class FunctionRootNode extends RootNode {
     private final boolean returnNullable;
     @Child private StmtNode body;
     /** A generator function's body (run by the Generator), or null; its frame slot for the Generator's state. */
-    private RootCallTarget generatorBody;
-    private int generatorSlot;
+    @CompilationFinal private RootCallTarget generatorBody;
+    @CompilationFinal private int generatorSlot;
 
     private final SourceSection sourceSection;
 
@@ -245,6 +245,12 @@ public final class FunctionRootNode extends RootNode {
             default:
                 return value;
         }
+    }
+
+    /** Splitting: a function called with different types from different sites gets a copy per caller profile. */
+    @Override
+    public boolean isCloningAllowed() {
+        return true;
     }
 
     @Override

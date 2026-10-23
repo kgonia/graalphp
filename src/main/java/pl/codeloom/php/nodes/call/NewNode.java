@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -36,6 +37,7 @@ public final class NewNode extends ExprNode {
     }
 
     /** Calls a class's constructor on a new object. */
+    @ReportPolymorphism
     public abstract static class Construct extends Node {
         public abstract void execute(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args);
 

@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -72,6 +73,7 @@ public final class MethodCallNode extends ExprNode {
     }
 
     /** Finds and calls the method for the receiver's class. */
+    @ReportPolymorphism
     public abstract static class Dispatch extends Node {
         protected final String lowerName;
 

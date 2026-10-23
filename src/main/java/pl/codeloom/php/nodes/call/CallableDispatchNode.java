@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.DirectCallNode;
@@ -23,6 +24,7 @@ import pl.codeloom.php.runtime.Str;
  * per callable shape (closure function, function name, [object class, method name], [class name, method name])
  * make the hot cases direct calls; WP_Hook's dispatch of `$the_['function']` goes through here.
  */
+@ReportPolymorphism
 public abstract class CallableDispatchNode extends Node {
     static final int LIMIT = 6;
 

@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -63,6 +64,7 @@ public final class ConstantNodes {
     }
 
     /** The value itself, as a compile-time constant while it is always the same object. */
+    @ReportPolymorphism
     public abstract static class StableValueNode extends Node {
         public abstract Object execute(Object value);
 

@@ -45,9 +45,4 @@ public final class BuiltinRootNode extends RootNode {
     public String getName() {
         return name;
     }
-
-    @Override
-    public boolean isCloningAllowed() {
-        return true;
-    }
 }
