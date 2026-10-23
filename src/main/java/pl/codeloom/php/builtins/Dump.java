@@ -22,7 +22,7 @@ final class Dump {
             return pad + "int(" + l + ")\n";
         }
         if (value instanceof Double d) {
-            return pad + "float(" + Convert.doubleToRepr(d).replace(".0E", "E") + ")\n";
+            return pad + "float(" + Convert.doubleToRepr(d) + ")\n";
         }
         if (value instanceof TruffleString s) {
             return pad + "string(" + Str.length(s) + ") \"" + Str.java(s) + "\"\n";
@@ -65,10 +65,7 @@ final class Dump {
             return "'" + Str.java(s).replace("\\", "\\\\").replace("'", "\\'") + "'";
         }
         if (value instanceof Double d) {
-            // php-src's smart_str_append_double with zero_frac: 9.0 exports as 9.0, not 9
-            String repr = Convert.doubleToRepr(d);
-            boolean integral = repr.chars().allMatch(c -> c == '-' || c >= '0' && c <= '9');
-            return integral ? repr + ".0" : repr;
+            return Convert.doubleToExport(d);
         }
         if (value instanceof Boolean b) {
             return b ? "true" : "false";

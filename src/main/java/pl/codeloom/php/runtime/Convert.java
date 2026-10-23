@@ -275,17 +275,42 @@ public final class Convert {
         return formatDouble(d, 14);
     }
 
-    /** A float with serialize_precision=-1 (var_export, json_encode): the shortest string that round-trips. */
+    /**
+     * A float with serialize_precision=-1, as zend_gcvt(d, 17) in zend_dtoa's mode 0 prints it (serialize,
+     * var_dump; var_export and json_encode add their ".0"): the shortest digits that round-trip, closest to d.
+     * Zeros print as "0" and "-0".
+     */
     @TruffleBoundary
     public static String doubleToRepr(double d) {
         if (!Double.isFinite(d)) {
             return Double.isNaN(d) ? "NAN" : d > 0 ? "INF" : "-INF";
         }
         if (d == 0) {
-            return 1 / d < 0 ? "-0.0" : "0.0";
+            return 1 / d < 0 ? "-0" : "0";
         }
-        BigDecimal exact = new BigDecimal(Double.toString(Math.abs(d)));
-        return (d < 0 ? "-" : "") + gcvt(exact.unscaledValue().toString(), exact.precision() - exact.scale(), 17);
+        double abs = Math.abs(d);
+        BigDecimal shortest = new BigDecimal(Double.toString(abs));
+        if (shortest.precision() == 2) {
+            // Double.toString picks among 1- and 2-digit decimals when one digit would do (4.9E-324); dtoa
+            // takes the 1-digit one closest to d
+            BigDecimal down = shortest.round(new MathContext(1, RoundingMode.FLOOR));
+            BigDecimal up = shortest.round(new MathContext(1, RoundingMode.CEILING));
+            boolean downOk = down.doubleValue() == abs;
+            boolean upOk = up.doubleValue() == abs;
+            if (downOk || upOk) {
+                BigDecimal exact = new BigDecimal(abs);
+                shortest = downOk && (!upOk || exact.subtract(down).compareTo(up.subtract(exact)) <= 0) ? down : up;
+            }
+        }
+        String digits = shortest.unscaledValue().toString();
+        return (d < 0 ? "-" : "") + gcvt(digits, shortest.precision() - shortest.scale(), 17);
+    }
+
+    /** var_export's float (smart_str_append_double with zero_frac): doubleToRepr, plus ".0" if integral. */
+    @TruffleBoundary
+    public static String doubleToExport(double d) {
+        String repr = doubleToRepr(d);
+        return Double.isFinite(d) && repr.indexOf('.') < 0 ? repr + ".0" : repr;
     }
 
     private static String formatDouble(double d, int precision) {
