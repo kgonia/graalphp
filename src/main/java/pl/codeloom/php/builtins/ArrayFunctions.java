@@ -622,6 +622,17 @@ final class ArrayFunctions {
         return result;
     }
 
+    /** php-src's HT_MAX_SIZE on 64-bit platforms: the most elements an array can have. */
+    private static final long MAX_ARRAY_SIZE = 0x40000000L;
+
+    /** range() bounds must be finite (php-src 8.3). */
+    private static void checkFinite(Object value, int position, String name) {
+        if (value instanceof Double d && (d.isInfinite() || d.isNaN())) {
+            throw new PhpError("ValueError: range(): Argument #" + position + " ($" + name
+                    + ") must be a finite number, " + (d.isNaN() ? "NAN" : "INF") + " provided");
+        }
+    }
+
     @TruffleBoundary
     private static PhpArray range(Object start, Object end, Object stepValue) {
         PhpArray result = new PhpArray();
@@ -638,8 +649,18 @@ final class ArrayFunctions {
         Object a = Convert.toNumber(start);
         Object b = Convert.toNumber(end);
         Object stepNumber = Convert.toNumber(stepValue);
+        checkFinite(a, 1, "start");
+        checkFinite(b, 2, "end");
         if (a instanceof Long x && b instanceof Long y && stepNumber instanceof Long st) {
             long step = Math.max(1, Math.abs(st));
+            // php-src's RANGE_CHECK_LONG_INIT_ARRAY: the element count, unsigned, against HT_MAX_SIZE
+            long size = Long.divideUnsigned(x <= y ? y - x : x - y, step);
+            if (Long.compareUnsigned(size, MAX_ARRAY_SIZE - 1) >= 0) {
+                throw new PhpError("ValueError: The supplied range exceeds the maximum array size by "
+                        + Long.toUnsignedString(size - MAX_ARRAY_SIZE + 1) + " elements: start=" + x + ", end=" + y
+                        + ", step=" + step + ". Calculated size: " + Long.toUnsignedString(size)
+                        + ". Maximum size: " + MAX_ARRAY_SIZE + ".");
+            }
             for (long v = x; x <= y ? v <= y : v >= y; v += x <= y ? step : -step) {
                 result.append(v);
             }
@@ -648,7 +669,15 @@ final class ArrayFunctions {
         double x = ((Number) a).doubleValue();
         double y = ((Number) b).doubleValue();
         double step = Math.abs(((Number) stepNumber).doubleValue());
-        long count = (long) Math.floor(Math.abs(y - x) / step);
+        double size = Math.floor(Math.abs(y - x) / step);
+        if (size >= MAX_ARRAY_SIZE - 1) {
+            throw new PhpError("ValueError: The supplied range exceeds the maximum array size by "
+                    + String.format("%.0f", size - MAX_ARRAY_SIZE + 1) + " elements: start="
+                    + String.format("%.1f", x) + ", end=" + String.format("%.1f", y) + ", step="
+                    + String.format("%.1f", step) + ". Calculated size: " + String.format("%.0f", size)
+                    + ". Maximum size: " + MAX_ARRAY_SIZE + ".");
+        }
+        long count = (long) size;
         for (long i = 0; i <= count; i++) {
             result.append(x <= y ? x + i * step : x - i * step);
         }
