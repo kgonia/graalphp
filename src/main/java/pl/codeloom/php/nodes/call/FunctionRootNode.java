@@ -70,26 +70,37 @@ public final class FunctionRootNode extends RootNode {
         this.generatorSlot = slot;
     }
 
+    /**
+     * Binds the arguments, runs the body and releases the locals however the call ends (a return, the end of the
+     * body, an exception, also one thrown while binding). A generator function's frame outlives the call: the
+     * Generator runs the body on it later, so its locals aren't released here.
+     */
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
-        bindParameters(frame, arguments);
-        if (captureSlots.length > 0) {
-            bindCaptures(frame, (PhpClosure) arguments[PhpFunction.ARG_CLOSURE]);
-        }
         if (generatorBody != null) {
+            bindArguments(frame, arguments);
             PhpGenerator generator = new PhpGenerator(frame.materialize(), generatorBody);
             frame.setObject(generatorSlot, generator);
             return newGenerator(PhpContext.get(this), generator);
         }
         Object result = PhpNull.NULL;
         try {
+            bindArguments(frame, arguments);
             body.execute(frame);
         } catch (ControlFlow.Return ret) {
             result = ret.value;
+        } finally {
+            releaseLocals(frame);
         }
-        releaseLocals(frame);
         return returnCoerce == 0 ? result : coerce(result, returnCoerce, returnNullable, "return value");
+    }
+
+    private void bindArguments(VirtualFrame frame, Object[] arguments) {
+        bindParameters(frame, arguments);
+        if (captureSlots.length > 0) {
+            bindCaptures(frame, (PhpClosure) arguments[PhpFunction.ARG_CLOSURE]);
+        }
     }
 
     @ExplodeLoop
