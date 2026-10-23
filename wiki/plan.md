@@ -109,7 +109,7 @@ The HHVM lesson is that compatibility work can swallow a project whose speed adv
   - **php-src `.phpt` pass %**, per directory (Zend/, ext/standard, ext/pcre, …), next to the oracle's own pass rate;
   - **parser AST parity** against php-ast on the corpus;
   - **differential fuzzing**: generated PHP programs run on both engines, with the output compared.
-- Milestones: `wp-load.php` in CLI mode → the installer → the home page over the HTTP SAPI (Vert.x) → wp-admin login.
+- Milestones: `wp-load.php` in CLI mode → the installer → the home page over HTTP (a FastCGI SAPI behind nginx, as php-fpm; D11) → wp-admin login.
 - Database: mysqli on JDBC first; SQLite integration as a fallback for early boots.
 
 ### Gate 3: drop-in parity (the campfire harness)

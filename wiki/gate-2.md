@@ -99,7 +99,7 @@ What the pages needed after the CLI boot:
 - references in array copies (`4d510ab`): a reference left in an array element by `foreach ($a as &$v)` stayed shared by every copy, so `WP_REST_Server::get_routes()` emptied `$this->endpoints` and the REST index listed 7 routes. `PhpRef` now approximates php-src's refcount (the variables bound to it, and the array elements made references), and a copy turns a reference only its element holds into a value;
 - magic properties (`aa2613d`), generators, `goto`, `extract()`, `instanceof` with a dynamic class (`e8a8da1`), the date classes (`7ef2b14`), output-buffer handlers (`acf4e60`).
 
-The installer and the wp-admin login are next. Known gaps on the way: `SimpleXMLElement`, `__call` and `__callStatic` on direct method calls (callables have `__call`), returning by reference, ticks.
+The installer and the wp-admin login are next; the order of the rest of Gate 2 (the AST export kept for now, the own parser as a separate track, a FastCGI SAPI replacing php-fpm) is [D11](decisions.md). Known gaps on the way: `SimpleXMLElement`, `__call` and `__callStatic` on direct method calls (callables have `__call`), returning by reference, ticks.
 
 At `acf4e60` the php-src score is 2622 of 7341 strict (35.7%) and 2821 lenient (38.4%).
 

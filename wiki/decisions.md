@@ -108,3 +108,14 @@ The first versions got all kernels running fast; their limits are now measured.
 
   Put an `(long, long)` specialization ahead of the `double` one for every int pair the fast one doesn't take, as `CompoundAssignNode.longPair` does.
 - **The DSL overrides every `execute*` method of the base class as "return this type".** `ExprNode.executeBoolean` means truthiness, but a generated node's override casts the result to `boolean`. That is safe only where a condition that isn't boolean-valued is wrapped in `ConditionNode` (`ConditionNode.of`). The `for` loop evaluated its comma-separated conditions before the last with `executeBoolean`, unwrapped, and `(void)f()` in that position crashed with a `ClassCastException` once casts were DSL nodes. Truthiness on an arbitrary node goes through `ConditionNode` or a `ToBooleanNode`; a value needed only for its effects goes through `execute`.
+
+## D11: Gate 2's server is a FastCGI SAPI; the AST export stays until the parser lands (2026-10-23)
+The order for the rest of Gate 2:
+1. **Keep the php-ast export for now.** The installer and the wp-admin login run on WordPress core, whose files are exported, so they don't wait for a parser.
+2. **The own parser is a separate track** (D5's replacement): a port of `zend_language_parser.y` and the re2c scanner that emits the same zend_ast kinds, so `Translator` stays. AST parity against php-ast on WordPress core and the top plugins is its test from the first day. It is what makes us a drop-in: without it any file not exported in advance (a plugin installed from wp-admin, a core update) fails with "no AST export", and real PHP has to run beside us.
+3. **The server is a FastCGI SAPI behind nginx, replacing php-fpm**, not Vert.x as plan.md had it. It is independent of 1 and 2.
+   - PHP never owns the socket: a host runs it through a SAPI (php-fpm, mod_php, `php -S`, FrankenPHP). GraalJS (Node), TruffleRuby (Puma) and GraalPy run their own guest-language servers; no Truffle language takes a Java server library for this.
+   - FastCGI's params are the CGI variables the `cgi` SAPI already reads, its stdin and stdout records the request body and the CGI response, so the new code is the record framing. nginx keeps routing (`try_files`), static files, TLS, HTTP/2 and keep-alive.
+   - The Gate 0 oracle is nginx + php-fpm: the same nginx with `fastcgi_pass` to either backend makes the comparison exact, which is Gate 3's drop-in setup.
+   - Vert.x is an event loop and PHP code blocks (JDBC, files, `sleep`): every request would need `executeBlocking`. A context per request fits a thread per request, on virtual threads.
+   - The CGI runner moves out of `HttpMain` into one class both servers call. `HttpMain` stays as the `php -S` of tests, on virtual threads. No server SPI: the server embeds the language, not the other way round, and a separate main per server is enough. Jetty only if a concrete need comes (a production server without nginx).
