@@ -1,7 +1,7 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
@@ -25,51 +25,67 @@ import pl.codeloom.php.runtime.PhpRef;
  * constant (functions can't be redeclared), and the lookup leaves compiled code.
  */
 public final class FunctionCallNode extends ExprNode {
-    private final String displayName;
-    private final int id;
-    /** An unqualified name in a namespace falls back to the global function: its id, else -1. */
-    private final int fallbackId;
     @Child private ArgumentsNode args;
+    @Child private Lookup lookup;
     @Child private Dispatch dispatch = FunctionCallNodeFactory.DispatchNodeGen.create();
-    @CompilationFinal private PhpFunction singleContextFunction;
 
     /** id is the lowercase name's {@link pl.codeloom.php.PhpLanguage#functionId}. */
     public FunctionCallNode(String displayName, int id, int fallbackId, ArgumentsNode args) {
-        this.displayName = displayName;
-        this.id = id;
-        this.fallbackId = fallbackId;
         this.args = args;
+        this.lookup = FunctionCallNodeFactory.LookupNodeGen.create(displayName, id, fallbackId);
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
-        PhpFunction function = singleContextFunction;
-        if (function == null || !PhpLanguage.get(this).singleContext().isValid()) {
-            function = lookup();
-        }
-        return PhpRef.deref(dispatch.execute(frame, function, args));
+        return PhpRef.deref(dispatch.execute(frame, lookup.execute(), args));
     }
 
-    private PhpFunction lookup() {
-        PhpContext context = PhpContext.get(this);
-        PhpFunction function = context.functionAt(id);
-        if (function == null && fallbackId >= 0) {
-            function = context.functionAt(fallbackId);
-        }
-        if (function == null) {
-            CompilerDirectives.transferToInterpreter();
-            throw undefined();
-        }
-        if (singleContextFunction == null && PhpLanguage.get(this).singleContext().isValid()) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            singleContextFunction = function;
-        }
-        return function;
-    }
+    /** Finds the function in the calling context; with one context, once (functions can't be redeclared). */
+    abstract static class Lookup extends Node {
+        private final String displayName;
+        private final int id;
+        /** An unqualified name in a namespace falls back to the global function: its id, else -1. */
+        private final int fallbackId;
 
-    @TruffleBoundary
-    private PhpError undefined() {
-        return new PhpError("Call to undefined function " + displayName + "()");
+        Lookup(String displayName, int id, int fallbackId) {
+            this.displayName = displayName;
+            this.id = id;
+            this.fallbackId = fallbackId;
+        }
+
+        abstract PhpFunction execute();
+
+        @Specialization(assumptions = "singleContext()")
+        protected PhpFunction single(@Cached("find()") PhpFunction function) {
+            return function;
+        }
+
+        @Specialization(replaces = "single")
+        protected PhpFunction perContext() {
+            return find();
+        }
+
+        protected PhpFunction find() {
+            PhpContext context = PhpContext.get(this);
+            PhpFunction function = context.functionAt(id);
+            if (function == null && fallbackId >= 0) {
+                function = context.functionAt(fallbackId);
+            }
+            if (function == null) {
+                CompilerDirectives.transferToInterpreter();
+                throw undefined();
+            }
+            return function;
+        }
+
+        @TruffleBoundary
+        private PhpError undefined() {
+            return new PhpError("Call to undefined function " + displayName + "()");
+        }
+
+        protected Assumption singleContext() {
+            return PhpLanguage.get(this).singleContext();
+        }
     }
 
     /** Calls a function: directly while the site sees one function (nearly always), else indirectly. */

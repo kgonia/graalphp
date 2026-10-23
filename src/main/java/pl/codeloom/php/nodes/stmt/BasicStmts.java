@@ -7,12 +7,12 @@ import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -124,37 +124,19 @@ public final class BasicStmts {
         }
     }
 
-    /** `global $x`: binds the local slot to the global's reference. */
+    /** `global $x`: binds the local slot to the global's reference (cached by {@link GlobalRefNode}). */
     public static final class GlobalNode extends StmtNode {
         @Child private LValueNode local;
-        private final String name;
-        /**
-         * The global's reference, valid while the context's globals version is unchanged. Kept only while the
-         * language serves one context: every context has its own globals, and a new one starts at version 0.
-         */
-        private PhpRef cachedRef;
-        private int cachedVersion = -1;
+        @Child private GlobalRefNode global;
 
         public GlobalNode(LValueNode local, String name) {
             this.local = local;
-            this.name = name;
+            this.global = GlobalRefNode.create(name);
         }
 
         @Override
         public void execute(VirtualFrame frame) {
-            PhpContext context = PhpContext.get(this);
-            if (!PhpLanguage.get(this).singleContext().isValid()) {
-                local.bindRef(frame, context.globalRef(name));
-                return;
-            }
-            int version = context.globalsVersion();
-            PhpRef ref = cachedRef;
-            if (ref == null || cachedVersion != version) {
-                ref = context.globalRef(name);
-                cachedRef = ref;
-                cachedVersion = version;
-            }
-            local.bindRef(frame, ref);
+            local.bindRef(frame, global.execute(PhpContext.get(this), true));
         }
     }
 

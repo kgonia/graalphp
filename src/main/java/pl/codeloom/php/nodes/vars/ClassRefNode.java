@@ -1,7 +1,9 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
@@ -23,14 +25,13 @@ public final class ClassRefNode extends Node {
     private final String name;
     private final boolean lateStatic;
     @Child private ExprNode dynamic;
-    @CompilationFinal private PhpClass singleContextClass;
-    /** The lowercase name's PhpLanguage.classId, resolved on first use. */
-    @CompilationFinal private int id = -1;
+    @Child private Named named;
 
     private ClassRefNode(String name, boolean lateStatic, ExprNode dynamic) {
         this.name = name;
         this.lateStatic = lateStatic;
         this.dynamic = dynamic;
+        this.named = name == null ? null : ClassRefNodeFactory.NamedNodeGen.create(name);
     }
 
     public static ClassRefNode named(String name) {
@@ -61,23 +62,46 @@ public final class ClassRefNode extends Node {
             }
             return PhpContext.get(this).getClass(Str.java(Convert.toStr(value)));
         }
-        PhpClass phpClass = singleContextClass;
-        if (phpClass != null && PhpLanguage.get(this).singleContext().isValid()) {
+        return named.execute();
+    }
+
+    /** A class by name: with one context the class found first, else the calling context's by name id. */
+    abstract static class Named extends Node {
+        protected final String name;
+
+        Named(String name) {
+            this.name = name;
+        }
+
+        abstract PhpClass execute();
+
+        @Specialization(assumptions = "singleContext()")
+        protected PhpClass single(@Cached("find(classId())") PhpClass phpClass) {
             return phpClass;
         }
-        if (id < 0) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            id = PhpLanguage.get(this).classId(name.toLowerCase());
+
+        @Specialization(replaces = "single")
+        protected PhpClass perContext(@Cached("classId()") int id) {
+            return find(id);
         }
-        phpClass = PhpContext.get(this).classAt(id);
-        if (phpClass == null) {
-            CompilerDirectives.transferToInterpreter();
-            phpClass = PhpContext.get(this).getClass(name); // throws "not found"
+
+        /** The class under the name's id; else (not declared yet) by name, which autoloads or throws. */
+        protected PhpClass find(int id) {
+            PhpContext context = PhpContext.get(this);
+            PhpClass phpClass = context.classAt(id);
+            if (phpClass == null) {
+                CompilerDirectives.transferToInterpreter();
+                phpClass = context.getClass(name); // throws "not found"
+            }
+            return phpClass;
         }
-        if (singleContextClass == null && PhpLanguage.get(this).singleContext().isValid()) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            singleContextClass = phpClass;
+
+        protected int classId() {
+            return PhpLanguage.get(this).classId(name.toLowerCase());
         }
-        return phpClass;
+
+        protected Assumption singleContext() {
+            return PhpLanguage.get(this).singleContext();
+        }
     }
 }
