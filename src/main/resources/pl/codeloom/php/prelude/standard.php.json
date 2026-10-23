@@ -1,0 +1,1 @@
+{"k":"AST_STMT_LIST","l":1,"c":[{"k":"AST_CLASS","l":5,"f":32,"e":7,"c":{"name":"__PHP_Incomplete_Class","docComment":"/** What unserialize() makes of an object whose class is missing or not allowed; the name is kept as a property. */","extends":null,"implements":null,"stmts":{"k":"AST_STMT_LIST","l":6,"c":[]},"attributes":null,"type":null,"__declId":0}}]}

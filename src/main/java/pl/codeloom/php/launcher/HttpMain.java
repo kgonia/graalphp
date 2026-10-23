@@ -30,10 +30,16 @@ import java.util.concurrent.Executors;
  * compiled code is shared, the PHP state is not), on a pool of threads. The language runs under its CGI SAPI:
  * the request goes in as CGI variables and stdin, the response comes back as a CGI response.
  *
- * <p>{@code HttpMain [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir] [--source-root=dir]
- * [--server-name=name]}: SERVER_NAME is the request's host unless set. Routing is
- * php -S's: an existing .php file runs, another existing file is served as is, a directory runs its index.php,
- * and anything else runs the document root's index.php (a front controller, as WordPress's permalinks need).
+ * <p>{@code HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir]
+ * [--source-root=dir] [--server-name=name]}: SERVER_NAME is the request's host unless set. Routing is php -S's:
+ * an existing .php file runs, another existing file is served as is, a directory runs its index.php, and anything
+ * else runs the document root's index.php (a front controller, as WordPress's permalinks need).
+ *
+ * <p>A test and development server, like php -S: it listens on the loopback interface unless told otherwise.
+ * Files are judged by their real path (symbolic links resolved, the name as the filesystem spells it), so a link
+ * can't lead out of the document root and `/WP-CONFIG.PHP` on a case-insensitive filesystem runs the script
+ * instead of serving its source. A request body is read up to post_max_size's default, 8 MB (413 past it), and a
+ * request must arrive within 30 seconds.
  */
 public final class HttpMain {
     private static final Map<String, String> TYPES = Map.ofEntries(Map.entry("css", "text/css"),
@@ -42,6 +48,8 @@ public final class HttpMain {
             Map.entry("svg", "image/svg+xml"), Map.entry("ico", "image/x-icon"), Map.entry("woff", "font/woff"),
             Map.entry("woff2", "font/woff2"), Map.entry("txt", "text/plain"), Map.entry("html", "text/html"),
             Map.entry("xml", "application/xml"), Map.entry("webp", "image/webp"));
+
+    private static final int MAX_BODY = 8 * 1024 * 1024;
 
     private final Engine engine;
     private final Path docroot;
@@ -60,6 +68,7 @@ public final class HttpMain {
     }
 
     public static void main(String[] args) throws IOException {
+        String host = "127.0.0.1";
         int port = 8080;
         int threads = Runtime.getRuntime().availableProcessors();
         String docroot = ".";
@@ -68,7 +77,9 @@ public final class HttpMain {
         String serverName = null;
         for (String arg : args) {
             String value = arg.substring(arg.indexOf('=') + 1);
-            if (arg.startsWith("--port=")) {
+            if (arg.startsWith("--host=")) {
+                host = value;
+            } else if (arg.startsWith("--port=")) {
                 port = Integer.parseInt(value);
             } else if (arg.startsWith("--threads=")) {
                 threads = Integer.parseInt(value);
@@ -81,15 +92,16 @@ public final class HttpMain {
             } else if (arg.startsWith("--server-name=")) {
                 serverName = value;
             } else {
-                System.err.println("usage: HttpMain [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir] "
-                        + "[--source-root=dir] [--server-name=name]");
+                System.err.println("usage: HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] "
+                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name]");
                 System.exit(2);
             }
         }
+        // the JDK server's time limit for receiving a request (seconds; read when the server class loads)
+        System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
         Engine engine = Engine.create("php");
-        HttpMain server = new HttpMain(engine, Path.of(docroot).toAbsolutePath().normalize(), astRoot, sourceRoot,
-                port, serverName);
-        HttpServer http = HttpServer.create(new InetSocketAddress(port), 128);
+        HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName);
+        HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
         http.createContext("/", exchange -> {
@@ -100,13 +112,17 @@ public final class HttpMain {
             }
         });
         http.start();
-        System.err.println("listening on :" + port + " (" + threads + " threads), docroot " + server.docroot);
+        System.err.println("listening on " + host + ":" + port + " (" + threads + " threads), docroot "
+                + server.docroot);
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         URI uri = exchange.getRequestURI();
         String path = uri.getPath() == null || uri.getPath().isEmpty() ? "/" : uri.getPath();
         Path target = docroot.resolve(path.substring(1)).normalize();
+        if (Files.exists(target)) {
+            target = target.toRealPath();
+        }
         if (!target.startsWith(docroot)) {
             respond(exchange, 403, "text/plain", "Forbidden".getBytes(StandardCharsets.UTF_8));
             return;
@@ -124,11 +140,11 @@ public final class HttpMain {
                 return;
             }
         } else if (Files.isRegularFile(target)) {
-            if (path.endsWith(".php")) {
+            String name = target.getFileName().toString();
+            String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            if (extension.equals("php")) {
                 runScript(exchange, target, path);
             } else {
-                String name = target.getFileName().toString();
-                String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
                 respond(exchange, 200, TYPES.getOrDefault(extension, "application/octet-stream"),
                         Files.readAllBytes(target));
             }
@@ -139,7 +155,11 @@ public final class HttpMain {
 
     /** Runs a script as a CGI request and sends its CGI response. */
     private void runScript(HttpExchange exchange, Path script, String scriptName) throws IOException {
-        byte[] body = exchange.getRequestBody().readAllBytes();
+        byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
+        if (body.length > MAX_BODY) {
+            respond(exchange, 413, "text/plain", "Request body too large".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         String failure = null;
         try (Context context = Context.newBuilder("php")
@@ -195,7 +215,8 @@ public final class HttpMain {
             String value = String.join(", ", header.getValue());
             if (name.equals("CONTENT_TYPE")) {
                 env.put("CONTENT_TYPE", value);
-            } else if (!name.equals("CONTENT_LENGTH")) {
+            } else if (!name.equals("CONTENT_LENGTH") && !name.equals("PROXY")) {
+                // a Proxy header would become HTTP_PROXY, which HTTP clients take as their proxy (httpoxy)
                 env.put("HTTP_" + name, value);
             }
         }

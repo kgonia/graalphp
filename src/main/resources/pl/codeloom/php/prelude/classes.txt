@@ -26,3 +26,4 @@ filesystemiterator	spl.php
 recursivedirectoryiterator	spl.php
 splfixedarray	spl.php
 splobjectstorage	spl.php
+__php_incomplete_class	standard.php

@@ -32,7 +32,7 @@ final class EncodingFunctions {
 
     static void register(Registry r) {
         r.fn("serialize", a -> serialize(Args.get(a, 0)));
-        r.fn("unserialize", (context, a) -> unserialize(context, Str.bytes(Args.str(a, 0))));
+        r.fn("unserialize", (context, a) -> unserialize(context, Str.bytes(Args.str(a, 0)), Args.get(a, 1)));
         r.fn("base64_encode", a -> Str.of(Base64.getEncoder().encode(Str.bytes(Args.str(a, 0)))));
         r.fn("base64_decode", a -> base64Decode(Str.bytes(Args.str(a, 0)), Args.bool(a, 1, false)));
         r.fn("hex2bin", a -> hex2bin(Str.java(Args.str(a, 0))));
@@ -143,13 +143,24 @@ final class EncodingFunctions {
 
     // ---- unserialize ----
 
+    /** unserialize_max_depth's default: deeper nesting fails, as php-src's. */
+    private static final long MAX_DEPTH = 4096;
+
+    /**
+     * unserialize($data, $options): false for malformed input. A class allowed_classes excludes, or one that
+     * doesn't exist, becomes a __PHP_Incomplete_Class without being autoloaded or woken; what __wakeup throws
+     * propagates.
+     */
     @TruffleBoundary
-    static Object unserialize(PhpContext context, byte[] input) {
-        Reader reader = new Reader(context, input);
+    static Object unserialize(PhpContext context, byte[] input, Object options) {
+        Reader reader = new Reader(context, input, options instanceof PhpArray array ? array : null);
         try {
-            Object value = reader.value();
-            return value;
-        } catch (RuntimeException malformed) {
+            return reader.value();
+        } catch (IllegalArgumentException | IndexOutOfBoundsException malformed) {
+            return Boolean.FALSE;
+        } catch (StackOverflowError tooDeep) {
+            // ponytail: recursive reader, ~2000 nested levels on a default stack where php-src takes 4096;
+            // an explicit stack if real data ever nests that deep
             return Boolean.FALSE;
         }
     }
@@ -158,10 +169,41 @@ final class EncodingFunctions {
         private final PhpContext context;
         private final byte[] s;
         private int pos;
+        /** allowed_classes: null for all, else the allowed lower-case names (none for false). */
+        private final java.util.Set<String> allowedClasses;
+        private final long maxDepth;
+        private long depth;
 
-        Reader(PhpContext context, byte[] s) {
+        Reader(PhpContext context, byte[] s, PhpArray options) {
             this.context = context;
             this.s = s;
+            Object allowed = options == null ? null : options.get(ArrayKey.of(Str.of("allowed_classes")));
+            if (allowed == null || allowed == Boolean.TRUE) {
+                allowedClasses = null;
+            } else {
+                allowedClasses = new java.util.HashSet<>();
+                if (allowed instanceof PhpArray names) {
+                    for (int p = names.firstPosition(); p >= 0; p = names.nextPosition(p)) {
+                        allowedClasses.add(Str.java(Convert.toStr(names.valueAt(p))).toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+            Object depthOption = options == null ? null : options.get(ArrayKey.of(Str.of("max_depth")));
+            long requested = depthOption == null ? 0 : Convert.toLong(depthOption);
+            maxDepth = requested > 0 ? requested : MAX_DEPTH;
+        }
+
+        /** Entering a nested array or object; php-src counts only the ones with elements. */
+        private void enter(long elements) {
+            if (elements > 0 && depth++ >= maxDepth) {
+                throw new IllegalArgumentException("unserialize: maximum depth of " + maxDepth + " exceeded");
+            }
+        }
+
+        private void leave(long elements) {
+            if (elements > 0) {
+                depth--;
+            }
         }
 
         Object value() {
@@ -191,7 +233,7 @@ final class EncodingFunctions {
                 }
                 case 's': {
                     expect("s:");
-                    TruffleString value = bytes((int) number(':'));
+                    TruffleString value = bytes(number(':'));
                     expect(";");
                     return value;
                 }
@@ -199,22 +241,33 @@ final class EncodingFunctions {
                     expect("a:");
                     long count = number(':');
                     expect("{");
+                    enter(count);
                     PhpArray array = new PhpArray();
                     for (long i = 0; i < count; i++) {
                         Object key = ArrayKey.of(value());
                         array.put(key, value());
                     }
                     expect("}");
+                    leave(count);
                     return array;
                 }
                 case 'O': {
                     expect("O:");
-                    String className = Str.java(bytes((int) number(':')));
+                    String className = Str.java(bytes(number(':')));
                     expect(":");
                     long count = number(':');
                     expect("{");
-                    PhpClass phpClass = context.findClassAutoloading(className);
-                    PhpObject object = (phpClass != null ? phpClass : context.getClass("stdClass")).instantiate();
+                    enter(count);
+                    boolean allowed = allowedClasses == null
+                            || allowedClasses.contains(className.toLowerCase(Locale.ROOT));
+                    PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
+                    PhpObject object;
+                    if (phpClass != null) {
+                        object = phpClass.instantiate();
+                    } else {
+                        object = context.getClass("__PHP_Incomplete_Class").instantiate();
+                        object.setProperty("__PHP_Incomplete_Class_Name", Str.of(className));
+                    }
                     for (long i = 0; i < count; i++) {
                         String name = Str.java(Convert.toStr(value()));
                         // private and protected properties are serialized as "\0Class\0name" and "\0*\0name"
@@ -224,7 +277,8 @@ final class EncodingFunctions {
                         object.setProperty(name.intern(), value());
                     }
                     expect("}");
-                    if (object.getPhpClass().findMethod("__wakeup") != null) {
+                    leave(count);
+                    if (phpClass != null && phpClass.findMethod("__wakeup") != null) {
                         object.callMethod("__wakeup");
                     }
                     return object;
@@ -256,11 +310,14 @@ final class EncodingFunctions {
             return Long.parseLong(until(end));
         }
 
-        /** A quoted byte string of a known length: "..." */
-        private TruffleString bytes(int length) {
+        /** A quoted byte string of a known length: "..." (checked against the input before copying). */
+        private TruffleString bytes(long length) {
             expect("\"");
-            byte[] value = java.util.Arrays.copyOfRange(s, pos, pos + length);
-            pos += length;
+            if (length < 0 || length > s.length - pos) {
+                throw new IllegalArgumentException("unserialize: string length " + length + " past the end");
+            }
+            byte[] value = java.util.Arrays.copyOfRange(s, pos, pos + (int) length);
+            pos += (int) length;
             expect("\"");
             return Str.of(value);
         }
@@ -333,10 +390,11 @@ final class EncodingFunctions {
             throw new PhpError("ValueError: random_int(): Argument #1 ($min) must be less than or equal to "
                     + "argument #2 ($max)");
         }
-        if (min == Long.MIN_VALUE && max == Long.MAX_VALUE) {
-            return RANDOM.nextLong();
+        // bounded draws are uniform (RandomGenerator.nextLong(origin, bound)); max + 1 may overflow
+        if (max < Long.MAX_VALUE) {
+            return RANDOM.nextLong(min, max + 1);
         }
-        return min + (long) (RANDOM.nextDouble() * ((double) max - min + 1));
+        return min == Long.MIN_VALUE ? RANDOM.nextLong() : RANDOM.nextLong(min - 1, max) + 1;
     }
 
     @TruffleBoundary
