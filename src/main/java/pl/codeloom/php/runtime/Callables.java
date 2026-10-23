@@ -24,6 +24,12 @@ public final class Callables {
             this(function, thisObject, staticClass, closure, null);
         }
 
+        /** Calls the target from runtime code (a built-in calling back): no inline caching. */
+        @TruffleBoundary
+        public Object call(Object... values) {
+            return function.getCallTarget().call(frameArguments(values));
+        }
+
         public Object[] frameArguments(Object[] values) {
             if (magicName != null) {
                 values = magicValues(magicName, values);
@@ -362,6 +368,15 @@ public final class Callables {
     @TruffleBoundary
     public static void check(PhpContext context, Object callable, Parameter parameter) {
         target(context, callable, parameter);
+    }
+
+    /**
+     * A built-in's callable parameter, resolved once on entry as php-src's fci_cache: the built-in calls the
+     * target for every element or match, whatever its callbacks call in between.
+     */
+    @TruffleBoundary
+    public static Target parameter(PhpContext context, Object callable, Parameter parameter) {
+        return target(context, callable, parameter);
     }
 
     private static Target target(PhpContext context, Object callable, Parameter parameter) {

@@ -48,12 +48,12 @@ final class RuntimeFunctions {
         // zend.assertions = -1, as in production: assert() is compiled out and returns true
         r.fn("assert", a -> Boolean.TRUE);
         r.fn("call_user_func", (context, a) -> {
-            Callables.check(context, Args.get(a, 0), CALL_USER_FUNC);
-            return Callables.call(context, Args.get(a, 0), Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
+            return Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC)
+                    .call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
         });
         r.fn("call_user_func_array", (context, a) -> {
-            Callables.check(context, Args.get(a, 0), CALL_USER_FUNC_ARRAY);
-            return Callables.call(context, Args.get(a, 0), positional(Args.array(a, 1, "call_user_func_array")));
+            Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC_ARRAY);
+            return target.call(positional(Args.array(a, 1, "call_user_func_array")));
         });
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());

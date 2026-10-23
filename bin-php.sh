@@ -4,7 +4,9 @@
 root=$(cd "$(dirname "$0")" && (pwd -W 2>/dev/null || pwd))
 java="${GRAALVM_HOME:-$HOME/.jdks/graalvm-jdk-25.0.4+7.1}/bin/java"
 sep=":"; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) sep=";";; esac
-# the runtime's debugging functions (truffle_*) are declared for the tools run through this script
-exec "$java" --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dpolyglot.php.Debug=true \
+# the runtime's debugging functions (truffle_*) are declared for the tools run through this script; PHP_DEBUG_OPT=
+# (empty) leaves the option out, for builds older than it (which declare those functions anyway)
+exec "$java" --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
+  ${PHP_DEBUG_OPT--Dpolyglot.php.Debug=true} \
   $JAVA_OPTS_BASE $JAVA_OPTS \
   -cp "$root/${PHP_CLASSES:-target/classes}${sep}$root/target/lib/*" pl.codeloom.php.launcher.PhpMain "$@"

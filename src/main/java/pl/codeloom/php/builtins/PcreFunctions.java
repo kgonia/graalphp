@@ -631,7 +631,9 @@ public final class PcreFunctions {
         long limit = Args.lng(a, 3, -1);
         long flags = callback ? Args.lng(a, 5, 0) : 0;
         if (callback) {
-            Callables.check(context, replacement, new Callables.Parameter("preg_replace_callback", 2, false));
+            // resolved once: every match calls the same target, whatever the callback calls in between
+            replacement = Callables.parameter(context, replacement,
+                    new Callables.Parameter("preg_replace_callback", 2, false));
         }
         if (limit < 0) {
             limit = Long.MAX_VALUE;
@@ -706,7 +708,7 @@ public final class PcreFunctions {
                     int matchEnd = m.end(0);
                     out.write(subject, lastEnd, matchStart - lastEnd);
                     if (callback) {
-                        Object value = Callables.call(context, replacement, groups(m, rc, flags));
+                        Object value = ((Callables.Target) replacement).call(groups(m, rc, flags));
                         out.write(Convert.toStr(value));
                     } else {
                         template.expand(out, m, rc);
