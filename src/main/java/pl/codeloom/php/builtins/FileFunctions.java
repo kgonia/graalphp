@@ -3,6 +3,7 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.TruffleSafepoint;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
@@ -11,6 +12,7 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.Str;
 
@@ -19,8 +21,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.channels.NonReadableChannelException;
 import java.nio.channels.NonWritableChannelException;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
@@ -46,6 +50,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The filesystem and stream functions: plain files and php://memory, php://temp, php://input, php://stdin,
@@ -376,6 +381,9 @@ final class FileFunctions {
         final SeekableByteChannel channel;
         /** a+: the channel can't both read and append, so each write moves to the end first (O_APPEND). */
         private final boolean appendOnWrite;
+        /** The flock() this stream holds: its file's lock state, or null; guarded by that state's monitor. */
+        FileLocks.Lock lock;
+        boolean lockExclusive;
 
         FileStream(TruffleFile file, SeekableByteChannel channel, boolean appendOnWrite, String mode, String uri) {
             super(mode, uri);
@@ -435,6 +443,7 @@ final class FileFunctions {
 
         @Override
         void rawClose() throws IOException {
+            FileLocks.unlock(this);
             channel.close();
         }
 
@@ -457,13 +466,8 @@ final class FileFunctions {
                 if (size < current) {
                     channel.truncate(size);
                 } else if (size > current) {
-                    ByteBuffer zero = ByteBuffer.wrap(new byte[1]);
-                    if (channel instanceof FileChannel fileChannel) {
-                        fileChannel.write(zero, size - 1);
-                    } else {
-                        channel.position(size - 1);
-                        channel.write(zero);
-                    }
+                    channel.position(size - 1);
+                    channel.write(ByteBuffer.wrap(new byte[1]));
                 }
                 channel.position(offset);
                 return Boolean.TRUE;
@@ -484,6 +488,196 @@ final class FileFunctions {
         @Override
         boolean lockable() {
             return true;
+        }
+    }
+
+    /**
+     * flock()'s advisory locks, kept as flock(2) keeps them: per open stream, shared (LOCK_SH) or exclusive
+     * (LOCK_EX); converting a lock drops it before taking the new one, so a failed LOCK_NB upgrade leaves none, as
+     * on Linux; closing the stream releases it.
+     *
+     * <p>php-src's processes exclude each other through the kernel. The contexts of one JVM are threads of one
+     * process, and FileChannel locks belong to the whole JVM, so the lock state lives here, JVM-wide as the kernel's
+     * is machine-wide. For other processes the JVM holds one OS lock per locked file while it has holders, shared or
+     * exclusive as they are, on one byte far past the data: Windows enforces a locked range on reads and writes,
+     * where flock() is advisory. Other Truffle PHP processes see that lock; php-src processes on Linux don't, since
+     * Java's locks are fcntl locks there, which flock(2) ignores.
+     */
+    static final class FileLocks {
+        static final int LOCKED = 0;
+        static final int WOULD_BLOCK = 1;
+        static final int FAILED = -1;
+        private static final long OS_LOCK_POSITION = Long.MAX_VALUE - 1;
+        /** The locked (or waited-for) files by canonical path. */
+        private static final ConcurrentHashMap<String, Lock> FILES = new ConcurrentHashMap<>();
+
+        private FileLocks() {
+        }
+
+        /** One file's lock state. Its monitor guards it and its holders' lock fields; waiters wait on it. */
+        static final class Lock {
+            private final String key;
+            private FileStream exclusive;
+            /** Identity set: streams don't override equals. */
+            private final Set<FileStream> shared = new HashSet<>();
+            private int waiting;
+            private boolean removed;
+            /** The channel holding the JVM's OS lock on the file, or null. */
+            private FileChannel osChannel;
+
+            Lock(String key) {
+                this.key = key;
+            }
+
+            private boolean unheld() {
+                return exclusive == null && shared.isEmpty();
+            }
+        }
+
+        /** flock(LOCK_SH or LOCK_EX, with LOCK_NB if nonBlocking): LOCKED, WOULD_BLOCK or FAILED. */
+        @TruffleBoundary
+        static int lock(FileStream stream, boolean exclusive, boolean nonBlocking) {
+            String key = key(stream.file);
+            if (stream.lock != null && !stream.lock.key.equals(key)) {
+                unlock(stream); // the file was renamed since it was locked
+            }
+            for (;;) {
+                Lock lock = FILES.computeIfAbsent(key, Lock::new);
+                synchronized (lock) {
+                    if (lock.removed) {
+                        continue;
+                    }
+                    lock.waiting++;
+                    try {
+                        return acquire(lock, stream, exclusive, nonBlocking);
+                    } finally {
+                        lock.waiting--;
+                        forgetIfUnused(lock);
+                    }
+                }
+            }
+        }
+
+        /** flock(LOCK_UN), and fclose: releases what the stream holds, if anything. */
+        @TruffleBoundary
+        static void unlock(FileStream stream) {
+            Lock lock = stream.lock;
+            if (lock == null) {
+                return;
+            }
+            synchronized (lock) {
+                if (stream.lock == lock) {
+                    release(lock, stream);
+                }
+                forgetIfUnused(lock);
+            }
+        }
+
+        private static int acquire(Lock lock, FileStream stream, boolean exclusive, boolean nonBlocking) {
+            if (stream.lock == lock) {
+                if (stream.lockExclusive == exclusive) {
+                    return LOCKED;
+                }
+                release(lock, stream);
+            }
+            while (lock.exclusive != null || exclusive && !lock.shared.isEmpty()) {
+                if (nonBlocking) {
+                    return WOULD_BLOCK;
+                }
+                TruffleSafepoint.setBlockedThreadInterruptible(null, Object::wait, lock);
+            }
+            if (lock.unheld()) {
+                int result = lockOs(lock, exclusive, nonBlocking);
+                if (result != LOCKED) {
+                    return result;
+                }
+            }
+            if (exclusive) {
+                lock.exclusive = stream;
+            } else {
+                lock.shared.add(stream);
+            }
+            stream.lock = lock;
+            stream.lockExclusive = exclusive;
+            return LOCKED;
+        }
+
+        private static void release(Lock lock, FileStream stream) {
+            if (lock.exclusive == stream) {
+                lock.exclusive = null;
+            } else {
+                lock.shared.remove(stream);
+            }
+            stream.lock = null;
+            if (lock.unheld()) {
+                closeOs(lock);
+            }
+            lock.notifyAll();
+        }
+
+        /**
+         * Takes the file's OS lock for the JVM's first holder. TruffleFile's channels don't expose FileChannel's
+         * locks, so the lock channel is opened on the host path of a file the stream already opened through the
+         * Env (no data is read or written through it). A shared lock reads the file, an exclusive one needs it
+         * writable; without that, or when the path is not on the host file system (a virtual file system), the lock
+         * is the JVM's alone.
+         */
+        private static int lockOs(Lock lock, boolean exclusive, boolean nonBlocking) {
+            FileChannel channel;
+            try {
+                channel = FileChannel.open(Path.of(lock.key), exclusive
+                        ? EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE)
+                        : EnumSet.of(StandardOpenOption.READ));
+            } catch (IOException | UnsupportedOperationException | SecurityException | IllegalArgumentException e) {
+                return LOCKED;
+            }
+            try {
+                FileLock os = nonBlocking ? channel.tryLock(OS_LOCK_POSITION, 1, !exclusive)
+                        : channel.lock(OS_LOCK_POSITION, 1, !exclusive);
+                if (os == null) {
+                    channel.close();
+                    return WOULD_BLOCK;
+                }
+                lock.osChannel = channel;
+                return LOCKED;
+            } catch (OverlappingFileLockException e) {
+                // the JVM holds this file's OS lock under another path (a link): the JVM-wide state excludes
+                closeQuietly(channel);
+                return LOCKED;
+            } catch (IOException e) {
+                closeQuietly(channel);
+                return FAILED;
+            }
+        }
+
+        private static void closeOs(Lock lock) {
+            if (lock.osChannel != null) {
+                closeQuietly(lock.osChannel); // releases the OS lock
+                lock.osChannel = null;
+            }
+        }
+
+        private static void forgetIfUnused(Lock lock) {
+            if (lock.waiting == 0 && lock.unheld() && !lock.removed) {
+                lock.removed = true;
+                FILES.remove(lock.key, lock);
+            }
+        }
+
+        private static String key(TruffleFile file) {
+            try {
+                return file.getCanonicalFile().getPath();
+            } catch (IOException | SecurityException e) {
+                return file.getAbsoluteFile().normalize().getPath();
+            }
+        }
+
+        private static void closeQuietly(SeekableByteChannel channel) {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                // nothing more to release
+            }
         }
     }
 
@@ -838,15 +1032,7 @@ final class FileFunctions {
             stream(a, "fflush");
             return Boolean.TRUE;
         });
-        r.fn("flock", a -> {
-            Stream stream = stream(a, "flock");
-            long operation = Args.lng(a, 1, 0);
-            if ((operation & 3) == 0) {
-                throw new PhpError("ValueError: flock(): Argument #2 ($operation) must be one of LOCK_SH, LOCK_EX, "
-                        + "or LOCK_UN");
-            }
-            return stream.lockable();
-        });
+        r.fn("flock", "001", a -> flock(a));
         r.fn("ftruncate", a -> {
             long size = Args.lng(a, 1, 0);
             if (size < 0) {
@@ -1089,6 +1275,39 @@ final class FileFunctions {
         };
     }
 
+    /**
+     * flock(stream, operation, &would_block): php_flock_common. LOCK_SH = 1, LOCK_EX = 2, LOCK_UN = 3, LOCK_NB = 4;
+     * would_block becomes 1 when LOCK_NB found the lock taken. Streams without locking return false.
+     */
+    private static Object flock(Object[] a) {
+        Stream stream = stream(a, "flock");
+        long operation = Args.lng(a, 1, 0);
+        int action = (int) (operation & 3);
+        if (action == 0) {
+            throw new PhpError("ValueError: flock(): Argument #2 ($operation) must be one of LOCK_SH, LOCK_EX, "
+                    + "or LOCK_UN");
+        }
+        PhpRef wouldBlock = Args.has(a, 2) ? Args.ref(a, 2) : null;
+        if (wouldBlock != null) {
+            wouldBlock.set(0L);
+        }
+        if (!stream.lockable()) {
+            return Boolean.FALSE;
+        }
+        if (!(stream instanceof FileStream file)) {
+            return Boolean.TRUE; // a standard stream: flock(2) on a pipe or terminal succeeds
+        }
+        if (action == 3) {
+            FileLocks.unlock(file);
+            return Boolean.TRUE;
+        }
+        int result = FileLocks.lock(file, action == 2, (operation & 4) != 0);
+        if (result == FileLocks.WOULD_BLOCK && wouldBlock != null) {
+            wouldBlock.set(1L);
+        }
+        return result == FileLocks.LOCKED;
+    }
+
     /** fwrite(stream, data, length = null). */
     private static Object write(Object[] a, String function) {
         Stream stream = stream(a, function);
@@ -1223,15 +1442,30 @@ final class FileFunctions {
 
     /**
      * file_put_contents(): opens with "wb" ("ab" with FILE_APPEND = 8) through the stream layer, so php:// targets
-     * work too; data may be a string, an array of strings or a stream. False if it can't be opened or written.
+     * work too; data may be a string, an array of strings or a stream. LOCK_EX (2) waits for an exclusive lock
+     * before writing, so it opens with "cb" and truncates once locked, and only plain files can be locked. False if
+     * the file can't be opened, locked or written.
      */
     @TruffleBoundary
     private static Object putContents(PhpContext context, String name, Object data, long flags) {
-        Stream stream = openStream(context, name, (flags & 8) != 0 ? "ab" : "wb");
+        boolean append = (flags & 8) != 0;
+        boolean lock = (flags & 2) != 0;
+        if (lock && !append && name.contains("://") && !name.regionMatches(true, 0, "file://", 0, 7)) {
+            return Boolean.FALSE; // "Exclusive locks may only be set for regular files"
+        }
+        Stream stream = openStream(context, name, append ? "ab" : lock ? "cb" : "wb");
         if (stream == null) {
             return Boolean.FALSE;
         }
         try {
+            if (lock) {
+                if (!(stream instanceof FileStream file) || FileLocks.lock(file, true, false) != FileLocks.LOCKED) {
+                    return Boolean.FALSE; // "Exclusive locks are not supported for this stream"
+                }
+                if (!append && !Boolean.TRUE.equals(file.truncate(0))) {
+                    return Boolean.FALSE;
+                }
+            }
             long written = 0;
             if (data instanceof PhpResource resource && resource.getHandle() instanceof Stream source) {
                 byte[] bytes = source.readAll(-1);
