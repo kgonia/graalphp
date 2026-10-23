@@ -69,7 +69,7 @@ final class MysqliFunctions {
         r.fn("mysqli_connect_errno", (context, a) -> (long) context.builtinState().mysqliConnectErrno);
         r.fn("mysqli_connect_error", (context, a) -> context.builtinState().mysqliConnectError == null
                 ? PhpNull.NULL : Str.of(context.builtinState().mysqliConnectError));
-        r.fn("mysqli_query", (context, a) -> query(context, link(a, 0), Str.java(Args.str(a, 1))));
+        r.fn("mysqli_query", (context, a) -> query(context, link(a, 0), Str.bytes(Args.str(a, 1))));
         r.fn("mysqli_real_escape_string", a -> escape(Str.bytes(Args.str(a, 1))));
         r.fn("mysqli_escape_string", a -> escape(Str.bytes(Args.str(a, 1))));
         r.fn("mysqli_set_charset", (context, a) -> setCharset(link(a, 0), Str.java(Args.str(a, 1))));
@@ -247,16 +247,24 @@ final class MysqliFunctions {
 
     // ---- queries ----
 
+    private static final java.util.regex.Pattern SET_NAMES =
+            java.util.regex.Pattern.compile("(?i)^\\s*SET\\s+NAMES\\s+'?([A-Za-z0-9_]+)");
+
     @TruffleBoundary
-    private static Object query(PhpContext context, PhpObject object, String sql) {
+    private static Object query(PhpContext context, PhpObject object, byte[] sql) {
         Link link = state(object);
         if (link.connection == null) {
             throw new PhpError("mysqli object is already closed");
         }
         link.errno = 0;
         link.error = "";
+        String text = sqlText(sql, link.charset);
         try (Statement statement = link.connection.createStatement()) {
-            boolean hasRows = statement.execute(sql, Statement.RETURN_GENERATED_KEYS);
+            boolean hasRows = statement.execute(text, Statement.RETURN_GENERATED_KEYS);
+            java.util.regex.Matcher names = SET_NAMES.matcher(text);
+            if (names.find()) {
+                link.charset = names.group(1);
+            }
             if (hasRows) {
                 try (ResultSet rows = statement.getResultSet()) {
                     Result result = read(rows);
@@ -295,17 +303,21 @@ final class MysqliFunctions {
             result.tables[i] = meta.getTableName(i + 1);
             result.types[i] = mysqliType(meta.getColumnType(i + 1));
         }
-        boolean[] binary = new boolean[columns];
+        boolean[] bytes = new boolean[columns];
         for (int i = 0; i < columns; i++) {
             int type = meta.getColumnType(i + 1);
-            binary[i] = type == Types.BINARY || type == Types.VARBINARY || type == Types.LONGVARBINARY
-                    || type == Types.BLOB;
+            bytes[i] = switch (type) {
+                case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
+                     Types.CLOB, Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> true;
+                default -> false;
+            };
         }
         while (rows.next()) {
             byte[][] row = new byte[columns][];
             for (int i = 0; i < columns; i++) {
-                // the text protocol's value as mysqlnd returns it: the column's bytes (utf8mb4 for text)
-                if (binary[i]) {
+                // the text protocol's value as mysqlnd returns it: text as the bytes the server sent, in the
+                // session's character set (not necessarily UTF-8); a number or a date as its (ASCII) text
+                if (bytes[i]) {
                     row[i] = rows.getBytes(i + 1);
                 } else {
                     String text = rows.getString(i + 1);
@@ -399,6 +411,127 @@ final class MysqliFunctions {
 
     private static Object value(byte[] bytes) {
         return bytes == null ? PhpNull.NULL : Str.of(bytes);
+    }
+
+    /**
+     * The query as the driver takes it: a Java string, sent UTF-8 encoded. mysqlnd sends the query's bytes as they
+     * are, which in a session of another character set (latin1) need not be UTF-8; a string literal holding such
+     * bytes is sent as `_charset X'hex'`, which the server reads as the same literal. Bytes that aren't UTF-8
+     * outside literals (in an identifier or a comment) can't be sent as they are and are replaced.
+     */
+    static String sqlText(byte[] sql, String charset) {
+        if (isUtf8(sql, 0, sql.length)) {
+            return new String(sql, StandardCharsets.UTF_8);
+        }
+        StringBuilder out = new StringBuilder(sql.length + 32);
+        int copied = 0;
+        int i = 0;
+        while (i < sql.length) {
+            byte b = sql[i];
+            if (b == '\'' || b == '"') {
+                int end = literalEnd(sql, i);
+                if (!isUtf8(sql, i, end)) {
+                    out.append(new String(sql, copied, i - copied, StandardCharsets.UTF_8));
+                    // after an introducer of its own (_binary'...') the hex literal takes that one
+                    boolean introduced = out.length() > 0 && isWordChar(out.charAt(out.length() - 1));
+                    out.append(introduced ? " X'" : "_" + charset.replaceAll("[^A-Za-z0-9_]", "") + " X'");
+                    out.append(java.util.HexFormat.of().formatHex(unescape(sql, i + 1, end - 1)));
+                    out.append('\'');
+                    copied = end;
+                }
+                i = end;
+            } else if (b == '`') {
+                i = indexOf(sql, (byte) '`', i + 1) + 1;
+            } else if (b == '#' || b == '-' && i + 2 < sql.length && sql[i + 1] == '-' && isSpace(sql[i + 2])) {
+                i = indexOf(sql, (byte) '\n', i);
+            } else if (b == '/' && i + 1 < sql.length && sql[i + 1] == '*') {
+                int close = i + 2;
+                while (close + 1 < sql.length && !(sql[close] == '*' && sql[close + 1] == '/')) {
+                    close++;
+                }
+                i = Math.min(close + 2, sql.length);
+            } else {
+                i++;
+            }
+        }
+        out.append(new String(sql, copied, sql.length - copied, StandardCharsets.UTF_8));
+        return out.toString();
+    }
+
+    /** The index after a quoted literal's closing quote (or the end): backslash escapes, a doubled quote. */
+    private static int literalEnd(byte[] sql, int open) {
+        byte quote = sql[open];
+        int i = open + 1;
+        while (i < sql.length) {
+            if (sql[i] == '\\') {
+                i += 2;
+            } else if (sql[i] == quote) {
+                if (i + 1 < sql.length && sql[i + 1] == quote) {
+                    i += 2;
+                } else {
+                    return i + 1;
+                }
+            } else {
+                i++;
+            }
+        }
+        return sql.length;
+    }
+
+    /** A literal's value: MySQL's backslash escapes (\% and \_ keep their backslash, for LIKE) and doubled quotes. */
+    private static byte[] unescape(byte[] sql, int from, int to) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(to - from);
+        for (int i = from; i < to; i++) {
+            byte b = sql[i];
+            if (b == '\\' && i + 1 < to) {
+                byte next = sql[++i];
+                switch (next) {
+                    case '0' -> out.write(0);
+                    case 'b' -> out.write('\b');
+                    case 'n' -> out.write('\n');
+                    case 'r' -> out.write('\r');
+                    case 't' -> out.write('\t');
+                    case 'Z' -> out.write(0x1A);
+                    case '%', '_' -> {
+                        out.write('\\');
+                        out.write(next);
+                    }
+                    default -> out.write(next);
+                }
+            } else if ((b == '\'' || b == '"') && i + 1 < to && sql[i + 1] == b) {
+                out.write(b);
+                i++;
+            } else {
+                out.write(b);
+            }
+        }
+        return out.toByteArray();
+    }
+
+    private static boolean isUtf8(byte[] bytes, int from, int to) {
+        try {
+            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes, from, to - from));
+            return true;
+        } catch (java.nio.charset.CharacterCodingException e) {
+            return false;
+        }
+    }
+
+    private static int indexOf(byte[] bytes, byte b, int from) {
+        for (int i = from; i < bytes.length; i++) {
+            if (bytes[i] == b) {
+                return i;
+            }
+        }
+        return bytes.length;
+    }
+
+    private static boolean isWordChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
+    private static boolean isSpace(byte b) {
+        return b == ' ' || b == '\t' || b == '\n' || b == '\r';
     }
 
     /** mysqli_real_escape_string: backslash-escapes NUL, \n, \r, \, ', " and Ctrl-Z. */
