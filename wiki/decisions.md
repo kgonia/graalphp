@@ -65,6 +65,20 @@ The first versions got all kernels running fast; their limits are now measured.
    - Parsed files are cached per language.
 
    Must land before Gate 2: a server reuses compiled code across requests.
+
+   **Design (2026-10-23).** Today the translator holds a `PhpContext`:
+   - function declarations are lambdas that capture it;
+   - a class declaration translates its methods when it runs, once per context, and resolves its parent and interfaces through the context;
+   - constants already defined in the context are folded into the AST.
+
+   `PhpFunction` also carries per-context state (static variables, the declaring `PhpClass`). The split:
+   - **Translation output is language-level.**
+     - A `PhpFunction` keeps only its name, flags, parameters and call target. Static variables move to the context, keyed by function.
+     - A class becomes a `ClassTemplate`: name, parent and interface names, flags, method `PhpFunction`s, property declarations and constant initializers. A declaration node instantiates it into a per-context `PhpClass` when it runs.
+   - **Name lookup goes through language-level ids.** `PhpLanguage` gives each function and class name an index, and a context keeps its declarations in arrays by that index. A call site does an array load, then a DSL inline cache on the identity of the template it finds, then a `DirectCallNode`. Under `SHARED` every context declares the same template objects, so the site stays monomorphic.
+   - **Only built-in constants** (`PHP_*`, `E_*` and the like, equal in every context) are folded at translation time. User constants go through the same id-indexed lookup.
+   - **Parsed files are cached in `PhpLanguage`** by path and modification time. `include` asks the language for the call target.
+   - **Then** `@Registration(contextPolicy = SHARED)`, with a test that runs two contexts on one engine and checks their outputs and that code isn't re-translated.
 5. **Bytecode DSL evaluation**, the Gate 2 decision already set in D6, judged on warmup and memory over WordPress-sized code.
 6. **Own parser and instrumentation tags** (D5's planned replacement; statement, call and root tags for debugging, coverage and statement-level profiling).
 
@@ -85,4 +99,4 @@ The first versions got all kernels running fast; their limits are now measured.
   - once `rewriteOn` excludes an int specialization, every int pair falls through to the `double` one.
 
   Put an `(long, long)` specialization ahead of the `double` one for every int pair the fast one doesn't take, as `CompoundAssignNode.longPair` does.
-- **The DSL overrides every `execute*` method of the base class as "return this type".** `ExprNode.executeBoolean` means truthiness, but a generated node's override casts the result to `boolean`. That is safe only because the translator wraps every condition that isn't boolean-valued in `ConditionNode`. Truthiness on an arbitrary node must go through `Convert.toBool(execute(frame))`, never `executeBoolean`.
+- **The DSL overrides every `execute*` method of the base class as "return this type".** `ExprNode.executeBoolean` means truthiness, but a generated node's override casts the result to `boolean`. That is safe only where a condition that isn't boolean-valued is wrapped in `ConditionNode` (`ConditionNode.of`). The `for` loop evaluated its comma-separated conditions before the last with `executeBoolean`, unwrapped, and `(void)f()` in that position crashed with a `ClassCastException` once casts were DSL nodes. Truthiness on an arbitrary node goes through `ConditionNode` or a `ToBooleanNode`; a value needed only for its effects goes through `execute`.

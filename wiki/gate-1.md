@@ -231,3 +231,18 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - `--engine.InstrumentBoundaries`, which would have counted boundary calls, crashes libgraal on GraalVM 25.0.4 (`ClassCastException` in `ConstantNode.findLength`), so the hot set came from built-in call counts per kernel.
   - **Gate 1 effect** of step 2 (ABBA, 2 pairs, 300 iterations): kses −14%, hooks −12%, wptexturize −11%, slugs +8%, the rest neutral. Checksums and the php-src run unchanged.
   - **Not done in step 2:** the `preg_*` front ends. A node would cache the compiled pattern per call site, which has to wait for step 4's language-level pattern cache.
+- **2026-10-23, Gate 0.5 (D10) step 3, per commit:**
+  - **What changed.** These node families are now DSL nodes:
+    - assignment (`5964aa1`);
+    - array element access and `foreach` binding (`c9a3424`);
+    - comparisons and object creation (`3363a93`);
+    - unary operators, casts and truthiness (`ToBooleanNode`).
+
+    Every hand-written "seen" flag in them is gone: the DSL's storage and type guards replace them, and `BranchProfile`s cover branches that need no type dispatch. Each commit passed smoke, both checksum sets and the php-src run. The run lost no tests and gained the four `range_bug70239` tests from the `range()` fix (`9c3d9e5`).
+  - **Speed, from builds run interleaved in rotating order** (ABCD, DCBA, …; 4–6 rounds, 400 iterations; ratio to the parent commit, <1 is faster). The shared box was noisy: per-round values of one build varied by 30–50% (another agent's WSL VM was busy). Only ratios whose whole range sits on one side of 1.0 count:
+    - **Element access and `foreach`:**
+      - slugs **0.59×** (0.52–0.60) and escape 0.92× (0.88–0.93);
+      - wpautop 1.10× (1.00–1.16) and kses 1.06× (1.03–1.11) slightly slower.
+    - **Comparisons:** escape 0.96× (0.81–0.99), the rest neutral.
+    - **Assignment, object creation, `LocalVarNode` profiles:** neutral within the noise. A first run hinted that hooks and escape were 13–25% slower after `3363a93`; a bisect with 6 rounds didn't reproduce it.
+  - **Not done in step 3:** calls. They depend on step 4's per-context lookup design (`FunctionCallNode`, `ClassRefNode` and constant caching), so they move there.
