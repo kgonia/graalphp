@@ -44,7 +44,6 @@ public final class PhpContext {
     private final Map<String, PhpClass> classes = new HashMap<>();
     private final Map<String, Object> constants = new HashMap<>();
     private final Map<String, PhpRef> globals = new HashMap<>();
-    private final Map<String, FileRootNode> files = new HashMap<>();
     private final Set<String> included = new HashSet<>();
     private final java.util.ArrayDeque<ByteBuilder> buffers = new java.util.ArrayDeque<>();
     private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
@@ -111,25 +110,27 @@ public final class PhpContext {
 
     // ---- files ----
 
-    /** The translated top-level code of a PHP file, loading its AST export on first use. */
+    /**
+     * The translated top-level code of a PHP file. Translations are language-level: the first context to load a
+     * file reads its AST export and translates it, and every context shares the result.
+     */
     @TruffleBoundary
     public FileRootNode loadFile(String path) {
         String canonical = canonicalPath(path);
-        FileRootNode root = files.get(canonical);
-        if (root == null) {
-            Path relative = sourceRoot.relativize(Path.of(canonical));
-            Path json = astRoot.resolve(relative.toString() + ".json");
-            TruffleFile file = env.getPublicTruffleFile(json.toString());
-            Ast ast;
-            try (InputStream in = file.newInputStream()) {
-                ast = AstReader.read(in);
-            } catch (IOException e) {
-                throw new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
-            }
-            root = new Translator(language, canonical, phpSource(canonical)).translateFile(ast);
-            files.put(canonical, root);
+        return language.file(canonical, () -> translate(path, canonical));
+    }
+
+    private FileRootNode translate(String path, String canonical) {
+        Path relative = sourceRoot.relativize(Path.of(canonical));
+        Path json = astRoot.resolve(relative.toString() + ".json");
+        TruffleFile file = env.getPublicTruffleFile(json.toString());
+        Ast ast;
+        try (InputStream in = file.newInputStream()) {
+            ast = AstReader.read(in);
+        } catch (IOException e) {
+            throw new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
         }
-        return root;
+        return new Translator(language, canonical, phpSource(canonical)).translateFile(ast);
     }
 
     private Source phpSource(String canonical) {
