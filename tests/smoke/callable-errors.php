@@ -113,3 +113,16 @@ $f = 'call_user_func';
 try { $f('nofunc'); } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 $g = 'array_map';
 try { $g('nofunc', []); } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
+// a name that didn't resolve isn't remembered: the function declared later is found
+try {
+    call_user_func('declared_later', 1);
+} catch (TypeError $e) {
+    echo $e->getMessage(), "\n";
+}
+if (true) {
+    function declared_later($x)
+    {
+        return "later $x";
+    }
+}
+var_dump(call_user_func('declared_later', 2), array_map('declared_later', [3]), call_user_func('DECLARED_LATER', 4));

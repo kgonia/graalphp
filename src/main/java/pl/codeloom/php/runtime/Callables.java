@@ -352,6 +352,11 @@ public final class Callables {
         Object first;
         Object second;
         Target target;
+        /**
+         * Function-name callables resolved so far (php-src finds them with one hash lookup): a declared function
+         * stays declared, so an entry never goes stale. Bounded, as names may come from input.
+         */
+        final java.util.HashMap<TruffleString, Target> functions = new java.util.HashMap<>();
     }
 
     /** Calls a callable from runtime code (array_map, usort, preg_replace_callback...): no inline caching. */
@@ -385,7 +390,22 @@ public final class Callables {
                 || array.get(0L) == last.first && array.get(1L) == last.second)) {
             return last.target;
         }
-        Target target = resolveOrThrow(context, callable, parameter);
+        Target target;
+        if (callable instanceof TruffleString name) {
+            target = last.functions.get(name);
+            if (target == null) {
+                target = resolveOrThrow(context, callable, parameter);
+                if (target.staticClass() == null) {
+                    // a plain function, not "Cls::m" (whose class and $this may depend on the caller)
+                    if (last.functions.size() >= 4096) {
+                        last.functions.clear();
+                    }
+                    last.functions.put(name, target);
+                }
+            }
+        } else {
+            target = resolveOrThrow(context, callable, parameter);
+        }
         // a class callable bound to the caller's $this depends on the caller: not kept
         boolean boundByCaller = target.thisObject() != null && !(callable instanceof PhpClosure)
                 && !(callable instanceof PhpArray array && array.get(0L) instanceof PhpObject);
