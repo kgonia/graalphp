@@ -37,6 +37,11 @@ public final class Ast {
         return list.get(index);
     }
 
+    /** The named children's values (expr, stmts, ...), in no particular order. */
+    public java.util.Collection<Object> namedValues() {
+        return named != null ? named.values() : List.of();
+    }
+
     public Object get(String name) {
         return named != null ? named.get(name) : null;
     }

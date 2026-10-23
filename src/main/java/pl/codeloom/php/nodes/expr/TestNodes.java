@@ -72,6 +72,51 @@ public final class TestNodes {
     }
 
     /** `$x instanceof Name`; the class need not be loaded (an unknown class matches nothing). */
+    /** `$x instanceof $class`: the class by name (a string) or as an object's class. */
+    public static final class DynamicInstanceofNode extends ExprNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
+        @Child private ExprNode operand;
+        @Child private ExprNode classValue;
+
+        public DynamicInstanceofNode(ExprNode operand, ExprNode classValue) {
+            this.operand = operand;
+            this.classValue = classValue;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return executeCondition(frame);
+        }
+
+        @Override
+        public boolean executeCondition(VirtualFrame frame) {
+            Object value = operand.execute(frame);
+            Object target = classValue.execute(frame);
+            return test(value, target);
+        }
+
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+        private static boolean test(Object value, Object target) {
+            String lowerClassName;
+            if (target instanceof PhpObject object) {
+                lowerClassName = object.getPhpClass().getLowerName();
+            } else if (target instanceof com.oracle.truffle.api.strings.TruffleString name) {
+                String text = name.toJavaStringUncached();
+                lowerClassName = (text.startsWith("\\") ? text.substring(1) : text).toLowerCase();
+            } else {
+                throw new pl.codeloom.php.runtime.PhpError("Class name must be a valid object or a string");
+            }
+            if (value instanceof PhpObject object) {
+                return object.getPhpClass().isSubclassOf(lowerClassName);
+            }
+            return value instanceof PhpClosure && lowerClassName.equals("closure");
+        }
+    }
+
     public static final class InstanceofNode extends ExprNode {
         @Override
         public boolean isBooleanValued() {

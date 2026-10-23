@@ -39,7 +39,7 @@ public final class TryNode extends StmtNode {
         } catch (PhpException e) {
             handle(frame, e, e.getThrowable());
         } catch (PhpError e) {
-            handle(frame, e, toErrorObject(e));
+            handle(frame, e, toErrorObject(PhpContext.get(this), e));
         } finally {
             if (finallyBody != null) {
                 finallyBody.execute(frame);
@@ -61,7 +61,7 @@ public final class TryNode extends StmtNode {
     }
 
     @TruffleBoundary
-    private static boolean matches(PhpObject thrown, String[] types) {
+    static boolean matches(PhpObject thrown, String[] types) {
         for (String type : types) {
             if (thrown.getPhpClass().isSubclassOf(type)) {
                 return true;
@@ -71,7 +71,7 @@ public final class TryNode extends StmtNode {
     }
 
     @TruffleBoundary
-    private PhpObject toErrorObject(PhpError error) {
+    static PhpObject toErrorObject(PhpContext context, PhpError error) {
         String message = error.getMessage();
         String className = "Error";
         int colon = message.indexOf(": ");
@@ -79,7 +79,6 @@ public final class TryNode extends StmtNode {
             className = message.substring(0, colon);
             message = message.substring(colon + 2);
         }
-        PhpContext context = PhpContext.get(this);
         PhpObject object = (context.findClass(className.toLowerCase()) != null
                 ? context.getClass(className) : context.getClass("Error")).instantiate();
         object.setProperty("message", Str.of(message));

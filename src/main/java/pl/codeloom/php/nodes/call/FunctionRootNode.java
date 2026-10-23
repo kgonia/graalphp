@@ -8,6 +8,8 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
+import com.oracle.truffle.api.RootCallTarget;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
@@ -18,6 +20,8 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpGenerator;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 
@@ -37,6 +41,9 @@ public final class FunctionRootNode extends RootNode {
     private final char returnCoerce;
     private final boolean returnNullable;
     @Child private StmtNode body;
+    /** A generator function's body (run by the Generator), or null; its frame slot for the Generator's state. */
+    private RootCallTarget generatorBody;
+    private int generatorSlot;
 
     private final SourceSection sourceSection;
 
@@ -57,12 +64,23 @@ public final class FunctionRootNode extends RootNode {
         this.body = body;
     }
 
+    /** Makes this a generator function: a call binds the parameters and returns a Generator running body. */
+    public void setGeneratorBody(RootCallTarget body, int slot) {
+        this.generatorBody = body;
+        this.generatorSlot = slot;
+    }
+
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
         bindParameters(frame, arguments);
         if (captureSlots.length > 0) {
             bindCaptures(frame, (PhpClosure) arguments[PhpFunction.ARG_CLOSURE]);
+        }
+        if (generatorBody != null) {
+            PhpGenerator generator = new PhpGenerator(frame.materialize(), generatorBody);
+            frame.setObject(generatorSlot, generator);
+            return newGenerator(PhpContext.get(this), generator);
         }
         Object result = PhpNull.NULL;
         try {
@@ -107,6 +125,13 @@ public final class FunctionRootNode extends RootNode {
             }
             FrameSlots.set(frame, slot, value);
         }
+    }
+
+    @TruffleBoundary
+    private static PhpObject newGenerator(PhpContext context, PhpGenerator generator) {
+        PhpObject object = context.getClass("Generator").instantiate();
+        object.setInternal(generator);
+        return object;
     }
 
     @TruffleBoundary

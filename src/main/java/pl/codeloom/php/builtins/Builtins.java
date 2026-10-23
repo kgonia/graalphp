@@ -27,11 +27,14 @@ public final class Builtins {
         private final Map<String, Object> constants;
         private final List<PhpFunction> functions;
         private final List<PhpFunction> throwableMethods;
+        private final List<PhpFunction> generatorMethods;
 
-        private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods) {
+        private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
+                      List<PhpFunction> generatorMethods) {
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
+            this.generatorMethods = generatorMethods;
         }
 
         /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
@@ -54,7 +57,8 @@ public final class Builtins {
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
         DebugFunctions.register(registry);
-        return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry));
+        return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry),
+                generatorMethods(registry));
     }
 
     public static void install(PhpContext context, Table table) {
@@ -163,6 +167,13 @@ public final class Builtins {
         PhpClass throwable = declare(context, "Throwable", null, true);
         throwable.addInterface(stringable);
         declare(context, "stdClass", null, false);
+        PhpClass generator = new PhpClass("Generator", null, false, false, context.getLanguage().rootShape(),
+                "Generator");
+        generator.addInterface(iterator);
+        for (PhpFunction method : table.generatorMethods) {
+            generator.addMethod(method);
+        }
+        context.declareClass(generator);
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
 
@@ -235,6 +246,30 @@ public final class Builtins {
                 registry.method("getLine", false, arguments -> property(arguments, "line")),
                 registry.method("getTrace", false, arguments -> new PhpArray()),
                 registry.method("getTraceAsString", false, arguments -> Str.of("#0 {main}")));
+    }
+
+    /** Generator: the Iterator methods plus send, throw and getReturn, on the object's PhpGenerator. */
+    private static List<PhpFunction> generatorMethods(Registry registry) {
+        return List.of(
+                registry.method("current", false, arguments -> generator(arguments).current()),
+                registry.method("key", false, arguments -> generator(arguments).key()),
+                registry.method("next", false, arguments -> {
+                    generator(arguments).next();
+                    return PhpNull.NULL;
+                }),
+                registry.method("valid", false, arguments -> generator(arguments).valid()),
+                registry.method("rewind", false, arguments -> {
+                    generator(arguments).rewind();
+                    return PhpNull.NULL;
+                }),
+                registry.method("send", false, arguments -> generator(arguments).send(Args.get(arguments, 0))),
+                registry.method("getReturn", false, arguments -> generator(arguments).getReturn()),
+                registry.method("throw", false, arguments -> generator(arguments).throwInto(
+                        new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))));
+    }
+
+    private static pl.codeloom.php.runtime.PhpGenerator generator(Object[] arguments) {
+        return (pl.codeloom.php.runtime.PhpGenerator) ((PhpObject) arguments[PhpFunction.ARG_THIS]).getInternal();
     }
 
     private static Object property(Object[] arguments, String name) {

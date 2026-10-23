@@ -39,12 +39,15 @@ import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.DeclareNodes;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
+import pl.codeloom.php.nodes.stmt.GeneratorNodes;
+import pl.codeloom.php.nodes.stmt.GotoNodes;
 import pl.codeloom.php.nodes.stmt.LoopNodes;
 import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.CompactNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.DynamicCompactNode;
+import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.GlobalVarNode;
 import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
@@ -118,6 +121,8 @@ public final class Translator {
     private final String functionName;
     private final PhpFunction function;
     private final Scope scope;
+    /** In a generator function's body: the frame slot of its Generator state; -1 elsewhere. */
+    private int generatorSlot = -1;
     /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
     private int hiddenCounter;
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
@@ -217,11 +222,25 @@ public final class Translator {
         if (!list.is("AST_STMT_LIST")) {
             return statement(list);
         }
+        if (generatorSlot >= 0 && containsYield(list)) {
+            return resumableStatement(list);
+        }
         List<StmtNode> result = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        List<Integer> targets = new ArrayList<>();
         for (Object child : list.children()) {
             if (child instanceof Ast statement) {
+                if (statement.is("AST_LABEL")) {
+                    labels.add((String) statement.get("name"));
+                    targets.add(result.size());
+                    continue;
+                }
                 result.add(statement(statement));
             }
+        }
+        if (!labels.isEmpty()) {
+            return new GotoNodes.LabeledBlockNode(result.toArray(new StmtNode[0]), labels.toArray(new String[0]),
+                    targets.stream().mapToInt(Integer::intValue).toArray());
         }
         return block(result);
     }
@@ -236,6 +255,12 @@ public final class Translator {
     }
 
     private StmtNode statementNode(Ast node) {
+        if (generatorSlot >= 0 && containsYield(node)) {
+            StmtNode resumable = resumableStatement(node);
+            if (resumable != null) {
+                return resumable;
+            }
+        }
         switch (node.kind) {
             case "AST_STMT_LIST":
                 return statements(node);
@@ -254,6 +279,10 @@ public final class Translator {
                 return foreach(node);
             case "AST_SWITCH":
                 return switchStatement(node);
+            case "AST_GOTO":
+                return new GotoNodes.GotoNode((String) node.get("label"));
+            case "AST_LABEL":
+                return new BasicStmts.NopNode();
             case "AST_BREAK":
             case "AST_CONTINUE":
                 return new BasicStmts.BreakNode(node.get("depth") instanceof Long depth ? depth.intValue() : 1,
@@ -285,6 +314,118 @@ public final class Translator {
             default:
                 return new BasicStmts.ExprStmtNode(expression(node));
         }
+    }
+
+    // ---- generators ----
+
+    /** Whether the code yields: a yield in it, not in a function, closure or class nested in it. */
+    private static boolean containsYield(Object value) {
+        if (!(value instanceof Ast node)) {
+            return false;
+        }
+        switch (node.kind) {
+            case "AST_YIELD":
+            case "AST_YIELD_FROM":
+                return true;
+            case "AST_CLOSURE":
+            case "AST_ARROW_FUNC":
+            case "AST_FUNC_DECL":
+            case "AST_CLASS":
+            case "AST_METHOD":
+                return false;
+            default:
+                break;
+        }
+        for (Object child : node.children()) {
+            if (containsYield(child)) {
+                return true;
+            }
+        }
+        for (Object child : node.namedValues()) {
+            if (containsYield(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The resumable variant of a statement on the path to a yield (see {@link GeneratorNodes}); null for a
+     * statement that is simply evaluated again on resume (an expression, echo, return).
+     */
+    private StmtNode resumableStatement(Ast node) {
+        switch (node.kind) {
+            case "AST_STMT_LIST": {
+                List<StmtNode> result = new ArrayList<>();
+                for (Object child : node.children()) {
+                    if (child instanceof Ast statement) {
+                        result.add(statement(statement));
+                    }
+                }
+                return new GeneratorNodes.BlockNode(result.toArray(new StmtNode[0]), hiddenSlot("block"));
+            }
+            case "AST_IF":
+                return resumableIf(node, 0);
+            case "AST_WHILE":
+            case "AST_DO_WHILE":
+                return new GeneratorNodes.WhileNode(expression(node.get("cond")), statements(node.node("stmts")),
+                        node.is("AST_WHILE"), hiddenSlot("while"));
+            case "AST_FOR":
+                return new GeneratorNodes.ForNode(expressionList(node.node("init")),
+                        expressionList(node.node("cond")), expressionList(node.node("loop")),
+                        statements(node.node("stmts")), hiddenSlot("for"));
+            case "AST_FOREACH": {
+                Ast value = node.node("value");
+                if (value.is("AST_REF") || value.is("AST_ARRAY")) {
+                    throw unsupported(node, "foreach by reference or into list() around a yield");
+                }
+                return new GeneratorNodes.ForeachNode(expression(node.get("expr")),
+                        node.get("key") == null ? null : place(node.get("key")), place(value),
+                        statements(node.node("stmts")), hiddenSlot("foreach"), hiddenSlot("subject"),
+                        hiddenSlot("position"));
+            }
+            case "AST_TRY":
+                return resumableTry(node);
+            case "AST_SWITCH":
+                throw unsupported(node, "yield inside switch");
+            default:
+                return null;
+        }
+    }
+
+    private StmtNode resumableIf(Ast node, int index) {
+        if (index >= node.size()) {
+            return null;
+        }
+        Ast element = (Ast) node.child(index);
+        Object condition = element.get("cond");
+        StmtNode body = statements(element.node("stmts"));
+        if (condition == null) {
+            return body;
+        }
+        return new GeneratorNodes.IfNode(expression(condition), body, resumableIf(node, index + 1),
+                hiddenSlot("if"));
+    }
+
+    private StmtNode resumableTry(Ast node) {
+        StmtNode body = statements(node.node("try"));
+        Ast catches = node.node("catches");
+        int count = catches == null ? 0 : catches.size();
+        String[][] types = new String[count][];
+        LValueNode[] targets = new LValueNode[count];
+        StmtNode[] bodies = new StmtNode[count];
+        for (int i = 0; i < count; i++) {
+            Ast handler = (Ast) catches.child(i);
+            Ast classes = handler.node("class");
+            types[i] = new String[classes.size()];
+            for (int j = 0; j < classes.size(); j++) {
+                types[i][j] = className((Ast) classes.child(j)).toLowerCase();
+            }
+            targets[i] = handler.get("var") == null ? null : place(handler.get("var"));
+            bodies[i] = statements(handler.node("stmts"));
+        }
+        StmtNode finallyBody = node.get("finally") == null ? null : statements(node.node("finally"));
+        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"));
     }
 
     private StmtNode ifChain(Ast node, int index) {
@@ -497,6 +638,10 @@ public final class Translator {
         for (int i = 0; i < captures.length; i++) {
             captureSlots[i] = bodyScope.slot(captures[i]);
         }
+        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(node.get("stmts"));
+        if (generator) {
+            body.generatorSlot = bodyScope.slot("\0generator");
+        }
         StmtNode statements;
         if (node.is("AST_ARROW_FUNC")) {
             Ast stmts = node.node("stmts");
@@ -520,7 +665,16 @@ public final class Translator {
             }
         }
         Ast returnType = node.node("returnType");
-        FunctionRootNode root = new FunctionRootNode(language, bodyScope.frame.build(), display, params,
+        FrameDescriptor descriptor = bodyScope.frame.build();
+        if (generator) {
+            FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
+                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(),
+                    lineSection(node.line));
+            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display)
+                    .getCallTarget(), body.generatorSlot);
+            return root.getCallTarget();
+        }
+        FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
                 statements, lineSection(node.line));
         return root.getCallTarget();
@@ -857,7 +1011,7 @@ public final class Translator {
             case "AST_INSTANCEOF": {
                 Ast classNode = node.node("class");
                 if (!classNode.is("AST_NAME")) {
-                    throw unsupported(node, "instanceof with a dynamic class");
+                    return new TestNodes.DynamicInstanceofNode(expression(node.get("expr")), expression(classNode));
                 }
                 String name = className(classNode);
                 if (name.equalsIgnoreCase("self") || name.equalsIgnoreCase("static")) {
@@ -880,6 +1034,19 @@ public final class Translator {
                 return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
                         forwarding);
             }
+            case "AST_YIELD":
+                if (generatorSlot < 0) {
+                    throw unsupported(node, "yield outside a function");
+                }
+                return new GeneratorNodes.YieldNode(node.get("key") == null ? null : expression(node.get("key")),
+                        node.get("value") == null ? null : expression(node.get("value")), hiddenSlot("yield"),
+                        generatorSlot);
+            case "AST_YIELD_FROM":
+                if (generatorSlot < 0) {
+                    throw unsupported(node, "yield from outside a function");
+                }
+                return new GeneratorNodes.YieldFromNode(expression(node.get("expr")), hiddenSlot("yield"),
+                        hiddenSlot("source"), hiddenSlot("position"), generatorSlot);
             case "AST_NEW":
                 if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                     return newAnonymousClass(node, classNode);
@@ -1356,7 +1523,14 @@ public final class Translator {
                 }
                 return new DynamicCompactNode(expressionList(args), scope == null ? null : scope.slots);
             }
-            case "extract":
+            case "extract": {
+                ExprNode[] extractArgs = expressionList(args);
+                if (extractArgs.length == 0) {
+                    break;
+                }
+                return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
+                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots);
+            }
             case "get_defined_vars":
                 throw unsupported(node, name + "()");
             default:
