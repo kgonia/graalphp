@@ -171,3 +171,43 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
   - **Conformance:** php-src's tests now run beside the kernels: 2,043 of 7,341 pass. They're the safety net for engine changes.
   - **Measurement fix:** PHP's opcache skipped files modified less than 2 seconds earlier (`file_update_protection`), so freshly written micro-benchmarks ran without the JIT on the PHP side. Now off in the image. The kernel files were old, so earlier Gate 1 numbers stand.
   - **Next:** apply the same rule to WordPress's hot paths: hash and string-key reads, `foreach`, property access and calls, where cold generic paths are compiled in too. Find what keeps fannkuch's function large.
+- **2026-10-23, measurement pass** (after "what is missing to reach the gate"):
+  - **Native time is now exact:**
+    - The Truffle PHP records each kernel's last-iteration PCRE2 calls (`-Dphp.pcre2.record`).
+    - `bench/gate1/pcre-replay.c` replays them against the same pcre2lib, called the way the preg wrappers and php-src call it, and reports the median of 200 passes.
+    - It replaces the Java-side estimate, which was 2–3× too high (wpautop 2.72 → 1.47 ms, kses 4.42 → 1.39 ms).
+    - It's a lower bound: in a real run, PHP code between matches evicts some cache lines.
+  - **Truffle needs 250–300 iterations to reach steady state on these kernels.** Tier 2 compiles of the big WordPress call trees take seconds; one `WP_Hook::do_action` compile took 1.8 s. Earlier runs judged iterations 75–100 or 151–200 and measured partly warmed-up code. `compare.sh` now defaults to 400 iterations.
+  - **Warmup** (the gate's third criterion): roughly 3 s for hooks and 6–7 s for kses until the plateau, on 8 pinned vCPUs.
+  - **Steady state** (500 iterations, a loaded window):
+
+    | Kernel | PHP 8.5 | Truffle | Native (replay) | End-to-end | PHP code |
+    |---|---:|---:|---:|---:|---:|
+    | hooks | 8.79 ms | 9.11 ms | 0 | 0.97× | 0.97× |
+    | escape | 1.67 ms | 1.66 ms | 0.05 ms | 1.00× | 1.00× |
+    | slugs | 1.03 ms | 1.77 ms | 0.13 ms | 0.58× | 0.55× |
+    | wpautop | 2.66 ms | 5.00 ms | 2.12 ms | 0.53× | 0.19× |
+    | wptexturize | 1.60 ms | 2.38 ms | 0.46 ms | 0.68× | 0.60× |
+    | blocks | 3.86 ms | 5.73 ms | 0.33 ms | 0.67× | 0.65× |
+    | kses | 13.13 ms | 20.70 ms | 1.89 ms | 0.63× | 0.60× |
+
+    Geomean **0.70× end to end, 0.58× PHP code**. The replay is load-sensitive too: wpautop's native time read 1.47 ms in a quieter window, which puts its PHP code at about 0.32×.
+  - **Per-primitive micro kernels** (`bench/micro`, 200k operations each, PHP's JIT on runtime-built arrays):
+    - **Faster than PHP:** inlined calls (11–70×), `isset` (1.85×), `new` (1.7×), property access (1.8×).
+    - **Slower:**
+
+      | Primitive | Speedup |
+      |---|---:|
+      | copy-on-write copy of a hash array | 0.20× |
+      | `foreach` over a list (0.34× before the fix below) | 0.51× |
+      | `.=` | 0.41× |
+      | `foreach` over a hash | 0.51× |
+      | string-key reads | 0.46–0.60× |
+      | string built-ins | 0.49× |
+
+    - **Calls Graal doesn't inline cost more than PHP's:** 6.5–7 ns for methods and statics against PHP's 3–3.5. A built-in costs **48 ns** against 2.6, because it goes through its own call target.
+  - **Tried:**
+    - `foreach` compiling only the array layouts it has seen, with the loop state in hidden frame slots: micro 1.7× faster, Gate 1 neutral, kept.
+    - Built-ins called directly from the call site, skipping their call target (48 → 13 ns per call when not inlined): Gate 1 neutral to slightly worse at steady state, and it made compiles bigger and slower. Reverted.
+  - **Profile of kses** (Truffle's CPU sampler, per PHP function): no hotspot. About 6% of samples are direct calls Graal didn't inline, each allocating an argument array and a frame. `preg_replace_callback` allocates a matcher and group arrays per match. Truffle drops the Tier 2 compile of a function "inlined into its only caller", even when the function is also reached indirectly; such functions keep running their Tier 1 code.
+  - **Where that leaves the gate:** hooks and escape are at parity. The regex-heavy kernels are at 0.2–0.65× on PHP code. To reach 2×, the slow primitives above need to become 3–10× faster, and calls that aren't inlined need to cost what PHP's do.

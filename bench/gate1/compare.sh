@@ -2,12 +2,14 @@
 # Runs the kernels on PHP and on the Truffle PHP back to back on the same cores, measures the regex time by
 # replaying the recorded PCRE2 calls in C (pcre-replay.c), then prints the comparison. Comparing runs made at different times is unreliable on a shared
 # machine: PHP's own timings moved by 30% between quiet and loaded periods.
-# Usage: bench/gate1/compare.sh [kernels|all] [iterations] [cpuset]   (defaults: all 200 14-21)
+# Usage: bench/gate1/compare.sh [kernels|all] [iterations] [cpuset]   (defaults: all 400 14-21)
+# Truffle reaches its plateau after 250-300 iterations of the WordPress kernels (Tier 2 compiles of the big
+# call trees take seconds), and the Truffle steady state is the last quarter: fewer iterations measure warmup.
 # DRIVER=bench/k0/run.php compares another kernel set (no native-time run: K0 makes no native calls).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 kernels=${1:-all}
-iterations=${2:-200}
+iterations=${2:-400}
 export CPUSET=${3:-14-21}
 driver=${DRIVER:-bench/gate1/run.php}
 out=target/compare
