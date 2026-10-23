@@ -71,14 +71,33 @@ public final class Convert {
         return 1;
     }
 
-    /** php-src's zend_dval_to_lval: out-of-range and non-finite values become 0. */
+    /**
+     * php-src's zend_dval_to_lval: non-finite values become 0, out-of-range ones wrap modulo 2^64
+     * (zend_dval_to_lval_slow).
+     */
     public static long doubleToLong(double d) {
-        if (!Double.isFinite(d) || d >= 9.223372036854775807E18 || d < -9.223372036854775808E18) {
-            return 0;
+        if (d >= 9.223372036854775807E18 || d < -9.223372036854775808E18 || d != d) {
+            return outOfRangeToLong(d);
         }
         return (long) d;
     }
 
+    @TruffleBoundary
+    private static long outOfRangeToLong(double d) {
+        if (!Double.isFinite(d)) {
+            return 0;
+        }
+        double twoPow64 = 18446744073709551616.0;
+        double dmod = d % twoPow64;
+        if (dmod < 0) {
+            dmod += twoPow64;
+        }
+        // (zend_long)(zend_ulong)dmod
+        return dmod >= 9.223372036854775807E18 ? (long) (dmod - 9.223372036854775807E18) + Long.MIN_VALUE
+                : (long) dmod;
+    }
+
+    /** zval_get_long of a string: a float-looking number saturates (zend_dval_to_lval_cap), as strtol would. */
     @TruffleBoundary
     public static long stringToLong(TruffleString s) {
         Object number = parseNumber(Str.readBytes(s), true);
@@ -86,7 +105,13 @@ public final class Convert {
             return l;
         }
         if (number instanceof Double d) {
-            return doubleToLong(d);
+            if (!Double.isFinite(d)) {
+                return 0;
+            }
+            if (d >= 9.223372036854775807E18 || d < -9.223372036854775808E18) {
+                return d > 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+            }
+            return (long) (double) d;
         }
         return 0;
     }
@@ -304,6 +329,16 @@ public final class Convert {
         }
         String digits = shortest.unscaledValue().toString();
         return (d < 0 ? "-" : "") + gcvt(digits, shortest.precision() - shortest.scale(), 17);
+    }
+
+    /**
+     * zend_gcvt(d, precision, '.', exponent) of a finite float: precision significant digits (zend_dtoa's mode
+     * 2), or the shortest round-trip digits (mode 0) when precision is negative.
+     */
+    @TruffleBoundary
+    public static String gcvt(double d, int precision, char exponent) {
+        String text = precision < 0 ? doubleToRepr(d) : formatDouble(d, precision);
+        return exponent == 'E' ? text : text.replace('E', exponent);
     }
 
     /** var_export's float (smart_str_append_double with zero_frac): doubleToRepr, plus ".0" if integral. */
