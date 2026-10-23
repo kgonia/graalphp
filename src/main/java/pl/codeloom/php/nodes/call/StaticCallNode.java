@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
@@ -27,6 +28,7 @@ public final class StaticCallNode extends ExprNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
+    @Child private SubclassTestNode subclassTest = SubclassTestNode.create();
     private final boolean forwarding;
 
     public StaticCallNode(ClassRefNode classRef, String methodName, ArgumentsNode args, boolean forwarding) {
@@ -41,7 +43,7 @@ public final class StaticCallNode extends ExprNode {
         PhpClass phpClass = classRef.resolve(frame);
         Object[] callerArgs = frame.getArguments();
         Object self = callerArgs[PhpFunction.ARG_THIS];
-        if (self instanceof PhpObject object && !object.getPhpClass().isSubclassOf(phpClass.getLowerName())) {
+        if (self instanceof PhpObject object && !subclassTest.execute(object.getPhpClass(), phpClass)) {
             self = null;
         }
         PhpClass staticClass = phpClass;

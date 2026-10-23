@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpNull;
@@ -71,7 +72,6 @@ public final class TestNodes {
         }
     }
 
-    /** `$x instanceof Name`; the class need not be loaded (an unknown class matches nothing). */
     /** `$x instanceof $class`: the class by name (a string) or as an object's class. */
     public static final class DynamicInstanceofNode extends ExprNode {
         @Override
@@ -117,6 +117,7 @@ public final class TestNodes {
         }
     }
 
+    /** `$x instanceof Name`; the class need not be loaded (an unknown class matches nothing). */
     public static final class InstanceofNode extends ExprNode {
         @Override
         public boolean isBooleanValued() {
@@ -124,6 +125,7 @@ public final class TestNodes {
         }
 
         @Child private ExprNode operand;
+        @Child private SubclassTestNode subclassTest = SubclassTestNode.create();
         private final String lowerClassName;
 
         public InstanceofNode(ExprNode operand, String lowerClassName) {
@@ -140,7 +142,7 @@ public final class TestNodes {
         public boolean executeCondition(VirtualFrame frame) {
             Object value = operand.execute(frame);
             if (value instanceof PhpObject object) {
-                return object.getPhpClass().isSubclassOf(lowerClassName);
+                return subclassTest.execute(object.getPhpClass(), lowerClassName);
             }
             if (value instanceof PhpClosure) {
                 return lowerClassName.equals("closure");
