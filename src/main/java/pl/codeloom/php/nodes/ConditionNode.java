@@ -22,7 +22,7 @@ public final class ConditionNode extends ExprNode {
     }
 
     @Override
-    public boolean executeBoolean(VirtualFrame frame) {
+    public boolean executeCondition(VirtualFrame frame) {
         return toBoolean.execute(value.execute(frame));
     }
 

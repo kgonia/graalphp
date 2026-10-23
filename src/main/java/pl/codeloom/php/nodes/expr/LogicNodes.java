@@ -33,16 +33,16 @@ public final class LogicNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            boolean first = left.executeBoolean(frame);
+        public boolean executeCondition(VirtualFrame frame) {
+            boolean first = left.executeCondition(frame);
             if (shortCircuit.profile(first == isOr)) {
                 return first;
             }
-            return right.executeBoolean(frame);
+            return right.executeCondition(frame);
         }
     }
 
@@ -62,12 +62,12 @@ public final class LogicNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            return left.executeBoolean(frame) ^ right.executeBoolean(frame);
+        public boolean executeCondition(VirtualFrame frame) {
+            return left.executeCondition(frame) ^ right.executeCondition(frame);
         }
     }
 
@@ -85,12 +85,12 @@ public final class LogicNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            return !operand.executeBoolean(frame);
+        public boolean executeCondition(VirtualFrame frame) {
+            return !operand.executeCondition(frame);
         }
     }
 
@@ -114,7 +114,7 @@ public final class LogicNodes {
                 Object value = condition.execute(frame);
                 return profile.profile(toBoolean.execute(value)) ? value : otherwise.execute(frame);
             }
-            return profile.profile(condition.executeBoolean(frame)) ? then.execute(frame) : otherwise.execute(frame);
+            return profile.profile(condition.executeCondition(frame)) ? then.execute(frame) : otherwise.execute(frame);
         }
     }
 

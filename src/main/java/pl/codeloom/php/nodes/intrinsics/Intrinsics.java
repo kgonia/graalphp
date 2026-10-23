@@ -232,11 +232,11 @@ public final class Intrinsics {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
+        public boolean executeCondition(VirtualFrame frame) {
             Object v = value.execute(frame);
             return switch (type) {
                 case ARRAY -> v instanceof PhpArray;

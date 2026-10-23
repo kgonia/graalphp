@@ -7,6 +7,7 @@ import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ConditionNode;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
@@ -84,7 +85,7 @@ public final class BasicStmts {
 
         @Override
         public void execute(VirtualFrame frame) {
-            if (profile.profile(condition.executeBoolean(frame))) {
+            if (profile.profile(condition.executeCondition(frame))) {
                 then.execute(frame);
             } else if (otherwise != null) {
                 otherwise.execute(frame);
@@ -127,7 +128,10 @@ public final class BasicStmts {
     public static final class GlobalNode extends StmtNode {
         @Child private LValueNode local;
         private final String name;
-        /** The global's reference, valid while the context's globals version is unchanged. */
+        /**
+         * The global's reference, valid while the context's globals version is unchanged. Kept only while the
+         * language serves one context: every context has its own globals, and a new one starts at version 0.
+         */
         private PhpRef cachedRef;
         private int cachedVersion = -1;
 
@@ -139,6 +143,10 @@ public final class BasicStmts {
         @Override
         public void execute(VirtualFrame frame) {
             PhpContext context = PhpContext.get(this);
+            if (!PhpLanguage.get(this).singleContext().isValid()) {
+                local.bindRef(frame, context.globalRef(name));
+                return;
+            }
             int version = context.globalsVersion();
             PhpRef ref = cachedRef;
             if (ref == null || cachedVersion != version) {

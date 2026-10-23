@@ -57,7 +57,7 @@ public final class LoopNodes {
 
         @Override
         public void execute(VirtualFrame frame) {
-            if (checkFirst && !condition.executeBoolean(frame)) {
+            if (checkFirst && !condition.executeCondition(frame)) {
                 return;
             }
             loop.execute(frame);
@@ -76,7 +76,7 @@ public final class LoopNodes {
 
         @Override
         public boolean executeRepeating(VirtualFrame frame) {
-            return runBody(body, frame) != EXIT && condition.executeBoolean(frame);
+            return runBody(body, frame) != EXIT && condition.executeCondition(frame);
         }
     }
 
@@ -128,7 +128,7 @@ public final class LoopNodes {
             for (int i = 0; i < last; i++) {
                 condition[i].execute(frame);
             }
-            return last < 0 || condition[last].executeBoolean(frame);
+            return last < 0 || condition[last].executeCondition(frame);
         }
     }
 

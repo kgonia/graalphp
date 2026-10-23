@@ -45,7 +45,15 @@ public final class ConstNode extends ExprNode {
     }
 
     @Override
-    public boolean executeBoolean(VirtualFrame frame) {
+    public boolean executeBoolean(VirtualFrame frame) throws UnexpectedResultException {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    @Override
+    public boolean executeCondition(VirtualFrame frame) {
         return truthy;
     }
 

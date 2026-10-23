@@ -28,12 +28,12 @@ public final class TestNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
         @ExplodeLoop
-        public boolean executeBoolean(VirtualFrame frame) {
+        public boolean executeCondition(VirtualFrame frame) {
             for (LValueNode place : places) {
                 if (!place.isSet(frame)) {
                     return false;
@@ -58,11 +58,11 @@ public final class TestNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
+        public boolean executeCondition(VirtualFrame frame) {
             if (operand instanceof LValueNode place) {
                 Object value = place.readIfSet(frame);
                 return value == null || value == PhpNull.NULL || !toBoolean.execute(value);
@@ -88,11 +88,11 @@ public final class TestNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+            return executeCondition(frame);
         }
 
         @Override
-        public boolean executeBoolean(VirtualFrame frame) {
+        public boolean executeCondition(VirtualFrame frame) {
             Object value = operand.execute(frame);
             if (value instanceof PhpObject object) {
                 return object.getPhpClass().isSubclassOf(lowerClassName);

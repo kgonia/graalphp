@@ -11,7 +11,30 @@ import pl.codeloom.php.runtime.Convert;
 public abstract class ExprNode extends Node {
     public abstract Object execute(VirtualFrame frame);
 
-    public boolean executeBoolean(VirtualFrame frame) {
+    /**
+     * Typed execute, as the DSL expects of every execute method: the value if it is a boolean, else
+     * UnexpectedResultException with the value. A condition's truthiness is {@link #executeCondition}.
+     */
+    public boolean executeBoolean(VirtualFrame frame) throws UnexpectedResultException {
+        Object value = execute(frame);
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        throw new UnexpectedResultException(value);
+    }
+
+    /**
+     * The value as a condition (if, while, &&, !): PHP truthiness. Boolean-valued nodes give their result without
+     * boxing; hand-written ones override this.
+     */
+    public boolean executeCondition(VirtualFrame frame) {
+        if (isBooleanValued()) {
+            try {
+                return executeBoolean(frame);
+            } catch (UnexpectedResultException e) {
+                return Convert.toBool(e.getResult());
+            }
+        }
         return Convert.toBool(execute(frame));
     }
 
@@ -31,7 +54,7 @@ public abstract class ExprNode extends Node {
         throw new UnexpectedResultException(value);
     }
 
-    /** Whether executeBoolean is this node's natural result (comparisons, tests, logic): no truthiness needed. */
+    /** Whether the node always yields a boolean (comparisons, tests, logic): conditions need no truthiness. */
     public boolean isBooleanValued() {
         return false;
     }

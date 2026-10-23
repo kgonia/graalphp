@@ -1,7 +1,7 @@
 <?php
 // Run by tests/shared/run.sh in many contexts at once on one engine: every context writes to arrays that start
 // as language-level data (a class's default property, a class constant, a constant array literal) and checks
-// that it only ever sees its own writes.
+// that it only ever sees its own writes. A global bound with `global` must be this context's own, too.
 class Box
 {
     const SEED = [1, 2, [3]];
@@ -30,6 +30,20 @@ for ($i = 0; $i < 20000; $i++) {
     Box::$log[] = $i;
 }
 if (count(Box::$log) !== 20001) {
+    $bad++;
+}
+
+function init_once()
+{
+    global $shared;
+    if (isset($shared)) {
+        return;
+    }
+    $shared = new stdClass();
+}
+
+init_once();
+if (!isset($shared)) {
     $bad++;
 }
 echo $bad === 0 ? "isolated\n" : "corrupted $bad\n";
