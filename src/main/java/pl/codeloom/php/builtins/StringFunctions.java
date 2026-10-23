@@ -20,7 +20,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /** ext/standard string functions, on bytes as php-src does (no locale: ASCII-only case mapping, as PHP 8.2+). */
-final class StringFunctions {
+public final class StringFunctions {
     private StringFunctions() {
     }
 
@@ -572,7 +572,7 @@ final class StringFunctions {
     }
 
     @TruffleBoundary
-    static TruffleString lower(TruffleString s) {
+    public static TruffleString lower(TruffleString s) {
         byte[] view = Str.readBytes(s);
         int first = 0;
         while (first < view.length && !(view[first] >= 'A' && view[first] <= 'Z')) {
@@ -591,7 +591,7 @@ final class StringFunctions {
     }
 
     @TruffleBoundary
-    static TruffleString upper(TruffleString s) {
+    public static TruffleString upper(TruffleString s) {
         byte[] view = Str.readBytes(s);
         int first = 0;
         while (first < view.length && !(view[first] >= 'a' && view[first] <= 'z')) {
@@ -610,7 +610,7 @@ final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString caseFirst(TruffleString s, boolean upper) {
+    public static TruffleString caseFirst(TruffleString s, boolean upper) {
         byte[] b = Str.bytes(s);
         if (b.length == 0) {
             return s;

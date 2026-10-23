@@ -8,6 +8,7 @@ import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.expr.ConstNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -17,6 +18,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
+import java.util.Arrays;
 import java.util.Set;
 
 /**
@@ -32,9 +34,12 @@ public final class Intrinsics {
     private static final Set<String> NAMES = Set.of("is_array", "is_string", "is_int", "is_integer", "is_long",
             "is_float", "is_double", "is_bool", "is_null", "is_object", "count", "sizeof", "strlen", "current",
             "pos", "key", "next", "prev", "reset", "end", "ord", "chr", "substr", "strpos", "str_contains",
-            "str_starts_with", "str_ends_with", "array_key_exists", "key_exists", "gettype", "strspn", "strcspn");
+            "str_starts_with", "str_ends_with", "array_key_exists", "key_exists", "gettype", "strspn", "strcspn",
+            "strtolower", "strtoupper", "trim", "ltrim", "rtrim", "chop", "ucfirst", "str_replace", "in_array",
+            "array_pop", "array_push", "array_slice");
 
-    private static final Set<String> BY_REF_FIRST = Set.of("next", "prev", "reset", "end");
+    private static final Set<String> BY_REF_FIRST = Set.of("next", "prev", "reset", "end", "array_pop",
+            "array_push");
 
     public static boolean handles(String lowerName) {
         return NAMES.contains(lowerName);
@@ -103,12 +108,54 @@ public final class Intrinsics {
             case "strspn":
             case "strcspn":
                 return n >= 2 && n <= 4 ? new SpanNode(args, lowerName.equals("strspn")) : null;
+            // DSL nodes (D10 step 2): missing optional arguments become their default values
+            case "strtolower":
+            case "strtoupper":
+                return n == 1 ? BuiltinNodesFactory.CaseNodeGen.create(lowerName.equals("strtoupper"), args) : null;
+            case "trim":
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(3, args) : null;
+            case "ltrim":
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(1, args) : null;
+            case "rtrim":
+            case "chop":
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(2, args) : null;
+            case "ucfirst":
+                return n == 1 ? BuiltinNodesFactory.UcfirstNodeGen.create(args) : null;
+            case "str_replace":
+                return n == 3 ? BuiltinNodesFactory.StrReplaceNodeGen.create(args) : null;
+            case "in_array":
+                return n == 2 || n == 3
+                        ? BuiltinNodesFactory.InArrayNodeGen.create(withDefaults(args, 2, Boolean.FALSE)) : null;
+            case "array_pop":
+                return n == 1 && writable(args[0]) ? BuiltinNodesFactory.ArrayPopNodeGen.create(
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0])}) : null;
+            case "array_push":
+                return n == 2 && writable(args[0]) ? BuiltinNodesFactory.ArrayPushNodeGen.create(
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]}) : null;
+            case "array_slice":
+                return n >= 2 && n <= 4
+                        ? BuiltinNodesFactory.ArraySliceNodeGen.create(withDefaults(args, 2, PhpNull.NULL, Boolean.FALSE))
+                        : null;
             default:
                 return null;
         }
     }
 
     // ---- shared helpers ----
+
+    /** The arguments, then constants for the missing optional ones (defaults: those after the required). */
+    private static ExprNode[] withDefaults(ExprNode[] args, int required, Object... defaults) {
+        ExprNode[] full = Arrays.copyOf(args, required + defaults.length);
+        for (int i = args.length; i < full.length; i++) {
+            full[i] = new ConstNode(defaults[i - required]);
+        }
+        return full;
+    }
+
+    /** A by-reference array argument a DSL node can take: a place that can be read and then written. */
+    private static boolean writable(ExprNode arg) {
+        return arg instanceof LValueNode place && place.isPure();
+    }
 
     /** A string argument: strings pass through, scalars convert (PHP's coercive mode), arrays are a TypeError. */
     static TruffleString string(Object value, String function, int position) {

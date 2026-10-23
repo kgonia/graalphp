@@ -478,6 +478,54 @@ public final class PhpArray implements TruffleObject {
         return nextIndex;
     }
 
+    /**
+     * array_pop(): removes and returns the last element (dereferenced), PhpNull when empty; the internal pointer
+     * goes back to the start and a popped trailing int key is reused by the next append. Packed arrays pop inline.
+     */
+    public Object pop() {
+        if (keys == null) {
+            if (size == 0) {
+                return PhpNull.NULL;
+            }
+            int last = --size;
+            Object value;
+            if (longs != null) {
+                value = longs[last];
+            } else {
+                Object raw = packed[last];
+                packed[last] = null;
+                countOut(raw, null);
+                value = PhpRef.deref(raw);
+            }
+            if (last == nextIndex - 1) {
+                nextIndex--;
+            }
+            pointer = size > 0 ? 0 : -1;
+            return value;
+        }
+        return popHashed();
+    }
+
+    @TruffleBoundary
+    private Object popHashed() {
+        int p = lastPosition();
+        if (p < 0) {
+            return PhpNull.NULL;
+        }
+        Object value = valueAt(p);
+        Object key = keyAt(p);
+        if (value instanceof PhpArray nested) {
+            nested.addHolder();
+        }
+        remove(key);
+        rewindNextIndex(key);
+        if (value instanceof PhpArray nested) {
+            nested.removeHolder();
+        }
+        setPointer(firstPosition());
+        return value;
+    }
+
     /** array_pop's extra step (unset doesn't do this): the popped last integer key is reused by the next append. */
     public void rewindNextIndex(Object poppedKey) {
         if (poppedKey instanceof Long index && index == nextIndex - 1) {

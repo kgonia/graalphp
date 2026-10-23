@@ -51,7 +51,9 @@ public final class Registry {
         if (variadicRef) {
             params[count - 1] = new PhpFunction.Param("rest", true, true, Boolean.TRUE, (char) 0, true);
         }
-        return new PhpFunction(name, params, false, isStatic, true, false,
+        PhpFunction function = new PhpFunction(name, params, false, isStatic, true, false,
                 () -> new BuiltinRootNode(language, name, body).getCallTarget());
+        function.setBuiltin(body);
+        return function;
     }
 }

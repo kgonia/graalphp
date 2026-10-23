@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
+import pl.codeloom.php.builtins.Builtin;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -37,6 +38,8 @@ public final class PhpFunction {
     private final boolean isPublic;
     private final boolean isAbstract;
     private final Supplier<RootCallTarget> factory;
+    /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
+    private Builtin builtin;
     private PhpClass declaringClass;
     private final Map<String, PhpRef> staticVariables = new HashMap<>();
 
@@ -95,6 +98,14 @@ public final class PhpFunction {
 
     public void setDeclaringClass(PhpClass declaringClass) {
         this.declaringClass = declaringClass;
+    }
+
+    public Builtin getBuiltin() {
+        return builtin;
+    }
+
+    public void setBuiltin(Builtin builtin) {
+        this.builtin = builtin;
     }
 
     public RootCallTarget getCallTarget() {

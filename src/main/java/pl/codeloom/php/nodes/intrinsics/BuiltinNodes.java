@@ -1,0 +1,300 @@
+package pl.codeloom.php.nodes.intrinsics;
+
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Fallback;
+import com.oracle.truffle.api.dsl.NodeChild;
+import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.strings.InternalByteArray;
+import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.StringFunctions;
+import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Str;
+
+/**
+ * Hot built-ins as Truffle DSL nodes (D10 step 2), compiled in place of the call: arguments are child nodes,
+ * specializations cover the common argument types with cached TruffleString nodes (the vectorized searches
+ * among them), and nothing on those paths is a boundary, so partial evaluation sees through the whole call.
+ * Every other case delegates to the function's regular built-in (BuiltinNode.callFull), which keeps the full
+ * PHP semantics in one place. The translator fills missing optional arguments with their defaults, so each
+ * node has a fixed arity; by-reference array arguments come through a {@link WritableArrayNode}.
+ */
+public final class BuiltinNodes {
+    private BuiltinNodes() {
+    }
+
+    /** A built-in function compiled in place. */
+    @NodeChild(value = "arguments", type = ExprNode[].class)
+    public abstract static class BuiltinNode extends ExprNode {
+        /**
+         * The regular built-in for the cases the specializations leave out, found in the current context: its Java
+         * body is called directly, as its call target would (a call through the target from here costs a frame
+         * and the call profiling on top).
+         */
+        @TruffleBoundary
+        protected final Object callFull(String name, Object... values) {
+            PhpFunction function = PhpContext.get(this).findFunction(name);
+            Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
+            System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
+            return PhpRef.deref(function.getBuiltin().call(arguments));
+        }
+
+        protected static boolean isString(Object value) {
+            return value instanceof TruffleString;
+        }
+    }
+
+    /**
+     * The array of a by-reference array argument, made exclusive for writing (array_pop($a), array_push($a, ...)),
+     * or the argument's value when it isn't an array. Created only for pure places, which can be read twice.
+     */
+    public static final class WritableArrayNode extends ExprNode {
+        @Child private LValueNode place;
+
+        public WritableArrayNode(LValueNode place) {
+            this.place = place;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object value = place.execute(frame);
+            return value instanceof PhpArray ? place.arrayForWrite(frame) : value;
+        }
+    }
+
+    @TruffleBoundary
+    static PhpError arrayTypeError(String function, Object value) {
+        return new PhpError("TypeError: " + function + "(): Argument #1 ($array) must be of type array, "
+                + Convert.typeName(value) + " given");
+    }
+
+    // ---- strings ----
+
+    /** strtolower / strtoupper: a vectorized scan for a letter to change; most strings have none. */
+    public abstract static class CaseNode extends BuiltinNode {
+        private static final TruffleString.CodePointSet UPPERCASE = TruffleString.CodePointSet.fromRanges(
+                new int[] {'A', 'Z'}, Str.ENC);
+        private static final TruffleString.CodePointSet LOWERCASE = TruffleString.CodePointSet.fromRanges(
+                new int[] {'a', 'z'}, Str.ENC);
+        private final boolean upper;
+
+        protected CaseNode(boolean upper) {
+            this.upper = upper;
+        }
+
+        @Specialization
+        protected TruffleString string(TruffleString s, @Cached TruffleString.ByteIndexOfCodePointSetNode find) {
+            if (find.execute(s, 0, s.byteLength(Str.ENC), upper ? LOWERCASE : UPPERCASE) < 0) {
+                return s;
+            }
+            return convert(s, upper);
+        }
+
+        @TruffleBoundary
+        private static TruffleString convert(TruffleString s, boolean upper) {
+            return upper ? StringFunctions.upper(s) : StringFunctions.lower(s);
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull(upper ? "strtoupper" : "strtolower", value);
+        }
+    }
+
+    /** trim / ltrim / rtrim with the default character set; a string with nothing to trim is returned as is. */
+    public abstract static class TrimNode extends BuiltinNode {
+        /** 1: left, 2: right, 3: both. */
+        private final int mode;
+
+        protected TrimNode(int mode) {
+            this.mode = mode;
+        }
+
+        @Specialization
+        protected TruffleString string(TruffleString s, @Cached TruffleString.GetInternalByteArrayNode bytes,
+                                       @Cached TruffleString.SubstringByteIndexNode substring) {
+            InternalByteArray internal = bytes.execute(s, Str.ENC);
+            byte[] array = internal.getArray();
+            int offset = internal.getOffset();
+            int length = internal.getLength();
+            int start = 0;
+            int end = length;
+            if ((mode & 1) != 0) {
+                while (start < end && isTrimmed(array[offset + start])) {
+                    start++;
+                }
+            }
+            if ((mode & 2) != 0) {
+                while (end > start && isTrimmed(array[offset + end - 1])) {
+                    end--;
+                }
+            }
+            if (start == 0 && end == length) {
+                return s;
+            }
+            return substring.execute(s, start, end - start, Str.ENC, true);
+        }
+
+        /** php-src's default: " \n\r\t\v\0". */
+        private static boolean isTrimmed(byte b) {
+            return b == ' ' || b == '\n' || b == '\r' || b == '\t' || b == 0x0B || b == 0;
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull(mode == 3 ? "trim" : mode == 1 ? "ltrim" : "rtrim", value);
+        }
+    }
+
+    /** ucfirst: unchanged unless the first byte is a lowercase ASCII letter. */
+    public abstract static class UcfirstNode extends BuiltinNode {
+        @Specialization
+        protected TruffleString string(TruffleString s, @Cached TruffleString.ReadByteNode read) {
+            if (s.byteLength(Str.ENC) == 0) {
+                return s;
+            }
+            int first = read.execute(s, 0, Str.ENC);
+            return first >= 'a' && first <= 'z' ? upperFirst(s) : s;
+        }
+
+        @TruffleBoundary
+        private static TruffleString upperFirst(TruffleString s) {
+            return StringFunctions.caseFirst(s, true);
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull("ucfirst", value);
+        }
+    }
+
+    /**
+     * str_replace(string, string, string): a vectorized search first; a subject without the search string (the
+     * usual case) is returned without copying. Arrays and the replacing itself go to the regular built-in.
+     */
+    public abstract static class StrReplaceNode extends BuiltinNode {
+        @Specialization
+        protected Object strings(TruffleString search, TruffleString replacement, TruffleString subject,
+                                 @Cached TruffleString.ByteIndexOfStringNode index) {
+            int length = subject.byteLength(Str.ENC);
+            int searchLength = search.byteLength(Str.ENC);
+            if (searchLength == 0 || searchLength > length || index.execute(subject, search, 0, length, Str.ENC) < 0) {
+                return subject;
+            }
+            return callFull("str_replace", search, replacement, subject);
+        }
+
+        @Fallback
+        protected Object other(Object search, Object replacement, Object subject) {
+            return callFull("str_replace", search, replacement, subject);
+        }
+    }
+
+    // ---- arrays ----
+
+    /**
+     * in_array(string, array[, strict]): string elements compare by bytes, plus PHP's numeric comparison when
+     * the needle is a numeric string; other element types use the full loose or strict comparison.
+     */
+    public abstract static class InArrayNode extends BuiltinNode {
+        @Specialization
+        protected boolean string(TruffleString needle, PhpArray haystack, boolean strict,
+                                 @Cached TruffleString.EqualNode equal) {
+            boolean numericNeedle = !strict && isNumeric(needle);
+            for (int p = haystack.firstPosition(); p >= 0; p = haystack.nextPosition(p)) {
+                Object value = haystack.valueAt(p);
+                if (value instanceof TruffleString element) {
+                    if (equal.execute(element, needle, Str.ENC)
+                            || numericNeedle && Convert.looseEquals(element, needle)) {
+                        return true;
+                    }
+                } else if (!strict && Convert.looseEquals(value, needle)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @TruffleBoundary
+        private static boolean isNumeric(TruffleString s) {
+            return Convert.numericValue(s) != null;
+        }
+
+        @Fallback
+        protected Object other(Object needle, Object haystack, Object strict) {
+            return callFull("in_array", needle, haystack, strict);
+        }
+    }
+
+    /** array_pop($a): packed arrays pop inline. */
+    public abstract static class ArrayPopNode extends BuiltinNode {
+        @Specialization
+        protected Object array(PhpArray array) {
+            return array.pop();
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            CompilerDirectives.transferToInterpreter();
+            throw arrayTypeError("array_pop", value);
+        }
+    }
+
+    /** array_push($a, $value): one value, appended in place. */
+    public abstract static class ArrayPushNode extends BuiltinNode {
+        @Specialization
+        protected long array(PhpArray array, Object value) {
+            // array_push($a, $a) pushes the array as it was, not the array that now contains itself
+            array.append(value == array ? array.copy() : value);
+            return array.size();
+        }
+
+        @Fallback
+        protected Object other(Object target, Object value) {
+            CompilerDirectives.transferToInterpreter();
+            throw arrayTypeError("array_push", target);
+        }
+    }
+
+    /**
+     * array_slice of a packed list with int bounds and renumbered keys (WP_Hook's argument trimming), built
+     * inline; other arrays and arguments go to the regular built-in.
+     */
+    public abstract static class ArraySliceNode extends BuiltinNode {
+        @Specialization(guards = {"array.isPacked()", "isLengthOrNull(length)", "preserveKeys == false"})
+        protected PhpArray packed(PhpArray array, long offset, Object length, boolean preserveKeys) {
+            int n = array.size();
+            long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+            long end;
+            if (length instanceof Long count) {
+                end = count < 0 ? Math.max(start, n + count) : Math.min(n, start + count);
+            } else {
+                end = n;
+            }
+            PhpArray result = new PhpArray();
+            for (int p = (int) start; p < end; p++) {
+                result.append(array.valueAt(p));
+            }
+            return result;
+        }
+
+        protected static boolean isLengthOrNull(Object length) {
+            return length instanceof Long || length == PhpNull.NULL;
+        }
+
+        @Fallback
+        protected Object other(Object array, Object offset, Object length, Object preserveKeys) {
+            return callFull("array_slice", array, offset, length, preserveKeys);
+        }
+    }
+}
