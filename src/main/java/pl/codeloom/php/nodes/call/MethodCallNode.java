@@ -106,7 +106,6 @@ public final class MethodCallNode extends ExprNode {
         protected PhpFunction find(PhpClass phpClass) {
             PhpFunction method = phpClass.findMethod(lowerName);
             if (method == null) {
-                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
             }
             return method;

@@ -189,7 +189,6 @@ public final class PhpClass {
     @TruffleBoundary
     public PhpObject instantiate() {
         if (!isInstantiable()) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
         PhpObject object = new PhpObject(rootShape, this, PhpContext.get(null).nextObjectId());

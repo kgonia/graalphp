@@ -1,6 +1,5 @@
 package pl.codeloom.php.runtime;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
@@ -97,7 +96,6 @@ public final class Callables {
     public static Target resolveOrThrow(PhpContext context, Object callable) {
         Target target = resolve(context, callable);
         if (target == null) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("TypeError: Argument must be a valid callback, got " + describe(callable));
         }
         return target;

@@ -228,7 +228,6 @@ public final class ForeachNode extends StmtNode {
     private static PhpObject unwrapAggregates(PhpObject object) {
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
             if (!(object.callMethod("getiterator") instanceof PhpObject inner)) {
-                CompilerDirectives.transferToInterpreter();
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

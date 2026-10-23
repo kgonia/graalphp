@@ -1,6 +1,5 @@
 package pl.codeloom.php.nodes.call;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -105,7 +104,6 @@ public final class ArgumentsNode extends Node {
     @TruffleBoundary
     private static void addSpread(List<Object> values, Object value) {
         if (!(value instanceof PhpArray array)) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Only arrays and Traversables can be unpacked");
         }
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {

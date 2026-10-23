@@ -905,8 +905,8 @@ public final class PhpArray implements TruffleObject {
     }
 
     @Override
+    @TruffleBoundary
     public String toString() {
-        CompilerDirectives.transferToInterpreterAndInvalidate();
         StringBuilder out = new StringBuilder("array(");
         for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
             out.append(keyAt(p)).append("=>").append(valueAt(p)).append(", ");

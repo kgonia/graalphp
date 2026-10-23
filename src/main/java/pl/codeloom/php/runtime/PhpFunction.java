@@ -41,7 +41,8 @@ public final class PhpFunction {
     /** The declaring class's name for messages ("C::m"); null for functions and shared built-in methods. */
     private String className;
 
-    @CompilationFinal private RootCallTarget callTarget;
+    /** Made on first call; volatile because contexts on several threads share the function. */
+    @CompilationFinal private volatile RootCallTarget callTarget;
 
     public PhpFunction(String name, Param[] params, boolean returnsRef, boolean isStatic, boolean isPublic,
                        boolean isAbstract, Supplier<RootCallTarget> factory) {

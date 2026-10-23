@@ -1,6 +1,5 @@
 package pl.codeloom.php.nodes.intrinsics;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -86,7 +85,7 @@ public final class Intrinsics {
             case "prev":
             case "reset":
             case "end":
-                return n == 1 && args[0] instanceof LValueNode place ? new MoveNode(place, lowerName) : null;
+                return n == 1 && writable(args[0]) ? new MoveNode((LValueNode) args[0], lowerName) : null;
             case "ord":
                 return n == 1 ? BuiltinNodesFactory.OrdNodeGen.create(args) : null;
             case "chr":
@@ -186,7 +185,6 @@ public final class Intrinsics {
     @TruffleBoundary
     private static TruffleString convertString(Object value, String function, int position) {
         if (value instanceof PhpArray) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("TypeError: " + function + "(): Argument #" + position + " must be of type string, "
                     + "array given");
         }
