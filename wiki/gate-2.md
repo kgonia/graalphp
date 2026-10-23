@@ -84,3 +84,20 @@ What the boot needed, in the order the boot loop hit it:
 7. `compact()` with names computed at run time: frame slots looked up by name, behind a boundary.
 
 The next milestones are the installer and the home page over HTTP. The census above still lists the gaps the boot path doesn't reach: `goto`, generators, `extract`, DOM, Reflection, and others.
+
+## php-src `.phpt` score: strict and lenient (2026-10-23)
+
+When both engines die, `tests/phpt/compare.py` used to count the case as passed whatever the reason. A case could then "pass" because Truffle PHP died on a missing class while PHP died on the error the test checks. Now:
+- the oracle (`tests/phpt/oracle.sh`) logs PHP's errors per case to `expected/<case>.err`;
+- the **strict** score also needs the same fatal message. The comparison ignores the "Uncaught" prefix, the exception class, file paths and line numbers;
+- the **lenient** score is the old one;
+- the cases that pass only leniently are `fatal-reason`, listed with both messages in `target/phpt/fatal-reasons.txt`.
+
+At `7cbeca2`, of 7341 cases:
+
+| Score | Passing |
+|---|---:|
+| Strict | 2431 (33.1%) |
+| Lenient | 2636 (35.9%) |
+
+Of the 205 cases that pass only leniently, 101 died on a missing class, such as `DateTime`, `ArrayObject` or `ReflectionClass`. Most of the rest are message details, for example `on NULL` vs `on null`, `integer given` vs `int given`, and a missing "previously declared in". The strict score is the one to report.

@@ -3,9 +3,12 @@
 Usage: python compare.py <phpt dir>      (reads <dir>/expected and <dir>/actual, writes <dir>/report.txt)
 
 A case passes when stdout is byte-identical and both engines agree on whether the script died (PHP exit code
-255 on a fatal error or uncaught exception). Failures are classified by their first cause: no AST export (the
-file doesn't parse), an unsupported construct or built-in, a timeout, an internal (Java) error, a fatal error
-on one side only, or different output.
+255 on a fatal error or uncaught exception). When both died, the strict score also wants the same reason: PHP's
+fatal message (from its log, expected/<case>.err) against the one Truffle PHP died with, compared without the
+exception class, file paths and line numbers. A case that passes only leniently is "fatal-reason"; the report
+gives both scores. Failures are classified by their first cause: no AST export (the file doesn't parse), an
+unsupported construct or built-in, a timeout, an internal (Java) error, a fatal error on one side only, a
+different reason to die, or different output.
 """
 import collections
 import os
@@ -24,6 +27,30 @@ def results(path):
     return rows
 
 
+def reason(message):
+    """A fatal message without "Uncaught", the exception class, paths, line numbers and the stack trace."""
+    # PHP's log line ends at a NUL (an anonymous class's name has one)
+    message = message.strip().split("\n")[0].split("\0")[0]
+    message = re.sub(r" in \S*:\d+$| in \S+ on line \d+$", "", message)
+    if message.startswith("Uncaught "):
+        # "Uncaught Class: message", or "Uncaught Class" for an exception without a message
+        message = re.sub(r"^[\w\\]+$|^[\w\\]+: ", "", message[len("Uncaught "):])
+    message = re.sub(r"^User error: |^[A-Z][\w\\]*: ", "", message)
+    message = re.sub(r"(/[\w.\-]+)+\.(php|inc)", "%s", message)
+    message = re.sub(r"(on line |:)\d+", r"\1%d", message)
+    return message.strip()
+
+
+def php_reason(case):
+    """PHP's last fatal error message, or None if its log has none."""
+    path = os.path.join(base, "expected", case + ".err")
+    if not os.path.exists(path):
+        return None
+    log = open(path, encoding="utf-8", errors="replace").read()
+    found = re.findall(r"PHP Fatal error:  (.*)", log)
+    return found[-1] if found else None
+
+
 expected = results(os.path.join(base, "expected", "results.txt"))
 actual = {k.replace("target/phpt/cases/", "", 1): v for k, v in results(os.path.join(base, "actual", "results.txt")).items()}
 
@@ -32,6 +59,7 @@ by_dir = collections.defaultdict(collections.Counter)
 missing = collections.Counter()
 unsupported = collections.Counter()
 lines = []
+reasons = []
 for case, (outcome, code) in sorted(expected.items()):
     top = "/".join(case.split("/")[:3]) if case.startswith("ext/") else "/".join(case.split("/")[:2])
     if outcome == "skip":
@@ -65,6 +93,10 @@ for case, (outcome, code) in sorted(expected.items()):
             unsupported[re.sub(r"\s+at .*|\d+", "", message)[:90]] += 1
         elif got == want and php_died == we_died:
             kind = "pass"
+            wanted = php_reason(case) if php_died else None
+            if wanted is not None and reason(wanted) != reason(message):
+                kind = "fatal-reason"
+                reasons.append(f"{case}\n    php:  {reason(wanted)}\n    ours: {reason(message)}")
         elif php_died != we_died:
             kind = "fatal-mismatch"
         else:
@@ -75,7 +107,9 @@ for case, (outcome, code) in sorted(expected.items()):
         lines.append(f"{case}\t{kind}\t{actual.get(case, ['-'])[0][:160]}")
 
 ran = sum(kinds.values())
-report = [f"cases compared: {ran}, passing: {kinds['pass']} ({kinds['pass'] * 100 / max(ran, 1):.1f}%)", ""]
+lenient = kinds["pass"] + kinds["fatal-reason"]
+report = [f"cases compared: {ran}, passing: {kinds['pass']} ({kinds['pass'] * 100 / max(ran, 1):.1f}%) strict, "
+          f"{lenient} ({lenient * 100 / max(ran, 1):.1f}%) lenient (dying for any reason when PHP dies)", ""]
 report += [f"{v:6}  {k}" for k, v in kinds.most_common()]
 report += ["", "by directory (pass / total):"]
 for d, c in sorted(by_dir.items()):
@@ -85,4 +119,5 @@ report += ["", "most-needed missing functions:"] + [f"  {v:4}  {k}" for k, v in 
 report += ["", "most frequent unsupported constructs:"] + [f"  {v:4}  {k}" for k, v in unsupported.most_common(25)]
 open(os.path.join(base, "report.txt"), "w", encoding="utf-8", newline="\n").write("\n".join(report) + "\n")
 open(os.path.join(base, "failures.txt"), "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+open(os.path.join(base, "fatal-reasons.txt"), "w", encoding="utf-8", newline="\n").write("\n".join(reasons) + "\n")
 print("\n".join(report[:2 + len(kinds) + 1 + len(by_dir) + 2]))
