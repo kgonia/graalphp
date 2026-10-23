@@ -743,26 +743,7 @@ final class ArrayFunctions {
 
     @TruffleBoundary
     private static Object pop(PhpRef ref) {
-        if (!(ref.get() instanceof PhpArray)) {
-            return PhpNull.NULL;
-        }
-        PhpArray array = ref.arrayForWrite();
-        int p = array.lastPosition();
-        if (p < 0) {
-            return PhpNull.NULL;
-        }
-        Object value = array.valueAt(p);
-        Object key = array.keyAt(p);
-        if (value instanceof PhpArray nested) {
-            nested.addHolder();
-        }
-        array.remove(key);
-        array.rewindNextIndex(key);
-        if (value instanceof PhpArray nested) {
-            nested.removeHolder();
-        }
-        array.setPointer(array.firstPosition());
-        return value;
+        return ref.get() instanceof PhpArray ? ref.arrayForWrite().pop() : PhpNull.NULL;
     }
 
     @TruffleBoundary

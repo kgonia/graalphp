@@ -7,7 +7,7 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,29 +27,47 @@ final class Html {
     private static final int XHTML = 32;
     private static final int HTML5 = 48;
 
-    /** Per doctype: entity name to UTF-8 bytes, in php-src's table order. */
-    private static final Map<Integer, Map<String, byte[]>> TABLES = new HashMap<>();
-
     private Html() {
     }
 
-    private static synchronized Map<String, byte[]> table(int doctype) {
-        return TABLES.computeIfAbsent(doctype, d -> {
-            String file = switch (d) {
-                case XML1 -> "entities-xml1.txt";
-                case XHTML -> "entities-xhtml.txt";
-                case HTML5 -> "entities-html5.txt";
-                default -> "entities-html401.txt";
-            };
-            Map<String, byte[]> map = new LinkedHashMap<>();
-            for (String line : new String(StringFunctions.resource(file), StandardCharsets.UTF_8).split("\n")) {
-                int tab = line.indexOf('\t');
-                if (tab > 0) {
-                    map.put(line.substring(0, tab), HexFormat.of().parseHex(line.substring(tab + 1)));
-                }
+    /*
+     * Per doctype, entity name to UTF-8 bytes in php-src's table order: one holder class each, so a table is
+     * loaded on first use (the JVM's class initialization makes that once and thread-safe) and then read lock-free.
+     */
+    private static final class Html401 {
+        static final Map<String, byte[]> TABLE = load("entities-html401.txt");
+    }
+
+    private static final class Xml1 {
+        static final Map<String, byte[]> TABLE = load("entities-xml1.txt");
+    }
+
+    private static final class Xhtml {
+        static final Map<String, byte[]> TABLE = load("entities-xhtml.txt");
+    }
+
+    private static final class Html5 {
+        static final Map<String, byte[]> TABLE = load("entities-html5.txt");
+    }
+
+    private static Map<String, byte[]> table(int doctype) {
+        return switch (doctype) {
+            case XML1 -> Xml1.TABLE;
+            case XHTML -> Xhtml.TABLE;
+            case HTML5 -> Html5.TABLE;
+            default -> Html401.TABLE;
+        };
+    }
+
+    private static Map<String, byte[]> load(String file) {
+        Map<String, byte[]> map = new LinkedHashMap<>();
+        for (String line : new String(StringFunctions.resource(file), StandardCharsets.UTF_8).split("\n")) {
+            int tab = line.indexOf('\t');
+            if (tab > 0) {
+                map.put(line.substring(0, tab), HexFormat.of().parseHex(line.substring(tab + 1)));
             }
-            return map;
-        });
+        }
+        return Collections.unmodifiableMap(map);
     }
 
     // ---- htmlspecialchars ----
@@ -66,7 +84,7 @@ final class Html {
             String replacement = null;
             int consumed = 1;
             if (b >= 0x80) {
-                int length = utf8Length(s, i);
+                int length = JsonFunctions.Utf8.sequenceLength(s, i);
                 if (length > 0) {
                     i += length;
                     continue;
@@ -116,45 +134,12 @@ final class Html {
         return Str.of(out.toByteArray());
     }
 
-    /** Length of a valid UTF-8 sequence at i (rejecting overlongs, surrogates and > U+10FFFF), else 0. */
-    static int utf8Length(byte[] s, int i) {
-        int b0 = s[i] & 0xFF;
-        if (b0 < 0x80) {
-            return 1;
-        }
-        if (b0 < 0xC2) {
-            return 0;
-        }
-        if (b0 < 0xE0) {
-            return i + 1 < s.length && cont(s[i + 1]) ? 2 : 0;
-        }
-        if (b0 < 0xF0) {
-            if (i + 2 >= s.length || !cont(s[i + 1]) || !cont(s[i + 2])) {
-                return 0;
-            }
-            int cp = (b0 & 0x0F) << 12 | (s[i + 1] & 0x3F) << 6 | (s[i + 2] & 0x3F);
-            return cp < 0x800 || cp >= 0xD800 && cp <= 0xDFFF ? 0 : 3;
-        }
-        if (b0 < 0xF5) {
-            if (i + 3 >= s.length || !cont(s[i + 1]) || !cont(s[i + 2]) || !cont(s[i + 3])) {
-                return 0;
-            }
-            int cp = (b0 & 0x07) << 18 | (s[i + 1] & 0x3F) << 12 | (s[i + 2] & 0x3F) << 6 | (s[i + 3] & 0x3F);
-            return cp < 0x10000 || cp > 0x10FFFF ? 0 : 4;
-        }
-        return 0;
-    }
-
-    private static boolean cont(byte b) {
-        return (b & 0xC0) == 0x80;
-    }
-
     /** How many bytes php-src's get_next_char skips for an invalid sequence: the lead plus valid continuations. */
     private static int invalidLength(byte[] s, int i) {
         int b0 = s[i] & 0xFF;
         int expected = b0 >= 0xF0 ? 4 : b0 >= 0xE0 ? 3 : b0 >= 0xC2 ? 2 : 1;
         int n = 1;
-        while (n < expected && i + n < s.length && cont(s[i + n])) {
+        while (n < expected && i + n < s.length && (s[i + n] & 0xC0) == 0x80) {
             n++;
         }
         return n == expected ? 1 : n;
