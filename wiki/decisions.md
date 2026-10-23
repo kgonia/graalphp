@@ -42,3 +42,35 @@ Gate 1 answers a peak-performance question, and AST and bytecode interpreters re
 ## D9: Gate 1 reference is PHP 8.5, and Go is judged on the PHP-code speedup (2026-10-22)
 - **PHP 8.5:** it is the newest stable release (8.5.12; 8.6 is at RC4), and the retro says to compare against the newest PHP. 8.4.27 is measured too.
 - **PHP-code speedup:** both engines run the same PCRE2, so regex time caps the end-to-end speedup regardless of Graal (side agent note, 2026-10-22). Gate 1 times native calls on the Truffle side and judges (T_php - T_native) / (T_truffle - T_native), with end-to-end reported next to it. Details in [gate-1.md](gate-1.md).
+
+## D10: migrate to idiomatic Truffle structure, in a fixed order (2026-10-23)
+**Decision:** the runtime moves to the structure that Truffle languages (GraalJS, TruffleRuby, GraalPy) and the Truffle guides use. The steps run in the order below. Each step is done when the Gate 1 checksums, the smoke tests and the php-src run show no regressions, and an alternating-order A/B is neutral or better.
+
+**Why:** Gate 1 stands at 0.58× on PHP code. A review found that the runtime departs from the Truffle idiom where it hurts most:
+- **Hand-written nodes.** Only 5 of 50 node files use the Truffle DSL, and polymorphism is never reported to the runtime, so splitting never triggers. Each specialization has been re-implemented by hand: the array and `foreach` "seen" flags.
+- **Built-ins are Java lambdas behind one boundary.** That means argument arrays, boxing, and 48 ns per call when not inlined, against PHP's 2.6 ns.
+- **Array layouts are if-chains in one class**, not storage types dispatched by DSL guards.
+- **17 static mutable fields** hold per-context state.
+- **ASTs are tied to a context.** A WordPress server with a context per request would re-translate and re-warm everything on every request.
+
+The first versions got all kernels running fast; their limits are now measured.
+
+**Migration order:**
+1. **Per-context state.** Move the static mutable fields into `PhpContext`, and thread-safe shared caches (compiled regexes) into `PhpLanguage`. Small and mechanical; it removes `BatchMain`'s manual resets. Debug-only statics (`NativeClock`, `PcreRecorder`) may stay.
+2. **Hot built-ins as DSL nodes.** Pick the set by measurement (`--engine.InstrumentBoundaries`, call counts in the kernels). Each becomes a node with `@Specialization`s and cached `TruffleString` nodes, with a boundary only around code partial evaluation can't handle. The lambda built-ins stay for the long tail. The existing `Intrinsics` are the start of this.
+3. **Core nodes on the DSL.** Element access, assignment, `foreach` and calls get DSL specializations that report polymorphism. `PhpArray` storage dispatches by type through guards (int list, Object list, hash), replacing the hand-written seen flags.
+4. **Context-independent ASTs and `ContextPolicy.SHARED`.**
+   - Translation no longer takes a `PhpContext`.
+   - Nodes cache only language-level objects (function and class templates), checked per context.
+   - Parsed files are cached per language.
+
+   Must land before Gate 2: a server reuses compiled code across requests.
+5. **Bytecode DSL evaluation**, the Gate 2 decision already set in D6, judged on warmup and memory over WordPress-sized code.
+6. **Own parser and instrumentation tags** (D5's planned replacement; statement, call and root tags for debugging, coverage and statement-level profiling).
+
+**Rules for new code from now on:**
+- Node behaviour that depends on value types is written with the DSL.
+- No mutable `static` state.
+- A built-in that is hot in measured kernels becomes a node.
+- `@TruffleBoundary` only wraps code partial evaluation can't handle, never a whole built-in on a hot path.
+- Partially evaluated code uses cached `TruffleString` nodes, not the uncached helpers.
