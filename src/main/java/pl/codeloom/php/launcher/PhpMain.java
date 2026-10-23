@@ -2,8 +2,10 @@ package pl.codeloom.php.launcher;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
+import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.io.IOAccess;
 
 import java.io.File;
 import java.io.IOException;
@@ -66,7 +68,11 @@ public final class PhpMain {
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", phpArgs)
-                .allowAllAccess(true)
+                // php-cli's access: files, the process environment, native code (PCRE2)
+                .allowIO(IOAccess.ALL)
+                .allowEnvironmentAccess(EnvironmentAccess.INHERIT)
+                .allowNativeAccess(true)
+                .allowExperimentalOptions(true)
                 .build()) {
             context.eval(source);
         } catch (PolyglotException e) {

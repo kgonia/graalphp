@@ -1,8 +1,10 @@
 package pl.codeloom.php.launcher;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.io.IOAccess;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -130,7 +132,11 @@ public final class BatchMain {
                 .arguments("php", new String[] {script})
                 .out(out)
                 .err(err)
-                .allowAllAccess(true)
+                // php-cli's access: files, the process environment, native code (PCRE2)
+                .allowIO(IOAccess.ALL)
+                .allowEnvironmentAccess(EnvironmentAccess.INHERIT)
+                .allowNativeAccess(true)
+                .allowExperimentalOptions(true)
                 .build()) {
             running.set(context);
             context.eval(source);

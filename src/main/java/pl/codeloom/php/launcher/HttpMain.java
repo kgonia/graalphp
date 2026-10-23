@@ -8,6 +8,7 @@ import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.io.IOAccess;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -164,7 +165,10 @@ public final class HttpMain {
         String failure = null;
         try (Context context = Context.newBuilder("php")
                 .engine(engine)
-                .allowAllAccess(true)
+                // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
+                .allowIO(IOAccess.ALL)
+                .allowNativeAccess(true)
+                .allowExperimentalOptions(true)
                 .allowEnvironmentAccess(EnvironmentAccess.NONE)
                 .environment(cgiEnvironment(exchange, script, scriptName, body.length))
                 .in(new ByteArrayInputStream(body))
