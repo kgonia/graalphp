@@ -158,10 +158,6 @@ final class EncodingFunctions {
             return reader.value();
         } catch (IllegalArgumentException | IndexOutOfBoundsException malformed) {
             return Boolean.FALSE;
-        } catch (StackOverflowError tooDeep) {
-            // ponytail: recursive reader, ~2000 nested levels on a default stack where php-src takes 4096;
-            // an explicit stack if real data ever nests that deep
-            return Boolean.FALSE;
         }
     }
 
@@ -206,7 +202,122 @@ final class EncodingFunctions {
             }
         }
 
+        /**
+         * An array or object being read: its elements come as key, value, key, value... Nesting is kept on an
+         * explicit stack, not the Java one, so the depth php-src allows (4096) fits any thread.
+         */
+        private static final class Container {
+            final long count;
+            final PhpArray array;
+            final PhpObject object;
+            final PhpClass phpClass;
+            long read;
+            Object key;
+
+            Container(long count, PhpArray array, PhpObject object, PhpClass phpClass) {
+                this.count = count;
+                this.array = array;
+                this.object = object;
+                this.phpClass = phpClass;
+            }
+        }
+
+        /** The value at the current position, with everything nested in it. */
         Object value() {
+            java.util.ArrayDeque<Container> open = new java.util.ArrayDeque<>();
+            while (true) {
+                Object value;
+                Container started = start();
+                if (started == null) {
+                    value = scalar();
+                } else if (started.count > 0) {
+                    open.push(started);
+                    continue;
+                } else {
+                    value = finish(started);
+                }
+                // hand the value to the containers it completes, innermost first
+                while (true) {
+                    Container top = open.peek();
+                    if (top == null) {
+                        return value;
+                    }
+                    if (top.key == null) {
+                        if (!(value instanceof Long) && !(value instanceof TruffleString)) {
+                            throw new IllegalArgumentException("unserialize: a key must be an int or a string");
+                        }
+                        top.key = value;
+                        break;
+                    }
+                    store(top, top.key, value);
+                    top.key = null;
+                    if (++top.read < top.count) {
+                        break;
+                    }
+                    open.pop();
+                    value = finish(top);
+                }
+            }
+        }
+
+        /** An array or object header (`a:n:{`, `O:len:"Class":n:{`), or null for a scalar. */
+        private Container start() {
+            char type = (char) s[pos];
+            if (type == 'a') {
+                expect("a:");
+                long count = number(':');
+                expect("{");
+                enter(count);
+                return new Container(count, new PhpArray(), null, null);
+            }
+            if (type != 'O') {
+                return null;
+            }
+            expect("O:");
+            String className = Str.java(bytes(number(':')));
+            expect(":");
+            long count = number(':');
+            expect("{");
+            enter(count);
+            boolean allowed = allowedClasses == null || allowedClasses.contains(className.toLowerCase(Locale.ROOT));
+            PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
+            PhpObject object;
+            if (phpClass != null) {
+                object = phpClass.instantiate();
+            } else {
+                object = context.getClass("__PHP_Incomplete_Class").instantiate();
+                object.setProperty("__PHP_Incomplete_Class_Name", Str.of(className));
+            }
+            return new Container(count, null, object, phpClass);
+        }
+
+        private static void store(Container container, Object key, Object value) {
+            if (container.array != null) {
+                container.array.put(ArrayKey.of(key), value);
+                return;
+            }
+            String name = Str.java(Convert.toStr(key));
+            // private and protected properties are serialized as "\0Class\0name" and "\0*\0name"
+            if (name.startsWith("\0")) {
+                name = name.substring(name.indexOf('\0', 1) + 1);
+            }
+            container.object.setProperty(name.intern(), value);
+        }
+
+        /** The closing brace: the array, or the object (woken if its class has __wakeup). */
+        private Object finish(Container container) {
+            expect("}");
+            leave(container.count);
+            if (container.array != null) {
+                return container.array;
+            }
+            if (container.phpClass != null && container.phpClass.findMethod("__wakeup") != null) {
+                container.object.callMethod("__wakeup");
+            }
+            return container.object;
+        }
+
+        private Object scalar() {
             char type = (char) s[pos];
             switch (type) {
                 case 'N':
@@ -236,52 +347,6 @@ final class EncodingFunctions {
                     TruffleString value = bytes(number(':'));
                     expect(";");
                     return value;
-                }
-                case 'a': {
-                    expect("a:");
-                    long count = number(':');
-                    expect("{");
-                    enter(count);
-                    PhpArray array = new PhpArray();
-                    for (long i = 0; i < count; i++) {
-                        Object key = ArrayKey.of(value());
-                        array.put(key, value());
-                    }
-                    expect("}");
-                    leave(count);
-                    return array;
-                }
-                case 'O': {
-                    expect("O:");
-                    String className = Str.java(bytes(number(':')));
-                    expect(":");
-                    long count = number(':');
-                    expect("{");
-                    enter(count);
-                    boolean allowed = allowedClasses == null
-                            || allowedClasses.contains(className.toLowerCase(Locale.ROOT));
-                    PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
-                    PhpObject object;
-                    if (phpClass != null) {
-                        object = phpClass.instantiate();
-                    } else {
-                        object = context.getClass("__PHP_Incomplete_Class").instantiate();
-                        object.setProperty("__PHP_Incomplete_Class_Name", Str.of(className));
-                    }
-                    for (long i = 0; i < count; i++) {
-                        String name = Str.java(Convert.toStr(value()));
-                        // private and protected properties are serialized as "\0Class\0name" and "\0*\0name"
-                        if (name.startsWith("\0")) {
-                            name = name.substring(name.indexOf('\0', 1) + 1);
-                        }
-                        object.setProperty(name.intern(), value());
-                    }
-                    expect("}");
-                    leave(count);
-                    if (phpClass != null && phpClass.findMethod("__wakeup") != null) {
-                        object.callMethod("__wakeup");
-                    }
-                    return object;
                 }
                 default:
                     throw new IllegalArgumentException("unserialize: unexpected " + type);

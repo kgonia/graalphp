@@ -38,7 +38,9 @@ var_dump(@unserialize('s:-1:"";'));
 var_dump(@unserialize('a:1:{i:0;a:1:{i:0;a:0:{}}}', ['max_depth' => 2]));
 var_dump(count(unserialize('a:1:{i:0;a:1:{i:0;a:0:{}}}', ['max_depth' => 3])));
 var_dump(@unserialize(str_repeat('a:1:{i:0;', 5000) . 'i:1;' . str_repeat('}', 5000)));
-var_dump(count(unserialize(str_repeat('a:1:{i:0;', 2000) . 'i:1;' . str_repeat('}', 2000))));
+var_dump(count(unserialize(str_repeat('a:1:{i:0;', 4096) . 'i:1;' . str_repeat('}', 4096))));
+var_dump(@unserialize(str_repeat('a:1:{i:0;', 4097) . 'i:1;' . str_repeat('}', 4097)));
+var_dump(@unserialize('a:1:{a:0:{}i:1;}'));
 
 try {
     unserialize(serialize(new Fails()));
