@@ -1,16 +1,11 @@
 package pl.codeloom.php.nodes;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.profiles.ValueProfile;
-import pl.codeloom.php.runtime.Convert;
 
-/**
- * A value used as a condition. PHP truthiness depends on the type; the class profile lets a site that always sees
- * one type (nearly all of them) compile to that one test instead of the whole type chain.
- */
+/** A value used as a condition: PHP truthiness by a {@link ToBooleanNode}, specialized on the value's type. */
 public final class ConditionNode extends ExprNode {
     @Child private ExprNode value;
-    private final ValueProfile type = ValueProfile.createClassProfile();
+    @Child private ToBooleanNode toBoolean = ToBooleanNode.create();
 
     private ConditionNode(ExprNode value) {
         this.value = value;
@@ -28,7 +23,7 @@ public final class ConditionNode extends ExprNode {
 
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
-        return Convert.toBool(type.profile(value.execute(frame)));
+        return toBoolean.execute(value.execute(frame));
     }
 
     @Override

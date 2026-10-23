@@ -747,7 +747,7 @@ public final class Translator {
             case "AST_EMPTY":
                 return new TestNodes.EmptyNode(expression(node.get("expr")));
             case "AST_CAST":
-                return new UnaryNodes.CastNode(expression(node.get("expr")), node.flags);
+                return UnaryNodes.CastNode.create(expression(node.get("expr")), node.flags);
             case "AST_INSTANCEOF": {
                 Ast classNode = node.node("class");
                 if (!classNode.is("AST_NAME")) {
@@ -1021,11 +1021,11 @@ public final class Translator {
             case 14:
                 return new LogicNodes.NotNode(operand);
             case 13:
-                return new UnaryNodes.BitNotNode(operand);
+                return UnaryNodes.BitNotNode.create(operand);
             case 260:
                 return operand;
             case 261:
-                return new UnaryNodes.PlusNode(operand);
+                return UnaryNodes.PlusNode.create(operand);
             case 262: {
                 Object constant = operand.constantValue();
                 if (constant instanceof Long l && l != Long.MIN_VALUE) {
@@ -1034,7 +1034,7 @@ public final class Translator {
                 if (constant instanceof Double d) {
                     return new ConstNode(-d);
                 }
-                return new UnaryNodes.NegateNode(operand);
+                return UnaryNodes.NegateNode.create(operand);
             }
             default:
                 throw unsupported(node, "unary operator " + node.flags);
