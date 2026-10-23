@@ -152,3 +152,22 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
       - An inline type check for typed parameters.
   - **Tried and reverted:** packed-array growth out of line. The boundary stops escape analysis of short-lived arrays (slugs +27%, kses +16%). ParallelGC was mixed (hooks 2× worse).
   - **Where the gap is now:** no single hotspot is left. The kses functions run at 0.6–0.9× each, and the rest is per-call overhead spread across array access, `preg_*` wrappers on short strings, and object creation (`new` is still 2–3× PHP's cost). Reaching the 2× go line on PHP code needs a structural change, not more trimming. Candidates: TRegex for the regexes it supports (D7), array storage specialized by shape, and a native image for steadier steady state.
+- **2026-10-23, first-principles pass** (details in [first-principles.md](first-principles.md)):
+  - **What changed:** packed int arrays are now unboxed `long[]`, and an element access compiles only the case it has seen. A call or field write left on a cold path made every access reload the array's fields.
+  - **K0 arithmetic kernels:** 1.96× PHP's JIT (geomean; was 1.63×). fannkuch (0.66×) and mandelbrot (0.81×) remain below PHP.
+  - **WordPress kernels:**
+
+    | Kernel | PHP 8.5 | Truffle | End-to-end |
+    |---|---:|---:|---:|
+    | hooks | 7.96 ms | 9.34 ms | 0.85× |
+    | escape | 1.47 ms | 1.54 ms | 0.95× |
+    | slugs | 0.99 ms | 1.48 ms | 0.67× |
+    | wpautop | 2.82 ms | 4.21 ms | 0.67× |
+    | wptexturize | 1.60 ms | 2.91 ms | 0.55× |
+    | blocks | 4.55 ms | 5.84 ms | 0.78× |
+    | kses | 12.18 ms | 22.32 ms | 0.55× |
+
+    Geomean **0.70×** end to end (was 0.64–0.69×), same window, cores 14–21, 100 iterations. Checksums are identical.
+  - **Conformance:** php-src's tests now run beside the kernels: 2,043 of 7,341 pass. They're the safety net for engine changes.
+  - **Measurement fix:** PHP's opcache skipped files modified less than 2 seconds earlier (`file_update_protection`), so freshly written micro-benchmarks ran without the JIT on the PHP side. Now off in the image. The kernel files were old, so earlier Gate 1 numbers stand.
+  - **Next:** apply the same rule to WordPress's hot paths: hash and string-key reads, `foreach`, property access and calls, where cold generic paths are compiled in too. Find what keeps fannkuch's function large.

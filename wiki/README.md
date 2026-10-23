@@ -11,6 +11,7 @@
 | [decisions.md](decisions.md) | Numbered decisions with the reason for each |
 | [graalphp-assessment.md](graalphp-assessment.md) | Why graalphp is a reference, not a base to fork |
 | [gate-1.md](gate-1.md) | Gate 1 spec, method, go/no-go criteria and status log |
+| [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
 ## Status
@@ -18,7 +19,7 @@
 | Gate | State |
 |---|---|
 | Gate 0: Amdahl ceiling of WordPress on php-fpm | not started (can run in parallel with Gate 1) |
-| **Gate 1: Truffle core vs PHP 8.5 JIT on extracted WordPress hot functions** | **in progress: all 7 kernels correct; 0.64–0.69× of PHP 8.5 JIT end to end on a quiet box (go needs 2× on PHP code); PHP-code metric for regex kernels needs a C replay of PCRE calls; engine micro-benchmarks up to 12× faster than PHP** |
+| **Gate 1: Truffle core vs PHP 8.5 JIT on extracted WordPress hot functions** | **in progress: all 7 kernels correct; 0.70× of PHP 8.5 JIT end to end (go needs 2× on PHP code); K0 arithmetic kernels 1.96× geomean; php-src tests 27.8% passing (2,043 / 7,341); PHP-code metric for regex kernels needs a C replay of PCRE calls** |
 | Gate 2: WordPress boots and renders | — |
 | Gate 3: drop-in parity | — |
 | Gate 4: performance and publication | — |
