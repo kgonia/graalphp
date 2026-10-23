@@ -1,3 +1,9 @@
+datetimeinterface	date.php
+datetimezone	date.php
+truffledatetime	date.php
+datetimeimmutable	date.php
+datetime	date.php
+dateinterval	date.php
 recursiveiterator	spl.php
 outeriterator	spl.php
 seekableiterator	spl.php

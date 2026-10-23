@@ -3,7 +3,11 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
 import java.time.DateTimeException;
@@ -51,6 +55,298 @@ final class DateFunctions {
         });
         r.fn("date_default_timezone_get", (context, a) -> Str.of(zone(context).getId()));
         r.fn("timezone_identifiers_list", a -> identifiers());
+
+        // ---- the prelude's date classes (src/main/php/prelude/date.php): instants in seconds, zones by name ----
+        // ---- the procedural API over the date classes ----
+        r.fn("date_create", (context, a) -> construct(context, "DateTime", a));
+        r.fn("date_create_immutable", (context, a) -> construct(context, "DateTimeImmutable", a));
+        r.fn("date_create_from_format", (context, a) -> staticCall(context, "DateTime", "createfromformat", a));
+        r.fn("date_create_immutable_from_format", (context, a) -> staticCall(context, "DateTimeImmutable",
+                "createfromformat", a));
+        r.fn("timezone_open", (context, a) -> construct(context, "DateTimeZone", a));
+        r.fn("date_format", a -> method(a, "format"));
+        r.fn("date_timestamp_get", a -> method(a, "gettimestamp"));
+        r.fn("date_timezone_get", a -> method(a, "gettimezone"));
+        r.fn("date_offset_get", a -> method(a, "getoffset"));
+        r.fn("date_timezone_set", a -> method(a, "settimezone"));
+        r.fn("date_modify", a -> method(a, "modify"));
+        r.fn("date_add", a -> method(a, "add"));
+        r.fn("date_sub", a -> method(a, "sub"));
+        r.fn("date_diff", a -> method(a, "diff"));
+        r.fn("timezone_name_get", a -> method(a, "getname"));
+        r.fn("timezone_offset_get", a -> method(a, "getoffset"));
+
+        r.fn("truffle\\timezone_name", a -> {
+            ZoneId zone = parseZone(Str.java(Args.str(a, 0)));
+            return zone == null ? (Object) Boolean.FALSE : Str.of(zoneName(zone, Str.java(Args.str(a, 0))));
+        });
+        r.fn("truffle\\timezone_offset", a -> (long) zoneOf(a, 0).getRules()
+                .getOffset(Instant.ofEpochSecond(Args.lng(a, 1, 0))).getTotalSeconds());
+        r.fn("truffle\\date_format", a -> Str.of(format(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0),
+                zoneOf(a, 2))));
+        r.fn("truffle\\date_parse", a -> {
+            Long result = strtotime(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0), zoneOf(a, 2));
+            return result == null ? (Object) Boolean.FALSE : result;
+        });
+        r.fn("truffle\\date_from_format", a -> fromFormat(Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1)),
+                zoneOf(a, 2)));
+        r.fn("truffle\\date_set", a -> set(Args.lng(a, 0, 0), zoneOf(a, 1), a));
+        r.fn("truffle\\date_add", a -> add(Args.lng(a, 0, 0), zoneOf(a, 1), a));
+        r.fn("truffle\\date_diff", a -> diff(Args.lng(a, 0, 0), Args.lng(a, 1, 0), zoneOf(a, 2)));
+    }
+
+    /** new Class(...args), or false if the constructor throws (date_create() and timezone_open() don't throw). */
+    @TruffleBoundary
+    private static Object construct(PhpContext context, String className, Object[] a) {
+        PhpObject object = context.getClass(className).instantiate();
+        try {
+            object.callMethod("__construct", arguments(a, 0));
+        } catch (PhpException | PhpError e) {
+            return Boolean.FALSE;
+        }
+        return object;
+    }
+
+    @TruffleBoundary
+    private static Object staticCall(PhpContext context, String className, String method, Object[] a) {
+        PhpClass phpClass = context.getClass(className);
+        return phpClass.findMethod(method).invoke(null, phpClass, arguments(a, 0));
+    }
+
+    /** $object->method(...rest) for the procedural forms: date_format($date, $format) is $date->format($format). */
+    @TruffleBoundary
+    private static Object method(Object[] a, String method) {
+        if (!(Args.get(a, 0) instanceof PhpObject object)) {
+            throw new PhpError("TypeError: Argument #1 must be a date object");
+        }
+        return object.callMethod(method, arguments(a, 1));
+    }
+
+    private static Object[] arguments(Object[] a, int from) {
+        Object[] values = new Object[Math.max(0, Args.count(a) - from)];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = Args.get(a, from + i);
+        }
+        return values;
+    }
+
+    /** A timezone as PHP names them: an identifier, UTC, an offset (+02:00, +0200) or an abbreviation; or null. */
+    @TruffleBoundary
+    static ZoneId parseZone(String name) {
+        String trimmed = name.trim();
+        if (trimmed.equalsIgnoreCase("UTC") || trimmed.equalsIgnoreCase("GMT")) {
+            return ZoneId.of("UTC");
+        }
+        if (trimmed.equalsIgnoreCase("Z")) {
+            return ZoneOffset.UTC;
+        }
+        Matcher offset = Pattern.compile("([+-])(\\d{1,2}):?(\\d{2})?").matcher(trimmed);
+        if (offset.matches()) {
+            int hours = Integer.parseInt(offset.group(2));
+            int minutes = offset.group(3) == null ? 0 : Integer.parseInt(offset.group(3));
+            int sign = offset.group(1).equals("-") ? -1 : 1;
+            return ZoneOffset.ofTotalSeconds(sign * (hours * 3600 + minutes * 60));
+        }
+        try {
+            return ZoneId.of(trimmed, ZoneId.SHORT_IDS);
+        } catch (DateTimeException e) {
+            for (String id : ZoneId.getAvailableZoneIds()) {
+                if (id.equalsIgnoreCase(trimmed)) {
+                    return ZoneId.of(id);
+                }
+            }
+            return null;
+        }
+    }
+
+    /** DateTimeZone::getName(): the identifier as given for regions, "+02:00" for offsets, UTC for UTC. */
+    private static String zoneName(ZoneId zone, String given) {
+        if (zone instanceof ZoneOffset offset) {
+            return given.trim().equalsIgnoreCase("Z") ? "Z" : offsetName(offset);
+        }
+        return zone.getId();
+    }
+
+    /** An offset zone's name: +02:00, and +00:00 rather than java.time's "Z". */
+    private static String offsetName(ZoneOffset offset) {
+        return offset.getTotalSeconds() == 0 ? "+00:00" : offset.getId();
+    }
+
+    private static ZoneId zoneOf(Object[] a, int index) {
+        ZoneId zone = parseZone(Str.java(Args.str(a, index)));
+        return zone == null ? ZoneOffset.UTC : zone;
+    }
+
+    /** date_set(ts, zone, year, month, day, hour, minute, second): null parts stay; out-of-range parts roll over. */
+    @TruffleBoundary
+    private static long set(long timestamp, ZoneId zone, Object[] a) {
+        ZonedDateTime t = Instant.ofEpochSecond(timestamp).atZone(zone);
+        long year = part(a, 2, t.getYear());
+        long month = part(a, 3, t.getMonthValue());
+        long day = part(a, 4, t.getDayOfMonth());
+        long hour = part(a, 5, t.getHour());
+        long minute = part(a, 6, t.getMinute());
+        long second = part(a, 7, t.getSecond());
+        return LocalDate.of((int) year, 1, 1).atStartOfDay(zone).plusMonths(month - 1).plusDays(day - 1)
+                .plusHours(hour).plusMinutes(minute).plusSeconds(second).toEpochSecond();
+    }
+
+    private static long part(Object[] a, int index, long current) {
+        return Args.has(a, index) && Args.get(a, index) != PhpNull.NULL ? Args.lng(a, index, 0) : current;
+    }
+
+    /** date_add(ts, zone, y, m, d, h, i, s, sign): a DateInterval added (sign 1) or subtracted (-1). */
+    @TruffleBoundary
+    private static long add(long timestamp, ZoneId zone, Object[] a) {
+        long sign = Args.lng(a, 8, 1);
+        ZonedDateTime t = Instant.ofEpochSecond(timestamp).atZone(zone);
+        return t.plusYears(sign * Args.lng(a, 2, 0)).plusMonths(sign * Args.lng(a, 3, 0))
+                .plusDays(sign * Args.lng(a, 4, 0)).plusHours(sign * Args.lng(a, 5, 0))
+                .plusMinutes(sign * Args.lng(a, 6, 0)).plusSeconds(sign * Args.lng(a, 7, 0)).toEpochSecond();
+    }
+
+    /** date_diff(from, to, zone): [y, m, d, h, i, s, invert, days], as DateTime::diff computes the parts. */
+    @TruffleBoundary
+    private static PhpArray diff(long from, long to, ZoneId zone) {
+        boolean invert = to < from;
+        ZonedDateTime start = Instant.ofEpochSecond(invert ? to : from).atZone(zone);
+        ZonedDateTime end = Instant.ofEpochSecond(invert ? from : to).atZone(zone);
+        java.time.Period period = java.time.Period.between(start.toLocalDate(), end.toLocalDate());
+        long seconds = java.time.Duration.between(start.toLocalTime(), end.toLocalTime()).getSeconds();
+        if (seconds < 0) {
+            period = period.minusDays(1);
+            seconds += 86400;
+            if (period.getDays() < 0) {
+                period = java.time.Period.between(start.toLocalDate(), end.toLocalDate().minusDays(1));
+            }
+        }
+        long days = ChronoUnit.DAYS.between(start.toLocalDateTime(), end.toLocalDateTime());
+        return PhpArray.list((long) period.getYears(), (long) period.getMonths(), (long) period.getDays(),
+                seconds / 3600, seconds / 60 % 60, seconds % 60, invert ? 1L : 0L, days);
+    }
+
+    /**
+     * DateTime::createFromFormat for the common characters: d j m n Y y H G h g i s A a U, month and day names,
+     * zones (e T P O), `!` and `|` (reset unparsed parts to the epoch's), backslash escapes. Unparsed parts are now's.
+     */
+    @TruffleBoundary
+    private static Object fromFormat(String format, String value, ZoneId zone) {
+        ZonedDateTime now = ZonedDateTime.now(zone);
+        Integer year = null;
+        Integer month = null;
+        Integer day = null;
+        Integer hour = null;
+        Integer minute = null;
+        Integer second = null;
+        boolean pm = false;
+        boolean meridian = false;
+        boolean reset = false;
+        Long epoch = null;
+        int at = 0;
+        for (int i = 0; i < format.length(); i++) {
+            char c = format.charAt(i);
+            if (c == '\\' && i + 1 < format.length()) {
+                i++;
+                if (at >= value.length() || value.charAt(at) != format.charAt(i)) {
+                    return Boolean.FALSE;
+                }
+                at++;
+                continue;
+            }
+            if (c == '!' || c == '|') {
+                reset = true;
+                continue;
+            }
+            int width = switch (c) {
+                case 'd', 'm', 'H', 'h', 'i', 's', 'y' -> 2;
+                case 'j', 'n', 'G', 'g' -> -2;
+                case 'Y' -> 4;
+                case 'U' -> -12;
+                default -> 0;
+            };
+            if (width != 0) {
+                int max = Math.abs(width);
+                int start = at;
+                if (c == 'U' && at < value.length() && value.charAt(at) == '-') {
+                    at++;
+                }
+                while (at < value.length() && at - start < max && Character.isDigit(value.charAt(at))) {
+                    at++;
+                }
+                if (at == start || width > 0 && c != 'Y' && at - start != max) {
+                    return Boolean.FALSE;
+                }
+                long number = Long.parseLong(value.substring(start, at));
+                switch (c) {
+                    case 'd', 'j' -> day = (int) number;
+                    case 'm', 'n' -> month = (int) number;
+                    case 'Y' -> year = (int) number;
+                    case 'y' -> year = (int) (number < 70 ? 2000 + number : 1900 + number);
+                    case 'H', 'G', 'h', 'g' -> hour = (int) number;
+                    case 'i' -> minute = (int) number;
+                    case 's' -> second = (int) number;
+                    case 'U' -> epoch = number;
+                    default -> {
+                    }
+                }
+                continue;
+            }
+            int wordStart = at;
+            switch (c) {
+                case 'A', 'a' -> {
+                    if (at + 2 > value.length()) {
+                        return Boolean.FALSE;
+                    }
+                    pm = value.substring(at, at + 2).equalsIgnoreCase("pm");
+                    meridian = true;
+                    at += 2;
+                }
+                case 'M', 'D' -> at = Math.min(value.length(), at + 3);
+                case 'F', 'l' -> {
+                    while (at < value.length() && Character.isLetter(value.charAt(at))) {
+                        at++;
+                    }
+                }
+                case 'e', 'T', 'P', 'O' -> {
+                    int start = at;
+                    while (at < value.length() && " ".indexOf(value.charAt(at)) < 0) {
+                        at++;
+                    }
+                    ZoneId parsed = parseZone(value.substring(start, at));
+                    if (parsed == null) {
+                        return Boolean.FALSE;
+                    }
+                    zone = parsed;
+                }
+                default -> {
+                    if (at >= value.length() || value.charAt(at) != c) {
+                        return Boolean.FALSE;
+                    }
+                    at++;
+                }
+            }
+            if ((c == 'M' || c == 'F') && at - wordStart >= 3) {
+                month = monthNumber(value.substring(wordStart, at));
+            }
+        }
+        if (at != value.length()) {
+            return Boolean.FALSE;
+        }
+        if (epoch != null) {
+            return epoch;
+        }
+        if (meridian && hour != null) {
+            hour = hour % 12 + (pm ? 12 : 0);
+        }
+        boolean anyTime = hour != null || minute != null || second != null;
+        int y = year != null ? year : reset ? 1970 : now.getYear();
+        int mo = month != null ? month : reset ? 1 : now.getMonthValue();
+        int d = day != null ? day : reset ? 1 : now.getDayOfMonth();
+        int h = hour != null ? hour : reset || anyTime ? 0 : now.getHour();
+        int mi = minute != null ? minute : reset || anyTime ? 0 : now.getMinute();
+        int se = second != null ? second : reset || anyTime ? 0 : now.getSecond();
+        return LocalDate.of(y, 1, 1).atStartOfDay(zone).plusMonths(mo - 1).plusDays(d - 1).plusHours(h)
+                .plusMinutes(mi).plusSeconds(se).toEpochSecond();
     }
 
     private static ZoneId zone(PhpContext context) {
@@ -142,7 +438,7 @@ final class DateFunctions {
                 case 's' -> out.append(two(t.getSecond()));
                 case 'u' -> out.append("000000");
                 case 'v' -> out.append("000");
-                case 'e' -> out.append(zone.getId());
+                case 'e' -> out.append(zone instanceof ZoneOffset offset ? offsetName(offset) : zone.getId());
                 case 'I' -> out.append(zone.getRules().isDaylightSavings(t.toInstant()) ? 1 : 0);
                 case 'O' -> out.append(offset(t, false));
                 case 'P' -> out.append(offset(t, true));
