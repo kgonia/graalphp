@@ -47,6 +47,9 @@ public final class PhpContext {
     private final Set<String> included = new HashSet<>();
     private final java.util.ArrayDeque<ByteBuilder> buffers = new java.util.ArrayDeque<>();
     private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
+    /** The next object id: ids start at 1 in each context, as in each php process. */
+    private int nextObjectId = 1;
+    private final pl.codeloom.php.runtime.Callables.LastCall lastCall = new pl.codeloom.php.runtime.Callables.LastCall();
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot) {
         this.language = language;
@@ -54,8 +57,6 @@ public final class PhpContext {
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
-        pl.codeloom.php.runtime.Callables.resetCache();
-        pl.codeloom.php.runtime.PhpObject.resetIds();
         Builtins.install(this);
         pl.codeloom.php.runtime.PhpArray argv = new pl.codeloom.php.runtime.PhpArray();
         for (String argument : env.getApplicationArguments()) {
@@ -67,6 +68,15 @@ public final class PhpContext {
 
     public static PhpContext get(Node node) {
         return CONTEXT.get(node);
+    }
+
+    public int nextObjectId() {
+        return nextObjectId++;
+    }
+
+    /** The callable that Callables.call resolved last in this context. */
+    public pl.codeloom.php.runtime.Callables.LastCall lastCall() {
+        return lastCall;
     }
 
     public PhpLanguage getLanguage() {

@@ -12,20 +12,14 @@ import com.oracle.truffle.api.strings.TruffleString;
  * nodes get shape-based inline caches. Property order is insertion order: declared properties first, as PHP.
  */
 public final class PhpObject extends DynamicObject {
-    private static int nextId = 1;
-
-    /** Object ids (var_dump's #n, spl_object_id) start at 1 in each context, as in each php process. */
-    public static void resetIds() {
-        nextId = 1;
-    }
-
     private final PhpClass phpClass;
     private final int id;
 
-    public PhpObject(Shape shape, PhpClass phpClass) {
+    /** id: var_dump's #n and spl_object_id(), from {@code PhpContext.nextObjectId()}. */
+    public PhpObject(Shape shape, PhpClass phpClass, int id) {
         super(shape);
         this.phpClass = phpClass;
-        this.id = nextId++;
+        this.id = id;
     }
 
     public PhpClass getPhpClass() {

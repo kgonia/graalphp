@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
+import pl.codeloom.php.PhpContext;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -160,7 +161,7 @@ public final class PhpClass {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
-        PhpObject object = new PhpObject(rootShape, this);
+        PhpObject object = new PhpObject(rootShape, this, PhpContext.get(null).nextObjectId());
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
         String[] names = declaredNames();
         Object[] defaults = declaredDefaults();

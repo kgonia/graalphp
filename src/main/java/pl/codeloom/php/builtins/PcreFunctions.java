@@ -71,8 +71,12 @@ final class PcreFunctions {
             "Malformed UTF-8 characters, possibly incorrectly encoded",
             "The offset did not correspond to the beginning of a valid UTF-8 code point", "JIT stack limit exhausted"};
 
-    private static final Map<TruffleString, Regex> CACHE = new HashMap<>();
-    private static int lastError;
+    /** Compiled patterns of this context, by regex string (php-src's per-process pcre cache). */
+    private final Map<TruffleString, Regex> regexes = new HashMap<>();
+    /** Parsed preg_replace replacement strings. */
+    private final Map<TruffleString, Template> templates = new HashMap<>();
+    private final SubjectCache subjects = new SubjectCache();
+    private int lastError;
 
     /** A compiled pattern with its group names and a reusable match block (php-src's mdata, guarded the same way). */
     private static final class Regex {
@@ -118,15 +122,15 @@ final class PcreFunctions {
      */
     private static final class SubjectCache {
         private static final int LARGE = 4096;
-        private static MemorySegment[] scratch = new MemorySegment[4];
-        private static int depth;
-        private static byte[][] subjects = new byte[8][];
-        private static MemorySegment[] buffers = new MemorySegment[8];
-        private static int[] users = new int[8];
-        private static int next;
+        private MemorySegment[] scratch = new MemorySegment[4];
+        private int depth;
+        private byte[][] subjects = new byte[8][];
+        private MemorySegment[] buffers = new MemorySegment[8];
+        private int[] users = new int[8];
+        private int next;
 
         /** The entry holding the subject's native copy (copied in unless already there); release it after use. */
-        static int acquire(byte[] subject) {
+        int acquire(byte[] subject) {
             if (subject.length < LARGE) {
                 return acquireScratch(subject);
             }
@@ -147,7 +151,7 @@ final class PcreFunctions {
             return slot;
         }
 
-        private static int acquireScratch(byte[] subject) {
+        private int acquireScratch(byte[] subject) {
             if (depth == scratch.length) {
                 scratch = Arrays.copyOf(scratch, depth * 2);
             }
@@ -160,11 +164,11 @@ final class PcreFunctions {
             return -1 - depth++;
         }
 
-        static MemorySegment segment(int slot) {
+        MemorySegment segment(int slot) {
             return slot >= 0 ? buffers[slot] : scratch[-1 - slot];
         }
 
-        static void release(int slot) {
+        void release(int slot) {
             if (slot >= 0) {
                 users[slot]--;
             } else {
@@ -172,7 +176,7 @@ final class PcreFunctions {
             }
         }
 
-        private static int unusedSlot() {
+        private int unusedSlot() {
             for (int k = 0; k < users.length; k++) {
                 int i = (next + k) % users.length;
                 if (users[i] == 0) {
@@ -198,12 +202,14 @@ final class PcreFunctions {
         final MemorySegment matchData;
         final MemorySegment ovector;
         final boolean ownsMatchData;
+        final SubjectCache subjects;
 
-        Matcher(Regex regex, byte[] subject) {
+        Matcher(SubjectCache subjects, Regex regex, byte[] subject) {
             this.regex = regex;
             this.subject = subject;
-            this.subjectSlot = Native.CRITICAL ? -1 : SubjectCache.acquire(subject);
-            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : SubjectCache.segment(subjectSlot);
+            this.subjects = subjects;
+            this.subjectSlot = Native.CRITICAL ? -1 : subjects.acquire(subject);
+            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : subjects.segment(subjectSlot);
             if (regex.matchDataInUse) {
                 ownsMatchData = true;
                 matchData = Native.createMatchData(regex.code);
@@ -272,24 +278,24 @@ final class PcreFunctions {
                 regex.matchDataInUse = false;
             }
             if (!Native.CRITICAL) {
-                SubjectCache.release(subjectSlot);
+                subjects.release(subjectSlot);
             }
         }
     }
 
+    /** Declares the preg_* functions, bound to a new instance: its caches and preg_last_error() are per context. */
     static void register(Registry r) {
-        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
-        lastError = 0;
+        PcreFunctions pcre = new PcreFunctions();
         PhpContext context = r.context();
-        r.fn("preg_match", "001", a -> match(a, false));
-        r.fn("preg_match_all", "001", a -> match(a, true));
-        r.fn("preg_replace", "00001", a -> replace(context, a, false));
-        r.fn("preg_replace_callback", "00001", a -> replace(context, a, true));
-        r.fn("preg_split", a -> split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
+        r.fn("preg_match", "001", a -> pcre.match(a, false));
+        r.fn("preg_match_all", "001", a -> pcre.match(a, true));
+        r.fn("preg_replace", "00001", a -> pcre.replace(context, a, false));
+        r.fn("preg_replace_callback", "00001", a -> pcre.replace(context, a, true));
+        r.fn("preg_split", a -> pcre.split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
         r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
-        r.fn("preg_grep", a -> grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
-        r.fn("preg_last_error", a -> (long) lastError);
-        r.fn("preg_last_error_msg", a -> Str.of(ERROR_MESSAGES[lastError]));
+        r.fn("preg_grep", a -> pcre.grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
+        r.fn("preg_last_error", a -> (long) pcre.lastError);
+        r.fn("preg_last_error_msg", a -> Str.of(ERROR_MESSAGES[pcre.lastError]));
         r.fn("truffle_native_ns", a -> NativeClock.nanos());
         if (PcreRecorder.ENABLED) {
             r.fn("truffle_pcre_record", a -> {
@@ -299,11 +305,24 @@ final class PcreFunctions {
         }
     }
 
+    /** The parsed replacement string (cached; bounded, as one-off replacements would otherwise pile up). */
+    private Template template(TruffleString source) {
+        Template cached = templates.get(source);
+        if (cached == null) {
+            cached = Template.parse(Str.readBytes(source));
+            if (templates.size() > 4096) {
+                templates.clear();
+            }
+            templates.put(source, cached);
+        }
+        return cached;
+    }
+
     // ---- compiling ----
 
     @TruffleBoundary
-    private static Regex compile(TruffleString regexString) {
-        Regex cached = CACHE.get(regexString);
+    private Regex compile(TruffleString regexString) {
+        Regex cached = regexes.get(regexString);
         if (cached != null) {
             return cached;
         }
@@ -365,11 +384,11 @@ final class PcreFunctions {
         compiled.options = options;
         if (DEBUG) {
             compiled.source = Str.java(regexString);
-            if (CACHE.isEmpty()) {
-                Runtime.getRuntime().addShutdownHook(new Thread(PcreFunctions::printStatistics));
+            if (regexes.isEmpty()) {
+                Runtime.getRuntime().addShutdownHook(new Thread(this::printStatistics));
             }
         }
-        CACHE.put(regexString, compiled);
+        regexes.put(regexString, compiled);
         return compiled;
     }
 
@@ -388,8 +407,8 @@ final class PcreFunctions {
 
     private static final boolean DEBUG = System.getProperty("php.pcre2.debug") != null;
 
-    private static void printStatistics() {
-        CACHE.values().stream().sorted((x, y) -> Long.compare(y.nanos, x.nanos)).limit(15).forEach(r ->
+    private void printStatistics() {
+        regexes.values().stream().sorted((x, y) -> Long.compare(y.nanos, x.nanos)).limit(15).forEach(r ->
                 System.err.printf("pcre %8.1f ms %8d calls %7.0f ns/call  %s%n", r.nanos / 1e6, r.calls,
                         r.calls == 0 ? 0.0 : (double) r.nanos / r.calls,
                         r.source.length() > 90 ? r.source.substring(0, 90) + "..." : r.source));
@@ -400,7 +419,7 @@ final class PcreFunctions {
     }
 
     /** pcre_handle_exec_error: maps a PCRE2 match error to preg_last_error(). */
-    private static void execError(int rc) {
+    private void execError(int rc) {
         if (rc == -47) {
             lastError = 2;
         } else if (rc == -53) {
@@ -452,7 +471,7 @@ final class PcreFunctions {
     // ---- preg_match / preg_match_all ----
 
     @TruffleBoundary
-    private static Object match(Object[] a, boolean global) {
+    private Object match(Object[] a, boolean global) {
         Regex regex = compile(Args.str(a, 0));
         byte[] subject = subjectBytes(Args.str(a, 1));
         PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
@@ -486,7 +505,7 @@ final class PcreFunctions {
             setOrder = new PhpArray();
         }
         long matched = 0;
-        try (Matcher m = new Matcher(regex, subject)) {
+        try (Matcher m = new Matcher(subjects, regex, subject)) {
             long start = offset;
             int rc = m.match(start, m.firstOptions());
             while (true) {
@@ -551,7 +570,7 @@ final class PcreFunctions {
     // ---- preg_replace / preg_replace_callback ----
 
     @TruffleBoundary
-    private static Object replace(PhpContext context, Object[] a, boolean callback) {
+    private Object replace(PhpContext context, Object[] a, boolean callback) {
         Object pattern = Args.get(a, 0);
         Object replacement = Args.get(a, 1);
         Object subject = Args.get(a, 2);
@@ -584,7 +603,7 @@ final class PcreFunctions {
         return result;
     }
 
-    private static TruffleString replaceOne(PhpContext context, Object pattern, Object replacement, boolean callback,
+    private TruffleString replaceOne(PhpContext context, Object pattern, Object replacement, boolean callback,
                                             TruffleString subject, long limit, long flags, long[] count) {
         if (!(pattern instanceof PhpArray patterns)) {
             return replaceWith(context, compile(Convert.toStr(pattern)), replacement, callback, subject, limit, flags,
@@ -609,12 +628,12 @@ final class PcreFunctions {
     }
 
     /** php_pcre_replace_impl and its callback twin; null on a match error. */
-    private static TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
+    private TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
                                              TruffleString subjectString, long limit, long flags, long[] count) {
         byte[] subject = subjectBytes(subjectString);
-        Template template = callback ? null : Template.of(Convert.toStr(replacement));
+        Template template = callback ? null : template(Convert.toStr(replacement));
         ByteBuilder out = null;
-        try (Matcher m = new Matcher(regex, subject)) {
+        try (Matcher m = new Matcher(subjects, regex, subject)) {
             int lastEnd = 0;
             long start = 0;
             int rc = m.match(start, m.firstOptions());
@@ -676,8 +695,6 @@ final class PcreFunctions {
      * (>= 0, the next bytes of text) or -(group + 1).
      */
     private static final class Template {
-        private static final Map<TruffleString, Template> CACHE = new HashMap<>();
-
         final byte[] text;
         final int[] ops;
 
@@ -686,19 +703,7 @@ final class PcreFunctions {
             this.ops = ops;
         }
 
-        static Template of(TruffleString source) {
-            Template cached = CACHE.get(source);
-            if (cached == null) {
-                cached = parse(Str.readBytes(source));
-                if (CACHE.size() > 4096) {
-                    CACHE.clear();
-                }
-                CACHE.put(source, cached);
-            }
-            return cached;
-        }
-
-        private static Template parse(byte[] template) {
+        static Template parse(byte[] template) {
             ByteBuilder text = new ByteBuilder(template.length);
             List<Integer> ops = new ArrayList<>();
             int chunkStart = 0;
@@ -777,7 +782,7 @@ final class PcreFunctions {
     // ---- preg_split, preg_quote, preg_grep ----
 
     @TruffleBoundary
-    private static Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
+    private Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
         Regex regex = compile(pattern);
         byte[] subject = subjectBytes(subjectString);
         boolean noEmpty = (flags & SPLIT_NO_EMPTY) != 0;
@@ -789,7 +794,7 @@ final class PcreFunctions {
         lastError = 0;
         PhpArray result = new PhpArray();
         int lastMatch = 0;
-        try (Matcher m = new Matcher(regex, subject)) {
+        try (Matcher m = new Matcher(subjects, regex, subject)) {
             long start = 0;
             int options = m.firstOptions();
             boolean retried = false;
@@ -881,7 +886,7 @@ final class PcreFunctions {
     }
 
     @TruffleBoundary
-    private static PhpArray grep(TruffleString pattern, PhpArray input, long flags) {
+    private PhpArray grep(TruffleString pattern, PhpArray input, long flags) {
         Regex regex = compile(pattern);
         boolean invert = (flags & 1) != 0;
         lastError = 0;
@@ -889,7 +894,7 @@ final class PcreFunctions {
         for (int p = input.firstPosition(); p >= 0; p = input.nextPosition(p)) {
             Object value = input.valueAt(p);
             int rc;
-            try (Matcher m = new Matcher(regex, subjectBytes(Convert.toStr(value)))) {
+            try (Matcher m = new Matcher(subjects, regex, subjectBytes(Convert.toStr(value)))) {
                 rc = m.match(0, m.firstOptions());
             }
             if (rc < 0 && rc != ERROR_NOMATCH) {

@@ -45,21 +45,23 @@ final class JsonFunctions {
     private static final int ERROR_UNSUPPORTED_TYPE = 8;
     private static final int ERROR_UTF16 = 10;
 
-    private static int lastError;
+    /** Per-context state: json_last_error(). Each context's register() makes its own. */
+    private static final class State {
+        int lastError;
+    }
 
     static void register(Registry r) {
-        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
-        lastError = 0;
+        State state = new State();
         PhpContext context = r.context();
         r.fn("json_decode", a -> {
             long flags = Args.lng(a, 3, 0);
             Object assocArg = Args.get(a, 1, PhpNull.NULL);
             boolean assoc = assocArg == PhpNull.NULL ? (flags & OBJECT_AS_ARRAY) != 0 : Convert.toBool(assocArg);
-            return decode(context, Args.str(a, 0), assoc, (int) Args.lng(a, 2, 512), flags);
+            return decode(context, state, Args.str(a, 0), assoc, (int) Args.lng(a, 2, 512), flags);
         });
-        r.fn("json_encode", a -> encode(Args.get(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 2, 512)));
-        r.fn("json_last_error", a -> (long) lastError);
-        r.fn("json_last_error_msg", a -> Str.of(message(lastError)));
+        r.fn("json_encode", a -> encode(state, Args.get(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 2, 512)));
+        r.fn("json_last_error", a -> (long) state.lastError);
+        r.fn("json_last_error_msg", a -> Str.of(message(state.lastError)));
     }
 
     private static String message(int code) {
@@ -77,11 +79,11 @@ final class JsonFunctions {
         };
     }
 
-    private static Object fail(int code, long flags) {
+    private static Object fail(State state, int code, long flags) {
         if ((flags & THROW_ON_ERROR) != 0) {
             throw new PhpError("JsonException: " + message(code));
         }
-        lastError = code;
+        state.lastError = code;
         return null;
     }
 
@@ -98,11 +100,11 @@ final class JsonFunctions {
     }
 
     @TruffleBoundary
-    private static Object decode(PhpContext context, TruffleString text, boolean assoc, int depth, long flags) {
-        lastError = 0;
+    private static Object decode(PhpContext context, State state, TruffleString text, boolean assoc, int depth, long flags) {
+        state.lastError = 0;
         byte[] input = Str.readBytes(text);
         if (input.length == 0) {
-            Object ignored = fail(ERROR_SYNTAX, flags);
+            Object ignored = fail(state, ERROR_SYNTAX, flags);
             return PhpNull.NULL;
         }
         Parser parser = new Parser(context, input, assoc, depth, flags);
@@ -115,7 +117,7 @@ final class JsonFunctions {
             }
             return value;
         } catch (JsonError e) {
-            Object ignored = fail(e.code, flags);
+            Object ignored = fail(state, e.code, flags);
             return PhpNull.NULL;
         }
     }
@@ -409,24 +411,24 @@ final class JsonFunctions {
     // ---- encoding ----
 
     @TruffleBoundary
-    private static Object encode(Object value, long flags, int depth) {
-        lastError = 0;
+    private static Object encode(State state, Object value, long flags, int depth) {
+        state.lastError = 0;
         Encoder encoder = new Encoder(flags, depth);
         try {
             encoder.value(value);
         } catch (JsonError e) {
             if ((flags & PARTIAL_OUTPUT_ON_ERROR) == 0) {
-                Object ignored = fail(e.code, flags);
+                Object ignored = fail(state, e.code, flags);
                 return Boolean.FALSE;
             }
-            lastError = e.code;
+            state.lastError = e.code;
         }
         if (encoder.error != 0) {
             if ((flags & PARTIAL_OUTPUT_ON_ERROR) == 0) {
-                Object ignored = fail(encoder.error, flags);
+                Object ignored = fail(state, encoder.error, flags);
                 return Boolean.FALSE;
             }
-            lastError = encoder.error;
+            state.lastError = encoder.error;
         }
         return Str.of(encoder.out.toByteArray());
     }

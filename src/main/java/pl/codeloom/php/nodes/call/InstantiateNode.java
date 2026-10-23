@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpObject;
@@ -50,7 +51,7 @@ public final class InstantiateNode extends Node {
 
     @ExplodeLoop
     private PhpObject initialize(PhpClass phpClass) {
-        PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass);
+        PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
             if (value instanceof Long l) {

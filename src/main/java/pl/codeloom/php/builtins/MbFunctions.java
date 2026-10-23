@@ -20,30 +20,32 @@ final class MbFunctions {
     }
 
     /** mb_substitute_character(): a code point, or -1 for "none". */
-    private static int substitute = '?';
+    private static final class State {
+        int substitute = '?';
+    }
 
     static void register(Registry r) {
         // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
-        substitute = '?';
+        State state = new State();
         r.fn("mb_check_encoding", a -> checkEncoding(Args.get(a, 0), encoding(a, 1)));
         r.fn("mb_substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), StringFunctions.lengthArg(a, 2),
                 encoding(a, 3)));
         r.fn("mb_strlen", a -> strlen(Args.str(a, 0), encoding(a, 1)));
-        r.fn("mb_strtolower", a -> changeCase(Args.str(a, 0), encoding(a, 1), false));
-        r.fn("mb_strtoupper", a -> changeCase(Args.str(a, 0), encoding(a, 1), true));
-        r.fn("mb_scrub", a -> scrub(Args.str(a, 0), encoding(a, 1)));
+        r.fn("mb_strtolower", a -> changeCase(state, Args.str(a, 0), encoding(a, 1), false));
+        r.fn("mb_strtoupper", a -> changeCase(state, Args.str(a, 0), encoding(a, 1), true));
+        r.fn("mb_scrub", a -> scrub(state, Args.str(a, 0), encoding(a, 1)));
         r.fn("mb_ord", a -> ord(Args.str(a, 0), encoding(a, 1)));
         r.fn("mb_chr", a -> chr(Args.lng(a, 0, 0), encoding(a, 1)));
         r.fn("mb_internal_encoding", a -> Args.has(a, 0) ? (Object) Boolean.TRUE : Str.of("UTF-8"));
         r.fn("mb_substitute_character", a -> {
             if (!Args.has(a, 0) || Args.get(a, 0) == PhpNull.NULL) {
-                return substitute == -1 ? Str.of("none") : (Object) (long) substitute;
+                return state.substitute == -1 ? Str.of("none") : (Object) (long) state.substitute;
             }
             Object value = Args.get(a, 0);
             if (value instanceof TruffleString s) {
                 String name = Str.java(s).toLowerCase(Locale.ROOT);
                 if (name.equals("none")) {
-                    substitute = -1;
+                    state.substitute = -1;
                     return true;
                 }
                 throw new PhpError("mb_substitute_character(\"" + name + "\") is not supported");
@@ -53,7 +55,7 @@ final class MbFunctions {
                 throw new PhpError("ValueError: mb_substitute_character(): Argument #1 ($substitute_character) "
                         + "is not a valid codepoint");
             }
-            substitute = (int) cp;
+            state.substitute = (int) cp;
             return true;
         });
     }
@@ -228,10 +230,10 @@ final class MbFunctions {
         return java.util.Arrays.copyOf(out, n);
     }
 
-    private static void encode(ByteBuilder out, int cp) {
+    private static void encode(State state, ByteBuilder out, int cp) {
         if (cp == -1) {
-            if (substitute != -1) {
-                JsonFunctions.Utf8.encode(out, substitute);
+            if (state.substitute != -1) {
+                JsonFunctions.Utf8.encode(out, state.substitute);
             }
         } else {
             JsonFunctions.Utf8.encode(out, cp);
@@ -239,23 +241,23 @@ final class MbFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString scrub(TruffleString text, String encoding) {
+    private static TruffleString scrub(State state, TruffleString text, String encoding) {
         byte[] s = Str.readBytes(text);
         ByteBuilder out = new ByteBuilder(s.length);
         if (encoding.equals("ASCII")) {
             for (byte b : s) {
-                encode(out, b < 0 ? -1 : b);
+                encode(state, out, b < 0 ? -1 : b);
             }
         } else {
             for (int cp : decode(s)) {
-                encode(out, cp);
+                encode(state, out, cp);
             }
         }
         return Str.of(out.toByteArray());
     }
 
     @TruffleBoundary
-    private static TruffleString changeCase(TruffleString text, String encoding, boolean upper) {
+    private static TruffleString changeCase(State state, TruffleString text, String encoding, boolean upper) {
         byte[] s = Str.readBytes(text);
         StringBuilder chars = new StringBuilder(s.length);
         for (int cp : decode(s)) {
@@ -270,7 +272,7 @@ final class MbFunctions {
         ByteBuilder out = new ByteBuilder(s.length);
         for (int i = 0; i < mapped.length(); ) {
             int cp = mapped.codePointAt(i);
-            encode(out, cp == 0xFFFF ? -1 : cp);
+            encode(state, out, cp == 0xFFFF ? -1 : cp);
             i += Character.charCount(cp);
         }
         return Str.of(out.toByteArray());

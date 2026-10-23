@@ -68,6 +68,8 @@ The first versions got all kernels running fast; their limits are now measured.
 5. **Bytecode DSL evaluation**, the Gate 2 decision already set in D6, judged on warmup and memory over WordPress-sized code.
 6. **Own parser and instrumentation tags** (D5's planned replacement; statement, call and root tags for debugging, coverage and statement-level profiling).
 
+**Gate 0.5 (owner, 2026-10-23):** the migration is a gate of its own, ahead of further Gate 1 tuning. It is done when steps 1–4 have landed. Gate 1 is re-measured from time to time as a progress and regression check, not as each step's bar: step 1 and step 4 are structural and aren't expected to be faster.
+
 **Rules for new code from now on:**
 - Node behaviour that depends on value types is written with the DSL.
 - No mutable `static` state.

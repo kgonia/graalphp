@@ -98,37 +98,32 @@ public final class Callables {
     }
 
     /**
-     * The last callable resolved by {@link #call}: built-ins that call back in a loop (array_map, usort,
-     * preg_replace_callback) pass the same callable value every time. An array callable is re-checked element by
-     * element, since an unshared array can change in place. Gate 1 runs one context, so one entry is enough.
+     * The last callable resolved by {@link #call}, one per context: built-ins that call back in a loop (array_map,
+     * usort, preg_replace_callback) pass the same callable value every time. An array callable is re-checked
+     * element by element, since an unshared array can change in place.
      */
-    private static Object lastCallable;
-    private static Object lastFirst;
-    private static Object lastSecond;
-    private static Target lastTarget;
-
-    /** Forgets the cached callable: a new context must not reuse a target resolved in an earlier one. */
-    public static void resetCache() {
-        lastCallable = null;
-        lastFirst = null;
-        lastSecond = null;
-        lastTarget = null;
+    public static final class LastCall {
+        Object callable;
+        Object first;
+        Object second;
+        Target target;
     }
 
     /** Calls a callable from runtime code (array_map, usort, preg_replace_callback...): no inline caching. */
     @TruffleBoundary
     public static Object call(PhpContext context, Object callable, Object... values) {
+        LastCall last = context.lastCall();
         Target target;
-        if (callable == lastCallable && (!(callable instanceof PhpArray array)
-                || array.get(0L) == lastFirst && array.get(1L) == lastSecond)) {
-            target = lastTarget;
+        if (callable == last.callable && (!(callable instanceof PhpArray array)
+                || array.get(0L) == last.first && array.get(1L) == last.second)) {
+            target = last.target;
         } else {
             target = resolveOrThrow(context, callable);
-            lastCallable = callable;
-            lastTarget = target;
+            last.callable = callable;
+            last.target = target;
             if (callable instanceof PhpArray array) {
-                lastFirst = array.get(0L);
-                lastSecond = array.get(1L);
+                last.first = array.get(0L);
+                last.second = array.get(1L);
             }
         }
         return target.function().getCallTarget().call(target.frameArguments(values));
