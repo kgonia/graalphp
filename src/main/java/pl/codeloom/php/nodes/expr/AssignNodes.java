@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -9,6 +10,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
@@ -106,7 +108,6 @@ public final class AssignNodes {
         public static final int CONCAT = 8;
         public static final int COALESCE = 260;
 
-        @Child private TruffleString.ConcatNode concat = TruffleString.ConcatNode.create();
         private final int op;
 
         protected CompoundAssignNode(int op) {
@@ -128,6 +129,22 @@ public final class AssignNodes {
 
         protected boolean isFloatOperator() {
             return op == 1 || op == 2 || op == 3 || op == 4;
+        }
+
+        protected boolean isConcat() {
+            return op == CONCAT;
+        }
+
+        /** `.=`: the target's content is converted first, then the value, as php-src's concat_function. */
+        @Specialization(guards = "isConcat()")
+        protected TruffleString concat(VirtualFrame frame, Object operand, Object current,
+                                       @Cached ToStrNode currentToStr,
+                                       @Cached ToStrNode operandToStr,
+                                       @Cached TruffleString.ConcatNode concat) {
+            TruffleString left = currentToStr.execute(current);
+            TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
+            getTarget().write(frame, result);
+            return result;
         }
 
         @Specialization(guards = "isIntOperator()", rewriteOn = ArithmeticException.class)
@@ -180,11 +197,6 @@ public final class AssignNodes {
 
         private Object apply(Object a, Object b) {
             switch (op) {
-                case CONCAT:
-                    if (a instanceof TruffleString x && b instanceof TruffleString y) {
-                        return concat.execute(x, y, Str.ENC, true);
-                    }
-                    return Str.concat(Convert.toStr(a), Convert.toStr(b));
                 case 1:
                     if (a instanceof Long x && b instanceof Long y) {
                         return Operators.addLongs(x, y);
