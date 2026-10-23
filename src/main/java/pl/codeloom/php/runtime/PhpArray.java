@@ -34,6 +34,11 @@ public final class PhpArray implements TruffleObject {
     private int holders;
     /** Never written once frozen; holders aren't counted (see {@link #freeze}). */
     private boolean immutable;
+    /**
+     * Whether an element may be a reference: set when one is stored, so the arrays that never had one skip the
+     * scan when they gain their first holder or lose their last (see {@link PhpRef}).
+     */
+    private boolean mayHoldRefs;
 
     /** Packed values, or null in hash layout and while the values are all ints (then {@link #longs}). */
     private Object[] packed;
@@ -82,14 +87,31 @@ public final class PhpArray implements TruffleObject {
     // ---- copy-on-write ----
 
     public void addHolder() {
-        if (!immutable) {
-            holders++;
+        if (!immutable && holders++ == 0 && mayHoldRefs) {
+            countReferences(true);
         }
     }
 
     public void removeHolder() {
-        if (!immutable && holders > 0) {
-            holders--;
+        if (!immutable && holders > 0 && --holders == 0 && mayHoldRefs) {
+            countReferences(false);
+        }
+    }
+
+    /**
+     * The references among the elements count this array while it has holders: bound when it gains its first,
+     * released when it loses its last (php-src's refcount of a reference counts the array slots holding it).
+     */
+    @TruffleBoundary
+    private void countReferences(boolean bind) {
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            if (rawAt(p) instanceof PhpRef ref) {
+                if (bind) {
+                    ref.bind();
+                } else {
+                    ref.unbind();
+                }
+            }
         }
     }
 
@@ -121,6 +143,7 @@ public final class PhpArray implements TruffleObject {
         copy.size = size;
         copy.nextIndex = nextIndex;
         copy.pointer = pointer;
+        copy.mayHoldRefs = mayHoldRefs;
         if (longs != null) {
             copy.packed = null;
             copy.longs = longs.length == 0 ? NO_LONGS : longs.clone();
@@ -128,7 +151,7 @@ public final class PhpArray implements TruffleObject {
             copy.packed = Arrays.copyOf(packed, Math.max(packed.length, MIN_CAPACITY));
             for (int i = 0; i < size; i++) {
                 if (packed[i] instanceof PhpRef ref) {
-                    copy.packed[i] = ref.copyElement(this);
+                    copy.packed[i] = ref.copyElement(this, holders > 0);
                 }
                 if (copy.packed[i] instanceof PhpArray nested) {
                     nested.addHolder();
@@ -144,7 +167,7 @@ public final class PhpArray implements TruffleObject {
             copy.used = used;
             for (int i = 0; i < used; i++) {
                 if (keys[i] != null && values[i] instanceof PhpRef ref) {
-                    copy.values[i] = ref.copyElement(this);
+                    copy.values[i] = ref.copyElement(this, holders > 0);
                 }
                 if (keys[i] != null && copy.values[i] instanceof PhpArray nested) {
                     nested.addHolder();
@@ -298,7 +321,10 @@ public final class PhpArray implements TruffleObject {
     /** Stores a PhpRef (or replaces whatever is there) under a normalized key: `$a[k] = &$x`. */
     @TruffleBoundary
     public void putRef(Object key, PhpRef ref) {
-        ref.bind();
+        mayHoldRefs = true;
+        if (holders > 0) {
+            ref.bind();
+        }
         if (longs != null) {
             toObjects();
         }
@@ -631,9 +657,15 @@ public final class PhpArray implements TruffleObject {
         }
     }
 
-    private static void countOut(Object old, Object replacement) {
-        if (old instanceof PhpArray array && old != replacement) {
+    /** An element leaves its slot: a nested array loses this holder, a reference this array's count. */
+    private void countOut(Object old, Object replacement) {
+        if (old == replacement) {
+            return;
+        }
+        if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpRef ref && holders > 0) {
+            ref.unbind();
         }
     }
 
@@ -741,7 +773,10 @@ public final class PhpArray implements TruffleObject {
             return ref;
         }
         PhpRef ref = new PhpRef(raw);
-        ref.bind();
+        mayHoldRefs = true;
+        if (holders > 0) {
+            ref.bind();
+        }
         if (raw instanceof PhpArray array) {
             array.removeHolder();
         }

@@ -50,6 +50,34 @@ $e = $list2;
 $e[2] = 300;
 echo implode(",", $list2), " ", implode(",", $e), "\n";
 
+// two arrays share a reference after its variable is gone: a third copy shares it too (refcount 2)
+$list3 = [1, 2, 3];
+foreach ($list3 as &$v3) {
+}
+$d3 = $list3;
+$d3[2] = 30;
+unset($v3);
+$e3 = $list3;
+$e3[2] = 300;
+echo implode(",", $list3), " ", implode(",", $d3), " ", implode(",", $e3), "\n";
+
+// once the other array is gone, the reference is the last slot's alone again
+unset($d3);
+$f3 = $list3;
+$f3[2] = 3000;
+echo implode(",", $list3), " ", implode(",", $f3), "\n";
+
+// a reference made inside a function and returned in an array, then copied twice
+function pair() {
+    $x = 1;
+    $a = [&$x, &$x];
+    return $a;
+}
+$p1 = pair();
+$p2 = $p1;
+$p2[0] = 5;
+echo json_encode($p1), " ", json_encode($p2), "\n";
+
 // copied while the foreach reference is bound, written once the function returned (WordPress's register_route)
 function register(array $args) {
     foreach ($args as &$group) {
