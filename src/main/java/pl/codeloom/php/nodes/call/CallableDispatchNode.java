@@ -69,9 +69,11 @@ public abstract class CallableDispatchNode extends Node {
                                   @Cached("methodName(callable)") TruffleString cachedMethod,
                                   @Cached TruffleString.EqualNode equal,
                                   @Cached("resolve(callable).function()") PhpFunction method,
+                                  @Cached("resolve(callable).magicName()") TruffleString magicName,
                                   @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object self = method.isStatic() ? null : callable.get(0L);
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, values)));
+        Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
+        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, arguments)));
     }
 
     /**
@@ -87,11 +89,13 @@ public abstract class CallableDispatchNode extends Node {
                                  @Cached TruffleString.EqualNode equalClass,
                                  @Cached TruffleString.EqualNode equalMethod,
                                  @Cached("resolve(callable).function()") PhpFunction method,
+                                 @Cached("resolve(callable).magicName()") TruffleString magicName,
                                  @Cached("classId(cachedClassName, cachedMethod)") int classId,
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
+        Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
         return PhpRef.deref(call.call(ArgumentsNode.frameArguments(null,
-                PhpContext.get(this).classAt(classId), null, values)));
+                PhpContext.get(this).classAt(classId), null, arguments)));
     }
 
     @Specialization(replaces = {"closure", "named", "objectMethod", "classMethod"})

@@ -17,6 +17,9 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.Callables;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * `Cls::m()`, `self::m()`, `parent::m()`, `static::m()`. Forwarding calls (self, parent, static) keep the
@@ -34,7 +37,7 @@ public final class StaticCallNode extends ExprNode {
         this.classRef = classRef;
         this.args = args;
         this.forwarding = forwarding;
-        this.dispatch = StaticCallNodeFactory.DispatchNodeGen.create(methodName.toLowerCase());
+        this.dispatch = StaticCallNodeFactory.DispatchNodeGen.create(methodName.toLowerCase(), Str.of(methodName));
     }
 
     @Override
@@ -52,13 +55,18 @@ public final class StaticCallNode extends ExprNode {
         return dispatch.execute(frame, phpClass, self, staticClass, args);
     }
 
-    /** Finds a method in a class, inline-cached on the class's key. */
+    /**
+     * Finds a method in a class, inline-cached on the class's key. A missing method goes to __call when the
+     * caller's $this is an instance of the class, else to __callStatic (zend_std_get_static_method).
+     */
     @ReportPolymorphism
     public abstract static class Dispatch extends Node {
         protected final String lowerName;
+        protected final TruffleString calledName;
 
-        protected Dispatch(String lowerName) {
+        protected Dispatch(String lowerName, TruffleString calledName) {
             this.lowerName = lowerName;
+            this.calledName = calledName;
         }
 
         public abstract Object execute(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
@@ -70,7 +78,11 @@ public final class StaticCallNode extends ExprNode {
                                 ArgumentsNode args,
                                 @Cached("phpClass.getKey()") ClassKey cachedKey,
                                 @Cached("find(phpClass)") PhpFunction method,
-                                @Cached("create(method.getCallTarget())") DirectCallNode call) {
+                                @Cached("createCall(method)") DirectCallNode call,
+                                @Cached IndirectCallNode magicCall) {
+            if (method == null) {
+                return magic(frame, phpClass, self, staticClass, args, magicCall);
+            }
             Object thisObject = method.isStatic() ? null : self;
             return PhpRef.deref(call.call(args.build(frame, method, thisObject, staticClass, null)));
         }
@@ -79,18 +91,54 @@ public final class StaticCallNode extends ExprNode {
         protected Object generic(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
                                  ArgumentsNode args, @Cached IndirectCallNode call) {
             PhpFunction method = find(phpClass);
+            if (method == null) {
+                return magic(frame, phpClass, self, staticClass, args, call);
+            }
             Object thisObject = method.isStatic() ? null : self;
             return PhpRef.deref(call.call(method.getCallTarget(),
                     args.build(frame, method, thisObject, staticClass, null)));
         }
 
+        /** __call on the caller's $this (an instance of the class) or __callStatic, with the name as called. */
+        private Object magic(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
+                             ArgumentsNode args, IndirectCallNode call) {
+            Object[] values = Callables.magicValues(calledName, args.values(frame));
+            PhpFunction viaCall = self != null ? magicMethod(phpClass, "__call") : null;
+            if (viaCall != null) {
+                return PhpRef.deref(call.call(viaCall.getCallTarget(),
+                        ArgumentsNode.frameArguments(self, staticClass, null, values)));
+            }
+            PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
+            if (viaStatic == null) {
+                throw undefined(phpClass);
+            }
+            return PhpRef.deref(call.call(viaStatic.getCallTarget(),
+                    ArgumentsNode.frameArguments(null, staticClass, null, values)));
+        }
+
+        protected static DirectCallNode createCall(PhpFunction method) {
+            return method == null ? null : DirectCallNode.create(method.getCallTarget());
+        }
+
+        @TruffleBoundary
+        private static PhpFunction magicMethod(PhpClass phpClass, String lowerName) {
+            return phpClass.findMethod(lowerName);
+        }
+
+        /** The method, or null when __call or __callStatic stands in for it. */
         @TruffleBoundary
         protected PhpFunction find(PhpClass phpClass) {
             PhpFunction method = phpClass.findMethod(lowerName);
-            if (method == null) {
-                throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+            if (method == null && phpClass.findMethod("__call") == null
+                    && phpClass.findMethod("__callstatic") == null) {
+                throw undefined(phpClass);
             }
             return method;
+        }
+
+        @TruffleBoundary
+        private PhpError undefined(PhpClass phpClass) {
+            return new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
         }
     }
 }

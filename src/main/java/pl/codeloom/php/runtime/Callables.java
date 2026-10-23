@@ -9,9 +9,20 @@ public final class Callables {
     private Callables() {
     }
 
-    /** A resolved callable: the function and what to bind for the call. */
-    public record Target(PhpFunction function, Object thisObject, PhpClass staticClass, Object closure) {
+    /**
+     * A resolved callable: the function and what to bind for the call. magicName is set when the function is
+     * __call or __callStatic standing in for a missing method: the call then passes the name and the arguments.
+     */
+    public record Target(PhpFunction function, Object thisObject, PhpClass staticClass, Object closure,
+                         TruffleString magicName) {
+        public Target(PhpFunction function, Object thisObject, PhpClass staticClass, Object closure) {
+            this(function, thisObject, staticClass, closure, null);
+        }
+
         public Object[] frameArguments(Object[] values) {
+            if (magicName != null) {
+                values = magicValues(magicName, values);
+            }
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             arguments[PhpFunction.ARG_THIS] = thisObject;
             arguments[PhpFunction.ARG_STATIC] = staticClass;
@@ -45,11 +56,7 @@ public final class Callables {
                 return null;
             }
             if (first instanceof PhpObject object) {
-                Target target = method(object.getPhpClass(), object, Str.java(methodName));
-                if (target == null && object.getPhpClass().findMethod("__call") != null) {
-                    return null;
-                }
-                return target;
+                return method(object.getPhpClass(), object, Str.java(methodName));
             }
             if (first instanceof TruffleString className) {
                 return method(context.findClass(stripNamespace(Str.java(className)).toLowerCase()), null,
@@ -58,9 +65,20 @@ public final class Callables {
             return null;
         }
         if (callable instanceof PhpObject object) {
-            return method(object.getPhpClass(), object, "__invoke");
+            PhpFunction invoke = object.getPhpClass().findMethod("__invoke");
+            return invoke == null ? null : new Target(invoke, object, object.getPhpClass(), null);
         }
         return null;
+    }
+
+    /** __call / __callStatic's arguments: the method name as it was called, and the arguments as an array. */
+    @TruffleBoundary
+    public static Object[] magicValues(TruffleString name, Object[] values) {
+        PhpArray arguments = new PhpArray();
+        for (Object value : values) {
+            arguments.append(PhpRef.deref(value));
+        }
+        return new Object[] {name, arguments};
     }
 
     /** The lowercase name a class-name callable (`['Cls', 'm']`) is looked up by. */
@@ -82,7 +100,15 @@ public final class Callables {
         }
         PhpFunction method = phpClass.findMethod(methodName.toLowerCase());
         if (method == null) {
-            return null;
+            // a missing method: __call on an object, __callStatic on a class (zend_is_callable_check_func)
+            if (object != null) {
+                PhpFunction magicCall = phpClass.findMethod("__call");
+                return magicCall == null ? null
+                        : new Target(magicCall, object, object.getPhpClass(), null, Str.of(methodName));
+            }
+            PhpFunction magicStatic = phpClass.findMethod("__callstatic");
+            return magicStatic == null ? null
+                    : new Target(magicStatic, null, phpClass, null, Str.of(methodName));
         }
         PhpClass staticClass = object != null ? object.getPhpClass() : phpClass;
         return new Target(method, method.isStatic() ? null : object, staticClass, null);

@@ -18,6 +18,9 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Str;
+import pl.codeloom.php.runtime.Callables;
+import com.oracle.truffle.api.strings.TruffleString;
 
 import java.util.concurrent.locks.Lock;
 
@@ -33,7 +36,7 @@ public final class MethodCallNode extends ExprNode {
         this.receiver = receiver;
         this.args = args;
         this.lowerName = methodName.toLowerCase();
-        this.dispatch = MethodCallNodeFactory.DispatchNodeGen.create(lowerName);
+        this.dispatch = MethodCallNodeFactory.DispatchNodeGen.create(lowerName, Str.of(methodName));
     }
 
     @Override
@@ -72,13 +75,18 @@ public final class MethodCallNode extends ExprNode {
         return new PhpError("Call to a member function " + lowerName + "() on " + Convert.typeName(target));
     }
 
-    /** Finds and calls the method for the receiver's class. */
+    /**
+     * Finds and calls the method for the receiver's class; a class without it but with __call gets
+     * __call(name, arguments), the name as called.
+     */
     @ReportPolymorphism
     public abstract static class Dispatch extends Node {
         protected final String lowerName;
+        protected final TruffleString calledName;
 
-        protected Dispatch(String lowerName) {
+        protected Dispatch(String lowerName, TruffleString calledName) {
             this.lowerName = lowerName;
+            this.calledName = calledName;
         }
 
         public abstract Object execute(VirtualFrame frame, PhpObject receiver, ArgumentsNode args);
@@ -88,9 +96,15 @@ public final class MethodCallNode extends ExprNode {
         protected Object cached(VirtualFrame frame, PhpObject receiver, ArgumentsNode args,
                                 @Cached("receiver.getPhpClass().getKey()") ClassKey cachedKey,
                                 @Cached("find(receiver.getPhpClass())") PhpFunction method,
+                                @Cached("isMagic(receiver.getPhpClass())") boolean magic,
                                 @Cached("create(method.getCallTarget())") DirectCallNode call) {
+            PhpClass phpClass = receiver.getPhpClass();
+            if (magic) {
+                return PhpRef.deref(call.call(ArgumentsNode.frameArguments(receiver, phpClass, null,
+                        Callables.magicValues(calledName, args.values(frame)))));
+            }
             Object self = method.isStatic() ? null : receiver;
-            return PhpRef.deref(call.call(args.build(frame, method, self, receiver.getPhpClass(), null)));
+            return PhpRef.deref(call.call(args.build(frame, method, self, phpClass, null)));
         }
 
         @Specialization(replaces = "cached")
@@ -98,17 +112,30 @@ public final class MethodCallNode extends ExprNode {
                                  @Cached IndirectCallNode call) {
             PhpClass phpClass = receiver.getPhpClass();
             PhpFunction method = find(phpClass);
+            if (isMagic(phpClass)) {
+                return PhpRef.deref(call.call(method.getCallTarget(), ArgumentsNode.frameArguments(receiver,
+                        phpClass, null, Callables.magicValues(calledName, args.values(frame)))));
+            }
             Object self = method.isStatic() ? null : receiver;
             return PhpRef.deref(call.call(method.getCallTarget(), args.build(frame, method, self, phpClass, null)));
         }
 
+        /** The method, or __call standing in for it. */
         @TruffleBoundary
         protected PhpFunction find(PhpClass phpClass) {
             PhpFunction method = phpClass.findMethod(lowerName);
             if (method == null) {
+                method = phpClass.findMethod("__call");
+            }
+            if (method == null) {
                 throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
             }
             return method;
+        }
+
+        @TruffleBoundary
+        protected boolean isMagic(PhpClass phpClass) {
+            return phpClass.findMethod(lowerName) == null;
         }
     }
 }
