@@ -108,3 +108,28 @@ try {
     var_dump(get_class($e), $e instanceof ArithmeticError);
 }
 
+echo "-- parse_url\n";
+$urls = ["http://user:pw@example.com:8080/p/a?q=1#frag", "https://example.com", "//example.com/x", "mailto:a@b.c",
+    "http://[::1]:80/", "http://h:/p", "http://h:65536/", "a1+.-b:rest", "/just/a/path?x", "?q", "#f", "x:٣/path",
+    "http://h:0/", "foo:123abc", "http://h:08/x", "https://u@h.example:443"];
+foreach ($urls as $u) {
+    echo json_encode(parse_url($u)), " ", json_encode(parse_url($u, PHP_URL_PORT)), "\n";
+}
+
+echo "-- timezones\n";
+foreach (["+02:00", "-0530", "+2", "+02", "-11:30", "+0200", "UTC", "Z", "Europe/Warsaw", "+1:30"] as $tz) {
+    $d = new DateTime("2024-03-01 12:00:00", new DateTimeZone($tz));
+    echo $tz, " => ", $d->format("c P"), " ", $d->getTimezone()->getName(), "\n";
+}
+
+echo "-- floats as strings\n";
+foreach ([1.0, 0.1, 100.0, 1.5e20, 1e25, 1e-5, 123456789012345.0, 0.000123, -2.50, 3.0e14, 1e15, 7.0E-10, 1200.0,
+             0.30000000000000004, 1 / 3] as $v) {
+    echo $v, " ", var_export($v, true), " ", json_encode($v), " ", (string) ($v * 10), "\n";
+}
+
+echo "-- base64_decode\n";
+foreach (["aGVsbG8=", "aGVsbG8", "aGVs bG8=", "ab", "abc", "abcd=", "YWJjZA", "YWJjZA=", ""] as $b) {
+    echo bin2hex(base64_decode($b)), "\n";
+}
+

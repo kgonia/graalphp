@@ -309,10 +309,11 @@ public final class Convert {
      * digits; exponential form ("1.0E+25") when decimalPoint < -3 or > ndigit.
      */
     private static String gcvt(String rawDigits, int decimalPoint, int ndigit) {
-        String digits = rawDigits.replaceFirst("0+$", "");
-        if (digits.isEmpty()) {
-            digits = "0";
+        int significant = rawDigits.length();
+        while (significant > 0 && rawDigits.charAt(significant - 1) == '0') {
+            significant--;
         }
+        String digits = significant == 0 ? "0" : rawDigits.substring(0, significant);
         if (decimalPoint < -3 || decimalPoint > ndigit) {
             StringBuilder out = new StringBuilder();
             out.append(digits.charAt(0)).append('.');

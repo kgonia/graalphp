@@ -130,6 +130,8 @@ final class DateFunctions {
         return values;
     }
 
+    private static final Pattern OFFSET = Pattern.compile("([+-])(\\d{1,2}):?(\\d{2})?");
+
     /** A timezone as PHP names them: an identifier, UTC, an offset (+02:00, +0200) or an abbreviation; or null. */
     @TruffleBoundary
     static ZoneId parseZone(String name) {
@@ -140,7 +142,7 @@ final class DateFunctions {
         if (trimmed.equalsIgnoreCase("Z")) {
             return ZoneOffset.UTC;
         }
-        Matcher offset = Pattern.compile("([+-])(\\d{1,2}):?(\\d{2})?").matcher(trimmed);
+        Matcher offset = OFFSET.matcher(trimmed);
         if (offset.matches()) {
             int hours = Integer.parseInt(offset.group(2));
             int minutes = offset.group(3) == null ? 0 : Integer.parseInt(offset.group(3));

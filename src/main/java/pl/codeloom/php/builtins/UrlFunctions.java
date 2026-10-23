@@ -7,6 +7,8 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
+import java.util.regex.Pattern;
+
 /** parse_url and parse_str, after php-src's ext/standard/url.c and main/php_variables.c (simplified). */
 final class UrlFunctions {
     private UrlFunctions() {
@@ -14,6 +16,10 @@ final class UrlFunctions {
 
     private static final String[] COMPONENTS = {"scheme", "host", "port", "user", "pass", "path", "query",
             "fragment"};
+    private static final Pattern SCHEME = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*");
+    /** "host:80/path" without "//" is a host and port, not a scheme. */
+    private static final Pattern PORT_AND_PATH = Pattern.compile("\\d+(/.*)?");
+    private static final Pattern DIGITS = Pattern.compile("\\d*");
 
     @TruffleBoundary
     static Object parseUrl(TruffleString input, long component) {
@@ -34,9 +40,9 @@ final class UrlFunctions {
         }
         String scheme = null;
         int colon = rest.indexOf(':');
-        if (colon > 0 && rest.substring(0, colon).matches("[A-Za-z][A-Za-z0-9+.-]*")) {
+        if (colon > 0 && SCHEME.matcher(rest.substring(0, colon)).matches()) {
             String after = rest.substring(colon + 1);
-            boolean portOnly = !after.startsWith("//") && after.matches("\\d+(/.*)?") ;
+            boolean portOnly = !after.startsWith("//") && PORT_AND_PATH.matcher(after).matches();
             if (!portOnly) {
                 scheme = rest.substring(0, colon);
                 rest = after;
@@ -60,7 +66,8 @@ final class UrlFunctions {
                 pass = c >= 0 ? userInfo.substring(c + 1) : null;
             }
             int portColon = authority.lastIndexOf(':');
-            if (portColon >= 0 && !authority.endsWith("]") && authority.substring(portColon + 1).matches("\\d*")) {
+            if (portColon >= 0 && !authority.endsWith("]")
+                    && DIGITS.matcher(authority.substring(portColon + 1)).matches()) {
                 String digits = authority.substring(portColon + 1);
                 if (!digits.isEmpty()) {
                     port = Long.parseLong(digits);

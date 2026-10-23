@@ -399,8 +399,8 @@ final class EncodingFunctions {
             clean.setLength(clean.length() - 1);
         }
         try {
-            return Str.of(Base64.getDecoder().decode(clean.toString().replaceAll("=+$", "")
-                    + "==".substring(0, (4 - clean.length() % 4) % 4)));
+            // clean stops before the first '=', so the padding is always added back here
+            return Str.of(Base64.getDecoder().decode(clean + "==".substring(0, (4 - clean.length() % 4) % 4)));
         } catch (IllegalArgumentException e) {
             return Boolean.FALSE;
         }
