@@ -89,6 +89,9 @@ final class PcreFunctions {
         long calls;
         long nanos;
         String source;
+        /** The pattern without delimiters and its compile options, for PcreRecorder. */
+        byte[] pattern;
+        int options;
 
         Regex(MemorySegment code, boolean jit, boolean utf, int groups, TruffleString[] names) {
             this.code = code;
@@ -217,6 +220,10 @@ final class PcreFunctions {
         }
 
         int match(long start, int options) {
+            if (PcreRecorder.ENABLED) {
+                PcreRecorder.match(regex, regex.pattern, regex.options, regex.jit, subject, subject.length, start,
+                        options);
+            }
             if (!NativeClock.ENABLED && !DEBUG) {
                 return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData);
             }
@@ -287,6 +294,12 @@ final class PcreFunctions {
         r.fn("preg_last_error", a -> (long) lastError);
         r.fn("preg_last_error_msg", a -> Str.of(ERROR_MESSAGES[lastError]));
         r.fn("truffle_native_ns", a -> NativeClock.nanos());
+        if (PcreRecorder.ENABLED) {
+            r.fn("truffle_pcre_record", a -> {
+                PcreRecorder.section(Str.java(Args.str(a, 0)));
+                return PhpNull.NULL;
+            });
+        }
     }
 
     // ---- compiling ----
@@ -351,6 +364,8 @@ final class PcreFunctions {
         int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
         Regex compiled = new Regex(code, Native.jitCompile(code), (options & UTF) != 0, groups,
                 Native.names(code, groups));
+        compiled.pattern = pattern;
+        compiled.options = options;
         if (DEBUG) {
             compiled.source = Str.java(regexString);
             if (CACHE.isEmpty()) {

@@ -36,14 +36,22 @@ $selected   = ($argv[1] ?? 'all') === 'all' ? array_keys($kernels) : explode(','
 $iterations = (int) ($argv[2] ?? 10);
 $dump       = ($argv[3] ?? '') === 'dump';
 $native     = function_exists('truffle_native_ns');
+// with -Dphp.pcre2.record, the Truffle PHP records the last iteration's PCRE2 calls for bench/gate1/pcre-replay.c
+$record     = function_exists('truffle_pcre_record');
 
 foreach ($selected as $name) {
     $kernel = $kernels[$name];
     for ($i = 1; $i <= $iterations; $i++) {
         $native0 = $native ? truffle_native_ns() : 0;
+        if ($record && $i === $iterations) {
+            truffle_pcre_record($name);
+        }
         $start   = hrtime(true);
         $result  = $kernel($corpus);
         $ns      = hrtime(true) - $start;
+        if ($record && $i === $iterations) {
+            truffle_pcre_record('');
+        }
         $extra   = $native ? ' ' . (truffle_native_ns() - $native0) : '';
         echo $name, ' ', $i, ' ', $ns, ' ', bench_checksum($result), $extra, "\n";
         if ($dump) {

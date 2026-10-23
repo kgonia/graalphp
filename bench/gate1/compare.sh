@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the kernels on PHP, on the Truffle PHP, and on the Truffle PHP with native-time accounting, back to back on
-# the same cores, then prints the comparison. Comparing runs made at different times is unreliable on a shared
+# Runs the kernels on PHP and on the Truffle PHP back to back on the same cores, measures the regex time by
+# replaying the recorded PCRE2 calls in C (pcre-replay.c), then prints the comparison. Comparing runs made at different times is unreliable on a shared
 # machine: PHP's own timings moved by 30% between quiet and loaded periods.
 # Usage: bench/gate1/compare.sh [kernels|all] [iterations] [cpuset]   (defaults: all 200 14-21)
 # DRIVER=bench/k0/run.php compares another kernel set (no native-time run: K0 makes no native calls).
@@ -15,8 +15,11 @@ mkdir -p "$out"
 bash bench/gate1/php.sh php "$driver" "$kernels" "$iterations" > "$out/php.txt"
 bash bench/gate1/truffle.sh "$driver" "$kernels" "$iterations" > "$out/truffle.txt"
 if [ "$driver" = bench/gate1/run.php ]; then
-    JAVA_OPTS="-Dphp.nativeclock=true" bash bench/gate1/truffle.sh "$driver" "$kernels" "$iterations" \
-        > "$out/native.txt"
+    # native time: the last iteration's PCRE2 calls, recorded and replayed in C against the same pcre2lib
+    root=$(pwd -W 2>/dev/null || pwd)
+    MSYS_NO_PATHCONV=1 docker run --rm -v "$root:/w" -w /w gate1-truffle:8.5 sh -c         'gcc -O2 -I/opt/pcre2-php -o target/pcre-replay bench/gate1/pcre-replay.c -L/opt/pcre2-php -lpcre2-8          -Wl,-rpath,/opt/pcre2-php'
+    JAVA_OPTS="-Dphp.pcre2.record=/w/$out/pcre.rec" bash bench/gate1/truffle.sh "$driver" "$kernels" 30 > /dev/null
+    MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} -v "$root:/w" -w /w gate1-truffle:8.5         target/pcre-replay "$out/pcre.rec" 200 > "$out/native.txt"
     python bench/gate1/summarize.py "$out/php.txt" "$out/truffle.txt" "$out/native.txt"
 else
     python bench/gate1/summarize.py "$out/php.txt" "$out/truffle.txt"

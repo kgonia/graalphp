@@ -1,11 +1,11 @@
 """Gate 1 comparison table from run.php outputs.
 
-Usage: python summarize.py <php.txt> <truffle.txt> [<truffle-native.txt>]
+Usage: python summarize.py <php.txt> <truffle.txt> [<native.txt>]
 
-Each input has lines "kernel iteration ns checksum [native-ns]". Steady state is the median of the second half of
-the PHP iterations and of the last quarter of the Truffle ones (Truffle warms up longer). The native file comes from
-a Truffle run with -Dphp.nativeclock=true (timing every PCRE2 call costs, so it is a separate run); without it the
-PHP-code column equals end to end. PHP-code speedup = (T_php - T_native) / (T_truffle - T_native).
+The run files have lines "kernel iteration ns checksum". Steady state is the median of the second half of the PHP
+iterations and of the last quarter of the Truffle ones (Truffle warms up longer). native.txt is pcre-replay's output,
+"kernel matches median-ns min-ns": one iteration's PCRE2 work replayed in C, the same for both engines. Without it
+the PHP-code column equals end to end. PHP-code speedup = (T_php - T_native) / (T_truffle - T_native).
 """
 import collections
 import math
@@ -27,14 +27,18 @@ def geomean(values):
 
 
 php, truffle = load(sys.argv[1]), load(sys.argv[2])
-native = load(sys.argv[3]) if len(sys.argv) > 3 else {}
+native = {}
+if len(sys.argv) > 3:
+    for line in open(sys.argv[3], encoding="utf-8"):
+        parts = line.split()
+        if len(parts) == 4:
+            native[parts[0]] = int(parts[2]) / 1e6
 print(f"{'kernel':12} {'php ms':>8} {'truffle':>8} {'native':>7} {'share':>6} {'e2e':>6} {'code':>6}  checksums")
 e2e, code = [], []
 for kernel in php:
     tp = statistics.median(r[0] for r in php[kernel][len(php[kernel]) // 2:]) / 1e6
     tt = statistics.median(r[0] for r in truffle[kernel][3 * len(truffle[kernel]) // 4:]) / 1e6
-    runs = native.get(kernel, [])
-    tn = statistics.median(r[1] for r in runs[len(runs) // 2:]) / 1e6 if runs else 0.0
+    tn = native.get(kernel, 0.0)
     c = (tp - tn) / (tt - tn) if tp > tn and tt > tn else float("nan")
     e2e.append(tp / tt)
     if c == c:
