@@ -179,6 +179,12 @@ public final class PhpClass {
         return properties.values();
     }
 
+    /** A declared (or inherited) instance property, as opposed to a dynamic one. */
+    @TruffleBoundary
+    public boolean isDeclaredProperty(String propertyName) {
+        return properties.containsKey(propertyName);
+    }
+
     @TruffleBoundary
     public boolean isPublicProperty(String propertyName) {
         PropertyDecl decl = properties.get(propertyName);

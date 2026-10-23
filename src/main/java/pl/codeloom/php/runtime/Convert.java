@@ -393,9 +393,32 @@ public final class Convert {
 
     // ---- comparisons ----
 
-    /** `===`. */
+    /**
+     * The arrays and objects whose comparison is in progress, innermost first: php-src's recursion protection of
+     * the left operand (zend_hash_compare, zend_std_compare_objects).
+     */
+    private record Guard(Object container, Guard outer) {
+        static boolean contains(Guard guard, Object container) {
+            for (Guard g = guard; g != null; g = g.outer) {
+                if (g.container == container) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private static PhpError nestingTooDeep() {
+        return new PhpError("Nesting level too deep - recursive dependency?");
+    }
+
+    /** `===`, as php-src's zend_is_identical. */
     @TruffleBoundary
     public static boolean strictEquals(Object a, Object b) {
+        return identical(a, b, null);
+    }
+
+    private static boolean identical(Object a, Object b, Guard guard) {
         if (a instanceof Long x) {
             return b instanceof Long y && x.longValue() == y.longValue();
         }
@@ -412,13 +435,29 @@ public final class Convert {
             return b == PhpNull.NULL;
         }
         if (a instanceof PhpArray x) {
-            if (!(b instanceof PhpArray y) || x.size() != y.size()) {
+            if (!(b instanceof PhpArray y)) {
                 return false;
             }
+            if (x == y) {
+                return true;
+            }
+            if (x.size() != y.size()) {
+                return false;
+            }
+            if (Guard.contains(guard, x)) {
+                throw nestingTooDeep();
+            }
+            Guard inner = new Guard(x, guard);
             int p = x.firstPosition();
             int q = y.firstPosition();
             while (p >= 0) {
-                if (!strictEquals(x.keyAt(p), y.keyAt(q)) || !strictEquals(x.valueAt(p), y.valueAt(q))) {
+                Object kx = x.keyAt(p);
+                Object ky = y.keyAt(q);
+                if (kx instanceof Long lx ? !(ky instanceof Long ly && lx.longValue() == ly.longValue())
+                        : !(ky instanceof TruffleString sy && Str.equal((TruffleString) kx, sy))) {
+                    return false;
+                }
+                if (!identical(x.valueAt(p), y.valueAt(q), inner)) {
                     return false;
                 }
                 p = x.nextPosition(p);
@@ -429,90 +468,180 @@ public final class Convert {
         return a == b;
     }
 
-    /** `==`. */
+    /** `==`, as php-src's zend_compare(a, b) == 0 (zendi_smart_str_equals for two strings). */
     @TruffleBoundary
     public static boolean looseEquals(Object a, Object b) {
         if (a instanceof TruffleString x && b instanceof TruffleString y) {
-            Object nx = numericValue(x);
-            Object ny = nx == null ? null : numericValue(y);
-            if (nx != null && ny != null) {
-                return compareNumbers(nx, ny) == 0;
-            }
-            return Str.equal(x, y);
+            return smartStrEquals(x, y);
         }
         return compare(a, b) == 0;
     }
 
-    /** `<=>`, as php-src's zend_compare (PHP 8 semantics for number/string pairs). */
+    /**
+     * `<=>`, as php-src's zend_compare: -1, 0 or 1, where 1 also stands for uncomparable (objects of different
+     * classes, arrays missing a key of the other).
+     */
     @TruffleBoundary
     public static int compare(Object a, Object b) {
+        return compare(a, b, null);
+    }
+
+    private static int compare(Object a, Object b, Guard guard) {
         if ((a instanceof Long || a instanceof Double) && (b instanceof Long || b instanceof Double)) {
             return compareNumbers(a, b);
         }
         if (a instanceof TruffleString x && b instanceof TruffleString y) {
-            Object nx = numericValue(x);
-            Object ny = nx == null ? null : numericValue(y);
-            if (nx != null && ny != null) {
-                return compareNumbers(nx, ny);
-            }
-            return Integer.signum(Str.compare(x, y));
+            return smartStrcmp(x, y);
         }
-        if (a instanceof Boolean || b instanceof Boolean || a == PhpNull.NULL || b == PhpNull.NULL) {
-            if (a == PhpNull.NULL && b instanceof TruffleString y) {
-                return Str.length(y) == 0 ? 0 : -1;
+        boolean converted = false;
+        while (true) {
+            int ta = typeOrder(a);
+            int tb = typeOrder(b);
+            if ((ta == LONG || ta == DOUBLE) && (tb == LONG || tb == DOUBLE)) {
+                return compareNumbers(a, b);
             }
-            if (b == PhpNull.NULL && a instanceof TruffleString x) {
-                return Str.length(x) == 0 ? 0 : 1;
+            if (ta == ARRAY && tb == ARRAY) {
+                return compareArrays((PhpArray) a, (PhpArray) b, guard);
             }
-            if (a == PhpNull.NULL && b instanceof PhpObject) {
-                return -1;
+            if (ta <= TRUE && tb <= TRUE) {
+                // null and false are equal; true is above both
+                return Integer.compare(ta == TRUE ? 1 : 0, tb == TRUE ? 1 : 0);
             }
-            if (b == PhpNull.NULL && a instanceof PhpObject) {
+            if (ta == STRING && tb == STRING) {
+                return smartStrcmp((TruffleString) a, (TruffleString) b);
+            }
+            if (ta == NULL && tb == STRING) {
+                return Str.length((TruffleString) b) == 0 ? 0 : -1;
+            }
+            if (ta == STRING && tb == NULL) {
+                return Str.length((TruffleString) a) == 0 ? 0 : 1;
+            }
+            if (ta == LONG && tb == STRING) {
+                return compareLongToString((Long) a, (TruffleString) b);
+            }
+            if (ta == STRING && tb == LONG) {
+                return -compareLongToString((Long) b, (TruffleString) a);
+            }
+            if (ta == DOUBLE && tb == STRING) {
+                double d = (Double) a;
+                return Double.isNaN(d) ? 1 : compareDoubleToString(d, (TruffleString) b);
+            }
+            if (ta == STRING && tb == DOUBLE) {
+                double d = (Double) b;
+                return Double.isNaN(d) ? 1 : -compareDoubleToString(d, (TruffleString) a);
+            }
+            if (ta == OBJECT && tb == NULL) {
                 return 1;
             }
-            return Boolean.compare(toBool(a), toBool(b));
-        }
-        if ((a instanceof Long || a instanceof Double) && b instanceof TruffleString y) {
-            Object ny = numericValue(y);
-            if (ny != null) {
-                return compareNumbers(a, ny);
+            if (ta == NULL && tb == OBJECT) {
+                return -1;
             }
-            return Integer.signum(Str.compare(toStr(a), y));
-        }
-        if (a instanceof TruffleString x && (b instanceof Long || b instanceof Double)) {
-            Object nx = numericValue(x);
-            if (nx != null) {
-                return compareNumbers(nx, b);
-            }
-            return Integer.signum(Str.compare(x, toStr(b)));
-        }
-        if (a instanceof PhpArray x && b instanceof PhpArray y) {
-            if (x.size() != y.size()) {
-                return x.size() < y.size() ? -1 : 1;
-            }
-            for (int p = x.firstPosition(); p >= 0; p = x.nextPosition(p)) {
-                Object other = y.get(x.keyAt(p));
-                if (other == null) {
-                    return 1;
+            if (ta == OBJECT || tb == OBJECT) {
+                if (ta == OBJECT && tb == OBJECT) {
+                    if (a == b) {
+                        return 0;
+                    }
+                } else if (ta == TRUE || ta == FALSE) {
+                    // a plain object casts to true
+                    return compare(a, Boolean.TRUE, guard);
+                } else if (tb == TRUE || tb == FALSE) {
+                    return compare(Boolean.TRUE, b, guard);
                 }
-                int c = compare(x.valueAt(p), other);
-                if (c != 0) {
-                    return c;
-                }
+                return compareObjects(a, b, ta == OBJECT, guard);
             }
-            return 0;
+            if (!converted) {
+                boolean nanA = a instanceof Double d && Double.isNaN(d);
+                boolean nanB = b instanceof Double d && Double.isNaN(d);
+                if (nanA || nanB) {
+                    // NAN used to be cast to true; php-src keeps that order by hand
+                    if (ta < TRUE) {
+                        return -1;
+                    } else if (ta == TRUE || tb == TRUE) {
+                        return 0;
+                    } else if (tb < TRUE) {
+                        return 1;
+                    } else if (ta != DOUBLE) {
+                        a = scalarToNumber(a);
+                        converted = true;
+                    } else if (tb != DOUBLE) {
+                        b = scalarToNumber(b);
+                        converted = true;
+                    }
+                } else if (ta < TRUE) {
+                    return toBool(b) ? -1 : 0;
+                } else if (ta == TRUE) {
+                    return toBool(b) ? 0 : 1;
+                } else if (tb < TRUE) {
+                    return toBool(a) ? 1 : 0;
+                } else if (tb == TRUE) {
+                    return toBool(a) ? 0 : -1;
+                } else {
+                    a = scalarToNumber(a);
+                    b = scalarToNumber(b);
+                    converted = true;
+                }
+            } else if (ta == ARRAY) {
+                return 1;
+            } else if (tb == ARRAY) {
+                return -1;
+            } else {
+                return 1;
+            }
         }
-        if (a instanceof PhpArray) {
-            return 1;
+    }
+
+    private static final int NULL = 1;
+    private static final int FALSE = 2;
+    private static final int TRUE = 3;
+    private static final int LONG = 4;
+    private static final int DOUBLE = 5;
+    private static final int STRING = 6;
+    private static final int ARRAY = 7;
+    private static final int OBJECT = 8;
+    private static final int RESOURCE = 9;
+
+    /** php-src's type codes, in their order (IS_NULL < IS_FALSE < IS_TRUE < ...). */
+    private static int typeOrder(Object value) {
+        if (value instanceof Long) {
+            return LONG;
         }
-        if (b instanceof PhpArray) {
-            return -1;
+        if (value instanceof Double) {
+            return DOUBLE;
         }
-        // PHP compares two objects of one class property by property; that is not implemented: unequal
-        if (a == b) {
-            return 0;
+        if (value instanceof TruffleString) {
+            return STRING;
         }
-        return 1;
+        if (value instanceof Boolean b) {
+            return b ? TRUE : FALSE;
+        }
+        if (value instanceof PhpArray) {
+            return ARRAY;
+        }
+        if (value instanceof PhpObject || value instanceof PhpClosure) {
+            return OBJECT;
+        }
+        if (value instanceof PhpResource) {
+            return RESOURCE;
+        }
+        return NULL;
+    }
+
+    /** _zendi_convert_scalar_to_number_silent: strings by their leading number, resources by id. */
+    private static Object scalarToNumber(Object value) {
+        if (value instanceof Boolean b) {
+            return b ? 1L : 0L;
+        }
+        if (value == PhpNull.NULL) {
+            return 0L;
+        }
+        if (value instanceof TruffleString s) {
+            Object number = parseNumber(Str.readBytes(s), true);
+            return number == null ? (Object) 0L : number;
+        }
+        if (value instanceof PhpResource r) {
+            return (long) r.getId();
+        }
+        return value;
     }
 
     private static int compareNumbers(Object a, Object b) {
@@ -539,6 +668,237 @@ public final class Convert {
             case "NULL" -> "null";
             default -> typeName(value);
         };
+    }
+
+    private static int compareLongToString(long l, TruffleString s) {
+        Object number = numericValue(s);
+        if (number instanceof Long sl) {
+            return Long.compare(l, sl);
+        }
+        if (number instanceof Double sd) {
+            return compareNumbers((double) l, sd);
+        }
+        return Integer.signum(Str.compare(Str.of(Long.toString(l)), s));
+    }
+
+    private static int compareDoubleToString(double d, TruffleString s) {
+        Object number = numericValue(s);
+        if (number != null) {
+            return compareNumbers(d, number instanceof Long sl ? (double) sl : (Double) number);
+        }
+        return Integer.signum(Str.compare(Str.of(doubleToString(d)), s));
+    }
+
+    /**
+     * is_numeric_string_ex's oflow: the sign of an integer string too big for an int (parsed as a float), else 0.
+     */
+    private static int overflow(TruffleString s, Object number) {
+        if (!(number instanceof Double d)) {
+            return 0;
+        }
+        int length = Str.length(s);
+        for (int i = 0; i < length; i++) {
+            int c = Str.byteAt(s, i);
+            if (c == '.' || c == 'e' || c == 'E') {
+                return 0;
+            }
+        }
+        return d > 0 ? 1 : -1;
+    }
+
+    /** zendi_smart_strcmp: numeric strings compare as numbers, others byte-wise. */
+    private static int smartStrcmp(TruffleString x, TruffleString y) {
+        if (x == y) {
+            return 0;
+        }
+        Object nx = numericValue(x);
+        Object ny = nx == null ? null : numericValue(y);
+        if (nx != null && ny != null) {
+            int oflowX = overflow(x, nx);
+            int oflowY = overflow(y, ny);
+            if (oflowX != 0 && oflowX == oflowY && (Double) nx - (Double) ny == 0.0) {
+                // both integers overflowed to the same side: the float comparison may have lost the difference
+                return Integer.signum(Str.compare(x, y));
+            }
+            if (nx instanceof Double || ny instanceof Double) {
+                double dx;
+                double dy;
+                if (!(nx instanceof Double)) {
+                    if (oflowY != 0) {
+                        return -oflowY;
+                    }
+                    dx = (Long) nx;
+                    dy = (Double) ny;
+                } else if (!(ny instanceof Double)) {
+                    if (oflowX != 0) {
+                        return oflowX;
+                    }
+                    dx = (Double) nx;
+                    dy = (Long) ny;
+                } else {
+                    dx = (Double) nx;
+                    dy = (Double) ny;
+                    if (dx == dy && !Double.isFinite(dx)) {
+                        return Integer.signum(Str.compare(x, y));
+                    }
+                }
+                double difference = dx - dy;
+                return difference > 0 ? 1 : difference < 0 ? -1 : 0;
+            }
+            return Long.compare((Long) nx, (Long) ny);
+        }
+        return Integer.signum(Str.compare(x, y));
+    }
+
+    /** zendi_smart_str_equals: `==` of two strings. */
+    @TruffleBoundary
+    public static boolean smartStrEquals(TruffleString x, TruffleString y) {
+        if (Str.equal(x, y)) {
+            return true;
+        }
+        Object nx = numericValue(x);
+        Object ny = nx == null ? null : numericValue(y);
+        if (nx == null || ny == null) {
+            return false;
+        }
+        int oflowX = overflow(x, nx);
+        int oflowY = overflow(y, ny);
+        if (oflowX != 0 && oflowX == oflowY && (Double) nx - (Double) ny == 0.0) {
+            // both integers overflowed to the same side, and differ as strings
+            return false;
+        }
+        if (nx instanceof Double || ny instanceof Double) {
+            if (!(nx instanceof Double)) {
+                return oflowY == 0 && (double) (Long) nx == (Double) ny;
+            }
+            if (!(ny instanceof Double)) {
+                return oflowX == 0 && (Double) nx == (double) (Long) ny;
+            }
+            double dx = (Double) nx;
+            double dy = (Double) ny;
+            // two infinities of one sign compare as strings, which differ here
+            return dx == dy && Double.isFinite(dx);
+        }
+        return ((Long) nx).longValue() == (Long) ny;
+    }
+
+    /**
+     * zend_compare_symbol_tables: by size, then each element of a against the element under the same key in b
+     * (1 when b lacks the key).
+     */
+    private static int compareArrays(PhpArray a, PhpArray b, Guard guard) {
+        if (a == b) {
+            return 0;
+        }
+        if (a.size() != b.size()) {
+            return a.size() < b.size() ? -1 : 1;
+        }
+        if (Guard.contains(guard, a)) {
+            throw nestingTooDeep();
+        }
+        Guard inner = new Guard(a, guard);
+        for (int p = a.firstPosition(); p >= 0; p = a.nextPosition(p)) {
+            Object other = b.get(a.keyAt(p));
+            if (other == null) {
+                return 1;
+            }
+            int c = compare(a.valueAt(p), PhpRef.deref(other), inner);
+            if (c != 0) {
+                return c;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * The compare handler of the object operand (objectLeft: a, else b) against the other operand, which is not
+     * null or a bool: zend_std_compare_objects, with ext/date's handlers for the prelude's date classes.
+     */
+    private static int compareObjects(Object a, Object b, boolean objectLeft, Guard guard) {
+        Object object = objectLeft ? a : b;
+        Object value = objectLeft ? b : a;
+        if (typeOrder(value) != OBJECT) {
+            Object casted;
+            if (value instanceof TruffleString && object instanceof PhpObject o
+                    && o.getPhpClass().findMethod("__tostring") != null) {
+                casted = o.toPhpString();
+            } else if (value instanceof Long) {
+                // php-src notices "Object of class X could not be converted to int"
+                casted = 1L;
+            } else if (value instanceof Double) {
+                casted = 1.0;
+            } else {
+                return objectLeft ? 1 : -1;
+            }
+            return objectLeft ? compare(casted, value, guard) : compare(value, casted, guard);
+        }
+        if (a == b) {
+            return 0;
+        }
+        if (!(a instanceof PhpObject x) || !(b instanceof PhpObject y)) {
+            // closures compare only to themselves
+            return 1;
+        }
+        PhpClass classX = x.getPhpClass();
+        if (classX.isSubclassOf("datetimeinterface") && y.getPhpClass().isSubclassOf("datetimeinterface")) {
+            // date_object_compare_date: the instants (prelude/date.php's timestamp and microseconds)
+            int c = compare(PhpRef.deref(x.getProperty("timestamp")), PhpRef.deref(y.getProperty("timestamp")));
+            return c != 0 ? c : compare(PhpRef.deref(x.getProperty("microseconds")),
+                    PhpRef.deref(y.getProperty("microseconds")));
+        }
+        if (classX != y.getPhpClass() || classX.isSubclassOf("dateinterval")) {
+            // different classes, or DateInterval (php-src warns "Cannot compare DateInterval objects")
+            return 1;
+        }
+        if (Guard.contains(guard, x)) {
+            throw nestingTooDeep();
+        }
+        Guard inner = new Guard(x, guard);
+        Object[] namesX = x.propertyNames();
+        Object[] namesY = y.propertyNames();
+        String[] declared = classX.declaredNames();
+        if (onlyDeclared(namesX, classX) && onlyDeclared(namesY, classX)) {
+            // no dynamic properties: the declared slots in order, an unset one above a set one
+            for (String name : declared) {
+                Object vx = x.getProperty(name);
+                Object vy = y.getProperty(name);
+                if (vx != null) {
+                    if (vy == null) {
+                        return 1;
+                    }
+                    int c = compare(PhpRef.deref(vx), PhpRef.deref(vy), inner);
+                    if (c != 0) {
+                        return c;
+                    }
+                } else if (vy != null) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+        if (namesX.length != namesY.length) {
+            return namesX.length < namesY.length ? -1 : 1;
+        }
+        for (Object name : namesX) {
+            Object vy = y.getProperty((String) name);
+            if (vy == null) {
+                return 1;
+            }
+            int c = compare(PhpRef.deref(x.getProperty((String) name)), PhpRef.deref(vy), inner);
+            if (c != 0) {
+                return c;
+            }
+        }
+        return 0;
+    }
+
+    private static boolean onlyDeclared(Object[] names, PhpClass phpClass) {
+        for (Object name : names) {
+            if (!phpClass.isDeclaredProperty((String) name)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** PHP type name as gettype() reports it. */
