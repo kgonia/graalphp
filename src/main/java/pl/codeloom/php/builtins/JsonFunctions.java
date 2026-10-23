@@ -48,6 +48,8 @@ final class JsonFunctions {
     private static int lastError;
 
     static void register(Registry r) {
+        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
+        lastError = 0;
         PhpContext context = r.context();
         r.fn("json_decode", a -> {
             long flags = Args.lng(a, 3, 0);

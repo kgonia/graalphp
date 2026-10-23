@@ -107,6 +107,14 @@ public final class Callables {
     private static Object lastSecond;
     private static Target lastTarget;
 
+    /** Forgets the cached callable: a new context must not reuse a target resolved in an earlier one. */
+    public static void resetCache() {
+        lastCallable = null;
+        lastFirst = null;
+        lastSecond = null;
+        lastTarget = null;
+    }
+
     /** Calls a callable from runtime code (array_map, usort, preg_replace_callback...): no inline caching. */
     @TruffleBoundary
     public static Object call(PhpContext context, Object callable, Object... values) {

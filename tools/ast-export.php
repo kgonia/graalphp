@@ -37,8 +37,14 @@ function export_value(mixed $v): mixed {
 
 [$_, $outDir] = $argv;
 foreach (array_slice($argv, 2) as $file) {
-    $ast = ast\parse_file($file, AST_VERSION);
-    $json = json_encode(export_value($ast), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    // a file that doesn't parse (php-src tests include deliberate syntax errors) gets no export; its run then fails
+    try {
+        $ast = ast\parse_file($file, AST_VERSION);
+        $json = json_encode(export_value($ast), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    } catch (ParseError | CompileError | JsonException $e) {
+        fwrite(STDERR, "not exported: $file: " . $e->getMessage() . "\n");
+        continue;
+    }
     $target = $outDir . '/' . ltrim($file, '/') . '.json';
     @mkdir(dirname($target), 0777, true);
     file_put_contents($target, $json);

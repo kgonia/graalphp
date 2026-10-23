@@ -274,6 +274,8 @@ final class PcreFunctions {
     }
 
     static void register(Registry r) {
+        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
+        lastError = 0;
         PhpContext context = r.context();
         r.fn("preg_match", "001", a -> match(a, false));
         r.fn("preg_match_all", "001", a -> match(a, true));

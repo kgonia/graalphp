@@ -1033,6 +1033,13 @@ final class StringFunctions {
     private static TruffleString wordwrap(TruffleString s, long width, TruffleString brk, boolean cut) {
         String text = Str.java(s);
         String breakText = Str.java(brk);
+        if (breakText.isEmpty()) {
+            throw new PhpError("ValueError: wordwrap(): Argument #3 ($break) must not be empty");
+        }
+        if (width == 0 && cut) {
+            throw new PhpError("ValueError: wordwrap(): Argument #4 ($cut_long_words) cannot be true when "
+                    + "argument #2 ($width) is 0");
+        }
         StringBuilder out = new StringBuilder();
         int lineStart = 0;
         int lastSpace = -1;

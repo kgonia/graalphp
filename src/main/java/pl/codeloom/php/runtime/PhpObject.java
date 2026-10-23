@@ -14,6 +14,11 @@ import com.oracle.truffle.api.strings.TruffleString;
 public final class PhpObject extends DynamicObject {
     private static int nextId = 1;
 
+    /** Object ids (var_dump's #n, spl_object_id) start at 1 in each context, as in each php process. */
+    public static void resetIds() {
+        nextId = 1;
+    }
+
     private final PhpClass phpClass;
     private final int id;
 

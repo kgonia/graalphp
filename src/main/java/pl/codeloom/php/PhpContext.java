@@ -54,6 +54,8 @@ public final class PhpContext {
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
+        pl.codeloom.php.runtime.Callables.resetCache();
+        pl.codeloom.php.runtime.PhpObject.resetIds();
         Builtins.install(this);
         pl.codeloom.php.runtime.PhpArray argv = new pl.codeloom.php.runtime.PhpArray();
         for (String argument : env.getApplicationArguments()) {

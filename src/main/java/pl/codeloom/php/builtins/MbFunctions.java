@@ -23,6 +23,8 @@ final class MbFunctions {
     private static int substitute = '?';
 
     static void register(Registry r) {
+        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
+        substitute = '?';
         r.fn("mb_check_encoding", a -> checkEncoding(Args.get(a, 0), encoding(a, 1)));
         r.fn("mb_substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), StringFunctions.lengthArg(a, 2),
                 encoding(a, 3)));
