@@ -17,4 +17,17 @@ public final class ThisNode extends ExprNode {
         }
         return self;
     }
+
+    /** isset($this): whether the code runs on an object (false in a static method or a plain function). */
+    public static final class IsSetNode extends ExprNode {
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return frame.getArguments()[PhpFunction.ARG_THIS] != null;
+        }
+
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+    }
 }

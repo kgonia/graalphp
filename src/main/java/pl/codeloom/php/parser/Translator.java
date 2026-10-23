@@ -961,8 +961,12 @@ public final class Translator {
             case "AST_DIM":
             case "AST_PROP":
             case "AST_STATIC_PROP":
-                if (node.is("AST_VAR") && "this".equals(node.get("name"))) {
+                if (isThis(node)) {
                     return new ThisNode();
+                }
+                if (node.is("AST_VAR") && "GLOBALS".equals(node.get("name"))) {
+                    // $GLOBALS read as a whole: a value, not a place
+                    return new GlobalsArrayNode();
                 }
                 return place(node);
             case "AST_CONST":
@@ -999,8 +1003,14 @@ public final class Translator {
                 return new LogicNodes.TernaryNode(expression(node.get("cond")),
                         node.get("true") == null ? null : expression(node.get("true")), expression(node.get("false")));
             case "AST_ISSET":
+                if (isThis(node.get("var"))) {
+                    return new ThisNode.IsSetNode();
+                }
                 return new TestNodes.IssetNode(new LValueNode[]{place(node.get("var"))});
             case "AST_EMPTY":
+                if (isThis(node.get("expr"))) {
+                    return new LogicNodes.NotNode(new ThisNode.IsSetNode());
+                }
                 return new TestNodes.EmptyNode(expression(node.get("expr")));
             case "AST_CAST":
                 return UnaryNodes.CastNode.create(expression(node.get("expr")), node.flags);
@@ -1089,6 +1099,10 @@ public final class Translator {
         throw unsupported(node, "dynamic method name");
     }
 
+    private static boolean isThis(Object value) {
+        return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
+    }
+
     // ---- places ----
 
     LValueNode place(Object value) {
@@ -1100,6 +1114,9 @@ public final class Translator {
                 }
                 if (name.equals("this")) {
                     throw unsupported(node, "assignment to $this");
+                }
+                if (name.equals("GLOBALS")) {
+                    throw new PhpError("$GLOBALS can only be modified using the $GLOBALS[$name] = $value syntax");
                 }
                 return (LValueNode) variable(name);
             }
