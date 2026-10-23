@@ -1,0 +1,4145 @@
+charset ISO-8859-1 1
+charset ISO8859-1 1
+charset ISO-8859-15 3
+charset ISO8859-15 3
+charset utf-8 0
+charset cp1252 2
+charset Windows-1252 2
+charset 1252 2
+charset BIG5 9
+charset 950 9
+charset GB2312 A
+charset 936 A
+charset BIG5-HKSCS B
+charset Shift_JIS C
+charset SJIS C
+charset 932 C
+charset SJIS-win C
+charset CP932 C
+charset EUCJP D
+charset EUC-JP D
+charset eucJP-win D
+charset KOI8-R 8
+charset koi8-ru 8
+charset koi8r 8
+charset cp1251 4
+charset Windows-1251 4
+charset win-1251 4
+charset iso8859-5 5
+charset iso-8859-5 5
+charset cp866 6
+charset 866 6
+charset ibm866 6
+charset MacRoman 7
+e2u 1 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 0080 0081 0082 0083 0084 0085 0086 0087 0088 0089 008A 008B 008C 008D 008E 008F 0090 0091 0092 0093 0094 0095 0096 0097 0098 0099 009A 009B 009C 009D 009E 009F 00A0 00A1 00A2 00A3 00A4 00A5 00A6 00A7 00A8 00A9 00AA 00AB 00AC 00AD 00AE 00AF 00B0 00B1 00B2 00B3 00B4 00B5 00B6 00B7 00B8 00B9 00BA 00BB 00BC 00BD 00BE 00BF 00C0 00C1 00C2 00C3 00C4 00C5 00C6 00C7 00C8 00C9 00CA 00CB 00CC 00CD 00CE 00CF 00D0 00D1 00D2 00D3 00D4 00D5 00D6 00D7 00D8 00D9 00DA 00DB 00DC 00DD 00DE 00DF 00E0 00E1 00E2 00E3 00E4 00E5 00E6 00E7 00E8 00E9 00EA 00EB 00EC 00ED 00EE 00EF 00F0 00F1 00F2 00F3 00F4 00F5 00F6 00F7 00F8 00F9 00FA 00FB 00FC 00FD 00FE 00FF
+e2u 2 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 20AC FFFF 201A 0192 201E 2026 2020 2021 02C6 2030 0160 2039 0152 FFFF 017D FFFF FFFF 2018 2019 201C 201D 2022 2013 2014 02DC 2122 0161 203A 0153 FFFF 017E 0178 00A0 00A1 00A2 00A3 00A4 00A5 00A6 00A7 00A8 00A9 00AA 00AB 00AC 00AD 00AE 00AF 00B0 00B1 00B2 00B3 00B4 00B5 00B6 00B7 00B8 00B9 00BA 00BB 00BC 00BD 00BE 00BF 00C0 00C1 00C2 00C3 00C4 00C5 00C6 00C7 00C8 00C9 00CA 00CB 00CC 00CD 00CE 00CF 00D0 00D1 00D2 00D3 00D4 00D5 00D6 00D7 00D8 00D9 00DA 00DB 00DC 00DD 00DE 00DF 00E0 00E1 00E2 00E3 00E4 00E5 00E6 00E7 00E8 00E9 00EA 00EB 00EC 00ED 00EE 00EF 00F0 00F1 00F2 00F3 00F4 00F5 00F6 00F7 00F8 00F9 00FA 00FB 00FC 00FD 00FE 00FF
+e2u 3 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 0080 0081 0082 0083 0084 0085 0086 0087 0088 0089 008A 008B 008C 008D 008E 008F 0090 0091 0092 0093 0094 0095 0096 0097 0098 0099 009A 009B 009C 009D 009E 009F 00A0 00A1 00A2 00A3 20AC 00A5 0160 00A7 0161 00A9 00AA 00AB 00AC 00AD 00AE 00AF 00B0 00B1 00B2 00B3 017D 00B5 00B6 00B7 017E 00B9 00BA 00BB 0152 0153 0178 00BF 00C0 00C1 00C2 00C3 00C4 00C5 00C6 00C7 00C8 00C9 00CA 00CB 00CC 00CD 00CE 00CF 00D0 00D1 00D2 00D3 00D4 00D5 00D6 00D7 00D8 00D9 00DA 00DB 00DC 00DD 00DE 00DF 00E0 00E1 00E2 00E3 00E4 00E5 00E6 00E7 00E8 00E9 00EA 00EB 00EC 00ED 00EE 00EF 00F0 00F1 00F2 00F3 00F4 00F5 00F6 00F7 00F8 00F9 00FA 00FB 00FC 00FD 00FE 00FF
+e2u 4 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 0402 0403 201A 0453 201E 2026 2020 2021 20AC 2030 0409 2039 040A 040C 040B 040F 0452 2018 2019 201C 201D 2022 2013 2014 FFFF 2122 0459 203A 045A 045C 045B 045F 00A0 040E 045E 0408 00A4 0490 00A6 00A7 0401 00A9 0404 00AB 00AC 00AD 00AE 0407 00B0 00B1 0406 0456 0491 00B5 00B6 00B7 0451 2116 0454 00BB 0458 0405 0455 0457 0410 0411 0412 0413 0414 0415 0416 0417 0418 0419 041A 041B 041C 041D 041E 041F 0420 0421 0422 0423 0424 0425 0426 0427 0428 0429 042A 042B 042C 042D 042E 042F 0430 0431 0432 0433 0434 0435 0436 0437 0438 0439 043A 043B 043C 043D 043E 043F 0440 0441 0442 0443 0444 0445 0446 0447 0448 0449 044A 044B 044C 044D 044E 044F
+e2u 5 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 0080 0081 0082 0083 0084 0085 0086 0087 0088 0089 008A 008B 008C 008D 008E 008F 0090 0091 0092 0093 0094 0095 0096 0097 0098 0099 009A 009B 009C 009D 009E 009F 00A0 0401 0402 0403 0404 0405 0406 0407 0408 0409 040A 040B 040C 00AD 040E 040F 0410 0411 0412 0413 0414 0415 0416 0417 0418 0419 041A 041B 041C 041D 041E 041F 0420 0421 0422 0423 0424 0425 0426 0427 0428 0429 042A 042B 042C 042D 042E 042F 0430 0431 0432 0433 0434 0435 0436 0437 0438 0439 043A 043B 043C 043D 043E 043F 0440 0441 0442 0443 0444 0445 0446 0447 0448 0449 044A 044B 044C 044D 044E 044F 2116 0451 0452 0453 0454 0455 0456 0457 0458 0459 045A 045B 045C 00A7 045E 045F
+e2u 6 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 0410 0411 0412 0413 0414 0415 0416 0417 0418 0419 041A 041B 041C 041D 041E 041F 0420 0421 0422 0423 0424 0425 0426 0427 0428 0429 042A 042B 042C 042D 042E 042F 0430 0431 0432 0433 0434 0435 0436 0437 0438 0439 043A 043B 043C 043D 043E 043F 2591 2592 2593 2502 2524 2561 2562 2556 2555 2563 2551 2557 255D 255C 255B 2510 2514 2534 252C 251C 2500 253C 255E 255F 255A 2554 2569 2566 2560 2550 256C 2567 2568 2564 2565 2559 2558 2552 2553 256B 256A 2518 250C 2588 2584 258C 2590 2580 0440 0441 0442 0443 0444 0445 0446 0447 0448 0449 044A 044B 044C 044D 044E 044F 0401 0451 0404 0454 0407 0457 040E 045E 00B0 2219 00B7 221A 2116 00A4 25A0 00A0
+e2u 7 FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E FFFF 00C4 00C5 00C7 00C9 00D1 00D6 00DC 00E1 00E0 00E2 00E4 00E3 00E5 00E7 00E9 00E8 00EA 00EB 00ED 00EC 00EE 00EF 00F1 00F3 00F2 00F4 00F6 00F5 00FA 00F9 00FB 00FC 2020 00B0 00A2 00A3 00A7 2022 00B6 00DF 00AE 00A9 2122 00B4 00A8 2260 00C6 00D8 221E 00B1 2264 2265 00A5 00B5 2202 2211 220F 03C0 222B 00AA 00BA 03A9 00E6 00F8 00BF 00A1 00AC 221A 0192 2248 2206 00AB 00BB 2026 00A0 00C0 00C3 00D5 0152 0153 2013 2014 201C 201D 2018 2019 00F7 25CA 00FF 0178 2044 20AC 2039 203A FB01 FB02 2021 00B7 201A 201E 2030 00C2 00CA 00C1 00CB 00C8 00CD 00CE 00CF 00CC 00D3 00D4 F8FF 00D2 00DA 00DB 00D9 0131 02C6 02DC 00AF 02D8 02D9 02DA 00B8 02DD 02DB 02C7
+e2u 8 0000 0001 0002 0003 0004 0005 0006 0007 0008 0009 000A 000B 000C 000D 000E 000F 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 001A 001B 001C 001D 001E 001F 0020 0021 0022 0023 0024 0025 0026 0027 0028 0029 002A 002B 002C 002D 002E 002F 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 003A 003B 003C 003D 003E 003F 0040 0041 0042 0043 0044 0045 0046 0047 0048 0049 004A 004B 004C 004D 004E 004F 0050 0051 0052 0053 0054 0055 0056 0057 0058 0059 005A 005B 005C 005D 005E 005F 0060 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 006B 006C 006D 006E 006F 0070 0071 0072 0073 0074 0075 0076 0077 0078 0079 007A 007B 007C 007D 007E 007F 2500 2502 250C 2510 2514 2518 251C 2524 252C 2534 253C 2580 2584 2588 258C 2590 2591 2592 2593 2320 25A0 2219 221A 2248 2264 2265 00A0 2321 00B0 00B2 00B7 00F7 2550 2551 2552 0451 2553 2554 2555 2556 2557 2558 2559 255A 255B 255C 255D 255E 255F 2560 2561 0401 2562 2563 2564 2565 2566 2567 2568 2569 256A 256B 256C 00A9 044E 0430 0431 0446 0434 0435 0444 0433 0445 0438 0439 043A 043B 043C 043D 043E 043F 044F 0440 0441 0442 0443 0436 0432 044C 044B 0437 0448 044D 0449 0447 044A 042E 0410 0411 0426 0414 0415 0424 0413 0425 0418 0419 041A 041B 041C 041D 041E 041F 042F 0420 0421 0422 0423 0416 0412 042C 042B 0417 0428 042D 0429 0427 042A
+u2e iso885915 00A5:A5 00A7:A7 00A9:A9 00AA:AA 00AB:AB 00AC:AC 00AD:AD 00AE:AE 00AF:AF 00B0:B0 00B1:B1 00B2:B2 00B3:B3 00B5:B5 00B6:B6 00B7:B7 00B9:B9 00BA:BA 00BB:BB 0152:BC 0153:BD 0160:A6 0161:A8 0178:BE 017D:B4 017E:B8 20AC:A4
+u2e win1252 0152:8C 0153:9C 0160:8A 0161:9A 0178:9F 017D:8E 017E:9E 0192:83 02C6:88 02DC:98 2013:96 2014:97 2018:91 2019:92 201A:82 201C:93 201D:94 201E:84 2020:86 2021:87 2022:95 2026:85 2030:89 2039:8B 203A:9B 20AC:80 2122:99
+u2e win1251 00A0:A0 00A4:A4 00A6:A6 00A7:A7 00A9:A9 00AB:AB 00AC:AC 00AD:AD 00AE:AE 00B0:B0 00B1:B1 00B5:B5 00B6:B6 00B7:B7 00BB:BB 0401:A8 0402:80 0403:81 0404:AA 0405:BD 0406:B2 0407:AF 0408:A3 0409:8A 040A:8C 040B:8E 040C:8D 040E:A1 040F:8F 0410:C0 0411:C1 0412:C2 0413:C3 0414:C4 0415:C5 0416:C6 0417:C7 0418:C8 0419:C9 041A:CA 041B:CB 041C:CC 041D:CD 041E:CE 041F:CF 0420:D0 0421:D1 0422:D2 0423:D3 0424:D4 0425:D5 0426:D6 0427:D7 0428:D8 0429:D9 042A:DA 042B:DB 042C:DC 042D:DD 042E:DE 042F:DF 0430:E0 0431:E1 0432:E2 0433:E3 0434:E4 0435:E5 0436:E6 0437:E7 0438:E8 0439:E9 043A:EA 043B:EB 043C:EC 043D:ED 043E:EE 043F:EF 0440:F0 0441:F1 0442:F2 0443:F3 0444:F4 0445:F5 0446:F6 0447:F7 0448:F8 0449:F9 044A:FA 044B:FB 044C:FC 044D:FD 044E:FE 044F:FF 0451:B8 0452:90 0453:83 0454:BA 0455:BE 0456:B3 0457:BF 0458:BC 0459:9A 045A:9C 045B:9E 045C:9D 045E:A2 045F:9F 0490:A5 0491:B4 2013:96 2014:97 2018:91 2019:92 201A:82 201C:93 201D:94 201E:84 2020:86 2021:87 2022:95 2026:85 2030:89 2039:8B 203A:9B 20AC:88 2116:B9 2122:99
+u2e koi8r 00A0:9A 00A9:BF 00B0:9C 00B2:9D 00B7:9E 00F7:9F 0401:B3 0410:E1 0411:E2 0412:F7 0413:E7 0414:E4 0415:E5 0416:F6 0417:FA 0418:E9 0419:EA 041A:EB 041B:EC 041C:ED 041D:EE 041E:EF 041F:F0 0420:F2 0421:F3 0422:F4 0423:F5 0424:E6 0425:E8 0426:E3 0427:FE 0428:FB 0429:FD 042A:FF 042B:F9 042C:F8 042D:FC 042E:E0 042F:F1 0430:C1 0431:C2 0432:D7 0433:C7 0434:C4 0435:C5 0436:D6 0437:DA 0438:C9 0439:CA 043A:CB 043B:CC 043C:CD 043D:CE 043E:CF 043F:D0 0440:D2 0441:D3 0442:D4 0443:D5 0444:C6 0445:C8 0446:C3 0447:DE 0448:DB 0449:DD 044A:DF 044B:D9 044C:D8 044D:DC 044E:C0 044F:D1 0451:A3 2219:95 221A:96 2248:97 2264:98 2265:99 2320:93 2321:9B 2500:80 2502:81 250C:82 2510:83 2514:84 2518:85 251C:86 2524:87 252C:88 2534:89 253C:8A 2550:A0 2551:A1 2552:A2 2553:A4 2554:A5 2555:A6 2556:A7 2557:A8 2558:A9 2559:AA 255A:AB 255B:AC 255C:AD 255D:AE 255E:AF 255F:B0 2560:B1 2561:B2 2562:B4 2563:B5 2564:B6 2565:B7 2566:B8 2567:B9 2568:BA 2569:BB 256A:BC 256B:BD 256C:BE 2580:8B 2584:8C 2588:8D 258C:8E 2590:8F 2591:90 2592:91 2593:92 25A0:94
+u2e cp866 00A0:FF 00A4:FD 00B0:F8 00B7:FA 0401:F0 0404:F2 0407:F4 040E:F6 0410:80 0411:81 0412:82 0413:83 0414:84 0415:85 0416:86 0417:87 0418:88 0419:89 041A:8A 041B:8B 041C:8C 041D:8D 041E:8E 041F:8F 0420:90 0421:91 0422:92 0423:93 0424:94 0425:95 0426:96 0427:97 0428:98 0429:99 042A:9A 042B:9B 042C:9C 042D:9D 042E:9E 042F:9F 0430:A0 0431:A1 0432:A2 0433:A3 0434:A4 0435:A5 0436:A6 0437:A7 0438:A8 0439:A9 043A:AA 043B:AB 043C:AC 043D:AD 043E:AE 043F:AF 0440:E0 0441:E1 0442:E2 0443:E3 0444:E4 0445:E5 0446:E6 0447:E7 0448:E8 0449:E9 044A:EA 044B:EB 044C:EC 044D:ED 044E:EE 044F:EF 0451:F1 0454:F3 0457:F5 045E:F7 2116:FC 2219:F9 221A:FB 2500:C4 2502:B3 250C:DA 2510:BF 2514:C0 2518:D9 251C:C3 2524:B4 252C:C2 2534:C1 253C:C5 2550:CD 2551:BA 2552:D5 2553:D6 2554:C9 2555:B8 2556:B7 2557:BB 2558:D4 2559:D3 255A:C8 255B:BE 255C:BD 255D:BC 255E:C6 255F:C7 2560:CC 2561:B5 2562:B6 2563:B9 2564:D1 2565:D2 2566:CB 2567:CF 2568:D0 2569:CA 256A:D8 256B:D7 256C:CE 2580:DF 2584:DC 2588:DB 258C:DD 2590:DE 2591:B0 2592:B1 2593:B2 25A0:FE
+u2e macroman 00A0:CA 00A1:C1 00A2:A2 00A3:A3 00A5:B4 00A7:A4 00A8:AC 00A9:A9 00AA:BB 00AB:C7 00AC:C2 00AE:A8 00AF:F8 00B0:A1 00B1:B1 00B4:AB 00B5:B5 00B6:A6 00B7:E1 00B8:FC 00BA:BC 00BB:C8 00BF:C0 00C0:CB 00C1:E7 00C2:E5 00C3:CC 00C4:80 00C5:81 00C6:AE 00C7:82 00C8:E9 00C9:83 00CA:E6 00CB:E8 00CC:ED 00CD:EA 00CE:EB 00CF:EC 00D1:84 00D2:F1 00D3:EE 00D4:EF 00D5:CD 00D6:85 00D8:AF 00D9:F4 00DA:F2 00DB:F3 00DC:86 00DF:A7 00E0:88 00E1:87 00E2:89 00E3:8B 00E4:8A 00E5:8C 00E6:BE 00E7:8D 00E8:8F 00E9:8E 00EA:90 00EB:91 00EC:93 00ED:92 00EE:94 00EF:95 00F1:96 00F2:98 00F3:97 00F4:99 00F5:9B 00F6:9A 00F7:D6 00F8:BF 00F9:9D 00FA:9C 00FB:9E 00FC:9F 00FF:D8 0131:F5 0152:CE 0153:CF 0178:D9 0192:C4 02C6:F6 02C7:FF 02D8:F9 02D9:FA 02DA:FB 02DB:FE 02DC:F7 02DD:FD 03A9:BD 03C0:B9 2013:D0 2014:D1 2018:D4 2019:D5 201A:E2 201C:D2 201D:D3 201E:E3 2020:A0 2021:E0 2022:A5 2026:C9 2030:E4 2039:DC 203A:DD 2044:DA 20AC:DB 2122:AA 2202:B6 2206:C6 220F:B8 2211:B7 221A:C3 221E:B0 222B:BA 2248:C5 2260:AD 2264:B2 2265:B3 25CA:D7 F8FF:F0 FB01:DE FB02:DF
+enc html5 9 Tab
+enc html5 A NewLine
+enc html5 21 excl
+enc html5 22 quot
+enc html5 23 num
+enc html5 24 dollar
+enc html5 25 percnt
+enc html5 26 amp
+enc html5 27 apos
+enc html5 28 lpar
+enc html5 29 rpar
+enc html5 2A ast
+enc html5 2B plus
+enc html5 2C comma
+enc html5 2E period
+enc html5 2F sol
+enc html5 3A colon
+enc html5 3B semi
+encm html5 3C lt 20D2:nvlt
+encm html5 3D equals 20E5:bne
+encm html5 3E gt 20D2:nvgt
+enc html5 3F quest
+enc html5 40 commat
+enc html5 5B lbrack
+enc html5 5C bsol
+enc html5 5D rsqb
+enc html5 5E Hat
+enc html5 5F lowbar
+enc html5 60 grave
+encm html5 66 - 6A:fjlig
+enc html5 7B lbrace
+enc html5 7C vert
+enc html5 7D rcub
+enc html5 A0 nbsp
+enc html5 A1 iexcl
+enc html5 A2 cent
+enc html5 A3 pound
+enc html5 A4 curren
+enc html5 A5 yen
+enc html5 A6 brvbar
+enc html5 A7 sect
+enc html5 A8 DoubleDot
+enc html5 A9 copy
+enc html5 AA ordf
+enc html5 AB laquo
+enc html5 AC not
+enc html5 AD shy
+enc html5 AE reg
+enc html5 AF macr
+enc html5 B0 deg
+enc html5 B1 plusmn
+enc html5 B2 sup2
+enc html5 B3 sup3
+enc html5 B4 DiacriticalAcute
+enc html5 B5 micro
+enc html5 B6 para
+enc html5 B7 CenterDot
+enc html5 B8 Cedilla
+enc html5 B9 sup1
+enc html5 BA ordm
+enc html5 BB raquo
+enc html5 BC frac14
+enc html5 BD half
+enc html5 BE frac34
+enc html5 BF iquest
+enc html5 C0 Agrave
+enc html5 C1 Aacute
+enc html5 C2 Acirc
+enc html5 C3 Atilde
+enc html5 C4 Auml
+enc html5 C5 Aring
+enc html5 C6 AElig
+enc html5 C7 Ccedil
+enc html5 C8 Egrave
+enc html5 C9 Eacute
+enc html5 CA Ecirc
+enc html5 CB Euml
+enc html5 CC Igrave
+enc html5 CD Iacute
+enc html5 CE Icirc
+enc html5 CF Iuml
+enc html5 D0 ETH
+enc html5 D1 Ntilde
+enc html5 D2 Ograve
+enc html5 D3 Oacute
+enc html5 D4 Ocirc
+enc html5 D5 Otilde
+enc html5 D6 Ouml
+enc html5 D7 times
+enc html5 D8 Oslash
+enc html5 D9 Ugrave
+enc html5 DA Uacute
+enc html5 DB Ucirc
+enc html5 DC Uuml
+enc html5 DD Yacute
+enc html5 DE THORN
+enc html5 DF szlig
+enc html5 E0 agrave
+enc html5 E1 aacute
+enc html5 E2 acirc
+enc html5 E3 atilde
+enc html5 E4 auml
+enc html5 E5 aring
+enc html5 E6 aelig
+enc html5 E7 ccedil
+enc html5 E8 egrave
+enc html5 E9 eacute
+enc html5 EA ecirc
+enc html5 EB euml
+enc html5 EC igrave
+enc html5 ED iacute
+enc html5 EE icirc
+enc html5 EF iuml
+enc html5 F0 eth
+enc html5 F1 ntilde
+enc html5 F2 ograve
+enc html5 F3 oacute
+enc html5 F4 ocirc
+enc html5 F5 otilde
+enc html5 F6 ouml
+enc html5 F7 divide
+enc html5 F8 oslash
+enc html5 F9 ugrave
+enc html5 FA uacute
+enc html5 FB ucirc
+enc html5 FC uuml
+enc html5 FD yacute
+enc html5 FE thorn
+enc html5 FF yuml
+enc html5 100 Amacr
+enc html5 101 amacr
+enc html5 102 Abreve
+enc html5 103 abreve
+enc html5 104 Aogon
+enc html5 105 aogon
+enc html5 106 Cacute
+enc html5 107 cacute
+enc html5 108 Ccirc
+enc html5 109 ccirc
+enc html5 10A Cdot
+enc html5 10B cdot
+enc html5 10C Ccaron
+enc html5 10D ccaron
+enc html5 10E Dcaron
+enc html5 10F dcaron
+enc html5 110 Dstrok
+enc html5 111 dstrok
+enc html5 112 Emacr
+enc html5 113 emacr
+enc html5 116 Edot
+enc html5 117 edot
+enc html5 118 Eogon
+enc html5 119 eogon
+enc html5 11A Ecaron
+enc html5 11B ecaron
+enc html5 11C Gcirc
+enc html5 11D gcirc
+enc html5 11E Gbreve
+enc html5 11F gbreve
+enc html5 120 Gdot
+enc html5 121 gdot
+enc html5 122 Gcedil
+enc html5 124 Hcirc
+enc html5 125 hcirc
+enc html5 126 Hstrok
+enc html5 127 hstrok
+enc html5 128 Itilde
+enc html5 129 itilde
+enc html5 12A Imacr
+enc html5 12B imacr
+enc html5 12E Iogon
+enc html5 12F iogon
+enc html5 130 Idot
+enc html5 131 inodot
+enc html5 132 IJlig
+enc html5 133 ijlig
+enc html5 134 Jcirc
+enc html5 135 jcirc
+enc html5 136 Kcedil
+enc html5 137 kcedil
+enc html5 138 kgreen
+enc html5 139 Lacute
+enc html5 13A lacute
+enc html5 13B Lcedil
+enc html5 13C lcedil
+enc html5 13D Lcaron
+enc html5 13E lcaron
+enc html5 13F Lmidot
+enc html5 140 lmidot
+enc html5 141 Lstrok
+enc html5 142 lstrok
+enc html5 143 Nacute
+enc html5 144 nacute
+enc html5 145 Ncedil
+enc html5 146 ncedil
+enc html5 147 Ncaron
+enc html5 148 ncaron
+enc html5 149 napos
+enc html5 14A ENG
+enc html5 14B eng
+enc html5 14C Omacr
+enc html5 14D omacr
+enc html5 150 Odblac
+enc html5 151 odblac
+enc html5 152 OElig
+enc html5 153 oelig
+enc html5 154 Racute
+enc html5 155 racute
+enc html5 156 Rcedil
+enc html5 157 rcedil
+enc html5 158 Rcaron
+enc html5 159 rcaron
+enc html5 15A Sacute
+enc html5 15B sacute
+enc html5 15C Scirc
+enc html5 15D scirc
+enc html5 15E Scedil
+enc html5 15F scedil
+enc html5 160 Scaron
+enc html5 161 scaron
+enc html5 162 Tcedil
+enc html5 163 tcedil
+enc html5 164 Tcaron
+enc html5 165 tcaron
+enc html5 166 Tstrok
+enc html5 167 tstrok
+enc html5 168 Utilde
+enc html5 169 utilde
+enc html5 16A Umacr
+enc html5 16B umacr
+enc html5 16C Ubreve
+enc html5 16D ubreve
+enc html5 16E Uring
+enc html5 16F uring
+enc html5 170 Udblac
+enc html5 171 udblac
+enc html5 172 Uogon
+enc html5 173 uogon
+enc html5 174 Wcirc
+enc html5 175 wcirc
+enc html5 176 Ycirc
+enc html5 177 ycirc
+enc html5 178 Yuml
+enc html5 179 Zacute
+enc html5 17A zacute
+enc html5 17B Zdot
+enc html5 17C zdot
+enc html5 17D Zcaron
+enc html5 17E zcaron
+enc html5 192 fnof
+enc html5 1B5 imped
+enc html5 1F5 gacute
+enc html5 237 jmath
+enc html5 2C6 circ
+enc html5 2C7 Hacek
+enc html5 2D8 Breve
+enc html5 2D9 dot
+enc html5 2DA ring
+enc html5 2DB ogon
+enc html5 2DC DiacriticalTilde
+enc html5 2DD DiacriticalDoubleAcute
+enc html5 311 DownBreve
+enc html5 391 Alpha
+enc html5 392 Beta
+enc html5 393 Gamma
+enc html5 394 Delta
+enc html5 395 Epsilon
+enc html5 396 Zeta
+enc html5 397 Eta
+enc html5 398 Theta
+enc html5 399 Iota
+enc html5 39A Kappa
+enc html5 39B Lambda
+enc html5 39C Mu
+enc html5 39D Nu
+enc html5 39E Xi
+enc html5 39F Omicron
+enc html5 3A0 Pi
+enc html5 3A1 Rho
+enc html5 3A3 Sigma
+enc html5 3A4 Tau
+enc html5 3A5 Upsilon
+enc html5 3A6 Phi
+enc html5 3A7 Chi
+enc html5 3A8 Psi
+enc html5 3A9 Omega
+enc html5 3B1 alpha
+enc html5 3B2 beta
+enc html5 3B3 gamma
+enc html5 3B4 delta
+enc html5 3B5 epsi
+enc html5 3B6 zeta
+enc html5 3B7 eta
+enc html5 3B8 theta
+enc html5 3B9 iota
+enc html5 3BA kappa
+enc html5 3BB lambda
+enc html5 3BC mu
+enc html5 3BD nu
+enc html5 3BE xi
+enc html5 3BF omicron
+enc html5 3C0 pi
+enc html5 3C1 rho
+enc html5 3C2 sigmav
+enc html5 3C3 sigma
+enc html5 3C4 tau
+enc html5 3C5 upsi
+enc html5 3C6 phi
+enc html5 3C7 chi
+enc html5 3C8 psi
+enc html5 3C9 omega
+enc html5 3D1 thetasym
+enc html5 3D2 upsih
+enc html5 3D5 straightphi
+enc html5 3D6 piv
+enc html5 3DC Gammad
+enc html5 3DD gammad
+enc html5 3F0 varkappa
+enc html5 3F1 rhov
+enc html5 3F5 straightepsilon
+enc html5 3F6 backepsilon
+enc html5 401 IOcy
+enc html5 402 DJcy
+enc html5 403 GJcy
+enc html5 404 Jukcy
+enc html5 405 DScy
+enc html5 406 Iukcy
+enc html5 407 YIcy
+enc html5 408 Jsercy
+enc html5 409 LJcy
+enc html5 40A NJcy
+enc html5 40B TSHcy
+enc html5 40C KJcy
+enc html5 40E Ubrcy
+enc html5 40F DZcy
+enc html5 410 Acy
+enc html5 411 Bcy
+enc html5 412 Vcy
+enc html5 413 Gcy
+enc html5 414 Dcy
+enc html5 415 IEcy
+enc html5 416 ZHcy
+enc html5 417 Zcy
+enc html5 418 Icy
+enc html5 419 Jcy
+enc html5 41A Kcy
+enc html5 41B Lcy
+enc html5 41C Mcy
+enc html5 41D Ncy
+enc html5 41E Ocy
+enc html5 41F Pcy
+enc html5 420 Rcy
+enc html5 421 Scy
+enc html5 422 Tcy
+enc html5 423 Ucy
+enc html5 424 Fcy
+enc html5 425 KHcy
+enc html5 426 TScy
+enc html5 427 CHcy
+enc html5 428 SHcy
+enc html5 429 SHCHcy
+enc html5 42A HARDcy
+enc html5 42B Ycy
+enc html5 42C SOFTcy
+enc html5 42D Ecy
+enc html5 42E YUcy
+enc html5 42F YAcy
+enc html5 430 acy
+enc html5 431 bcy
+enc html5 432 vcy
+enc html5 433 gcy
+enc html5 434 dcy
+enc html5 435 iecy
+enc html5 436 zhcy
+enc html5 437 zcy
+enc html5 438 icy
+enc html5 439 jcy
+enc html5 43A kcy
+enc html5 43B lcy
+enc html5 43C mcy
+enc html5 43D ncy
+enc html5 43E ocy
+enc html5 43F pcy
+enc html5 440 rcy
+enc html5 441 scy
+enc html5 442 tcy
+enc html5 443 ucy
+enc html5 444 fcy
+enc html5 445 khcy
+enc html5 446 tscy
+enc html5 447 chcy
+enc html5 448 shcy
+enc html5 449 shchcy
+enc html5 44A hardcy
+enc html5 44B ycy
+enc html5 44C softcy
+enc html5 44D ecy
+enc html5 44E yucy
+enc html5 44F yacy
+enc html5 451 iocy
+enc html5 452 djcy
+enc html5 453 gjcy
+enc html5 454 jukcy
+enc html5 455 dscy
+enc html5 456 iukcy
+enc html5 457 yicy
+enc html5 458 jsercy
+enc html5 459 ljcy
+enc html5 45A njcy
+enc html5 45B tshcy
+enc html5 45C kjcy
+enc html5 45E ubrcy
+enc html5 45F dzcy
+enc html5 2002 ensp
+enc html5 2003 emsp
+enc html5 2004 emsp13
+enc html5 2005 emsp14
+enc html5 2007 numsp
+enc html5 2008 puncsp
+enc html5 2009 ThinSpace
+enc html5 200A hairsp
+enc html5 200B ZeroWidthSpace
+enc html5 200C zwnj
+enc html5 200D zwj
+enc html5 200E lrm
+enc html5 200F rlm
+enc html5 2010 hyphen
+enc html5 2013 ndash
+enc html5 2014 mdash
+enc html5 2015 horbar
+enc html5 2016 Verbar
+enc html5 2018 OpenCurlyQuote
+enc html5 2019 rsquo
+enc html5 201A sbquo
+enc html5 201C OpenCurlyDoubleQuote
+enc html5 201D rdquo
+enc html5 201E bdquo
+enc html5 2020 dagger
+enc html5 2021 Dagger
+enc html5 2022 bull
+enc html5 2025 nldr
+enc html5 2026 hellip
+enc html5 2030 permil
+enc html5 2031 pertenk
+enc html5 2032 prime
+enc html5 2033 Prime
+enc html5 2034 tprime
+enc html5 2035 backprime
+enc html5 2039 lsaquo
+enc html5 203A rsaquo
+enc html5 203E oline
+enc html5 2041 caret
+enc html5 2043 hybull
+enc html5 2044 frasl
+enc html5 204F bsemi
+enc html5 2057 qprime
+encm html5 205F MediumSpace 200A:ThickSpace
+enc html5 2060 NoBreak
+enc html5 2061 af
+enc html5 2062 InvisibleTimes
+enc html5 2063 ic
+enc html5 20AC euro
+enc html5 20DB TripleDot
+enc html5 20DC DotDot
+enc html5 2102 complexes
+enc html5 2105 incare
+enc html5 210A gscr
+enc html5 210B HilbertSpace
+enc html5 210C Hfr
+enc html5 210D Hopf
+enc html5 210E planckh
+enc html5 210F planck
+enc html5 2110 imagline
+enc html5 2111 Ifr
+enc html5 2112 lagran
+enc html5 2113 ell
+enc html5 2115 naturals
+enc html5 2116 numero
+enc html5 2117 copysr
+enc html5 2118 wp
+enc html5 2119 primes
+enc html5 211A rationals
+enc html5 211B realine
+enc html5 211C Rfr
+enc html5 211D Ropf
+enc html5 211E rx
+enc html5 2122 trade
+enc html5 2124 Zopf
+enc html5 2127 mho
+enc html5 2128 Zfr
+enc html5 2129 iiota
+enc html5 212C Bscr
+enc html5 212D Cfr
+enc html5 212F escr
+enc html5 2130 expectation
+enc html5 2131 Fouriertrf
+enc html5 2133 Mellintrf
+enc html5 2134 orderof
+enc html5 2135 aleph
+enc html5 2136 beth
+enc html5 2137 gimel
+enc html5 2138 daleth
+enc html5 2145 CapitalDifferentialD
+enc html5 2146 DifferentialD
+enc html5 2147 exponentiale
+enc html5 2148 ImaginaryI
+enc html5 2153 frac13
+enc html5 2154 frac23
+enc html5 2155 frac15
+enc html5 2156 frac25
+enc html5 2157 frac35
+enc html5 2158 frac45
+enc html5 2159 frac16
+enc html5 215A frac56
+enc html5 215B frac18
+enc html5 215C frac38
+enc html5 215D frac58
+enc html5 215E frac78
+enc html5 2190 larr
+enc html5 2191 uarr
+enc html5 2192 srarr
+enc html5 2193 darr
+enc html5 2194 harr
+enc html5 2195 UpDownArrow
+enc html5 2196 nwarrow
+enc html5 2197 UpperRightArrow
+enc html5 2198 LowerRightArrow
+enc html5 2199 swarr
+enc html5 219A nleftarrow
+enc html5 219B nrarr
+encm html5 219D rarrw 338:nrarrw
+enc html5 219E Larr
+enc html5 219F Uarr
+enc html5 21A0 twoheadrightarrow
+enc html5 21A1 Darr
+enc html5 21A2 larrtl
+enc html5 21A3 rarrtl
+enc html5 21A4 LeftTeeArrow
+enc html5 21A5 UpTeeArrow
+enc html5 21A6 map
+enc html5 21A7 DownTeeArrow
+enc html5 21A9 larrhk
+enc html5 21AA rarrhk
+enc html5 21AB larrlp
+enc html5 21AC looparrowright
+enc html5 21AD harrw
+enc html5 21AE nleftrightarrow
+enc html5 21B0 Lsh
+enc html5 21B1 rsh
+enc html5 21B2 ldsh
+enc html5 21B3 rdsh
+enc html5 21B5 crarr
+enc html5 21B6 curvearrowleft
+enc html5 21B7 curarr
+enc html5 21BA olarr
+enc html5 21BB orarr
+enc html5 21BC leftharpoonup
+enc html5 21BD leftharpoondown
+enc html5 21BE RightUpVector
+enc html5 21BF uharl
+enc html5 21C0 rharu
+enc html5 21C1 rhard
+enc html5 21C2 RightDownVector
+enc html5 21C3 dharl
+enc html5 21C4 rightleftarrows
+enc html5 21C5 udarr
+enc html5 21C6 lrarr
+enc html5 21C7 llarr
+enc html5 21C8 upuparrows
+enc html5 21C9 rrarr
+enc html5 21CA downdownarrows
+enc html5 21CB leftrightharpoons
+enc html5 21CC rightleftharpoons
+enc html5 21CD nLeftarrow
+enc html5 21CE nhArr
+enc html5 21CF nrArr
+enc html5 21D0 DoubleLeftArrow
+enc html5 21D1 DoubleUpArrow
+enc html5 21D2 Implies
+enc html5 21D3 Downarrow
+enc html5 21D4 hArr
+enc html5 21D5 Updownarrow
+enc html5 21D6 nwArr
+enc html5 21D7 neArr
+enc html5 21D8 seArr
+enc html5 21D9 swArr
+enc html5 21DA lAarr
+enc html5 21DB rAarr
+enc html5 21DD zigrarr
+enc html5 21E4 LeftArrowBar
+enc html5 21E5 RightArrowBar
+enc html5 21F5 DownArrowUpArrow
+enc html5 21FD loarr
+enc html5 21FE roarr
+enc html5 21FF hoarr
+enc html5 2200 forall
+enc html5 2201 comp
+encm html5 2202 part 338:npart
+enc html5 2203 Exists
+enc html5 2204 nexist
+enc html5 2205 empty
+enc html5 2207 nabla
+enc html5 2208 isinv
+enc html5 2209 notin
+enc html5 220B ReverseElement
+enc html5 220C notniva
+enc html5 220F prod
+enc html5 2210 Coproduct
+enc html5 2211 sum
+enc html5 2212 minus
+enc html5 2213 MinusPlus
+enc html5 2214 plusdo
+enc html5 2216 ssetmn
+enc html5 2217 lowast
+enc html5 2218 compfn
+enc html5 221A Sqrt
+enc html5 221D prop
+enc html5 221E infin
+enc html5 221F angrt
+encm html5 2220 angle 20D2:nang
+enc html5 2221 angmsd
+enc html5 2222 angsph
+enc html5 2223 mid
+enc html5 2224 nshortmid
+enc html5 2225 shortparallel
+enc html5 2226 nparallel
+enc html5 2227 and
+enc html5 2228 or
+encm html5 2229 cap FE00:caps
+encm html5 222A cup FE00:cups
+enc html5 222B Integral
+enc html5 222C Int
+enc html5 222D tint
+enc html5 222E ContourIntegral
+enc html5 222F DoubleContourIntegral
+enc html5 2230 Cconint
+enc html5 2231 cwint
+enc html5 2232 cwconint
+enc html5 2233 awconint
+enc html5 2234 there4
+enc html5 2235 Because
+enc html5 2236 ratio
+enc html5 2237 Colon
+enc html5 2238 minusd
+enc html5 223A mDDot
+enc html5 223B homtht
+encm html5 223C sim 20D2:nvsim
+encm html5 223D bsim 331:race
+encm html5 223E ac 333:acE
+enc html5 223F acd
+enc html5 2240 wr
+enc html5 2241 NotTilde
+encm html5 2242 esim 338:nesim
+enc html5 2243 simeq
+enc html5 2244 nsime
+enc html5 2245 TildeFullEqual
+enc html5 2246 simne
+enc html5 2247 ncong
+enc html5 2248 approx
+enc html5 2249 napprox
+enc html5 224A ape
+encm html5 224B apid 338:napid
+enc html5 224C bcong
+encm html5 224D CupCap 20D2:nvap
+encm html5 224E bump 338:nbump
+encm html5 224F HumpEqual 338:nbumpe
+encm html5 2250 esdot 338:nedot
+enc html5 2251 doteqdot
+enc html5 2252 fallingdotseq
+enc html5 2253 risingdotseq
+enc html5 2254 coloneq
+enc html5 2255 eqcolon
+enc html5 2256 ecir
+enc html5 2257 circeq
+enc html5 2259 wedgeq
+enc html5 225A veeeq
+enc html5 225C triangleq
+enc html5 225F equest
+enc html5 2260 NotEqual
+encm html5 2261 Congruent 20E5:bnequiv
+enc html5 2262 NotCongruent
+encm html5 2264 leq 20D2:nvle
+encm html5 2265 ge 20D2:nvge
+encm html5 2266 lE 338:nlE
+encm html5 2267 geqq 338:NotGreaterFullEqual
+encm html5 2268 lneqq FE00:lvertneqq
+encm html5 2269 gneqq FE00:gvertneqq
+encm html5 226A ll 338:nLtv 20D2:nLt
+encm html5 226B gg 338:NotGreaterGreater 20D2:nGt
+enc html5 226C between
+enc html5 226D NotCupCap
+enc html5 226E NotLess
+enc html5 226F ngtr
+enc html5 2270 NotLessEqual
+enc html5 2271 ngeq
+enc html5 2272 LessTilde
+enc html5 2273 GreaterTilde
+enc html5 2274 nlsim
+enc html5 2275 ngsim
+enc html5 2276 lessgtr
+enc html5 2277 gl
+enc html5 2278 ntlg
+enc html5 2279 NotGreaterLess
+enc html5 227A prec
+enc html5 227B succ
+enc html5 227C PrecedesSlantEqual
+enc html5 227D succcurlyeq
+enc html5 227E precsim
+encm html5 227F SucceedsTilde 338:NotSucceedsTilde
+enc html5 2280 npr
+enc html5 2281 NotSucceeds
+encm html5 2282 sub 20D2:vnsub
+encm html5 2283 sup 20D2:nsupset
+enc html5 2284 nsub
+enc html5 2285 nsup
+enc html5 2286 SubsetEqual
+enc html5 2287 supe
+enc html5 2288 NotSubsetEqual
+enc html5 2289 NotSupersetEqual
+encm html5 228A subsetneq FE00:vsubne
+encm html5 228B supsetneq FE00:vsupne
+enc html5 228D cupdot
+enc html5 228E UnionPlus
+encm html5 228F sqsub 338:NotSquareSubset
+encm html5 2290 sqsupset 338:NotSquareSuperset
+enc html5 2291 SquareSubsetEqual
+enc html5 2292 SquareSupersetEqual
+encm html5 2293 sqcap FE00:sqcaps
+encm html5 2294 sqcup FE00:sqcups
+enc html5 2295 CirclePlus
+enc html5 2296 ominus
+enc html5 2297 CircleTimes
+enc html5 2298 osol
+enc html5 2299 CircleDot
+enc html5 229A ocir
+enc html5 229B oast
+enc html5 229D odash
+enc html5 229E boxplus
+enc html5 229F boxminus
+enc html5 22A0 timesb
+enc html5 22A1 sdotb
+enc html5 22A2 vdash
+enc html5 22A3 dashv
+enc html5 22A4 DownTee
+enc html5 22A5 perp
+enc html5 22A7 models
+enc html5 22A8 DoubleRightTee
+enc html5 22A9 Vdash
+enc html5 22AA Vvdash
+enc html5 22AB VDash
+enc html5 22AC nvdash
+enc html5 22AD nvDash
+enc html5 22AE nVdash
+enc html5 22AF nVDash
+enc html5 22B0 prurel
+enc html5 22B2 vartriangleleft
+enc html5 22B3 vrtri
+encm html5 22B4 LeftTriangleEqual 20D2:nvltrie
+encm html5 22B5 RightTriangleEqual 20D2:nvrtrie
+enc html5 22B6 origof
+enc html5 22B7 imof
+enc html5 22B8 mumap
+enc html5 22B9 hercon
+enc html5 22BA intcal
+enc html5 22BB veebar
+enc html5 22BD barvee
+enc html5 22BE angrtvb
+enc html5 22BF lrtri
+enc html5 22C0 xwedge
+enc html5 22C1 xvee
+enc html5 22C2 bigcap
+enc html5 22C3 bigcup
+enc html5 22C4 diamond
+enc html5 22C5 sdot
+enc html5 22C6 Star
+enc html5 22C7 divonx
+enc html5 22C8 bowtie
+enc html5 22C9 ltimes
+enc html5 22CA rtimes
+enc html5 22CB lthree
+enc html5 22CC rthree
+enc html5 22CD backsimeq
+enc html5 22CE curlyvee
+enc html5 22CF curlywedge
+enc html5 22D0 Sub
+enc html5 22D1 Supset
+enc html5 22D2 Cap
+enc html5 22D3 Cup
+enc html5 22D4 pitchfork
+enc html5 22D5 epar
+enc html5 22D6 lessdot
+enc html5 22D7 gtrdot
+encm html5 22D8 Ll 338:nLl
+encm html5 22D9 Gg 338:nGg
+encm html5 22DA lesseqgtr FE00:lesg
+encm html5 22DB gtreqless FE00:gesl
+enc html5 22DE curlyeqprec
+enc html5 22DF cuesc
+enc html5 22E0 NotPrecedesSlantEqual
+enc html5 22E1 NotSucceedsSlantEqual
+enc html5 22E2 NotSquareSubsetEqual
+enc html5 22E3 NotSquareSupersetEqual
+enc html5 22E6 lnsim
+enc html5 22E7 gnsim
+enc html5 22E8 precnsim
+enc html5 22E9 scnsim
+enc html5 22EA nltri
+enc html5 22EB ntriangleright
+enc html5 22EC nltrie
+enc html5 22ED NotRightTriangleEqual
+enc html5 22EE vellip
+enc html5 22EF ctdot
+enc html5 22F0 utdot
+enc html5 22F1 dtdot
+enc html5 22F2 disin
+enc html5 22F3 isinsv
+enc html5 22F4 isins
+encm html5 22F5 isindot 338:notindot
+enc html5 22F6 notinvc
+enc html5 22F7 notinvb
+encm html5 22F9 isinE 338:notinE
+enc html5 22FA nisd
+enc html5 22FB xnis
+enc html5 22FC nis
+enc html5 22FD notnivc
+enc html5 22FE notnivb
+enc html5 2305 barwed
+enc html5 2306 doublebarwedge
+enc html5 2308 lceil
+enc html5 2309 RightCeiling
+enc html5 230A LeftFloor
+enc html5 230B RightFloor
+enc html5 230C drcrop
+enc html5 230D dlcrop
+enc html5 230E urcrop
+enc html5 230F ulcrop
+enc html5 2310 bnot
+enc html5 2312 profline
+enc html5 2313 profsurf
+enc html5 2315 telrec
+enc html5 2316 target
+enc html5 231C ulcorner
+enc html5 231D urcorner
+enc html5 231E llcorner
+enc html5 231F drcorn
+enc html5 2322 frown
+enc html5 2323 smile
+enc html5 232D cylcty
+enc html5 232E profalar
+enc html5 2336 topbot
+enc html5 233D ovbar
+enc html5 233F solbar
+enc html5 237C angzarr
+enc html5 23B0 lmoust
+enc html5 23B1 rmoust
+enc html5 23B4 OverBracket
+enc html5 23B5 bbrk
+enc html5 23B6 bbrktbrk
+enc html5 23DC OverParenthesis
+enc html5 23DD UnderParenthesis
+enc html5 23DE OverBrace
+enc html5 23DF UnderBrace
+enc html5 23E2 trpezium
+enc html5 23E7 elinters
+enc html5 2423 blank
+enc html5 24C8 oS
+enc html5 2500 HorizontalLine
+enc html5 2502 boxv
+enc html5 250C boxdr
+enc html5 2510 boxdl
+enc html5 2514 boxur
+enc html5 2518 boxul
+enc html5 251C boxvr
+enc html5 2524 boxvl
+enc html5 252C boxhd
+enc html5 2534 boxhu
+enc html5 253C boxvh
+enc html5 2550 boxH
+enc html5 2551 boxV
+enc html5 2552 boxdR
+enc html5 2553 boxDr
+enc html5 2554 boxDR
+enc html5 2555 boxdL
+enc html5 2556 boxDl
+enc html5 2557 boxDL
+enc html5 2558 boxuR
+enc html5 2559 boxUr
+enc html5 255A boxUR
+enc html5 255B boxuL
+enc html5 255C boxUl
+enc html5 255D boxUL
+enc html5 255E boxvR
+enc html5 255F boxVr
+enc html5 2560 boxVR
+enc html5 2561 boxvL
+enc html5 2562 boxVl
+enc html5 2563 boxVL
+enc html5 2564 boxHd
+enc html5 2565 boxhD
+enc html5 2566 boxHD
+enc html5 2567 boxHu
+enc html5 2568 boxhU
+enc html5 2569 boxHU
+enc html5 256A boxvH
+enc html5 256B boxVh
+enc html5 256C boxVH
+enc html5 2580 uhblk
+enc html5 2584 lhblk
+enc html5 2588 block
+enc html5 2591 blk14
+enc html5 2592 blk12
+enc html5 2593 blk34
+enc html5 25A1 Square
+enc html5 25AA squarf
+enc html5 25AB EmptyVerySmallSquare
+enc html5 25AD rect
+enc html5 25AE marker
+enc html5 25B1 fltns
+enc html5 25B3 bigtriangleup
+enc html5 25B4 blacktriangle
+enc html5 25B5 triangle
+enc html5 25B8 blacktriangleright
+enc html5 25B9 rtri
+enc html5 25BD bigtriangledown
+enc html5 25BE blacktriangledown
+enc html5 25BF triangledown
+enc html5 25C2 blacktriangleleft
+enc html5 25C3 ltri
+enc html5 25CA lozenge
+enc html5 25CB cir
+enc html5 25EC tridot
+enc html5 25EF bigcirc
+enc html5 25F8 ultri
+enc html5 25F9 urtri
+enc html5 25FA lltri
+enc html5 25FB EmptySmallSquare
+enc html5 25FC FilledSmallSquare
+enc html5 2605 starf
+enc html5 2606 star
+enc html5 260E phone
+enc html5 2640 female
+enc html5 2642 male
+enc html5 2660 spadesuit
+enc html5 2663 clubs
+enc html5 2665 hearts
+enc html5 2666 diamondsuit
+enc html5 266A sung
+enc html5 266D flat
+enc html5 266E natur
+enc html5 266F sharp
+enc html5 2713 check
+enc html5 2717 cross
+enc html5 2720 maltese
+enc html5 2736 sext
+enc html5 2758 VerticalSeparator
+enc html5 2772 lbbrk
+enc html5 2773 rbbrk
+enc html5 27C8 bsolhsub
+enc html5 27C9 suphsol
+enc html5 27E6 LeftDoubleBracket
+enc html5 27E7 RightDoubleBracket
+enc html5 27E8 langle
+enc html5 27E9 RightAngleBracket
+enc html5 27EA Lang
+enc html5 27EB Rang
+enc html5 27EC loang
+enc html5 27ED roang
+enc html5 27F5 longleftarrow
+enc html5 27F6 LongRightArrow
+enc html5 27F7 LongLeftRightArrow
+enc html5 27F8 xlArr
+enc html5 27F9 DoubleLongRightArrow
+enc html5 27FA xhArr
+enc html5 27FC xmap
+enc html5 27FF dzigrarr
+enc html5 2902 nvlArr
+enc html5 2903 nvrArr
+enc html5 2904 nvHarr
+enc html5 2905 Map
+enc html5 290C lbarr
+enc html5 290D bkarow
+enc html5 290E lBarr
+enc html5 290F dbkarow
+enc html5 2910 drbkarow
+enc html5 2911 DDotrahd
+enc html5 2912 UpArrowBar
+enc html5 2913 DownArrowBar
+enc html5 2916 Rarrtl
+enc html5 2919 latail
+enc html5 291A ratail
+enc html5 291B lAtail
+enc html5 291C rAtail
+enc html5 291D larrfs
+enc html5 291E rarrfs
+enc html5 291F larrbfs
+enc html5 2920 rarrbfs
+enc html5 2923 nwarhk
+enc html5 2924 nearhk
+enc html5 2925 searhk
+enc html5 2926 swarhk
+enc html5 2927 nwnear
+enc html5 2928 toea
+enc html5 2929 seswar
+enc html5 292A swnwar
+encm html5 2933 rarrc 338:nrarrc
+enc html5 2935 cudarrr
+enc html5 2936 ldca
+enc html5 2937 rdca
+enc html5 2938 cudarrl
+enc html5 2939 larrpl
+enc html5 293C curarrm
+enc html5 293D cularrp
+enc html5 2945 rarrpl
+enc html5 2948 harrcir
+enc html5 2949 Uarrocir
+enc html5 294A lurdshar
+enc html5 294B ldrushar
+enc html5 294E LeftRightVector
+enc html5 294F RightUpDownVector
+enc html5 2950 DownLeftRightVector
+enc html5 2951 LeftUpDownVector
+enc html5 2952 LeftVectorBar
+enc html5 2953 RightVectorBar
+enc html5 2954 RightUpVectorBar
+enc html5 2955 RightDownVectorBar
+enc html5 2956 DownLeftVectorBar
+enc html5 2957 DownRightVectorBar
+enc html5 2958 LeftUpVectorBar
+enc html5 2959 LeftDownVectorBar
+enc html5 295A LeftTeeVector
+enc html5 295B RightTeeVector
+enc html5 295C RightUpTeeVector
+enc html5 295D RightDownTeeVector
+enc html5 295E DownLeftTeeVector
+enc html5 295F DownRightTeeVector
+enc html5 2960 LeftUpTeeVector
+enc html5 2961 LeftDownTeeVector
+enc html5 2962 lHar
+enc html5 2963 uHar
+enc html5 2964 rHar
+enc html5 2965 dHar
+enc html5 2966 luruhar
+enc html5 2967 ldrdhar
+enc html5 2968 ruluhar
+enc html5 2969 rdldhar
+enc html5 296A lharul
+enc html5 296B llhard
+enc html5 296C rharul
+enc html5 296D lrhard
+enc html5 296E udhar
+enc html5 296F ReverseUpEquilibrium
+enc html5 2970 RoundImplies
+enc html5 2971 erarr
+enc html5 2972 simrarr
+enc html5 2973 larrsim
+enc html5 2974 rarrsim
+enc html5 2975 rarrap
+enc html5 2976 ltlarr
+enc html5 2978 gtrarr
+enc html5 2979 subrarr
+enc html5 297B suplarr
+enc html5 297C lfisht
+enc html5 297D rfisht
+enc html5 297E ufisht
+enc html5 297F dfisht
+enc html5 2985 lopar
+enc html5 2986 ropar
+enc html5 298B lbrke
+enc html5 298C rbrke
+enc html5 298D lbrkslu
+enc html5 298E rbrksld
+enc html5 298F lbrksld
+enc html5 2990 rbrkslu
+enc html5 2991 langd
+enc html5 2992 rangd
+enc html5 2993 lparlt
+enc html5 2994 rpargt
+enc html5 2995 gtlPar
+enc html5 2996 ltrPar
+enc html5 299A vzigzag
+enc html5 299C vangrt
+enc html5 299D angrtvbd
+enc html5 29A4 ange
+enc html5 29A5 range
+enc html5 29A6 dwangle
+enc html5 29A7 uwangle
+enc html5 29A8 angmsdaa
+enc html5 29A9 angmsdab
+enc html5 29AA angmsdac
+enc html5 29AB angmsdad
+enc html5 29AC angmsdae
+enc html5 29AD angmsdaf
+enc html5 29AE angmsdag
+enc html5 29AF angmsdah
+enc html5 29B0 bemptyv
+enc html5 29B1 demptyv
+enc html5 29B2 cemptyv
+enc html5 29B3 raemptyv
+enc html5 29B4 laemptyv
+enc html5 29B5 ohbar
+enc html5 29B6 omid
+enc html5 29B7 opar
+enc html5 29B9 operp
+enc html5 29BB olcross
+enc html5 29BC odsold
+enc html5 29BE olcir
+enc html5 29BF ofcir
+enc html5 29C0 olt
+enc html5 29C1 ogt
+enc html5 29C2 cirscir
+enc html5 29C3 cirE
+enc html5 29C4 solb
+enc html5 29C5 bsolb
+enc html5 29C9 boxbox
+enc html5 29CD trisb
+enc html5 29CE rtriltri
+encm html5 29CF LeftTriangleBar 338:NotLeftTriangleBar
+encm html5 29D0 RightTriangleBar 338:NotRightTriangleBar
+enc html5 29DC iinfin
+enc html5 29DD infintie
+enc html5 29DE nvinfin
+enc html5 29E3 eparsl
+enc html5 29E4 smeparsl
+enc html5 29E5 eqvparsl
+enc html5 29EB lozf
+enc html5 29F4 RuleDelayed
+enc html5 29F6 dsol
+enc html5 2A00 xodot
+enc html5 2A01 bigoplus
+enc html5 2A02 bigotimes
+enc html5 2A04 biguplus
+enc html5 2A06 bigsqcup
+enc html5 2A0C iiiint
+enc html5 2A0D fpartint
+enc html5 2A10 cirfnint
+enc html5 2A11 awint
+enc html5 2A12 rppolint
+enc html5 2A13 scpolint
+enc html5 2A14 npolint
+enc html5 2A15 pointint
+enc html5 2A16 quatint
+enc html5 2A17 intlarhk
+enc html5 2A22 pluscir
+enc html5 2A23 plusacir
+enc html5 2A24 simplus
+enc html5 2A25 plusdu
+enc html5 2A26 plussim
+enc html5 2A27 plustwo
+enc html5 2A29 mcomma
+enc html5 2A2A minusdu
+enc html5 2A2D loplus
+enc html5 2A2E roplus
+enc html5 2A2F Cross
+enc html5 2A30 timesd
+enc html5 2A31 timesbar
+enc html5 2A33 smashp
+enc html5 2A34 lotimes
+enc html5 2A35 rotimes
+enc html5 2A36 otimesas
+enc html5 2A37 Otimes
+enc html5 2A38 odiv
+enc html5 2A39 triplus
+enc html5 2A3A triminus
+enc html5 2A3B tritime
+enc html5 2A3C iprod
+enc html5 2A3F amalg
+enc html5 2A40 capdot
+enc html5 2A42 ncup
+enc html5 2A43 ncap
+enc html5 2A44 capand
+enc html5 2A45 cupor
+enc html5 2A46 cupcap
+enc html5 2A47 capcup
+enc html5 2A48 cupbrcap
+enc html5 2A49 capbrcup
+enc html5 2A4A cupcup
+enc html5 2A4B capcap
+enc html5 2A4C ccups
+enc html5 2A4D ccaps
+enc html5 2A50 ccupssm
+enc html5 2A53 And
+enc html5 2A54 Or
+enc html5 2A55 andand
+enc html5 2A56 oror
+enc html5 2A57 orslope
+enc html5 2A58 andslope
+enc html5 2A5A andv
+enc html5 2A5B orv
+enc html5 2A5C andd
+enc html5 2A5D ord
+enc html5 2A5F wedbar
+enc html5 2A66 sdote
+enc html5 2A6A simdot
+encm html5 2A6D congdot 338:ncongdot
+enc html5 2A6E easter
+enc html5 2A6F apacir
+encm html5 2A70 apE 338:napE
+enc html5 2A71 eplus
+enc html5 2A72 pluse
+enc html5 2A73 Esim
+enc html5 2A74 Colone
+enc html5 2A75 Equal
+enc html5 2A77 ddotseq
+enc html5 2A78 equivDD
+enc html5 2A79 ltcir
+enc html5 2A7A gtcir
+enc html5 2A7B ltquest
+enc html5 2A7C gtquest
+encm html5 2A7D les 338:nles
+encm html5 2A7E ges 338:nges
+enc html5 2A7F lesdot
+enc html5 2A80 gesdot
+enc html5 2A81 lesdoto
+enc html5 2A82 gesdoto
+enc html5 2A83 lesdotor
+enc html5 2A84 gesdotol
+enc html5 2A85 lap
+enc html5 2A86 gap
+enc html5 2A87 lne
+enc html5 2A88 gne
+enc html5 2A89 lnap
+enc html5 2A8A gnap
+enc html5 2A8B lesseqqgtr
+enc html5 2A8C gEl
+enc html5 2A8D lsime
+enc html5 2A8E gsime
+enc html5 2A8F lsimg
+enc html5 2A90 gsiml
+enc html5 2A91 lgE
+enc html5 2A92 glE
+enc html5 2A93 lesges
+enc html5 2A94 gesles
+enc html5 2A95 els
+enc html5 2A96 egs
+enc html5 2A97 elsdot
+enc html5 2A98 egsdot
+enc html5 2A99 el
+enc html5 2A9A eg
+enc html5 2A9D siml
+enc html5 2A9E simg
+enc html5 2A9F simlE
+enc html5 2AA0 simgE
+encm html5 2AA1 LessLess 338:NotNestedLessLess
+encm html5 2AA2 GreaterGreater 338:NotNestedGreaterGreater
+enc html5 2AA4 glj
+enc html5 2AA5 gla
+enc html5 2AA6 ltcc
+enc html5 2AA7 gtcc
+enc html5 2AA8 lescc
+enc html5 2AA9 gescc
+enc html5 2AAA smt
+enc html5 2AAB lat
+encm html5 2AAC smte FE00:smtes
+encm html5 2AAD late FE00:lates
+enc html5 2AAE bumpE
+encm html5 2AAF preceq 338:NotPrecedesEqual
+encm html5 2AB0 SucceedsEqual 338:NotSucceedsEqual
+enc html5 2AB3 prE
+enc html5 2AB4 scE
+enc html5 2AB5 precneqq
+enc html5 2AB6 scnE
+enc html5 2AB7 precapprox
+enc html5 2AB8 succapprox
+enc html5 2AB9 precnapprox
+enc html5 2ABA succnapprox
+enc html5 2ABB Pr
+enc html5 2ABC Sc
+enc html5 2ABD subdot
+enc html5 2ABE supdot
+enc html5 2ABF subplus
+enc html5 2AC0 supplus
+enc html5 2AC1 submult
+enc html5 2AC2 supmult
+enc html5 2AC3 subedot
+enc html5 2AC4 supedot
+encm html5 2AC5 subE 338:nsubE
+encm html5 2AC6 supseteqq 338:nsupseteqq
+enc html5 2AC7 subsim
+enc html5 2AC8 supsim
+encm html5 2ACB subsetneqq FE00:vsubnE
+encm html5 2ACC supnE FE00:varsupsetneqq
+enc html5 2ACF csub
+enc html5 2AD0 csup
+enc html5 2AD1 csube
+enc html5 2AD2 csupe
+enc html5 2AD3 subsup
+enc html5 2AD4 supsub
+enc html5 2AD5 subsub
+enc html5 2AD6 supsup
+enc html5 2AD7 suphsub
+enc html5 2AD8 supdsub
+enc html5 2AD9 forkv
+enc html5 2ADA topfork
+enc html5 2ADB mlcp
+enc html5 2AE4 Dashv
+enc html5 2AE6 Vdashl
+enc html5 2AE7 Barv
+enc html5 2AE8 vBar
+enc html5 2AE9 vBarv
+enc html5 2AEB Vbar
+enc html5 2AEC Not
+enc html5 2AED bNot
+enc html5 2AEE rnmid
+enc html5 2AEF cirmid
+enc html5 2AF0 midcir
+enc html5 2AF1 topcir
+enc html5 2AF2 nhpar
+enc html5 2AF3 parsim
+encm html5 2AFD parsl 20E5:nparsl
+enc html5 FB00 fflig
+enc html5 FB01 filig
+enc html5 FB02 fllig
+enc html5 FB03 ffilig
+enc html5 FB04 ffllig
+enc html5 1D49C Ascr
+enc html5 1D49E Cscr
+enc html5 1D49F Dscr
+enc html5 1D4A2 Gscr
+enc html5 1D4A5 Jscr
+enc html5 1D4A6 Kscr
+enc html5 1D4A9 Nscr
+enc html5 1D4AA Oscr
+enc html5 1D4AB Pscr
+enc html5 1D4AC Qscr
+enc html5 1D4AE Sscr
+enc html5 1D4AF Tscr
+enc html5 1D4B0 Uscr
+enc html5 1D4B1 Vscr
+enc html5 1D4B2 Wscr
+enc html5 1D4B3 Xscr
+enc html5 1D4B4 Yscr
+enc html5 1D4B5 Zscr
+enc html5 1D4B6 ascr
+enc html5 1D4B7 bscr
+enc html5 1D4B8 cscr
+enc html5 1D4B9 dscr
+enc html5 1D4BB fscr
+enc html5 1D4BD hscr
+enc html5 1D4BE iscr
+enc html5 1D4BF jscr
+enc html5 1D4C0 kscr
+enc html5 1D4C1 lscr
+enc html5 1D4C2 mscr
+enc html5 1D4C3 nscr
+enc html5 1D4C5 pscr
+enc html5 1D4C6 qscr
+enc html5 1D4C7 rscr
+enc html5 1D4C8 sscr
+enc html5 1D4C9 tscr
+enc html5 1D4CA uscr
+enc html5 1D4CB vscr
+enc html5 1D4CC wscr
+enc html5 1D4CD xscr
+enc html5 1D4CE yscr
+enc html5 1D4CF zscr
+enc html5 1D504 Afr
+enc html5 1D505 Bfr
+enc html5 1D507 Dfr
+enc html5 1D508 Efr
+enc html5 1D509 Ffr
+enc html5 1D50A Gfr
+enc html5 1D50D Jfr
+enc html5 1D50E Kfr
+enc html5 1D50F Lfr
+enc html5 1D510 Mfr
+enc html5 1D511 Nfr
+enc html5 1D512 Ofr
+enc html5 1D513 Pfr
+enc html5 1D514 Qfr
+enc html5 1D516 Sfr
+enc html5 1D517 Tfr
+enc html5 1D518 Ufr
+enc html5 1D519 Vfr
+enc html5 1D51A Wfr
+enc html5 1D51B Xfr
+enc html5 1D51C Yfr
+enc html5 1D51E afr
+enc html5 1D51F bfr
+enc html5 1D520 cfr
+enc html5 1D521 dfr
+enc html5 1D522 efr
+enc html5 1D523 ffr
+enc html5 1D524 gfr
+enc html5 1D525 hfr
+enc html5 1D526 ifr
+enc html5 1D527 jfr
+enc html5 1D528 kfr
+enc html5 1D529 lfr
+enc html5 1D52A mfr
+enc html5 1D52B nfr
+enc html5 1D52C ofr
+enc html5 1D52D pfr
+enc html5 1D52E qfr
+enc html5 1D52F rfr
+enc html5 1D530 sfr
+enc html5 1D531 tfr
+enc html5 1D532 ufr
+enc html5 1D533 vfr
+enc html5 1D534 wfr
+enc html5 1D535 xfr
+enc html5 1D536 yfr
+enc html5 1D537 zfr
+enc html5 1D538 Aopf
+enc html5 1D539 Bopf
+enc html5 1D53B Dopf
+enc html5 1D53C Eopf
+enc html5 1D53D Fopf
+enc html5 1D53E Gopf
+enc html5 1D540 Iopf
+enc html5 1D541 Jopf
+enc html5 1D542 Kopf
+enc html5 1D543 Lopf
+enc html5 1D544 Mopf
+enc html5 1D546 Oopf
+enc html5 1D54A Sopf
+enc html5 1D54B Topf
+enc html5 1D54C Uopf
+enc html5 1D54D Vopf
+enc html5 1D54E Wopf
+enc html5 1D54F Xopf
+enc html5 1D550 Yopf
+enc html5 1D552 aopf
+enc html5 1D553 bopf
+enc html5 1D554 copf
+enc html5 1D555 dopf
+enc html5 1D556 eopf
+enc html5 1D557 fopf
+enc html5 1D558 gopf
+enc html5 1D559 hopf
+enc html5 1D55A iopf
+enc html5 1D55B jopf
+enc html5 1D55C kopf
+enc html5 1D55D lopf
+enc html5 1D55E mopf
+enc html5 1D55F nopf
+enc html5 1D560 oopf
+enc html5 1D561 popf
+enc html5 1D562 qopf
+enc html5 1D563 ropf
+enc html5 1D564 sopf
+enc html5 1D565 topf
+enc html5 1D566 uopf
+enc html5 1D567 vopf
+enc html5 1D568 wopf
+enc html5 1D569 xopf
+enc html5 1D56A yopf
+enc html5 1D56B zopf
+enc html4 22 quot
+enc html4 26 amp
+enc html4 27 #039
+enc html4 3C lt
+enc html4 3E gt
+enc html4 A0 nbsp
+enc html4 A1 iexcl
+enc html4 A2 cent
+enc html4 A3 pound
+enc html4 A4 curren
+enc html4 A5 yen
+enc html4 A6 brvbar
+enc html4 A7 sect
+enc html4 A8 uml
+enc html4 A9 copy
+enc html4 AA ordf
+enc html4 AB laquo
+enc html4 AC not
+enc html4 AD shy
+enc html4 AE reg
+enc html4 AF macr
+enc html4 B0 deg
+enc html4 B1 plusmn
+enc html4 B2 sup2
+enc html4 B3 sup3
+enc html4 B4 acute
+enc html4 B5 micro
+enc html4 B6 para
+enc html4 B7 middot
+enc html4 B8 cedil
+enc html4 B9 sup1
+enc html4 BA ordm
+enc html4 BB raquo
+enc html4 BC frac14
+enc html4 BD frac12
+enc html4 BE frac34
+enc html4 BF iquest
+enc html4 C0 Agrave
+enc html4 C1 Aacute
+enc html4 C2 Acirc
+enc html4 C3 Atilde
+enc html4 C4 Auml
+enc html4 C5 Aring
+enc html4 C6 AElig
+enc html4 C7 Ccedil
+enc html4 C8 Egrave
+enc html4 C9 Eacute
+enc html4 CA Ecirc
+enc html4 CB Euml
+enc html4 CC Igrave
+enc html4 CD Iacute
+enc html4 CE Icirc
+enc html4 CF Iuml
+enc html4 D0 ETH
+enc html4 D1 Ntilde
+enc html4 D2 Ograve
+enc html4 D3 Oacute
+enc html4 D4 Ocirc
+enc html4 D5 Otilde
+enc html4 D6 Ouml
+enc html4 D7 times
+enc html4 D8 Oslash
+enc html4 D9 Ugrave
+enc html4 DA Uacute
+enc html4 DB Ucirc
+enc html4 DC Uuml
+enc html4 DD Yacute
+enc html4 DE THORN
+enc html4 DF szlig
+enc html4 E0 agrave
+enc html4 E1 aacute
+enc html4 E2 acirc
+enc html4 E3 atilde
+enc html4 E4 auml
+enc html4 E5 aring
+enc html4 E6 aelig
+enc html4 E7 ccedil
+enc html4 E8 egrave
+enc html4 E9 eacute
+enc html4 EA ecirc
+enc html4 EB euml
+enc html4 EC igrave
+enc html4 ED iacute
+enc html4 EE icirc
+enc html4 EF iuml
+enc html4 F0 eth
+enc html4 F1 ntilde
+enc html4 F2 ograve
+enc html4 F3 oacute
+enc html4 F4 ocirc
+enc html4 F5 otilde
+enc html4 F6 ouml
+enc html4 F7 divide
+enc html4 F8 oslash
+enc html4 F9 ugrave
+enc html4 FA uacute
+enc html4 FB ucirc
+enc html4 FC uuml
+enc html4 FD yacute
+enc html4 FE thorn
+enc html4 FF yuml
+enc html4 152 OElig
+enc html4 153 oelig
+enc html4 160 Scaron
+enc html4 161 scaron
+enc html4 178 Yuml
+enc html4 192 fnof
+enc html4 2C6 circ
+enc html4 2DC tilde
+enc html4 391 Alpha
+enc html4 392 Beta
+enc html4 393 Gamma
+enc html4 394 Delta
+enc html4 395 Epsilon
+enc html4 396 Zeta
+enc html4 397 Eta
+enc html4 398 Theta
+enc html4 399 Iota
+enc html4 39A Kappa
+enc html4 39B Lambda
+enc html4 39C Mu
+enc html4 39D Nu
+enc html4 39E Xi
+enc html4 39F Omicron
+enc html4 3A0 Pi
+enc html4 3A1 Rho
+enc html4 3A3 Sigma
+enc html4 3A4 Tau
+enc html4 3A5 Upsilon
+enc html4 3A6 Phi
+enc html4 3A7 Chi
+enc html4 3A8 Psi
+enc html4 3A9 Omega
+enc html4 3B1 alpha
+enc html4 3B2 beta
+enc html4 3B3 gamma
+enc html4 3B4 delta
+enc html4 3B5 epsilon
+enc html4 3B6 zeta
+enc html4 3B7 eta
+enc html4 3B8 theta
+enc html4 3B9 iota
+enc html4 3BA kappa
+enc html4 3BB lambda
+enc html4 3BC mu
+enc html4 3BD nu
+enc html4 3BE xi
+enc html4 3BF omicron
+enc html4 3C0 pi
+enc html4 3C1 rho
+enc html4 3C2 sigmaf
+enc html4 3C3 sigma
+enc html4 3C4 tau
+enc html4 3C5 upsilon
+enc html4 3C6 phi
+enc html4 3C7 chi
+enc html4 3C8 psi
+enc html4 3C9 omega
+enc html4 3D1 thetasym
+enc html4 3D2 upsih
+enc html4 3D6 piv
+enc html4 2002 ensp
+enc html4 2003 emsp
+enc html4 2009 thinsp
+enc html4 200C zwnj
+enc html4 200D zwj
+enc html4 200E lrm
+enc html4 200F rlm
+enc html4 2013 ndash
+enc html4 2014 mdash
+enc html4 2018 lsquo
+enc html4 2019 rsquo
+enc html4 201A sbquo
+enc html4 201C ldquo
+enc html4 201D rdquo
+enc html4 201E bdquo
+enc html4 2020 dagger
+enc html4 2021 Dagger
+enc html4 2022 bull
+enc html4 2026 hellip
+enc html4 2030 permil
+enc html4 2032 prime
+enc html4 2033 Prime
+enc html4 2039 lsaquo
+enc html4 203A rsaquo
+enc html4 203E oline
+enc html4 2044 frasl
+enc html4 20AC euro
+enc html4 2111 image
+enc html4 2118 weierp
+enc html4 211C real
+enc html4 2122 trade
+enc html4 2135 alefsym
+enc html4 2190 larr
+enc html4 2191 uarr
+enc html4 2192 rarr
+enc html4 2193 darr
+enc html4 2194 harr
+enc html4 21B5 crarr
+enc html4 21D0 lArr
+enc html4 21D1 uArr
+enc html4 21D2 rArr
+enc html4 21D3 dArr
+enc html4 21D4 hArr
+enc html4 2200 forall
+enc html4 2202 part
+enc html4 2203 exist
+enc html4 2205 empty
+enc html4 2207 nabla
+enc html4 2208 isin
+enc html4 2209 notin
+enc html4 220B ni
+enc html4 220F prod
+enc html4 2211 sum
+enc html4 2212 minus
+enc html4 2217 lowast
+enc html4 221A radic
+enc html4 221D prop
+enc html4 221E infin
+enc html4 2220 ang
+enc html4 2227 and
+enc html4 2228 or
+enc html4 2229 cap
+enc html4 222A cup
+enc html4 222B int
+enc html4 2234 there4
+enc html4 223C sim
+enc html4 2245 cong
+enc html4 2248 asymp
+enc html4 2260 ne
+enc html4 2261 equiv
+enc html4 2264 le
+enc html4 2265 ge
+enc html4 2282 sub
+enc html4 2283 sup
+enc html4 2284 nsub
+enc html4 2286 sube
+enc html4 2287 supe
+enc html4 2295 oplus
+enc html4 2297 otimes
+enc html4 22A5 perp
+enc html4 22C5 sdot
+enc html4 2308 lceil
+enc html4 2309 rceil
+enc html4 230A lfloor
+enc html4 230B rfloor
+enc html4 2329 lang
+enc html4 232A rang
+enc html4 25CA loz
+enc html4 2660 spades
+enc html4 2663 clubs
+enc html4 2665 hearts
+enc html4 2666 diams
+enc be_noapos 22 quot
+enc be_noapos 26 amp
+enc be_noapos 27 #039
+enc be_noapos 3C lt
+enc be_noapos 3E gt
+enc be_apos 22 quot
+enc be_apos 26 amp
+enc be_apos 27 apos
+enc be_apos 3C lt
+enc be_apos 3E gt
+dec html5 realpart 211C 0
+dec html5 varr 2195 0
+dec html5 angrt 221F 0
+dec html5 iogon 12F 0
+dec html5 lessdot 22D6 0
+dec html5 simrarr 2972 0
+dec html5 Zscr 1D4B5 0
+dec html5 midast 2A 0
+dec html5 copf 1D554 0
+dec html5 female 2640 0
+dec html5 NegativeThickSpace 200B 0
+dec html5 copy A9 0
+dec html5 angst C5 0
+dec html5 searr 2198 0
+dec html5 sqcups 2294 FE00
+dec html5 Acirc C2 0
+dec html5 gtdot 22D7 0
+dec html5 varpi 3D6 0
+dec html5 UpTee 22A5 0
+dec html5 TildeTilde 2248 0
+dec html5 mfr 1D52A 0
+dec html5 RightVectorBar 2953 0
+dec html5 gesdot 2A80 0
+dec html5 Uarrocir 2949 0
+dec html5 RightTriangleBar 29D0 0
+dec html5 Ocy 41E 0
+dec html5 int 222B 0
+dec html5 preccurlyeq 227C 0
+dec html5 sccue 227D 0
+dec html5 DoubleContourIntegral 222F 0
+dec html5 nexist 2204 0
+dec html5 acirc E2 0
+dec html5 setmn 2216 0
+dec html5 Dopf 1D53B 0
+dec html5 LeftTee 22A3 0
+dec html5 SquareSuperset 2290 0
+dec html5 udhar 296E 0
+dec html5 Equal 2A75 0
+dec html5 pscr 1D4C5 0
+dec html5 xvee 22C1 0
+dec html5 approx 2248 0
+dec html5 HARDcy 42A 0
+dec html5 nGg 22D9 338
+dec html5 yopf 1D56A 0
+dec html5 prcue 227C 0
+dec html5 loarr 21FD 0
+dec html5 mho 2127 0
+dec html5 otimesas 2A36 0
+dec html5 capcap 2A4B 0
+dec html5 eplus 2A71 0
+dec html5 nGt 226B 20D2
+dec html5 Bumpeq 224E 0
+dec html5 submult 2AC1 0
+dec html5 subplus 2ABF 0
+dec html5 auml E4 0
+dec html5 RightDoubleBracket 27E7 0
+dec html5 varkappa 3F0 0
+dec html5 plusdo 2214 0
+dec html5 mid 2223 0
+dec html5 plusdu 2A25 0
+dec html5 notniva 220C 0
+dec html5 notnivb 22FE 0
+dec html5 notnivc 22FD 0
+dec html5 varepsilon 3F5 0
+dec html5 nspar 2226 0
+dec html5 Ofr 1D512 0
+dec html5 Omega 3A9 0
+dec html5 equals 3D 0
+dec html5 harrcir 2948 0
+dec html5 Succeeds 227B 0
+dec html5 cupdot 228D 0
+dec html5 lsqb 5B 0
+dec html5 Qscr 1D4AC 0
+dec html5 urcorn 231D 0
+dec html5 Zopf 2124 0
+dec html5 triangleleft 25C3 0
+dec html5 supdsub 2AD8 0
+dec html5 chcy 447 0
+dec html5 sqsupset 2290 0
+dec html5 omega 3C9 0
+dec html5 rthree 22CC 0
+dec html5 THORN DE 0
+dec html5 clubsuit 2663 0
+dec html5 filig FB01 0
+dec html5 ocir 229A 0
+dec html5 ShortDownArrow 2193 0
+dec html5 atilde E3 0
+dec html5 DownLeftTeeVector 295E 0
+dec html5 LeftTeeArrow 21A4 0
+dec html5 GreaterFullEqual 2267 0
+dec html5 emsp 2003 0
+dec html5 lozf 29EB 0
+dec html5 ThinSpace 2009 0
+dec html5 fnof 192 0
+dec html5 multimap 22B8 0
+dec html5 Zacute 179 0
+dec html5 mdash 2014 0
+dec html5 minusb 229F 0
+dec html5 minusd 2238 0
+dec html5 varsigma 3C2 0
+dec html5 ntilde F1 0
+dec html5 Lambda 39B 0
+dec html5 integers 2124 0
+dec html5 gesles 2A94 0
+dec html5 NotSubset 2282 20D2
+dec html5 NotLeftTriangleEqual 22EC 0
+dec html5 LessLess 2AA1 0
+dec html5 gscr 210A 0
+dec html5 popf 1D561 0
+dec html5 Agrave C0 0
+dec html5 nvinfin 29DE 0
+dec html5 gacute 1F5 0
+dec html5 diam 22C4 0
+dec html5 nesim 2242 338
+dec html5 YIcy 407 0
+dec html5 bcy 431 0
+dec html5 Exists 2203 0
+dec html5 vert 7C 0
+dec html5 ropar 2986 0
+dec html5 topfork 2ADA 0
+dec html5 nLl 22D8 338
+dec html5 notin 2209 0
+dec html5 SucceedsSlantEqual 227D 0
+dec html5 toea 2928 0
+dec html5 ImaginaryI 2148 0
+dec html5 srarr 2192 0
+dec html5 ulcorner 231C 0
+dec html5 LeftArrowBar 21E4 0
+dec html5 ldsh 21B2 0
+dec html5 DownBreve 311 0
+dec html5 nLt 226A 20D2
+dec html5 vltri 22B2 0
+dec html5 VDash 22AB 0
+dec html5 Dstrok 110 0
+dec html5 Intersection 22C2 0
+dec html5 lrhar 21CB 0
+dec html5 RightTee 22A2 0
+dec html5 RightArrowLeftArrow 21C4 0
+dec html5 Ccirc 108 0
+dec html5 ntrianglelefteq 22EC 0
+dec html5 leftharpoonup 21BC 0
+dec html5 scap 2AB8 0
+dec html5 darr 2193 0
+dec html5 qfr 1D52E 0
+dec html5 cdot 10B 0
+dec html5 supseteqq 2AC6 0
+dec html5 Scy 421 0
+dec html5 Hscr 210B 0
+dec html5 LowerRightArrow 2198 0
+dec html5 divide F7 0
+dec html5 tcedil 163 0
+dec html5 LeftArrow 2190 0
+dec html5 Qopf 211A 0
+dec html5 vDash 22A8 0
+dec html5 dash 2010 0
+dec html5 oror 2A56 0
+dec html5 ccirc 109 0
+dec html5 LongLeftArrow 27F5 0
+dec html5 straightphi 3D5 0
+dec html5 xlarr 27F5 0
+dec html5 DJcy 402 0
+dec html5 nbsp A0 0
+dec html5 succcurlyeq 227D 0
+dec html5 njcy 45A 0
+dec html5 Leftarrow 21D0 0
+dec html5 dtrif 25BE 0
+dec html5 bfr 1D51F 0
+dec html5 GreaterTilde 2273 0
+dec html5 hamilt 210B 0
+dec html5 Dcy 414 0
+dec html5 LeftUpVector 21BF 0
+dec html5 bigoplus 2A01 0
+dec html5 nwarhk 2923 0
+dec html5 diams 2666 0
+dec html5 suphsol 27C9 0
+dec html5 boxminus 229F 0
+dec html5 leftarrow 2190 0
+dec html5 andd 2A5C 0
+dec html5 NonBreakingSpace A0 0
+dec html5 xutri 25B3 0
+dec html5 Longleftrightarrow 27FA 0
+dec html5 Longleftarrow 27F8 0
+dec html5 gtrapprox 2A86 0
+dec html5 phmmat 2133 0
+dec html5 andv 2A5A 0
+dec html5 equiv 2261 0
+dec html5 Sfr 1D516 0
+dec html5 gopf 1D558 0
+dec html5 sqsub 228F 0
+dec html5 approxeq 224A 0
+dec html5 Del 2207 0
+dec html5 nrightarrow 219B 0
+dec html5 SquareUnion 2294 0
+dec html5 strns AF 0
+dec html5 Itilde 128 0
+dec html5 sqsup 2290 0
+dec html5 Ouml D6 0
+dec html5 PrecedesTilde 227E 0
+dec html5 AMP 26 0
+dec html5 plusmn B1 0
+dec html5 xcup 22C3 0
+dec html5 radic 221A 0
+dec html5 longleftarrow 27F5 0
+dec html5 lrcorner 231F 0
+dec html5 notni 220C 0
+dec html5 updownarrow 2195 0
+dec html5 szlig DF 0
+dec html5 ugrave F9 0
+dec html5 imof 22B7 0
+dec html5 csub 2ACF 0
+dec html5 gsim 2273 0
+dec html5 leftleftarrows 21C7 0
+dec html5 backcong 224C 0
+dec html5 clubs 2663 0
+dec html5 csup 2AD0 0
+dec html5 Dfr 1D507 0
+dec html5 profline 2312 0
+dec html5 Zdot 17B 0
+dec html5 ClockwiseContourIntegral 2232 0
+dec html5 roplus 2A2E 0
+dec html5 Rang 27EB 0
+dec html5 bcong 224C 0
+dec html5 tshcy 45B 0
+dec html5 eDot 2251 0
+dec html5 Hopf 210D 0
+dec html5 lpar 28 0
+dec html5 odash 229D 0
+dec html5 capbrcup 2A49 0
+dec html5 ucy 443 0
+dec html5 ofcir 29BF 0
+dec html5 Breve 2D8 0
+dec html5 barvee 22BD 0
+dec html5 backsim 223D 0
+dec html5 ange 29A4 0
+dec html5 half BD 0
+dec html5 tscr 1D4C9 0
+dec html5 realine 211B 0
+dec html5 Oacute D3 0
+dec html5 dfisht 297F 0
+dec html5 swnwar 292A 0
+dec html5 tscy 446 0
+dec html5 lsquor 201A 0
+dec html5 naturals 2115 0
+dec html5 utrif 25B4 0
+dec html5 DiacriticalTilde 2DC 0
+dec html5 RightUpVectorBar 2954 0
+dec html5 rHar 2964 0
+dec html5 curlyeqprec 22DE 0
+dec html5 dtri 25BF 0
+dec html5 euml EB 0
+dec html5 breve 2D8 0
+dec html5 Barwed 2306 0
+dec html5 nvlArr 2902 0
+dec html5 dcaron 10F 0
+dec html5 natural 266E 0
+dec html5 nsupseteqq 2AC6 338
+dec html5 nedot 2250 338
+dec html5 bigtriangledown 25BD 0
+dec html5 fcy 444 0
+dec html5 marker 25AE 0
+dec html5 Union 22C3 0
+dec html5 varpropto 221D 0
+dec html5 CloseCurlyDoubleQuote 201D 0
+dec html5 DoubleLongRightArrow 27F9 0
+dec html5 GreaterGreater 2AA2 0
+dec html5 Umacr 16A 0
+dec html5 Colon 2237 0
+dec html5 Hat 5E 0
+dec html5 Uscr 1D4B0 0
+dec html5 SHCHcy 429 0
+dec html5 nLeftarrow 21CD 0
+dec html5 Ecirc CA 0
+dec html5 Jukcy 404 0
+dec html5 nbumpe 224F 338
+dec html5 NotLess 226E 0
+dec html5 gtlPar 2995 0
+dec html5 suphsub 2AD7 0
+dec html5 gtreqqless 2A8C 0
+dec html5 ufr 1D532 0
+dec html5 cirscir 29C2 0
+dec html5 LeftDownTeeVector 2961 0
+dec html5 duhar 296F 0
+dec html5 nrtrie 22ED 0
+dec html5 llhard 296B 0
+dec html5 umacr 16B 0
+dec html5 lates 2AAD FE00
+dec html5 colon 3A 0
+dec html5 iacute ED 0
+dec html5 NotPrecedes 2280 0
+dec html5 cirfnint 2A10 0
+dec html5 barwedge 2305 0
+dec html5 nleftarrow 219A 0
+dec html5 Ubrcy 40E 0
+dec html5 leftthreetimes 22CB 0
+dec html5 andand 2A55 0
+dec html5 ecirc EA 0
+dec html5 jukcy 454 0
+dec html5 quatint 2A16 0
+dec html5 lharul 296A 0
+dec html5 smtes 2AAC FE00
+dec html5 UnionPlus 228E 0
+dec html5 NotLeftTriangle 22EA 0
+dec html5 bne 3D 20E5
+dec html5 gtrsim 2273 0
+dec html5 Rarr 21A0 0
+dec html5 ldquor 201E 0
+dec html5 phiv 3D5 0
+dec html5 because 2235 0
+dec html5 gEl 2A8C 0
+dec html5 setminus 2216 0
+dec html5 ffr 1D523 0
+dec html5 ubrcy 45E 0
+dec html5 elinters 23E7 0
+dec html5 plusb 229E 0
+dec html5 pluse 2A72 0
+dec html5 CapitalDifferentialD 2145 0
+dec html5 daleth 2138 0
+dec html5 kscr 1D4C0 0
+dec html5 ogon 2DB 0
+dec html5 SHcy 428 0
+dec html5 equest 225F 0
+dec html5 rbarr 290D 0
+dec html5 topf 1D565 0
+dec html5 tritime 2A3B 0
+dec html5 bot 22A5 0
+dec html5 Wfr 1D51A 0
+dec html5 HumpEqual 224F 0
+dec html5 rightleftharpoons 21CC 0
+dec html5 frasl 2044 0
+dec html5 UnderBracket 23B5 0
+dec html5 ovbar 233D 0
+dec html5 upharpoonright 21BE 0
+dec html5 euro 20AC 0
+dec html5 nhArr 21CE 0
+dec html5 NotSupersetEqual 2289 0
+dec html5 cularr 21B6 0
+dec html5 scnE 2AB6 0
+dec html5 napid 224B 338
+dec html5 harr 2194 0
+dec html5 gdot 121 0
+dec html5 Lscr 2112 0
+dec html5 zeta 3B6 0
+dec html5 ENG 14A 0
+dec html5 Uopf 1D54C 0
+dec html5 esdot 2250 0
+dec html5 scsim 227F 0
+dec html5 Hfr 210C 0
+dec html5 RightArrow 2192 0
+dec html5 Sqrt 221A 0
+dec html5 xodot 2A00 0
+dec html5 ycy 44B 0
+dec html5 hkswarow 2926 0
+dec html5 urtri 25F9 0
+dec html5 roang 27ED 0
+dec html5 tosa 2929 0
+dec html5 CircleMinus 2296 0
+dec html5 Lcaron 13D 0
+dec html5 ShortLeftArrow 2190 0
+dec html5 Dot A8 0
+dec html5 Rightarrow 21D2 0
+dec html5 prsim 227E 0
+dec html5 notinE 22F9 338
+dec html5 becaus 2235 0
+dec html5 NotEqualTilde 2242 338
+dec html5 nparallel 2226 0
+dec html5 capcup 2A47 0
+dec html5 simeq 2243 0
+dec html5 forall 2200 0
+dec html5 straightepsilon 3F5 0
+dec html5 ruluhar 2968 0
+dec html5 jcy 439 0
+dec html5 ltcc 2AA6 0
+dec html5 bscr 1D4B7 0
+dec html5 ExponentialE 2147 0
+dec html5 weierp 2118 0
+dec html5 yen A5 0
+dec html5 blacksquare 25AA 0
+dec html5 uml A8 0
+dec html5 backsimeq 22CD 0
+dec html5 kopf 1D55C 0
+dec html5 NotPrecedesEqual 2AAF 338
+dec html5 simgE 2AA0 0
+dec html5 tridot 25EC 0
+dec html5 DoubleLongLeftArrow 27F8 0
+dec html5 models 22A7 0
+dec html5 emptyv 2205 0
+dec html5 eqslantgtr 2A96 0
+dec html5 Gcirc 11C 0
+dec html5 bernou 212C 0
+dec html5 HumpDownHump 224E 0
+dec html5 yfr 1D536 0
+dec html5 blacktriangle 25B4 0
+dec html5 yacy 44F 0
+dec html5 lsime 2A8D 0
+dec html5 NotTildeEqual 2244 0
+dec html5 lsimg 2A8F 0
+dec html5 ncap 2A43 0
+dec html5 DD 2145 0
+dec html5 gcirc 11D 0
+dec html5 Cscr 1D49E 0
+dec html5 Lopf 1D543 0
+dec html5 lBarr 290E 0
+dec html5 Leftrightarrow 21D4 0
+dec html5 gtrdot 22D7 0
+dec html5 NotSquareSubset 228F 338
+dec html5 sqsubset 228F 0
+dec html5 subsetneq 228A 0
+dec html5 doublebarwedge 2306 0
+dec html5 blacktriangleleft 25C2 0
+dec html5 hellip 2026 0
+dec html5 xscr 1D4CD 0
+dec html5 LessFullEqual 2266 0
+dec html5 jfr 1D527 0
+dec html5 GreaterSlantEqual 2A7E 0
+dec html5 Uring 16E 0
+dec html5 VeryThinSpace 200A 0
+dec html5 roarr 21FE 0
+dec html5 scaron 161 0
+dec html5 Lcy 41B 0
+dec html5 RightDownVector 21C2 0
+dec html5 Sub 22D0 0
+dec html5 pitchfork 22D4 0
+dec html5 nvsim 223C 20D2
+dec html5 xrArr 27F9 0
+dec html5 CloseCurlyQuote 2019 0
+dec html5 uwangle 29A7 0
+dec html5 Sum 2211 0
+dec html5 iuml EF 0
+dec html5 Sup 22D1 0
+dec html5 planck 210F 0
+dec html5 Egrave C8 0
+dec html5 curlywedge 22CF 0
+dec html5 TildeFullEqual 2245 0
+dec html5 searhk 2925 0
+dec html5 ETH D0 0
+dec html5 napos 149 0
+dec html5 upsi 3C5 0
+dec html5 twoheadleftarrow 219E 0
+dec html5 Assign 2254 0
+dec html5 uring 16F 0
+dec html5 SquareIntersection 2293 0
+dec html5 lmidot 140 0
+dec html5 kcedil 137 0
+dec html5 curren A4 0
+dec html5 acute B4 0
+dec html5 curlyeqsucc 22DF 0
+dec html5 Omicron 39F 0
+dec html5 uarr 2191 0
+dec html5 Hstrok 126 0
+dec html5 UnderBrace 23DF 0
+dec html5 tdot 20DB 0
+dec html5 qint 2A0C 0
+dec html5 sfrown 2322 0
+dec html5 trpezium 23E2 0
+dec html5 Yscr 1D4B4 0
+dec html5 cedil B8 0
+dec html5 planckh 210E 0
+dec html5 lang 27E8 0
+dec html5 bopf 1D553 0
+dec html5 lbbrk 2772 0
+dec html5 khcy 445 0
+dec html5 Epsilon 395 0
+dec html5 simlE 2A9F 0
+dec html5 GT 3E 0
+dec html5 nap 2249 0
+dec html5 Lfr 1D50F 0
+dec html5 succapprox 2AB8 0
+dec html5 bsim 223D 0
+dec html5 Gg 22D9 0
+dec html5 angrtvb 22BE 0
+dec html5 xcirc 25EF 0
+dec html5 Gt 226B 0
+dec html5 LeftRightVector 294E 0
+dec html5 circledast 229B 0
+dec html5 telrec 2315 0
+dec html5 SucceedsTilde 227F 0
+dec html5 nLtv 226A 338
+dec html5 Copf 2102 0
+dec html5 napprox 2249 0
+dec html5 nsupseteq 2289 0
+dec html5 VerticalTilde 2240 0
+dec html5 parallel 2225 0
+dec html5 precnapprox 2AB9 0
+dec html5 oscr 2134 0
+dec html5 supsetneqq 2ACC 0
+dec html5 xopf 1D569 0
+dec html5 mumap 22B8 0
+dec html5 varsupsetneqq 2ACC FE00
+dec html5 ReverseEquilibrium 21CB 0
+dec html5 Ubreve 16C 0
+dec html5 YUcy 42E 0
+dec html5 ncy 43D 0
+dec html5 ltimes 22C9 0
+dec html5 UpperRightArrow 2197 0
+dec html5 nvap 224D 20D2
+dec html5 Im 2111 0
+dec html5 simne 2246 0
+dec html5 ccups 2A4C 0
+dec html5 nlArr 21CD 0
+dec html5 rarrsim 2974 0
+dec html5 Ncaron 147 0
+dec html5 vsupnE 2ACC FE00
+dec html5 succeq 2AB0 0
+dec html5 Gammad 3DC 0
+dec html5 Icirc CE 0
+dec html5 backepsilon 3F6 0
+dec html5 ddarr 21CA 0
+dec html5 larr 2190 0
+dec html5 divideontimes 22C7 0
+dec html5 succsim 227F 0
+dec html5 Pscr 1D4AB 0
+dec html5 puncsp 2008 0
+dec html5 gtreqless 22DB 0
+dec html5 intcal 22BA 0
+dec html5 nsime 2244 0
+dec html5 Yopf 1D550 0
+dec html5 angsph 2222 0
+dec html5 vsupne 228B FE00
+dec html5 NotNestedLessLess 2AA1 338
+dec html5 PrecedesSlantEqual 227C 0
+dec html5 icirc EE 0
+dec html5 DownLeftVectorBar 2956 0
+dec html5 Auml C4 0
+dec html5 LJcy 409 0
+dec html5 sqsube 2291 0
+dec html5 nprec 2280 0
+dec html5 ngE 2267 338
+dec html5 smile 2323 0
+dec html5 LT 3C 0
+dec html5 ldrdhar 2967 0
+dec html5 utri 25B5 0
+dec html5 Sacute 15A 0
+dec html5 late 2AAD 0
+dec html5 nfr 1D52B 0
+dec html5 NotNestedGreaterGreater 2AA2 338
+dec html5 nwarr 2196 0
+dec html5 biguplus 2A04 0
+dec html5 Pcy 41F 0
+dec html5 bigtriangleup 25B3 0
+dec html5 rationals 211A 0
+dec html5 congdot 2A6D 0
+dec html5 PlusMinus B1 0
+dec html5 IOcy 401 0
+dec html5 Scedil 15E 0
+dec html5 eqcirc 2256 0
+dec html5 Ll 22D8 0
+dec html5 Cayleys 212D 0
+dec html5 nge 2271 0
+dec html5 NotGreater 226F 0
+dec html5 Lt 226A 0
+dec html5 rotimes 2A35 0
+dec html5 caps 2229 FE00
+dec html5 ngt 226F 0
+dec html5 Cross 2A2F 0
+dec html5 bumpeq 224F 0
+dec html5 VerticalSeparator 2758 0
+dec html5 plankv 210F 0
+dec html5 fscr 1D4BB 0
+dec html5 bsol 5C 0
+dec html5 sqsubseteq 2291 0
+dec html5 boxH 2550 0
+dec html5 rightarrowtail 21A3 0
+dec html5 ufisht 297E 0
+dec html5 oopf 1D560 0
+dec html5 lobrk 27E6 0
+dec html5 Acy 410 0
+dec html5 NotSubsetEqual 2288 0
+dec html5 boxV 2551 0
+dec html5 dHar 2965 0
+dec html5 precnsim 22E8 0
+dec html5 Mu 39C 0
+dec html5 aelig E6 0
+dec html5 gescc 2AA9 0
+dec html5 origof 22B6 0
+dec html5 upsih 3D2 0
+dec html5 cross 2717 0
+dec html5 LeftFloor 230A 0
+dec html5 boxh 2500 0
+dec html5 NotGreaterEqual 2271 0
+dec html5 profalar 232E 0
+dec html5 nsmid 2224 0
+dec html5 hbar 210F 0
+dec html5 udarr 21C5 0
+dec html5 boxv 2502 0
+dec html5 olarr 21BA 0
+dec html5 Nu 39D 0
+dec html5 NotCongruent 2262 0
+dec html5 bkarow 290D 0
+dec html5 Pfr 1D513 0
+dec html5 forkv 2AD9 0
+dec html5 nis 22FC 0
+dec html5 trianglerighteq 22B5 0
+dec html5 ngeq 2271 0
+dec html5 cudarrl 2938 0
+dec html5 nges 2A7E 338
+dec html5 niv 220B 0
+dec html5 SubsetEqual 2286 0
+dec html5 Gscr 1D4A2 0
+dec html5 complexes 2102 0
+dec html5 eDDot 2A77 0
+dec html5 nvge 2265 20D2
+dec html5 cudarrr 2935 0
+dec html5 Popf 2119 0
+dec html5 LongRightArrow 27F6 0
+dec html5 supseteq 2287 0
+dec html5 dollar 24 0
+dec html5 gnsim 22E7 0
+dec html5 nvgt 3E 20D2
+dec html5 Or 2A54 0
+dec html5 Vert 2016 0
+dec html5 lneqq 2268 0
+dec html5 nLeftrightarrow 21CE 0
+dec html5 nbump 224E 338
+dec html5 ntriangleright 22EB 0
+dec html5 ecir 2256 0
+dec html5 npolint 2A14 0
+dec html5 plus 2B 0
+dec html5 centerdot B7 0
+dec html5 zacute 17A 0
+dec html5 odiv 2A38 0
+dec html5 cap 2229 0
+dec html5 ensp 2002 0
+dec html5 Afr 1D504 0
+dec html5 Pi 3A0 0
+dec html5 iquest BF 0
+dec html5 ltri 25C3 0
+dec html5 nlE 2266 338
+dec html5 Phi 3A6 0
+dec html5 lambda 3BB 0
+dec html5 Pr 2ABB 0
+dec html5 Vdashl 2AE6 0
+dec html5 SuchThat 220B 0
+dec html5 Supset 22D1 0
+dec html5 Darr 21A1 0
+dec html5 Cdot 10A 0
+dec html5 rcy 440 0
+dec html5 orderof 2134 0
+dec html5 leqq 2266 0
+dec html5 precsim 227E 0
+dec html5 RightTriangle 22B3 0
+dec html5 agrave E0 0
+dec html5 succnapprox 2ABA 0
+dec html5 Tab 9 0
+dec html5 nle 2270 0
+dec html5 spades 2660 0
+dec html5 gtcc 2AA7 0
+dec html5 llcorner 231E 0
+dec html5 Oslash D8 0
+dec html5 Tau 3A4 0
+dec html5 fopf 1D557 0
+dec html5 Mellintrf 2133 0
+dec html5 nlt 226E 0
+dec html5 lparlt 2993 0
+dec html5 Ccaron 10C 0
+dec html5 Re 211C 0
+dec html5 dstrok 111 0
+dec html5 leftharpoondown 21BD 0
+dec html5 ssetmn 2216 0
+dec html5 lrhard 296D 0
+dec html5 reg AE 0
+dec html5 sharp 266F 0
+dec html5 yicy 457 0
+dec html5 ShortUpArrow 2191 0
+dec html5 plusacir 2A23 0
+dec html5 cent A2 0
+dec html5 natur 266E 0
+dec html5 varphi 3D5 0
+dec html5 lesg 22DA FE00
+dec html5 supnE 2ACC 0
+dec html5 ohbar 29B5 0
+dec html5 NotLessGreater 2278 0
+dec html5 nleqslant 2A7D 338
+dec html5 Sc 2ABC 0
+dec html5 NotSucceedsEqual 2AB0 338
+dec html5 DZcy 40F 0
+dec html5 vartheta 3D1 0
+dec html5 ltrie 22B4 0
+dec html5 Otilde D5 0
+dec html5 ltrif 25C2 0
+dec html5 Lsh 21B0 0
+dec html5 hookleftarrow 21A9 0
+dec html5 rfr 1D52F 0
+dec html5 supne 228B 0
+dec html5 Gopf 1D53E 0
+dec html5 UpEquilibrium 296E 0
+dec html5 Tcy 422 0
+dec html5 ffilig FB03 0
+dec html5 fork 22D4 0
+dec html5 oplus 2295 0
+dec html5 nvle 2264 20D2
+dec html5 HilbertSpace 210B 0
+dec html5 subedot 2AC3 0
+dec html5 TripleDot 20DB 0
+dec html5 sscr 1D4C8 0
+dec html5 osol 2298 0
+dec html5 plustwo 2A27 0
+dec html5 LessGreater 2276 0
+dec html5 lrarr 21C6 0
+dec html5 nvlt 3C 20D2
+dec html5 questeq 225F 0
+dec html5 LessTilde 2272 0
+dec html5 djcy 452 0
+dec html5 xoplus 2A01 0
+dec html5 primes 2119 0
+dec html5 solb 29C4 0
+dec html5 not AC 0
+dec html5 angzarr 237C 0
+dec html5 nearr 2197 0
+dec html5 lowast 2217 0
+dec html5 cfr 1D520 0
+dec html5 ltcir 2A79 0
+dec html5 Ecy 42D 0
+dec html5 gesdotol 2A84 0
+dec html5 longleftrightarrow 27F7 0
+dec html5 para B6 0
+dec html5 Uacute DA 0
+dec html5 blank 2423 0
+dec html5 rho 3C1 0
+dec html5 dharl 21C3 0
+dec html5 rsquor 2019 0
+dec html5 NotSquareSubsetEqual 22E2 0
+dec html5 npr 2280 0
+dec html5 dharr 21C2 0
+dec html5 NewLine A 0
+dec html5 odot 2299 0
+dec html5 part 2202 0
+dec html5 cuvee 22CE 0
+dec html5 lesdoto 2A81 0
+dec html5 itilde 129 0
+dec html5 Tscr 1D4AF 0
+dec html5 nsubE 2AC5 338
+dec html5 ratio 2236 0
+dec html5 Conint 222F 0
+dec html5 LeftDownVectorBar 2959 0
+dec html5 Tfr 1D517 0
+dec html5 fllig FB02 0
+dec html5 thksim 223C 0
+dec html5 Euml CB 0
+dec html5 chi 3C7 0
+dec html5 ncup 2A42 0
+dec html5 SOFTcy 42C 0
+dec html5 bnequiv 2261 20E5
+dec html5 nsube 2288 0
+dec html5 mapstoleft 21A4 0
+dec html5 NotLessSlantEqual 2A7D 338
+dec html5 ldrushar 294B 0
+dec html5 Equilibrium 21CC 0
+dec html5 Uogon 172 0
+dec html5 supsetneq 228B 0
+dec html5 Vbar 2AEB 0
+dec html5 vnsub 2282 20D2
+dec html5 Square 25A1 0
+dec html5 lessapprox 2A85 0
+dec html5 And 2A53 0
+dec html5 gesdoto 2A82 0
+dec html5 gap 2A86 0
+dec html5 nsucc 2281 0
+dec html5 thicksim 223C 0
+dec html5 vnsup 2283 20D2
+dec html5 Efr 1D508 0
+dec html5 Igrave CC 0
+dec html5 cir 25CB 0
+dec html5 Xi 39E 0
+dec html5 oacute F3 0
+dec html5 nsc 2281 0
+dec html5 uogon 173 0
+dec html5 rharul 296C 0
+dec html5 RuleDelayed 29F4 0
+dec html5 apacir 2A6F 0
+dec html5 jscr 1D4BF 0
+dec html5 vcy 432 0
+dec html5 barwed 2305 0
+dec html5 sopf 1D564 0
+dec html5 thkap 2248 0
+dec html5 lesseqgtr 22DA 0
+dec html5 rdquor 201D 0
+dec html5 Lstrok 141 0
+dec html5 Product 220F 0
+dec html5 sqsupe 2292 0
+dec html5 awconint 2233 0
+dec html5 hearts 2665 0
+dec html5 rlm 200F 0
+dec html5 comma 2C 0
+dec html5 PartialD 2202 0
+dec html5 wedbar 2A5F 0
+dec html5 oline 203E 0
+dec html5 OverBracket 23B4 0
+dec html5 RBarr 2910 0
+dec html5 uharl 21BF 0
+dec html5 leftrightsquigarrow 21AD 0
+dec html5 RightFloor 230B 0
+dec html5 intprod 2A3C 0
+dec html5 vee 2228 0
+dec html5 zigrarr 21DD 0
+dec html5 uharr 21BE 0
+dec html5 gcy 433 0
+dec html5 varsubsetneq 228A FE00
+dec html5 leqslant 2A7D 0
+dec html5 Odblac 150 0
+dec html5 minus 2212 0
+dec html5 scpolint 2A13 0
+dec html5 lrtri 22BF 0
+dec html5 DiacriticalGrave 60 0
+dec html5 num 23 0
+dec html5 quest 3F 0
+dec html5 Kscr 1D4A6 0
+dec html5 UnderBar 5F 0
+dec html5 lsquo 2018 0
+dec html5 rArr 21D2 0
+dec html5 Topf 1D54B 0
+dec html5 heartsuit 2665 0
+dec html5 rBarr 290F 0
+dec html5 emptyset 2205 0
+dec html5 UnderParenthesis 23DD 0
+dec html5 dotplus 2214 0
+dec html5 Psi 3A8 0
+dec html5 GJcy 403 0
+dec html5 exist 2203 0
+dec html5 simplus 2A24 0
+dec html5 vfr 1D533 0
+dec html5 tprime 2034 0
+dec html5 leftrightharpoons 21CB 0
+dec html5 rbrksld 298E 0
+dec html5 Ecaron 11A 0
+dec html5 gel 22DB 0
+dec html5 capdot 2A40 0
+dec html5 geq 2265 0
+dec html5 LowerLeftArrow 2199 0
+dec html5 ges 2A7E 0
+dec html5 Colone 2A74 0
+dec html5 NotLessEqual 2270 0
+dec html5 nrarr 219B 0
+dec html5 rbrkslu 2990 0
+dec html5 flat 266D 0
+dec html5 there4 2234 0
+dec html5 Gdot 120 0
+dec html5 ijlig 133 0
+dec html5 blacklozenge 29EB 0
+dec html5 Zeta 396 0
+dec html5 duarr 21F5 0
+dec html5 DotEqual 2250 0
+dec html5 dtdot 22F1 0
+dec html5 gfr 1D524 0
+dec html5 cirE 29C3 0
+dec html5 period 2E 0
+dec html5 lmoust 23B0 0
+dec html5 Icy 418 0
+dec html5 Rcaron 158 0
+dec html5 LeftCeiling 2308 0
+dec html5 ascr 1D4B6 0
+dec html5 boxtimes 22A0 0
+dec html5 jopf 1D55B 0
+dec html5 ntriangleleft 22EA 0
+dec html5 eqcolon 2255 0
+dec html5 rbbrk 2773 0
+dec html5 homtht 223B 0
+dec html5 ggg 22D9 0
+dec html5 seswar 2929 0
+dec html5 perp 22A5 0
+dec html5 shcy 448 0
+dec html5 phone 260E 0
+dec html5 NotDoubleVerticalBar 2226 0
+dec html5 ngtr 226F 0
+dec html5 ThickSpace 205F 200A
+dec html5 ForAll 2200 0
+dec html5 circ 2C6 0
+dec html5 Verbar 2016 0
+dec html5 cire 2257 0
+dec html5 lesges 2A93 0
+dec html5 slarr 2190 0
+dec html5 RightDownTeeVector 295D 0
+dec html5 triangleq 225C 0
+dec html5 checkmark 2713 0
+dec html5 quot 22 0
+dec html5 suplarr 297B 0
+dec html5 Backslash 2216 0
+dec html5 fallingdotseq 2252 0
+dec html5 swArr 21D9 0
+dec html5 Xfr 1D51B 0
+dec html5 lbrke 298B 0
+dec html5 jmath 237 0
+dec html5 lmoustache 23B0 0
+dec html5 DownTee 22A4 0
+dec html5 reals 211D 0
+dec html5 quaternions 210D 0
+dec html5 vzigzag 299A 0
+dec html5 pound A3 0
+dec html5 permil 2030 0
+dec html5 Bscr 212C 0
+dec html5 lfisht 297C 0
+dec html5 vartriangleleft 22B2 0
+dec html5 Kopf 1D542 0
+dec html5 Tilde 223C 0
+dec html5 gtrarr 2978 0
+dec html5 lAarr 21DA 0
+dec html5 opar 29B7 0
+dec html5 triangle 25B5 0
+dec html5 lcaron 13E 0
+dec html5 wscr 1D4CC 0
+dec html5 asympeq 224D 0
+dec html5 Ifr 2111 0
+dec html5 DoubleDot A8 0
+dec html5 nVdash 22AE 0
+dec html5 hairsp 200A 0
+dec html5 leftrightarrows 21C6 0
+dec html5 lbrace 7B 0
+dec html5 rightarrow 2192 0
+dec html5 Dagger 2021 0
+dec html5 rsh 21B1 0
+dec html5 eqslantless 2A95 0
+dec html5 gnapprox 2A8A 0
+dec html5 lbrack 5B 0
+dec html5 uHar 2963 0
+dec html5 tilde 2DC 0
+dec html5 complement 2201 0
+dec html5 zcy 437 0
+dec html5 boxDL 2557 0
+dec html5 micro B5 0
+dec html5 horbar 2015 0
+dec html5 boxDR 2554 0
+dec html5 bsolhsub 27C8 0
+dec html5 ac 223E 0
+dec html5 nvdash 22AC 0
+dec html5 precapprox 2AB7 0
+dec html5 af 2061 0
+dec html5 bullet 2022 0
+dec html5 demptyv 29B1 0
+dec html5 geqq 2267 0
+dec html5 uuarr 21C8 0
+dec html5 Ocirc D4 0
+dec html5 utdot 22F0 0
+dec html5 ap 2248 0
+dec html5 bNot 2AED 0
+dec html5 CirclePlus 2295 0
+dec html5 glE 2A92 0
+dec html5 midcir 2AF0 0
+dec html5 rppolint 2A12 0
+dec html5 boxDl 2556 0
+dec html5 sdot 22C5 0
+dec html5 boxDr 2553 0
+dec html5 Xscr 1D4B3 0
+dec html5 dlcrop 230D 0
+dec html5 gtrless 2277 0
+dec html5 aopf 1D552 0
+dec html5 operp 29B9 0
+dec html5 kcy 43A 0
+dec html5 larrfs 291D 0
+dec html5 rcub 7D 0
+dec html5 nrtri 22EB 0
+dec html5 nparsl 2AFD 20E5
+dec html5 ocirc F4 0
+dec html5 gla 2AA5 0
+dec html5 Iuml CF 0
+dec html5 mcomma 2A29 0
+dec html5 glj 2AA4 0
+dec html5 Map 2905 0
+dec html5 copysr 2117 0
+dec html5 DownTeeArrow 21A7 0
+dec html5 Upsi 3D2 0
+dec html5 awint 2A11 0
+dec html5 DownRightVector 21C1 0
+dec html5 NotEqual 2260 0
+dec html5 gesl 22DB FE00
+dec html5 NotCupCap 226D 0
+dec html5 blacktriangleright 25B8 0
+dec html5 zfr 1D537 0
+dec html5 leftrightarrow 2194 0
+dec html5 Abreve 102 0
+dec html5 Uarr 219F 0
+dec html5 gnE 2269 0
+dec html5 supmult 2AC2 0
+dec html5 supplus 2AC0 0
+dec html5 nabla 2207 0
+dec html5 Lang 27EA 0
+dec html5 laquo AB 0
+dec html5 larrhk 21A9 0
+dec html5 Bopf 1D539 0
+dec html5 lowbar 5F 0
+dec html5 cup 222A 0
+dec html5 dd 2146 0
+dec html5 nsce 2AB0 338
+dec html5 nshortparallel 2226 0
+dec html5 nsupE 2AC6 338
+dec html5 OpenCurlyQuote 2018 0
+dec html5 bsolb 29C5 0
+dec html5 DScy 405 0
+dec html5 boxHD 2566 0
+dec html5 ltrPar 2996 0
+dec html5 nscr 1D4C3 0
+dec html5 lEg 2A8B 0
+dec html5 egrave E8 0
+dec html5 gne 2A88 0
+dec html5 larrsim 2973 0
+dec html5 COPY A9 0
+dec html5 bdquo 201E 0
+dec html5 wopf 1D568 0
+dec html5 NotRightTriangleEqual 22ED 0
+dec html5 robrk 27E7 0
+dec html5 kfr 1D528 0
+dec html5 nlsim 2274 0
+dec html5 xhArr 27FA 0
+dec html5 boxHU 2569 0
+dec html5 lHar 2962 0
+dec html5 Mcy 41C 0
+dec html5 ee 2147 0
+dec html5 nsupe 2289 0
+dec html5 eg 2A9A 0
+dec html5 trade 2122 0
+dec html5 el 2A99 0
+dec html5 nsucceq 2AB0 338
+dec html5 langle 27E8 0
+dec html5 boxHd 2564 0
+dec html5 Subset 22D0 0
+dec html5 DownArrowBar 2913 0
+dec html5 topbot 2336 0
+dec html5 OverBrace 23DE 0
+dec html5 Eta 397 0
+dec html5 hstrok 127 0
+dec html5 Hacek 2C7 0
+dec html5 diamond 22C4 0
+dec html5 isinsv 22F3 0
+dec html5 rtriltri 29CE 0
+dec html5 nvltrie 22B4 20D2
+dec html5 boxHu 2567 0
+dec html5 fpartint 2A0D 0
+dec html5 Proportional 221D 0
+dec html5 NotSuperset 2283 20D2
+dec html5 gE 2267 0
+dec html5 scnsim 22E9 0
+dec html5 uparrow 2191 0
+dec html5 ltlarr 2976 0
+dec html5 rtimes 22CA 0
+dec html5 ncong 2247 0
+dec html5 Oscr 1D4AA 0
+dec html5 vArr 21D5 0
+dec html5 Xopf 1D54F 0
+dec html5 notinva 2209 0
+dec html5 notinvb 22F7 0
+dec html5 notinvc 22F6 0
+dec html5 nsqsube 22E2 0
+dec html5 Tcaron 164 0
+dec html5 upsilon 3C5 0
+dec html5 ge 2265 0
+dec html5 gg 226B 0
+dec html5 KJcy 40C 0
+dec html5 gl 2277 0
+dec html5 dblac 2DD 0
+dec html5 lAtail 291B 0
+dec html5 gt 3E 0
+dec html5 lotimes 2A34 0
+dec html5 seArr 21D8 0
+dec html5 Lacute 139 0
+dec html5 Laplacetrf 2112 0
+dec html5 uuml FC 0
+dec html5 Amacr 100 0
+dec html5 Mfr 1D510 0
+dec html5 Int 222C 0
+dec html5 Vvdash 22AA 0
+dec html5 Lcedil 13B 0
+dec html5 larrlp 21AB 0
+dec html5 Larr 219E 0
+dec html5 CircleTimes 2297 0
+dec html5 NotReverseElement 220C 0
+dec html5 latail 2919 0
+dec html5 ntrianglerighteq 22ED 0
+dec html5 blk12 2592 0
+dec html5 intlarhk 2A17 0
+dec html5 blk14 2591 0
+dec html5 ccupssm 2A50 0
+dec html5 hercon 22B9 0
+dec html5 bigotimes 2A02 0
+dec html5 amacr 101 0
+dec html5 nrarrc 2933 338
+dec html5 ubreve 16D 0
+dec html5 Yacute DD 0
+dec html5 ic 2063 0
+dec html5 escr 212F 0
+dec html5 ii 2148 0
+dec html5 DownArrowUpArrow 21F5 0
+dec html5 nopf 1D55F 0
+dec html5 in 2208 0
+dec html5 bumpE 2AAE 0
+dec html5 rightharpoonup 21C0 0
+dec html5 nrarrw 219D 338
+dec html5 it 2062 0
+dec html5 ncaron 148 0
+dec html5 succnsim 22E9 0
+dec html5 gammad 3DD 0
+dec html5 yucy 44E 0
+dec html5 ocy 43E 0
+dec html5 hybull 2043 0
+dec html5 rpargt 2994 0
+dec html5 csube 2AD1 0
+dec html5 iiota 2129 0
+dec html5 nsim 2241 0
+dec html5 LeftTriangleEqual 22B4 0
+dec html5 bumpe 224F 0
+dec html5 nearhk 2924 0
+dec html5 nhpar 2AF2 0
+dec html5 risingdotseq 2253 0
+dec html5 blk34 2593 0
+dec html5 LeftTriangle 22B2 0
+dec html5 vBarv 2AE9 0
+dec html5 AElig C6 0
+dec html5 DoubleUpDownArrow 21D5 0
+dec html5 cwint 2231 0
+dec html5 rtrie 22B5 0
+dec html5 rtrif 25B8 0
+dec html5 Fscr 2131 0
+dec html5 lE 2266 0
+dec html5 Oopf 1D546 0
+dec html5 spar 2225 0
+dec html5 uplus 228E 0
+dec html5 sacute 15B 0
+dec html5 fltns 25B1 0
+dec html5 rrarr 21C9 0
+dec html5 larrpl 2939 0
+dec html5 ultri 25F8 0
+dec html5 le 2264 0
+dec html5 xuplus 2A04 0
+dec html5 ljcy 459 0
+dec html5 lg 2276 0
+dec html5 vsubnE 2ACB FE00
+dec html5 scedil 15F 0
+dec html5 ll 226A 0
+dec html5 lt 3C 0
+dec html5 ofr 1D52C 0
+dec html5 nexists 2204 0
+dec html5 smallsetminus 2216 0
+dec html5 InvisibleComma 2063 0
+dec html5 dotminus 2238 0
+dec html5 vsubne 228A FE00
+dec html5 iocy 451 0
+dec html5 gsime 2A8E 0
+dec html5 Rarrtl 2916 0
+dec html5 cirmid 2AEF 0
+dec html5 ominus 2296 0
+dec html5 gsiml 2A90 0
+dec html5 Prime 2033 0
+dec html5 mp 2213 0
+dec html5 tint 222D 0
+dec html5 mu 3BC 0
+dec html5 dbkarow 290F 0
+dec html5 eopf 1D556 0
+dec html5 ogt 29C1 0
+dec html5 Precedes 227A 0
+dec html5 UpTeeArrow 21A5 0
+dec html5 varsupsetneq 228B FE00
+dec html5 ne 2260 0
+dec html5 ni 220B 0
+dec html5 mDDot 223A 0
+dec html5 cularrp 293D 0
+dec html5 rnmid 2AEE 0
+dec html5 hardcy 44A 0
+dec html5 prime 2032 0
+dec html5 Bcy 411 0
+dec html5 REG AE 0
+dec html5 oS 24C8 0
+dec html5 nu 3BD 0
+dec html5 ohm 3A9 0
+dec html5 langd 2991 0
+dec html5 backprime 2035 0
+dec html5 esim 2242 0
+dec html5 veeeq 225A 0
+dec html5 RightCeiling 2309 0
+dec html5 crarr 21B5 0
+dec html5 eqsim 2242 0
+dec html5 or 2228 0
+dec html5 OverParenthesis 23DC 0
+dec html5 UpperLeftArrow 2196 0
+dec html5 nleftrightarrow 21AE 0
+dec html5 expectation 2130 0
+dec html5 coprod 2210 0
+dec html5 Qfr 1D514 0
+dec html5 dArr 21D3 0
+dec html5 Fopf 1D53D 0
+dec html5 Cconint 2230 0
+dec html5 larrtl 21A2 0
+dec html5 Aacute C1 0
+dec html5 DownLeftRightVector 2950 0
+dec html5 circleddash 229D 0
+dec html5 thinsp 2009 0
+dec html5 Longrightarrow 27F9 0
+dec html5 pi 3C0 0
+dec html5 hookrightarrow 21AA 0
+dec html5 rscr 1D4C7 0
+dec html5 scE 2AB4 0
+dec html5 pm B1 0
+dec html5 ZHcy 416 0
+dec html5 pr 227A 0
+dec html5 LongLeftRightArrow 27F7 0
+dec html5 supset 2283 0
+dec html5 UpArrowBar 2912 0
+dec html5 Utilde 168 0
+dec html5 xlArr 27F8 0
+dec html5 DoubleUpArrow 21D1 0
+dec html5 alefsym 2135 0
+dec html5 Scirc 15C 0
+dec html5 xotime 2A02 0
+dec html5 Bfr 1D505 0
+dec html5 rdca 2937 0
+dec html5 sce 2AB0 0
+dec html5 Nacute 143 0
+dec html5 amalg 2A3F 0
+dec html5 UpDownArrow 2195 0
+dec html5 EqualTilde 2242 0
+dec html5 boxUL 255D 0
+dec html5 oslash F8 0
+dec html5 lnap 2A89 0
+dec html5 thorn FE 0
+dec html5 ssmile 2323 0
+dec html5 ndash 2013 0
+dec html5 Ncedil 145 0
+dec html5 scy 441 0
+dec html5 boxUR 255A 0
+dec html5 Aring C5 0
+dec html5 scirc 15D 0
+dec html5 ccaron 10D 0
+dec html5 dotsquare 22A1 0
+dec html5 nshortmid 2224 0
+dec html5 rsquo 2019 0
+dec html5 Sscr 1D4AE 0
+dec html5 bigwedge 22C0 0
+dec html5 Bernoullis 212C 0
+dec html5 harrw 21AD 0
+dec html5 SquareSubset 228F 0
+dec html5 boxVH 256C 0
+dec html5 boxUl 255C 0
+dec html5 rx 211E 0
+dec html5 boxVL 2563 0
+dec html5 olt 29C0 0
+dec html5 boxUr 2559 0
+dec html5 aring E5 0
+dec html5 boxVR 2560 0
+dec html5 sc 227B 0
+dec html5 NestedGreaterGreater 226B 0
+dec html5 oast 229B 0
+dec html5 star 2606 0
+dec html5 LeftTeeVector 295A 0
+dec html5 bigsqcup 2A06 0
+dec html5 dcy 434 0
+dec html5 preceq 2AAF 0
+dec html5 otilde F5 0
+dec html5 luruhar 2966 0
+dec html5 boxVh 256B 0
+dec html5 capand 2A44 0
+dec html5 yuml FF 0
+dec html5 Updownarrow 21D5 0
+dec html5 TildeEqual 2243 0
+dec html5 boxVl 2562 0
+dec html5 boxVr 255F 0
+dec html5 HorizontalLine 2500 0
+dec html5 xmap 27FC 0
+dec html5 sigmaf 3C2 0
+dec html5 EmptySmallSquare 25FB 0
+dec html5 dzcy 45F 0
+dec html5 cups 222A FE00
+dec html5 zwj 200D 0
+dec html5 beta 3B2 0
+dec html5 supsim 2AC8 0
+dec html5 beth 2136 0
+dec html5 Iukcy 406 0
+dec html5 eparsl 29E3 0
+dec html5 sigmav 3C2 0
+dec html5 lhard 21BD 0
+dec html5 sfr 1D530 0
+dec html5 nsqsupe 22E3 0
+dec html5 Jsercy 408 0
+dec html5 deg B0 0
+dec html5 Ucy 423 0
+dec html5 iscr 1D4BE 0
+dec html5 efDot 2252 0
+dec html5 uhblk 2580 0
+dec html5 ropf 1D563 0
+dec html5 vprop 221D 0
+dec html5 isinE 22F9 0
+dec html5 raemptyv 29B3 0
+dec html5 lharu 21BC 0
+dec html5 ncongdot 2A6D 338
+dec html5 subnE 2ACB 0
+dec html5 ngsim 2275 0
+dec html5 starf 2605 0
+dec html5 Ograve D2 0
+dec html5 hksearow 2925 0
+dec html5 iukcy 456 0
+dec html5 uacute FA 0
+dec html5 asymp 2248 0
+dec html5 lneq 2A87 0
+dec html5 Otimes 2A37 0
+dec html5 NotTildeTilde 2249 0
+dec html5 Integral 222B 0
+dec html5 rbrke 298C 0
+dec html5 nsub 2284 0
+dec html5 rlhar 21CC 0
+dec html5 dfr 1D521 0
+dec html5 subne 228A 0
+dec html5 varnothing 2205 0
+dec html5 Fcy 424 0
+dec html5 DoubleLeftTee 2AE4 0
+dec html5 isins 22F4 0
+dec html5 nsup 2285 0
+dec html5 circlearrowleft 21BA 0
+dec html5 isinv 2208 0
+dec html5 IEcy 415 0
+dec html5 conint 222E 0
+dec html5 vBar 2AE8 0
+dec html5 edot 117 0
+dec html5 Kappa 39A 0
+dec html5 MediumSpace 205F 0
+dec html5 lbrksld 298F 0
+dec html5 sect A7 0
+dec html5 nldr 2025 0
+dec html5 Jscr 1D4A5 0
+dec html5 shy AD 0
+dec html5 ulcrop 230F 0
+dec html5 veebar 22BB 0
+dec html5 Sopf 1D54A 0
+dec html5 cuwed 22CF 0
+dec html5 rAarr 21DB 0
+dec html5 erarr 2971 0
+dec html5 lbrkslu 298D 0
+dec html5 NotSucceeds 2281 0
+dec html5 nsccue 22E1 0
+dec html5 subrarr 2979 0
+dec html5 looparrowright 21AC 0
+dec html5 wp 2118 0
+dec html5 Emacr 112 0
+dec html5 sim 223C 0
+dec html5 wr 2240 0
+dec html5 Udblac 170 0
+dec html5 Ufr 1D518 0
+dec html5 kappa 3BA 0
+dec html5 notindot 22F5 338
+dec html5 nleq 2270 0
+dec html5 NestedLessLess 226A 0
+dec html5 square 25A1 0
+dec html5 nles 2A7D 338
+dec html5 squarf 25AA 0
+dec html5 order 2134 0
+dec html5 igrave EC 0
+dec html5 precneqq 2AB5 0
+dec html5 csupe 2AD2 0
+dec html5 xi 3BE 0
+dec html5 NotHumpEqual 224F 338
+dec html5 ord 2A5D 0
+dec html5 emacr 113 0
+dec html5 nwnear 2927 0
+dec html5 nprcue 22E0 0
+dec html5 NotExists 2204 0
+dec html5 die A8 0
+dec html5 ddotseq 2A77 0
+dec html5 Dashv 2AE4 0
+dec html5 Ucirc DB 0
+dec html5 orv 2A5B 0
+dec html5 Because 2235 0
+dec html5 kgreen 138 0
+dec html5 Ffr 1D509 0
+dec html5 LeftVector 21BC 0
+dec html5 lstrok 142 0
+dec html5 twixt 226C 0
+dec html5 compfn 2218 0
+dec html5 div F7 0
+dec html5 drcrop 230C 0
+dec html5 shortmid 2223 0
+dec html5 iopf 1D55A 0
+dec html5 triangledown 25BF 0
+dec html5 IJlig 132 0
+dec html5 thetasym 3D1 0
+dec html5 Sigma 3A3 0
+dec html5 equivDD 2A78 0
+dec html5 Cacute 106 0
+dec html5 dashv 22A3 0
+dec html5 ucirc FB 0
+dec html5 gneqq 2269 0
+dec html5 gvertneqq 2269 FE00
+dec html5 RightDownVectorBar 2955 0
+dec html5 NotLessLess 226A 338
+dec html5 Ccedil C7 0
+dec html5 odblac 151 0
+dec html5 mstpos 223E 0
+dec html5 cemptyv 29B2 0
+dec html5 rarrap 2975 0
+dec html5 rmoust 23B1 0
+dec html5 elsdot 2A97 0
+dec html5 sigma 3C3 0
+dec html5 Implies 21D2 0
+dec html5 isin 2208 0
+dec html5 bottom 22A5 0
+dec html5 ShortRightArrow 2192 0
+dec html5 cupcap 2A46 0
+dec html5 NotSquareSuperset 2290 338
+dec html5 LeftArrowRightArrow 21C6 0
+dec html5 FilledVerySmallSquare 25AA 0
+dec html5 LeftUpTeeVector 2960 0
+dec html5 DoubleRightArrow 21D2 0
+dec html5 raquo BB 0
+dec html5 Ascr 1D49C 0
+dec html5 ReverseUpEquilibrium 296F 0
+dec html5 hArr 21D4 0
+dec html5 Jopf 1D541 0
+dec html5 npar 2226 0
+dec html5 SupersetEqual 2287 0
+dec html5 ffllig FB04 0
+dec html5 smt 2AAA 0
+dec html5 twoheadrightarrow 21A0 0
+dec html5 ecaron 11B 0
+dec html5 NotRightTriangleBar 29D0 338
+dec html5 apid 224B 0
+dec html5 vscr 1D4CB 0
+dec html5 supdot 2ABE 0
+dec html5 colone 2254 0
+dec html5 dwangle 29A6 0
+dec html5 shchcy 449 0
+dec html5 ltdot 22D6 0
+dec html5 downharpoonright 21C2 0
+dec html5 gjcy 453 0
+dec html5 wfr 1D534 0
+dec html5 rfisht 297D 0
+dec html5 Ycy 42B 0
+dec html5 swarrow 2199 0
+dec html5 nharr 21AE 0
+dec html5 frac12 BD 0
+dec html5 frac13 2153 0
+dec html5 frac14 BC 0
+dec html5 GreaterEqual 2265 0
+dec html5 frac15 2155 0
+dec html5 Gamma 393 0
+dec html5 frac16 2159 0
+dec html5 dzigrarr 27FF 0
+dec html5 frac18 215B 0
+dec html5 rcaron 159 0
+dec html5 DownRightTeeVector 295F 0
+dec html5 nvrtrie 22B5 20D2
+dec html5 iota 3B9 0
+dec html5 sol 2F 0
+dec html5 rbrace 7D 0
+dec html5 rbrack 5D 0
+dec html5 rsqb 5D 0
+dec html5 oint 222E 0
+dec html5 Wscr 1D4B2 0
+dec html5 hfr 1D525 0
+dec html5 frac23 2154 0
+dec html5 dlcorn 231E 0
+dec html5 verbar 7C 0
+dec html5 frac25 2156 0
+dec html5 gamma 3B3 0
+dec html5 nVDash 22AF 0
+dec html5 Jcy 419 0
+dec html5 nwarrow 2196 0
+dec html5 OverBar 203E 0
+dec html5 rightsquigarrow 219D 0
+dec html5 iexcl A1 0
+dec html5 sqcap 2293 0
+dec html5 pertenk 2031 0
+dec html5 PrecedesEqual 2AAF 0
+dec html5 frac34 BE 0
+dec html5 Therefore 2234 0
+dec html5 frac35 2157 0
+dec html5 nvDash 22AD 0
+dec html5 odsold 29BC 0
+dec html5 dot 2D9 0
+dec html5 frac38 215C 0
+dec html5 sqcaps 2293 FE00
+dec html5 ZeroWidthSpace 200B 0
+dec html5 rarrfs 291E 0
+dec html5 Yfr 1D51C 0
+dec html5 CircleDot 2299 0
+dec html5 gtcir 2A7A 0
+dec html5 squ 25A1 0
+dec html5 angmsd 2221 0
+dec html5 nsubseteq 2288 0
+dec html5 iprod 2A3C 0
+dec html5 bprime 2035 0
+dec html5 supsub 2AD4 0
+dec html5 SquareSupersetEqual 2292 0
+dec html5 therefore 2234 0
+dec html5 frac45 2158 0
+dec html5 Aopf 1D538 0
+dec html5 NotGreaterFullEqual 2267 338
+dec html5 Tstrok 166 0
+dec html5 rightleftarrows 21C4 0
+dec html5 Fouriertrf 2131 0
+dec html5 epar 22D5 0
+dec html5 omid 29B6 0
+dec html5 OpenCurlyDoubleQuote 201C 0
+dec html5 dagger 2020 0
+dec html5 semi 3B 0
+dec html5 supsup 2AD6 0
+dec html5 zeetrf 2128 0
+dec html5 DifferentialD 2146 0
+dec html5 topcir 2AF1 0
+dec html5 mscr 1D4C2 0
+dec html5 Wcirc 174 0
+dec html5 boxdL 2555 0
+dec html5 Gbreve 11E 0
+dec html5 vopf 1D567 0
+dec html5 lap 2A85 0
+dec html5 llarr 21C7 0
+dec html5 boxdR 2552 0
+dec html5 RightAngleBracket 27E9 0
+dec html5 lat 2AAB 0
+dec html5 Jfr 1D50D 0
+dec html5 frac56 215A 0
+dec html5 frac58 215D 0
+dec html5 rarrhk 21AA 0
+dec html5 lesdot 2A7F 0
+dec html5 ApplyFunction 2061 0
+dec html5 NotGreaterTilde 2275 0
+dec html5 Cedilla B8 0
+dec html5 curvearrowright 21B7 0
+dec html5 rdsh 21B3 0
+dec html5 larrb 21E4 0
+dec html5 vrtri 22B3 0
+dec html5 nequiv 2262 0
+dec html5 wcirc 175 0
+dec html5 boxdl 2510 0
+dec html5 DoubleDownArrow 21D3 0
+dec html5 boxdr 250C 0
+dec html5 pluscir 2A22 0
+dec html5 longmapsto 27FC 0
+dec html5 gnap 2A8A 0
+dec html5 bigodot 2A00 0
+dec html5 thickapprox 2248 0
+dec html5 DotDot 20DC 0
+dec html5 incare 2105 0
+dec html5 rarrbfs 2920 0
+dec html5 apos 27 0
+dec html5 tbrk 23B4 0
+dec html5 grave 60 0
+dec html5 Nscr 1D4A9 0
+dec html5 rangle 27E9 0
+dec html5 uArr 21D1 0
+dec html5 Wopf 1D54E 0
+dec html5 doteq 2250 0
+dec html5 times D7 0
+dec html5 fflig FB00 0
+dec html5 lcy 43B 0
+dec html5 sub 2282 0
+dec html5 frac78 215E 0
+dec html5 xrarr 27F6 0
+dec html5 UpArrowDownArrow 21C5 0
+dec html5 bbrktbrk 23B6 0
+dec html5 abreve 103 0
+dec html5 lsaquo 2039 0
+dec html5 sum 2211 0
+dec html5 Eacute C9 0
+dec html5 sup 2283 0
+dec html5 ContourIntegral 222E 0
+dec html5 DiacriticalDot 2D9 0
+dec html5 trisb 29CD 0
+dec html5 Hcirc 124 0
+dec html5 lceil 2308 0
+dec html5 Zcaron 17D 0
+dec html5 looparrowleft 21AB 0
+dec html5 oelig 153 0
+dec html5 LessSlantEqual 2A7D 0
+dec html5 NegativeThinSpace 200B 0
+dec html5 boxhD 2565 0
+dec html5 omicron 3BF 0
+dec html5 leg 22DA 0
+dec html5 rightthreetimes 22CC 0
+dec html5 NotSucceedsSlantEqual 22E1 0
+dec html5 angmsdaa 29A8 0
+dec html5 angmsdab 29A9 0
+dec html5 rAtail 291C 0
+dec html5 angmsdac 29AA 0
+dec html5 angmsdad 29AB 0
+dec html5 angmsdae 29AC 0
+dec html5 angmsdaf 29AD 0
+dec html5 angmsdag 29AE 0
+dec html5 leq 2264 0
+dec html5 angmsdah 29AF 0
+dec html5 solbar 233F 0
+dec html5 Racute 154 0
+dec html5 les 2A7D 0
+dec html5 boxhU 2568 0
+dec html5 hcirc 125 0
+dec html5 dscr 1D4B9 0
+dec html5 smashp 2A33 0
+dec html5 mopf 1D55E 0
+dec html5 Rcedil 156 0
+dec html5 dscy 455 0
+dec html5 prap 2AB7 0
+dec html5 rarrlp 21AC 0
+dec html5 Aogon 104 0
+dec html5 boxhd 252C 0
+dec html5 subset 2282 0
+dec html5 lgE 2A91 0
+dec html5 epsilon 3B5 0
+dec html5 curarrm 293C 0
+dec html5 ratail 291A 0
+dec html5 DoubleLongLeftRightArrow 27FA 0
+dec html5 rhov 3F1 0
+dec html5 LeftDoubleBracket 27E6 0
+dec html5 Lleftarrow 21DA 0
+dec html5 Uuml DC 0
+dec html5 lfr 1D529 0
+dec html5 minusdu 2A2A 0
+dec html5 boxhu 2534 0
+dec html5 Ncy 41D 0
+dec html5 gneq 2A88 0
+dec html5 rangd 2992 0
+dec html5 range 29A5 0
+dec html5 lfloor 230A 0
+dec html5 NotSucceedsTilde 227F 338
+dec html5 aogon 105 0
+dec html5 NotGreaterSlantEqual 2A7E 338
+dec html5 NotSquareSupersetEqual 22E3 0
+dec html5 profsurf 2313 0
+dec html5 wedgeq 2259 0
+dec html5 Alpha 391 0
+dec html5 DiacriticalDoubleAcute 2DD 0
+dec html5 lltri 25FA 0
+dec html5 tcaron 165 0
+dec html5 Imacr 12A 0
+dec html5 subseteq 2286 0
+dec html5 Escr 2130 0
+dec html5 lArr 21D0 0
+dec html5 Nopf 2115 0
+dec html5 rpar 29 0
+dec html5 divonx 22C7 0
+dec html5 olcir 29BE 0
+dec html5 lacute 13A 0
+dec html5 zscr 1D4CF 0
+dec html5 alpha 3B1 0
+dec html5 imacr 12B 0
+dec html5 vellip 22EE 0
+dec html5 lcedil 13C 0
+dec html5 sime 2243 0
+dec html5 empty 2205 0
+dec html5 imped 1B5 0
+dec html5 simg 2A9E 0
+dec html5 kjcy 45C 0
+dec html5 siml 2A9D 0
+dec html5 LessEqualGreater 22DA 0
+dec html5 Ycirc 176 0
+dec html5 RoundImplies 2970 0
+dec html5 nvrArr 2903 0
+dec html5 check 2713 0
+dec html5 nlarr 219A 0
+dec html5 middot B7 0
+dec html5 par 2225 0
+dec html5 NotGreaterGreater 226B 338
+dec html5 Nfr 1D511 0
+dec html5 nwArr 21D6 0
+dec html5 prec 227A 0
+dec html5 Barv 2AE7 0
+dec html5 yacute FD 0
+dec html5 DoubleLeftRightArrow 21D4 0
+dec html5 Coproduct 2210 0
+dec html5 rarrpl 2945 0
+dec html5 subsim 2AC7 0
+dec html5 ntgl 2279 0
+dec html5 LeftTriangleBar 29CF 0
+dec html5 ycirc 177 0
+dec html5 doteqdot 2251 0
+dec html5 nang 2220 20D2
+dec html5 bigcap 22C2 0
+dec html5 CHcy 427 0
+dec html5 dopf 1D555 0
+dec html5 inodot 131 0
+dec html5 nvHarr 2904 0
+dec html5 laemptyv 29B4 0
+dec html5 bigcirc 25EF 0
+dec html5 scnap 2ABA 0
+dec html5 DownLeftVector 21BD 0
+dec html5 race 223D 331
+dec html5 vartriangleright 22B3 0
+dec html5 napE 2A70 338
+dec html5 supedot 2AC4 0
+dec html5 acE 223E 333
+dec html5 pcy 43F 0
+dec html5 qprime 2057 0
+dec html5 RightTeeVector 295B 0
+dec html5 curlyvee 22CE 0
+dec html5 swarhk 2926 0
+dec html5 Atilde C3 0
+dec html5 bbrk 23B5 0
+dec html5 prnap 2AB9 0
+dec html5 image 2111 0
+dec html5 sext 2736 0
+dec html5 ldquo 201C 0
+dec html5 NotLeftTriangleBar 29CF 338
+dec html5 epsiv 3F5 0
+dec html5 CenterDot B7 0
+dec html5 acd 223F 0
+dec html5 upuparrows 21C8 0
+dec html5 Eopf 1D53C 0
+dec html5 Jcirc 134 0
+dec html5 smid 2223 0
+dec html5 bull 2022 0
+dec html5 rhard 21C1 0
+dec html5 nsupset 2283 20D2
+dec html5 npre 2AAF 338
+dec html5 qscr 1D4C6 0
+dec html5 acy 430 0
+dec html5 lnE 2268 0
+dec html5 zopf 1D56B 0
+dec html5 Ntilde D1 0
+dec html5 rharu 21C0 0
+dec html5 kappav 3F0 0
+dec html5 timesb 22A0 0
+dec html5 iiiint 2A0C 0
+dec html5 timesd 2A30 0
+dec html5 jcirc 135 0
+dec html5 nsimeq 2244 0
+dec html5 Esim 2A73 0
+dec html5 Cap 22D2 0
+dec html5 bump 224E 0
+dec html5 lvnE 2268 FE00
+dec html5 rarrtl 21A3 0
+dec html5 lne 2A87 0
+dec html5 commat 40 0
+dec html5 hslash 210F 0
+dec html5 lthree 22CB 0
+dec html5 Gcedil 122 0
+dec html5 pfr 1D52D 0
+dec html5 RightTriangleEqual 22B5 0
+dec html5 ngeqslant 2A7E 338
+dec html5 Rcy 420 0
+dec html5 gimel 2137 0
+dec html5 curarr 21B7 0
+dec html5 ntlg 2278 0
+dec html5 Rscr 211B 0
+dec html5 urcrop 230E 0
+dec html5 Poincareplane 210C 0
+dec html5 NoBreak 2060 0
+dec html5 lcub 7B 0
+dec html5 nltri 22EA 0
+dec html5 blacktriangledown 25BE 0
+dec html5 fjlig 66 6A
+dec html5 percnt 25 0
+dec html5 rightharpoondown 21C1 0
+dec html5 LeftAngleBracket 27E8 0
+dec html5 npreceq 2AAF 338
+dec html5 cupcup 2A4A 0
+dec html5 LeftVectorBar 2952 0
+dec html5 NJcy 40A 0
+dec html5 triangleright 25B9 0
+dec html5 Tcedil 162 0
+dec html5 loz 25CA 0
+dec html5 afr 1D51E 0
+dec html5 NotLessTilde 2274 0
+dec html5 NotElement 2209 0
+dec html5 NotHumpDownHump 224E 338
+dec html5 SquareSubsetEqual 2291 0
+dec html5 nleqq 2266 338
+dec html5 phi 3C6 0
+dec html5 NotRightTriangle 22EB 0
+dec html5 lhblk 2584 0
+dec html5 caret 2041 0
+dec html5 bsemi 204F 0
+dec html5 aacute E1 0
+dec html5 mapsto 21A6 0
+dec html5 Congruent 2261 0
+dec html5 Vdash 22A9 0
+dec html5 longrightarrow 27F6 0
+dec html5 iinfin 29DC 0
+dec html5 EmptyVerySmallSquare 25AB 0
+dec html5 real 211C 0
+dec html5 SucceedsEqual 2AB0 0
+dec html5 utilde 169 0
+dec html5 Rfr 211C 0
+dec html5 tau 3C4 0
+dec html5 Wedge 22C0 0
+dec html5 piv 3D6 0
+dec html5 hscr 1D4BD 0
+dec html5 subdot 2ABD 0
+dec html5 dsol 29F6 0
+dec html5 prnE 2AB5 0
+dec html5 qopf 1D562 0
+dec html5 vdash 22A2 0
+dec html5 Star 22C6 0
+dec html5 sqsupseteq 2292 0
+dec html5 zhcy 436 0
+dec html5 nacute 144 0
+dec html5 lessgtr 2276 0
+dec html5 nless 226E 0
+dec html5 RightTeeArrow 21A6 0
+dec html5 Yuml 178 0
+dec html5 target 2316 0
+dec html5 upharpoonleft 21BF 0
+dec html5 between 226C 0
+dec html5 boxuL 255B 0
+dec html5 TSHcy 40B 0
+dec html5 lrm 200E 0
+dec html5 excl 21 0
+dec html5 hyphen 2010 0
+dec html5 mlcp 2ADB 0
+dec html5 wedge 2227 0
+dec html5 ncedil 146 0
+dec html5 boxuR 2558 0
+dec html5 Not 2AEC 0
+dec html5 epsi 3B5 0
+dec html5 disin 22F2 0
+dec html5 nRightarrow 21CF 0
+dec html5 cylcty 232D 0
+dec html5 neArr 21D7 0
+dec html5 prnsim 22E8 0
+dec html5 Cfr 212D 0
+dec html5 Beta 392 0
+dec html5 leftarrowtail 21A2 0
+dec html5 parsl 2AFD 0
+dec html5 xwedge 22C0 0
+dec html5 olcross 29BB 0
+dec html5 boxvH 256A 0
+dec html5 lsh 21B0 0
+dec html5 circledR AE 0
+dec html5 Rho 3A1 0
+dec html5 circledS 24C8 0
+dec html5 cupor 2A45 0
+dec html5 Ugrave D9 0
+dec html5 boxul 2518 0
+dec html5 boxvL 2561 0
+dec html5 sqcup 2294 0
+dec html5 rect 25AD 0
+dec html5 mldr 2026 0
+dec html5 boxur 2514 0
+dec html5 digamma 3DD 0
+dec html5 tcy 442 0
+dec html5 urcorner 231D 0
+dec html5 DoubleLeftArrow 21D0 0
+dec html5 Iscr 2110 0
+dec html5 boxvR 255E 0
+dec html5 ulcorn 231C 0
+dec html5 prod 220F 0
+dec html5 Ropf 211D 0
+dec html5 rmoustache 23B1 0
+dec html5 NegativeMediumSpace 200B 0
+dec html5 prop 221D 0
+dec html5 TScy 426 0
+dec html5 xsqcup 2A06 0
+dec html5 bemptyv 29B0 0
+dec html5 boxvh 253C 0
+dec html5 boxvl 2524 0
+dec html5 NotTildeFullEqual 2247 0
+dec html5 subE 2AC5 0
+dec html5 boxvr 251C 0
+dec html5 bigvee 22C1 0
+dec html5 Chi 3A7 0
+dec html5 circeq 2257 0
+dec html5 emsp13 2004 0
+dec html5 emsp14 2005 0
+dec html5 ouml F6 0
+dec html5 RightArrowBar 21E5 0
+dec html5 ecy 44D 0
+dec html5 succneqq 2AB6 0
+dec html5 npart 2202 338
+dec html5 Element 2208 0
+dec html5 Edot 116 0
+dec html5 RightUpDownVector 294F 0
+dec html5 sube 2286 0
+dec html5 jsercy 458 0
+dec html5 varrho 3F1 0
+dec html5 subsub 2AD5 0
+dec html5 Dcaron 10E 0
+dec html5 Eogon 118 0
+dec html5 geqslant 2A7E 0
+dec html5 rdldhar 2969 0
+dec html5 zdot 17C 0
+dec html5 subsup 2AD3 0
+dec html5 ograve F2 0
+dec html5 ReverseElement 220B 0
+dec html5 drcorn 231F 0
+dec html5 rang 27E9 0
+dec html5 tfr 1D531 0
+dec html5 hopf 1D559 0
+dec html5 succ 227B 0
+dec html5 otimes 2297 0
+dec html5 Vcy 412 0
+dec html5 ltquest 2A7B 0
+dec html5 lozenge 25CA 0
+dec html5 LeftDownVector 21C3 0
+dec html5 eogon 119 0
+dec html5 amp 26 0
+dec html5 lopar 2985 0
+dec html5 loplus 2A2D 0
+dec html5 NotTilde 2241 0
+dec html5 CounterClockwiseContourIntegral 2233 0
+dec html5 InvisibleTimes 2062 0
+dec html5 lesdotor 2A83 0
+dec html5 and 2227 0
+dec html5 RightUpVector 21BE 0
+dec html5 ang 2220 0
+dec html5 DoubleRightTee 22A8 0
+dec html5 LeftUpVectorBar 2958 0
+dec html5 smte 2AAC 0
+dec html5 Iacute CD 0
+dec html5 triminus 2A3A 0
+dec html5 efr 1D522 0
+dec html5 iiint 222D 0
+dec html5 ctdot 22EF 0
+dec html5 mnplus 2213 0
+dec html5 Vee 22C1 0
+dec html5 Gcy 413 0
+dec html5 lurdshar 294A 0
+dec html5 smeparsl 29E4 0
+dec html5 DoubleVerticalBar 2225 0
+dec html5 iecy 435 0
+dec html5 udblac 171 0
+dec html5 gtquest 2A7C 0
+dec html5 Iopf 1D540 0
+dec html5 bsime 22CD 0
+dec html5 RightVector 21C0 0
+dec html5 NotGreaterLess 2279 0
+dec html5 apE 2A70 0
+dec html5 CupCap 224D 0
+dec html5 uscr 1D4CA 0
+dec html5 erDot 2253 0
+dec html5 egs 2A96 0
+dec html5 rlarr 21C4 0
+dec html5 prE 2AB3 0
+dec html5 QUOT 22 0
+dec html5 Vfr 1D519 0
+dec html5 cupbrcap 2A48 0
+dec html5 intercal 22BA 0
+dec html5 imath 131 0
+dec html5 RightUpTeeVector 295C 0
+dec html5 trie 225C 0
+dec html5 ape 224A 0
+dec html5 softcy 44C 0
+dec html5 rarrb 21E5 0
+dec html5 FilledSmallSquare 25FC 0
+dec html5 rarrc 2933 0
+dec html5 Superset 2283 0
+dec html5 hoarr 21FF 0
+dec html5 DownRightVectorBar 2957 0
+dec html5 brvbar A6 0
+dec html5 ecolon 2255 0
+dec html5 GreaterLess 2277 0
+dec html5 nrArr 21CF 0
+dec html5 pre 2AAF 0
+dec html5 aleph 2135 0
+dec html5 DiacriticalAcute B4 0
+dec html5 SmallCircle 2218 0
+dec html5 parsim 2AF3 0
+dec html5 rarrw 219D 0
+dec html5 caron 2C7 0
+dec html5 cacute 107 0
+dec html5 lagran 2112 0
+dec html5 rarr 2192 0
+dec html5 Rrightarrow 21DB 0
+dec html5 Vscr 1D4B1 0
+dec html5 Gfr 1D50A 0
+dec html5 ccedil E7 0
+dec html5 propto 221D 0
+dec html5 zwnj 200C 0
+dec html5 psi 3C8 0
+dec html5 infin 221E 0
+dec html5 circledcirc 229A 0
+dec html5 Proportion 2237 0
+dec html5 subseteqq 2AC5 0
+dec html5 nGtv 226B 338
+dec html5 macr AF 0
+dec html5 orslope 2A57 0
+dec html5 frown 2322 0
+dec html5 Iota 399 0
+dec html5 rceil 2309 0
+dec html5 spadesuit 2660 0
+dec html5 sstarf 22C6 0
+dec html5 icy 438 0
+dec html5 ast 2A 0
+dec html5 nmid 2224 0
+dec html5 bowtie 22C8 0
+dec html5 thetav 3D1 0
+dec html5 vangrt 299C 0
+dec html5 numsp 2007 0
+dec html5 triplus 2A39 0
+dec html5 lscr 1D4C1 0
+dec html5 pointint 2A15 0
+dec html5 Theta 398 0
+dec html5 rightrightarrows 21C9 0
+dec html5 uopf 1D566 0
+dec html5 ell 2113 0
+dec html5 cuepr 22DE 0
+dec html5 NotVerticalBar 2224 0
+dec html5 xnis 22FB 0
+dec html5 els 2A95 0
+dec html5 DDotrahd 2911 0
+dec html5 larrbfs 291F 0
+dec html5 Rsh 21B1 0
+dec html5 boxplus 229E 0
+dec html5 swarr 2199 0
+dec html5 gvnE 2269 FE00
+dec html5 xfr 1D535 0
+dec html5 ldca 2936 0
+dec html5 NotPrecedesSlantEqual 22E0 0
+dec html5 YAcy 42F 0
+dec html5 Zcy 417 0
+dec html5 andslope 2A58 0
+dec html5 numero 2116 0
+dec html5 theta 3B8 0
+dec html5 mapstoup 21A5 0
+dec html5 bigcup 22C3 0
+dec html5 nesear 2928 0
+dec html5 lesssim 2272 0
+dec html5 DownArrow 2193 0
+dec html5 orarr 21BB 0
+dec html5 ccaps 2A4D 0
+dec html5 xdtri 25BD 0
+dec html5 xcap 22C2 0
+dec html5 downdownarrows 21CA 0
+dec html5 nisd 22FA 0
+dec html5 VerticalBar 2223 0
+dec html5 TRADE 2122 0
+dec html5 Omacr 14C 0
+dec html5 top 22A4 0
+dec html5 LeftRightArrow 2194 0
+dec html5 Mscr 2133 0
+dec html5 iff 21D4 0
+dec html5 downharpoonleft 21C3 0
+dec html5 eng 14B 0
+dec html5 Vopf 1D54D 0
+dec html5 ifr 1D526 0
+dec html5 Downarrow 21D3 0
+dec html5 Kcy 41A 0
+dec html5 angle 2220 0
+dec html5 lescc 2AA8 0
+dec html5 lesseqqgtr 2A8B 0
+dec html5 bigstar 2605 0
+dec html5 ddagger 2021 0
+dec html5 nltrie 22EC 0
+dec html5 omacr 14D 0
+dec html5 cuesc 22DF 0
+dec html5 circlearrowright 21BB 0
+dec html5 ngeqq 2267 338
+dec html5 squf 25AA 0
+dec html5 rtri 25B9 0
+dec html5 VerticalLine 7C 0
+dec html5 downarrow 2193 0
+dec html5 Scaron 160 0
+dec html5 tstrok 167 0
+dec html5 wreath 2240 0
+dec html5 exponentiale 2147 0
+dec html5 Idot 130 0
+dec html5 Zfr 2128 0
+dec html5 bnot 2310 0
+dec html5 infintie 29DD 0
+dec html5 angrtvbd 299D 0
+dec html5 prurel 22B0 0
+dec html5 gbreve 11F 0
+dec html5 rsaquo 203A 0
+dec html5 sung 266A 0
+dec html5 lvertneqq 2268 FE00
+dec html5 lnsim 22E6 0
+dec html5 searrow 2198 0
+dec html5 nsubset 2282 20D2
+dec html5 Cup 22D3 0
+dec html5 Lmidot 13F 0
+dec html5 sup1 B9 0
+dec html5 Delta 394 0
+dec html5 sbquo 201A 0
+dec html5 sup2 B2 0
+dec html5 cscr 1D4B8 0
+dec html5 nsubseteqq 2AC5 338
+dec html5 sup3 B3 0
+dec html5 Kcedil 136 0
+dec html5 plussim 2A26 0
+dec html5 KHcy 425 0
+dec html5 OElig 152 0
+dec html5 simdot 2A6A 0
+dec html5 lopf 1D55D 0
+dec html5 boxbox 29C9 0
+dec html5 bepsi 3F6 0
+dec html5 lbarr 290C 0
+dec html5 lnapprox 2A89 0
+dec html5 sdotb 22A1 0
+dec html5 measuredangle 2221 0
+dec html5 supE 2AC6 0
+dec html5 map 21A6 0
+dec html5 sdote 2A66 0
+dec html5 diamondsuit 2666 0
+dec html5 Kfr 1D50E 0
+dec html5 imagline 2110 0
+dec html5 delta 3B4 0
+dec html5 mapstodown 21A7 0
+dec html5 eqvparsl 29E5 0
+dec html5 UpArrow 2191 0
+dec html5 imagpart 2111 0
+dec html5 lsim 2272 0
+dec html5 trianglelefteq 22B4 0
+dec html5 isindot 22F5 0
+dec html5 LeftUpDownVector 2951 0
+dec html5 curvearrowleft 21B6 0
+dec html5 Diamond 22C4 0
+dec html5 supe 2287 0
+dec html5 nearrow 2197 0
+dec html5 easter 2A6E 0
+dec html5 rdquo 201D 0
+dec html5 subsetneqq 2ACB 0
+dec html5 Dscr 1D49F 0
+dec html5 comp 2201 0
+dec html5 Uparrow 21D1 0
+dec html5 coloneq 2254 0
+dec html5 Mopf 1D544 0
+dec html5 rfloor 230B 0
+dec html5 varsubsetneqq 2ACB FE00
+dec html5 eacute E9 0
+dec html5 shortparallel 2225 0
+dec html5 male 2642 0
+dec html5 yscr 1D4CE 0
+dec html5 xharr 27F7 0
+dec html5 cong 2245 0
+dec html5 mcy 43C 0
+dec html5 Upsilon 3A5 0
+dec html5 block 2588 0
+dec html5 maltese 2720 0
+dec html5 ordf AA 0
+dec html5 zcaron 17E 0
+dec html5 malt 2720 0
+dec html5 loang 27EC 0
+dec html5 ordm BA 0
+dec html5 NegativeVeryThinSpace 200B 0
+dec html5 eta 3B7 0
+dec html5 Iogon 12E 0
+dec html5 drbkarow 2910 0
+dec html5 eth F0 0
+dec html5 racute 155 0
+dec html5 cwconint 2232 0
+dec html5 egsdot 2A98 0
+dec html5 MinusPlus 2213 0
+dec html5 ring 2DA 0
+dec html5 rcedil 157 0
+dec html5 timesbar 2A31 0
+dec html5 GreaterEqualLess 22DB 0
+dec html4 gt 3E 0
+dec html4 Igrave CC 0
+dec html4 amp 26 0
+dec html4 oacute F3 0
+dec html4 Xi 39E 0
+dec html4 uuml FC 0
+dec html4 Alpha 391 0
+dec html4 sim 223C 0
+dec html4 kappa 3BA 0
+dec html4 lArr 21D0 0
+dec html4 and 2227 0
+dec html4 ang 2220 0
+dec html4 copy A9 0
+dec html4 Iacute CD 0
+dec html4 igrave EC 0
+dec html4 xi 3BE 0
+dec html4 Acirc C2 0
+dec html4 Ecirc CA 0
+dec html4 alpha 3B1 0
+dec html4 hearts 2665 0
+dec html4 Icirc CE 0
+dec html4 Yacute DD 0
+dec html4 int 222B 0
+dec html4 rlm 200F 0
+dec html4 empty 2205 0
+dec html4 larr 2190 0
+dec html4 Ucirc DB 0
+dec html4 oline 203E 0
+dec html4 iacute ED 0
+dec html4 middot B7 0
+dec html4 acirc E2 0
+dec html4 ecirc EA 0
+dec html4 icirc EE 0
+dec html4 yacute FD 0
+dec html4 minus 2212 0
+dec html4 Auml C4 0
+dec html4 thetasym 3D1 0
+dec html4 Sigma 3A3 0
+dec html4 lsquo 2018 0
+dec html4 ucirc FB 0
+dec html4 rArr 21D2 0
+dec html4 brvbar A6 0
+dec html4 AElig C6 0
+dec html4 Ccedil C7 0
+dec html4 Psi 3A8 0
+dec html4 exist 2203 0
+dec html4 auml E4 0
+dec html4 sigma 3C3 0
+dec html4 isin 2208 0
+dec html4 rarr 2192 0
+dec html4 ccedil E7 0
+dec html4 raquo BB 0
+dec html4 Omega 3A9 0
+dec html4 zwnj 200C 0
+dec html4 psi 3C8 0
+dec html4 there4 2234 0
+dec html4 hArr 21D4 0
+dec html4 le 2264 0
+dec html4 Atilde C3 0
+dec html4 Zeta 396 0
+dec html4 infin 221E 0
+dec html4 frasl 2044 0
+dec html4 euro 20AC 0
+dec html4 lt 3C 0
+dec html4 aelig E6 0
+dec html4 Mu 39C 0
+dec html4 macr AF 0
+dec html4 image 2111 0
+dec html4 ldquo 201C 0
+dec html4 omega 3C9 0
+dec html4 upsih 3D2 0
+dec html4 THORN DE 0
+dec html4 Iota 399 0
+dec html4 harr 2194 0
+dec html4 bull 2022 0
+dec html4 rceil 2309 0
+dec html4 atilde E3 0
+dec html4 zeta 3B6 0
+dec html4 emsp 2003 0
+dec html4 perp 22A5 0
+dec html4 Prime 2033 0
+dec html4 frac12 BD 0
+dec html4 Ntilde D1 0
+dec html4 frac14 BC 0
+dec html4 circ 2C6 0
+dec html4 mu 3BC 0
+dec html4 Gamma 393 0
+dec html4 Nu 39D 0
+dec html4 fnof 192 0
+dec html4 quot 22 0
+dec html4 iota 3B9 0
+dec html4 mdash 2014 0
+dec html4 ne 2260 0
+dec html4 Theta 398 0
+dec html4 ni 220B 0
+dec html4 prime 2032 0
+dec html4 ntilde F1 0
+dec html4 Lambda 39B 0
+dec html4 gamma 3B3 0
+dec html4 nu 3BD 0
+dec html4 pound A3 0
+dec html4 permil 2030 0
+dec html4 cap 2229 0
+dec html4 iexcl A1 0
+dec html4 Agrave C0 0
+dec html4 theta 3B8 0
+dec html4 ensp 2002 0
+dec html4 Pi 3A0 0
+dec html4 crarr 21B5 0
+dec html4 iquest BF 0
+dec html4 forall 2200 0
+dec html4 Phi 3A6 0
+dec html4 lambda 3BB 0
+dec html4 or 2228 0
+dec html4 frac34 BE 0
+dec html4 notin 2209 0
+dec html4 dArr 21D3 0
+dec html4 Dagger 2021 0
+dec html4 yen A5 0
+dec html4 weierp 2118 0
+dec html4 uml A8 0
+dec html4 tilde 2DC 0
+dec html4 Aacute C1 0
+dec html4 loz 25CA 0
+dec html4 agrave E0 0
+dec html4 thinsp 2009 0
+dec html4 pi 3C0 0
+dec html4 micro B5 0
+dec html4 spades 2660 0
+dec html4 phi 3C6 0
+dec html4 darr 2193 0
+dec html4 Oslash D8 0
+dec html4 Tau 3A4 0
+dec html4 dagger 2020 0
+dec html4 Ocirc D4 0
+dec html4 alefsym 2135 0
+dec html4 aacute E1 0
+dec html4 divide F7 0
+dec html4 sdot 22C5 0
+dec html4 reg AE 0
+dec html4 real 211C 0
+dec html4 Scaron 160 0
+dec html4 cent A2 0
+dec html4 oslash F8 0
+dec html4 tau 3C4 0
+dec html4 thorn FE 0
+dec html4 ndash 2013 0
+dec html4 piv 3D6 0
+dec html4 ocirc F4 0
+dec html4 Aring C5 0
+dec html4 nbsp A0 0
+dec html4 Iuml CF 0
+dec html4 rsquo 2019 0
+dec html4 rsaquo 203A 0
+dec html4 hellip 2026 0
+dec html4 Otilde D5 0
+dec html4 scaron 161 0
+dec html4 Yuml 178 0
+dec html4 sup1 B9 0
+dec html4 sup2 B2 0
+dec html4 Delta 394 0
+dec html4 sbquo 201A 0
+dec html4 sup3 B3 0
+dec html4 lrm 200E 0
+dec html4 diams 2666 0
+dec html4 OElig 152 0
+dec html4 aring E5 0
+dec html4 oplus 2295 0
+dec html4 iuml EF 0
+dec html4 Egrave C8 0
+dec html4 uArr 21D1 0
+dec html4 Beta 392 0
+dec html4 nabla 2207 0
+dec html4 ETH D0 0
+dec html4 otilde F5 0
+dec html4 laquo AB 0
+dec html4 times D7 0
+dec html4 yuml FF 0
+dec html4 cup 222A 0
+dec html4 Rho 3A1 0
+dec html4 Ugrave D9 0
+dec html4 delta 3B4 0
+dec html4 equiv 2261 0
+dec html4 sub 2282 0
+dec html4 curren A4 0
+dec html4 not AC 0
+dec html4 acute B4 0
+dec html4 prod 220F 0
+dec html4 sum 2211 0
+dec html4 lsaquo 2039 0
+dec html4 Eacute C9 0
+dec html4 Omicron 39F 0
+dec html4 sigmaf 3C2 0
+dec html4 sup 2283 0
+dec html4 egrave E8 0
+dec html4 uarr 2191 0
+dec html4 lowast 2217 0
+dec html4 zwj 200D 0
+dec html4 bdquo 201E 0
+dec html4 beta 3B2 0
+dec html4 Ouml D6 0
+dec html4 supe 2287 0
+dec html4 plusmn B1 0
+dec html4 cedil B8 0
+dec html4 prop 221D 0
+dec html4 lang 2329 0
+dec html4 radic 221A 0
+dec html4 para B6 0
+dec html4 Uacute DA 0
+dec html4 szlig DF 0
+dec html4 rho 3C1 0
+dec html4 lceil 2308 0
+dec html4 ugrave F9 0
+dec html4 rdquo 201D 0
+dec html4 deg B0 0
+dec html4 trade 2122 0
+dec html4 oelig 153 0
+dec html4 Chi 3A7 0
+dec html4 rfloor 230B 0
+dec html4 eacute E9 0
+dec html4 omicron 3BF 0
+dec html4 part 2202 0
+dec html4 clubs 2663 0
+dec html4 Epsilon 395 0
+dec html4 Eta 397 0
+dec html4 ouml F6 0
+dec html4 #039 27 0
+dec html4 Ograve D2 0
+dec html4 uacute FA 0
+dec html4 cong 2245 0
+dec html4 Upsilon 3A5 0
+dec html4 asymp 2248 0
+dec html4 ordf AA 0
+dec html4 sube 2286 0
+dec html4 ordm BA 0
+dec html4 Euml CB 0
+dec html4 chi 3C7 0
+dec html4 nsub 2284 0
+dec html4 epsilon 3B5 0
+dec html4 eta 3B7 0
+dec html4 Oacute D3 0
+dec html4 eth F0 0
+dec html4 Uuml DC 0
+dec html4 ograve F2 0
+dec html4 rang 232A 0
+dec html4 upsilon 3C5 0
+dec html4 ge 2265 0
+dec html4 Kappa 39A 0
+dec html4 lfloor 230A 0
+dec html4 sect A7 0
+dec html4 otimes 2297 0
+dec html4 euml EB 0
+dec html4 shy AD 0
+dec be_noapos gt 3E 0
+dec be_noapos amp 26 0
+dec be_noapos #039 27 0
+dec be_noapos lt 3C 0
+dec be_noapos quot 22 0
+dec be_apos gt 3E 0
+dec be_apos amp 26 0
+dec be_apos lt 3C 0
+dec be_apos apos 27 0
+dec be_apos quot 22 0

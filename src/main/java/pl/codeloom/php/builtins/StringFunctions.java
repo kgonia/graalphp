@@ -124,12 +124,16 @@ public final class StringFunctions {
         r.fn("stripslashes", a -> stripslashes(Args.str(a, 0)));
         r.fn("addcslashes", a -> addcslashes(Args.str(a, 0), Args.str(a, 1)));
         r.fn("stripcslashes", a -> stripcslashes(Args.str(a, 0)));
-        r.fn("htmlspecialchars", a -> Html.specialChars(Args.str(a, 0), Args.lng(a, 1, 3 | 8),
-                Args.bool(a, 3, true)));
-        r.fn("htmlspecialchars_decode", a -> Html.decode(Args.str(a, 0), Args.lng(a, 1, 3 | 8), true));
-        r.fn("html_entity_decode", a -> Html.decode(Args.str(a, 0), Args.lng(a, 1, 3 | 8), false));
-        r.fn("htmlentities", a -> Html.specialChars(Args.str(a, 0), Args.lng(a, 1, 3 | 8), Args.bool(a, 3, true)));
-        r.fn("get_html_translation_table", a -> Html.translationTable(Args.lng(a, 0, 0), Args.lng(a, 1, 3 | 8)));
+        r.fn("htmlspecialchars", a -> Html.escape(Args.str(a, 0), false, Args.lng(a, 1, Html.DEFAULT_FLAGS),
+                charsetArg(a, 2), Args.bool(a, 3, true)));
+        r.fn("htmlspecialchars_decode", a -> Html.unescape(Args.str(a, 0), false, Args.lng(a, 1, Html.DEFAULT_FLAGS),
+                null));
+        r.fn("html_entity_decode", a -> Html.unescape(Args.str(a, 0), true, Args.lng(a, 1, Html.DEFAULT_FLAGS),
+                charsetArg(a, 2)));
+        r.fn("htmlentities", a -> Html.escape(Args.str(a, 0), true, Args.lng(a, 1, Html.DEFAULT_FLAGS),
+                charsetArg(a, 2), Args.bool(a, 3, true)));
+        r.fn("get_html_translation_table", a -> Html.translationTable(Args.lng(a, 0, 0),
+                Args.lng(a, 1, Html.DEFAULT_FLAGS), charsetArg(a, 2)));
         r.fn("strip_tags", a -> StripTags.strip(Args.str(a, 0), Args.get(a, 1)));
         r.fn("nl2br", a -> nl2br(Args.str(a, 0)));
         r.fn("rawurlencode", a -> urlencode(Args.str(a, 0), true));
@@ -1195,6 +1199,12 @@ public final class StringFunctions {
     }
 
     /** Reads a bundled resource next to this class. */
+    /** An optional ?string charset argument of the html functions: null when missing or null. */
+    private static TruffleString charsetArg(Object[] a, int index) {
+        Object value = Args.get(a, index);
+        return value == null || value == PhpNull.NULL ? null : Args.str(a, index);
+    }
+
     static byte[] resource(String name) {
         try (InputStream in = StringFunctions.class.getResourceAsStream(name)) {
             if (in == null) {
