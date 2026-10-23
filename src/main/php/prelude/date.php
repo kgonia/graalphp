@@ -114,18 +114,7 @@ trait TruffleDateTime
 
     public function format(string $format): string
     {
-        if (strpbrk($format, 'uv') !== false) {
-            $format = preg_replace_callback('/(\\\\.)|u|v/', function ($m) {
-                if ($m[0] === 'u') {
-                    return sprintf('%06d', $this->microseconds);
-                }
-                if ($m[0] === 'v') {
-                    return sprintf('%03d', intdiv($this->microseconds, 1000));
-                }
-                return $m[0];
-            }, $format);
-        }
-        return \Truffle\date_format($format, $this->timestamp, $this->zone);
+        return \Truffle\date_format($format, $this->timestamp, $this->zone, $this->microseconds);
     }
 
     public function getTimestamp(): int

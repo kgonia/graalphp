@@ -1,7 +1,9 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
@@ -10,6 +12,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -18,11 +21,15 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
-import java.util.TreeSet;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,8 +42,8 @@ final class DateFunctions {
     }
 
     static void register(Registry r) {
-        r.fn("date", (context, a) -> Str.of(format(Str.java(Args.str(a, 0)), timestamp(a, 1), zone(context))));
-        r.fn("gmdate", a -> Str.of(format(Str.java(Args.str(a, 0)), timestamp(a, 1), ZoneOffset.UTC)));
+        r.fn("date", (context, a) -> format(Args.str(a, 0), timestamp(a, 1), 0, contextZone(context), true));
+        r.fn("gmdate", (context, a) -> format(Args.str(a, 0), timestamp(a, 1), 0, contextZone(context), false));
         r.fn("mktime", (context, a) -> mktime(a, zone(context)));
         r.fn("gmmktime", a -> mktime(a, ZoneOffset.UTC));
         r.fn("checkdate", a -> checkdate(Args.lng(a, 0, 0), Args.lng(a, 1, 0), Args.lng(a, 2, 0)));
@@ -77,13 +84,17 @@ final class DateFunctions {
         r.fn("timezone_offset_get", a -> method(a, "getoffset"));
 
         r.fn("truffle\\timezone_name", a -> {
-            ZoneId zone = parseZone(Str.java(Args.str(a, 0)));
-            return zone == null ? (Object) Boolean.FALSE : Str.of(zoneName(zone, Str.java(Args.str(a, 0))));
+            PhpZone zone = parseZone(Str.java(Args.str(a, 0)));
+            return zone == null ? (Object) Boolean.FALSE : Str.of(zone.name());
         });
         r.fn("truffle\\timezone_offset", a -> (long) zoneOf(a, 0).getRules()
                 .getOffset(Instant.ofEpochSecond(Args.lng(a, 1, 0))).getTotalSeconds());
-        r.fn("truffle\\date_format", a -> Str.of(format(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0),
-                zoneOf(a, 2))));
+        // date_format(format, timestamp, zone, microseconds)
+        r.fn("truffle\\date_format", a -> {
+            PhpZone zone = parseZone(Str.java(Args.str(a, 2)));
+            return format(Args.str(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 3, 0),
+                    zone == null ? parseZone("UTC") : zone, true);
+        });
         r.fn("truffle\\date_parse", a -> {
             Long result = strtotime(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0), zoneOf(a, 2));
             return result == null ? (Object) Boolean.FALSE : result;
@@ -130,53 +141,201 @@ final class DateFunctions {
         return values;
     }
 
-    private static final Pattern OFFSET = Pattern.compile("([+-])(\\d{1,2}):?(\\d{2})?");
+    // ---- timezones ----
 
-    /** A timezone as PHP names them: an identifier, UTC, an offset (+02:00, +0200) or an abbreviation; or null. */
+    /** timelib's zone types. */
+    static final int ZONETYPE_OFFSET = 1;
+    static final int ZONETYPE_ABBR = 2;
+    static final int ZONETYPE_ID = 3;
+
+    /**
+     * A PHP timezone: an identifier (rules from java.time), a UTC offset, or an abbreviation (its standard offset
+     * plus an hour when dst). name is DateTimeZone::getName(): the identifier, "+02:00", or the abbreviation in
+     * upper case.
+     */
+    record PhpZone(int type, String name, ZoneId rules, int offset, boolean dst) {
+        /** The java.time zone the date arithmetic runs in. */
+        ZoneId zoneId() {
+            return rules;
+        }
+    }
+
+    /**
+     * What tz-tables.txt (tools/tz-tables.php, from PHP's timelib data) holds: the abbreviations PHP accepts as
+     * zones, the identifiers it lists, and per identifier the eras that give a UTC offset its abbreviation and
+     * DST flag.
+     */
+    private static final class TzTables {
+        /** Lower-case abbreviation to {offset, dst}: timelib_timezone_lookup's first entry for the name. */
+        static final Map<String, int[]> ABBREVIATIONS = new HashMap<>();
+        static final List<String> IDENTIFIERS = new ArrayList<>();
+        /** Lower-case identifier to its eras. */
+        static final Map<String, Era[]> ZONES = new HashMap<>();
+        /** Lower-case identifier to its spelling. */
+        static final Map<String, String> CANONICAL = new HashMap<>();
+
+        static {
+            String text = new String(StringFunctions.resource("tz-tables.txt"), StandardCharsets.UTF_8);
+            for (String line : text.split("\n")) {
+                String[] fields = line.split(" ");
+                switch (fields[0]) {
+                    case "abbr" -> ABBREVIATIONS.put(fields[1],
+                            new int[]{Integer.parseInt(fields[2]), Integer.parseInt(fields[3])});
+                    case "ids" -> IDENTIFIERS.addAll(Arrays.asList(fields).subList(1, fields.length));
+                    case "zone" -> {
+                        Era[] eras = new Era[fields.length - 2];
+                        for (int i = 2; i < fields.length; i++) {
+                            int eq = fields[i].indexOf('=');
+                            String[] entries = fields[i].substring(eq + 1).split(",");
+                            int[] offsets = new int[entries.length];
+                            boolean[] dsts = new boolean[entries.length];
+                            String[] abbreviations = new String[entries.length];
+                            for (int j = 0; j < entries.length; j++) {
+                                String[] parts = entries[j].split(":", 3);
+                                offsets[j] = Integer.parseInt(parts[0]);
+                                dsts[j] = parts[1].equals("1");
+                                abbreviations[j] = parts[2];
+                            }
+                            eras[i - 2] = new Era(Long.parseLong(fields[i].substring(0, eq)), offsets, dsts,
+                                    abbreviations);
+                        }
+                        ZONES.put(fields[1].toLowerCase(Locale.ROOT), eras);
+                        CANONICAL.put(fields[1].toLowerCase(Locale.ROOT), fields[1]);
+                    }
+                    default -> {
+                    }
+                }
+            }
+        }
+    }
+
+    /** From start until the next era: a moment at offsets[i] has the DST flag dsts[i] and abbreviations[i]. */
+    private record Era(long start, int[] offsets, boolean[] dsts, String[] abbreviations) {
+    }
+
+    /** A parsed zone per zone name: the prelude passes names, and formats a date with the same zone again. */
+    private static final Map<String, PhpZone> ZONE_CACHE = new ConcurrentHashMap<>();
+    private static final PhpZone NO_ZONE = new PhpZone(0, "", ZoneOffset.UTC, 0, false);
+
+    private static final Pattern OFFSET = Pattern.compile("([+-])(\\d{1,2})(?::?(\\d{2}))?(?::?(\\d{2}))?");
+
+    /**
+     * A timezone as timelib_parse_zone reads one: "GMT" before an offset is skipped, an offset (+2, +02:00,
+     * +0200), "UTC" (an identifier), an abbreviation (under six letters, case-insensitive; "GMT" too), or an
+     * identifier (case-insensitive). Null if it is none of these.
+     */
     @TruffleBoundary
-    static ZoneId parseZone(String name) {
-        String trimmed = name.trim();
-        if (trimmed.equalsIgnoreCase("UTC") || trimmed.equalsIgnoreCase("GMT")) {
-            return ZoneId.of("UTC");
+    static PhpZone parseZone(String given) {
+        PhpZone zone = ZONE_CACHE.computeIfAbsent(given, DateFunctions::parseZoneUncached);
+        return zone == NO_ZONE ? null : zone;
+    }
+
+    private static PhpZone parseZoneUncached(String given) {
+        String name = given.trim();
+        if (name.length() > 3 && name.regionMatches(true, 0, "GMT", 0, 3)
+                && (name.charAt(3) == '+' || name.charAt(3) == '-')) {
+            name = name.substring(3);
         }
-        if (trimmed.equalsIgnoreCase("Z")) {
-            return ZoneOffset.UTC;
-        }
-        Matcher offset = OFFSET.matcher(trimmed);
+        Matcher offset = OFFSET.matcher(name);
         if (offset.matches()) {
             int hours = Integer.parseInt(offset.group(2));
             int minutes = offset.group(3) == null ? 0 : Integer.parseInt(offset.group(3));
-            int sign = offset.group(1).equals("-") ? -1 : 1;
-            return ZoneOffset.ofTotalSeconds(sign * (hours * 3600 + minutes * 60));
+            int seconds = offset.group(4) == null ? 0 : Integer.parseInt(offset.group(4));
+            int total = (offset.group(1).equals("-") ? -1 : 1) * (hours * 3600 + minutes * 60 + seconds);
+            if (Math.abs(total) > 18 * 3600) {
+                return NO_ZONE;
+            }
+            return new PhpZone(ZONETYPE_OFFSET, offsetName(total), ZoneOffset.ofTotalSeconds(total), total, false);
         }
-        try {
-            return ZoneId.of(trimmed, ZoneId.SHORT_IDS);
-        } catch (DateTimeException e) {
-            for (String id : ZoneId.getAvailableZoneIds()) {
-                if (id.equalsIgnoreCase(trimmed)) {
-                    return ZoneId.of(id);
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.equals("utc")) {
+            return new PhpZone(ZONETYPE_ID, "UTC", ZoneId.of("UTC"), 0, false);
+        }
+        int[] abbreviation = name.length() < 6 ? TzTables.ABBREVIATIONS.get(lower) : null;
+        if (lower.equals("gmt")) {
+            abbreviation = new int[]{0, 0};
+        }
+        if (abbreviation != null) {
+            return new PhpZone(ZONETYPE_ABBR, name.toUpperCase(Locale.ROOT),
+                    ZoneOffset.ofTotalSeconds(abbreviation[0]), abbreviation[0] - abbreviation[1] * 3600,
+                    abbreviation[1] != 0);
+        }
+        String id = TzTables.CANONICAL.get(lower);
+        if (id == null) {
+            for (String available : ZoneId.getAvailableZoneIds()) {
+                if (available.equalsIgnoreCase(name)) {
+                    id = available;
+                    break;
                 }
             }
-            return null;
+        }
+        if (id == null) {
+            return NO_ZONE;
+        }
+        try {
+            // the name stays as given ("europe/warsaw"), as php-src keeps it
+            return new PhpZone(ZONETYPE_ID, name, ZoneId.of(id), 0, false);
+        } catch (DateTimeException e) {
+            return NO_ZONE;
         }
     }
 
-    /** DateTimeZone::getName(): the identifier as given for regions, "+02:00" for offsets, UTC for UTC. */
-    private static String zoneName(ZoneId zone, String given) {
-        if (zone instanceof ZoneOffset offset) {
-            return given.trim().equalsIgnoreCase("Z") ? "Z" : offsetName(offset);
-        }
-        return zone.getId();
+    /** The context's default timezone (date(), mktime()), an identifier. */
+    private static PhpZone contextZone(PhpContext context) {
+        ZoneId zone = context.timezone();
+        PhpZone parsed = parseZone(zone.getId());
+        return parsed != null ? parsed : new PhpZone(ZONETYPE_ID, zone.getId(), zone, 0, false);
     }
 
-    /** An offset zone's name: +02:00, and +00:00 rather than java.time's "Z". */
-    private static String offsetName(ZoneOffset offset) {
-        return offset.getTotalSeconds() == 0 ? "+00:00" : offset.getId();
+    /** DateTimeZone::getName() of an offset zone: "+02:00", or "+02:00:30" with seconds. */
+    private static String offsetName(int total) {
+        int abs = Math.abs(total);
+        String name = (total < 0 ? "-" : "+") + two(abs / 3600) + ":" + two(abs / 60 % 60);
+        return abs % 60 == 0 ? name : name + ":" + two(abs % 60);
     }
 
     private static ZoneId zoneOf(Object[] a, int index) {
-        ZoneId zone = parseZone(Str.java(Args.str(a, index)));
-        return zone == null ? ZoneOffset.UTC : zone;
+        PhpZone zone = parseZone(Str.java(Args.str(a, index)));
+        return zone == null ? ZoneOffset.UTC : zone.zoneId();
+    }
+
+    /** The zone's UTC offset at a moment, its DST flag and abbreviation, as timelib_time_offset. */
+    private record ZoneState(int offset, boolean dst, String abbreviation) {
+    }
+
+    private static ZoneState zoneState(PhpZone zone, long timestamp) {
+        switch (zone.type()) {
+            case ZONETYPE_ABBR:
+                return new ZoneState(zone.offset() + (zone.dst() ? 3600 : 0), zone.dst(), zone.name());
+            case ZONETYPE_OFFSET: {
+                int total = zone.offset();
+                return new ZoneState(total, false, "GMT" + (total < 0 ? '-' : '+') + two(Math.abs(total / 3600))
+                        + two(Math.abs(total % 3600 / 60)));
+            }
+            default: {
+                int total = zone.rules().getRules().getOffset(Instant.ofEpochSecond(timestamp)).getTotalSeconds();
+                Era[] eras = TzTables.ZONES.get(zone.name().toLowerCase(Locale.ROOT));
+                if (eras != null) {
+                    int at = 0;
+                    while (at + 1 < eras.length && eras[at + 1].start() <= timestamp) {
+                        at++;
+                    }
+                    for (int e = at; e >= 0; e--) {
+                        Era era = eras[e];
+                        for (int i = 0; i < era.offsets().length; i++) {
+                            if (era.offsets()[i] == total) {
+                                return new ZoneState(total, era.dsts()[i], era.abbreviations()[i]);
+                            }
+                        }
+                    }
+                }
+                boolean dst = zone.rules().getRules().isDaylightSavings(Instant.ofEpochSecond(timestamp));
+                int abs = Math.abs(total);
+                String abbreviation = (total < 0 ? "-" : "+") + two(abs / 3600)
+                        + (abs % 3600 == 0 ? "" : two(abs / 60 % 60));
+                return new ZoneState(total, dst, abbreviation);
+            }
+        }
     }
 
     /** date_set(ts, zone, year, month, day, hour, minute, second): null parts stay; out-of-range parts roll over. */
@@ -314,11 +473,11 @@ final class DateFunctions {
                     while (at < value.length() && " ".indexOf(value.charAt(at)) < 0) {
                         at++;
                     }
-                    ZoneId parsed = parseZone(value.substring(start, at));
+                    PhpZone parsed = parseZone(value.substring(start, at));
                     if (parsed == null) {
                         return Boolean.FALSE;
                     }
-                    zone = parsed;
+                    zone = parsed.zoneId();
                 }
                 default -> {
                     if (at >= value.length() || value.charAt(at) != c) {
@@ -363,15 +522,13 @@ final class DateFunctions {
         return Args.has(a, index) && Args.get(a, index) != PhpNull.NULL ? Args.lng(a, index, 0) : now();
     }
 
+    /** timezone_identifiers_list(): PHP's list (from its timezone database). */
     @TruffleBoundary
     private static PhpArray identifiers() {
         PhpArray list = new PhpArray();
-        for (String id : new TreeSet<>(ZoneId.getAvailableZoneIds())) {
-            if (id.contains("/") && !id.startsWith("Etc/") && !id.startsWith("SystemV/")) {
-                list.append(Str.of(id));
-            }
+        for (String id : TzTables.IDENTIFIERS) {
+            list.append(Str.of(id));
         }
-        list.append(Str.of("UTC"));
         return list;
     }
 
@@ -404,72 +561,131 @@ final class DateFunctions {
         return date.toEpochSecond();
     }
 
-    /** date() with PHP's format characters; a backslash escapes the next one. */
+    private static final String[] MONTH_FULL = {"January", "February", "March", "April", "May", "June", "July",
+            "August", "September", "October", "November", "December"};
+    private static final String[] MONTH_SHORT = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
+            "Nov", "Dec"};
+    private static final String[] DAY_FULL = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+            "Saturday"};
+    private static final String[] DAY_SHORT = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+    /**
+     * php_date.c's date_format: the format's characters for a moment (timestamp and microseconds) in a zone;
+     * localtime false is gmdate's UTC without a zone. A backslash escapes the next byte (a trailing one prints
+     * the string's terminating NUL, as php-src does).
+     */
     @TruffleBoundary
-    static String format(String format, long timestamp, ZoneId zone) {
-        ZonedDateTime t = Instant.ofEpochSecond(timestamp).atZone(zone);
+    static TruffleString format(TruffleString formatString, long timestamp, int micro, PhpZone zone,
+                                boolean localtime) {
+        byte[] format = Str.bytes(formatString);
+        if (format.length == 0) {
+            return Str.EMPTY;
+        }
+        ZoneState state = localtime ? zoneState(zone, timestamp) : new ZoneState(0, false, "GMT");
+        int offset = state.offset();
+        LocalDateTime t = LocalDateTime.ofEpochSecond(timestamp, 0, ZoneOffset.ofTotalSeconds(offset));
+        long y = t.getYear();
+        int m = t.getMonthValue();
+        int d = t.getDayOfMonth();
+        int h = t.getHour();
+        int dayOfWeek = t.getDayOfWeek().getValue() % 7;
         StringBuilder out = new StringBuilder();
-        for (int i = 0; i < format.length(); i++) {
-            char c = format.charAt(i);
-            switch (c) {
-                case 'd' -> out.append(two(t.getDayOfMonth()));
-                case 'D' -> out.append(t.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ENGLISH));
-                case 'j' -> out.append(t.getDayOfMonth());
-                case 'l' -> out.append(t.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
-                case 'N' -> out.append(t.getDayOfWeek().getValue());
-                case 'S' -> out.append(suffix(t.getDayOfMonth()));
-                case 'w' -> out.append(t.getDayOfWeek().getValue() % 7);
+        ByteBuilder bytes = new ByteBuilder(format.length + 16);
+        for (int i = 0; i < format.length; i++) {
+            out.setLength(0);
+            switch (format[i]) {
+                case 'd' -> out.append(two(d));
+                case 'D' -> out.append(DAY_SHORT[dayOfWeek]);
+                case 'j' -> out.append(d);
+                case 'l' -> out.append(DAY_FULL[dayOfWeek]);
+                case 'S' -> out.append(englishSuffix(d));
+                case 'w' -> out.append(dayOfWeek);
+                case 'N' -> out.append(dayOfWeek == 0 ? 7 : dayOfWeek);
                 case 'z' -> out.append(t.getDayOfYear() - 1);
                 case 'W' -> out.append(two(t.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)));
-                case 'F' -> out.append(t.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
-                case 'm' -> out.append(two(t.getMonthValue()));
-                case 'M' -> out.append(t.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH));
-                case 'n' -> out.append(t.getMonthValue());
+                case 'o' -> out.append(t.get(IsoFields.WEEK_BASED_YEAR));
+                case 'F' -> out.append(MONTH_FULL[m - 1]);
+                case 'm' -> out.append(two(m));
+                case 'M' -> out.append(MONTH_SHORT[m - 1]);
+                case 'n' -> out.append(m);
                 case 't' -> out.append(t.toLocalDate().lengthOfMonth());
                 case 'L' -> out.append(t.toLocalDate().isLeapYear() ? 1 : 0);
-                case 'o' -> out.append(t.get(IsoFields.WEEK_BASED_YEAR));
-                case 'Y' -> out.append(t.getYear());
-                case 'y' -> out.append(two(t.getYear() % 100));
-                case 'a' -> out.append(t.getHour() < 12 ? "am" : "pm");
-                case 'A' -> out.append(t.getHour() < 12 ? "AM" : "PM");
-                case 'g' -> out.append(t.getHour() % 12 == 0 ? 12 : t.getHour() % 12);
-                case 'G' -> out.append(t.getHour());
-                case 'h' -> out.append(two(t.getHour() % 12 == 0 ? 12 : t.getHour() % 12));
-                case 'H' -> out.append(two(t.getHour()));
+                case 'y' -> out.append(String.format("%02d", y % 100));
+                case 'Y' -> out.append(y < 0 ? "-" : "").append(String.format("%04d", Math.abs(y)));
+                case 'x' -> out.append(y < 0 ? "-" : y >= 10000 ? "+" : "").append(String.format("%04d", Math.abs(y)));
+                case 'X' -> out.append(y < 0 ? "-" : "+").append(String.format("%04d", Math.abs(y)));
+                case 'a' -> out.append(h >= 12 ? "pm" : "am");
+                case 'A' -> out.append(h >= 12 ? "PM" : "AM");
+                case 'B' -> {
+                    long beat = (timestamp % 86400 + 3600) * 10;
+                    if (beat < 0) {
+                        beat += 864000;
+                    }
+                    out.append(String.format("%03d", beat / 864 % 1000));
+                }
+                case 'g' -> out.append(h % 12 != 0 ? h % 12 : 12);
+                case 'G' -> out.append(h);
+                case 'h' -> out.append(two(h % 12 != 0 ? h % 12 : 12));
+                case 'H' -> out.append(two(h));
                 case 'i' -> out.append(two(t.getMinute()));
                 case 's' -> out.append(two(t.getSecond()));
-                case 'u' -> out.append("000000");
-                case 'v' -> out.append("000");
-                case 'e' -> out.append(zone instanceof ZoneOffset offset ? offsetName(offset) : zone.getId());
-                case 'I' -> out.append(zone.getRules().isDaylightSavings(t.toInstant()) ? 1 : 0);
-                case 'O' -> out.append(offset(t, false));
-                case 'P' -> out.append(offset(t, true));
-                case 'p' -> out.append(t.getOffset().getTotalSeconds() == 0 ? "Z" : offset(t, true));
-                case 'T' -> out.append(abbreviation(t, zone));
-                case 'Z' -> out.append(t.getOffset().getTotalSeconds());
-                case 'c' -> out.append(format("Y-m-d\\TH:i:sP", timestamp, zone));
-                case 'r' -> out.append(format("D, d M Y H:i:s O", timestamp, zone));
-                case 'U' -> out.append(timestamp);
-                case '\\' -> {
-                    if (i + 1 < format.length()) {
-                        out.append(format.charAt(++i));
+                case 'u' -> out.append(String.format("%06d", micro));
+                case 'v' -> out.append(String.format("%03d", micro / 1000));
+                case 'I' -> out.append(localtime && state.dst() ? 1 : 0);
+                case 'p' -> {
+                    String abbreviation = state.abbreviation();
+                    if (!localtime || abbreviation.equals("UTC") || abbreviation.equals("Z")
+                            || abbreviation.equals("GMT+0000")) {
+                        out.append('Z');
+                    } else {
+                        out.append(offset(offset, true));
                     }
                 }
-                default -> out.append(c);
+                case 'P' -> out.append(offset(offset, true));
+                case 'O' -> out.append(offset(offset, false));
+                case 'T' -> out.append(state.abbreviation());
+                case 'e' -> {
+                    if (!localtime) {
+                        out.append("UTC");
+                    } else if (zone.type() == ZONETYPE_OFFSET) {
+                        out.append(offsetName(offset));
+                    } else {
+                        out.append(zone.type() == ZONETYPE_ID ? zone.name() : state.abbreviation());
+                    }
+                }
+                case 'Z' -> out.append(offset);
+                case 'c' -> out.append(String.format("%04d", y)).append('-').append(two(m)).append('-').append(two(d))
+                        .append('T').append(two(h)).append(':').append(two(t.getMinute())).append(':')
+                        .append(two(t.getSecond())).append(offset(offset, true));
+                case 'r' -> out.append(DAY_SHORT[dayOfWeek]).append(", ").append(two(d)).append(' ')
+                        .append(MONTH_SHORT[m - 1]).append(' ').append(String.format("%04d", y)).append(' ')
+                        .append(two(h)).append(':').append(two(t.getMinute())).append(':')
+                        .append(two(t.getSecond())).append(' ').append(offset(offset, false));
+                case 'U' -> out.append(timestamp);
+                case '\\' -> {
+                    i++;
+                    bytes.write(i < format.length ? format[i] : 0);
+                    continue;
+                }
+                default -> {
+                    bytes.write(format[i]);
+                    continue;
+                }
             }
+            bytes.writeBytes(out.toString().getBytes(StandardCharsets.ISO_8859_1));
         }
-        return out.toString();
+        return Str.of(bytes.toByteArray());
     }
 
-    private static String two(int value) {
-        return value < 10 ? "0" + value : Integer.toString(value);
+    private static String two(long value) {
+        return value >= 0 && value < 10 ? "0" + value : Long.toString(value);
     }
 
-    private static String suffix(int day) {
-        if (day >= 11 && day <= 13) {
+    private static String englishSuffix(int number) {
+        if (number >= 10 && number <= 19) {
             return "th";
         }
-        return switch (day % 10) {
+        return switch (number % 10) {
             case 1 -> "st";
             case 2 -> "nd";
             case 3 -> "rd";
@@ -477,18 +693,10 @@ final class DateFunctions {
         };
     }
 
-    private static String offset(ZonedDateTime t, boolean colon) {
-        int seconds = t.getOffset().getTotalSeconds();
-        int minutes = Math.abs(seconds) / 60;
-        return (seconds < 0 ? "-" : "+") + two(minutes / 60) + (colon ? ":" : "") + two(minutes % 60);
-    }
-
-    private static String abbreviation(ZonedDateTime t, ZoneId zone) {
-        if (zone.equals(ZoneOffset.UTC) || zone.getId().equals("UTC")) {
-            return "UTC";
-        }
-        String name = zone.getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
-        return name.startsWith("GMT") || name.contains("/") ? offset(t, true) : name;
+    /** "+0200" or "+02:00": the offset's hours and minutes (seconds dropped), as the O and P formats. */
+    private static String offset(int seconds, boolean colon) {
+        return (seconds < 0 ? "-" : "+") + two(Math.abs(seconds / 3600)) + (colon ? ":" : "")
+                + two(Math.abs(seconds % 3600 / 60));
     }
 
     // ---- strtotime ----
@@ -500,7 +708,7 @@ final class DateFunctions {
             "(?:[A-Za-z]{3},\\s*)?(\\d{1,2})\\s+([A-Za-z]{3})[a-z]*\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*"
                     + "([+-]\\d{4}|GMT|UTC|Z)?");
     private static final Pattern RELATIVE = Pattern.compile(
-            "([+-]?\\s*\\d+)\\s*(sec|second|min|minute|hour|day|week|fortnight|month|year)s?(\\s+ago)?");
+            "([+-]?\\s*\\d+)\\s*(second|sec|minute|min|hour|day|week|fortnight|month|year)s?(\\s+ago)?");
 
     /** The formats WordPress uses: ISO dates and times, RFC 2822, @timestamp, now/today/…, relative offsets. */
     @TruffleBoundary
