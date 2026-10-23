@@ -85,6 +85,24 @@ What the boot needed, in the order the boot loop hit it:
 
 The next milestones are the installer and the home page over HTTP. The census above still lists the gaps the boot path doesn't reach: `goto`, generators, `extract`, DOM, Reflection, and others.
 
+## Milestone: the home page over HTTP (2026-10-23)
+
+`tests/gate2/http.sh` serves WordPress twice and fetches the same pages from both (the site is still installed by wp-cli on regular PHP, so the installer milestone stays open):
+- on Truffle PHP through `launcher.HttpMain`: the JDK HTTP server, a new context per request on one shared engine, the language under its CGI SAPI (`php.Sapi=cgi`: the request in environment variables and stdin, the header block written before the first output byte);
+- on regular PHP with mysqli (`php -S` in the `wordpress:cli-php8.4` image).
+
+Nonces, dates and asset versions are masked. 7 of the 9 pages are byte-identical with the same status: the home page, a category archive, the RSS feed, `wp-login.php`, the REST index (137 routes), a search, and a 404. The single post and the page each differ by one line: the oEmbed XML discovery link, which WordPress prints only when `SimpleXMLElement` exists.
+
+What the pages needed after the CLI boot:
+- typed `executeBoolean` beside the truthiness `executeCondition` (`false === 0` was true, so the HTML tag processor saw no tags), and global-variable caching only under the single-context assumption (`e3fb16b`);
+- the CGI SAPI, `HttpMain`, the SPL classes in the prelude, `trigger_error` that is fatal only for `E_USER_ERROR` (`d177c66`);
+- references in array copies (`4d510ab`): a reference left in an array element by `foreach ($a as &$v)` stayed shared by every copy, so `WP_REST_Server::get_routes()` emptied `$this->endpoints` and the REST index listed 7 routes. `PhpRef` now approximates php-src's refcount (the variables bound to it, and the array elements made references), and a copy turns a reference only its element holds into a value;
+- magic properties (`aa2613d`), generators, `goto`, `extract()`, `instanceof` with a dynamic class (`e8a8da1`), the date classes (`7ef2b14`), output-buffer handlers (`acf4e60`).
+
+The installer and the wp-admin login are next. Known gaps on the way: `SimpleXMLElement`, `__call` and `__callStatic` on direct method calls (callables have `__call`), returning by reference, ticks.
+
+At `acf4e60` the php-src score is 2622 of 7341 strict (35.7%) and 2821 lenient (38.4%).
+
 ## php-src `.phpt` score: strict and lenient (2026-10-23)
 
 When both engines die, `tests/phpt/compare.py` used to count the case as passed whatever the reason. A case could then "pass" because Truffle PHP died on a missing class while PHP died on the error the test checks. Now:
