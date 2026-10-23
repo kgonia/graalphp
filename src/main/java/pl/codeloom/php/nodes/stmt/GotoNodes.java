@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.nodes.StmtNode;
 
 /**
@@ -57,9 +58,7 @@ public final class GotoNodes {
             int start = 0;
             while (true) {
                 try {
-                    for (int i = start; i < statements.length; i++) {
-                        statements[i].execute(frame);
-                    }
+                    runFrom(frame, start);
                     return;
                 } catch (Jump jump) {
                     start = target(jump);
@@ -67,6 +66,16 @@ public final class GotoNodes {
             }
         }
 
+        @ExplodeLoop
+        private void runFrom(VirtualFrame frame, int start) {
+            for (int i = 0; i < statements.length; i++) {
+                if (i >= start) {
+                    statements[i].execute(frame);
+                }
+            }
+        }
+
+        @ExplodeLoop
         private int target(Jump jump) {
             for (int i = 0; i < labels.length; i++) {
                 if (labels[i] == jump.label) {

@@ -133,7 +133,7 @@ public final class LoopNodes {
     }
 
     @ExplodeLoop
-    private static void runAll(ExprNode[] expressions, VirtualFrame frame) {
+    static void runAll(ExprNode[] expressions, VirtualFrame frame) {
         for (ExprNode expression : expressions) {
             expression.execute(frame);
         }

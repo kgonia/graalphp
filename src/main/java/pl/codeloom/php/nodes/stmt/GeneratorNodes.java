@@ -6,6 +6,7 @@ import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
@@ -201,16 +202,23 @@ public final class GeneratorNodes {
         public void execute(VirtualFrame frame) {
             boolean yielded = false;
             try {
-                for (int i = (int) state(frame, slot); i < statements.length; i++) {
-                    frame.setLong(slot, i);
-                    statements[i].execute(frame);
-                }
+                runFrom(frame, (int) state(frame, slot));
             } catch (Yield y) {
                 yielded = true;
                 throw y;
             } finally {
                 if (!yielded) {
                     frame.setLong(slot, 0);
+                }
+            }
+        }
+
+        @ExplodeLoop
+        private void runFrom(VirtualFrame frame, int start) {
+            for (int i = 0; i < statements.length; i++) {
+                if (i >= start) {
+                    frame.setLong(slot, i);
+                    statements[i].execute(frame);
                 }
             }
         }
@@ -322,9 +330,7 @@ public final class GeneratorNodes {
             try {
                 boolean resuming = state(frame, slot) == 1;
                 if (!resuming) {
-                    for (ExprNode expression : init) {
-                        expression.execute(frame);
-                    }
+                    LoopNodes.runAll(init, frame);
                 }
                 while (true) {
                     if (!resuming && !test(frame)) {
@@ -336,9 +342,7 @@ public final class GeneratorNodes {
                         break;
                     }
                     frame.setLong(slot, 0);
-                    for (ExprNode expression : step) {
-                        expression.execute(frame);
-                    }
+                    LoopNodes.runAll(step, frame);
                 }
             } catch (Yield y) {
                 yielded = true;
@@ -350,6 +354,7 @@ public final class GeneratorNodes {
             }
         }
 
+        @ExplodeLoop
         private boolean test(VirtualFrame frame) {
             int last = condition.length - 1;
             for (int i = 0; i < last; i++) {
@@ -505,7 +510,7 @@ public final class GeneratorNodes {
             try {
                 long state = state(frame, slot);
                 if (state >= 2) {
-                    catchBodies[(int) state - 2].execute(frame);
+                    resumeCatch(frame, (int) state - 2);
                     return;
                 }
                 frame.setLong(slot, 1);
@@ -529,6 +534,16 @@ public final class GeneratorNodes {
             }
         }
 
+        @ExplodeLoop
+        private void resumeCatch(VirtualFrame frame, int index) {
+            for (int i = 0; i < catchBodies.length; i++) {
+                if (i == index) {
+                    catchBodies[i].execute(frame);
+                }
+            }
+        }
+
+        @ExplodeLoop
         private void handle(VirtualFrame frame, RuntimeException original, PhpObject thrown) {
             for (int i = 0; i < catchBodies.length; i++) {
                 if (pl.codeloom.php.nodes.stmt.TryNode.matches(thrown, catchTypes[i])) {

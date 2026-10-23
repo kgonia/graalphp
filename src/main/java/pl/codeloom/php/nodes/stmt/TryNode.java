@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -47,6 +48,7 @@ public final class TryNode extends StmtNode {
         }
     }
 
+    @ExplodeLoop
     private void handle(VirtualFrame frame, RuntimeException original, PhpObject thrown) {
         for (int i = 0; i < catchBodies.length; i++) {
             if (matches(thrown, catchTypes[i])) {
