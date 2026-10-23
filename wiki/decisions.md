@@ -80,6 +80,10 @@ The first versions got all kernels running fast; their limits are now measured.
      - Each `PhpClass` carries a `ClassKey`, interned in `PhpLanguage` from its `ClassTemplate`, its parent's key and its interfaces' keys. Two contexts that declare the same classes from the same files get the same keys.
      - A cache guards on the key and takes from it only what the key determines: methods and the constructor, property names and the shape.
      - Per-context values, such as evaluated defaults, static properties and evaluated constants, are read from the context's `PhpClass`.
+   - **Single-context speculation (owner, 2026-10-23).** While a language instance serves one context, a node keeps what it looked up in the context (a function, a constant, a class) as a compile-time constant, under an assumption that `initializeMultipleContexts()` invalidates. GraalJS's single-realm assumption and TruffleRuby's single-context assumption do the same.
+     - This gives two modes. The per-context slot lookup made hooks 10% slower when it ran in a single context.
+     - The kernel benchmarks run one context, so they measure only the fast mode. A server with a context per request runs the other.
+     - From step 4e on, the harness also runs the kernels in several contexts on one shared engine, and both numbers are reported. **The multi-context number is the one that counts for Gate 2.**
    - **Only built-in constants** (`PHP_*`, `E_*` and the like, equal in every context) are folded at translation time. User constants go through the same id-indexed lookup.
    - **Parsed files are cached in `PhpLanguage`** by path and modification time. `include` asks the language for the call target.
    - **Then** `@Registration(contextPolicy = SHARED)`, with a test that runs two contexts on one engine and checks their outputs and that code isn't re-translated.

@@ -13,6 +13,7 @@ import org.graalvm.options.OptionValues;
 import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.ScriptRootNode;
+import pl.codeloom.php.runtime.NameIds;
 import pl.codeloom.php.runtime.PhpObject;
 
 import java.util.Map;
@@ -48,8 +49,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      */
     private final Map<String, FileRootNode> files = new ConcurrentHashMap<>();
 
-    /** Function names (lowercase) by id: a call site resolves its name to an id once, for every context. */
-    private final Map<String, Integer> functionIds = new ConcurrentHashMap<>();
+    /** Ids of function names (lowercase) and constant names: a node resolves its name once, for every context. */
+    private final NameIds functionIds = new NameIds();
+    private final NameIds constantIds = new NameIds();
 
     /** Built-in functions are language-level: built on first use, then declared by every context. */
     private volatile Builtins.Table builtins;
@@ -77,15 +79,14 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot));
     }
 
-    /** The id of a function name (lowercase), assigned on first use; a context keeps its functions by id. */
+    /** The id of a function name (lowercase); a context keeps its functions by id. */
     public int functionId(String lowerName) {
-        Integer id = functionIds.get(lowerName);
-        if (id == null) {
-            synchronized (functionIds) {
-                id = functionIds.computeIfAbsent(lowerName, name -> functionIds.size());
-            }
-        }
-        return id;
+        return functionIds.id(lowerName);
+    }
+
+    /** The id of a constant name (case-sensitive); a context keeps its constants by id. */
+    public int constantId(String name) {
+        return constantIds.id(name);
     }
 
     /** A file's translation, made by translate on first use (once, also when contexts race). */

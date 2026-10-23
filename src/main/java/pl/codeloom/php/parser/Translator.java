@@ -343,6 +343,9 @@ public final class Translator {
         List<StmtNode> result = new ArrayList<>();
         for (Object child : node.children()) {
             Ast element = (Ast) child;
+            if (!element.is("AST_CONST_ELEM")) {
+                continue; // #[attributes] on the declaration
+            }
             String name = (String) element.get("name");
             ExprNode value = expression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
@@ -1056,7 +1059,7 @@ public final class Translator {
         if (known != null) {
             return new ConstNode(known);
         }
-        return new ConstantNodes.GlobalConstNode(name);
+        return new ConstantNodes.GlobalConstNode(name, language.constantId(name));
     }
 
     private ExprNode classConstant(Ast node) {

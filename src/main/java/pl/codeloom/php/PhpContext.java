@@ -46,6 +46,8 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     private final Map<String, PhpClass> classes = new HashMap<>();
     private final Map<String, Object> constants = new HashMap<>();
+    /** The defined constants by their name's language-level id (null: not defined here). */
+    private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
     private final java.util.ArrayDeque<ByteBuilder> buffers = new java.util.ArrayDeque<>();
@@ -170,9 +172,13 @@ public final class PhpContext {
         }
         int id = language.functionId(key);
         if (id >= functionSlots.length) {
-            functionSlots = Arrays.copyOf(functionSlots, Math.max(id + 1, functionSlots.length * 2));
+            functionSlots = Arrays.copyOf(functionSlots, grown(functionSlots.length, id));
         }
         functionSlots[id] = function;
+    }
+
+    private static int grown(int length, int id) {
+        return Math.max(id + 1, length * 2);
     }
 
     /** The function declared under a name id (PhpLanguage.functionId), or null. */
@@ -210,7 +216,21 @@ public final class PhpContext {
 
     @TruffleBoundary
     public boolean defineConstant(String name, Object value) {
-        return constants.putIfAbsent(name, value) == null;
+        if (constants.putIfAbsent(name, value) != null) {
+            return false;
+        }
+        int id = language.constantId(name);
+        if (id >= constantSlots.length) {
+            constantSlots = Arrays.copyOf(constantSlots, grown(constantSlots.length, id));
+        }
+        constantSlots[id] = value;
+        return true;
+    }
+
+    /** The constant defined under a name id (PhpLanguage.constantId), or null. */
+    public Object constantAt(int id) {
+        Object[] slots = constantSlots;
+        return id < slots.length ? slots[id] : null;
     }
 
     // ---- global variables ----

@@ -2,7 +2,10 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
@@ -10,30 +13,49 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.Str;
 
-/** Global and class constants. Constants never change once defined, so each site caches the first value. */
+/** Global and class constants. */
 public final class ConstantNodes {
     private ConstantNodes() {
     }
 
+    /**
+     * A global constant, looked up in the calling context by the name's language-level id. A constant never
+     * changes once defined: while a site sees one value object (true, an int defined once, or one context's
+     * string) compiled code uses it as a constant.
+     */
     public static final class GlobalConstNode extends ExprNode {
         private final String name;
-        @CompilationFinal private Object value;
+        private final int id;
+        @Child private StableValueNode stable = ConstantNodesFactory.StableValueNodeGen.create();
 
-        public GlobalConstNode(String name) {
+        /** id is the name's {@link pl.codeloom.php.PhpLanguage#constantId}. */
+        public GlobalConstNode(String name, int id) {
             this.name = name;
+            this.id = id;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
+            Object value = PhpContext.get(this).constantAt(id);
             if (value == null) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                Object found = PhpContext.get(this).findConstant(name);
-                if (found == null) {
-                    CompilerDirectives.transferToInterpreter();
-                    throw new PhpError("Undefined constant \"" + name + "\"");
-                }
-                value = found;
+                CompilerDirectives.transferToInterpreter();
+                throw new PhpError("Undefined constant \"" + name + "\"");
             }
+            return stable.execute(value);
+        }
+    }
+
+    /** The value itself, as a compile-time constant while it is always the same object. */
+    public abstract static class StableValueNode extends Node {
+        public abstract Object execute(Object value);
+
+        @Specialization(guards = "value == cachedValue", limit = "1")
+        protected static Object cached(Object value, @Cached("value") Object cachedValue) {
+            return cachedValue;
+        }
+
+        @Specialization(replaces = "cached")
+        protected static Object generic(Object value) {
             return value;
         }
     }
