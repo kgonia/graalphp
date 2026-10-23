@@ -224,3 +224,10 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - `PcreFunctions.Native` creates its handles, and a native match-context `MemorySegment`, in a static initializer. The page says such classes must be initialized at run time, and native segments may not be in the image heap.
 
     To do when the native image (D8) is built.
+- **2026-10-23, Gate 0.5 (D10) progress check after steps 1–2:**
+  - **Step 1:** per-context state replaces the static fields.
+  - **Step 2:** 25 hot built-ins are DSL nodes compiled in place of the call. Their fast specializations use cached TruffleString nodes (vectorized scans), and every other case goes to the regular built-in's body.
+    - `array_filter` and `array_map` call their callbacks through an inline cache of direct calls.
+    - `--engine.InstrumentBoundaries`, which would have counted boundary calls, crashes libgraal on GraalVM 25.0.4 (`ClassCastException` in `ConstantNode.findLength`), so the hot set came from built-in call counts per kernel.
+  - **Gate 1 effect** of step 2 (ABBA, 2 pairs, 300 iterations): kses −14%, hooks −12%, wptexturize −11%, slugs +8%, the rest neutral. Checksums and the php-src run unchanged.
+  - **Not done in step 2:** the `preg_*` front ends. A node would cache the compiled pattern per call site, which has to wait for step 4's language-level pattern cache.

@@ -19,7 +19,7 @@
 | Gate | State |
 |---|---|
 | Gate 0: Amdahl ceiling of WordPress on php-fpm | not started (can run in parallel with Gate 1) |
-| **Gate 0.5: idiomatic Truffle structure ([D10](decisions.md))** | **in progress: step 1 of 6 (per-context state) done** |
+| **Gate 0.5: idiomatic Truffle structure ([D10](decisions.md))** | **in progress: steps 1–2 of 6 done (per-context state; 25 hot built-ins as DSL nodes: kses −14%, hooks −12%)** |
 | **Gate 1: Truffle core vs PHP 8.5 JIT on extracted WordPress hot functions** | **in progress: all 7 kernels correct; steady state 0.70× of PHP 8.5 JIT end to end, 0.58× on PHP code (go needs 2×; exact regex time from a C replay); plateau after 250–300 iterations (3–7 s); K0 arithmetic kernels 1.96×; php-src tests 27.8% passing** |
 | Gate 2: WordPress boots and renders | — |
 | Gate 3: drop-in parity | — |
