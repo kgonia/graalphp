@@ -8,8 +8,8 @@ import pl.codeloom.php.runtime.PhpArray;
 
 /**
  * A compile-time constant: a literal, a folded constant expression, or a constant array. A constant array is
- * built once and held permanently (one extra holder), so every place that stores it copies before writing,
- * like php-src's immutable arrays.
+ * built once and frozen ({@link PhpArray#freeze}), so every place that stores it copies before writing, like
+ * php-src's immutable arrays, and contexts on several threads share it safely.
  */
 public final class ConstNode extends ExprNode {
     private final Object value;
@@ -17,7 +17,7 @@ public final class ConstNode extends ExprNode {
 
     public ConstNode(Object value) {
         if (value instanceof PhpArray array) {
-            array.addHolder();
+            array.freeze();
         }
         this.value = value;
         this.truthy = Convert.toBool(value);

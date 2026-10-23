@@ -20,6 +20,11 @@ import java.util.Arrays;
  * properties, references) that hold this array. It may overestimate (heap slots only ever add), never
  * underestimate; a write through a slot copies first when the array is shared. Keys passed in must already be
  * normalized ({@link ArrayKey}).
+ *
+ * <p>An array held by language-level data (a constant array in a shared AST, a class's default) is
+ * {@link #freeze frozen}, like php-src's immutable arrays in opcache: its holders aren't counted and it is always
+ * shared, so every write through a slot copies it first and nothing ever writes to it. Contexts on several
+ * threads can then share it without a race on the count.
  */
 public final class PhpArray implements TruffleObject {
     private static final int MIN_CAPACITY = 8;
@@ -27,6 +32,8 @@ public final class PhpArray implements TruffleObject {
     private static final long[] NO_LONGS = new long[0];
 
     private int holders;
+    /** Never written once frozen; holders aren't counted (see {@link #freeze}). */
+    private boolean immutable;
 
     /** Packed values, or null in hash layout and while the values are all ints (then {@link #longs}). */
     private Object[] packed;
@@ -75,17 +82,36 @@ public final class PhpArray implements TruffleObject {
     // ---- copy-on-write ----
 
     public void addHolder() {
-        holders++;
+        if (!immutable) {
+            holders++;
+        }
     }
 
     public void removeHolder() {
-        if (holders > 0) {
+        if (!immutable && holders > 0) {
             holders--;
         }
     }
 
     public boolean isShared() {
-        return holders > 1;
+        return immutable || holders > 1;
+    }
+
+    /**
+     * Makes this array and the arrays nested in it immutable: language-level data shared by every context (and
+     * thread). Call it before the array is published, while one thread holds it.
+     */
+    @TruffleBoundary
+    public void freeze() {
+        if (immutable) {
+            return;
+        }
+        immutable = true;
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            if (rawAt(p) instanceof PhpArray nested) {
+                nested.freeze();
+            }
+        }
     }
 
     /** A shallow copy with no holders; nested arrays gain one holder each (the copy now also holds them). */
