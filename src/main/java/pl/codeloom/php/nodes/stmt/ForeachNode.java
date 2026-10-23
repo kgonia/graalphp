@@ -1,13 +1,14 @@
 package pl.codeloom.php.nodes.stmt;
 
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.Truffle;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RepeatingNode;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -26,9 +27,7 @@ import pl.codeloom.php.runtime.Str;
  */
 public final class ForeachNode extends StmtNode {
     @Child private ExprNode subject;
-    @Child private LValueNode keyTarget;
-    @Child private LValueNode valueTarget;
-    @Child private ListAssignNode valueList;
+    @Child private BindNode bind;
     @Child private StmtNode body;
     @Child private LoopNode arrayLoop;
     private final boolean byRef;
@@ -39,23 +38,13 @@ public final class ForeachNode extends StmtNode {
      */
     private final int arraySlot;
     private final int positionSlot;
-    /** Whether this loop has iterated an object: until it does, compiled code leaves the object path out. */
-    @CompilationFinal private boolean seenObject;
-    /**
-     * The array layouts this loop has iterated by value. Compiled code has a path only for those: an int list
-     * binds its values unboxed, and no layout pays for the others' checks.
-     */
-    @CompilationFinal private byte seenLayouts;
-    private static final byte LONGS = 1;
-    private static final byte OBJECTS = 2;
-    private static final byte HASH = 4;
+    /** Until this loop iterates an object, compiled code leaves the object path out. */
+    private final BranchProfile objectSubject = BranchProfile.create();
 
     public ForeachNode(ExprNode subject, LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList,
                        StmtNode body, boolean byRef, int arraySlot, int positionSlot) {
         this.subject = subject;
-        this.keyTarget = keyTarget;
-        this.valueTarget = valueTarget;
-        this.valueList = valueList;
+        this.bind = ForeachNodeFactory.BindNodeGen.create(keyTarget, valueTarget, valueList);
         this.body = body;
         this.byRef = byRef;
         this.arraySlot = arraySlot;
@@ -73,12 +62,10 @@ public final class ForeachNode extends StmtNode {
             }
             PhpArray array = (PhpArray) frame.getObject(arraySlot);
             if (byRef) {
-                if (keyTarget != null) {
-                    keyTarget.write(frame, array.keyAt(p));
-                }
-                valueTarget.bindRef(frame, array.refAtPosition(p));
+                bind.writeKey(frame, array.keyAt(p));
+                bind.bindRef(frame, array.refAtPosition(p));
             } else {
-                bind(frame, array, p);
+                bind.execute(frame, array, p);
             }
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return false;
@@ -89,10 +76,26 @@ public final class ForeachNode extends StmtNode {
         }
     }
 
-    /** Binds key and value of the element at position p, by the array's layout. */
-    private void bind(VirtualFrame frame, PhpArray array, int p) {
-        if (array.holdsLongs()) {
-            seen(LONGS);
+    /**
+     * The loop variables (key, and value or list) and the binding of an array element to them, by the array's
+     * layout: compiled code has a path only for the layouts the loop has met, and an int list binds unboxed.
+     */
+    abstract static class BindNode extends Node {
+        @Child private LValueNode keyTarget;
+        @Child private LValueNode valueTarget;
+        @Child private ListAssignNode valueList;
+
+        BindNode(LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList) {
+            this.keyTarget = keyTarget;
+            this.valueTarget = valueTarget;
+            this.valueList = valueList;
+        }
+
+        /** Binds key and value of the element at position p. */
+        abstract void execute(VirtualFrame frame, PhpArray array, int p);
+
+        @Specialization(guards = "array.holdsLongs()")
+        protected void longs(VirtualFrame frame, PhpArray array, int p) {
             if (keyTarget != null) {
                 keyTarget.writeLong(frame, p);
             }
@@ -101,25 +104,42 @@ public final class ForeachNode extends StmtNode {
             } else {
                 valueList.assign(frame, array.longAt(p));
             }
-        } else if (array.holdsObjects()) {
-            seen(OBJECTS);
+        }
+
+        @Specialization(guards = "array.holdsObjects()")
+        protected void objects(VirtualFrame frame, PhpArray array, int p) {
             if (keyTarget != null) {
                 keyTarget.writeLong(frame, p);
             }
             assignValue(frame, PhpRef.deref(array.packedAt(p)));
-        } else {
-            seen(HASH);
-            if (keyTarget != null) {
-                keyTarget.write(frame, array.hashKeyAt(p));
-            }
+        }
+
+        @Specialization(guards = {"!array.holdsLongs()", "!array.holdsObjects()"})
+        protected void hash(VirtualFrame frame, PhpArray array, int p) {
+            writeKey(frame, array.hashKeyAt(p));
             assignValue(frame, PhpRef.deref(array.hashValueAt(p)));
         }
-    }
 
-    private void seen(byte layout) {
-        if ((seenLayouts & layout) == 0) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            seenLayouts |= layout;
+        void writeKey(VirtualFrame frame, Object key) {
+            if (keyTarget != null) {
+                keyTarget.write(frame, key);
+            }
+        }
+
+        boolean hasKey() {
+            return keyTarget != null;
+        }
+
+        void assignValue(VirtualFrame frame, Object element) {
+            if (valueList != null) {
+                valueList.assign(frame, element);
+            } else {
+                valueTarget.write(frame, element);
+            }
+        }
+
+        void bindRef(VirtualFrame frame, PhpRef ref) {
+            valueTarget.bindRef(frame, ref);
         }
     }
 
@@ -144,10 +164,7 @@ public final class ForeachNode extends StmtNode {
         if (value instanceof PhpArray array) {
             iterate(frame, array);
         } else if (value instanceof PhpObject object) {
-            if (!seenObject) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                seenObject = true;
-            }
+            objectSubject.enter();
             iterateObject(frame, object);
         }
     }
@@ -158,14 +175,6 @@ public final class ForeachNode extends StmtNode {
             runArray(frame, array);
         } finally {
             array.removeHolder();
-        }
-    }
-
-    private void assignValue(VirtualFrame frame, Object element) {
-        if (valueList != null) {
-            valueList.assign(frame, element);
-        } else {
-            valueTarget.write(frame, element);
         }
     }
 
@@ -188,10 +197,10 @@ public final class ForeachNode extends StmtNode {
             object.callMethod("rewind");
             while (Convert.toBool(object.callMethod("valid"))) {
                 Object current = PhpRef.deref(object.callMethod("current"));
-                if (keyTarget != null) {
-                    keyTarget.write(frame, PhpRef.deref(object.callMethod("key")));
+                if (bind.hasKey()) {
+                    bind.writeKey(frame, PhpRef.deref(object.callMethod("key")));
                 }
-                assignValue(frame, current);
+                bind.assignValue(frame, current);
                 if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                     return;
                 }
@@ -204,10 +213,8 @@ public final class ForeachNode extends StmtNode {
             if (!object.getPhpClass().isPublicProperty(property)) {
                 continue;
             }
-            if (keyTarget != null) {
-                keyTarget.write(frame, Str.of(property));
-            }
-            assignValue(frame, PhpRef.deref(object.getProperty(property)));
+            bind.writeKey(frame, Str.of(property));
+            bind.assignValue(frame, PhpRef.deref(object.getProperty(property)));
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;
             }

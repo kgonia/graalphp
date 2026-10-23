@@ -1,14 +1,15 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
-import com.oracle.truffle.api.profiles.ValueProfile;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
-import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
+import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
+import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -19,26 +20,18 @@ import pl.codeloom.php.runtime.Str;
 
 /**
  * `$container[key]` and `$container[]`: array elements, string offsets (read) and ArrayAccess objects.
- * A literal key is normalized once by the translator (constantKey); other keys are normalized per access.
+ * A literal key is normalized once by the translator (constantKey); other keys are normalized per access. Element
+ * reads and writes are {@link ElementNodes}: DSL nodes that dispatch on the container and the array's storage.
  */
 public final class DimNode extends LValueNode {
     @Child private ExprNode container;
     @Child private ExprNode key;
-    @Child private TruffleString.ReadByteNode readByte = TruffleString.ReadByteNode.create();
+    @Child private ElementReadNode read = ElementNodesFactory.ElementReadNodeGen.create();
+    @Child private ElementWriteNode writeElement = ElementNodesFactory.ElementWriteNodeGen.create();
+    @Child private ArrayKeyNode toKey = ElementNodesFactory.ArrayKeyNodeGen.create();
     private final Object constantKey;
-    /** The container's class (array, string, ArrayAccess object): reads compile to the one case seen. */
-    private final ValueProfile containerType = ValueProfile.createClassProfile();
-    private final ValueProfile keyType = ValueProfile.createClassProfile();
-    /** Whether a write here has met an ArrayAccess object: until then compiled code leaves that path out. */
-    @CompilationFinal private boolean seenObjectWrite;
-    /**
-     * Whether an int read or write here has met anything but an element of an int-strategy array. Until then
-     * compiled code holds only that case: no calls or field writes on other paths, so a loop can keep the
-     * array's fields in registers instead of reloading them at every access.
-     */
-    @CompilationFinal private boolean seenLongMiss;
-    /** Where a string key was found last time (PhpArray.slotOf); checked by identity before hashing. */
-    private int slotGuess = -1;
+    /** Until a write here meets an ArrayAccess object, compiled code leaves that path out. */
+    private final BranchProfile objectWrite = BranchProfile.create();
 
     /** key and constantKey are both null for `$a[]`. */
     public DimNode(ExprNode container, ExprNode key, Object constantKey) {
@@ -56,7 +49,7 @@ public final class DimNode extends LValueNode {
     }
 
     private Object normalizedKey(VirtualFrame frame) {
-        return constantKey != null ? constantKey : ArrayKey.of(keyType.profile(key.execute(frame)));
+        return constantKey != null ? constantKey : toKey.execute(key.execute(frame));
     }
 
     private LValueNode place() {
@@ -73,12 +66,8 @@ public final class DimNode extends LValueNode {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot use [] for reading");
         }
-        Object value = containerType.profile(container.execute(frame));
-        if (value instanceof PhpArray array) {
-            Object element = lookup(array, normalizedKey(frame));
-            return element == null ? PhpNull.NULL : element;
-        }
-        return readOther(frame, value);
+        Object value = container.execute(frame);
+        return read.execute(value, rawKey(frame));
     }
 
     /** An int element of an int-strategy array is read without boxing. */
@@ -87,63 +76,8 @@ public final class DimNode extends LValueNode {
         if (isAppend()) {
             return super.executeLong(frame);
         }
-        Object value = containerType.profile(container.execute(frame));
-        Object result;
-        if (value instanceof PhpArray array) {
-            Object k = normalizedKey(frame);
-            if (k instanceof Long index && array.holdsLongAt(index)) {
-                return array.longAt(index);
-            }
-            longMiss();
-            Object element = lookup(array, k);
-            result = element == null ? PhpNull.NULL : element;
-        } else {
-            longMiss();
-            result = readOther(frame, value);
-        }
-        if (result instanceof Long number) {
-            return number;
-        }
-        throw new UnexpectedResultException(result);
-    }
-
-    /** A read from a container that isn't an array. */
-    private Object readOther(VirtualFrame frame, Object value) {
-        if (value instanceof TruffleString string) {
-            return stringOffset(string, rawKey(frame));
-        }
-        if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return PhpRef.deref(object.callMethod("offsetget", rawKey(frame)));
-        }
-        return PhpNull.NULL;
-    }
-
-    /** The dereferenced element under a normalized key, or null when absent. */
-    private Object lookup(PhpArray array, Object k) {
-        if (k instanceof TruffleString) {
-            int slot = slotGuess;
-            if (!array.isKeyAt(slot, k)) {
-                slot = array.slotOf(k);
-                if (slot < 0) {
-                    return null;
-                }
-                slotGuess = slot;
-            }
-            return PhpRef.deref(array.rawAt(slot));
-        }
-        return array.get(k);
-    }
-
-    private TruffleString stringOffset(TruffleString string, Object offsetValue) {
-        long offset = Convert.toLong(offsetValue);
-        int length = string.byteLength(Str.ENC);
-        if (offset < 0) {
-            offset += length;
-        }
-        if (offset < 0 || offset >= length) {
-            return Str.EMPTY;
-        }
-        return Str.singleByte(readByte.execute(string, (int) offset, Str.ENC));
+        Object value = container.execute(frame);
+        return read.executeLong(value, rawKey(frame));
     }
 
     @Override
@@ -156,15 +90,11 @@ public final class DimNode extends LValueNode {
         try {
             PhpArray array = place().arrayForWrite(frame);
             if (array == null) {
-                if (!seenObjectWrite) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    seenObjectWrite = true;
-                }
                 writeObject(frame, value);
             } else if (isAppend()) {
                 array.append(value);
             } else {
-                array.put(normalizedKey(frame), value);
+                writeElement.execute(array, rawKey(frame), value);
             }
         } finally {
             if (held != null) {
@@ -177,38 +107,17 @@ public final class DimNode extends LValueNode {
     @Override
     public void writeLong(VirtualFrame frame, long value) {
         PhpArray array = place().arrayForWrite(frame);
-        if (array != null && !isAppend()) {
-            Object k = normalizedKey(frame);
-            if (k instanceof Long index && array.holdsLongAt(index)) {
-                array.setLongAt(index, value);
-                return;
-            }
-            longMiss();
-            array.putLong(k, value);
-            return;
-        }
-        longMiss();
         if (array == null) {
-            if (!seenObjectWrite) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                seenObjectWrite = true;
-            }
             writeObject(frame, value);
         } else if (isAppend()) {
             array.appendLong(value);
         } else {
-            array.putLong(normalizedKey(frame), value);
-        }
-    }
-
-    private void longMiss() {
-        if (!seenLongMiss) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            seenLongMiss = true;
+            writeElement.executeLong(array, rawKey(frame), value);
         }
     }
 
     private void writeObject(VirtualFrame frame, Object value) {
+        objectWrite.enter();
         Object target = container.execute(frame);
         if (target instanceof PhpObject object && object.isArrayAccess()) {
             object.callMethod("offsetset", isAppend() ? PhpNull.NULL : rawKey(frame), value);
@@ -282,11 +191,9 @@ public final class DimNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
-        Object value = containerType.profile(
-                container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame));
+        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray array) {
-            Object element = lookup(array, normalizedKey(frame));
-            return element != null && element != PhpNull.NULL;
+            return read.execute(array, rawKey(frame)) != PhpNull.NULL;
         }
         if (value instanceof TruffleString string) {
             Object offsetValue = rawKey(frame);
@@ -305,10 +212,9 @@ public final class DimNode extends LValueNode {
 
     @Override
     public Object readIfSet(VirtualFrame frame) {
-        Object value = containerType.profile(
-                container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame));
+        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray array) {
-            Object element = lookup(array, normalizedKey(frame));
+            Object element = read.execute(array, rawKey(frame));
             return element == PhpNull.NULL ? null : element;
         }
         if (value == null || value == PhpNull.NULL) {
