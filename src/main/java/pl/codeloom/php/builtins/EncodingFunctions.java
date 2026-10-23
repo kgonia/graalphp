@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Locale;
@@ -382,28 +383,72 @@ final class EncodingFunctions {
 
     // ---- the rest ----
 
+    /** base64.c's base64_reverse_table: a byte's 6-bit value, -1 for whitespace, -2 for anything else. */
+    private static final byte[] BASE64_REVERSE = new byte[256];
+
+    static {
+        Arrays.fill(BASE64_REVERSE, (byte) -2);
+        BASE64_REVERSE['\t'] = -1;
+        BASE64_REVERSE['\n'] = -1;
+        BASE64_REVERSE['\r'] = -1;
+        BASE64_REVERSE[' '] = -1;
+        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < alphabet.length(); i++) {
+            BASE64_REVERSE[alphabet.charAt(i)] = (byte) i;
+        }
+    }
+
+    /**
+     * php_base64_decode_impl: '=' is counted wherever it is; other bytes outside the alphabet are skipped, or in
+     * strict mode whitespace is skipped and anything else, or data after padding, fails, as do a lone last
+     * character and wrong padding.
+     */
     @TruffleBoundary
-    private static Object base64Decode(byte[] input, boolean strict) {
-        StringBuilder clean = new StringBuilder(input.length);
-        for (byte b : input) {
-            char c = (char) (b & 0xFF);
-            if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/') {
-                clean.append(c);
-            } else if (c == '=') {
-                break;
-            } else if (strict && !Character.isWhitespace(c)) {
-                return Boolean.FALSE;
+    private static Object base64Decode(byte[] in, boolean strict) {
+        byte[] out = new byte[in.length / 4 * 3 + 3];
+        int i = 0;
+        int padding = 0;
+        int j = 0;
+        for (byte b : in) {
+            if (b == '=') {
+                padding++;
+                continue;
             }
+            int ch = BASE64_REVERSE[b & 0xFF];
+            if (!strict) {
+                if (ch < 0) {
+                    continue;
+                }
+            } else {
+                if (ch == -1) {
+                    continue;
+                }
+                if (ch == -2 || padding != 0) {
+                    return Boolean.FALSE;
+                }
+            }
+            switch (i % 4) {
+                case 0 -> out[j] = (byte) (ch << 2);
+                case 1 -> {
+                    out[j++] |= (byte) (ch >> 4);
+                    out[j] = (byte) ((ch & 0x0F) << 4);
+                }
+                case 2 -> {
+                    out[j++] |= (byte) (ch >> 2);
+                    out[j] = (byte) ((ch & 0x03) << 6);
+                }
+                default -> out[j++] |= (byte) ch;
+            }
+            i++;
         }
-        while (clean.length() % 4 == 1) {
-            clean.setLength(clean.length() - 1);
-        }
-        try {
-            // clean stops before the first '=', so the padding is always added back here
-            return Str.of(Base64.getDecoder().decode(clean + "==".substring(0, (4 - clean.length() % 4) % 4)));
-        } catch (IllegalArgumentException e) {
+        if (strict && i % 4 == 1) {
+            // truncated: one character in the last group
             return Boolean.FALSE;
         }
+        if (strict && padding != 0 && (padding > 2 || (i + padding) % 4 != 0)) {
+            return Boolean.FALSE;
+        }
+        return Str.of(out, 0, j);
     }
 
     /** False for an odd length or a byte outside [0-9A-Fa-f] (PHP also warns); HexFormat rejects exactly those. */
