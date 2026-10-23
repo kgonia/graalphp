@@ -15,6 +15,7 @@ import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.ThunkRootNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
 import pl.codeloom.php.nodes.call.CallableCallNode;
+import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.ClosureNode;
 import pl.codeloom.php.nodes.call.DynamicMethodCallNode;
 import pl.codeloom.php.nodes.call.FrameArgsNode;
@@ -1032,6 +1033,12 @@ public final class Translator {
             case "AST_CALL":
                 return call(node);
             case "AST_METHOD_CALL":
+                if (isCallableConvert(node)) {
+                    return node.get("method") instanceof String method
+                            ? new CallableConvertNodes.MethodNode(expression(node.get("expr")), method, null)
+                            : new CallableConvertNodes.MethodNode(expression(node.get("expr")), null,
+                                    expression(node.get("method")));
+                }
                 if (!(node.get("method") instanceof String)) {
                     return new DynamicMethodCallNode(placeOrExpression(node.get("expr")), expression(node.get("method")),
                             arguments(node.node("args")));
@@ -1041,6 +1048,12 @@ public final class Translator {
                 Ast classNode = node.node("class");
                 String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
                 boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
+                if (isCallableConvert(node)) {
+                    if (!(node.get("method") instanceof String method)) {
+                        throw unsupported(node, "dynamic static method name");
+                    }
+                    return new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, forwarding);
+                }
                 return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
                         forwarding);
             }
@@ -1497,11 +1510,27 @@ public final class Translator {
         return new ArgumentsNode(args, spread);
     }
 
+    /** `f(...)`: the call's arguments are the first-class callable marker, not a list. */
+    private static boolean isCallableConvert(Ast call) {
+        return call.get("args") instanceof Ast args && args.is("AST_CALLABLE_CONVERT");
+    }
+
     private ExprNode call(Ast node) {
         Ast callee = node.node("expr");
         Ast args = node.node("args");
-        if (!callee.is("AST_NAME")) {
-            return new CallableCallNode(expression(callee), arguments(args), null, null);
+        // a string callee naming a method, 'A::m'(), calls it as the value would be called
+        boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
+        ExprNode value = method ? new ConstNode(Str.of((String) callee.get("name"))) : null;
+        if (isCallableConvert(node)) {
+            if (!callee.is("AST_NAME") || method) {
+                return new CallableConvertNodes.ValueNode(method ? value : expression(callee));
+            }
+            String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
+            return new CallableConvertNodes.FunctionNode(resolved[0], language.functionId(Str.lower(resolved[0])),
+                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
+        }
+        if (!callee.is("AST_NAME") || method) {
+            return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null);
         }
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)

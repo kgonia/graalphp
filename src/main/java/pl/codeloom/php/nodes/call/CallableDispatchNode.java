@@ -51,7 +51,9 @@ public abstract class CallableDispatchNode extends Node {
                              @Cached("create(cachedFunction.getCallTarget())") DirectCallNode call) {
         PhpObject self = callable.getBoundThis();
         PhpClass scope = self != null ? self.getPhpClass() : callable.getScope();
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, scope, callable, values)));
+        Object[] arguments = callable.getMagicName() == null ? values
+                : Callables.magicValues(callable.getMagicName(), values);
+        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, scope, callable, arguments)));
     }
 
     /**

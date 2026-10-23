@@ -51,7 +51,7 @@ public final class Callables {
     private static Target resolve(PhpContext context, Object callable, boolean direct) {
         if (callable instanceof PhpClosure closure) {
             PhpClass scope = closure.getBoundThis() != null ? closure.getBoundThis().getPhpClass() : closure.getScope();
-            return new Target(closure.getFunction(), closure.getBoundThis(), scope, closure);
+            return new Target(closure.getFunction(), closure.getBoundThis(), scope, closure, closure.getMagicName());
         }
         if (callable instanceof TruffleString name) {
             String text = Str.java(name);
