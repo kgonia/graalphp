@@ -9,7 +9,10 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Predefined constants, built-in classes and built-in functions. The functions and methods are built once per
@@ -21,12 +24,19 @@ public final class Builtins {
 
     /** The language-level built-in functions, and the methods that each context's Exception and Error get. */
     public static final class Table {
+        private final Map<String, Object> constants;
         private final List<PhpFunction> functions;
         private final List<PhpFunction> throwableMethods;
 
-        private Table(List<PhpFunction> functions, List<PhpFunction> throwableMethods) {
+        private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods) {
+            this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
+        }
+
+        /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
+        public Object constant(String name) {
+            return constants.get(name);
         }
     }
 
@@ -38,18 +48,20 @@ public final class Builtins {
         PcreFunctions.register(registry);
         JsonFunctions.register(registry);
         MbFunctions.register(registry);
-        return new Table(List.copyOf(registry.functions()), throwableMethods(registry));
+        return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry));
     }
 
     public static void install(PhpContext context, Table table) {
-        constants(context);
+        for (Map.Entry<String, Object> constant : table.constants.entrySet()) {
+            context.defineConstant(constant.getKey(), constant.getValue());
+        }
         classes(context, table);
         for (PhpFunction function : table.functions) {
             context.declareFunction(function);
         }
     }
 
-    private static void constants(PhpContext context) {
+    private static Map<String, Object> constants() {
         Object[][] table = {
                 {"PHP_EOL", Str.of("\n")}, {"PHP_INT_MAX", Long.MAX_VALUE}, {"PHP_INT_MIN", Long.MIN_VALUE},
                 {"PHP_INT_SIZE", 8L}, {"PHP_FLOAT_EPSILON", Math.ulp(1.0)}, {"PHP_FLOAT_MAX", Double.MAX_VALUE},
@@ -94,9 +106,11 @@ public final class Builtins {
                 {"MB_CASE_UPPER", 0L}, {"MB_CASE_LOWER", 1L}, {"MB_CASE_TITLE", 2L},
                 {"LC_CTYPE", 0L}, {"LC_ALL", 6L},
         };
+        Map<String, Object> constants = new LinkedHashMap<>();
         for (Object[] entry : table) {
-            context.defineConstant((String) entry[0], entry[1]);
+            constants.put((String) entry[0], entry[1]);
         }
+        return Collections.unmodifiableMap(constants);
     }
 
     private static void classes(PhpContext context, Table table) {

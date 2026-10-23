@@ -126,7 +126,7 @@ public final class PhpContext {
             } catch (IOException e) {
                 throw new PhpError("Failed opening '" + path + "' for inclusion (no AST export at " + json + ")");
             }
-            root = new Translator(language, this, canonical, phpSource(canonical)).translateFile(ast);
+            root = new Translator(language, canonical, phpSource(canonical)).translateFile(ast);
             files.put(canonical, root);
         }
         return root;

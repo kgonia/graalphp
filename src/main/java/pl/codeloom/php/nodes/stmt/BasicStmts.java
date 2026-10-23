@@ -215,24 +215,6 @@ public final class BasicStmts {
     }
 
     /** Runs an expression for its side effect in statement position, e.g. a hoisted declaration's runtime part. */
-    public static final class ActionNode extends StmtNode {
-        private final Runnable action;
-
-        public ActionNode(Runnable action) {
-            this.action = action;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            run(action);
-        }
-
-        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
-        private static void run(Runnable action) {
-            action.run();
-        }
-    }
-
     /** Constructor property promotion: `$this->name = $name` before the constructor body runs. */
     public static final class PromoteNode extends StmtNode {
         private final String name;

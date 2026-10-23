@@ -76,6 +76,10 @@ The first versions got all kernels running fast; their limits are now measured.
      - A `PhpFunction` keeps only its name, flags, parameters and call target. Static variables move to the context, keyed by function.
      - A class becomes a `ClassTemplate`: name, parent and interface names, flags, method `PhpFunction`s, property declarations and constant initializers. A declaration node instantiates it into a per-context `PhpClass` when it runs.
    - **Name lookup goes through language-level ids.** `PhpLanguage` gives each function and class name an index, and a context keeps its declarations in arrays by that index. A call site does an array load, then a DSL inline cache on the identity of the template it finds, then a `DirectCallNode`. Under `SHARED` every context declares the same template objects, so the site stays monomorphic.
+   - **Inline caches on classes key on a language-level class identity, not the per-context `PhpClass`** (owner, 2026-10-23). Under `SHARED`, a context per request would otherwise turn every class-keyed cache megamorphic: `new`, method calls, `InstantiateNode`, class constants. This is how GraalJS and TruffleRuby key caches on shapes rather than on objects.
+     - Each `PhpClass` carries a `ClassKey`, interned in `PhpLanguage` from its `ClassTemplate`, its parent's key and its interfaces' keys. Two contexts that declare the same classes from the same files get the same keys.
+     - A cache guards on the key and takes from it only what the key determines: methods and the constructor, property names and the shape.
+     - Per-context values, such as evaluated defaults, static properties and evaluated constants, are read from the context's `PhpClass`.
    - **Only built-in constants** (`PHP_*`, `E_*` and the like, equal in every context) are folded at translation time. User constants go through the same id-indexed lookup.
    - **Parsed files are cached in `PhpLanguage`** by path and modification time. `include` asks the language for the call target.
    - **Then** `@Registration(contextPolicy = SHARED)`, with a test that runs two contexts on one engine and checks their outputs and that code isn't re-translated.

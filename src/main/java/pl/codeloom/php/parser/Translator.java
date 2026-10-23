@@ -37,6 +37,7 @@ import pl.codeloom.php.nodes.expr.ThrowExprNode;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
+import pl.codeloom.php.nodes.stmt.DeclareNodes;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.LoopNodes;
 import pl.codeloom.php.nodes.stmt.TryNode;
@@ -50,6 +51,7 @@ import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.StaticPropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
@@ -106,7 +108,6 @@ public final class Translator {
     }
 
     private final PhpLanguage language;
-    private final PhpContext context;
     private final String path;
     /** The PHP file's source, for root nodes' source sections (profilers, stack traces); null if unreadable. */
     private final Source source;
@@ -119,14 +120,13 @@ public final class Translator {
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
     private final Scope fileSlots = new Scope();
 
-    public Translator(PhpLanguage language, PhpContext context, String path, Source source) {
-        this(language, context, path, source, null, "", null, null);
+    public Translator(PhpLanguage language, String path, Source source) {
+        this(language, path, source, null, "", null, null);
     }
 
-    private Translator(PhpLanguage language, PhpContext context, String path, Source source, ClassInfo classInfo,
+    private Translator(PhpLanguage language, String path, Source source, ClassInfo classInfo,
                        String functionName, PhpFunction function, Scope scope) {
         this.language = language;
-        this.context = context;
         this.path = path;
         this.source = source;
         this.classInfo = classInfo;
@@ -151,7 +151,7 @@ public final class Translator {
         for (Object child : file.children()) {
             if (child instanceof Ast statement && statement.is("AST_FUNC_DECL")) {
                 PhpFunction declared = declareFunction(statement, null);
-                prologue.add(new BasicStmts.ActionNode(() -> context.declareFunction(declared)));
+                prologue.add(new DeclareNodes.DeclareFunctionNode(declared));
             } else if (child instanceof Ast statement) {
                 body.add(statement(statement));
             }
@@ -231,7 +231,7 @@ public final class Translator {
                 return tryStatement(node);
             case "AST_FUNC_DECL": {
                 PhpFunction declared = declareFunction(node, null);
-                return new BasicStmts.ActionNode(() -> context.declareFunction(declared));
+                return new DeclareNodes.DeclareFunctionNode(declared);
             }
             case "AST_CLASS":
                 return classDeclaration(node);
@@ -437,7 +437,7 @@ public final class Translator {
                                          PhpFunction.Param[] params, String[] captures, boolean[] captureByRef) {
         Scope bodyScope = new Scope();
         String display = owner == null ? name : owner.name() + "::" + name;
-        Translator body = new Translator(language, context, path, source, owner, display, target, bodyScope);
+        Translator body = new Translator(language, path, source, owner, display, target, bodyScope);
         Ast paramList = node.node("params");
         int[] paramSlots = new int[params.length];
         ExprNode[] defaults = new ExprNode[params.length];
@@ -562,44 +562,45 @@ public final class Translator {
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
         ClassInfo info = new ClassInfo(name, parentName);
-        Ast members = node.node("stmts");
-        return new BasicStmts.ActionNode(() -> {
-            PhpClass parent = parentName == null ? null : context.getClass(parentName);
-            PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, language.rootShape());
-            for (String iface : interfaces) {
-                phpClass.addInterface(context.getClass(iface));
+        Translator inClass = new Translator(language, path, source, info, "", null, null);
+        List<ClassTemplate.Member> members = new ArrayList<>();
+        String unsupported = null;
+        try {
+            for (Object child : node.node("stmts").children()) {
+                inClass.addMember(members, (Ast) child, name, info);
             }
-            for (Object child : members.children()) {
-                addMember(phpClass, (Ast) child, info);
-            }
-            context.declareClass(phpClass);
-        });
+        } catch (PhpError error) {
+            // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
+            unsupported = error.getMessage();
+        }
+        return new DeclareNodes.DeclareClassNode(
+                new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members, unsupported));
     }
 
-    private void addMember(PhpClass phpClass, Ast member, ClassInfo info) {
-        Translator inClass = new Translator(language, context, path, source, info, "", null, null);
+    private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info) {
         switch (member.kind) {
             case "AST_METHOD": {
-                PhpFunction method = inClass.declareFunction(member, info);
+                PhpFunction method = declareFunction(member, info);
+                List<PhpClass.PropertyDecl> promoted = new ArrayList<>();
                 if (method.getName().equalsIgnoreCase("__construct")) {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
                             boolean isPublic = (param.flags & 6) == 0;
-                            phpClass.addProperty(new PhpClass.PropertyDecl(((String) param.get("name")).intern(),
+                            promoted.add(new PhpClass.PropertyDecl(((String) param.get("name")).intern(),
                                     PhpNull.NULL, isPublic));
                         }
                     }
                 }
-                method.setClassName(phpClass.getName());
-                phpClass.addMethod(method);
+                method.setClassName(className);
+                members.add(new ClassTemplate.Method(method, promoted));
                 break;
             }
             case "AST_CLASS_CONST_GROUP": {
                 for (Object child : member.node("const").children()) {
                     Ast element = (Ast) child;
-                    phpClass.addConstant((String) element.get("name"), inClass.constantOrThunk(element.get("value"),
-                            phpClass));
+                    members.add(new ClassTemplate.Constant((String) element.get("name"),
+                            constantOrDeferred(element.get("value"))));
                 }
                 break;
             }
@@ -610,12 +611,8 @@ public final class Translator {
                     Ast element = (Ast) child;
                     String propertyName = ((String) element.get("name")).intern();
                     Object initial = element.get("default") == null ? PhpNull.NULL
-                            : inClass.constantOrThunk(element.get("default"), phpClass);
-                    if (isStatic) {
-                        phpClass.addStaticProperty(propertyName, initial);
-                    } else {
-                        phpClass.addProperty(new PhpClass.PropertyDecl(propertyName, initial, isPublic));
-                    }
+                            : constantOrDeferred(element.get("default"));
+                    members.add(new ClassTemplate.Property(propertyName, initial, isPublic, isStatic));
                 }
                 break;
             }
@@ -626,14 +623,14 @@ public final class Translator {
         }
     }
 
-    /** A constant expression's value if it folds, else a thunk evaluating it on first use. */
-    private Object constantOrThunk(Object expression, PhpClass phpClass) {
+    /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
+    private Object constantOrDeferred(Object expression) {
         ExprNode node = expression(expression);
         Object value = node.constantValue();
         if (value != null) {
             return value;
         }
-        return new ThunkRootNode(language, node, phpClass);
+        return new ThunkRootNode(language, node);
     }
 
     private String className(Ast name) {
@@ -1055,7 +1052,7 @@ public final class Translator {
             default:
                 break;
         }
-        Object known = context.findConstant(name);
+        Object known = language.builtins().constant(name);
         if (known != null) {
             return new ConstNode(known);
         }
