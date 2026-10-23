@@ -11,7 +11,7 @@ public final class DynamicMethodCallNode extends ExprNode {
     @Child private ExprNode name;
     @Child private ArgumentsNode args;
     @Child private ToStrNode toStr = ToStrNode.create();
-    @Child private CallableDispatchNode dispatch = CallableDispatchNodeGen.create();
+    @Child private CallableDispatchNode dispatch = CallableDispatchNode.create();
 
     public DynamicMethodCallNode(ExprNode object, ExprNode name, ArgumentsNode args) {
         this.object = object;

@@ -258,6 +258,18 @@ public final class FunctionRootNode extends RootNode {
         }
     }
 
+    /** The lowercase name of the class the function is declared in (a method's, a trait's user), or null. */
+    private String scopeName;
+
+    public void setScopeName(String scopeName) {
+        this.scopeName = scopeName;
+    }
+
+    /** What self:: means in this function's code: callables named "self::m" or "parent::m" resolve with it. */
+    public String getScopeName() {
+        return scopeName;
+    }
+
     /** Splitting: a function called with different types from different sites gets a copy per caller profile. */
     @Override
     public boolean isCloningAllowed() {

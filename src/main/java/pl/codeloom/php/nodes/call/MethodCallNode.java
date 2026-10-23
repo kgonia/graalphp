@@ -62,7 +62,7 @@ public final class MethodCallNode extends ExprNode {
         lock.lock();
         try {
             if (closureCall == null) {
-                closureCall = insert(CallableDispatchNodeGen.create());
+                closureCall = insert(CallableDispatchNode.create());
             }
             return closureCall;
         } finally {

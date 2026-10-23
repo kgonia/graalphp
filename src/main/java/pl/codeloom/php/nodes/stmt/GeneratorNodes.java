@@ -53,10 +53,19 @@ public final class GeneratorNodes {
         @Child private StmtNode body;
         private final String name;
 
-        public BodyRootNode(PhpLanguage language, FrameDescriptor descriptor, StmtNode body, String name) {
+        /** As FunctionRootNode's: the declaring class's lowercase name, or null. */
+        private final String scopeName;
+
+        public BodyRootNode(PhpLanguage language, FrameDescriptor descriptor, StmtNode body, String name,
+                            String scopeName) {
             super(language, descriptor);
             this.body = body;
             this.name = name;
+            this.scopeName = scopeName;
+        }
+
+        public String getScopeName() {
+            return scopeName;
         }
 
         @Override

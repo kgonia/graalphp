@@ -28,8 +28,19 @@ import pl.codeloom.php.runtime.Str;
 public abstract class CallableDispatchNode extends Node {
     static final int LIMIT = 6;
 
+    /** The built-in parameter the callable was given to, for its TypeError; null for a direct call `$f()`. */
+    protected final Callables.Parameter parameter;
+
+    protected CallableDispatchNode(Callables.Parameter parameter) {
+        this.parameter = parameter;
+    }
+
     public static CallableDispatchNode create() {
-        return CallableDispatchNodeGen.create();
+        return CallableDispatchNodeGen.create(null);
+    }
+
+    public static CallableDispatchNode create(Callables.Parameter parameter) {
+        return CallableDispatchNodeGen.create(parameter);
     }
 
     public abstract Object execute(Object callable, Object[] values);
@@ -81,6 +92,7 @@ public abstract class CallableDispatchNode extends Node {
      * no receiver. A 'parent::method' name resolves to another class and takes the generic path.
      */
     @Specialization(guards = {"isClassMethod(callable)", "equalClass.execute(className(callable), cachedClassName, ENC)",
+            "isStaticCall(method, magicName)",
             "equalMethod.execute(methodName(callable), cachedMethod, ENC)", "classId >= 0",
             "keyAt(classId) == cachedKey"}, limit = "LIMIT")
     protected Object classMethod(PhpArray callable, Object[] values,
@@ -101,12 +113,23 @@ public abstract class CallableDispatchNode extends Node {
     @Specialization(replaces = {"closure", "named", "objectMethod", "classMethod"})
     protected Object generic(Object callable, Object[] values,
                              @Cached IndirectCallNode call) {
-        Callables.Target target = Callables.resolveOrThrow(PhpContext.get(this), callable);
+        Callables.Target target = resolve(callable);
         return PhpRef.deref(call.call(target.function().getCallTarget(), target.frameArguments(values)));
     }
 
+    /**
+     * A static method (or __callStatic) binds no $this, so it can be cached; a non-static one or __call takes
+     * the caller's $this, resolved per call by the generic path.
+     */
+    protected static boolean isStaticCall(PhpFunction method, TruffleString magicName) {
+        return method.isStatic();
+    }
+
+    /** A direct call `$f()` (no parameter) takes names literally; a built-in's callable resolves against its caller. */
     protected Callables.Target resolve(Object callable) {
-        return Callables.resolveOrThrow(PhpContext.get(this), callable);
+        PhpContext context = PhpContext.get(this);
+        return parameter == null ? Callables.resolveCall(context, callable)
+                : Callables.resolveOrThrow(context, callable, parameter);
     }
 
     /** The function name id of a callable naming a plain function, or -1 for a method ("Cls::m"). */
@@ -122,12 +145,17 @@ public abstract class CallableDispatchNode extends Node {
         return PhpContext.get(this).functionAt(id);
     }
 
-    /** The class name's id, or -1 when the method name qualifies another class ('parent::m'). */
+    /**
+     * The class name's id, or -1 when the class depends on the calling code: a method name qualifying another
+     * class ('parent::m'), or a callable's "self", "parent", "static".
+     */
     protected int classId(TruffleString className, TruffleString methodName) {
-        if (Str.java(methodName).contains("::")) {
+        String name = Callables.className(className);
+        if (Str.java(methodName).contains("::") || name.equals("self") || name.equals("parent")
+                || name.equals("static")) {
             return -1;
         }
-        return PhpLanguage.get(this).classId(Callables.className(className));
+        return PhpLanguage.get(this).classId(name);
     }
 
     /** The key of the class the calling context declares under a name id, or null. */

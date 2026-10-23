@@ -29,21 +29,30 @@ final class RuntimeFunctions {
     static final java.util.Set<String> EXTENSIONS = new java.util.TreeSet<>(java.util.List.of("core", "standard", "date",
             "pcre", "json", "mbstring", "ctype", "hash", "spl", "random", "mysqli"));
 
+    private static final Callables.Parameter CALL_USER_FUNC = new Callables.Parameter("call_user_func", 1, false);
+    private static final Callables.Parameter CALL_USER_FUNC_ARRAY =
+            new Callables.Parameter("call_user_func_array", 1, false);
+
     static void register(Registry r) {
         // ---- lifecycle ----
         r.fn("exit", (context, a) -> exit(context, Args.get(a, 0, 0L)));
         r.fn("die", (context, a) -> exit(context, Args.get(a, 0, 0L)));
         r.fn("register_shutdown_function", (context, a) -> {
+            Callables.check(context, Args.get(a, 0), new Callables.Parameter("register_shutdown_function", 1, false));
             context.addShutdownFunction(Args.get(a, 0), Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
             return PhpNull.NULL;
         });
         r.fn("clone", (context, a) -> cloneObject(context, Args.get(a, 0), Args.get(a, 1, PhpNull.NULL)));
         // zend.assertions = -1, as in production: assert() is compiled out and returns true
         r.fn("assert", a -> Boolean.TRUE);
-        r.fn("call_user_func", (context, a) -> Callables.call(context, Args.get(a, 0),
-                Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length)));
-        r.fn("call_user_func_array", (context, a) -> Callables.call(context, Args.get(a, 0),
-                positional(Args.array(a, 1, "call_user_func_array"))));
+        r.fn("call_user_func", (context, a) -> {
+            Callables.check(context, Args.get(a, 0), CALL_USER_FUNC);
+            return Callables.call(context, Args.get(a, 0), Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
+        });
+        r.fn("call_user_func_array", (context, a) -> {
+            Callables.check(context, Args.get(a, 0), CALL_USER_FUNC_ARRAY);
+            return Callables.call(context, Args.get(a, 0), positional(Args.array(a, 1, "call_user_func_array")));
+        });
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("ignore_user_abort", a -> 0L);
         r.fn("flush", (context, a) -> {

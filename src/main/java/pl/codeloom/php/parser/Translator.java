@@ -57,6 +57,7 @@ import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.StaticPropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -70,6 +71,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -670,13 +672,16 @@ public final class Translator {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
                     defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(),
                     lineSection(node.line));
-            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display)
+            String scope = owner == null ? null : owner.name().toLowerCase(Locale.ROOT);
+            root.setScopeName(scope);
+            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display, scope)
                     .getCallTarget(), body.generatorSlot);
             return root.getCallTarget();
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
                 statements, lineSection(node.line));
+        root.setScopeName(owner == null ? null : owner.name().toLowerCase(Locale.ROOT));
         return root.getCallTarget();
     }
 
@@ -1497,7 +1502,7 @@ public final class Translator {
         Ast callee = node.node("expr");
         Ast args = node.node("args");
         if (!callee.is("AST_NAME")) {
-            return new CallableCallNode(expression(callee), arguments(args), null);
+            return new CallableCallNode(expression(callee), arguments(args), null, null);
         }
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)
@@ -1509,11 +1514,13 @@ public final class Translator {
                 return new FrameArgsNode(true);
             case "call_user_func": {
                 ArgumentsNode rest = arguments(dropFirst(args));
-                return new CallableCallNode(expression(args.child(0)), rest, null);
+                return new CallableCallNode(expression(args.child(0)), rest, null,
+                        new Callables.Parameter("call_user_func", 1, false));
             }
             case "call_user_func_array":
                 return new CallableCallNode(expression(args.child(0)), new ArgumentsNode(new ExprNode[0],
-                        new boolean[0]), expression(args.child(1)));
+                        new boolean[0]), expression(args.child(1)),
+                        new Callables.Parameter("call_user_func_array", 1, false));
             case "get_class":
             case "get_called_class":
                 if (args.size() == 0) {

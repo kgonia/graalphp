@@ -59,7 +59,7 @@ final class CoreFunctions {
         r.fn("is_nan", a -> Double.isNaN(Convert.toDouble(Args.get(a, 0))));
         r.fn("is_infinite", a -> Double.isInfinite(Convert.toDouble(Args.get(a, 0))));
         r.fn("gettype", a -> Str.of(Convert.typeName(Args.get(a, 0, PhpNull.NULL))));
-        r.fn("get_debug_type", a -> Str.of(debugType(Args.get(a, 0, PhpNull.NULL))));
+        r.fn("get_debug_type", a -> Str.of(Convert.debugType(Args.get(a, 0, PhpNull.NULL))));
         r.fn("intval", a -> intval(Args.get(a, 0), Args.lng(a, 1, 10)));
         r.fn("floatval", a -> Convert.toDouble(Args.get(a, 0)));
         r.fn("strval", a -> Convert.toStr(Args.get(a, 0)));
@@ -102,6 +102,7 @@ final class CoreFunctions {
             if (callable == PhpNull.NULL) {
                 throw new PhpError("spl_autoload_register() without a callback (spl_autoload) is not supported");
             }
+            Callables.check(context, callable, new Callables.Parameter("spl_autoload_register", 1, true));
             context.addAutoloader(callable, Args.bool(a, 2, false));
             return Boolean.TRUE;
         });
@@ -154,6 +155,10 @@ final class CoreFunctions {
         // ---- output ----
         r.fn("ob_start", (context, a) -> {
             Object handler = Args.get(a, 0);
+            if (handler != null && handler != PhpNull.NULL && Callables.resolve(context, handler) == null) {
+                // php-src warns "ob_start(): function ... not found" and starts no buffer
+                return false;
+            }
             context.startBuffer(handler == null || handler == PhpNull.NULL ? null : handler,
                     Args.count(a) > 2 ? Convert.toLong(Args.get(a, 2))
                             : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE);
@@ -233,7 +238,13 @@ final class CoreFunctions {
 
         // ---- errors and configuration ----
         r.fn("error_reporting", a -> 30719L);
-        r.fn("set_error_handler", (context, a) -> context.swapErrorHandler(Args.get(a, 0, PhpNull.NULL)));
+        r.fn("set_error_handler", (context, a) -> {
+            Object handler = Args.get(a, 0, PhpNull.NULL);
+            if (handler != PhpNull.NULL) {
+                Callables.check(context, handler, new Callables.Parameter("set_error_handler", 1, true));
+            }
+            return context.swapErrorHandler(handler);
+        });
         r.fn("restore_error_handler", a -> true);
         r.fn("trigger_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
         r.fn("user_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
@@ -427,22 +438,6 @@ final class CoreFunctions {
             return phpClass != null && phpClass.isSubclassOf(lower);
         }
         return false;
-    }
-
-    private static String debugType(Object value) {
-        if (value instanceof PhpObject object) {
-            return object.getPhpClass().getName();
-        }
-        if (value instanceof PhpClosure) {
-            return "Closure";
-        }
-        return switch (Convert.typeName(value)) {
-            case "integer" -> "int";
-            case "double" -> "float";
-            case "boolean" -> "bool";
-            case "NULL" -> "null";
-            default -> Convert.typeName(value);
-        };
     }
 
     @TruffleBoundary

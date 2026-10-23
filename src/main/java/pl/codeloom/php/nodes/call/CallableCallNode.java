@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.call;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 
@@ -14,12 +15,15 @@ public final class CallableCallNode extends ExprNode {
     @Child private ExprNode callable;
     @Child private ArgumentsNode args;
     @Child private ExprNode argsArray;
-    @Child private CallableDispatchNode dispatch = CallableDispatchNodeGen.create();
+    @Child private CallableDispatchNode dispatch;
 
-    public CallableCallNode(ExprNode callable, ArgumentsNode args, ExprNode argsArray) {
+    /** parameter: call_user_func(_array)'s callback parameter, null for `$f(args)`. */
+    public CallableCallNode(ExprNode callable, ArgumentsNode args, ExprNode argsArray,
+                            Callables.Parameter parameter) {
         this.callable = callable;
         this.args = args;
         this.argsArray = argsArray;
+        this.dispatch = CallableDispatchNode.create(parameter);
     }
 
     @Override

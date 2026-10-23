@@ -464,6 +464,23 @@ public final class Convert {
         return x < y ? -1 : x > y ? 1 : x == y ? 0 : 1;
     }
 
+    /** PHP type name as get_debug_type() and error messages report it: int, float, null, a class name... */
+    public static String debugType(Object value) {
+        if (value instanceof PhpObject object) {
+            return object.getPhpClass().getName();
+        }
+        if (value instanceof PhpClosure) {
+            return "Closure";
+        }
+        return switch (typeName(value)) {
+            case "integer" -> "int";
+            case "double" -> "float";
+            case "boolean" -> "bool";
+            case "NULL" -> "null";
+            default -> typeName(value);
+        };
+    }
+
     /** PHP type name as gettype() reports it. */
     public static String typeName(Object value) {
         if (value instanceof Long) {

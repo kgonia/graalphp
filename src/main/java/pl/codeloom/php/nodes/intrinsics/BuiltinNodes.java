@@ -16,6 +16,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -430,9 +431,14 @@ public final class BuiltinNodes {
             return result;
         }
 
+        static final Callables.Parameter CALLBACK = new Callables.Parameter("array_filter", 2, true);
+
         @Specialization(guards = {"!isNull(callback)", "mode == 0"})
         protected PhpArray callback(PhpArray array, Object callback, long mode,
-                                    @Cached CallableDispatchNode dispatch) {
+                                    @Cached("create(CALLBACK)") CallableDispatchNode dispatch) {
+            if (array.size() == 0) {
+                Callables.check(PhpContext.get(this), callback, CALLBACK);
+            }
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = array.valueAt(p);
@@ -451,8 +457,14 @@ public final class BuiltinNodes {
 
     /** array_map($callback, $a) with one array: keys kept, the callback through an inline cache of direct calls. */
     public abstract static class ArrayMapNode extends BuiltinNode {
+        static final Callables.Parameter CALLBACK = new Callables.Parameter("array_map", 1, true);
+
         @Specialization(guards = "!isNull(callback)")
-        protected PhpArray map(Object callback, PhpArray array, @Cached CallableDispatchNode dispatch) {
+        protected PhpArray map(Object callback, PhpArray array,
+                               @Cached("create(CALLBACK)") CallableDispatchNode dispatch) {
+            if (array.size() == 0) {
+                Callables.check(PhpContext.get(this), callback, CALLBACK);
+            }
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));

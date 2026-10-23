@@ -612,6 +612,9 @@ public final class PcreFunctions {
         Object subject = Args.get(a, 2);
         long limit = Args.lng(a, 3, -1);
         long flags = callback ? Args.lng(a, 5, 0) : 0;
+        if (callback) {
+            Callables.check(context, replacement, new Callables.Parameter("preg_replace_callback", 2, false));
+        }
         if (limit < 0) {
             limit = Long.MAX_VALUE;
         }
