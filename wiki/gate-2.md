@@ -119,3 +119,33 @@ At `7cbeca2`, of 7341 cases:
 | Lenient | 2636 (35.9%) |
 
 Of the 205 cases that pass only leniently, 101 died on a missing class, such as `DateTime`, `ArrayObject` or `ReflectionClass`. Most of the rest are message details, for example `on NULL` vs `on null`, `integer given` vs `int given`, and a missing "previously declared in". The strict score is the one to report.
+
+## Code review and its fixes (2026-10-23)
+
+Three reviewers read the code at `925485a`: Codex, Opus and Fable. They checked idiomatic Truffle, security and simplicity; their reports are `target/review/{codex,opus,fable}.md`. Together they listed 71 findings, many of them the same defect seen three times. All but three were fixed (the three are below), under the rule that a fix is php-src's behaviour, not a documented deviation: 51 commits from `6429986` to `19fb78c`. Smoke and the Gate 1 and K0 checksums passed after every commit; context isolation, the boot, mysqli and the HTTP comparison after every commit of the main line and every merged branch.
+
+| Area | What changed |
+|---|---|
+| PCRE | Compiled patterns are shared by the engine (bounded); the JIT stack, match data and buffers are per context and freed when it closes. A pattern that doesn't compile makes the call fail as in php-src instead of killing the request. |
+| Untrusted input | `unserialize` honours `allowed_classes`, checks lengths before allocating, and reads nesting on an explicit stack (php-src's 4096 levels); `random_int` is uniform; HttpMain limits bodies (8 MB) and request time, resolves symlinks and case before serving, drops `Proxy:`, listens on loopback, and shows fatal errors only with `--display-errors` (`php_error_cb`'s 500 otherwise); `setcookie` checks its parts as php-src. |
+| mysqli | Raw `COM_QUERY` bytes, escaping by the connection's charset and `NO_BACKSLASH_ESCAPES` (from `mysqlnd_charset.c`), `mysqli_report`, no `LOAD DATA LOCAL`. |
+| I/O | Every file function goes through the context's `Env` (`TruffleFile`), with php-src's stream read buffer, real `flock`, atomic `x` mode, streams closed with the context; launchers grant only the access PHP needs. |
+| Truffle idioms | Splitting enabled (18 splits on the kernels, 0 before); inline caches for `instanceof`, `self::`/`parent::`, globals, static properties, string `==`/`switch`, `.=`; caches keep functions, not the first request's objects; `ClassKey` includes traits; `@ExplodeLoop` where child loops were missed; no mutable static state; translations outside the cache lock. |
+| PHP semantics | `finally` doesn't run while `exit()` unwinds; callables resolve as `zend_is_callable` (for built-ins) or as the dynamic call (`$f()`), with php-src's errors; `__call`/`__callStatic` on direct calls; first-class callable syntax (it used to *call* the method); runtime errors carry their PHP class (`JsonException` is catchable); names fold as ASCII (`zend_str_tolower`); property names keep their bytes; references in arrays count toward the refcount. |
+| Built-ins | var_dump/print_r/var_export as bytes, ports of `php_formatted_print`, `zend_compare`, html.c, `php_url_parse_ex2`, `date_format`, base64, `version_compare`'s special forms; `get_declared_classes` and friends. |
+| Simplicity | One UTF-8 validator, `HexFormat`, `PhpArray.pop`, one string-list helper, debug built-ins only with `php.Debug`, dead code removed. |
+
+Gate 1 kernels, `925485a` against `19fb78c` (interleaved, 6 rounds, CPUs 14–21; median of per-round ratios, <1 is faster): hooks 0.97, escape 0.84, slugs 0.87, wpautop 0.84, wptexturize 0.81, blocks 1.01 (0.96–1.09), kses 0.98 (0.86–1.15). On the way kses was 13% slower: checking a built-in's callback on entry (as php-src does) resolved string callbacks by name on every `preg_replace_callback`, mostly calls without a match. Built-ins now take the resolved target once (`8bdbe45`, php-src's fci_cache), and resolved function names are kept per context (`19fb78c`), which brought it back. An earlier 1.10 on blocks didn't reproduce in a bisection or a direct re-run; the compiled code was the same (same deopts and inlining).
+
+Left as they are, deliberately: `PhpFunction.isPublic` (needed once method visibility is enforced), the sorted `EXTENSIONS` set (`Set.of` has no order), and `PhpContext`'s name maps beside its id slots (they keep the declaration order the listings need).
+
+php-src `.phpt` at `078e824`: 2868 of 7341 strict (39.1%) and 3048 lenient, from 2622 (35.7%) and 2821 before: 247 cases fixed, one broken (a closure of an abstract method, fixed in `312e1cb` and checked by hand).
+
+Found on the way, still open:
+- after a fatal error php-src runs the shutdown functions and fills `error_get_last()`; WordPress's `WP_Fatal_Error_Handler` depends on both;
+- `trigger_error(E_USER_ERROR)` is catchable here, fatal in PHP;
+- named arguments are unsupported;
+- php-src binds an anonymous class at compile time;
+- var_dump doesn't show `:protected`/`:private` or a closure's name, file and parameters;
+- object ids aren't reused after an object is freed;
+- `match` and enums are unsupported in the translator.
