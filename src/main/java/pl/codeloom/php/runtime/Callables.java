@@ -64,6 +64,12 @@ public final class Callables {
         return null;
     }
 
+    /** The lowercase name a class-name callable (`['Cls', 'm']`) is looked up by. */
+    @TruffleBoundary
+    public static String className(TruffleString name) {
+        return stripNamespace(Str.java(name)).toLowerCase();
+    }
+
     private static Target method(PhpClass phpClass, PhpObject object, String methodName) {
         if (phpClass == null) {
             return null;

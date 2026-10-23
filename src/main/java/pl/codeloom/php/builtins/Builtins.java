@@ -144,7 +144,7 @@ public final class Builtins {
         };
         for (String[] pair : hierarchy) {
             PhpClass phpClass = new PhpClass(pair[0], context.getClass(pair[1]), false, false,
-                    context.getLanguage().rootShape());
+                    context.getLanguage().rootShape(), pair[0]);
             context.declareClass(phpClass);
         }
         if (exception == null || error == null) {
@@ -153,14 +153,14 @@ public final class Builtins {
     }
 
     private static PhpClass declare(PhpContext context, String name, PhpClass parent, boolean isInterface) {
-        PhpClass phpClass = new PhpClass(name, parent, isInterface, false, context.getLanguage().rootShape());
+        PhpClass phpClass = new PhpClass(name, parent, isInterface, false, context.getLanguage().rootShape(), name);
         context.declareClass(phpClass);
         return phpClass;
     }
 
     /** Exception and Error: message, code and previous, with the usual getters. */
     private static PhpClass throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
-        PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape());
+        PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape(), name);
         phpClass.addInterface(throwable);
         phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("code", 0L, false));

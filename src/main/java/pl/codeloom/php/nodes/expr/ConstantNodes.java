@@ -70,7 +70,11 @@ public final class ConstantNodes {
         }
     }
 
-    /** `Cls::NAME`; with a `static::` class reference the value is looked up per call. */
+    /**
+     * `Cls::NAME`; with a `static::` class reference the value is looked up per call. Class constants are per
+     * context (initializers may differ), so a site keeps its value as a constant only while the language serves
+     * one context.
+     */
     public static final class ClassConstNode extends ExprNode {
         @Child private ClassRefNode classRef;
         private final String name;
@@ -85,7 +89,7 @@ public final class ConstantNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            if (cacheable && value != null) {
+            if (cacheable && value != null && PhpLanguage.get(this).singleContext().isValid()) {
                 return value;
             }
             PhpClass phpClass = classRef.resolve(frame);
@@ -94,7 +98,7 @@ public final class ConstantNodes {
                 CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
             }
-            if (cacheable) {
+            if (cacheable && value == null && PhpLanguage.get(this).singleContext().isValid()) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 value = found;
             }

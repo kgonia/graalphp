@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
+import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -49,7 +50,7 @@ public final class StaticCallNode extends ExprNode {
         return dispatch.execute(frame, phpClass, self, staticClass, args);
     }
 
-    /** Finds a method in a class, inline-cached on the class. */
+    /** Finds a method in a class, inline-cached on the class's key. */
     public abstract static class Dispatch extends Node {
         protected final String lowerName;
 
@@ -60,11 +61,12 @@ public final class StaticCallNode extends ExprNode {
         public abstract Object execute(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
                                        ArgumentsNode args);
 
-        @Specialization(guards = "phpClass == cachedClass", limit = "4")
+        /** Keyed on the class's language-level identity: the same cache entry serves every context. */
+        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
         protected Object cached(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
                                 ArgumentsNode args,
-                                @Cached("phpClass") PhpClass cachedClass,
-                                @Cached("find(cachedClass)") PhpFunction method,
+                                @Cached("phpClass.getKey()") ClassKey cachedKey,
+                                @Cached("find(phpClass)") PhpFunction method,
                                 @Cached("create(method.getCallTarget())") DirectCallNode call) {
             Object thisObject = method.isStatic() ? null : self;
             return PhpRef.deref(call.call(args.build(frame, method, thisObject, staticClass, null)));

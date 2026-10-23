@@ -61,7 +61,8 @@ public final class ClassTemplate {
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
-        PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape());
+        PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
+                this);
         for (String iface : interfaces) {
             phpClass.addInterface(context.getClass(iface));
         }

@@ -15,6 +15,7 @@ import org.graalvm.options.OptionValues;
 import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.ScriptRootNode;
+import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.NameIds;
 import pl.codeloom.php.runtime.PhpObject;
 
@@ -61,6 +62,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** Ids of function names (lowercase) and constant names: a node resolves its name once, for every context. */
     private final NameIds functionIds = new NameIds();
     private final NameIds constantIds = new NameIds();
+    private final NameIds classIds = new NameIds();
+    /** Interned class identities (see ClassKey). */
+    private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
 
     /** Built-in functions are language-level: built on first use, then declared by every context. */
     private volatile Builtins.Table builtins;
@@ -91,6 +95,16 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The id of a function name (lowercase); a context keeps its functions by id. */
     public int functionId(String lowerName) {
         return functionIds.id(lowerName);
+    }
+
+    /** The id of a class name (lowercase); a context keeps its classes by id. */
+    public int classId(String lowerName) {
+        return classIds.id(lowerName);
+    }
+
+    /** The one ClassKey for these declarations, in every context. */
+    public ClassKey classKey(ClassKey.Id id) {
+        return classKeys.computeIfAbsent(id, ClassKey::new);
     }
 
     /** The id of a constant name (case-sensitive); a context keeps its constants by id. */

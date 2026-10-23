@@ -45,6 +45,8 @@ public final class PhpContext {
     /** The declared functions by their name's language-level id (null: not declared here). */
     private PhpFunction[] functionSlots = new PhpFunction[256];
     private final Map<String, PhpClass> classes = new HashMap<>();
+    /** The declared classes by their lowercase name's language-level id (null: not declared here). */
+    private PhpClass[] classSlots = new PhpClass[256];
     private final Map<String, Object> constants = new HashMap<>();
     /** The defined constants by their name's language-level id (null: not defined here). */
     private Object[] constantSlots = new Object[256];
@@ -206,6 +208,17 @@ public final class PhpContext {
         if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
+        int id = language.classId(phpClass.getLowerName());
+        if (id >= classSlots.length) {
+            classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
+        }
+        classSlots[id] = phpClass;
+    }
+
+    /** The class declared under a name id (PhpLanguage.classId), or null. */
+    public PhpClass classAt(int id) {
+        PhpClass[] slots = classSlots;
+        return id < slots.length ? slots[id] : null;
     }
 
     /** A global constant's value, or null if undefined. true, false and null are folded by the translator. */

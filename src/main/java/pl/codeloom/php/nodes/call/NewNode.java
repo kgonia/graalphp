@@ -8,6 +8,7 @@ import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
+import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
@@ -38,12 +39,13 @@ public final class NewNode extends ExprNode {
     public abstract static class Construct extends Node {
         public abstract void execute(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args);
 
-        @Specialization(guards = "phpClass == cachedClass", limit = "4")
+        /** Keyed on the class's language-level identity: the same cache entry serves every context. */
+        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
         protected void cached(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args,
-                              @Cached("phpClass") PhpClass cachedClass,
-                              @Cached("cachedClass.getConstructor()") PhpFunction constructor,
+                              @Cached("phpClass.getKey()") ClassKey cachedKey,
+                              @Cached("phpClass.getConstructor()") PhpFunction constructor,
                               @Cached("create(constructor.getCallTarget())") DirectCallNode call) {
-            call.call(args.build(frame, constructor, object, cachedClass, null));
+            call.call(args.build(frame, constructor, object, phpClass, null));
         }
 
         @Specialization(replaces = "cached")

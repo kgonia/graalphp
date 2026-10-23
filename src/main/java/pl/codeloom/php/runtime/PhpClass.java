@@ -7,9 +7,11 @@ import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
 import pl.codeloom.php.PhpContext;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -34,10 +36,19 @@ public final class PhpClass {
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
+    /** What declared this class: its ClassTemplate, or a built-in class's name (see {@link ClassKey}). */
+    private final Object declaration;
+    private final List<PhpClass> interfaces = new ArrayList<>();
+    /** The language-level identity inline caches key on; made on first use, once the class is complete. */
+    private ClassKey key;
+    /** The property defaults, evaluated once (declaredDefaults order). */
+    private Object[] defaults;
 
     @CompilationFinal private PhpFunction constructor;
 
-    public PhpClass(String name, PhpClass parent, boolean isInterface, boolean isAbstract, Shape rootShape) {
+    public PhpClass(String name, PhpClass parent, boolean isInterface, boolean isAbstract, Shape rootShape,
+                    Object declaration) {
+        this.declaration = declaration;
         this.name = name;
         this.lowerName = name.toLowerCase();
         this.parent = parent;
@@ -82,6 +93,7 @@ public final class PhpClass {
     }
 
     public void addInterface(PhpClass iface) {
+        interfaces.add(iface);
         ancestors.addAll(iface.ancestors);
         for (Map.Entry<String, Object> constant : iface.constants.entrySet()) {
             constants.putIfAbsent(constant.getKey(), constant.getValue());
@@ -177,6 +189,38 @@ public final class PhpClass {
             }
         }
         return object;
+    }
+
+    /** The language-level identity of this class: equal for the same declarations in every context. */
+    public ClassKey getKey() {
+        ClassKey k = key;
+        if (k == null) {
+            CompilerDirectives.transferToInterpreter();
+            k = makeKey();
+        }
+        return k;
+    }
+
+    @TruffleBoundary
+    private ClassKey makeKey() {
+        List<ClassKey> interfaceKeys = new ArrayList<>(interfaces.size());
+        for (PhpClass iface : interfaces) {
+            interfaceKeys.add(iface.getKey());
+        }
+        key = PhpContext.get(null).getLanguage().classKey(
+                new ClassKey.Id(declaration, parent == null ? null : parent.getKey(), List.copyOf(interfaceKeys)));
+        return key;
+    }
+
+    /** The property defaults in declaredNames order, evaluated on first use and kept (don't modify). */
+    public Object[] defaults() {
+        Object[] values = defaults;
+        if (values == null) {
+            CompilerDirectives.transferToInterpreter();
+            values = declaredDefaults();
+            defaults = values;
+        }
+        return values;
     }
 
     public boolean isInstantiable() {
