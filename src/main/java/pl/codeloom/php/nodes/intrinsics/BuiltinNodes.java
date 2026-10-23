@@ -9,10 +9,12 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
+import com.oracle.truffle.api.strings.TruffleStringBuilder;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.StringFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.call.CallableDispatchNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -51,6 +53,10 @@ public final class BuiltinNodes {
 
         protected static boolean isString(Object value) {
             return value instanceof TruffleString;
+        }
+
+        protected static boolean isNull(Object value) {
+            return value == PhpNull.NULL;
         }
     }
 
@@ -295,6 +301,167 @@ public final class BuiltinNodes {
         @Fallback
         protected Object other(Object array, Object offset, Object length, Object preserveKeys) {
             return callFull("array_slice", array, offset, length, preserveKeys);
+        }
+    }
+
+    /** array_unshift($a, $value): one value; a packed list shifts its elements in place. */
+    public abstract static class ArrayUnshiftNode extends BuiltinNode {
+        @Specialization
+        protected long array(PhpArray array, Object value) {
+            array.prepend(value == array ? array.copy() : value);
+            return array.size();
+        }
+
+        @Fallback
+        protected Object other(Object target, Object value) {
+            CompilerDirectives.transferToInterpreter();
+            throw arrayTypeError("array_unshift", target);
+        }
+    }
+
+    /** array_keys($a): a packed array's keys are 0..n-1, built unboxed. */
+    public abstract static class ArrayKeysNode extends BuiltinNode {
+        @Specialization
+        protected PhpArray array(PhpArray array) {
+            PhpArray result = new PhpArray();
+            if (array.isPacked()) {
+                for (int i = 0; i < array.size(); i++) {
+                    result.appendLong(i);
+                }
+            } else {
+                for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                    result.append(array.keyAt(p));
+                }
+            }
+            return result;
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull("array_keys", value);
+        }
+    }
+
+    /** implode(string, array): pieces appended to a TruffleStringBuilder, ints formatted without a detour. */
+    public abstract static class ImplodeNode extends BuiltinNode {
+        @Specialization
+        protected TruffleString join(TruffleString glue, PhpArray pieces,
+                                     @Cached TruffleStringBuilder.AppendStringNode appendString,
+                                     @Cached TruffleStringBuilder.AppendLongNumberNode appendLong,
+                                     @Cached TruffleStringBuilder.ToStringNode toString) {
+            TruffleStringBuilder out = TruffleStringBuilder.create(Str.ENC);
+            int first = pieces.firstPosition();
+            for (int p = first; p >= 0; p = pieces.nextPosition(p)) {
+                if (p != first) {
+                    appendString.execute(out, glue);
+                }
+                Object piece = pieces.valueAt(p);
+                if (piece instanceof TruffleString text) {
+                    appendString.execute(out, text);
+                } else if (piece instanceof Long number) {
+                    appendLong.execute(out, number);
+                } else {
+                    appendString.execute(out, toStr(piece));
+                }
+            }
+            return toString.execute(out);
+        }
+
+        @TruffleBoundary
+        private static TruffleString toStr(Object value) {
+            return Convert.toStr(value);
+        }
+
+        @Fallback
+        protected Object other(Object glue, Object pieces) {
+            return callFull("implode", glue, pieces);
+        }
+    }
+
+    /** explode(separator, string) without a limit: a vectorized search for each piece. */
+    public abstract static class ExplodeNode extends BuiltinNode {
+        protected static final long NO_LIMIT = Long.MAX_VALUE;
+
+        @Specialization(guards = {"limit == NO_LIMIT", "hasBytes(separator)"})
+        protected PhpArray split(TruffleString separator, TruffleString s, long limit,
+                                 @Cached TruffleString.ByteIndexOfStringNode index,
+                                 @Cached TruffleString.SubstringByteIndexNode substring) {
+            int separatorLength = separator.byteLength(Str.ENC);
+            int length = s.byteLength(Str.ENC);
+            PhpArray result = new PhpArray();
+            int from = 0;
+            while (from + separatorLength <= length) {
+                int found = index.execute(s, separator, from, length, Str.ENC);
+                if (found < 0) {
+                    break;
+                }
+                result.append(substring.execute(s, from, found - from, Str.ENC, false));
+                from = found + separatorLength;
+            }
+            result.append(substring.execute(s, from, length - from, Str.ENC, false));
+            return result;
+        }
+
+        protected static boolean hasBytes(TruffleString s) {
+            return s.byteLength(Str.ENC) > 0;
+        }
+
+        @Fallback
+        protected Object other(Object separator, Object s, Object limit) {
+            return callFull("explode", separator, s, limit);
+        }
+    }
+
+    /**
+     * array_filter($a[, $callback]): the callback goes through an inline cache of direct calls, which Graal can
+     * inline, where the regular built-in calls it from behind a boundary.
+     */
+    public abstract static class ArrayFilterNode extends BuiltinNode {
+        @Specialization(guards = {"isNull(callback)", "mode == 0"})
+        protected PhpArray truthy(PhpArray array, Object callback, long mode) {
+            PhpArray result = new PhpArray();
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                Object value = array.valueAt(p);
+                if (Convert.toBool(value)) {
+                    result.put(array.keyAt(p), value);
+                }
+            }
+            return result;
+        }
+
+        @Specialization(guards = {"!isNull(callback)", "mode == 0"})
+        protected PhpArray callback(PhpArray array, Object callback, long mode,
+                                    @Cached CallableDispatchNode dispatch) {
+            PhpArray result = new PhpArray();
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                Object value = array.valueAt(p);
+                if (Convert.toBool(dispatch.execute(callback, new Object[] {value}))) {
+                    result.put(array.keyAt(p), value);
+                }
+            }
+            return result;
+        }
+
+        @Fallback
+        protected Object other(Object array, Object callback, Object mode) {
+            return callFull("array_filter", array, callback, mode);
+        }
+    }
+
+    /** array_map($callback, $a) with one array: keys kept, the callback through an inline cache of direct calls. */
+    public abstract static class ArrayMapNode extends BuiltinNode {
+        @Specialization(guards = "!isNull(callback)")
+        protected PhpArray map(Object callback, PhpArray array, @Cached CallableDispatchNode dispatch) {
+            PhpArray result = new PhpArray();
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));
+            }
+            return result;
+        }
+
+        @Fallback
+        protected Object other(Object callback, Object array) {
+            return callFull("array_map", callback, array);
         }
     }
 }

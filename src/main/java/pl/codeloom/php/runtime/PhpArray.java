@@ -506,6 +506,65 @@ public final class PhpArray implements TruffleObject {
         return popHashed();
     }
 
+    /**
+     * array_unshift() of one value: it becomes the first element, int keys are renumbered (string keys kept) and
+     * the internal pointer goes back to the start. A packed list shifts its elements inline.
+     */
+    public void prepend(Object value) {
+        if (keys == null && nextIndex == size) {
+            if (longs != null) {
+                if (value instanceof Long number) {
+                    if (size == longs.length) {
+                        longs = Arrays.copyOf(longs, Math.max(MIN_CAPACITY, size * 2));
+                    }
+                    System.arraycopy(longs, 0, longs, 1, size);
+                    longs[0] = number;
+                    size++;
+                    nextIndex = size;
+                    pointer = 0;
+                    return;
+                }
+                toObjects();
+            }
+            countIn(value);
+            if (size == packed.length) {
+                packed = Arrays.copyOf(packed, Math.max(MIN_CAPACITY, size * 2));
+            }
+            System.arraycopy(packed, 0, packed, 1, size);
+            packed[0] = value;
+            size++;
+            nextIndex = size;
+            pointer = 0;
+            return;
+        }
+        prependRebuilt(value);
+    }
+
+    @TruffleBoundary
+    private void prependRebuilt(Object value) {
+        PhpArray rebuilt = new PhpArray();
+        rebuilt.append(value);
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            Object key = keyAt(p);
+            if (key instanceof Long) {
+                rebuilt.append(valueAt(p));
+            } else {
+                rebuilt.put(key, valueAt(p));
+            }
+        }
+        packed = rebuilt.packed;
+        longs = rebuilt.longs;
+        size = rebuilt.size;
+        keys = rebuilt.keys;
+        hashes = rebuilt.hashes;
+        values = rebuilt.values;
+        buckets = rebuilt.buckets;
+        chain = rebuilt.chain;
+        used = rebuilt.used;
+        nextIndex = rebuilt.nextIndex;
+        pointer = firstPosition();
+    }
+
     @TruffleBoundary
     private Object popHashed() {
         int p = lastPosition();

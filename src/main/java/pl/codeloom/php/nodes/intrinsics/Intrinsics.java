@@ -36,10 +36,11 @@ public final class Intrinsics {
             "pos", "key", "next", "prev", "reset", "end", "ord", "chr", "substr", "strpos", "str_contains",
             "str_starts_with", "str_ends_with", "array_key_exists", "key_exists", "gettype", "strspn", "strcspn",
             "strtolower", "strtoupper", "trim", "ltrim", "rtrim", "chop", "ucfirst", "str_replace", "in_array",
-            "array_pop", "array_push", "array_slice");
+            "array_pop", "array_push", "array_slice", "array_unshift", "array_keys", "implode", "join", "explode",
+            "array_filter", "array_map");
 
     private static final Set<String> BY_REF_FIRST = Set.of("next", "prev", "reset", "end", "array_pop",
-            "array_push");
+            "array_push", "array_unshift");
 
     public static boolean handles(String lowerName) {
         return NAMES.contains(lowerName);
@@ -136,6 +137,22 @@ public final class Intrinsics {
                 return n >= 2 && n <= 4
                         ? BuiltinNodesFactory.ArraySliceNodeGen.create(withDefaults(args, 2, PhpNull.NULL, Boolean.FALSE))
                         : null;
+            case "array_unshift":
+                return n == 2 && writable(args[0]) ? BuiltinNodesFactory.ArrayUnshiftNodeGen.create(
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]}) : null;
+            case "array_keys":
+                return n == 1 ? BuiltinNodesFactory.ArrayKeysNodeGen.create(args) : null;
+            case "implode":
+            case "join":
+                return n == 2 ? BuiltinNodesFactory.ImplodeNodeGen.create(args) : null;
+            case "explode":
+                return n == 2 || n == 3
+                        ? BuiltinNodesFactory.ExplodeNodeGen.create(withDefaults(args, 2, Long.MAX_VALUE)) : null;
+            case "array_filter":
+                return n >= 1 && n <= 3
+                        ? BuiltinNodesFactory.ArrayFilterNodeGen.create(withDefaults(args, 1, PhpNull.NULL, 0L)) : null;
+            case "array_map":
+                return n == 2 ? BuiltinNodesFactory.ArrayMapNodeGen.create(args) : null;
             default:
                 return null;
         }

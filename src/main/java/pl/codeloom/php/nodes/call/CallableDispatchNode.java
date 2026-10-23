@@ -24,6 +24,10 @@ import pl.codeloom.php.runtime.Str;
 public abstract class CallableDispatchNode extends Node {
     static final int LIMIT = 6;
 
+    public static CallableDispatchNode create() {
+        return CallableDispatchNodeGen.create();
+    }
+
     public abstract Object execute(Object callable, Object[] values);
 
     @Specialization(guards = "callable.getFunction() == cachedFunction", limit = "LIMIT")
