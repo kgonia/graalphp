@@ -56,6 +56,7 @@ final class RuntimeFunctions {
             return Callables.call(context, Args.get(a, 0), positional(Args.array(a, 1, "call_user_func_array")));
         });
         r.fn("set_time_limit", a -> Boolean.TRUE);
+        r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
         r.fn("flush", (context, a) -> {
             context.flush();

@@ -1083,6 +1083,11 @@ final class FileFunctions {
         r.fn("file_put_contents", (context, a) -> putContents(context, Str.java(Args.str(a, 0)), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
         r.fn("file", (context, a) -> lines(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("file_get_contents", (context, a) -> {
+            Object length = Args.get(a, 4, PhpNull.NULL);
+            return getContents(context, Str.java(Args.str(a, 0)), Args.lng(a, 3, 0),
+                    length == PhpNull.NULL ? null : Convert.toLong(length));
+        });
         r.fn("readfile", (context, a) -> {
             byte[] bytes = readAll(context, Str.java(Args.str(a, 0)));
             if (bytes == null) {
@@ -1095,6 +1100,15 @@ final class FileFunctions {
         r.fn("sha1_file", (context, a) -> digestFile(context, "SHA-1", a));
 
         // ---- metadata ----
+        r.fn("file_exists", (context, a) -> test(context, a, file -> file.exists()));
+        r.fn("is_file", (context, a) -> test(context, a, file -> file.isRegularFile()));
+        r.fn("is_dir", (context, a) -> test(context, a, file -> file.isDirectory()));
+        r.fn("realpath", (context, a) -> io(() -> {
+            // the path with symbolic links, "." and ".." resolved; false if it doesn't exist
+            String name = Str.java(Args.str(a, 0));
+            TruffleFile file = file(context, name.isEmpty() ? "." : name);
+            return file.exists() ? (Object) Str.of(file.getCanonicalFile().getPath()) : Boolean.FALSE;
+        }));
         r.fn("is_readable", (context, a) -> test(context, a, file -> file.isReadable()));
         r.fn("is_writable", (context, a) -> test(context, a, file -> file.isWritable()));
         r.fn("is_writeable", (context, a) -> test(context, a, file -> file.isWritable()));
@@ -1436,6 +1450,30 @@ final class FileFunctions {
         Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE,
                 StandardOpenOption.DELETE_ON_CLOSE);
         return resource(context, new FileStream(file, file.newByteChannel(options), false, "r+b", file.getPath()));
+    }
+
+    /**
+     * file_get_contents() as php-src's: the stream from offset (from the end when negative) up to length bytes
+     * (all when null); false if it can't be opened or seeked.
+     */
+    @TruffleBoundary
+    private static Object getContents(PhpContext context, String name, long offset, Long length) {
+        if (length != null && length < 0) {
+            throw new PhpError("ValueError", "file_get_contents(): Argument #5 ($length) must be greater than or "
+                    + "equal to 0");
+        }
+        Stream stream = openStream(context, name, "rb");
+        if (stream == null) {
+            return Boolean.FALSE;
+        }
+        try {
+            if (offset != 0 && stream.seek(offset, offset > 0 ? SEEK_SET : SEEK_END) < 0) {
+                return Boolean.FALSE;
+            }
+            return Str.of(stream.readAll(length == null ? -1 : length));
+        } finally {
+            closeStream(stream);
+        }
     }
 
     @TruffleBoundary

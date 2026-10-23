@@ -18,8 +18,6 @@ import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.zip.CRC32;
 
@@ -343,16 +341,6 @@ final class CoreFunctions {
         r.fn("md5", a -> EncodingFunctions.digest("MD5", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
         r.fn("sha1", a -> EncodingFunctions.digest("SHA-1", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
 
-        // ---- files (read-only, for the benchmark driver) ----
-        r.fn("file_exists", a -> Files.exists(Path.of(Str.java(Args.str(a, 0)))));
-        r.fn("is_file", a -> Files.isRegularFile(Path.of(Str.java(Args.str(a, 0)))));
-        r.fn("is_dir", a -> Files.isDirectory(Path.of(Str.java(Args.str(a, 0)))));
-        r.fn("realpath", a -> {
-            Path path = Path.of(Str.java(Args.str(a, 0)));
-            return Files.exists(path) ? (Object) Str.of(path.toAbsolutePath().normalize().toString()) : Boolean.FALSE;
-        });
-        r.fn("file_get_contents", (context, a) -> Str.java(Args.str(a, 0)).equals("php://input")
-                ? Str.of(context.requestBody()) : readFile(Str.java(Args.str(a, 0))));
     }
 
     @TruffleBoundary
@@ -572,12 +560,4 @@ final class CoreFunctions {
         return crc.getValue();
     }
 
-    @TruffleBoundary
-    private static Object readFile(String path) {
-        try {
-            return Str.of(Files.readAllBytes(Path.of(path)));
-        } catch (java.io.IOException e) {
-            return Boolean.FALSE;
-        }
-    }
 }
