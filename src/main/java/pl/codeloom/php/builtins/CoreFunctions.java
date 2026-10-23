@@ -99,8 +99,18 @@ final class CoreFunctions {
             return value;
         });
         r.fn("function_exists", (context, a) -> context.findFunction(lowerName(Args.str(a, 0))) != null);
-        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false));
-        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true));
+        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false, Args.bool(a, 1, true)));
+        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true, Args.bool(a, 1, true)));
+        r.fn("spl_autoload_register", (context, a) -> {
+            Object callable = Args.get(a, 0, PhpNull.NULL);
+            if (callable == PhpNull.NULL) {
+                throw new PhpError("spl_autoload_register() without a callback (spl_autoload) is not supported");
+            }
+            context.addAutoloader(callable, Args.bool(a, 2, false));
+            return Boolean.TRUE;
+        });
+        r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Args.get(a, 0)));
+        r.fn("spl_autoload_functions", (context, a) -> PhpArray.list(context.autoloaders().toArray()));
         r.fn("method_exists", (context, a) -> {
             Object target = Args.get(a, 0);
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
@@ -193,10 +203,7 @@ final class CoreFunctions {
         r.fn("trigger_error", a -> {
             throw new PhpError("User error: " + Str.java(Args.str(a, 0)));
         });
-        r.fn("extension_loaded", a -> {
-            String name = Str.java(Args.str(a, 0)).toLowerCase();
-            return name.equals("mbstring") || name.equals("pcre") || name.equals("json") || name.equals("ctype");
-        });
+        r.fn("extension_loaded", a -> RuntimeFunctions.EXTENSIONS.contains(Str.java(Args.str(a, 0)).toLowerCase()));
         r.fn("ini_get", a -> Boolean.FALSE);
         r.fn("ini_set", a -> Boolean.FALSE);
         r.fn("function_exists_internal", a -> true);
@@ -305,8 +312,9 @@ final class CoreFunctions {
         return (text.startsWith("\\") ? text.substring(1) : text).toLowerCase();
     }
 
-    private static boolean classExists(PhpContext context, TruffleString name, boolean wantInterface) {
-        PhpClass phpClass = context.findClass(lowerName(name));
+    private static boolean classExists(PhpContext context, TruffleString name, boolean wantInterface,
+                                       boolean autoload) {
+        PhpClass phpClass = autoload ? context.findClassAutoloading(Str.java(name)) : context.findClass(lowerName(name));
         return phpClass != null && phpClass.isInterface() == wantInterface;
     }
 

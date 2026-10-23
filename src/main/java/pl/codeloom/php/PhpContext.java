@@ -14,6 +14,7 @@ import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
 import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -28,6 +29,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -45,6 +47,9 @@ public final class PhpContext {
     /** The declared functions by their name's language-level id (null: not declared here). */
     private PhpFunction[] functionSlots = new PhpFunction[256];
     private final Map<String, PhpClass> classes = new HashMap<>();
+    /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
+    private final List<Object> autoloaders = new java.util.ArrayList<>();
+    private final Set<String> autoloading = new HashSet<>();
     /** The declared classes by their lowercase name's language-level id (null: not declared here). */
     private PhpClass[] classSlots = new PhpClass[256];
     private final Map<String, Object> constants = new HashMap<>();
@@ -68,12 +73,42 @@ public final class PhpContext {
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
         Builtins.install(this, language.builtins());
-        pl.codeloom.php.runtime.PhpArray argv = new pl.codeloom.php.runtime.PhpArray();
+        PhpArray argv = new PhpArray();
         for (String argument : env.getApplicationArguments()) {
             argv.append(Str.of(argument));
         }
         globalRef("argv").set(argv);
         globalRef("argc").set((long) argv.size());
+        superglobals(argv);
+    }
+
+    /** The superglobal names: global variables visible in every scope. */
+    public static final java.util.Set<String> SUPERGLOBALS = java.util.Set.of("_SERVER", "_GET", "_POST", "_COOKIE",
+            "_FILES", "_REQUEST", "_ENV", "_SESSION");
+
+    /** As the CLI SAPI fills them: $_SERVER has the environment, argv/argc and the request time; the rest empty. */
+    private void superglobals(PhpArray argv) {
+        PhpArray server = new PhpArray();
+        for (Map.Entry<String, String> variable : new java.util.TreeMap<>(env.getEnvironment()).entrySet()) {
+            server.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(variable.getKey())), Str.of(variable.getValue()));
+        }
+        String script = argv.size() > 0 ? Str.java((TruffleString) argv.get(0L)) : "";
+        server.put(Str.of("PHP_SELF"), Str.of(script));
+        server.put(Str.of("SCRIPT_NAME"), Str.of(script));
+        server.put(Str.of("SCRIPT_FILENAME"), Str.of(script));
+        server.put(Str.of("PATH_TRANSLATED"), Str.of(script));
+        server.put(Str.of("DOCUMENT_ROOT"), Str.EMPTY);
+        long millis = System.currentTimeMillis();
+        server.put(Str.of("REQUEST_TIME_FLOAT"), millis / 1000.0);
+        server.put(Str.of("REQUEST_TIME"), millis / 1000);
+        server.put(Str.of("argv"), argv);
+        server.put(Str.of("argc"), (long) argv.size());
+        globalRef("_SERVER").set(server);
+        for (String name : SUPERGLOBALS) {
+            if (!name.equals("_SERVER") && !name.equals("_SESSION")) {
+                globalRef(name).set(new PhpArray());
+            }
+        }
     }
 
     public static PhpContext get(Node node) {
@@ -207,13 +242,65 @@ public final class PhpContext {
         return classes.get(lowerName);
     }
 
+    /** The class, running the autoloaders if it isn't declared yet; throws if it still isn't. */
     @TruffleBoundary
     public PhpClass getClass(String name) {
-        PhpClass phpClass = classes.get(name.toLowerCase());
+        PhpClass phpClass = findClassAutoloading(name);
         if (phpClass == null) {
-            throw new PhpError("Class \"" + name + "\" not found");
+            throw new PhpError("Class \"" + stripSlash(name) + "\" not found");
         }
         return phpClass;
+    }
+
+    /** The class, running the autoloaders (spl_autoload_register) if it isn't declared yet; or null. */
+    @TruffleBoundary
+    public PhpClass findClassAutoloading(String name) {
+        String className = stripSlash(name);
+        String lowerName = className.toLowerCase();
+        PhpClass phpClass = classes.get(lowerName);
+        if (phpClass != null || autoloaders.isEmpty() || !autoloading.add(lowerName)) {
+            return phpClass;
+        }
+        try {
+            for (Object autoloader : List.copyOf(autoloaders)) {
+                pl.codeloom.php.runtime.Callables.call(this, autoloader, Str.of(className));
+                phpClass = classes.get(lowerName);
+                if (phpClass != null) {
+                    return phpClass;
+                }
+            }
+            return null;
+        } finally {
+            autoloading.remove(lowerName);
+        }
+    }
+
+    private static String stripSlash(String name) {
+        return name.startsWith("\\") ? name.substring(1) : name;
+    }
+
+    /** spl_autoload_register(): false when the callable is registered already. */
+    @TruffleBoundary
+    public boolean addAutoloader(Object callable, boolean prepend) {
+        if (autoloaders.contains(callable)) {
+            return false;
+        }
+        if (prepend) {
+            autoloaders.add(0, callable);
+        } else {
+            autoloaders.add(callable);
+        }
+        return true;
+    }
+
+    @TruffleBoundary
+    public boolean removeAutoloader(Object callable) {
+        return autoloaders.remove(callable);
+    }
+
+    @TruffleBoundary
+    public List<Object> autoloaders() {
+        return List.copyOf(autoloaders);
     }
 
     @TruffleBoundary
@@ -284,6 +371,68 @@ public final class PhpContext {
     public void unsetGlobal(String name) {
         globals.remove(name);
         globalsVersion++;
+    }
+
+    /** date_default_timezone_set(); UTC until set, as php.ini's date.timezone default. */
+    private java.time.ZoneId timezone = java.time.ZoneOffset.UTC;
+
+    public java.time.ZoneId timezone() {
+        return timezone;
+    }
+
+    public void setTimezone(java.time.ZoneId zone) {
+        timezone = zone;
+    }
+
+    // ---- lifecycle ----
+
+    /** register_shutdown_function's callables with their arguments, run when the script ends or exits. */
+    private final List<Object[]> shutdownFunctions = new java.util.ArrayList<>();
+
+    @TruffleBoundary
+    public void addShutdownFunction(Object callable, Object[] arguments) {
+        Object[] entry = new Object[arguments.length + 1];
+        entry[0] = callable;
+        System.arraycopy(arguments, 0, entry, 1, arguments.length);
+        shutdownFunctions.add(entry);
+    }
+
+    /** Runs the shutdown functions (also those they register), once. */
+    @TruffleBoundary
+    public void runShutdownFunctions() {
+        for (int i = 0; i < shutdownFunctions.size(); i++) {
+            Object[] entry = shutdownFunctions.get(i);
+            pl.codeloom.php.runtime.Callables.call(this, entry[0], java.util.Arrays.copyOfRange(entry, 1, entry.length));
+        }
+        shutdownFunctions.clear();
+    }
+
+    /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
+    @TruffleBoundary
+    public void exit(int status) {
+        runShutdownFunctions();
+        flush();
+        env.getContext().closeExited(null, status);
+    }
+
+    /** get_defined_constants(): the defined constants by name. */
+    @TruffleBoundary
+    public PhpArray constantsArray() {
+        PhpArray array = new PhpArray();
+        for (Map.Entry<String, Object> constant : constants.entrySet()) {
+            array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(constant.getKey())), constant.getValue());
+        }
+        return array;
+    }
+
+    /** `$GLOBALS` read as a whole: a copy of the global variables (PHP 8.1+: read-only). */
+    @TruffleBoundary
+    public PhpArray globalsArray() {
+        PhpArray array = new PhpArray();
+        for (Map.Entry<String, PhpRef> global : globals.entrySet()) {
+            array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(global.getKey())), global.getValue().get());
+        }
+        return array;
     }
 
     /** Changes whenever a global variable is rebound or unset, so nodes may cache a global's reference. */

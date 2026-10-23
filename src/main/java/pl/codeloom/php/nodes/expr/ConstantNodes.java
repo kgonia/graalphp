@@ -27,13 +27,16 @@ public final class ConstantNodes {
     public static final class GlobalConstNode extends ExprNode {
         private final String name;
         private final int id;
+        /** An unqualified name in a namespace falls back to the global constant: its id, else -1. */
+        private final int fallbackId;
         @Child private StableValueNode stable = ConstantNodesFactory.StableValueNodeGen.create();
         @CompilationFinal private Object singleContextValue;
 
         /** id is the name's {@link pl.codeloom.php.PhpLanguage#constantId}. */
-        public GlobalConstNode(String name, int id) {
+        public GlobalConstNode(String name, int id, int fallbackId) {
             this.name = name;
             this.id = id;
+            this.fallbackId = fallbackId;
         }
 
         @Override
@@ -42,7 +45,11 @@ public final class ConstantNodes {
             if (value != null && PhpLanguage.get(this).singleContext().isValid()) {
                 return value;
             }
-            value = PhpContext.get(this).constantAt(id);
+            PhpContext context = PhpContext.get(this);
+            value = context.constantAt(id);
+            if (value == null && fallbackId >= 0) {
+                value = context.constantAt(fallbackId);
+            }
             if (value == null) {
                 CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Undefined constant \"" + name + "\"");

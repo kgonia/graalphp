@@ -26,14 +26,17 @@ import pl.codeloom.php.runtime.PhpRef;
 public final class FunctionCallNode extends ExprNode {
     private final String displayName;
     private final int id;
+    /** An unqualified name in a namespace falls back to the global function: its id, else -1. */
+    private final int fallbackId;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch = FunctionCallNodeFactory.DispatchNodeGen.create();
     @CompilationFinal private PhpFunction singleContextFunction;
 
     /** id is the lowercase name's {@link pl.codeloom.php.PhpLanguage#functionId}. */
-    public FunctionCallNode(String displayName, int id, ArgumentsNode args) {
+    public FunctionCallNode(String displayName, int id, int fallbackId, ArgumentsNode args) {
         this.displayName = displayName;
         this.id = id;
+        this.fallbackId = fallbackId;
         this.args = args;
     }
 
@@ -47,7 +50,11 @@ public final class FunctionCallNode extends ExprNode {
     }
 
     private PhpFunction lookup() {
-        PhpFunction function = PhpContext.get(this).functionAt(id);
+        PhpContext context = PhpContext.get(this);
+        PhpFunction function = context.functionAt(id);
+        if (function == null && fallbackId >= 0) {
+            function = context.functionAt(fallbackId);
+        }
         if (function == null) {
             CompilerDirectives.transferToInterpreter();
             throw undefined();

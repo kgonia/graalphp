@@ -32,7 +32,9 @@ public final class ScriptRootNode extends RootNode {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             call = fileCall();
         }
-        return call.call(new Object[PhpFunction.ARG_FIRST]);
+        Object result = call.call(new Object[PhpFunction.ARG_FIRST]);
+        PhpContext.get(this).runShutdownFunctions();
+        return result;
     }
 
     /** Inserted under the AST lock: contexts on several threads may run the script first at the same time. */

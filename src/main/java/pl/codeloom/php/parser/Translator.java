@@ -42,8 +42,10 @@ import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.LoopNodes;
 import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
+import pl.codeloom.php.nodes.vars.CompactNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.GlobalVarNode;
+import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.nodes.vars.LocalVarNode;
@@ -119,13 +121,15 @@ public final class Translator {
     private int hiddenCounter;
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
     private final Scope fileSlots = new Scope();
+    /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
+    private Names names;
 
     public Translator(PhpLanguage language, String path, Source source) {
-        this(language, path, source, null, "", null, null);
+        this(language, path, source, null, "", null, null, Names.GLOBAL);
     }
 
     private Translator(PhpLanguage language, String path, Source source, ClassInfo classInfo,
-                       String functionName, PhpFunction function, Scope scope) {
+                       String functionName, PhpFunction function, Scope scope, Names names) {
         this.language = language;
         this.path = path;
         this.source = source;
@@ -133,6 +137,7 @@ public final class Translator {
         this.functionName = functionName;
         this.function = function;
         this.scope = scope;
+        this.names = names;
     }
 
     private SourceSection lineSection(int line) {
@@ -145,17 +150,52 @@ public final class Translator {
 
     // ---- files ----
 
+    /**
+     * A file's top-level statements: function declarations are hoisted into the prologue, namespace and use
+     * statements change how the following names resolve, and a braced namespace's statements come in place.
+     */
+    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> body) {
+        for (Object child : list.children()) {
+            if (!(child instanceof Ast statement)) {
+                continue;
+            }
+            switch (statement.kind) {
+                case "AST_FUNC_DECL":
+                    prologue.add(new DeclareNodes.DeclareFunctionNode(declareFunction(statement, null)));
+                    break;
+                case "AST_NAMESPACE":
+                    names = Names.namespace((String) statement.get("name"));
+                    if (statement.get("stmts") != null) {
+                        fileStatements(statement.node("stmts"), prologue, body);
+                        names = Names.GLOBAL;
+                    }
+                    break;
+                case "AST_USE":
+                    for (Object element : statement.children()) {
+                        Ast use = (Ast) element;
+                        names = names.use(statement.flags, (String) use.get("name"), (String) use.get("alias"));
+                    }
+                    break;
+                case "AST_GROUP_USE": {
+                    String prefix = (String) statement.get("prefix");
+                    Ast uses = statement.node("uses");
+                    for (Object element : uses.children()) {
+                        Ast use = (Ast) element;
+                        int kind = use.flags != 0 ? use.flags : uses.flags;
+                        names = names.use(kind, prefix + "\\" + use.get("name"), (String) use.get("alias"));
+                    }
+                    break;
+                }
+                default:
+                    body.add(statement(statement));
+            }
+        }
+    }
+
     public FileRootNode translateFile(Ast file) {
         List<StmtNode> prologue = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();
-        for (Object child : file.children()) {
-            if (child instanceof Ast statement && statement.is("AST_FUNC_DECL")) {
-                PhpFunction declared = declareFunction(statement, null);
-                prologue.add(new DeclareNodes.DeclareFunctionNode(declared));
-            } else if (child instanceof Ast statement) {
-                body.add(statement(statement));
-            }
-        }
+        fileStatements(file, prologue, body);
         return new FileRootNode(language, fileSlots.frame.build(), path, block(prologue), block(body),
                 source == null ? null : source.createSection(0, source.getLength()));
     }
@@ -346,7 +386,7 @@ public final class Translator {
             if (!element.is("AST_CONST_ELEM")) {
                 continue; // #[attributes] on the declaration
             }
-            String name = (String) element.get("name");
+            String name = names.declared((String) element.get("name"));
             ExprNode value = expression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
@@ -375,7 +415,8 @@ public final class Translator {
 
     /** Builds a PhpFunction whose body is translated on first call. */
     private PhpFunction declareFunction(Ast node, ClassInfo owner) {
-        String name = (String) node.get("name");
+        String name = owner == null ? names.declared((String) node.get("name")) : (String) node.get("name");
+        Names declaredNames = names;
         Ast paramList = node.node("params");
         PhpFunction.Param[] params = params(paramList);
         int flags = node.flags;
@@ -384,7 +425,8 @@ public final class Translator {
         boolean isAbstract = (flags & MODIFIER_ABSTRACT) != 0 || node.get("stmts") == null;
         PhpFunction[] self = new PhpFunction[1];
         self[0] = new PhpFunction(name, params, (flags & FUNC_RETURNS_REF) != 0, isStatic, isPublic, isAbstract,
-                () -> translateBody(node, owner, self[0], name, params, new String[0], new boolean[0]));
+                () -> translateBody(node, owner, self[0], name, params, new String[0], new boolean[0],
+                        declaredNames));
         return self[0];
     }
 
@@ -437,10 +479,11 @@ public final class Translator {
     }
 
     private RootCallTarget translateBody(Ast node, ClassInfo owner, PhpFunction target, String name,
-                                         PhpFunction.Param[] params, String[] captures, boolean[] captureByRef) {
+                                         PhpFunction.Param[] params, String[] captures, boolean[] captureByRef,
+                                         Names declaredNames) {
         Scope bodyScope = new Scope();
         String display = owner == null ? name : owner.name() + "::" + name;
-        Translator body = new Translator(language, path, source, owner, display, target, bodyScope);
+        Translator body = new Translator(language, path, source, owner, display, target, bodyScope, declaredNames);
         Ast paramList = node.node("params");
         int[] paramSlots = new int[params.length];
         ExprNode[] defaults = new ExprNode[params.length];
@@ -516,9 +559,10 @@ public final class Translator {
         }
         String name = "{closure:" + Path.of(path).getFileName() + ":" + node.line + "}";
         ClassInfo owner = classInfo;
+        Names declaredNames = this.names;
         PhpFunction[] self = new PhpFunction[1];
         self[0] = new PhpFunction(name, params, false, (node.flags & MODIFIER_STATIC) != 0, true, false,
-                () -> translateBody(node, owner, self[0], name, params, names, byRef));
+                () -> translateBody(node, owner, self[0], name, params, names, byRef, declaredNames));
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
         return new ClosureNode(self[0], captureNodes, byRef, (node.flags & MODIFIER_STATIC) != 0, scopeRef);
     }
@@ -551,7 +595,7 @@ public final class Translator {
     // ---- classes ----
 
     private StmtNode classDeclaration(Ast node) {
-        String name = (String) node.get("name");
+        String name = names.declared((String) node.get("name"));
         if ((node.flags & CLASS_TRAIT) != 0) {
             throw unsupported(node, "trait declaration");
         }
@@ -565,7 +609,7 @@ public final class Translator {
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
         ClassInfo info = new ClassInfo(name, parentName);
-        Translator inClass = new Translator(language, path, source, info, "", null, null);
+        Translator inClass = new Translator(language, path, source, info, "", null, null, names);
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
         try {
@@ -636,9 +680,9 @@ public final class Translator {
         return new ThunkRootNode(language, node);
     }
 
+    /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
     private String className(Ast name) {
-        String text = (String) name.get("name");
-        return text.startsWith("\\") ? text.substring(1) : text;
+        return names.className((String) name.get("name"), name.flags);
     }
 
     /** A class reference by name: self and parent resolve to the enclosing class names, static to LSB. */
@@ -887,8 +931,11 @@ public final class Translator {
         if (name.equals("this")) {
             return new ThisNode();
         }
-        if (name.equals("GLOBALS") || name.startsWith("_") && name.equals(name.toUpperCase())) {
-            throw new PhpError("Unsupported superglobal $" + name);
+        if (name.equals("GLOBALS")) {
+            return new GlobalsArrayNode();
+        }
+        if (PhpContext.SUPERGLOBALS.contains(name)) {
+            return new GlobalVarNode(name);
         }
         return scope == null ? new GlobalVarNode(name) : new LocalVarNode(scope.slot(name), name);
     }
@@ -1044,7 +1091,10 @@ public final class Translator {
     // ---- constants and literals ----
 
     private ExprNode constant(Ast node) {
-        String name = className(node.node("name"));
+        Ast nameNode = node.node("name");
+        String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
+        // true, false and null, and the predefined constants, are global; a namespace can't shadow them here
+        String name = resolved[1] != null ? resolved[1] : resolved[0];
         switch (name.toLowerCase()) {
             case "true":
                 return new ConstNode(Boolean.TRUE);
@@ -1059,7 +1109,8 @@ public final class Translator {
         if (known != null) {
             return new ConstNode(known);
         }
-        return new ConstantNodes.GlobalConstNode(name, language.constantId(name));
+        return new ConstantNodes.GlobalConstNode(resolved[0], language.constantId(resolved[0]),
+                resolved[1] == null ? -1 : language.constantId(resolved[1]));
     }
 
     private ExprNode classConstant(Ast node) {
@@ -1110,7 +1161,7 @@ public final class Translator {
                 return new ConstNode(Str.of(name));
             }
             case 354:
-                return new ConstNode(Str.EMPTY);
+                return new ConstNode(Str.of(names.namespace()));
             default:
                 throw unsupported(node, "magic constant " + node.flags);
         }
@@ -1202,7 +1253,9 @@ public final class Translator {
         if (!callee.is("AST_NAME")) {
             return new CallableCallNode(expression(callee), arguments(args), null);
         }
-        String name = className(callee);
+        String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
+        // the global name, for the built-ins the translator handles itself (null: a namespaced function)
+        String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
         switch (name.toLowerCase()) {
             case "func_get_args":
                 return new FrameArgsNode(false);
@@ -1224,18 +1277,50 @@ public final class Translator {
                             : classInfo.name()));
                 }
                 break;
-            case "compact":
+            case "compact": {
+                List<String> variableNames = new ArrayList<>();
+                if (compactNames(args, variableNames)) {
+                    TruffleString[] keys = new TruffleString[variableNames.size()];
+                    LValueNode[] variables = new LValueNode[keys.length];
+                    for (int i = 0; i < keys.length; i++) {
+                        keys[i] = Str.intern(Str.of(variableNames.get(i)));
+                        variables[i] = (LValueNode) variable(variableNames.get(i));
+                    }
+                    return new CompactNode(keys, variables);
+                }
+                throw unsupported(node, "compact() with names computed at run time");
+            }
             case "extract":
             case "get_defined_vars":
                 throw unsupported(node, name + "()");
             default:
                 break;
         }
-        ExprNode intrinsic = intrinsic(name.toLowerCase(), args);
+        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(name.toLowerCase(), args);
         if (intrinsic != null) {
             return intrinsic;
         }
-        return new FunctionCallNode(name, language.functionId(name.toLowerCase()), arguments(args));
+        return new FunctionCallNode(resolved[0], language.functionId(resolved[0].toLowerCase()),
+                resolved[1] == null ? -1 : language.functionId(resolved[1].toLowerCase()), arguments(args));
+    }
+
+    /** compact()'s variable names when they are string literals or arrays of them; false otherwise. */
+    private boolean compactNames(Ast list, List<String> out) {
+        for (Object child : list.children()) {
+            if (child instanceof String name) {
+                out.add(name);
+            } else if (child instanceof Ast ast && ast.is("AST_ARRAY")) {
+                for (Object element : ast.children()) {
+                    if (!(element instanceof Ast item) || !(item.get("value") instanceof String name)) {
+                        return false;
+                    }
+                    out.add(name);
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The in-place node for a small built-in (see {@link Intrinsics}), or null for a regular call. */

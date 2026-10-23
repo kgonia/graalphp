@@ -233,6 +233,11 @@ public final class LocalVarNode extends LValueNode {
     }
 
     @Override
+    public boolean isDefined(VirtualFrame frame) {
+        return raw(frame, slot) != null;
+    }
+
+    @Override
     public boolean isSet(VirtualFrame frame) {
         if (frame.isLong(slot) || frame.isDouble(slot)) {
             return true;

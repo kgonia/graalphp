@@ -38,6 +38,11 @@ public abstract class LValueNode extends ExprNode {
     /** isset(): the place exists and isn't null, evaluated without side effects on the container. */
     public abstract boolean isSet(VirtualFrame frame);
 
+    /** Whether the variable exists (compact()): unlike isSet, a null value counts. */
+    public boolean isDefined(VirtualFrame frame) {
+        return isSet(frame);
+    }
+
     /** True when evaluating the place twice has no side effects (compound assignment re-reads it). */
     public abstract boolean isPure();
 

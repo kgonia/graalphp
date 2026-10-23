@@ -50,6 +50,11 @@ public final class GlobalVarNode extends LValueNode {
     }
 
     @Override
+    public boolean isDefined(VirtualFrame frame) {
+        return PhpContext.get(this).findGlobal(name) != null;
+    }
+
+    @Override
     public boolean isSet(VirtualFrame frame) {
         PhpRef ref = PhpContext.get(this).findGlobal(name);
         return ref != null && ref.get() != PhpNull.NULL;
