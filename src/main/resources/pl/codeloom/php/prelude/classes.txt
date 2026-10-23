@@ -4,6 +4,7 @@ truffledatetime	date.php
 datetimeimmutable	date.php
 datetime	date.php
 dateinterval	date.php
+mysqli_sql_exception	mysqli.php
 recursiveiterator	spl.php
 outeriterator	spl.php
 seekableiterator	spl.php

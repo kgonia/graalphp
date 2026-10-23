@@ -11,6 +11,8 @@ public final class BuiltinState {
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;
+    /** mysqli_report()'s mode: MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT unless changed, as PHP 8.1+. */
+    long mysqliReport = 3;
     /** mysqli_connect_errno() / mysqli_connect_error(): the last connection attempt's. */
     int mysqliConnectErrno;
     String mysqliConnectError;

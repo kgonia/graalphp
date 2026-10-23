@@ -6,6 +6,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
@@ -18,6 +19,12 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import org.mariadb.jdbc.client.Completion;
+import org.mariadb.jdbc.client.Context;
+import org.mariadb.jdbc.client.socket.Writer;
+import org.mariadb.jdbc.message.ClientMessage;
+import org.mariadb.jdbc.message.server.OkPacket;
+import org.mariadb.jdbc.util.constants.ServerStatus;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -70,8 +77,8 @@ final class MysqliFunctions {
         r.fn("mysqli_connect_error", (context, a) -> context.builtinState().mysqliConnectError == null
                 ? PhpNull.NULL : Str.of(context.builtinState().mysqliConnectError));
         r.fn("mysqli_query", (context, a) -> query(context, link(a, 0), Str.bytes(Args.str(a, 1))));
-        r.fn("mysqli_real_escape_string", a -> escape(Str.bytes(Args.str(a, 1))));
-        r.fn("mysqli_escape_string", a -> escape(Str.bytes(Args.str(a, 1))));
+        r.fn("mysqli_real_escape_string", a -> escape(link(a, 0), Str.bytes(Args.str(a, 1))));
+        r.fn("mysqli_escape_string", a -> escape(link(a, 0), Str.bytes(Args.str(a, 1))));
         r.fn("mysqli_set_charset", (context, a) -> setCharset(link(a, 0), Str.java(Args.str(a, 1))));
         r.fn("mysqli_character_set_name", a -> Str.of(state(link(a, 0)).charset));
         r.fn("mysqli_select_db", a -> selectDb(link(a, 0), Str.java(Args.str(a, 1))));
@@ -83,7 +90,10 @@ final class MysqliFunctions {
         r.fn("mysqli_get_client_info", a -> Str.of("mysqlnd 8.5.12"));
         r.fn("mysqli_ping", a -> ping(link(a, 0)));
         r.fn("mysqli_close", a -> close(link(a, 0)));
-        r.fn("mysqli_report", a -> Boolean.TRUE);
+        r.fn("mysqli_report", (context, a) -> {
+            context.builtinState().mysqliReport = Args.lng(a, 0, 0);
+            return Boolean.TRUE;
+        });
         r.fn("mysqli_more_results", a -> Boolean.FALSE);
         r.fn("mysqli_next_result", a -> Boolean.FALSE);
         r.fn("mysqli_num_fields", a -> (long) result(a, 0).names.length);
@@ -159,7 +169,9 @@ final class MysqliFunctions {
                 ? Str.java(Args.str(a, index + 3)) : "";
         long port = Args.has(a, index + 4) && Args.get(a, index + 4) != PhpNull.NULL ? Args.lng(a, index + 4, 3306)
                 : 3306;
-        String url = "jdbc:mariadb://" + host + ":" + port + "/" + database + "?connectTimeout=10000";
+        // LOAD DATA LOCAL INFILE stays off, as mysqli.allow_local_infile's default
+        String url = "jdbc:mariadb://" + host + ":" + port + "/" + database
+                + "?connectTimeout=10000&allowLocalInfile=false";
         BuiltinState state = context.builtinState();
         try {
             link.connection = DriverManager.getConnection(url, user, password);
@@ -175,19 +187,35 @@ final class MysqliFunctions {
             state.mysqliConnectError = e.getMessage();
             object.setProperty("connect_errno", (long) state.mysqliConnectErrno);
             object.setProperty("connect_error", Str.of(e.getMessage()));
+            // a failed connection throws under MYSQLI_REPORT_STRICT alone (php_mysqli_throw_sql_exception), with
+            // mysqlnd's sqlstate for a handshake error
+            if ((state.mysqliReport & REPORT_STRICT) != 0) {
+                throw sqlException(context, "HY000", state.mysqliConnectErrno, e.getMessage());
+            }
             return false;
         }
     }
 
+    /**
+     * mysqli_set_charset: SET NAMES, and the charset mysqli_real_escape_string escapes for; a name mysqlnd
+     * doesn't know fails with CR_CANT_FIND_CHARSET, before anything is sent.
+     */
     @TruffleBoundary
     private static boolean setCharset(PhpObject object, String charset) {
         Link link = state(object);
         if (link.connection == null) {
             return false;
         }
+        if (MysqlCharsets.find(charset) == null) {
+            link.errno = 2019;
+            link.error = "Invalid character set was provided";
+            reflect(object);
+            reportError("HY000", link.errno, link.error);
+            return false;
+        }
         try (Statement statement = link.connection.createStatement()) {
-            statement.execute("SET NAMES " + charset.replaceAll("[^A-Za-z0-9_]", ""));
-            link.charset = charset;
+            statement.execute("SET NAMES " + charset);
+            link.charset = charset.toLowerCase(java.util.Locale.ROOT);
             return true;
         } catch (SQLException e) {
             failed(object, e);
@@ -243,12 +271,58 @@ final class MysqliFunctions {
         link.errno = e.getErrorCode();
         link.error = e.getMessage();
         reflect(object);
+        reportError(sqlState(e), link.errno, link.error);
+    }
+
+    // mysqli_report() flags
+    private static final long REPORT_ERROR = 1;
+    private static final long REPORT_STRICT = 2;
+    private static final long REPORT_INDEX = 4;
+    // SERVER_QUERY_NO_GOOD_INDEX_USED, SERVER_QUERY_NO_INDEX_USED
+    private static final int NO_GOOD_INDEX_USED = 16;
+    private static final int NO_INDEX_USED = 32;
+
+    private static String sqlState(SQLException e) {
+        return e.getSQLState() != null ? e.getSQLState() : "HY000";
+    }
+
+    /**
+     * MYSQLI_REPORT_MYSQL_ERROR: under MYSQLI_REPORT_ERROR an error is reported, as a mysqli_sql_exception with
+     * MYSQLI_REPORT_STRICT, else as a warning (which this runtime doesn't print).
+     */
+    private static void reportError(String sqlState, long code, String message) {
+        PhpContext context = PhpContext.get(null);
+        long mode = context.builtinState().mysqliReport;
+        if ((mode & REPORT_ERROR) != 0 && (mode & REPORT_STRICT) != 0) {
+            throw sqlException(context, sqlState, code, message);
+        }
+    }
+
+    /** php_mysqli_report_index: under MYSQLI_REPORT_INDEX, a query the server ran without a (good) index. */
+    private static void reportIndex(PhpContext context, Link link, byte[] sql) {
+        long mode = context.builtinState().mysqliReport;
+        if ((mode & REPORT_INDEX) == 0) {
+            return;
+        }
+        int status = driver(link).getContext().getServerStatus();
+        String index = (status & NO_GOOD_INDEX_USED) != 0 ? "Bad index"
+                : (status & NO_INDEX_USED) != 0 ? "No index" : null;
+        if (index != null && (mode & REPORT_STRICT) != 0) {
+            throw sqlException(context, "00000", 0, index + " used in query/prepared statement "
+                    + new String(sql, StandardCharsets.UTF_8));
+        }
+    }
+
+    /** php_mysqli_throw_sql_exception: the object made without its constructor, message, sqlstate and code set. */
+    private static PhpException sqlException(PhpContext context, String sqlState, long code, String message) {
+        PhpObject exception = context.findClassAutoloading("mysqli_sql_exception").instantiate();
+        exception.setProperty("message", Str.of(message));
+        exception.setProperty("sqlstate", Str.of(sqlState));
+        exception.setProperty("code", code);
+        return new PhpException(exception);
     }
 
     // ---- queries ----
-
-    private static final java.util.regex.Pattern SET_NAMES =
-            java.util.regex.Pattern.compile("(?i)^\\s*SET\\s+NAMES\\s+'?([A-Za-z0-9_]+)");
 
     @TruffleBoundary
     private static Object query(PhpContext context, PhpObject object, byte[] sql) {
@@ -258,15 +332,15 @@ final class MysqliFunctions {
         }
         link.errno = 0;
         link.error = "";
-        String text = sqlText(sql, link.charset);
-        try (Statement statement = link.connection.createStatement()) {
-            boolean hasRows = statement.execute(text, Statement.RETURN_GENERATED_KEYS);
-            java.util.regex.Matcher names = SET_NAMES.matcher(text);
-            if (names.find()) {
-                link.charset = names.group(1);
-            }
-            if (hasRows) {
-                try (ResultSet rows = statement.getResultSet()) {
+        org.mariadb.jdbc.Connection driver = driver(link);
+        try (Statement statement = driver.createStatement()) {
+            // without the driver's statement lock: a connection belongs to one context, run by one thread at a time
+            List<Completion> completions = driver.getClient().execute(new RawQuery(sql),
+                    (org.mariadb.jdbc.Statement) statement, 0, 0L, ResultSet.CONCUR_READ_ONLY,
+                    ResultSet.TYPE_FORWARD_ONLY, false, false);
+            Completion first = completions.get(0);
+            if (first instanceof ResultSet resultSet) {
+                try (ResultSet rows = resultSet) {
                     Result result = read(rows);
                     link.affectedRows = result.rows.size();
                     reflect(object);
@@ -274,19 +348,15 @@ final class MysqliFunctions {
                     resultObject.setInternal(result);
                     resultObject.setProperty("num_rows", (long) result.rows.size());
                     resultObject.setProperty("field_count", (long) result.names.length);
+                    reportIndex(context, link, sql);
                     return resultObject;
                 }
             }
-            link.affectedRows = Math.max(0, statement.getUpdateCount());
-            link.insertId = 0;
-            try (ResultSet keys = statement.getGeneratedKeys()) {
-                if (keys.next()) {
-                    link.insertId = keys.getLong(1);
-                }
-            } catch (SQLException noKeys) {
-                // statements without generated keys
-            }
+            OkPacket ok = (OkPacket) first;
+            link.affectedRows = ok.getAffectedRows();
+            link.insertId = ok.getLastInsertId();
             reflect(object);
+            reportIndex(context, link, sql);
             return Boolean.TRUE;
         } catch (SQLException e) {
             failed(object, e);
@@ -414,142 +484,45 @@ final class MysqliFunctions {
     }
 
     /**
-     * The query as the driver takes it: a Java string, sent UTF-8 encoded. mysqlnd sends the query's bytes as they
-     * are, which in a session of another character set (latin1) need not be UTF-8; a string literal holding such
-     * bytes is sent as `_charset X'hex'`, which the server reads as the same literal. Bytes that aren't UTF-8
-     * outside literals (in an identifier or a comment) can't be sent as they are and are replaced.
+     * COM_QUERY with the query's own bytes, as mysqlnd sends them: in a session of another character set (latin1)
+     * they need not be UTF-8, which the driver's QueryPacket (a Java string, UTF-8 encoded) can't carry. Encoded
+     * as QueryPacket.encode does it.
      */
-    static String sqlText(byte[] sql, String charset) {
-        if (isUtf8(sql, 0, sql.length)) {
+    private record RawQuery(byte[] sql) implements ClientMessage {
+        @Override
+        public int encode(Writer writer, Context context) throws java.io.IOException {
+            writer.initPacket();
+            writer.writeByte(0x03);
+            writer.writeBytes(sql);
+            writer.flush();
+            return 1;
+        }
+
+        @Override
+        public String description() {
             return new String(sql, StandardCharsets.UTF_8);
         }
-        StringBuilder out = new StringBuilder(sql.length + 32);
-        int copied = 0;
-        int i = 0;
-        while (i < sql.length) {
-            byte b = sql[i];
-            if (b == '\'' || b == '"') {
-                int end = literalEnd(sql, i);
-                if (!isUtf8(sql, i, end)) {
-                    out.append(new String(sql, copied, i - copied, StandardCharsets.UTF_8));
-                    // after an introducer of its own (_binary'...') the hex literal takes that one
-                    boolean introduced = out.length() > 0 && isWordChar(out.charAt(out.length() - 1));
-                    out.append(introduced ? " X'" : "_" + charset.replaceAll("[^A-Za-z0-9_]", "") + " X'");
-                    out.append(java.util.HexFormat.of().formatHex(unescape(sql, i + 1, end - 1)));
-                    out.append('\'');
-                    copied = end;
-                }
-                i = end;
-            } else if (b == '`') {
-                i = indexOf(sql, (byte) '`', i + 1) + 1;
-            } else if (b == '#' || b == '-' && i + 2 < sql.length && sql[i + 1] == '-' && isSpace(sql[i + 2])) {
-                i = indexOf(sql, (byte) '\n', i);
-            } else if (b == '/' && i + 1 < sql.length && sql[i + 1] == '*') {
-                int close = i + 2;
-                while (close + 1 < sql.length && !(sql[close] == '*' && sql[close + 1] == '/')) {
-                    close++;
-                }
-                i = Math.min(close + 2, sql.length);
-            } else {
-                i++;
-            }
-        }
-        out.append(new String(sql, copied, sql.length - copied, StandardCharsets.UTF_8));
-        return out.toString();
     }
 
-    /** The index after a quoted literal's closing quote (or the end): backslash escapes, a doubled quote. */
-    private static int literalEnd(byte[] sql, int open) {
-        byte quote = sql[open];
-        int i = open + 1;
-        while (i < sql.length) {
-            if (sql[i] == '\\') {
-                i += 2;
-            } else if (sql[i] == quote) {
-                if (i + 1 < sql.length && sql[i + 1] == quote) {
-                    i += 2;
-                } else {
-                    return i + 1;
-                }
-            } else {
-                i++;
-            }
-        }
-        return sql.length;
-    }
-
-    /** A literal's value: MySQL's backslash escapes (\% and \_ keep their backslash, for LIKE) and doubled quotes. */
-    private static byte[] unescape(byte[] sql, int from, int to) {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(to - from);
-        for (int i = from; i < to; i++) {
-            byte b = sql[i];
-            if (b == '\\' && i + 1 < to) {
-                byte next = sql[++i];
-                switch (next) {
-                    case '0' -> out.write(0);
-                    case 'b' -> out.write('\b');
-                    case 'n' -> out.write('\n');
-                    case 'r' -> out.write('\r');
-                    case 't' -> out.write('\t');
-                    case 'Z' -> out.write(0x1A);
-                    case '%', '_' -> {
-                        out.write('\\');
-                        out.write(next);
-                    }
-                    default -> out.write(next);
-                }
-            } else if ((b == '\'' || b == '"') && i + 1 < to && sql[i + 1] == b) {
-                out.write(b);
-                i++;
-            } else {
-                out.write(b);
-            }
-        }
-        return out.toByteArray();
-    }
-
-    private static boolean isUtf8(byte[] bytes, int from, int to) {
+    private static org.mariadb.jdbc.Connection driver(Link link) {
         try {
-            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes, from, to - from));
-            return true;
-        } catch (java.nio.charset.CharacterCodingException e) {
-            return false;
+            return link.connection.unwrap(org.mariadb.jdbc.Connection.class);
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
         }
     }
 
-    private static int indexOf(byte[] bytes, byte b, int from) {
-        for (int i = from; i < bytes.length; i++) {
-            if (bytes[i] == b) {
-                return i;
-            }
-        }
-        return bytes.length;
-    }
-
-    private static boolean isWordChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    private static boolean isSpace(byte b) {
-        return b == ' ' || b == '\t' || b == '\n' || b == '\r';
-    }
-
-    /** mysqli_real_escape_string: backslash-escapes NUL, \n, \r, \, ', " and Ctrl-Z. */
+    /**
+     * mysqli_real_escape_string as mysqlnd does it: for the connection's charset (the last mysqli_set_charset), and,
+     * when the server reports NO_BACKSLASH_ESCAPES in its sql_mode, by doubling quotes instead of backslashes.
+     */
     @TruffleBoundary
-    private static TruffleString escape(byte[] input) {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(input.length + 16);
-        for (byte b : input) {
-            switch (b) {
-                case 0 -> out.writeBytes("\\0".getBytes(StandardCharsets.ISO_8859_1));
-                case '\n' -> out.writeBytes("\\n".getBytes(StandardCharsets.ISO_8859_1));
-                case '\r' -> out.writeBytes("\\r".getBytes(StandardCharsets.ISO_8859_1));
-                case '\\' -> out.writeBytes("\\\\".getBytes(StandardCharsets.ISO_8859_1));
-                case '\'' -> out.writeBytes("\\'".getBytes(StandardCharsets.ISO_8859_1));
-                case '"' -> out.writeBytes("\\\"".getBytes(StandardCharsets.ISO_8859_1));
-                case 0x1A -> out.writeBytes("\\Z".getBytes(StandardCharsets.ISO_8859_1));
-                default -> out.write(b);
-            }
-        }
-        return Str.of(out.toByteArray());
+    private static TruffleString escape(PhpObject object, byte[] input) {
+        Link link = state(object);
+        MysqlCharsets.Encoding charset = MysqlCharsets.find(link.charset);
+        boolean noBackslashEscapes = link.connection != null
+                && (driver(link).getContext().getServerStatus() & ServerStatus.NO_BACKSLASH_ESCAPES) != 0;
+        return Str.of(noBackslashEscapes ? MysqlCharsets.escapeQuotes(charset, input)
+                : MysqlCharsets.escapeSlashes(charset, input));
     }
 }
