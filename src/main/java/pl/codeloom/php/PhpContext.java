@@ -49,6 +49,9 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
     private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
+    /** How many of the first functions and classes declared are the built-ins (the prelude's come later). */
+    private final int internalFunctions;
+    private final int internalClasses;
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
     private final List<Object> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
@@ -84,6 +87,8 @@ public final class PhpContext {
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
         Builtins.install(this, language.builtins(debug));
+        internalFunctions = functions.size();
+        internalClasses = classes.size();
         PhpArray argv = new PhpArray();
         for (String argument : env.getApplicationArguments()) {
             argv.append(Str.of(argument));
@@ -291,6 +296,62 @@ public final class PhpContext {
             phpClass = classes.get(lowerName);
         }
         return phpClass;
+    }
+
+    /**
+     * The declared functions, the built-ins first then the script's, each in declaration order: what
+     * get_defined_functions() lists as "internal" and "user". The runtime's own helpers aren't listed.
+     */
+    @TruffleBoundary
+    public List<List<PhpFunction>> declaredFunctions() {
+        List<PhpFunction> internal = new java.util.ArrayList<>();
+        List<PhpFunction> user = new java.util.ArrayList<>();
+        int index = 0;
+        for (PhpFunction function : functions.values()) {
+            if (index++ < internalFunctions) {
+                if (!isRuntimeHelper(function.getName())) {
+                    internal.add(function);
+                }
+            } else {
+                user.add(function);
+            }
+        }
+        return List.of(internal, user);
+    }
+
+    /**
+     * The prelude's and built-ins' own helpers, which php-src doesn't have: their names start with "Truffle"
+     * (trait TruffleDateTime, functions in namespace Truffle, the php.Debug truffle_* functions).
+     */
+    private static boolean isRuntimeHelper(String name) {
+        return name.regionMatches(true, 0, "truffle", 0, "truffle".length());
+    }
+
+    /**
+     * The declared classes, interfaces and traits as get_declared_classes() and the like list them: the built-in
+     * ones first (with every prelude class, which php-src has from the start), then the script's in declaration
+     * order. Anonymous classes are listed once declared, where php-src binds them at compile time.
+     */
+    @TruffleBoundary
+    public List<PhpClass> declaredClasses() {
+        for (String file : language.preludeFiles()) {
+            if (preludeLoaded.add(file)) {
+                language.preludeRoot(file).getCallTarget().call(new Object[PhpFunction.ARG_FIRST]);
+            }
+        }
+        List<PhpClass> internal = new java.util.ArrayList<>();
+        List<PhpClass> user = new java.util.ArrayList<>();
+        int index = 0;
+        for (PhpClass phpClass : classes.values()) {
+            boolean builtin = index++ < internalClasses || language.preludeFile(phpClass.getLowerName()) != null;
+            if (!builtin) {
+                user.add(phpClass);
+            } else if (!isRuntimeHelper(phpClass.getName())) {
+                internal.add(phpClass);
+            }
+        }
+        internal.addAll(user);
+        return internal;
     }
 
     /** Runs the prelude file declaring a built-in class written in PHP, once; false if there's none to run. */

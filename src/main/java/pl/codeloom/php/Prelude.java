@@ -42,6 +42,11 @@ final class Prelude {
         }
     }
 
+    /** Every prelude file, each once. */
+    java.util.Collection<String> files() {
+        return new java.util.TreeSet<>(classes.values());
+    }
+
     /** The prelude file declaring the class, or null if it isn't a prelude class. */
     String fileOf(String lowerName) {
         return classes.get(lowerName);

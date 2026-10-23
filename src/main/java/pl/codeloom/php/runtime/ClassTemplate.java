@@ -70,6 +70,10 @@ public final class ClassTemplate {
     private final String unsupported;
     /** A trait's body, or null for a class or interface. */
     private final TraitBody traitBody;
+
+    public boolean isTrait() {
+        return traitBody != null;
+    }
     /** The used traits' members, translated for this class once (keyed by the trait's template). */
     private final Map<ClassTemplate, List<Member>> traitMembers = new ConcurrentHashMap<>();
 

@@ -223,6 +223,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return prelude.fileOf(lowerClassName);
     }
 
+    /** Every prelude file. */
+    public java.util.Collection<String> preludeFiles() {
+        return prelude.files();
+    }
+
     /** A prelude file's translation, shared by every context. */
     public FileRootNode preludeRoot(String file) {
         return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));

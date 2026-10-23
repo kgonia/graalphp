@@ -3,12 +3,14 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -18,6 +20,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.zip.CRC32;
 
 /** Types, constants, classes and objects, output, time, math and error handling. */
@@ -95,6 +98,16 @@ final class CoreFunctions {
             return value;
         });
         r.fn("function_exists", (context, a) -> context.findFunction(lowerName(Args.str(a, 0))) != null);
+        r.fn("get_defined_functions", (context, a) -> {
+            List<List<PhpFunction>> declared = context.declaredFunctions();
+            PhpArray result = new PhpArray();
+            result.put(ArrayKey.of(Str.of("internal")), functionNames(declared.get(0)));
+            result.put(ArrayKey.of(Str.of("user")), functionNames(declared.get(1)));
+            return result;
+        });
+        r.fn("get_declared_classes", (context, a) -> classNames(context, Kind.CLASS));
+        r.fn("get_declared_interfaces", (context, a) -> classNames(context, Kind.INTERFACE));
+        r.fn("get_declared_traits", (context, a) -> classNames(context, Kind.TRAIT));
         r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false, Args.bool(a, 1, true)));
         r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true, Args.bool(a, 1, true)));
         r.fn("spl_autoload_register", (context, a) -> {
@@ -397,6 +410,33 @@ final class CoreFunctions {
                                        boolean autoload) {
         PhpClass phpClass = autoload ? context.findClassAutoloading(Str.java(name)) : context.findClass(lowerName(name));
         return phpClass != null && phpClass.isInterface() == wantInterface;
+    }
+
+    /** get_defined_functions()' lists: names in lowercase, as php-src keys its function table. */
+    @TruffleBoundary
+    private static PhpArray functionNames(List<PhpFunction> functions) {
+        PhpArray names = new PhpArray();
+        for (PhpFunction function : functions) {
+            names.append(Str.of(Str.lower(function.getName())));
+        }
+        return names;
+    }
+
+    private enum Kind { CLASS, INTERFACE, TRAIT }
+
+    /** get_declared_classes(), _interfaces() or _traits(): the names as declared. */
+    @TruffleBoundary
+    private static PhpArray classNames(PhpContext context, Kind kind) {
+        PhpArray names = new PhpArray();
+        for (PhpClass phpClass : context.declaredClasses()) {
+            boolean trait = phpClass.getDeclaration() instanceof pl.codeloom.php.runtime.ClassTemplate template
+                    && template.isTrait();
+            Kind of = trait ? Kind.TRAIT : phpClass.isInterface() ? Kind.INTERFACE : Kind.CLASS;
+            if (of == kind) {
+                names.append(Str.of(phpClass.getName()));
+            }
+        }
+        return names;
     }
 
     @TruffleBoundary
