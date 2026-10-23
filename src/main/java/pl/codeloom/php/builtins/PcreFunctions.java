@@ -33,7 +33,7 @@ import java.util.Map;
  * preg_* on the system PCRE2 through FFM (D7), mirroring ext/pcre/php_pcre.c: the same delimiter and modifier
  * parsing, a per-regex cache of compiled and JIT-ed patterns, the same empty-match stepping and error codes.
  */
-final class PcreFunctions {
+public final class PcreFunctions {
     PcreFunctions() {
     }
 
@@ -71,8 +71,27 @@ final class PcreFunctions {
             "Malformed UTF-8 characters, possibly incorrectly encoded",
             "The offset did not correspond to the beginning of a valid UTF-8 code point", "JIT stack limit exhausted"};
 
-    /** Compiled patterns of this context, by regex string (php-src's per-process pcre cache). */
+    /**
+     * Compiled patterns shared by every context of the engine, by regex string (php-src's per-process pcre
+     * cache, with its 4096-entry bound): a compiled pattern and its JIT code are read-only while matching, so
+     * threads share them. Past the bound a pattern is compiled for the context alone and freed with it.
+     */
+    public static final class Patterns {
+        private static final int LIMIT = 4096;
+        private final java.util.concurrent.ConcurrentHashMap<TruffleString, Compiled> compiled =
+                new java.util.concurrent.ConcurrentHashMap<>();
+    }
+
+    /** A pattern as compiled: the code, its group names, and how it was compiled. */
+    private record Compiled(MemorySegment code, boolean jit, boolean utf, int groups, TruffleString[] names,
+                            byte[] pattern, int options, boolean shared) {
+    }
+
+    /** This context's view of the compiled patterns, by regex string, with their match blocks. */
     private final Map<TruffleString, Regex> regexes = new HashMap<>();
+    /** This context's match context and JIT stack (PCRE2 needs one stack per thread matching), made on first use. */
+    private MemorySegment matchContext;
+    private MemorySegment jitStack;
     /** Parsed preg_replace replacement strings. */
     private final Map<TruffleString, Template> templates = new HashMap<>();
     private final SubjectCache subjects = new SubjectCache();
@@ -80,6 +99,7 @@ final class PcreFunctions {
 
     /** A compiled pattern with its group names and a reusable match block (php-src's mdata, guarded the same way). */
     private static final class Regex {
+        final Compiled compiled;
         final MemorySegment code;
         /** JIT-compiled: matches without a UTF check go through pcre2_jit_match, as php-src does. */
         final boolean jit;
@@ -97,12 +117,15 @@ final class PcreFunctions {
         byte[] pattern;
         int options;
 
-        Regex(MemorySegment code, boolean jit, boolean utf, int groups, TruffleString[] names) {
-            this.code = code;
-            this.jit = jit;
-            this.utf = utf;
-            this.groups = groups;
-            this.names = names;
+        Regex(Compiled compiled) {
+            this.compiled = compiled;
+            this.code = compiled.code();
+            this.jit = compiled.jit();
+            this.utf = compiled.utf();
+            this.groups = compiled.groups();
+            this.names = compiled.names();
+            this.pattern = compiled.pattern();
+            this.options = compiled.options();
             this.matchData = Native.createMatchData(code);
             this.ovector = Native.ovector(matchData, groups);
         }
@@ -117,8 +140,8 @@ final class PcreFunctions {
      * call (a preg_replace_callback callback calling preg_* again) is never reused. Small subjects (most calls)
      * skip the cache: they are copied into a scratch buffer per nesting depth, slot -1 - depth.
      *
-     * <p>Buffers come from global or automatic arenas, never shared ones: a downcall acquires and releases a
-     * shared arena's session around the call, which took a 13-byte match from 12 to 23 ns.
+     * <p>Buffers come from automatic arenas, never shared ones: a downcall acquires and releases a shared
+     * arena's session around the call, which took a 13-byte match from 12 to 23 ns. They go with the context.
      */
     private static final class SubjectCache {
         private static final int LARGE = 4096;
@@ -157,7 +180,7 @@ final class PcreFunctions {
             }
             MemorySegment buffer = scratch[depth];
             if (buffer == null || buffer.byteSize() < subject.length) {
-                buffer = Arena.global().allocate(LARGE);
+                buffer = Arena.ofAuto().allocate(LARGE);
                 scratch[depth] = buffer;
             }
             MemorySegment.copy(subject, 0, buffer, ValueLayout.JAVA_BYTE, 0, subject.length);
@@ -203,11 +226,13 @@ final class PcreFunctions {
         final MemorySegment ovector;
         final boolean ownsMatchData;
         final SubjectCache subjects;
+        final MemorySegment matchContext;
 
-        Matcher(SubjectCache subjects, Regex regex, byte[] subject) {
+        Matcher(PcreFunctions pcre, Regex regex, byte[] subject) {
             this.regex = regex;
             this.subject = subject;
-            this.subjects = subjects;
+            this.subjects = pcre.subjects;
+            this.matchContext = pcre.matchContext();
             this.subjectSlot = Native.CRITICAL ? -1 : subjects.acquire(subject);
             this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : subjects.segment(subjectSlot);
             if (regex.matchDataInUse) {
@@ -228,10 +253,12 @@ final class PcreFunctions {
                         options);
             }
             if (!NativeClock.ENABLED && !DEBUG) {
-                return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData);
+                return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                        matchContext);
             }
             long t0 = System.nanoTime();
-            int rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData);
+            int rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                    matchContext);
             long t1 = System.nanoTime();
             long elapsed = t1 - t0;
             NativeClock.add(elapsed, System.nanoTime() - t1);
@@ -274,12 +301,40 @@ final class PcreFunctions {
 
         @Override
         public void close() {
-            if (!ownsMatchData) {
+            if (ownsMatchData) {
+                Native.free(Native.MATCH_DATA_FREE, matchData);
+            } else {
                 regex.matchDataInUse = false;
             }
             if (!Native.CRITICAL) {
                 subjects.release(subjectSlot);
             }
+        }
+    }
+
+    private MemorySegment matchContext() {
+        MemorySegment context = matchContext;
+        if (context == null) {
+            jitStack = Native.jitStack();
+            context = Native.matchContext(jitStack);
+            matchContext = context;
+        }
+        return context;
+    }
+
+    /** Frees this context's native memory: match blocks, the match context, patterns not shared. */
+    void close() {
+        for (Regex regex : regexes.values()) {
+            Native.free(Native.MATCH_DATA_FREE, regex.matchData);
+            if (!regex.compiled.shared()) {
+                Native.free(Native.CODE_FREE, regex.code);
+            }
+        }
+        regexes.clear();
+        if (matchContext != null) {
+            Native.free(Native.MATCH_CONTEXT_FREE, matchContext);
+            Native.free(Native.JIT_STACK_FREE, jitStack);
+            matchContext = null;
         }
     }
 
@@ -329,6 +384,30 @@ final class PcreFunctions {
         if (cached != null) {
             return cached;
         }
+        Patterns patterns = PhpContext.get(null).getLanguage().pcrePatterns();
+        Compiled compiled = patterns.compiled.get(regexString);
+        if (compiled == null) {
+            compiled = compileNew(regexString, patterns.compiled.size() < Patterns.LIMIT);
+            if (compiled.shared()) {
+                Compiled raced = patterns.compiled.putIfAbsent(regexString, compiled);
+                if (raced != null) {
+                    Native.free(Native.CODE_FREE, compiled.code());
+                    compiled = raced;
+                }
+            }
+        }
+        Regex regex = new Regex(compiled);
+        if (DEBUG) {
+            regex.source = Str.java(regexString);
+            if (regexes.isEmpty()) {
+                Runtime.getRuntime().addShutdownHook(new Thread(this::printStatistics));
+            }
+        }
+        regexes.put(regexString, regex);
+        return regex;
+    }
+
+    private static Compiled compileNew(TruffleString regexString, boolean shared) {
         byte[] regex = Str.readBytes(regexString);
         int p = 0;
         while (p < regex.length && isSpace(regex[p])) {
@@ -381,18 +460,8 @@ final class PcreFunctions {
         System.arraycopy(regex, patternStart, pattern, 0, pattern.length);
         MemorySegment code = Native.compile(pattern, options);
         int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
-        Regex compiled = new Regex(code, Native.jitCompile(code), (options & UTF) != 0, groups,
-                Native.names(code, groups));
-        compiled.pattern = pattern;
-        compiled.options = options;
-        if (DEBUG) {
-            compiled.source = Str.java(regexString);
-            if (regexes.isEmpty()) {
-                Runtime.getRuntime().addShutdownHook(new Thread(this::printStatistics));
-            }
-        }
-        regexes.put(regexString, compiled);
-        return compiled;
+        return new Compiled(code, Native.jitCompile(code), (options & UTF) != 0, groups, Native.names(code, groups),
+                pattern, options, shared);
     }
 
     /** The string's bytes: its own backing array when it has one of exactly its size (read-only!), else a copy. */
@@ -508,7 +577,7 @@ final class PcreFunctions {
             setOrder = new PhpArray();
         }
         long matched = 0;
-        try (Matcher m = new Matcher(subjects, regex, subject)) {
+        try (Matcher m = new Matcher(this, regex, subject)) {
             long start = offset;
             int rc = m.match(start, m.firstOptions());
             while (true) {
@@ -636,7 +705,7 @@ final class PcreFunctions {
         byte[] subject = subjectBytes(subjectString);
         Template template = callback ? null : template(Convert.toStr(replacement));
         ByteBuilder out = null;
-        try (Matcher m = new Matcher(subjects, regex, subject)) {
+        try (Matcher m = new Matcher(this, regex, subject)) {
             int lastEnd = 0;
             long start = 0;
             int rc = m.match(start, m.firstOptions());
@@ -797,7 +866,7 @@ final class PcreFunctions {
         lastError = 0;
         PhpArray result = new PhpArray();
         int lastMatch = 0;
-        try (Matcher m = new Matcher(subjects, regex, subject)) {
+        try (Matcher m = new Matcher(this, regex, subject)) {
             long start = 0;
             int options = m.firstOptions();
             boolean retried = false;
@@ -897,7 +966,7 @@ final class PcreFunctions {
         for (int p = input.firstPosition(); p >= 0; p = input.nextPosition(p)) {
             Object value = input.valueAt(p);
             int rc;
-            try (Matcher m = new Matcher(subjects, regex, subjectBytes(Convert.toStr(value)))) {
+            try (Matcher m = new Matcher(this, regex, subjectBytes(Convert.toStr(value)))) {
                 rc = m.match(0, m.firstOptions());
             }
             if (rc < 0 && rc != ERROR_NOMATCH) {
@@ -963,8 +1032,10 @@ final class PcreFunctions {
                 ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS);
         private static final MethodHandle JIT_STACK_ASSIGN = LINKER.downcallHandle(find("pcre2_jit_stack_assign_8"),
                 FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-        /** pcre.backtrack_limit and pcre.recursion_limit defaults, and php-src's 32K..192K JIT stack. */
-        private static final MemorySegment MATCH_CONTEXT_PTR = matchContext();
+        static final MethodHandle CODE_FREE = freeHandle("pcre2_code_free_8");
+        static final MethodHandle MATCH_DATA_FREE = freeHandle("pcre2_match_data_free_8");
+        static final MethodHandle MATCH_CONTEXT_FREE = freeHandle("pcre2_match_context_free_8");
+        static final MethodHandle JIT_STACK_FREE = freeHandle("pcre2_jit_stack_free_8");
 
         private static String libraryPath() {
             String configured = System.getProperty("php.pcre2");
@@ -986,13 +1057,33 @@ final class PcreFunctions {
             return LINKER.downcallHandle(find(name), FunctionDescriptor.of(result, arguments));
         }
 
-        private static MemorySegment matchContext() {
+        private static MethodHandle freeHandle(String name) {
+            return LINKER.downcallHandle(find(name), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+        }
+
+        static void free(MethodHandle free, MemorySegment pointer) {
+            try {
+                free.invokeExact(pointer);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** php-src's 32K..192K JIT stack; one per context, as only one thread matches with it at a time. */
+        static MemorySegment jitStack() {
+            try {
+                return (MemorySegment) JIT_STACK.invokeExact(32L * 1024, 192L * 1024, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** A match context with pcre.backtrack_limit and pcre.recursion_limit's defaults, matching on stack. */
+        static MemorySegment matchContext(MemorySegment stack) {
             try {
                 MemorySegment context = (MemorySegment) MATCH_CONTEXT.invokeExact(MemorySegment.NULL);
                 int ignored = (int) SET_MATCH_LIMIT.invokeExact(context, 1_000_000);
                 ignored = (int) SET_DEPTH_LIMIT.invokeExact(context, 100_000);
-                MemorySegment stack = (MemorySegment) JIT_STACK.invokeExact(32L * 1024, 192L * 1024,
-                        MemorySegment.NULL);
                 JIT_STACK_ASSIGN.invokeExact(context, MemorySegment.NULL, stack);
                 return context;
             } catch (Throwable t) {
@@ -1095,13 +1186,13 @@ final class PcreFunctions {
          * pcre2_jit_match; the first UTF-checked match and anchored retries after an empty match take pcre2_match.
          */
         static int match(MemorySegment code, boolean jit, MemorySegment subject, long length, long start,
-                         int options, MemorySegment matchData) {
+                         int options, MemorySegment matchData, MemorySegment matchContext) {
             try {
                 if (jit && options == NO_UTF_CHECK) {
                     return (int) JIT_MATCH.invokeExact(code, subject, length, start, options, matchData,
-                            MATCH_CONTEXT_PTR);
+                            matchContext);
                 }
-                return (int) MATCH.invokeExact(code, subject, length, start, options, matchData, MATCH_CONTEXT_PTR);
+                return (int) MATCH.invokeExact(code, subject, length, start, options, matchData, matchContext);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }

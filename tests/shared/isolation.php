@@ -46,4 +46,20 @@ init_once();
 if (!isset($shared)) {
     $bad++;
 }
+
+// Regular expressions: the compiled patterns are shared by the engine's threads, each context matches on its own
+// JIT stack. A backtracking pattern on a long subject uses the stack, so threads sharing one would corrupt it.
+$subject = str_repeat('ab', 2000) . 'c' . uniqid();
+for ($i = 0; $i < 300; $i++) {
+    $word = 'w' . ($i % 7);
+    if (preg_match('/^((?:a|ab)+?)(b*)c/', $subject, $m) !== 1 || strlen($m[1]) !== 3999 || $m[2] !== 'b') {
+        $bad++;
+    }
+    if (preg_replace('/(\w)(\d)/', '$2$1', "$word-x9") !== strrev(substr($word, 0, 2)) . '-9x') {
+        $bad++;
+    }
+    if (preg_match("/$word(\\d*)/", "a{$word}42", $m) !== 1 || $m[1] !== '42') {
+        $bad++;
+    }
+}
 echo $bad === 0 ? "isolated\n" : "corrupted $bad\n";

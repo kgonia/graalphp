@@ -19,6 +19,7 @@ public final class BuiltinState {
 
     /** Closes what the context left open. */
     public void close() {
+        pcre.close();
         for (java.sql.Connection connection : openConnections) {
             try {
                 connection.close();

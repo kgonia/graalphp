@@ -83,6 +83,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final NameIds classIds = new NameIds();
     /** Interned class identities (see ClassKey). */
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
+    /** Compiled regular expressions, shared by the contexts (and threads) of the engine. */
+    private final pl.codeloom.php.builtins.PcreFunctions.Patterns pcrePatterns =
+            new pl.codeloom.php.builtins.PcreFunctions.Patterns();
 
     /** Built-in functions are language-level: built on first use, then declared by every context. */
     private volatile Builtins.Table builtins;
@@ -180,9 +183,16 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return new ScriptRootNode(this, request.getSource().getPath()).getCallTarget();
     }
 
+    public pl.codeloom.php.builtins.PcreFunctions.Patterns pcrePatterns() {
+        return pcrePatterns;
+    }
+
     @Override
     protected void finalizeContext(PhpContext context) {
-        context.endRequest();
-        context.builtinState().close();
+        try {
+            context.endRequest();
+        } finally {
+            context.builtinState().close();
+        }
     }
 }
