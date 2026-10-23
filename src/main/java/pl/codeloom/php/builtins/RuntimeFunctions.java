@@ -78,7 +78,7 @@ final class RuntimeFunctions {
         });
         r.fn("headers_sent", (context, a) -> context.response() != null && context.response().isSent());
         r.fn("headers_list", (context, a) -> context.response() == null ? new PhpArray()
-                : list(context.response().headers().toArray(new String[0])));
+                : PhpArray.ofStrings(context.response().headers().toArray(new String[0])));
         r.fn("http_response_code", (context, a) -> {
             if (context.response() == null) {
                 return Boolean.FALSE;
@@ -97,7 +97,7 @@ final class RuntimeFunctions {
         r.fn("phpversion", a -> Args.has(a, 0) ? (Object) Boolean.FALSE : Str.of("8.5.12"));
         r.fn("php_uname", a -> Str.of(Args.str(a, 0, Str.of("a")).equals(Str.of("s")) ? "Linux"
                 : "Linux localhost 6.0 #1 SMP x86_64"));
-        r.fn("get_loaded_extensions", a -> list(EXTENSIONS.toArray(new String[0])));
+        r.fn("get_loaded_extensions", a -> PhpArray.ofStrings(EXTENSIONS.toArray(new String[0])));
         r.fn("ini_get_all", a -> new PhpArray());
         r.fn("error_get_last", a -> PhpNull.NULL);
         r.fn("error_clear_last", a -> PhpNull.NULL);
@@ -242,11 +242,4 @@ final class RuntimeFunctions {
         return Boolean.TRUE;
     }
 
-    private static PhpArray list(String... items) {
-        PhpArray array = new PhpArray();
-        for (String item : items) {
-            array.append(Str.of(item));
-        }
-        return array;
-    }
 }

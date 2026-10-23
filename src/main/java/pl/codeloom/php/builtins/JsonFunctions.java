@@ -598,7 +598,7 @@ final class JsonFunctions {
                         }
                         if ((flags & INVALID_UTF8_SUBSTITUTE) != 0) {
                             if ((flags & UNESCAPED_UNICODE) != 0) {
-                                out.writeBytes(new byte[]{(byte) 0xEF, (byte) 0xBF, (byte) 0xBD});
+                                out.write(new byte[]{(byte) 0xEF, (byte) 0xBF, (byte) 0xBD});
                             } else {
                                 ascii("\\ufffd");
                             }

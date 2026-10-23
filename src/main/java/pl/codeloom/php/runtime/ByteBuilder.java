@@ -93,10 +93,6 @@ public final class ByteBuilder {
         write(bytes, 0, bytes.length);
     }
 
-    public void writeBytes(byte[] bytes) {
-        write(bytes, 0, bytes.length);
-    }
-
     /** Appends a string's bytes, read in place (no intermediate copy, also for substrings). */
     public void write(TruffleString s) {
         InternalByteArray bytes = s.getInternalByteArrayUncached(Str.ENC);
@@ -106,7 +102,7 @@ public final class ByteBuilder {
     /** Appends an int in decimal, as PHP converts it to a string. */
     public void writeLong(long value) {
         if (value == Long.MIN_VALUE) {
-            writeBytes(Long.toString(value).getBytes(StandardCharsets.ISO_8859_1));
+            write(Long.toString(value).getBytes(StandardCharsets.ISO_8859_1));
             return;
         }
         if (value < 0) {

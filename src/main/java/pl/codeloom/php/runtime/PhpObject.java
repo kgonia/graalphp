@@ -1,6 +1,5 @@
 package pl.codeloom.php.runtime;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
@@ -97,7 +96,6 @@ public final class PhpObject extends DynamicObject {
     public Object callMethod(String lowerName, Object... args) {
         PhpFunction method = phpClass.findMethod(lowerName);
         if (method == null) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
         }
         return method.invoke(this, phpClass, args);
@@ -111,7 +109,6 @@ public final class PhpObject extends DynamicObject {
     public TruffleString toPhpString() {
         PhpFunction toString = phpClass.findMethod("__tostring");
         if (toString == null) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Object of class " + phpClass.getName() + " could not be converted to string");
         }
         return Convert.toStr(toString.invoke(this, phpClass));

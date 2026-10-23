@@ -84,6 +84,16 @@ public final class PhpArray implements TruffleObject {
         return array;
     }
 
+    /** A packed list of strings (algorithm names, extension names...). */
+    @TruffleBoundary
+    public static PhpArray ofStrings(String... items) {
+        PhpArray array = new PhpArray(items.length);
+        for (String item : items) {
+            array.append(Str.of(item));
+        }
+        return array;
+    }
+
     // ---- copy-on-write ----
 
     public void addHolder() {
@@ -367,7 +377,6 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     private void appendSlow(Object value) {
         if (nextIndex == Long.MAX_VALUE && containsKey(Long.MAX_VALUE)) {
-            CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot add element to the array as the next element is already occupied");
         }
         countIn(value);

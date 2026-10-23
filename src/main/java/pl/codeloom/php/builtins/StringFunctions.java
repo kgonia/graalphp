@@ -935,7 +935,7 @@ public final class StringFunctions {
                     case '\f' -> "f";
                     default -> String.format("%03o", u);
                 };
-                out.writeBytes(escape.getBytes(StandardCharsets.ISO_8859_1));
+                out.write(escape.getBytes(StandardCharsets.ISO_8859_1));
             } else {
                 out.write(c);
             }
@@ -998,7 +998,7 @@ public final class StringFunctions {
         ByteBuilder out = new ByteBuilder(b.length + 16);
         for (int i = 0; i < b.length; i++) {
             if (b[i] == '\r' || b[i] == '\n') {
-                out.writeBytes("<br />".getBytes(StandardCharsets.ISO_8859_1));
+                out.write("<br />".getBytes(StandardCharsets.ISO_8859_1));
                 out.write(b[i]);
                 if (i + 1 < b.length && (b[i + 1] == '\r' || b[i + 1] == '\n') && b[i + 1] != b[i]) {
                     out.write(b[++i]);

@@ -671,7 +671,7 @@ final class DateFunctions {
                     continue;
                 }
             }
-            bytes.writeBytes(out.toString().getBytes(StandardCharsets.ISO_8859_1));
+            bytes.write(out.toString().getBytes(StandardCharsets.ISO_8859_1));
         }
         return Str.of(bytes.toByteArray());
     }

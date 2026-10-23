@@ -52,17 +52,10 @@ final class EncodingFunctions {
         r.fn("hash_hmac", a -> hmac(Str.java(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), Str.bytes(Args.str(a, 2)),
                 Args.bool(a, 3, false)));
         r.fn("hash_equals", a -> MessageDigest.isEqual(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
-        r.fn("hash_algos", a -> list("md5", "sha1", "sha224", "sha256", "sha384", "sha512", "crc32b"));
-        r.fn("hash_hmac_algos", a -> list("md5", "sha1", "sha224", "sha256", "sha384", "sha512"));
+        r.fn("hash_algos", a -> PhpArray.ofStrings("md5", "sha1", "sha224", "sha256", "sha384", "sha512", "crc32b"));
+        r.fn("hash_hmac_algos", a -> PhpArray.ofStrings("md5", "sha1", "sha224", "sha256", "sha384", "sha512"));
     }
 
-    private static PhpArray list(String... names) {
-        PhpArray array = new PhpArray();
-        for (String name : names) {
-            array.append(Str.of(name));
-        }
-        return array;
-    }
 
     // ---- serialize ----
 

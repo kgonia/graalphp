@@ -936,7 +936,7 @@ public final class PcreFunctions {
         ByteBuilder out = new ByteBuilder(bytes.length + 8);
         for (byte b : bytes) {
             if (b == 0) {
-                out.writeBytes(new byte[]{'\\', '0', '0', '0'});
+                out.write(new byte[]{'\\', '0', '0', '0'});
                 continue;
             }
             if (".\\+*?[^]$(){}=!<>|:-#".indexOf(b) >= 0 || (b & 0xFF) == delim) {

@@ -56,11 +56,11 @@ final class Dump {
     }
 
     private void ascii(String text) {
-        out.writeBytes(text.getBytes(StandardCharsets.ISO_8859_1));
+        out.write(text.getBytes(StandardCharsets.ISO_8859_1));
     }
 
     private void utf8(String text) {
-        out.writeBytes(text.getBytes(StandardCharsets.UTF_8));
+        out.write(text.getBytes(StandardCharsets.UTF_8));
     }
 
     private void spaces(int count) {
