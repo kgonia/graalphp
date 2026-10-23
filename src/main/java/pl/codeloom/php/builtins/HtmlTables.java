@@ -1,11 +1,12 @@
 package pl.codeloom.php.builtins;
 
+import pl.codeloom.php.runtime.Str;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -71,7 +72,7 @@ final class HtmlTables {
         private static Map<String, Integer> load() {
             Map<String, Integer> map = new HashMap<>();
             for (String[] line : lines("charset", null)) {
-                map.put(line[1].toLowerCase(Locale.ROOT), Integer.parseInt(line[2], 16));
+                map.put(Str.lower(line[1]), Integer.parseInt(line[2], 16));
             }
             return map;
         }
@@ -91,7 +92,7 @@ final class HtmlTables {
 
     /** The charset for a name in charset_map, or -1. */
     static int charset(String name) {
-        Integer cs = Charsets.BY_NAME.get(name.toLowerCase(Locale.ROOT));
+        Integer cs = Charsets.BY_NAME.get(Str.lower(name));
         return cs == null ? -1 : cs;
     }
 

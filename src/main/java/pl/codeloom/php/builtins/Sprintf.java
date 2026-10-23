@@ -92,7 +92,7 @@ final class Sprintf {
             }
             int argnum = number();
             if (argnum <= 0) {
-                throw new PhpError("ValueError: Argument number specifier must be greater than zero and less than "
+                throw new PhpError("ValueError", "Argument number specifier must be greater than zero and less than "
                         + Integer.MAX_VALUE);
             }
             pos++;
@@ -154,7 +154,7 @@ final class Sprintf {
                             format.pos++;
                             padding = f[format.pos];
                         } else {
-                            throw new PhpError("ValueError: Missing padding character");
+                            throw new PhpError("ValueError", "Missing padding character");
                         }
                     } else {
                         break;
@@ -171,16 +171,16 @@ final class Sprintf {
                         continue;
                     }
                     if (!(args[widthArgnum] instanceof Long w)) {
-                        throw new PhpError("ValueError: Width must be an integer");
+                        throw new PhpError("ValueError", "Width must be an integer");
                     }
                     if (w < 0 || w > Integer.MAX_VALUE) {
-                        throw new PhpError("ValueError: Width must be between 0 and " + Integer.MAX_VALUE);
+                        throw new PhpError("ValueError", "Width must be between 0 and " + Integer.MAX_VALUE);
                     }
                     width = (int) (long) w;
                 } else if (format.isDigit()) {
                     width = format.number();
                     if (width < 0) {
-                        throw new PhpError("ValueError: Width must be between 0 and " + Integer.MAX_VALUE);
+                        throw new PhpError("ValueError", "Width must be between 0 and " + Integer.MAX_VALUE);
                     }
                 } else {
                     width = 0;
@@ -199,17 +199,17 @@ final class Sprintf {
                             continue;
                         }
                         if (!(args[precisionArgnum] instanceof Long p)) {
-                            throw new PhpError("ValueError: Precision must be an integer");
+                            throw new PhpError("ValueError", "Precision must be an integer");
                         }
                         if (p < -1 || p > Integer.MAX_VALUE) {
-                            throw new PhpError("ValueError: Precision must be between -1 and " + Integer.MAX_VALUE);
+                            throw new PhpError("ValueError", "Precision must be between -1 and " + Integer.MAX_VALUE);
                         }
                         precision = (int) (long) p;
                         expprec = true;
                     } else if (format.isDigit()) {
                         precision = format.number();
                         if (precision < 0) {
-                            throw new PhpError("ValueError: Precision must be between 0 and " + Integer.MAX_VALUE);
+                            throw new PhpError("ValueError", "Precision must be between 0 and " + Integer.MAX_VALUE);
                         }
                         expprec = true;
                     } else {
@@ -231,7 +231,7 @@ final class Sprintf {
             }
             int spec = format.peek();
             if (expprec && precision == -1 && spec != 'g' && spec != 'G' && spec != 'h' && spec != 'H') {
-                throw new PhpError("ValueError: Precision -1 is only supported for %g, %G, %h and %H");
+                throw new PhpError("ValueError", "Precision -1 is only supported for %g, %G, %h and %H");
             }
             Object value = args[argnum];
             switch (spec) {
@@ -278,20 +278,20 @@ final class Sprintf {
                     break;
                 default:
                     if (spec == 0 && format.pos >= length) {
-                        throw new PhpError("ValueError: Missing format specifier at end of string");
+                        throw new PhpError("ValueError", "Missing format specifier at end of string");
                     }
                     // the message is a C string: a NUL specifier ends it
-                    throw new PhpError("ValueError: Unknown format specifier \"" + (spec == 0 ? ""
+                    throw new PhpError("ValueError", "Unknown format specifier \"" + (spec == 0 ? ""
                             : new String(new byte[]{(byte) spec}, StandardCharsets.ISO_8859_1) + "\""));
             }
             format.pos++;
         }
         if (maxMissingArgnum >= 0) {
             if (nbAdditional == -1) {
-                throw new PhpError("ValueError: The arguments array must contain " + (maxMissingArgnum + 1)
+                throw new PhpError("ValueError", "The arguments array must contain " + (maxMissingArgnum + 1)
                         + " items, " + args.length + " given");
             }
-            throw new PhpError("ArgumentCountError: " + (maxMissingArgnum + nbAdditional + 1)
+            throw new PhpError("ArgumentCountError", (maxMissingArgnum + nbAdditional + 1)
                     + " arguments are required, " + (args.length + nbAdditional) + " given");
         }
         return Str.of(out.toByteArray());

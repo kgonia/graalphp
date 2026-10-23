@@ -27,7 +27,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -199,8 +198,8 @@ final class DateFunctions {
                             eras[i - 2] = new Era(Long.parseLong(fields[i].substring(0, eq)), offsets, dsts,
                                     abbreviations);
                         }
-                        ZONES.put(fields[1].toLowerCase(Locale.ROOT), eras);
-                        CANONICAL.put(fields[1].toLowerCase(Locale.ROOT), fields[1]);
+                        ZONES.put(Str.lower(fields[1]), eras);
+                        CANONICAL.put(Str.lower(fields[1]), fields[1]);
                     }
                     default -> {
                     }
@@ -247,7 +246,7 @@ final class DateFunctions {
             }
             return new PhpZone(ZONETYPE_OFFSET, offsetName(total), ZoneOffset.ofTotalSeconds(total), total, false);
         }
-        String lower = name.toLowerCase(Locale.ROOT);
+        String lower = Str.lower(name);
         if (lower.equals("utc")) {
             return new PhpZone(ZONETYPE_ID, "UTC", ZoneId.of("UTC"), 0, false);
         }
@@ -256,7 +255,7 @@ final class DateFunctions {
             abbreviation = new int[]{0, 0};
         }
         if (abbreviation != null) {
-            return new PhpZone(ZONETYPE_ABBR, name.toUpperCase(Locale.ROOT),
+            return new PhpZone(ZONETYPE_ABBR, Str.upper(name),
                     ZoneOffset.ofTotalSeconds(abbreviation[0]), abbreviation[0] - abbreviation[1] * 3600,
                     abbreviation[1] != 0);
         }
@@ -314,7 +313,7 @@ final class DateFunctions {
             }
             default: {
                 int total = zone.rules().getRules().getOffset(Instant.ofEpochSecond(timestamp)).getTotalSeconds();
-                Era[] eras = TzTables.ZONES.get(zone.name().toLowerCase(Locale.ROOT));
+                Era[] eras = TzTables.ZONES.get(Str.lower(zone.name()));
                 if (eras != null) {
                     int at = 0;
                     while (at + 1 < eras.length && eras[at + 1].start() <= timestamp) {

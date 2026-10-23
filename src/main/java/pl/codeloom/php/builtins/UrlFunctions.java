@@ -35,7 +35,7 @@ final class UrlFunctions {
         }
         if (component > -1) {
             if (component > FRAGMENT) {
-                throw new PhpError("ValueError: parse_url(): Argument #2 ($component) must be a valid URL component "
+                throw new PhpError("ValueError", "parse_url(): Argument #2 ($component) must be a valid URL component "
                         + "identifier, " + component + " given");
             }
             Object value = url[(int) component];
