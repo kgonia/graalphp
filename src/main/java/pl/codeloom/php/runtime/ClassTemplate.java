@@ -158,6 +158,7 @@ public final class ClassTemplate {
             if (!(trait.getDeclaration() instanceof ClassTemplate template) || template.traitBody == null) {
                 throw new PhpError(phpClass.getName() + " cannot use " + trait.getName() + " - it is not a trait");
             }
+            phpClass.addTrait(trait);
             String traitLower = trait.getLowerName();
             List<Member> imported = traitMembers.computeIfAbsent(template,
                     t -> t.traitBody.members(name, parentName));

@@ -39,6 +39,8 @@ public final class PhpClass {
     /** What declared this class: its ClassTemplate, or a built-in class's name (see {@link ClassKey}). */
     private final Object declaration;
     private final List<PhpClass> interfaces = new ArrayList<>();
+    /** The traits whose members this class imported, nested ones included, in import order. */
+    private final List<PhpClass> traits = new ArrayList<>();
     /** The language-level identity inline caches key on; made on first use, once the class is complete. */
     private ClassKey key;
     /** The property defaults, evaluated once (declaredDefaults order). */
@@ -101,6 +103,11 @@ public final class PhpClass {
         for (Map.Entry<String, PhpFunction> method : iface.methods.entrySet()) {
             methods.putIfAbsent(method.getKey(), method.getValue());
         }
+    }
+
+    /** Records a trait this class imports members from: the trait is part of the class's key. */
+    public void addTrait(PhpClass trait) {
+        traits.add(trait);
     }
 
     /** What declared this class: its ClassTemplate, or a built-in class's name. */
@@ -215,13 +222,17 @@ public final class PhpClass {
 
     @TruffleBoundary
     private ClassKey makeKey() {
-        List<ClassKey> interfaceKeys = new ArrayList<>(interfaces.size());
-        for (PhpClass iface : interfaces) {
-            interfaceKeys.add(iface.getKey());
-        }
-        key = PhpContext.get(null).getLanguage().classKey(
-                new ClassKey.Id(declaration, parent == null ? null : parent.getKey(), List.copyOf(interfaceKeys)));
+        key = PhpContext.get(null).getLanguage().classKey(new ClassKey.Id(declaration,
+                parent == null ? null : parent.getKey(), keys(interfaces), keys(traits)));
         return key;
+    }
+
+    private static List<ClassKey> keys(List<PhpClass> classes) {
+        List<ClassKey> keys = new ArrayList<>(classes.size());
+        for (PhpClass phpClass : classes) {
+            keys.add(phpClass.getKey());
+        }
+        return List.copyOf(keys);
     }
 
     /** The property defaults in declaredNames order, evaluated on first use and kept (don't modify). */
