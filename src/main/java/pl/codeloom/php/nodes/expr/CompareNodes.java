@@ -1,10 +1,9 @@
 package pl.codeloom.php.nodes.expr;
 
-import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
-import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.UnexpectedResultException;
-import com.oracle.truffle.api.profiles.ValueProfile;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Fallback;
+import com.oracle.truffle.api.dsl.NodeChild;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
@@ -12,50 +11,61 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
 /**
- * Comparison operators. Fast paths cover same-typed ints, floats and strings; everything else goes through
- * php-src's zend_compare rules in {@link Convert}.
+ * Comparison operators, specialized on operand types: a site compiles the type pairs it has met. Everything else
+ * goes through php-src's zend_compare rules in {@link Convert}. An int meets a float as a float (the implicit
+ * cast), which is PHP 8's rule for `==` and `<`, but not for `===`, which has no float specialization.
  */
 public final class CompareNodes {
     private CompareNodes() {
     }
 
-    /** `===`, or `!==` with negate. */
-    public static final class IdenticalNode extends ExprNode {
+    @NodeChild("left")
+    @NodeChild("right")
+    public abstract static class CompareNode extends ExprNode {
         @Override
         public boolean isBooleanValued() {
             return true;
         }
+    }
 
-        @Child private ExprNode left;
-        @Child private ExprNode right;
-        @Child private TruffleString.EqualNode equal = TruffleString.EqualNode.create();
-        /** Operand class profiles: a site comparing one type pair compiles to that comparison only. */
-        private final ValueProfile leftType = ValueProfile.createClassProfile();
-        private final ValueProfile rightType = ValueProfile.createClassProfile();
+    /** `===`, or `!==` with negate. */
+    public abstract static class IdenticalNode extends CompareNode {
         private final boolean negate;
 
-        public IdenticalNode(ExprNode left, ExprNode right, boolean negate) {
-            this.left = left;
-            this.right = right;
+        protected IdenticalNode(boolean negate) {
             this.negate = negate;
         }
 
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+        public static IdenticalNode create(ExprNode left, ExprNode right, boolean negate) {
+            return CompareNodesFactory.IdenticalNodeGen.create(negate, left, right);
         }
 
-        @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            return identical(leftType.profile(left.execute(frame)), rightType.profile(right.execute(frame))) != negate;
+        @Specialization
+        protected boolean longs(long a, long b) {
+            return (a == b) != negate;
         }
 
-        private boolean identical(Object a, Object b) {
+        @Specialization
+        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
+            return equal.execute(a, b, Str.ENC) != negate;
+        }
+
+        @Specialization
+        protected boolean booleans(boolean a, boolean b) {
+            return (a == b) != negate;
+        }
+
+        @Fallback
+        protected boolean other(Object a, Object b) {
+            return identical(a, b) != negate;
+        }
+
+        private static boolean identical(Object a, Object b) {
             if (a instanceof Long x) {
                 return b instanceof Long y && x.longValue() == y.longValue();
             }
             if (a instanceof TruffleString x) {
-                return b instanceof TruffleString y && equal.execute(x, y, Str.ENC);
+                return b instanceof TruffleString y && x.equals(y);
             }
             if (a instanceof Boolean x) {
                 return b instanceof Boolean y && x.booleanValue() == y.booleanValue();
@@ -71,50 +81,42 @@ public final class CompareNodes {
     }
 
     /** `==`, or `!=` with negate. */
-    public static final class EqualNode extends ExprNode {
-        @Override
-        public boolean isBooleanValued() {
-            return true;
-        }
-
-        @Child private ExprNode left;
-        @Child private ExprNode right;
-        @Child private TruffleString.EqualNode equal = TruffleString.EqualNode.create();
-        /** Operand class profiles: a site comparing one type pair compiles to that comparison only. */
-        private final ValueProfile leftType = ValueProfile.createClassProfile();
-        private final ValueProfile rightType = ValueProfile.createClassProfile();
+    public abstract static class EqualNode extends CompareNode {
         private final boolean negate;
 
-        public EqualNode(ExprNode left, ExprNode right, boolean negate) {
-            this.left = left;
-            this.right = right;
+        protected EqualNode(boolean negate) {
             this.negate = negate;
         }
 
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+        public static EqualNode create(ExprNode left, ExprNode right, boolean negate) {
+            return CompareNodesFactory.EqualNodeGen.create(negate, left, right);
         }
 
-        @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            return equals(leftType.profile(left.execute(frame)), rightType.profile(right.execute(frame))) != negate;
+        @Specialization
+        protected boolean longs(long a, long b) {
+            return (a == b) != negate;
         }
 
-        private boolean equals(Object a, Object b) {
-            if (a instanceof Long x && b instanceof Long y) {
-                return x.longValue() == y.longValue();
-            }
-            if (a instanceof TruffleString x && b instanceof TruffleString y) {
-                if (equal.execute(x, y, Str.ENC)) {
-                    return true;
-                }
-                return mayBeNumeric(x) && mayBeNumeric(y) && Convert.looseEquals(x, y);
-            }
-            if (a instanceof Boolean x && b instanceof Boolean y) {
-                return x.booleanValue() == y.booleanValue();
-            }
-            return Convert.looseEquals(a, b);
+        @Specialization
+        protected boolean doubles(double a, double b) {
+            return (a == b) != negate;
+        }
+
+        @Specialization
+        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
+            boolean result = equal.execute(a, b, Str.ENC)
+                    || mayBeNumeric(a) && mayBeNumeric(b) && Convert.looseEquals(a, b);
+            return result != negate;
+        }
+
+        @Specialization
+        protected boolean booleans(boolean a, boolean b) {
+            return (a == b) != negate;
+        }
+
+        @Fallback
+        protected boolean other(Object a, Object b) {
+            return Convert.looseEquals(a, b) != negate;
         }
 
         /** Cheap pre-check: a numeric string starts with whitespace, a sign, a digit or a dot. */
@@ -131,96 +133,56 @@ public final class CompareNodes {
     /**
      * `<` and `<=` (orEqual); with swapped, `>` and `>=` as `right < left`. Operands still evaluate left first.
      */
-    public static final class LessNode extends ExprNode {
-        @Override
-        public boolean isBooleanValued() {
-            return true;
-        }
-
-        @Child private ExprNode left;
-        @Child private ExprNode right;
+    public abstract static class LessNode extends CompareNode {
         private final boolean orEqual;
         private final boolean swapped;
 
-        /** Ints on both sides until shown otherwise: loop conditions compare unboxed. */
-        @CompilationFinal private boolean speculateLong = true;
-
-        public LessNode(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
-            this.left = left;
-            this.right = right;
+        protected LessNode(boolean orEqual, boolean swapped) {
             this.orEqual = orEqual;
             this.swapped = swapped;
         }
 
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
+        public static LessNode create(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
+            return CompareNodesFactory.LessNodeGen.create(orEqual, swapped, left, right);
         }
 
-        @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            if (speculateLong) {
-                long first;
-                try {
-                    first = left.executeLong(frame);
-                } catch (UnexpectedResultException e) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    speculateLong = false;
-                    return compareGeneric(e.getResult(), right.execute(frame));
-                }
-                long second;
-                try {
-                    second = right.executeLong(frame);
-                } catch (UnexpectedResultException e) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    speculateLong = false;
-                    return compareGeneric(first, e.getResult());
-                }
-                long a = swapped ? second : first;
-                long b = swapped ? first : second;
-                return orEqual ? a <= b : a < b;
-            }
-            return compareGeneric(left.execute(frame), right.execute(frame));
+        @Specialization
+        protected boolean longs(long first, long second) {
+            long a = swapped ? second : first;
+            long b = swapped ? first : second;
+            return orEqual ? a <= b : a < b;
         }
 
-        private boolean compareGeneric(Object first, Object second) {
-            Object a = swapped ? second : first;
-            Object b = swapped ? first : second;
-            if (a instanceof Long x && b instanceof Long y) {
-                return orEqual ? x <= y : x < y;
-            }
-            if (a instanceof Double x && b instanceof Double y) {
-                return orEqual ? x <= y : x < y;
-            }
-            if (a instanceof Long x && b instanceof Double y) {
-                return orEqual ? x <= y : x < y;
-            }
-            if (a instanceof Double x && b instanceof Long y) {
-                return orEqual ? x <= y : x < y;
-            }
-            int c = Convert.compare(a, b);
+        @Specialization
+        protected boolean doubles(double first, double second) {
+            double a = swapped ? second : first;
+            double b = swapped ? first : second;
+            return orEqual ? a <= b : a < b;
+        }
+
+        @Fallback
+        protected boolean other(Object first, Object second) {
+            int c = Convert.compare(swapped ? second : first, swapped ? first : second);
             return orEqual ? c <= 0 : c < 0;
         }
     }
 
     /** `<=>`. */
-    public static final class SpaceshipNode extends ExprNode {
-        @Child private ExprNode left;
-        @Child private ExprNode right;
-
-        public SpaceshipNode(ExprNode left, ExprNode right) {
-            this.left = left;
-            this.right = right;
+    @NodeChild("left")
+    @NodeChild("right")
+    public abstract static class SpaceshipNode extends ExprNode {
+        public static SpaceshipNode create(ExprNode left, ExprNode right) {
+            return CompareNodesFactory.SpaceshipNodeGen.create(left, right);
         }
 
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Object a = left.execute(frame);
-            Object b = right.execute(frame);
-            if (a instanceof Long x && b instanceof Long y) {
-                return (long) Long.compare(x, y);
-            }
-            return (long) Convert.compare(a, b);
+        @Specialization
+        protected long longs(long a, long b) {
+            return Long.compare(a, b);
+        }
+
+        @Fallback
+        protected long other(Object a, Object b) {
+            return Convert.compare(a, b);
         }
     }
 }

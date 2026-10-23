@@ -1,10 +1,10 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
@@ -184,7 +184,7 @@ public final class LocalVarNode extends LValueNode {
         Object value = raw(frame, slot);
         if (value instanceof PhpArray array) {
             if (array.isShared()) {
-                seen(SEEN_SHARED);
+                sharedArray.enter();
                 PhpArray copy = array.copy();
                 copy.addHolder();
                 array.removeHolder();
@@ -194,11 +194,11 @@ public final class LocalVarNode extends LValueNode {
             return array;
         }
         if (value instanceof PhpRef ref) {
-            seen(SEEN_REF);
+            refArray.enter();
             return Places.refArrayForWrite(ref);
         }
         if (value == null || value == PhpNull.NULL || value == Boolean.FALSE) {
-            seen(SEEN_CREATE);
+            createdArray.enter();
             PhpArray created = new PhpArray();
             created.addHolder();
             FrameSlots.setObject(frame, slot, created);
@@ -215,17 +215,9 @@ public final class LocalVarNode extends LValueNode {
      * an unshared array; compiled code keeps the other cases (separation, references, auto-creation) out until
      * they happen, instead of inlining all of them at every write site.
      */
-    @CompilationFinal private byte seenCases;
-    private static final byte SEEN_SHARED = 1;
-    private static final byte SEEN_REF = 2;
-    private static final byte SEEN_CREATE = 4;
-
-    private void seen(byte kind) {
-        if ((seenCases & kind) == 0) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            seenCases |= kind;
-        }
-    }
+    private final BranchProfile sharedArray = BranchProfile.create();
+    private final BranchProfile refArray = BranchProfile.create();
+    private final BranchProfile createdArray = BranchProfile.create();
 
     @TruffleBoundary
     private static PhpError scalarAsArray() {

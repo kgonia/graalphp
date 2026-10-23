@@ -1,7 +1,7 @@
 package pl.codeloom.php.nodes.call;
 
-import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
@@ -16,42 +16,21 @@ import pl.codeloom.php.runtime.PhpObject;
  * stores into the final shape's fields directly; PhpClass.instantiate walks the uncached shape transitions, which
  * cost ~10x more per object. Other classes take that generic path.
  */
-public final class InstantiateNode extends Node {
-    @CompilationFinal private PhpClass cachedClass;
-    @CompilationFinal(dimensions = 1) private String[] names;
-    @CompilationFinal(dimensions = 1) private Object[] defaults;
-    @Children private DynamicObjectLibrary[] puts;
-    @CompilationFinal private boolean generic;
+public abstract class InstantiateNode extends Node {
+    public abstract PhpObject execute(PhpClass phpClass);
 
-    public PhpObject execute(PhpClass phpClass) {
-        if (!generic) {
-            if (cachedClass == null) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                if (!phpClass.isInstantiable()) {
-                    generic = true;
-                    return phpClass.instantiate();
-                }
-                defaults = phpClass.declaredDefaults();
-                names = phpClass.declaredNames();
-                DynamicObjectLibrary[] libraries = new DynamicObjectLibrary[names.length];
-                for (int i = 0; i < libraries.length; i++) {
-                    libraries[i] = DynamicObjectLibrary.getFactory().createDispatched(1);
-                }
-                puts = insert(libraries);
-                cachedClass = phpClass;
-            }
-            if (phpClass == cachedClass) {
-                return initialize(phpClass);
-            }
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            generic = true;
-        }
-        return phpClass.instantiate();
+    public static InstantiateNode create() {
+        return InstantiateNodeGen.create();
     }
 
+    @Specialization(guards = {"phpClass == cachedClass", "cachedClass.isInstantiable()"}, limit = "1")
     @ExplodeLoop
-    private PhpObject initialize(PhpClass phpClass) {
-        PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
+    protected PhpObject cached(PhpClass phpClass,
+                               @Cached("phpClass") PhpClass cachedClass,
+                               @Cached(value = "cachedClass.declaredNames()", dimensions = 1) String[] names,
+                               @Cached(value = "cachedClass.declaredDefaults()", dimensions = 1) Object[] defaults,
+                               @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts) {
+        PhpObject object = new PhpObject(cachedClass.getRootShape(), cachedClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
             if (value instanceof Long l) {
@@ -64,5 +43,18 @@ public final class InstantiateNode extends Node {
             }
         }
         return object;
+    }
+
+    @Specialization(replaces = "cached")
+    protected PhpObject generic(PhpClass phpClass) {
+        return phpClass.instantiate();
+    }
+
+    protected static DynamicObjectLibrary[] createPuts(int count) {
+        DynamicObjectLibrary[] libraries = new DynamicObjectLibrary[count];
+        for (int i = 0; i < count; i++) {
+            libraries[i] = DynamicObjectLibrary.getFactory().createDispatched(1);
+        }
+        return libraries;
     }
 }

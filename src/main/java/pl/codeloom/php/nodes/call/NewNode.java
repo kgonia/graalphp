@@ -17,7 +17,7 @@ public final class NewNode extends ExprNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Construct construct = NewNodeFactory.ConstructNodeGen.create();
-    @Child private InstantiateNode instantiate = new InstantiateNode();
+    @Child private InstantiateNode instantiate = InstantiateNode.create();
 
     public NewNode(ClassRefNode classRef, ArgumentsNode args) {
         this.classRef = classRef;

@@ -977,23 +977,23 @@ public final class Translator {
             case 7:
                 return ArithmeticNodesFactory.ShiftRightNodeGen.create(left, right);
             case 16:
-                return new CompareNodes.IdenticalNode(left, right, false);
+                return CompareNodes.IdenticalNode.create(left, right, false);
             case 17:
-                return new CompareNodes.IdenticalNode(left, right, true);
+                return CompareNodes.IdenticalNode.create(left, right, true);
             case 18:
-                return new CompareNodes.EqualNode(left, right, false);
+                return CompareNodes.EqualNode.create(left, right, false);
             case 19:
-                return new CompareNodes.EqualNode(left, right, true);
+                return CompareNodes.EqualNode.create(left, right, true);
             case 20:
-                return new CompareNodes.LessNode(left, right, false, false);
+                return CompareNodes.LessNode.create(left, right, false, false);
             case 21:
-                return new CompareNodes.LessNode(left, right, true, false);
+                return CompareNodes.LessNode.create(left, right, true, false);
             case 256:
-                return new CompareNodes.LessNode(left, right, false, true);
+                return CompareNodes.LessNode.create(left, right, false, true);
             case 257:
-                return new CompareNodes.LessNode(left, right, true, true);
+                return CompareNodes.LessNode.create(left, right, true, true);
             case 170:
-                return new CompareNodes.SpaceshipNode(left, right);
+                return CompareNodes.SpaceshipNode.create(left, right);
             case 259:
                 return new LogicNodes.AndOrNode(left, right, false);
             case 258:

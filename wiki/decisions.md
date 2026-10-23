@@ -76,3 +76,13 @@ The first versions got all kernels running fast; their limits are now measured.
 - A built-in that is hot in measured kernels becomes a node.
 - `@TruffleBoundary` only wraps code partial evaluation can't handle, never a whole built-in on a hot path.
 - Partially evaluated code uses cached `TruffleString` nodes, not the uncached helpers.
+- A branch that only needs "not seen yet, leave it out of compiled code" uses a `BranchProfile`, not a hand-written `@CompilationFinal` flag.
+
+**DSL pitfalls met during the migration:**
+- **`UnexpectedResultException` is not a "try the next specialization" signal.** When a specialization throws it, the generated code returns `e.getResult()` as the node's value. To leave a specialization, throw your own `SlowPathException` subclass listed in `rewriteOn`. A value the specialization depends on is better as a DSL child, so the guard sees it before the specialization runs.
+- **Implicit casts carry over into rewrites.** With `long → double` an `@ImplicitCast`, a `double` specialization also takes ints:
+  - when a specialization rewrites, the next one receives the already-cast value, so `NULL += 1` gave `float(1)`;
+  - once `rewriteOn` excludes an int specialization, every int pair falls through to the `double` one.
+
+  Put an `(long, long)` specialization ahead of the `double` one for every int pair the fast one doesn't take, as `CompoundAssignNode.longPair` does.
+- **The DSL overrides every `execute*` method of the base class as "return this type".** `ExprNode.executeBoolean` means truthiness, but a generated node's override casts the result to `boolean`. That is safe only because the translator wraps every condition that isn't boolean-valued in `ConditionNode`. Truthiness on an arbitrary node must go through `Convert.toBool(execute(frame))`, never `executeBoolean`.
