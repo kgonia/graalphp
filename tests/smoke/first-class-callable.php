@@ -30,4 +30,14 @@ foreach ([fn() => nope(...), fn() => null->m(...), fn() => P::pm(...), fn() => P
 }
 var_dump(array_map(intval(...), ["1", "2x"]), "A::ps"(), $c->__invoke(...)(5));
 $arr = ['b', 'a']; usort($arr, strcmp(...)); var_dump($arr);
+
+abstract class Abs
+{
+    abstract public static function m();
+}
+try {
+    Abs::m(...);
+} catch (Error $e) {
+    echo get_class($e), ': ', $e->getMessage(), "\n";
+}
 }

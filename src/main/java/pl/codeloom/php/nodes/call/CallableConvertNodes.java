@@ -27,6 +27,9 @@ public final class CallableConvertNodes {
     }
 
     private static PhpClosure closure(PhpFunction function, PhpObject self, PhpClass scope, TruffleString magicName) {
+        if (function.isAbstract()) {
+            throw new PhpError("Cannot call abstract method " + function.displayName() + "()");
+        }
         return new PhpClosure(function, self, scope, NO_CAPTURES, magicName);
     }
 
