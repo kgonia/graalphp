@@ -2,6 +2,7 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -20,32 +21,35 @@ final class MbFunctions {
     }
 
     /** mb_substitute_character(): a code point, or -1 for "none". */
-    private static final class State {
+    /** Per-context state: mb_substitute_character(). */
+    static final class State {
         int substitute = '?';
     }
 
+    private static State state(PhpContext context) {
+        return context.builtinState().mb;
+    }
+
     static void register(Registry r) {
-        // per-process state starts over in each context (BatchMain runs many contexts in one JVM)
-        State state = new State();
         r.fn("mb_check_encoding", a -> checkEncoding(Args.get(a, 0), encoding(a, 1)));
         r.fn("mb_substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), StringFunctions.lengthArg(a, 2),
                 encoding(a, 3)));
         r.fn("mb_strlen", a -> strlen(Args.str(a, 0), encoding(a, 1)));
-        r.fn("mb_strtolower", a -> changeCase(state, Args.str(a, 0), encoding(a, 1), false));
-        r.fn("mb_strtoupper", a -> changeCase(state, Args.str(a, 0), encoding(a, 1), true));
-        r.fn("mb_scrub", a -> scrub(state, Args.str(a, 0), encoding(a, 1)));
+        r.fn("mb_strtolower", (context, a) -> changeCase(state(context), Args.str(a, 0), encoding(a, 1), false));
+        r.fn("mb_strtoupper", (context, a) -> changeCase(state(context), Args.str(a, 0), encoding(a, 1), true));
+        r.fn("mb_scrub", (context, a) -> scrub(state(context), Args.str(a, 0), encoding(a, 1)));
         r.fn("mb_ord", a -> ord(Args.str(a, 0), encoding(a, 1)));
         r.fn("mb_chr", a -> chr(Args.lng(a, 0, 0), encoding(a, 1)));
         r.fn("mb_internal_encoding", a -> Args.has(a, 0) ? (Object) Boolean.TRUE : Str.of("UTF-8"));
-        r.fn("mb_substitute_character", a -> {
+        r.fn("mb_substitute_character", (context, a) -> {
             if (!Args.has(a, 0) || Args.get(a, 0) == PhpNull.NULL) {
-                return state.substitute == -1 ? Str.of("none") : (Object) (long) state.substitute;
+                return state(context).substitute == -1 ? Str.of("none") : (Object) (long) state(context).substitute;
             }
             Object value = Args.get(a, 0);
             if (value instanceof TruffleString s) {
                 String name = Str.java(s).toLowerCase(Locale.ROOT);
                 if (name.equals("none")) {
-                    state.substitute = -1;
+                    state(context).substitute = -1;
                     return true;
                 }
                 throw new PhpError("mb_substitute_character(\"" + name + "\") is not supported");
@@ -55,7 +59,7 @@ final class MbFunctions {
                 throw new PhpError("ValueError: mb_substitute_character(): Argument #1 ($substitute_character) "
                         + "is not a valid codepoint");
             }
-            state.substitute = (int) cp;
+            state(context).substitute = (int) cp;
             return true;
         });
     }

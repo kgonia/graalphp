@@ -6,8 +6,6 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import pl.codeloom.php.builtins.Builtin;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -40,8 +38,8 @@ public final class PhpFunction {
     private final Supplier<RootCallTarget> factory;
     /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
     private Builtin builtin;
-    private PhpClass declaringClass;
-    private final Map<String, PhpRef> staticVariables = new HashMap<>();
+    /** The declaring class's name for messages ("C::m"); null for functions and shared built-in methods. */
+    private String className;
 
     @CompilationFinal private RootCallTarget callTarget;
 
@@ -92,12 +90,8 @@ public final class PhpFunction {
         return isAbstract;
     }
 
-    public PhpClass getDeclaringClass() {
-        return declaringClass;
-    }
-
-    public void setDeclaringClass(PhpClass declaringClass) {
-        this.declaringClass = declaringClass;
+    public void setClassName(String className) {
+        this.className = className;
     }
 
     public Builtin getBuiltin() {
@@ -120,19 +114,6 @@ public final class PhpFunction {
         return callTarget;
     }
 
-    /** The shared PhpRef of a `static $name` variable, or null before its first initialization. */
-    @TruffleBoundary
-    public PhpRef findStaticVariable(String variableName) {
-        return staticVariables.get(variableName);
-    }
-
-    @TruffleBoundary
-    public PhpRef createStaticVariable(String variableName, Object initial) {
-        PhpRef ref = new PhpRef(initial);
-        staticVariables.put(variableName, ref);
-        return ref;
-    }
-
     /** A call from runtime code (not a call node): no inline caching. */
     @TruffleBoundary
     public Object invoke(Object thisObject, PhpClass staticClass, Object... args) {
@@ -144,7 +125,7 @@ public final class PhpFunction {
     }
 
     public String displayName() {
-        return declaringClass == null ? name : declaringClass.getName() + "::" + name;
+        return className == null ? name : className + "::" + name;
     }
 
     @Override

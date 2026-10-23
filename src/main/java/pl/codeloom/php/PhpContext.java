@@ -7,6 +7,7 @@ import com.oracle.truffle.api.TruffleLanguage.ContextReference;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.builtins.BuiltinState;
 import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.parser.Ast;
@@ -49,6 +50,9 @@ public final class PhpContext {
     private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
+    private final BuiltinState builtinState = new BuiltinState();
+    /** Static variables (`static $x`) by function, then name. */
+    private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
     private final pl.codeloom.php.runtime.Callables.LastCall lastCall = new pl.codeloom.php.runtime.Callables.LastCall();
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot) {
@@ -57,7 +61,7 @@ public final class PhpContext {
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
-        Builtins.install(this);
+        Builtins.install(this, language.builtins());
         pl.codeloom.php.runtime.PhpArray argv = new pl.codeloom.php.runtime.PhpArray();
         for (String argument : env.getApplicationArguments()) {
             argv.append(Str.of(argument));
@@ -77,6 +81,24 @@ public final class PhpContext {
     /** The callable that Callables.call resolved last in this context. */
     public pl.codeloom.php.runtime.Callables.LastCall lastCall() {
         return lastCall;
+    }
+
+    public BuiltinState builtinState() {
+        return builtinState;
+    }
+
+    /** The reference of a function's `static $name` variable, or null before its first initialization. */
+    @TruffleBoundary
+    public PhpRef findStaticVariable(PhpFunction function, String name) {
+        Map<String, PhpRef> variables = staticVariables.get(function);
+        return variables == null ? null : variables.get(name);
+    }
+
+    @TruffleBoundary
+    public PhpRef createStaticVariable(PhpFunction function, String name, Object initial) {
+        PhpRef ref = new PhpRef(initial);
+        staticVariables.computeIfAbsent(function, f -> new HashMap<>()).put(name, ref);
+        return ref;
     }
 
     public PhpLanguage getLanguage() {

@@ -3,25 +3,34 @@ package pl.codeloom.php.builtins;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.call.BuiltinRootNode;
-import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 
-/** Declares built-in functions and methods in a context. */
-public final class Registry {
-    private final PhpContext context;
-    private final PhpLanguage language;
+import java.util.ArrayList;
+import java.util.List;
 
-    Registry(PhpContext context) {
-        this.context = context;
-        this.language = context.getLanguage();
+/**
+ * Builds the language-level built-in functions and methods, once per language: every context declares the same
+ * PhpFunction objects, so their call targets (and compiled code) are shared.
+ */
+public final class Registry {
+    private final PhpLanguage language;
+    private final List<PhpFunction> functions = new ArrayList<>();
+
+    Registry(PhpLanguage language) {
+        this.language = language;
     }
 
-    public PhpContext context() {
-        return context;
+    List<PhpFunction> functions() {
+        return functions;
     }
 
     /** A built-in function with by-value parameters. */
     public void fn(String name, Builtin body) {
+        fn(name, "", body);
+    }
+
+    /** A built-in function that needs the calling context (its output, declarations or per-context state). */
+    public void fn(String name, ContextBuiltin body) {
         fn(name, "", body);
     }
 
@@ -30,14 +39,16 @@ public final class Registry {
      * '*' makes all further parameters by reference.
      */
     public void fn(String name, String refMask, Builtin body) {
-        context.declareFunction(make(name, refMask, body, false));
+        functions.add(make(name, refMask, body, false));
     }
 
-    /** A built-in method on a built-in class. */
-    public void method(PhpClass phpClass, String name, boolean isStatic, Builtin body) {
-        PhpFunction method = make(name, "", body, isStatic);
-        method.setDeclaringClass(phpClass);
-        phpClass.addMethod(method);
+    public void fn(String name, String refMask, ContextBuiltin body) {
+        fn(name, refMask, (Builtin) arguments -> body.call(PhpContext.get(null), arguments));
+    }
+
+    /** A built-in method, for built-in classes to add in each context. */
+    public PhpFunction method(String name, boolean isStatic, Builtin body) {
+        return make(name, "", body, isStatic);
     }
 
     private PhpFunction make(String name, String refMask, Builtin body, boolean isStatic) {
@@ -55,5 +66,11 @@ public final class Registry {
                 () -> new BuiltinRootNode(language, name, body).getCallTarget());
         function.setBuiltin(body);
         return function;
+    }
+
+    /** A built-in body that receives the calling context; Registry looks it up at each call. */
+    @FunctionalInterface
+    public interface ContextBuiltin {
+        Object call(PhpContext context, Object[] arguments);
     }
 }

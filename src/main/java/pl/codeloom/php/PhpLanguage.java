@@ -9,6 +9,7 @@ import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
+import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.nodes.ScriptRootNode;
 import pl.codeloom.php.runtime.PhpObject;
 
@@ -35,8 +36,25 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return LANGUAGE.get(node);
     }
 
+    /** Built-in functions are language-level: built on first use, then declared by every context. */
+    private volatile Builtins.Table builtins;
+
     public Shape rootShape() {
         return rootShape;
+    }
+
+    public Builtins.Table builtins() {
+        Builtins.Table table = builtins;
+        if (table == null) {
+            synchronized (this) {
+                table = builtins;
+                if (table == null) {
+                    table = Builtins.build(this);
+                    builtins = table;
+                }
+            }
+        }
+        return table;
     }
 
     @Override

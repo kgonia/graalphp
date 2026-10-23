@@ -45,23 +45,25 @@ final class JsonFunctions {
     private static final int ERROR_UNSUPPORTED_TYPE = 8;
     private static final int ERROR_UTF16 = 10;
 
-    /** Per-context state: json_last_error(). Each context's register() makes its own. */
-    private static final class State {
+    /** Per-context state: json_last_error(). */
+    static final class State {
         int lastError;
     }
 
+    private static State state(PhpContext context) {
+        return context.builtinState().json;
+    }
+
     static void register(Registry r) {
-        State state = new State();
-        PhpContext context = r.context();
-        r.fn("json_decode", a -> {
+        r.fn("json_decode", (context, a) -> {
             long flags = Args.lng(a, 3, 0);
             Object assocArg = Args.get(a, 1, PhpNull.NULL);
             boolean assoc = assocArg == PhpNull.NULL ? (flags & OBJECT_AS_ARRAY) != 0 : Convert.toBool(assocArg);
-            return decode(context, state, Args.str(a, 0), assoc, (int) Args.lng(a, 2, 512), flags);
+            return decode(context, state(context), Args.str(a, 0), assoc, (int) Args.lng(a, 2, 512), flags);
         });
-        r.fn("json_encode", a -> encode(state, Args.get(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 2, 512)));
-        r.fn("json_last_error", a -> (long) state.lastError);
-        r.fn("json_last_error_msg", a -> Str.of(message(state.lastError)));
+        r.fn("json_encode", (context, a) -> encode(state(context), Args.get(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 2, 512)));
+        r.fn("json_last_error", (context, a) -> (long) state(context).lastError);
+        r.fn("json_last_error_msg", (context, a) -> Str.of(message(state(context).lastError)));
     }
 
     private static String message(int code) {

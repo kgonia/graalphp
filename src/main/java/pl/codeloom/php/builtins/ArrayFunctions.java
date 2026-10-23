@@ -29,13 +29,12 @@ final class ArrayFunctions {
     }
 
     static void register(Registry r) {
-        PhpContext context = r.context();
         r.fn("array_keys", a -> keys(Args.array(a, 0, "array_keys"), Args.has(a, 1) ? Args.get(a, 1) : null,
                 Args.bool(a, 2, false)));
         r.fn("array_values", a -> values(Args.array(a, 0, "array_values")));
         r.fn("array_merge", a -> merge(a));
-        r.fn("array_map", a -> map(context, a));
-        r.fn("array_filter", a -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
+        r.fn("array_map", (context, a) -> map(context, a));
+        r.fn("array_filter", (context, a) -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
         r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
         r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
@@ -100,10 +99,10 @@ final class ArrayFunctions {
             int p = array.lastPosition();
             return p < 0 ? PhpNull.NULL : array.valueAt(p);
         });
-        r.fn("array_any", a -> anyAll(context, Args.array(a, 0, "array_any"), Args.get(a, 1), true));
-        r.fn("array_all", a -> anyAll(context, Args.array(a, 0, "array_all"), Args.get(a, 1), false));
-        r.fn("array_find", a -> find(context, Args.array(a, 0, "array_find"), Args.get(a, 1), false));
-        r.fn("array_find_key", a -> find(context, Args.array(a, 0, "array_find_key"), Args.get(a, 1), true));
+        r.fn("array_any", (context, a) -> anyAll(context, Args.array(a, 0, "array_any"), Args.get(a, 1), true));
+        r.fn("array_all", (context, a) -> anyAll(context, Args.array(a, 0, "array_all"), Args.get(a, 1), false));
+        r.fn("array_find", (context, a) -> find(context, Args.array(a, 0, "array_find"), Args.get(a, 1), false));
+        r.fn("array_find_key", (context, a) -> find(context, Args.array(a, 0, "array_find_key"), Args.get(a, 1), true));
         r.fn("array_is_list", a -> {
             PhpArray array = Args.array(a, 0, "array_is_list");
             long expected = 0;
@@ -178,7 +177,7 @@ final class ArrayFunctions {
             }
             return result;
         });
-        r.fn("array_walk", "1", a -> {
+        r.fn("array_walk", "1", (context, a) -> {
             PhpArray array = writable(Args.ref(a, 0));
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 if (Args.has(a, 2)) {
@@ -192,15 +191,15 @@ final class ArrayFunctions {
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
 
         // ---- sorting ----
-        r.fn("sort", "1", a -> sort(context, Args.ref(a, 0), null, false, false, false));
-        r.fn("rsort", "1", a -> sort(context, Args.ref(a, 0), null, false, true, false));
-        r.fn("usort", "1", a -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, false));
-        r.fn("asort", "1", a -> sort(context, Args.ref(a, 0), null, false, false, true));
-        r.fn("arsort", "1", a -> sort(context, Args.ref(a, 0), null, false, true, true));
-        r.fn("uasort", "1", a -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, true));
-        r.fn("ksort", "1", a -> sort(context, Args.ref(a, 0), null, true, false, true));
-        r.fn("krsort", "1", a -> sort(context, Args.ref(a, 0), null, true, true, true));
-        r.fn("uksort", "1", a -> sort(context, Args.ref(a, 0), Args.get(a, 1), true, false, true));
+        r.fn("sort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, false));
+        r.fn("rsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, false));
+        r.fn("usort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, false));
+        r.fn("asort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, true));
+        r.fn("arsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, true));
+        r.fn("uasort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, true));
+        r.fn("ksort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, false, true));
+        r.fn("krsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, true, true));
+        r.fn("uksort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), true, false, true));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));

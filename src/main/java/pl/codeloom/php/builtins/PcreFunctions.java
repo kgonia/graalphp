@@ -34,7 +34,7 @@ import java.util.Map;
  * parsing, a per-regex cache of compiled and JIT-ed patterns, the same empty-match stepping and error codes.
  */
 final class PcreFunctions {
-    private PcreFunctions() {
+    PcreFunctions() {
     }
 
     // pcre2.h
@@ -283,19 +283,22 @@ final class PcreFunctions {
         }
     }
 
-    /** Declares the preg_* functions, bound to a new instance: its caches and preg_last_error() are per context. */
+    /** This context's instance: its pattern caches and preg_last_error(). */
+    private static PcreFunctions pcre(PhpContext context) {
+        return context.builtinState().pcre;
+    }
+
+    /** Declares the preg_* functions; their state is the calling context's instance. */
     static void register(Registry r) {
-        PcreFunctions pcre = new PcreFunctions();
-        PhpContext context = r.context();
-        r.fn("preg_match", "001", a -> pcre.match(a, false));
-        r.fn("preg_match_all", "001", a -> pcre.match(a, true));
-        r.fn("preg_replace", "00001", a -> pcre.replace(context, a, false));
-        r.fn("preg_replace_callback", "00001", a -> pcre.replace(context, a, true));
-        r.fn("preg_split", a -> pcre.split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
+        r.fn("preg_match", "001", (context, a) -> pcre(context).match(a, false));
+        r.fn("preg_match_all", "001", (context, a) -> pcre(context).match(a, true));
+        r.fn("preg_replace", "00001", (context, a) -> pcre(context).replace(context, a, false));
+        r.fn("preg_replace_callback", "00001", (context, a) -> pcre(context).replace(context, a, true));
+        r.fn("preg_split", (context, a) -> pcre(context).split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
         r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
-        r.fn("preg_grep", a -> pcre.grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
-        r.fn("preg_last_error", a -> (long) pcre.lastError);
-        r.fn("preg_last_error_msg", a -> Str.of(ERROR_MESSAGES[pcre.lastError]));
+        r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
+        r.fn("preg_last_error", (context, a) -> (long) pcre(context).lastError);
+        r.fn("preg_last_error_msg", (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError]));
         r.fn("truffle_native_ns", a -> NativeClock.nanos());
         if (PcreRecorder.ENABLED) {
             r.fn("truffle_pcre_record", a -> {

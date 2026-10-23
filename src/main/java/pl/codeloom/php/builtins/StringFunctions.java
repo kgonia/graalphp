@@ -25,7 +25,6 @@ public final class StringFunctions {
     }
 
     static void register(Registry r) {
-        PhpContext context = r.context();
         r.fn("substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), lengthArg(a, 2)));
         r.fn("strpos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
         r.fn("stripos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
@@ -50,7 +49,7 @@ public final class StringFunctions {
         r.fn("join", a -> implode(a));
         r.fn("sprintf", a -> Sprintf.format(a, 0));
         r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf")));
-        r.fn("printf", a -> {
+        r.fn("printf", (context, a) -> {
             TruffleString text = Sprintf.format(a, 0);
             context.write(text);
             return (long) Str.length(text);

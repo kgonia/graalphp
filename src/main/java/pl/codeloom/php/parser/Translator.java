@@ -591,7 +591,7 @@ public final class Translator {
                         }
                     }
                 }
-                method.setDeclaringClass(phpClass);
+                method.setClassName(phpClass.getName());
                 phpClass.addMethod(method);
                 break;
             }

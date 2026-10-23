@@ -30,7 +30,6 @@ final class CoreFunctions {
     }
 
     static void register(Registry r) {
-        PhpContext context = r.context();
 
         // ---- types ----
         r.fn("strlen", a -> (long) Str.length(Args.str(a, 0)));
@@ -59,7 +58,7 @@ final class CoreFunctions {
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("traversable"));
         r.fn("is_countable", a -> Args.get(a, 0) instanceof PhpArray
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("countable"));
-        r.fn("is_callable", a -> Callables.resolve(context, Args.get(a, 0, PhpNull.NULL)) != null);
+        r.fn("is_callable", (context, a) -> Callables.resolve(context, Args.get(a, 0, PhpNull.NULL)) != null);
         r.fn("is_finite", a -> Double.isFinite(Convert.toDouble(Args.get(a, 0))));
         r.fn("is_nan", a -> Double.isNaN(Convert.toDouble(Args.get(a, 0))));
         r.fn("is_infinite", a -> Double.isInfinite(Convert.toDouble(Args.get(a, 0))));
@@ -87,9 +86,9 @@ final class CoreFunctions {
         });
 
         // ---- constants, functions, classes ----
-        r.fn("define", a -> context.defineConstant(Str.java(Args.str(a, 0)), Args.get(a, 1)));
-        r.fn("defined", a -> context.findConstant(Str.java(Args.str(a, 0))) != null);
-        r.fn("constant", a -> {
+        r.fn("define", (context, a) -> context.defineConstant(Str.java(Args.str(a, 0)), Args.get(a, 1)));
+        r.fn("defined", (context, a) -> context.findConstant(Str.java(Args.str(a, 0))) != null);
+        r.fn("constant", (context, a) -> {
             String name = Str.java(Args.str(a, 0));
             int separator = name.indexOf("::");
             Object value = separator > 0 ? context.getClass(name.substring(0, separator))
@@ -99,16 +98,16 @@ final class CoreFunctions {
             }
             return value;
         });
-        r.fn("function_exists", a -> context.findFunction(lowerName(Args.str(a, 0))) != null);
-        r.fn("class_exists", a -> classExists(context, Args.str(a, 0), false));
-        r.fn("interface_exists", a -> classExists(context, Args.str(a, 0), true));
-        r.fn("method_exists", a -> {
+        r.fn("function_exists", (context, a) -> context.findFunction(lowerName(Args.str(a, 0))) != null);
+        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false));
+        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true));
+        r.fn("method_exists", (context, a) -> {
             Object target = Args.get(a, 0);
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
                     : context.findClass(lowerName(Convert.toStr(target)));
             return phpClass != null && phpClass.findMethod(Str.java(Args.str(a, 1)).toLowerCase()) != null;
         });
-        r.fn("property_exists", a -> {
+        r.fn("property_exists", (context, a) -> {
             Object target = Args.get(a, 0);
             String name = Str.java(Args.str(a, 1));
             if (target instanceof PhpObject o) {
@@ -127,7 +126,7 @@ final class CoreFunctions {
             }
             throw new PhpError("get_class(): Argument #1 ($object) must be of type object");
         });
-        r.fn("get_parent_class", a -> {
+        r.fn("get_parent_class", (context, a) -> {
             Object target = Args.get(a, 0);
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
                     : target == null ? null : context.findClass(lowerName(Convert.toStr(target)));
@@ -137,8 +136,8 @@ final class CoreFunctions {
         r.fn("get_object_vars", a -> objectVars(Args.get(a, 0)));
         r.fn("spl_object_id", a -> (long) objectId(Args.get(a, 0)));
         r.fn("spl_object_hash", a -> Str.of(String.format("%032x", objectId(Args.get(a, 0)))));
-        r.fn("is_a", a -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false)));
-        r.fn("is_subclass_of", a -> {
+        r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false)));
+        r.fn("is_subclass_of", (context, a) -> {
             Object target = Args.get(a, 0);
             String parent = lowerName(Args.str(a, 1));
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
@@ -147,15 +146,15 @@ final class CoreFunctions {
         });
 
         // ---- output ----
-        r.fn("ob_start", a -> {
+        r.fn("ob_start", (context, a) -> {
             context.startBuffer();
             return true;
         });
-        r.fn("ob_get_contents", a -> {
+        r.fn("ob_get_contents", (context, a) -> {
             TruffleString contents = context.bufferContents();
             return contents == null ? Boolean.FALSE : contents;
         });
-        r.fn("ob_get_clean", a -> {
+        r.fn("ob_get_clean", (context, a) -> {
             TruffleString contents = context.bufferContents();
             if (contents == null) {
                 return Boolean.FALSE;
@@ -163,14 +162,14 @@ final class CoreFunctions {
             context.endBuffer();
             return contents;
         });
-        r.fn("ob_end_clean", a -> context.endBuffer());
-        r.fn("var_dump", a -> {
+        r.fn("ob_end_clean", (context, a) -> context.endBuffer());
+        r.fn("var_dump", (context, a) -> {
             for (int i = 0; i < Args.count(a); i++) {
                 context.write(Str.of(Dump.varDump(Args.get(a, i), 0)));
             }
             return PhpNull.NULL;
         });
-        r.fn("var_export", a -> {
+        r.fn("var_export", (context, a) -> {
             TruffleString text = Str.of(Dump.varExport(Args.get(a, 0), 0));
             if (Args.bool(a, 1, false)) {
                 return text;
@@ -178,7 +177,7 @@ final class CoreFunctions {
             context.write(text);
             return PhpNull.NULL;
         });
-        r.fn("print_r", a -> {
+        r.fn("print_r", (context, a) -> {
             TruffleString text = Str.of(Dump.printR(Args.get(a, 0), 0));
             if (Args.bool(a, 1, false)) {
                 return text;
@@ -189,7 +188,7 @@ final class CoreFunctions {
 
         // ---- errors and configuration ----
         r.fn("error_reporting", a -> 30719L);
-        r.fn("set_error_handler", a -> context.swapErrorHandler(Args.get(a, 0, PhpNull.NULL)));
+        r.fn("set_error_handler", (context, a) -> context.swapErrorHandler(Args.get(a, 0, PhpNull.NULL)));
         r.fn("restore_error_handler", a -> true);
         r.fn("trigger_error", a -> {
             throw new PhpError("User error: " + Str.java(Args.str(a, 0)));

@@ -1,6 +1,7 @@
 package pl.codeloom.php.builtins;
 
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -8,21 +9,44 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
-/** Installs predefined constants, built-in classes and built-in functions into a new context. */
+import java.util.List;
+
+/**
+ * Predefined constants, built-in classes and built-in functions. The functions and methods are built once per
+ * language ({@link Table}); each new context declares them, the constants and its own instances of the classes.
+ */
 public final class Builtins {
     private Builtins() {
     }
 
-    public static void install(PhpContext context) {
-        Registry registry = new Registry(context);
-        constants(context);
-        classes(context, registry);
+    /** The language-level built-in functions, and the methods that each context's Exception and Error get. */
+    public static final class Table {
+        private final List<PhpFunction> functions;
+        private final List<PhpFunction> throwableMethods;
+
+        private Table(List<PhpFunction> functions, List<PhpFunction> throwableMethods) {
+            this.functions = functions;
+            this.throwableMethods = throwableMethods;
+        }
+    }
+
+    public static Table build(PhpLanguage language) {
+        Registry registry = new Registry(language);
         CoreFunctions.register(registry);
         StringFunctions.register(registry);
         ArrayFunctions.register(registry);
         PcreFunctions.register(registry);
         JsonFunctions.register(registry);
         MbFunctions.register(registry);
+        return new Table(List.copyOf(registry.functions()), throwableMethods(registry));
+    }
+
+    public static void install(PhpContext context, Table table) {
+        constants(context);
+        classes(context, table);
+        for (PhpFunction function : table.functions) {
+            context.declareFunction(function);
+        }
     }
 
     private static void constants(PhpContext context) {
@@ -75,7 +99,7 @@ public final class Builtins {
         }
     }
 
-    private static void classes(PhpContext context, Registry registry) {
+    private static void classes(PhpContext context, Table table) {
         PhpClass traversable = declare(context, "Traversable", null, true);
         PhpClass iterator = declare(context, "Iterator", null, true);
         iterator.addInterface(traversable);
@@ -89,8 +113,8 @@ public final class Builtins {
         throwable.addInterface(stringable);
         declare(context, "stdClass", null, false);
 
-        PhpClass exception = throwableClass(context, registry, "Exception", null, throwable);
-        PhpClass error = throwableClass(context, registry, "Error", null, throwable);
+        PhpClass exception = throwableClass(context, table, "Exception", throwable);
+        PhpClass error = throwableClass(context, table, "Error", throwable);
         String[][] hierarchy = {
                 {"ErrorException", "Exception"}, {"LogicException", "Exception"},
                 {"BadFunctionCallException", "LogicException"}, {"BadMethodCallException", "BadFunctionCallException"},
@@ -121,37 +145,43 @@ public final class Builtins {
     }
 
     /** Exception and Error: message, code and previous, with the usual getters. */
-    private static PhpClass throwableClass(PhpContext context, Registry registry, String name, PhpClass parent,
-                                           PhpClass throwable) {
-        PhpClass phpClass = new PhpClass(name, parent, false, false, context.getLanguage().rootShape());
+    private static PhpClass throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
+        PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape());
         phpClass.addInterface(throwable);
         phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("code", 0L, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("file", Str.EMPTY, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("line", 0L, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("previous", PhpNull.NULL, false));
-        registry.method(phpClass, "__construct", false, arguments -> {
-            PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
-            if (Args.has(arguments, 0)) {
-                self.setProperty("message", Args.str(arguments, 0));
-            }
-            if (Args.has(arguments, 1)) {
-                self.setProperty("code", Args.get(arguments, 1));
-            }
-            if (Args.has(arguments, 2)) {
-                self.setProperty("previous", Args.get(arguments, 2));
-            }
-            return PhpNull.NULL;
-        });
-        registry.method(phpClass, "getMessage", false, arguments -> property(arguments, "message"));
-        registry.method(phpClass, "getCode", false, arguments -> property(arguments, "code"));
-        registry.method(phpClass, "getPrevious", false, arguments -> property(arguments, "previous"));
-        registry.method(phpClass, "getFile", false, arguments -> property(arguments, "file"));
-        registry.method(phpClass, "getLine", false, arguments -> property(arguments, "line"));
-        registry.method(phpClass, "getTrace", false, arguments -> new PhpArray());
-        registry.method(phpClass, "getTraceAsString", false, arguments -> Str.of("#0 {main}"));
+        for (PhpFunction method : table.throwableMethods) {
+            phpClass.addMethod(method);
+        }
         context.declareClass(phpClass);
         return phpClass;
+    }
+
+    private static List<PhpFunction> throwableMethods(Registry registry) {
+        return List.of(
+                registry.method("__construct", false, arguments -> {
+                    PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
+                    if (Args.has(arguments, 0)) {
+                        self.setProperty("message", Args.str(arguments, 0));
+                    }
+                    if (Args.has(arguments, 1)) {
+                        self.setProperty("code", Args.get(arguments, 1));
+                    }
+                    if (Args.has(arguments, 2)) {
+                        self.setProperty("previous", Args.get(arguments, 2));
+                    }
+                    return PhpNull.NULL;
+                }),
+                registry.method("getMessage", false, arguments -> property(arguments, "message")),
+                registry.method("getCode", false, arguments -> property(arguments, "code")),
+                registry.method("getPrevious", false, arguments -> property(arguments, "previous")),
+                registry.method("getFile", false, arguments -> property(arguments, "file")),
+                registry.method("getLine", false, arguments -> property(arguments, "line")),
+                registry.method("getTrace", false, arguments -> new PhpArray()),
+                registry.method("getTraceAsString", false, arguments -> Str.of("#0 {main}")));
     }
 
     private static Object property(Object[] arguments, String name) {
