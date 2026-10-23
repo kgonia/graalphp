@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -41,6 +42,8 @@ public final class PhpContext {
     private final OutputStream out;
 
     private final Map<String, PhpFunction> functions = new HashMap<>();
+    /** The declared functions by their name's language-level id (null: not declared here). */
+    private PhpFunction[] functionSlots = new PhpFunction[256];
     private final Map<String, PhpClass> classes = new HashMap<>();
     private final Map<String, Object> constants = new HashMap<>();
     private final Map<String, PhpRef> globals = new HashMap<>();
@@ -165,6 +168,17 @@ public final class PhpContext {
         if (functions.putIfAbsent(key, function) != null) {
             throw new PhpError("Cannot redeclare function " + function.getName() + "()");
         }
+        int id = language.functionId(key);
+        if (id >= functionSlots.length) {
+            functionSlots = Arrays.copyOf(functionSlots, Math.max(id + 1, functionSlots.length * 2));
+        }
+        functionSlots[id] = function;
+    }
+
+    /** The function declared under a name id (PhpLanguage.functionId), or null. */
+    public PhpFunction functionAt(int id) {
+        PhpFunction[] slots = functionSlots;
+        return id < slots.length ? slots[id] : null;
     }
 
     @TruffleBoundary

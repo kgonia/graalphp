@@ -48,6 +48,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      */
     private final Map<String, FileRootNode> files = new ConcurrentHashMap<>();
 
+    /** Function names (lowercase) by id: a call site resolves its name to an id once, for every context. */
+    private final Map<String, Integer> functionIds = new ConcurrentHashMap<>();
+
     /** Built-in functions are language-level: built on first use, then declared by every context. */
     private volatile Builtins.Table builtins;
 
@@ -72,6 +75,17 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected PhpContext createContext(Env env) {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot));
+    }
+
+    /** The id of a function name (lowercase), assigned on first use; a context keeps its functions by id. */
+    public int functionId(String lowerName) {
+        Integer id = functionIds.get(lowerName);
+        if (id == null) {
+            synchronized (functionIds) {
+                id = functionIds.computeIfAbsent(lowerName, name -> functionIds.size());
+            }
+        }
+        return id;
     }
 
     /** A file's translation, made by translate on first use (once, also when contexts race). */

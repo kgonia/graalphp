@@ -1232,7 +1232,7 @@ public final class Translator {
         if (intrinsic != null) {
             return intrinsic;
         }
-        return new FunctionCallNode(name, arguments(args));
+        return new FunctionCallNode(name, language.functionId(name.toLowerCase()), arguments(args));
     }
 
     /** The in-place node for a small built-in (see {@link Intrinsics}), or null for a regular call. */
