@@ -74,9 +74,9 @@ public final class Intrinsics {
                 return n == 1 ? new TypeTestNode(args[0], TypeTestNode.OBJECT) : null;
             case "count":
             case "sizeof":
-                return n == 1 ? new CountNode(args[0]) : null;
+                return n == 1 ? BuiltinNodesFactory.CountNodeGen.create(args) : null;
             case "strlen":
-                return n == 1 ? new StrlenNode(args[0]) : null;
+                return n == 1 ? BuiltinNodesFactory.StrlenNodeGen.create(args) : null;
             case "current":
             case "pos":
                 return n == 1 ? new CurrentNode(args[0], false) : null;
@@ -88,22 +88,23 @@ public final class Intrinsics {
             case "end":
                 return n == 1 && args[0] instanceof LValueNode place ? new MoveNode(place, lowerName) : null;
             case "ord":
-                return n == 1 ? new OrdNode(args[0]) : null;
+                return n == 1 ? BuiltinNodesFactory.OrdNodeGen.create(args) : null;
             case "chr":
                 return n == 1 ? new ChrNode(args[0]) : null;
             case "substr":
-                return n == 2 || n == 3 ? new SubstrNode(args[0], args[1], n == 3 ? args[2] : null) : null;
+                return n == 2 || n == 3
+                        ? BuiltinNodesFactory.SubstrNodeGen.create(withDefaults(args, 2, PhpNull.NULL)) : null;
             case "strpos":
-                return n == 2 ? new StrposNode(args[0], args[1]) : null;
+                return n == 2 ? BuiltinNodesFactory.StrposNodeGen.create(args) : null;
             case "str_contains":
-                return n == 2 ? new ContainsNode(args[0], args[1], ContainsNode.CONTAINS) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.CONTAINS, args) : null;
             case "str_starts_with":
-                return n == 2 ? new ContainsNode(args[0], args[1], ContainsNode.STARTS) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.STARTS, args) : null;
             case "str_ends_with":
-                return n == 2 ? new ContainsNode(args[0], args[1], ContainsNode.ENDS) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.ENDS, args) : null;
             case "array_key_exists":
             case "key_exists":
-                return n == 2 ? new KeyExistsNode(args[0], args[1]) : null;
+                return n == 2 ? BuiltinNodesFactory.KeyExistsNodeGen.create(args) : null;
             case "gettype":
                 return n == 1 ? new GettypeNode(args[0]) : null;
             case "strspn":
@@ -249,56 +250,6 @@ public final class Intrinsics {
         }
     }
 
-    static final class CountNode extends ExprNode {
-        @Child private ExprNode value;
-
-        CountNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeLong(frame);
-        }
-
-        @Override
-        public long executeLong(VirtualFrame frame) {
-            Object v = value.execute(frame);
-            if (v instanceof PhpArray array) {
-                return array.size();
-            }
-            return countSlow(v);
-        }
-
-        @TruffleBoundary
-        private static long countSlow(Object v) {
-            if (v instanceof PhpObject object && object.getPhpClass().isSubclassOf("countable")) {
-                return Convert.toLong(object.callMethod("count"));
-            }
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("TypeError: count(): Argument #1 ($value) must be of type Countable|array, "
-                    + Convert.typeName(v) + " given");
-        }
-    }
-
-    static final class StrlenNode extends ExprNode {
-        @Child private ExprNode value;
-
-        StrlenNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeLong(frame);
-        }
-
-        @Override
-        public long executeLong(VirtualFrame frame) {
-            return string(value.execute(frame), "strlen", 1).byteLength(Str.ENC);
-        }
-    }
-
     /** current() / key(): the element or key at the internal pointer; false (current) or null (key) past the end. */
     static final class CurrentNode extends ExprNode {
         @Child private ExprNode value;
@@ -360,26 +311,6 @@ public final class Intrinsics {
         }
     }
 
-    static final class OrdNode extends ExprNode {
-        @Child private ExprNode value;
-        @Child private TruffleString.ReadByteNode readByte = TruffleString.ReadByteNode.create();
-
-        OrdNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeLong(frame);
-        }
-
-        @Override
-        public long executeLong(VirtualFrame frame) {
-            TruffleString s = string(value.execute(frame), "ord", 1);
-            return s.byteLength(Str.ENC) == 0 ? 0 : readByte.execute(s, 0, Str.ENC);
-        }
-    }
-
     static final class ChrNode extends ExprNode {
         @Child private ExprNode value;
 
@@ -390,166 +321,6 @@ public final class Intrinsics {
         @Override
         public Object execute(VirtualFrame frame) {
             return Str.singleByte((int) Math.floorMod(integer(value.execute(frame)), 256L));
-        }
-    }
-
-    /** substr(): a lazy view of the bytes (no copy), with php-src's offset and length rules. */
-    static final class SubstrNode extends ExprNode {
-        @Child private ExprNode string;
-        @Child private ExprNode offset;
-        @Child private ExprNode length;
-        @Child private TruffleString.SubstringByteIndexNode substring = TruffleString.SubstringByteIndexNode.create();
-
-        SubstrNode(ExprNode string, ExprNode offset, ExprNode length) {
-            this.string = string;
-            this.offset = offset;
-            this.length = length;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            TruffleString s = string(string.execute(frame), "substr", 1);
-            long from = integer(offset.execute(frame));
-            Object lengthValue = length == null ? PhpNull.NULL : length.execute(frame);
-            int n = s.byteLength(Str.ENC);
-            long start = from < 0 ? Math.max(0, n + from) : from;
-            if (start > n) {
-                return Str.EMPTY;
-            }
-            long end;
-            if (lengthValue == PhpNull.NULL) {
-                end = n;
-            } else {
-                long len = integer(lengthValue);
-                if (len < 0) {
-                    end = n + len;
-                    if (end < start) {
-                        return Str.EMPTY;
-                    }
-                } else {
-                    end = Math.min(n, start + len);
-                }
-            }
-            if (start == 0 && end == n) {
-                return s;
-            }
-            return substring.execute(s, (int) start, (int) (end - start), Str.ENC, true);
-        }
-    }
-
-    /** strpos($haystack, $needle): the byte offset of the first occurrence, or false. */
-    static final class StrposNode extends ExprNode {
-        @Child private ExprNode haystack;
-        @Child private ExprNode needle;
-        @Child private TruffleString.ByteIndexOfStringNode indexOf = TruffleString.ByteIndexOfStringNode.create();
-
-        StrposNode(ExprNode haystack, ExprNode needle) {
-            this.haystack = haystack;
-            this.needle = needle;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            TruffleString h = string(haystack.execute(frame), "strpos", 1);
-            TruffleString n = string(needle.execute(frame), "strpos", 2);
-            int index = n.byteLength(Str.ENC) == 0 ? 0 : indexOf.execute(h, n, 0, h.byteLength(Str.ENC), Str.ENC);
-            return index < 0 ? (Object) Boolean.FALSE : (long) index;
-        }
-    }
-
-    /** str_contains / str_starts_with / str_ends_with. */
-    static final class ContainsNode extends ExprNode {
-        @Override
-        public boolean isBooleanValued() {
-            return true;
-        }
-
-        static final int CONTAINS = 0;
-        static final int STARTS = 1;
-        static final int ENDS = 2;
-
-        @Child private ExprNode haystack;
-        @Child private ExprNode needle;
-        @Child private TruffleString.ByteIndexOfStringNode indexOf = TruffleString.ByteIndexOfStringNode.create();
-        @Child private TruffleString.RegionEqualByteIndexNode regionEqual =
-                TruffleString.RegionEqualByteIndexNode.create();
-        private final int mode;
-        private final String name;
-
-        ContainsNode(ExprNode haystack, ExprNode needle, int mode) {
-            this.haystack = haystack;
-            this.needle = needle;
-            this.mode = mode;
-            this.name = mode == CONTAINS ? "str_contains" : mode == STARTS ? "str_starts_with" : "str_ends_with";
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
-        }
-
-        @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            TruffleString h = string(haystack.execute(frame), name, 1);
-            TruffleString n = string(needle.execute(frame), name, 2);
-            int hl = h.byteLength(Str.ENC);
-            int nl = n.byteLength(Str.ENC);
-            if (nl == 0) {
-                return true;
-            }
-            if (nl > hl) {
-                return false;
-            }
-            return switch (mode) {
-                case CONTAINS -> indexOf.execute(h, n, 0, hl, Str.ENC) >= 0;
-                case STARTS -> regionEqual.execute(h, 0, n, 0, nl, Str.ENC);
-                default -> regionEqual.execute(h, hl - nl, n, 0, nl, Str.ENC);
-            };
-        }
-    }
-
-    static final class KeyExistsNode extends ExprNode {
-        @Override
-        public boolean isBooleanValued() {
-            return true;
-        }
-
-        @Child private ExprNode key;
-        @Child private ExprNode container;
-
-        KeyExistsNode(ExprNode key, ExprNode container) {
-            this.key = key;
-            this.container = container;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return executeBoolean(frame);
-        }
-
-        @Override
-        public boolean executeBoolean(VirtualFrame frame) {
-            Object k = key.execute(frame);
-            Object c = container.execute(frame);
-            if (c instanceof PhpArray array) {
-                return array.containsKey(k instanceof Long ? k : normalize(k));
-            }
-            return keyExistsSlow(k, c);
-        }
-
-        @TruffleBoundary
-        private static Object normalize(Object k) {
-            return ArrayKey.of(k);
-        }
-
-        @TruffleBoundary
-        private static boolean keyExistsSlow(Object k, Object c) {
-            if (c instanceof PhpObject object) {
-                return object.getProperty(Str.java(Convert.toStr(k))) != null;
-            }
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("TypeError: array_key_exists(): Argument #2 ($array) must be of type array, "
-                    + Convert.typeName(c) + " given");
         }
     }
 

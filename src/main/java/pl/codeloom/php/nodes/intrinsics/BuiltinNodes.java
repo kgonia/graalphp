@@ -15,6 +15,7 @@ import pl.codeloom.php.builtins.StringFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
+import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -462,6 +463,173 @@ public final class BuiltinNodes {
         @Fallback
         protected Object other(Object callback, Object array) {
             return callFull("array_map", callback, array);
+        }
+    }
+
+    // ---- the first intrinsics (count, strlen, ord, substr, strpos, str_contains...), on the DSL ----
+
+    /** count($a) of an array; Countable objects and errors go to the regular built-in. */
+    public abstract static class CountNode extends BuiltinNode {
+        @Specialization
+        protected long array(PhpArray array) {
+            return array.size();
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull("count", value);
+        }
+    }
+
+    public abstract static class StrlenNode extends BuiltinNode {
+        @Specialization
+        protected long string(TruffleString s) {
+            return s.byteLength(Str.ENC);
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull("strlen", value);
+        }
+    }
+
+    public abstract static class OrdNode extends BuiltinNode {
+        @Specialization
+        protected long string(TruffleString s, @Cached TruffleString.ReadByteNode readByte) {
+            return s.byteLength(Str.ENC) == 0 ? 0 : readByte.execute(s, 0, Str.ENC);
+        }
+
+        @Fallback
+        protected Object other(Object value) {
+            return callFull("ord", value);
+        }
+    }
+
+    /** substr(string, int[, ?int]): a lazy view of the bytes (no copy), with php-src's offset and length rules. */
+    public abstract static class SubstrNode extends BuiltinNode {
+        @Specialization(guards = "isLengthOrNull(length)")
+        protected TruffleString string(TruffleString s, long from, Object length,
+                                       @Cached TruffleString.SubstringByteIndexNode substring) {
+            int n = s.byteLength(Str.ENC);
+            long start = from < 0 ? Math.max(0, n + from) : from;
+            if (start > n) {
+                return Str.EMPTY;
+            }
+            long end;
+            if (length instanceof Long count) {
+                if (count < 0) {
+                    end = n + count;
+                    if (end < start) {
+                        return Str.EMPTY;
+                    }
+                } else {
+                    end = Math.min(n, start + count);
+                }
+            } else {
+                end = n;
+            }
+            if (start == 0 && end == n) {
+                return s;
+            }
+            return substring.execute(s, (int) start, (int) (end - start), Str.ENC, true);
+        }
+
+        protected static boolean isLengthOrNull(Object length) {
+            return length instanceof Long || length == PhpNull.NULL;
+        }
+
+        @Fallback
+        protected Object other(Object s, Object from, Object length) {
+            return callFull("substr", s, from, length);
+        }
+    }
+
+    /** strpos($haystack, $needle): the byte offset of the first occurrence, or false. */
+    public abstract static class StrposNode extends BuiltinNode {
+        @Specialization
+        protected Object strings(TruffleString haystack, TruffleString needle,
+                                 @Cached TruffleString.ByteIndexOfStringNode indexOf) {
+            int length = haystack.byteLength(Str.ENC);
+            int needleLength = needle.byteLength(Str.ENC);
+            int index = needleLength == 0 ? 0
+                    : needleLength > length ? -1 : indexOf.execute(haystack, needle, 0, length, Str.ENC);
+            return index < 0 ? (Object) Boolean.FALSE : (long) index;
+        }
+
+        @Fallback
+        protected Object other(Object haystack, Object needle) {
+            return callFull("strpos", haystack, needle);
+        }
+    }
+
+    /** str_contains / str_starts_with / str_ends_with. */
+    public abstract static class ContainsNode extends BuiltinNode {
+        public static final int CONTAINS = 0;
+        public static final int STARTS = 1;
+        public static final int ENDS = 2;
+
+        private final int mode;
+
+        protected ContainsNode(int mode) {
+            this.mode = mode;
+        }
+
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
+        @Specialization
+        protected boolean strings(TruffleString haystack, TruffleString needle,
+                                  @Cached TruffleString.ByteIndexOfStringNode indexOf,
+                                  @Cached TruffleString.RegionEqualByteIndexNode regionEqual) {
+            int length = haystack.byteLength(Str.ENC);
+            int needleLength = needle.byteLength(Str.ENC);
+            if (needleLength == 0) {
+                return true;
+            }
+            if (needleLength > length) {
+                return false;
+            }
+            return switch (mode) {
+                case CONTAINS -> indexOf.execute(haystack, needle, 0, length, Str.ENC) >= 0;
+                case STARTS -> regionEqual.execute(haystack, 0, needle, 0, needleLength, Str.ENC);
+                default -> regionEqual.execute(haystack, length - needleLength, needle, 0, needleLength, Str.ENC);
+            };
+        }
+
+        @Fallback
+        protected Object other(Object haystack, Object needle) {
+            return callFull(mode == CONTAINS ? "str_contains" : mode == STARTS ? "str_starts_with" : "str_ends_with",
+                    haystack, needle);
+        }
+    }
+
+    /** array_key_exists($key, $array) for int and string keys of arrays. */
+    public abstract static class KeyExistsNode extends BuiltinNode {
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
+        @Specialization
+        protected boolean intKey(long key, PhpArray array) {
+            return array.containsKey(key);
+        }
+
+        @Specialization
+        protected boolean stringKey(TruffleString key, PhpArray array) {
+            return array.containsKey(normalize(key));
+        }
+
+        @TruffleBoundary
+        private static Object normalize(TruffleString key) {
+            return ArrayKey.of(key);
+        }
+
+        @Fallback
+        protected Object other(Object key, Object container) {
+            return callFull("array_key_exists", key, container);
         }
     }
 }
