@@ -112,6 +112,9 @@ final class PcreFunctions {
      * times the match itself, and preg_replace chains produce a new subject per call. An entry in use by an outer
      * call (a preg_replace_callback callback calling preg_* again) is never reused. Small subjects (most calls)
      * skip the cache: they are copied into a scratch buffer per nesting depth, slot -1 - depth.
+     *
+     * <p>Buffers come from global or automatic arenas, never shared ones: a downcall acquires and releases a
+     * shared arena's session around the call, which took a 13-byte match from 12 to 23 ns.
      */
     private static final class SubjectCache {
         private static final int LARGE = 4096;
@@ -119,7 +122,6 @@ final class PcreFunctions {
         private static int depth;
         private static byte[][] subjects = new byte[8][];
         private static MemorySegment[] buffers = new MemorySegment[8];
-        private static Arena[] arenas = new Arena[8];
         private static int[] users = new int[8];
         private static int next;
 
@@ -136,12 +138,8 @@ final class PcreFunctions {
             }
             int slot = unusedSlot();
             if (buffers[slot] == null || buffers[slot].byteSize() < subject.length) {
-                if (arenas[slot] != null) {
-                    arenas[slot].close();
-                }
-                arenas[slot] = Arena.ofShared();
                 long size = Math.max(256, Integer.highestOneBit(Math.max(1, subject.length)) * 2L);
-                buffers[slot] = arenas[slot].allocate(size);
+                buffers[slot] = Arena.ofAuto().allocate(size);
             }
             MemorySegment.copy(subject, 0, buffers[slot], ValueLayout.JAVA_BYTE, 0, subject.length);
             subjects[slot] = subject;
@@ -185,7 +183,6 @@ final class PcreFunctions {
             int slot = users.length;
             subjects = Arrays.copyOf(subjects, slot * 2);
             buffers = Arrays.copyOf(buffers, slot * 2);
-            arenas = Arrays.copyOf(arenas, slot * 2);
             users = Arrays.copyOf(users, slot * 2);
             next = slot + 1;
             return slot;
@@ -919,28 +916,29 @@ final class PcreFunctions {
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
         private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        /** Critical with heap access: the subject is passed as a Java array segment; matching never calls back. */
         /**
-         * -Dphp.pcre2.critical=true passes subjects as Java arrays through a critical downcall. That avoids the
-         * copy but made allocation-heavy calls (preg_split, preg_match_all with matches) 2-3x slower: the GC has
-         * to pin the array for every call. The default copies subjects to native memory (SubjectCache).
+         * How the match downcalls run, -Dphp.pcre2.critical: "off" (default) makes ordinary downcalls on subjects
+         * copied to native memory (SubjectCache). "native" makes them critical (no transition to native state and
+         * back): 12 -> 8 ns for a 13-byte match, but wpautop and wptexturize got ~40% slower, because the critical
+         * stub skips vzeroupper and PCRE2's SSE code then runs with the upper halves of the vector registers dirty
+         * from the JIT-compiled Java code (a 4 KB scan after an AVX array copy: 570 -> 656 ns). "heap" also passes
+         * the Java arrays themselves, avoiding the copy, but made allocation-heavy calls (preg_split,
+         * preg_match_all with matches) 2-3x slower because the GC has to pin the array for every call.
          */
-        static final boolean CRITICAL = Boolean.getBoolean("php.pcre2.critical");
-        private static final MethodHandle MATCH = CRITICAL ? LINKER.downcallHandle(find("pcre2_match_8"),
-                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS), Linker.Option.critical(true))
-                : handle("pcre2_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS);
+        private static final String CRITICAL_MODE = System.getProperty("php.pcre2.critical", "off");
+        static final boolean CRITICAL = CRITICAL_MODE.equals("heap");
+        private static final Linker.Option[] MATCH_OPTIONS = CRITICAL
+                ? new Linker.Option[] {Linker.Option.critical(true)}
+                : CRITICAL_MODE.equals("native") ? new Linker.Option[] {Linker.Option.critical(false)}
+                : new Linker.Option[0];
+        private static final FunctionDescriptor MATCH_SIGNATURE = FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
+                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"), MATCH_SIGNATURE,
+                MATCH_OPTIONS);
         /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
-        private static final MethodHandle JIT_MATCH = CRITICAL ? LINKER.downcallHandle(find("pcre2_jit_match_8"),
-                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS), Linker.Option.critical(true))
-                : handle("pcre2_jit_match_8", ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                        ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_MATCH = LINKER.downcallHandle(find("pcre2_jit_match_8"),
+                MATCH_SIGNATURE, MATCH_OPTIONS);
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,

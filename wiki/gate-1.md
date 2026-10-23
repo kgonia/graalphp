@@ -211,3 +211,16 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - Built-ins called directly from the call site, skipping their call target (48 → 13 ns per call when not inlined): Gate 1 neutral to slightly worse at steady state, and it made compiles bigger and slower. Reverted.
   - **Profile of kses** (Truffle's CPU sampler, per PHP function): no hotspot. About 6% of samples are direct calls Graal didn't inline, each allocating an argument array and a frame. `preg_replace_callback` allocates a matcher and group arrays per match. Truffle drops the Tier 2 compile of a function "inlined into its only caller", even when the function is also reached indirectly; such functions keep running their Tier 1 code.
   - **Where that leaves the gate:** hooks and escape are at parity. The regex-heavy kernels are at 0.2–0.65× on PHP code. To reach 2×, the slow primitives above need to become 3–10× faster, and calls that aren't inlined need to cost what PHP's do.
+- **2026-10-23, FFM review of the PCRE2 bindings** (against GraalVM's [FFM API in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/native-code-interoperability/ffm-api/) page and the JVM rules):
+  - **Already fine:**
+    - `static final` downcall handles, called with `invokeExact` and exact types.
+    - `--enable-native-access` is set.
+    - `size_t` is mapped to `JAVA_LONG` (correct on 64-bit Linux and Windows; no C `long` anywhere).
+    - Downcalls only run behind the built-ins' `@TruffleBoundary`.
+  - **Shared arenas cost a session acquire and release on every downcall.** Subjects of 4 KB and up lived in `Arena.ofShared()` buffers, which added 11 ns per match (13-byte match: 12 → 23 ns; global or auto arena: 12–14 ns). They now come from `Arena.ofAuto()`. Gate 1: neutral to slightly better.
+  - **Critical downcalls (`Linker.Option.critical(false)`) were tried and rejected.** They are cheaper per call (12 → 8 ns), but made wpautop and wptexturize about 40% slower. The critical stub skips `vzeroupper`, so PCRE2's SSE code runs with the upper vector halves dirty from Graal-compiled Java code. A 4 KB scan right after an AVX array copy: 570 ns normal, 656 ns critical. Normal downcalls stay the default; `-Dphp.pcre2.critical=native|heap` keeps both variants for experiments. `bench/ffm/FfmBench.java` measures all of this.
+  - **Not yet ready for Native Image:**
+    - There's no `reachability-metadata.json` with a `"foreign"` `"downcalls"` section for the 13 PCRE2 signatures.
+    - `PcreFunctions.Native` creates its handles, and a native match-context `MemorySegment`, in a static initializer. The page says such classes must be initialized at run time, and native segments may not be in the image heap.
+
+    To do when the native image (D8) is built.
