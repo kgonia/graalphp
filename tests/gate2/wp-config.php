@@ -19,8 +19,14 @@ define('NONCE_SALT', 'gate2-nonce-salt');
 
 $table_prefix = 'wp_';
 
+// over HTTP the site is wherever it was requested from (tests/gate2/http.sh sends Host: localhost to both servers)
+if (!empty($_SERVER['HTTP_HOST'])) {
+    define('WP_HOME', 'http://' . $_SERVER['HTTP_HOST']);
+    define('WP_SITEURL', 'http://' . $_SERVER['HTTP_HOST']);
+}
+
 define('WP_DEBUG', true);
-define('WP_DEBUG_DISPLAY', true);
+define('WP_DEBUG_DISPLAY', false); // notices would differ: Truffle PHP displays no diagnostics
 
 if (!defined('ABSPATH')) {
     define('ABSPATH', __DIR__ . '/');

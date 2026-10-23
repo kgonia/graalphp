@@ -239,9 +239,8 @@ final class CoreFunctions {
         r.fn("error_reporting", a -> 30719L);
         r.fn("set_error_handler", (context, a) -> context.swapErrorHandler(Args.get(a, 0, PhpNull.NULL)));
         r.fn("restore_error_handler", a -> true);
-        r.fn("trigger_error", a -> {
-            throw new PhpError("User error: " + Str.java(Args.str(a, 0)));
-        });
+        r.fn("trigger_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
+        r.fn("user_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, 1024)));
         r.fn("extension_loaded", a -> RuntimeFunctions.EXTENSIONS.contains(Str.java(Args.str(a, 0)).toLowerCase()));
         r.fn("ini_get", a -> Boolean.FALSE);
         r.fn("ini_set", a -> Boolean.FALSE);
@@ -329,7 +328,8 @@ final class CoreFunctions {
             Path path = Path.of(Str.java(Args.str(a, 0)));
             return Files.exists(path) ? (Object) Str.of(path.toAbsolutePath().normalize().toString()) : Boolean.FALSE;
         });
-        r.fn("file_get_contents", a -> readFile(Str.java(Args.str(a, 0))));
+        r.fn("file_get_contents", (context, a) -> Str.java(Args.str(a, 0)).equals("php://input")
+                ? Str.of(context.requestBody()) : readFile(Str.java(Args.str(a, 0))));
     }
 
     @TruffleBoundary
@@ -353,6 +353,28 @@ final class CoreFunctions {
         }
         throw new PhpError("TypeError: count(): Argument #1 ($value) must be of type Countable|array, "
                 + Convert.typeName(value == null ? PhpNull.NULL : value) + " given");
+    }
+
+    /**
+     * trigger_error(): the error handler gets it if one is set (and doesn't return false); otherwise E_USER_ERROR
+     * is fatal and the other levels are not reported (this runtime displays no diagnostics).
+     */
+    @TruffleBoundary
+    private static Object triggerError(PhpContext context, TruffleString message, long level) {
+        if (level != 256 && level != 512 && level != 1024 && level != 16384) {
+            throw new PhpError("ValueError: trigger_error(): Argument #2 ($error_level) must be one of E_USER_ERROR,"
+                    + " E_USER_WARNING, E_USER_NOTICE, or E_USER_DEPRECATED");
+        }
+        Object handler = context.errorHandler();
+        if (handler != PhpNull.NULL
+                && !Boolean.FALSE.equals(pl.codeloom.php.runtime.Callables.call(context, handler, level, message,
+                        Str.EMPTY, 0L))) {
+            return Boolean.TRUE;
+        }
+        if (level == 256) {
+            throw new PhpError(Str.java(message));
+        }
+        return Boolean.TRUE;
     }
 
     @TruffleBoundary

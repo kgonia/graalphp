@@ -375,7 +375,7 @@ final class FileFunctions {
 
         // ---- directories ----
         r.fn("scandir", a -> io(() -> {
-            List<String> names = entries(path(a, 0));
+            List<String> names = entries(path(a, 0), true);
             if (Args.lng(a, 1, 0) == 1) {
                 Collections.reverse(names);
             }
@@ -383,7 +383,7 @@ final class FileFunctions {
         }));
         r.fn("glob", a -> glob(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
         r.fn("opendir", (context, a) -> io(() -> new PhpResource(context.nextResourceId(), "stream",
-                new Directory(entries(path(a, 0))))));
+                new Directory(entries(path(a, 0), false)))));
         r.fn("readdir", a -> {
             Directory directory = (Directory) resource(a, 0).getHandle();
             return directory.position < directory.entries.size()
@@ -450,6 +450,12 @@ final class FileFunctions {
         Stream stream;
         switch (name) {
             case "php://memory", "php://temp" -> stream = new MemoryStream();
+            case "php://input" -> {
+                MemoryStream input = new MemoryStream();
+                input.write(context.requestBody());
+                input.position = 0;
+                stream = input;
+            }
             case "php://stdin" -> stream = new StdStream(context, 0);
             case "php://stdout", "php://output" -> stream = new StdStream(context, 1);
             case "php://stderr" -> stream = new StdStream(context, 2);
@@ -640,8 +646,8 @@ final class FileFunctions {
         return PosixFilePermissions.fromString(text.toString());
     }
 
-    /** A directory's entries, sorted, with . and .. as PHP lists them. */
-    private static List<String> entries(Path directory) throws IOException {
+    /** A directory's entries with . and ..: sorted (scandir), or in the file system's order (readdir). */
+    private static List<String> entries(Path directory, boolean sorted) throws IOException {
         List<String> names = new ArrayList<>();
         names.add(".");
         names.add("..");
@@ -650,7 +656,9 @@ final class FileFunctions {
                 names.add(entry.getFileName().toString());
             }
         }
-        Collections.sort(names);
+        if (sorted) {
+            Collections.sort(names);
+        }
         return names;
     }
 

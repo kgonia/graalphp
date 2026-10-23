@@ -1009,7 +1009,7 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString urlencode(TruffleString s, boolean raw) {
+    static TruffleString urlencode(TruffleString s, boolean raw) {
         byte[] b = Str.readBytes(s);
         ByteBuilder out = new ByteBuilder(b.length * 3 / 2);
         for (byte c : b) {

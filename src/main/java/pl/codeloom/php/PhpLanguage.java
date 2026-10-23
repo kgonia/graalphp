@@ -42,6 +42,10 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> SourceRoot = new OptionKey<>(".");
 
+    @Option(help = "The server API: cli (php-cli) or cgi (a request from the environment and stdin, a CGI response "
+            + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
+    static final OptionKey<String> Sapi = new OptionKey<>("cli");
+
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 
     private final Shape rootShape = Shape.newBuilder().layout(PhpObject.class, java.lang.invoke.MethodHandles.lookup())
@@ -57,6 +61,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      * engine runs (a plugin or core update) is translated again on its next include.
      */
     private final Map<String, CachedFile> files = new ConcurrentHashMap<>();
+    private final Prelude prelude = new Prelude();
 
     /** A translation and the AST export version (modification time and size) it was made from. */
     private record CachedFile(FileRootNode root, long modified, long size) {
@@ -102,7 +107,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     @Override
     protected PhpContext createContext(Env env) {
-        return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot));
+        return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
+                env.getOptions().get(Sapi).equals("cgi"));
     }
 
     /** The id of a function name (lowercase); a context keeps its functions by id. */
@@ -147,6 +153,16 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return cached.root();
     }
 
+    /** The prelude file declaring a built-in class written in PHP, or null (see {@link Prelude}). */
+    public String preludeFile(String lowerClassName) {
+        return prelude.fileOf(lowerClassName);
+    }
+
+    /** A prelude file's translation, shared by every context. */
+    public FileRootNode preludeRoot(String file) {
+        return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));
+    }
+
     /** Contexts share translated files only when they read the same AST exports. */
     @Override
     protected boolean areOptionsCompatible(OptionValues firstOptions, OptionValues newOptions) {
@@ -166,7 +182,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     @Override
     protected void finalizeContext(PhpContext context) {
-        context.flush();
+        context.endRequest();
         context.builtinState().close();
     }
 }

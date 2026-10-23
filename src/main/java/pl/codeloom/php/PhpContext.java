@@ -66,7 +66,14 @@ public final class PhpContext {
     private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
     private final pl.codeloom.php.runtime.Callables.LastCall lastCall = new pl.codeloom.php.runtime.Callables.LastCall();
 
-    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot) {
+    /** The prelude files this context has run (see {@link Prelude}). */
+    private final java.util.Set<String> preludeLoaded = new java.util.HashSet<>();
+    /** The CGI SAPI's response, or null under the CLI SAPI. */
+    private final pl.codeloom.php.builtins.CgiSapi.Response response;
+    /** The request body (php://input): stdin under the CGI SAPI, empty under the CLI. */
+    private final byte[] requestBody;
+
+    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi) {
         this.language = language;
         this.env = env;
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
@@ -79,30 +86,58 @@ public final class PhpContext {
         }
         globalRef("argv").set(argv);
         globalRef("argc").set((long) argv.size());
+        response = cgi ? new pl.codeloom.php.builtins.CgiSapi.Response() : null;
+        requestBody = cgi ? readRequestBody(env) : new byte[0];
         superglobals(argv);
+        if (cgi) {
+            pl.codeloom.php.builtins.CgiSapi.installRequest(this, env.getEnvironment(), requestBody);
+        }
+    }
+
+    private static byte[] readRequestBody(TruffleLanguage.Env env) {
+        try {
+            return env.in().readAllBytes();
+        } catch (IOException e) {
+            throw new PhpError("reading the request body failed: " + e.getMessage());
+        }
+    }
+
+    public pl.codeloom.php.builtins.CgiSapi.Response response() {
+        return response;
+    }
+
+    public byte[] requestBody() {
+        return requestBody;
     }
 
     /** The superglobal names: global variables visible in every scope. */
     public static final java.util.Set<String> SUPERGLOBALS = java.util.Set.of("_SERVER", "_GET", "_POST", "_COOKIE",
             "_FILES", "_REQUEST", "_ENV", "_SESSION");
 
-    /** As the CLI SAPI fills them: $_SERVER has the environment, argv/argc and the request time; the rest empty. */
+    /**
+     * As the CLI SAPI fills them: $_SERVER has the environment, argv/argc and the request time; the rest empty. Under
+     * the CGI SAPI the environment holds the request's variables (SCRIPT_NAME, ...), and argv/argc are left out.
+     */
     private void superglobals(PhpArray argv) {
         PhpArray server = new PhpArray();
         for (Map.Entry<String, String> variable : new java.util.TreeMap<>(env.getEnvironment()).entrySet()) {
             server.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(variable.getKey())), Str.of(variable.getValue()));
         }
-        String script = argv.size() > 0 ? Str.java((TruffleString) argv.get(0L)) : "";
-        server.put(Str.of("PHP_SELF"), Str.of(script));
-        server.put(Str.of("SCRIPT_NAME"), Str.of(script));
-        server.put(Str.of("SCRIPT_FILENAME"), Str.of(script));
-        server.put(Str.of("PATH_TRANSLATED"), Str.of(script));
-        server.put(Str.of("DOCUMENT_ROOT"), Str.EMPTY);
         long millis = System.currentTimeMillis();
+        if (response == null) {
+            String script = argv.size() > 0 ? Str.java((TruffleString) argv.get(0L)) : "";
+            server.put(Str.of("PHP_SELF"), Str.of(script));
+            server.put(Str.of("SCRIPT_NAME"), Str.of(script));
+            server.put(Str.of("SCRIPT_FILENAME"), Str.of(script));
+            server.put(Str.of("PATH_TRANSLATED"), Str.of(script));
+            server.put(Str.of("DOCUMENT_ROOT"), Str.EMPTY);
+        }
         server.put(Str.of("REQUEST_TIME_FLOAT"), millis / 1000.0);
         server.put(Str.of("REQUEST_TIME"), millis / 1000);
-        server.put(Str.of("argv"), argv);
-        server.put(Str.of("argc"), (long) argv.size());
+        if (response == null) {
+            server.put(Str.of("argv"), argv);
+            server.put(Str.of("argc"), (long) argv.size());
+        }
         globalRef("_SERVER").set(server);
         for (String name : SUPERGLOBALS) {
             if (!name.equals("_SERVER") && !name.equals("_SESSION")) {
@@ -246,7 +281,21 @@ public final class PhpContext {
 
     @TruffleBoundary
     public PhpClass findClass(String lowerName) {
-        return classes.get(lowerName);
+        PhpClass phpClass = classes.get(lowerName);
+        if (phpClass == null && loadPrelude(lowerName)) {
+            phpClass = classes.get(lowerName);
+        }
+        return phpClass;
+    }
+
+    /** Runs the prelude file declaring a built-in class written in PHP, once; false if there's none to run. */
+    private boolean loadPrelude(String lowerName) {
+        String file = language.preludeFile(lowerName);
+        if (file == null || !preludeLoaded.add(file)) {
+            return false;
+        }
+        language.preludeRoot(file).getCallTarget().call(new Object[PhpFunction.ARG_FIRST]);
+        return true;
     }
 
     /** The class, running the autoloaders if it isn't declared yet; throws if it still isn't. */
@@ -264,7 +313,7 @@ public final class PhpContext {
     public PhpClass findClassAutoloading(String name) {
         String className = stripSlash(name);
         String lowerName = className.toLowerCase();
-        PhpClass phpClass = classes.get(lowerName);
+        PhpClass phpClass = findClass(lowerName);
         if (phpClass != null || autoloaders.isEmpty() || !autoloading.add(lowerName)) {
             return phpClass;
         }
@@ -418,7 +467,7 @@ public final class PhpContext {
     @TruffleBoundary
     public void exit(int status) {
         runShutdownFunctions();
-        flush();
+        endRequest();
         env.getContext().closeExited(null, status);
     }
 
@@ -454,12 +503,19 @@ public final class PhpContext {
         return previous;
     }
 
+    public Object errorHandler() {
+        return errorHandler;
+    }
+
     // ---- output ----
 
     @TruffleBoundary
     public void write(TruffleString s) {
         try {
             if (buffers.isEmpty()) {
+                if (response != null && !response.isSent()) {
+                    out.write(response.block());
+                }
                 out.write(Str.readBytes(s));
             } else {
                 buffers.peek().write(Str.readBytes(s));
@@ -497,6 +553,15 @@ public final class PhpContext {
         return true;
     }
 
+    /** The end of the script or request: open output buffers are flushed, then the output (and headers). */
+    @TruffleBoundary
+    public void endRequest() {
+        while (flushBuffer()) {
+            // each level passes its contents to the one below
+        }
+        flush();
+    }
+
     /** Discards the current buffer (ob_end_clean); false if there was none. */
     @TruffleBoundary
     public boolean endBuffer() {
@@ -506,6 +571,9 @@ public final class PhpContext {
     @TruffleBoundary
     public void flush() {
         try {
+            if (response != null && !response.isSent()) {
+                out.write(response.block());
+            }
             out.flush();
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());

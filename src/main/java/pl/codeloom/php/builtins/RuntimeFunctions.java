@@ -51,14 +51,35 @@ final class RuntimeFunctions {
             return PhpNull.NULL;
         });
 
-        // ---- HTTP headers and cookies: php-cli sends none ----
-        r.fn("header", a -> PhpNull.NULL);
-        r.fn("header_remove", a -> PhpNull.NULL);
-        r.fn("headers_sent", a -> Boolean.FALSE);
-        r.fn("headers_list", a -> new PhpArray());
-        r.fn("http_response_code", a -> Boolean.FALSE);
-        r.fn("setcookie", a -> Boolean.TRUE);
-        r.fn("setrawcookie", a -> Boolean.TRUE);
+        // ---- HTTP headers and cookies: the CGI SAPI's response; php-cli sends none ----
+        r.fn("header", (context, a) -> {
+            if (context.response() != null && !context.response().isSent()) {
+                context.response().header(Str.java(Args.str(a, 0)), Args.bool(a, 1, true), (int) Args.lng(a, 2, 0));
+            }
+            return PhpNull.NULL;
+        });
+        r.fn("header_remove", (context, a) -> {
+            if (context.response() != null && !context.response().isSent()) {
+                context.response().remove(Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL
+                        ? Str.java(Args.str(a, 0)) : null);
+            }
+            return PhpNull.NULL;
+        });
+        r.fn("headers_sent", (context, a) -> context.response() != null && context.response().isSent());
+        r.fn("headers_list", (context, a) -> context.response() == null ? new PhpArray()
+                : list(context.response().headers().toArray(new String[0])));
+        r.fn("http_response_code", (context, a) -> {
+            if (context.response() == null) {
+                return Boolean.FALSE;
+            }
+            long previous = context.response().status();
+            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL && !context.response().isSent()) {
+                context.response().setStatus((int) Args.lng(a, 0, 200));
+            }
+            return previous;
+        });
+        r.fn("setcookie", (context, a) -> cookie(context, a, false));
+        r.fn("setrawcookie", (context, a) -> cookie(context, a, true));
 
         // ---- environment and self-description ----
         r.fn("getenv", (context, a) -> getenv(context, a));
@@ -139,6 +160,49 @@ final class RuntimeFunctions {
         }
         String value = environment.get(Str.java(Args.str(a, 0)));
         return value == null ? (Object) Boolean.FALSE : Str.of(value);
+    }
+
+    /** setcookie(name, value, expires_or_options, path, domain, secure, httponly). */
+    @TruffleBoundary
+    private static Object cookie(PhpContext context, Object[] a, boolean raw) {
+        if (context.response() == null) {
+            return Boolean.TRUE;
+        }
+        if (context.response().isSent()) {
+            return Boolean.FALSE;
+        }
+        String name = Str.java(Args.str(a, 0));
+        byte[] value = Str.bytes(Args.str(a, 1, Str.EMPTY));
+        long expires = 0;
+        String path = "";
+        String domain = "";
+        boolean secure = false;
+        boolean httpOnly = false;
+        String sameSite = "";
+        if (Args.get(a, 2, PhpNull.NULL) instanceof PhpArray options) {
+            for (int p = options.firstPosition(); p >= 0; p = options.nextPosition(p)) {
+                Object option = options.valueAt(p);
+                switch (Str.java(Convert.toStr(options.keyAt(p))).toLowerCase()) {
+                    case "expires" -> expires = Convert.toLong(option);
+                    case "path" -> path = Str.java(Convert.toStr(option));
+                    case "domain" -> domain = Str.java(Convert.toStr(option));
+                    case "secure" -> secure = Convert.toBool(option);
+                    case "httponly" -> httpOnly = Convert.toBool(option);
+                    case "samesite" -> sameSite = Str.java(Convert.toStr(option));
+                    default -> throw new PhpError("ValueError: setcookie(): option \"" + options.keyAt(p)
+                            + "\" is invalid");
+                }
+            }
+        } else {
+            expires = Args.lng(a, 2, 0);
+            path = Str.java(Args.str(a, 3, Str.EMPTY));
+            domain = Str.java(Args.str(a, 4, Str.EMPTY));
+            secure = Args.bool(a, 5, false);
+            httpOnly = Args.bool(a, 6, false);
+        }
+        context.response().header(CgiSapi.cookieHeader(name, value, raw, expires, path, domain, secure, httpOnly,
+                sameSite), false, 0);
+        return Boolean.TRUE;
     }
 
     private static PhpArray list(String... items) {
