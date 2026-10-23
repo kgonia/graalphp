@@ -1,5 +1,6 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 
@@ -27,9 +28,10 @@ public final class ByteBuilder {
      * Builders kept for reuse by built-ins that build a document-sized string per call (preg_replace,
      * str_replace): a fresh buffer is zeroed on allocation, which cost more than the copying itself on 10 KB
      * posts. Small outputs take a fresh builder (cheaper than the pool). Borrowing nests (a preg_replace_callback
-     * callback may call them again); release() returns a pooled builder.
+     * callback may call them again); release() returns a pooled builder. The pool is per thread: contexts on
+     * different threads share the language, and a builder is borrowed and released within one call.
      */
-    private static final ArrayDeque<ByteBuilder> POOL = new ArrayDeque<>();
+    private static final ThreadLocal<ArrayDeque<ByteBuilder>> POOL = ThreadLocal.withInitial(ArrayDeque::new);
     private static final int POOLED_FROM = 4096;
     private static final int POOLED_LIMIT = 1 << 22;
     private boolean pooled;
@@ -39,7 +41,12 @@ public final class ByteBuilder {
         if (expected < POOLED_FROM) {
             return new ByteBuilder(expected + 16);
         }
-        ByteBuilder builder = POOL.pollFirst();
+        return borrowPooled(expected);
+    }
+
+    @TruffleBoundary
+    private static ByteBuilder borrowPooled(int expected) {
+        ByteBuilder builder = POOL.get().pollFirst();
         if (builder == null) {
             builder = new ByteBuilder(expected + expected / 4);
             builder.pooled = true;
@@ -49,8 +56,18 @@ public final class ByteBuilder {
     }
 
     public void release() {
-        if (pooled && buf.length <= POOLED_LIMIT && POOL.size() < 16) {
-            POOL.addFirst(this);
+        if (pooled) {
+            releasePooled();
+        }
+    }
+
+    @TruffleBoundary
+    private void releasePooled() {
+        if (buf.length <= POOLED_LIMIT) {
+            ArrayDeque<ByteBuilder> pool = POOL.get();
+            if (pool.size() < 16) {
+                pool.addFirst(this);
+            }
         }
     }
 
