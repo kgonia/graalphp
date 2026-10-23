@@ -49,6 +49,8 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
     private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
+    /** php.ini's display_errors (the php.DisplayErrors option). */
+    private final boolean displayErrors;
     /** How many of the first functions and classes declared are the built-ins (the prelude's come later). */
     private final int internalFunctions;
     private final int internalClasses;
@@ -80,7 +82,8 @@ public final class PhpContext {
     private final byte[] requestBody;
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
-                      boolean debug) {
+                      boolean debug, boolean displayErrors) {
+        this.displayErrors = displayErrors;
         this.language = language;
         this.env = env;
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
@@ -709,6 +712,17 @@ public final class PhpContext {
     }
 
     /** The end of the script or request: open output buffers are flushed, then the output (and headers). */
+    /**
+     * An uncaught error ends the script: as php_error_cb, a CGI response whose headers haven't gone out becomes a
+     * 500 unless the error is displayed or the script chose another status.
+     */
+    @TruffleBoundary
+    public void fatalError() {
+        if (response != null && !response.isSent() && response.status() == 200 && !displayErrors) {
+            response.setStatus(500);
+        }
+    }
+
     @TruffleBoundary
     public void endRequest() {
         while (flushBuffer()) {

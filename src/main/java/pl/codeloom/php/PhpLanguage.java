@@ -50,6 +50,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
 
+    @Option(help = "The display_errors setting of php.ini: a fatal error's message is shown (On, PHP's default); "
+            + "Off (as php.ini-production) makes a CGI response a 500 when its headers haven't gone out yet.",
+            category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
+    static final OptionKey<Boolean> DisplayErrors = new OptionKey<>(true);
+
     @Option(help = "Declares the runtime's debugging functions for its own tools (truffle_translate, "
             + "truffle_native_ns, truffle_pcre_record); PHP has none of them.", category = OptionCategory.INTERNAL,
             stability = OptionStability.EXPERIMENTAL)
@@ -152,7 +157,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected PhpContext createContext(Env env) {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
-                env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug));
+                env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
+                env.getOptions().get(DisplayErrors));
     }
 
     /** The id of a function name (lowercase); a context keeps its functions by id. */

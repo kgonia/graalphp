@@ -33,7 +33,9 @@ import java.util.concurrent.Executors;
  * the request goes in as CGI variables and stdin, the response comes back as a CGI response.
  *
  * <p>{@code HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir]
- * [--source-root=dir] [--server-name=name]}: SERVER_NAME is the request's host unless set. Routing is php -S's:
+ * [--source-root=dir] [--server-name=name] [--display-errors]}: SERVER_NAME is the request's host unless set.
+ * --display-errors is php.ini's display_errors=On (php -S's default): a fatal error's message goes to the client;
+ * without it, as in php.ini-production, it is only logged and the response is a 500. Routing is php -S's:
  * an existing .php file runs, another existing file is served as is, a directory runs its index.php, and anything
  * else runs the document root's index.php (a front controller, as WordPress's permalinks need).
  *
@@ -59,9 +61,12 @@ public final class HttpMain {
     private final String sourceRoot;
     private final int port;
     private final String serverName;
+    private final boolean displayErrors;
 
-    private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName) {
+    private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName,
+                     boolean displayErrors) {
         this.serverName = serverName;
+        this.displayErrors = displayErrors;
         this.engine = engine;
         this.docroot = docroot;
         this.astRoot = astRoot;
@@ -77,6 +82,7 @@ public final class HttpMain {
         String astRoot = "target/ast";
         String sourceRoot = ".";
         String serverName = null;
+        boolean displayErrors = false;
         for (String arg : args) {
             String value = arg.substring(arg.indexOf('=') + 1);
             if (arg.startsWith("--host=")) {
@@ -93,16 +99,19 @@ public final class HttpMain {
                 sourceRoot = value;
             } else if (arg.startsWith("--server-name=")) {
                 serverName = value;
+            } else if (arg.equals("--display-errors")) {
+                displayErrors = true;
             } else {
                 System.err.println("usage: HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] "
-                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name]");
+                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name] [--display-errors]");
                 System.exit(2);
             }
         }
         // the JDK server's time limit for receiving a request (seconds; read when the server class loads)
         System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
         Engine engine = Engine.create("php");
-        HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName);
+        HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName,
+                displayErrors);
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
@@ -175,6 +184,7 @@ public final class HttpMain {
                 .in(new ByteArrayInputStream(body))
                 .out(out)
                 .option("php.Sapi", "cgi")
+                .option("php.DisplayErrors", Boolean.toString(displayErrors))
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", new String[] {script.toString()})
@@ -189,7 +199,7 @@ public final class HttpMain {
                 }
             }
         }
-        sendCgiResponse(exchange, out.toByteArray(), failure);
+        sendCgiResponse(exchange, out.toByteArray(), failure, displayErrors);
     }
 
     private Map<String, String> cgiEnvironment(HttpExchange exchange, Path script, String scriptName, int length) {
@@ -229,7 +239,12 @@ public final class HttpMain {
     }
 
     /** A CGI response: a header block (Status and headers) up to an empty line, then the body. */
-    private static void sendCgiResponse(HttpExchange exchange, byte[] output, String failure) throws IOException {
+    /**
+     * The CGI response; after a fatal error with display_errors, the message is appended (without, the runtime
+     * made the response a 500 if its headers hadn't gone out).
+     */
+    private static void sendCgiResponse(HttpExchange exchange, byte[] output, String failure, boolean displayErrors)
+            throws IOException {
         int status = 200;
         int bodyStart = 0;
         Headers headers = exchange.getResponseHeaders();
@@ -252,9 +267,8 @@ public final class HttpMain {
             bodyStart = end + 4;
         }
         byte[] body = java.util.Arrays.copyOfRange(output, bodyStart, output.length);
-        if (failure != null) {
+        if (failure != null && displayErrors) {
             if (end < 0) {
-                status = 500;
                 headers.set("Content-Type", "text/html; charset=UTF-8");
             }
             byte[] message = ("<br />\n<b>Fatal error</b>:  " + failure.replace("&", "&amp;").replace("<", "&lt;")

@@ -7,6 +7,8 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpFunction;
 
 import java.util.concurrent.locks.Lock;
@@ -32,7 +34,13 @@ public final class ScriptRootNode extends RootNode {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             call = fileCall();
         }
-        Object result = call.call(new Object[PhpFunction.ARG_FIRST]);
+        Object result;
+        try {
+            result = call.call(new Object[PhpFunction.ARG_FIRST]);
+        } catch (PhpError | PhpException e) {
+            PhpContext.get(this).fatalError();
+            throw e;
+        }
         PhpContext.get(this).runShutdownFunctions();
         return result;
     }
