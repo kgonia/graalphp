@@ -69,6 +69,11 @@ public final class PhpRef {
         }
     }
 
+    /** More than one holder: php-src's refcount above 1, where var_dump marks the value with "&". */
+    public boolean isShared() {
+        return bindings > 1;
+    }
+
     /**
      * This reference as an element of a copy of source: the value if source's slot alone holds it (a slot counts
      * only while its array has holders), else itself. A reference to the source array itself (`$a[] = &$a`) stays

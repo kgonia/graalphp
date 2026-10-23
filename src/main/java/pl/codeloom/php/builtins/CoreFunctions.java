@@ -215,12 +215,12 @@ final class CoreFunctions {
         });
         r.fn("var_dump", (context, a) -> {
             for (int i = 0; i < Args.count(a); i++) {
-                context.write(Str.of(Dump.varDump(Args.get(a, i), 0)));
+                context.write(Dump.varDump(Args.get(a, i)));
             }
             return PhpNull.NULL;
         });
         r.fn("var_export", (context, a) -> {
-            TruffleString text = Str.of(Dump.varExport(Args.get(a, 0), 0));
+            TruffleString text = Dump.varExport(Args.get(a, 0));
             if (Args.bool(a, 1, false)) {
                 return text;
             }
@@ -228,7 +228,7 @@ final class CoreFunctions {
             return PhpNull.NULL;
         });
         r.fn("print_r", (context, a) -> {
-            TruffleString text = Str.of(Dump.printR(Args.get(a, 0), 0));
+            TruffleString text = Dump.printR(Args.get(a, 0));
             if (Args.bool(a, 1, false)) {
                 return text;
             }
