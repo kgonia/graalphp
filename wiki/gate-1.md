@@ -246,3 +246,34 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - **Comparisons:** escape 0.96× (0.81–0.99), the rest neutral.
     - **Assignment, object creation, `LocalVarNode` profiles:** neutral within the noise. A first run hinted that hooks and escape were 13–25% slower after `3363a93`; a bisect with 6 rounds didn't reproduce it.
   - **Not done in step 3:** calls. They depend on step 4's per-context lookup design (`FunctionCallNode`, `ClassRefNode` and constant caching), so they move there.
+- **2026-10-23, Gate 0.5 (D10) step 4: context-independent ASTs and `ContextPolicy.SHARED`.**
+  - **What landed, one commit per part:**
+    - built-in functions are language-level, with per-context `BuiltinState` (4a);
+    - the translator no longer holds a context: `ClassTemplate`, declaration nodes, only predefined constants folded (4b);
+    - translated files are cached in `PhpLanguage` and revalidated against the AST export's modification time and size (4c);
+    - functions, constants and classes are looked up per context by language-level ids, with single-context speculation (4d);
+    - class caches key on an interned `ClassKey` (4d-3);
+    - constant arrays are frozen (immutable, as in opcache);
+    - `SHARED` (4e).
+
+    Every commit passed smoke, both checksum sets and the php-src run, which lost no tests.
+  - **New tests:**
+    - The smoke run also runs each test in three contexts on one engine.
+    - `tests/shared/run.sh` runs 40 contexts on 4 threads that write to arrays which start as language-level data. Without frozen arrays, every run sees corruption.
+  - **Speed, single context, end of step 3 (`fe273fc`) → `90d4176`** (interleaved, 4 rounds, 400 iterations):
+    - hooks **1.11×** (1.04–1.15) and wptexturize **1.09×** (1.04–1.29) slower; escape 1.08× (1.00–1.21);
+    - the rest neutral.
+
+    4a–4c alone measured neutral to faster (slugs 0.88×). 4d-1's per-call function lookup cost hooks 10% before the single-context speculation was added.
+  - **Server mode (`PHP_CONTEXTS=2`: two contexts on one engine, the second measured) against single context, same build:**
+    - hooks 1.02×, escape 0.99×, wptexturize 0.98×, kses 1.03×;
+    - slugs **1.20×** (1.07–1.33), blocks 1.09×;
+    - wpautop 0.85× (unexplained).
+
+    From here on both modes are reported; the multi-context number is the one that counts for Gate 2.
+  - **Bisect of the single-context cost** (4 rounds over 4d–4e, then 8 rounds over the last two commits): no single commit stands out. Each measured 0.9–1.09×, every range straddling 1.0. A first hint that frozen arrays cost wptexturize 15% didn't reproduce over 8 rounds (1.02×). The cost is the sum of small per-commit costs:
+    - key-guarded caches add a load per method call;
+    - `getKey()` has a null check;
+    - holder updates take a branch for frozen arrays.
+
+    Worth recovering during Gate 1 tuning, measured in both modes.
