@@ -177,8 +177,8 @@ public final class Builtins {
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
 
-        PhpClass exception = throwableClass(context, table, "Exception", throwable);
-        PhpClass error = throwableClass(context, table, "Error", throwable);
+        throwableClass(context, table, "Exception", throwable);
+        throwableClass(context, table, "Error", throwable);
         String[][] hierarchy = {
                 {"ErrorException", "Exception"}, {"LogicException", "Exception"},
                 {"BadFunctionCallException", "LogicException"}, {"BadMethodCallException", "BadFunctionCallException"},
@@ -197,9 +197,6 @@ public final class Builtins {
                     context.getLanguage().rootShape(), pair[0]);
             context.declareClass(phpClass);
         }
-        if (exception == null || error == null) {
-            throw new IllegalStateException("exception classes missing");
-        }
     }
 
     private static PhpClass declare(PhpContext context, String name, PhpClass parent, boolean isInterface) {
@@ -209,7 +206,7 @@ public final class Builtins {
     }
 
     /** Exception and Error: message, code and previous, with the usual getters. */
-    private static PhpClass throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
+    private static void throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
         PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape(), name);
         phpClass.addInterface(throwable);
         phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, false));
@@ -221,7 +218,6 @@ public final class Builtins {
             phpClass.addMethod(method);
         }
         context.declareClass(phpClass);
-        return phpClass;
     }
 
     private static List<PhpFunction> throwableMethods(Registry registry) {

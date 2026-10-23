@@ -130,10 +130,6 @@ public final class ClassTemplate {
         return phpClass;
     }
 
-    public boolean isTrait() {
-        return traitBody != null;
-    }
-
     private static void add(PhpClass phpClass, Member member) {
         if (member instanceof Method method) {
             for (PhpClass.PropertyDecl property : method.promoted()) {

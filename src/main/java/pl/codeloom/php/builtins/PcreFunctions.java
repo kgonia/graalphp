@@ -1,7 +1,6 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ByteBuilder;
@@ -109,10 +108,6 @@ public final class PcreFunctions {
         final MemorySegment matchData;
         final MemorySegment ovector;
         boolean matchDataInUse;
-        /** Debug statistics (-Dphp.pcre2.debug): matches run and their native time. */
-        long calls;
-        long nanos;
-        String source;
         /** The pattern without delimiters and its compile options, for PcreRecorder. */
         byte[] pattern;
         int options;
@@ -233,8 +228,8 @@ public final class PcreFunctions {
             this.subject = subject;
             this.subjects = pcre.subjects;
             this.matchContext = pcre.matchContext();
-            this.subjectSlot = Native.CRITICAL ? -1 : subjects.acquire(subject);
-            this.nativeSubject = Native.CRITICAL ? MemorySegment.ofArray(subject) : subjects.segment(subjectSlot);
+            this.subjectSlot = subjects.acquire(subject);
+            this.nativeSubject = subjects.segment(subjectSlot);
             if (regex.matchDataInUse) {
                 ownsMatchData = true;
                 matchData = Native.createMatchData(regex.code);
@@ -252,7 +247,7 @@ public final class PcreFunctions {
                 PcreRecorder.match(regex, regex.pattern, regex.options, regex.jit, subject, subject.length, start,
                         options);
             }
-            if (!NativeClock.ENABLED && !DEBUG) {
+            if (!NativeClock.ENABLED) {
                 return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
                         matchContext);
             }
@@ -260,12 +255,7 @@ public final class PcreFunctions {
             int rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
                     matchContext);
             long t1 = System.nanoTime();
-            long elapsed = t1 - t0;
-            NativeClock.add(elapsed, System.nanoTime() - t1);
-            if (DEBUG) {
-                regex.calls++;
-                regex.nanos += elapsed;
-            }
+            NativeClock.add(t1 - t0, System.nanoTime() - t1);
             return rc;
         }
 
@@ -306,9 +296,7 @@ public final class PcreFunctions {
             } else {
                 regex.matchDataInUse = false;
             }
-            if (!Native.CRITICAL) {
-                subjects.release(subjectSlot);
-            }
+            subjects.release(subjectSlot);
         }
     }
 
@@ -397,12 +385,6 @@ public final class PcreFunctions {
             }
         }
         Regex regex = new Regex(compiled);
-        if (DEBUG) {
-            regex.source = Str.java(regexString);
-            if (regexes.isEmpty()) {
-                Runtime.getRuntime().addShutdownHook(new Thread(this::printStatistics));
-            }
-        }
         regexes.put(regexString, regex);
         return regex;
     }
@@ -464,28 +446,6 @@ public final class PcreFunctions {
                 pattern, options, shared);
     }
 
-    /** The string's bytes: its own backing array when it has one of exactly its size (read-only!), else a copy. */
-    private static byte[] subjectBytes(TruffleString s) {
-        InternalByteArray internal = s.getInternalByteArrayUncached(Str.ENC);
-        if (internal.getOffset() == 0 && internal.getLength() == internal.getArray().length) {
-            return internal.getArray();
-        }
-        if (DEBUG) {
-            System.err.println("pcre subject copied: offset " + internal.getOffset() + " length " + internal.getLength()
-                    + " array " + internal.getArray().length);
-        }
-        return Str.bytes(s);
-    }
-
-    private static final boolean DEBUG = System.getProperty("php.pcre2.debug") != null;
-
-    private void printStatistics() {
-        regexes.values().stream().sorted((x, y) -> Long.compare(y.nanos, x.nanos)).limit(15).forEach(r ->
-                System.err.printf("pcre %8.1f ms %8d calls %7.0f ns/call  %s%n", r.nanos / 1e6, r.calls,
-                        r.calls == 0 ? 0.0 : (double) r.nanos / r.calls,
-                        r.source.length() > 90 ? r.source.substring(0, 90) + "..." : r.source));
-    }
-
     private static boolean isSpace(byte b) {
         return b == ' ' || b >= 9 && b <= 13;
     }
@@ -545,7 +505,7 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object match(Object[] a, boolean global) {
         Regex regex = compile(Args.str(a, 0));
-        byte[] subject = subjectBytes(Args.str(a, 1));
+        byte[] subject = Str.readBytes(Args.str(a, 1));
         PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
         long flags = Args.lng(a, 3, 0);
         long offset = Args.lng(a, 4, 0);
@@ -702,7 +662,7 @@ public final class PcreFunctions {
     /** php_pcre_replace_impl and its callback twin; null on a match error. */
     private TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
                                              TruffleString subjectString, long limit, long flags, long[] count) {
-        byte[] subject = subjectBytes(subjectString);
+        byte[] subject = Str.readBytes(subjectString);
         Template template = callback ? null : template(Convert.toStr(replacement));
         ByteBuilder out = null;
         try (Matcher m = new Matcher(this, regex, subject)) {
@@ -856,7 +816,7 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
         Regex regex = compile(pattern);
-        byte[] subject = subjectBytes(subjectString);
+        byte[] subject = Str.readBytes(subjectString);
         boolean noEmpty = (flags & SPLIT_NO_EMPTY) != 0;
         boolean delimCapture = (flags & SPLIT_DELIM_CAPTURE) != 0;
         boolean offsetCapture = (flags & SPLIT_OFFSET_CAPTURE) != 0;
@@ -966,7 +926,7 @@ public final class PcreFunctions {
         for (int p = input.firstPosition(); p >= 0; p = input.nextPosition(p)) {
             Object value = input.valueAt(p);
             int rc;
-            try (Matcher m = new Matcher(this, regex, subjectBytes(Convert.toStr(value)))) {
+            try (Matcher m = new Matcher(this, regex, Str.readBytes(Convert.toStr(value)))) {
                 rc = m.match(0, m.firstOptions());
             }
             if (rc < 0 && rc != ERROR_NOMATCH) {
@@ -993,29 +953,19 @@ public final class PcreFunctions {
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
         private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        /**
-         * How the match downcalls run, -Dphp.pcre2.critical: "off" (default) makes ordinary downcalls on subjects
-         * copied to native memory (SubjectCache). "native" makes them critical (no transition to native state and
-         * back): 12 -> 8 ns for a 13-byte match, but wpautop and wptexturize got ~40% slower, because the critical
-         * stub skips vzeroupper and PCRE2's SSE code then runs with the upper halves of the vector registers dirty
-         * from the JIT-compiled Java code (a 4 KB scan after an AVX array copy: 570 -> 656 ns). "heap" also passes
-         * the Java arrays themselves, avoiding the copy, but made allocation-heavy calls (preg_split,
-         * preg_match_all with matches) 2-3x slower because the GC has to pin the array for every call.
+        /*
+         * The match downcalls are ordinary ones on subjects copied to native memory (SubjectCache). Critical
+         * downcalls were measured slower on WordPress (wiki/gate-1.md): on native subjects wpautop and wptexturize
+         * lost ~40% (the critical stub skips vzeroupper, so PCRE2's SSE code runs with dirty upper vector halves);
+         * on the Java arrays themselves preg_split and preg_match_all lost 2-3x (the GC pins the array per call).
          */
-        private static final String CRITICAL_MODE = System.getProperty("php.pcre2.critical", "off");
-        static final boolean CRITICAL = CRITICAL_MODE.equals("heap");
-        private static final Linker.Option[] MATCH_OPTIONS = CRITICAL
-                ? new Linker.Option[] {Linker.Option.critical(true)}
-                : CRITICAL_MODE.equals("native") ? new Linker.Option[] {Linker.Option.critical(false)}
-                : new Linker.Option[0];
         private static final FunctionDescriptor MATCH_SIGNATURE = FunctionDescriptor.of(ValueLayout.JAVA_INT,
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
                 ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"), MATCH_SIGNATURE,
-                MATCH_OPTIONS);
+        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"), MATCH_SIGNATURE);
         /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
         private static final MethodHandle JIT_MATCH = LINKER.downcallHandle(find("pcre2_jit_match_8"),
-                MATCH_SIGNATURE, MATCH_OPTIONS);
+                MATCH_SIGNATURE);
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,

@@ -95,7 +95,7 @@ final class EncodingFunctions {
         } else if (value instanceof Long l) {
             out.append("i:").append(Long.toString(l)).append(";");
         } else if (value instanceof Double d) {
-            out.append("d:").append(serializedDouble(d)).append(";");
+            out.append("d:").append(Convert.doubleToRepr(d)).append(";");
         } else if (value instanceof TruffleString s) {
             string(out, s);
         } else if (value instanceof PhpArray array) {
@@ -119,16 +119,6 @@ final class EncodingFunctions {
         } else {
             throw new PhpError("Serialization of '" + Convert.typeName(value) + "' is not allowed");
         }
-    }
-
-    private static String serializedDouble(double d) {
-        if (Double.isNaN(d)) {
-            return "NAN";
-        }
-        if (Double.isInfinite(d)) {
-            return d > 0 ? "INF" : "-INF";
-        }
-        return Convert.doubleToRepr(d);
     }
 
     private static void key(Out out, Object key) {

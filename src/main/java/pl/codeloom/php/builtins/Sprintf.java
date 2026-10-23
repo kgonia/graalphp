@@ -208,10 +208,6 @@ final class Sprintf {
             return Double.isNaN(v) ? "NaN" : v > 0 ? "Inf" : "-Inf";
         }
         String text = new BigDecimal(v).setScale(precision, RoundingMode.HALF_EVEN).toPlainString();
-        if (text.startsWith("-") && new BigDecimal(text).signum() == 0) {
-            text = text.substring(1);
-            text = "-" + text;
-        }
         return plus && v >= 0 ? "+" + text : text;
     }
 

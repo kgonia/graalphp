@@ -77,3 +77,34 @@ show('popped', pop_dynamic($f));
 $f[] = 'again';
 show('appended', $f);
 
+echo "-- sprintf %f\n";
+foreach ([0.0, 0.04, -1.005, 2.345, -2.345, 1e15, -123456.789, 0.5, -0.51, 1.5, 2.5, -7.25] as $v) {
+    echo sprintf("[%.1f] [%.2f] [%08.2f] [%-8.1f] [%+.1f] [%+05.0f] [%F] [%.0f]", $v, $v, $v, $v, $v, $v, $v, $v), "\n";
+}
+
+echo "-- serialize floats\n";
+foreach ([0.1, 1e100, -1.5e-7, NAN, INF, -INF, 1.0, 123456789012345678.0] as $v) {
+    echo serialize($v), " ", var_export($v, true), " ", json_encode([$v], JSON_PARTIAL_OUTPUT_ON_ERROR), "\n";
+}
+var_dump(unserialize(serialize([1.5, -INF, 0.30000000000000004])));
+
+echo "-- odds and ends\n";
+var_dump(function_exists('function_exists_internal'), function_exists('md5'));
+class Point {
+    public function __construct(public $x = 0) {
+    }
+}
+$p = new Point(1);
+$q = new Point(1);
+var_dump($p == $p, $p <=> $p, $p === $q, $p != new Point(2));
+try {
+    throw new InvalidArgumentException('bad', 3);
+} catch (LogicException $e) {
+    var_dump(get_class($e), $e->getMessage(), $e->getCode(), $e instanceof Exception, $e instanceof Throwable);
+}
+try {
+    intdiv(1, 0);
+} catch (Error $e) {
+    var_dump(get_class($e), $e instanceof ArithmeticError);
+}
+

@@ -3,13 +3,11 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
-import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.IOException;
@@ -1208,13 +1206,6 @@ public final class StringFunctions {
         }
     }
 
-    static Object keyOf(String text) {
-        return ArrayKey.of(Str.of(text));
-    }
-
-    static Object deref(Object value) {
-        return PhpRef.deref(value);
-    }
     /**
      * php-src's strnatcmp_ex: leading zeros are skipped at the start only, whitespace is skipped, digit runs
      * compare as numbers (right-aligned) or, when one starts with 0, as fractions (left-aligned).

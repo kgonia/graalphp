@@ -16,7 +16,6 @@ import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.CRC32;
@@ -241,7 +240,6 @@ final class CoreFunctions {
         r.fn("extension_loaded", a -> RuntimeFunctions.EXTENSIONS.contains(Str.java(Args.str(a, 0)).toLowerCase()));
         r.fn("ini_get", a -> Boolean.FALSE);
         r.fn("ini_set", a -> Boolean.FALSE);
-        r.fn("function_exists_internal", a -> true);
         r.fn("version_compare", a -> {
             int c = VersionCompare.compare(Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1)));
             if (!Args.has(a, 2)) {
@@ -542,9 +540,5 @@ final class CoreFunctions {
         } catch (java.io.IOException e) {
             return Boolean.FALSE;
         }
-    }
-
-    static String utf8(byte[] bytes) {
-        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

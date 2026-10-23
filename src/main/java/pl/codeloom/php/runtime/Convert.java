@@ -447,11 +447,9 @@ public final class Convert {
         if (b instanceof PhpArray) {
             return -1;
         }
+        // PHP compares two objects of one class property by property; that is not implemented: unequal
         if (a == b) {
             return 0;
-        }
-        if (a instanceof PhpObject x && b instanceof PhpObject y && x.getPhpClass() == y.getPhpClass()) {
-            return 1;
         }
         return 1;
     }
