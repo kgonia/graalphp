@@ -7,6 +7,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.PhpClass;
@@ -20,13 +21,14 @@ public final class ConstantNodes {
 
     /**
      * A global constant, looked up in the calling context by the name's language-level id. A constant never
-     * changes once defined: while a site sees one value object (true, an int defined once, or one context's
-     * string) compiled code uses it as a constant.
+     * changes once defined: while the language serves one context, the value found first is a compile-time
+     * constant; with several, a site that sees one value object (true, a shared literal) still folds it.
      */
     public static final class GlobalConstNode extends ExprNode {
         private final String name;
         private final int id;
         @Child private StableValueNode stable = ConstantNodesFactory.StableValueNodeGen.create();
+        @CompilationFinal private Object singleContextValue;
 
         /** id is the name's {@link pl.codeloom.php.PhpLanguage#constantId}. */
         public GlobalConstNode(String name, int id) {
@@ -36,10 +38,18 @@ public final class ConstantNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            Object value = PhpContext.get(this).constantAt(id);
+            Object value = singleContextValue;
+            if (value != null && PhpLanguage.get(this).singleContext().isValid()) {
+                return value;
+            }
+            value = PhpContext.get(this).constantAt(id);
             if (value == null) {
                 CompilerDirectives.transferToInterpreter();
                 throw new PhpError("Undefined constant \"" + name + "\"");
+            }
+            if (singleContextValue == null && PhpLanguage.get(this).singleContext().isValid()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                singleContextValue = value;
             }
             return stable.execute(value);
         }

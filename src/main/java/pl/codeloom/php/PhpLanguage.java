@@ -1,7 +1,9 @@
 package pl.codeloom.php;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.Option;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.Shape;
@@ -49,6 +51,13 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      */
     private final Map<String, FileRootNode> files = new ConcurrentHashMap<>();
 
+    /**
+     * Valid while this language instance serves one context. Until then a node may keep what it looked up in the
+     * context (a function, a constant, a class) as a compile-time constant; Truffle calls
+     * initializeMultipleContexts before a second context shares the instance, which invalidates it.
+     */
+    private final Assumption singleContext = Truffle.getRuntime().createAssumption("single PHP context");
+
     /** Ids of function names (lowercase) and constant names: a node resolves its name once, for every context. */
     private final NameIds functionIds = new NameIds();
     private final NameIds constantIds = new NameIds();
@@ -87,6 +96,15 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The id of a constant name (case-sensitive); a context keeps its constants by id. */
     public int constantId(String name) {
         return constantIds.id(name);
+    }
+
+    public Assumption singleContext() {
+        return singleContext;
+    }
+
+    @Override
+    protected void initializeMultipleContexts() {
+        singleContext.invalidate();
     }
 
     /** A file's translation, made by translate on first use (once, also when contexts race). */
