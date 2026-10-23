@@ -121,13 +121,14 @@ public final class LoopNodes {
             return true;
         }
 
+        /** The expressions before the last are evaluated for their effects; the last one (a condition) decides. */
         @ExplodeLoop
         private boolean test(VirtualFrame frame) {
-            boolean result = true;
-            for (ExprNode expression : condition) {
-                result = expression.executeBoolean(frame);
+            int last = condition.length - 1;
+            for (int i = 0; i < last; i++) {
+                condition[i].execute(frame);
             }
-            return result;
+            return last < 0 || condition[last].executeBoolean(frame);
         }
     }
 
