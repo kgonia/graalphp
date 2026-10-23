@@ -72,25 +72,16 @@ final class VersionCompare {
         return na ? compare("#", b) : compare(a, "#");
     }
 
+    /** compare_special_version_forms: names in matching order, each with its rank. */
+    private static final String[] FORMS = {"dev", "alpha", "a", "beta", "b", "RC", "rc", "#", "pl", "p"};
+    private static final int[] RANKS = {0, 1, 1, 2, 2, 3, 3, 4, 5, 5};
+
+    /** The rank of the first form the part starts with, case-sensitively as php-src's strncmp; -1 for none. */
     private static int order(String special) {
-        String s = special.toLowerCase();
-        if (s.startsWith("dev")) {
-            return 0;
-        }
-        if (s.startsWith("alpha") || s.equals("a")) {
-            return 1;
-        }
-        if (s.startsWith("beta") || s.equals("b")) {
-            return 2;
-        }
-        if (s.startsWith("rc") || s.equals("c")) {
-            return 3;
-        }
-        if (s.equals("#")) {
-            return 4;
-        }
-        if (s.startsWith("pl") || s.equals("p")) {
-            return 5;
+        for (int i = 0; i < FORMS.length; i++) {
+            if (special.startsWith(FORMS[i])) {
+                return RANKS[i];
+            }
         }
         return -1;
     }
