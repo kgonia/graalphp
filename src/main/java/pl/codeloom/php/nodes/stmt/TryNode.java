@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.LValueNode;
@@ -33,18 +34,33 @@ public final class TryNode extends StmtNode {
         this.finallyBody = finallyBody;
     }
 
+    /**
+     * finally runs when the try (or a catch) completes, throws, or leaves by return, break, continue or goto, as
+     * in php-src; not while exit() or a cancelled context unwinds (the polyglot exit and cancel exceptions are
+     * neither PHP exceptions nor control flow), where php-src runs no finally either.
+     */
     @Override
     public void execute(VirtualFrame frame) {
+        if (finallyBody == null) {
+            tryCatch(frame);
+            return;
+        }
+        try {
+            tryCatch(frame);
+        } catch (ControlFlowException | PhpException | PhpError leaving) {
+            finallyBody.execute(frame);
+            throw leaving;
+        }
+        finallyBody.execute(frame);
+    }
+
+    private void tryCatch(VirtualFrame frame) {
         try {
             body.execute(frame);
         } catch (PhpException e) {
             handle(frame, e, e.getThrowable());
         } catch (PhpError e) {
             handle(frame, e, toErrorObject(PhpContext.get(this), e));
-        } finally {
-            if (finallyBody != null) {
-                finallyBody.execute(frame);
-            }
         }
     }
 
