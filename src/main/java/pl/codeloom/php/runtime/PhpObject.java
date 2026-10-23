@@ -16,6 +16,8 @@ public final class PhpObject extends DynamicObject {
     private final int id;
     /** Native state of a built-in class's instance (a mysqli connection, a query result), or null. */
     private Object internal;
+    /** The magic property accesses in progress ("get:name", ...): inside __get('x'), $this->x is the real one. */
+    private java.util.Set<String> magicGuards;
 
     /** id: var_dump's #n and spl_object_id(), from {@code PhpContext.nextObjectId()}. */
     public PhpObject(Shape shape, PhpClass phpClass, int id) {
@@ -23,6 +25,35 @@ public final class PhpObject extends DynamicObject {
         this.phpClass = phpClass;
         this.id = id;
     }
+
+    /**
+     * Calls a magic property method (__get, __set, __isset, __unset) unless the class has none or one for this
+     * property is already running on this object, as php-src's property guards; NO_MAGIC when it didn't call.
+     */
+    @TruffleBoundary
+    public Object magicProperty(String lowerMethod, String name, Object... args) {
+        if (phpClass.findMethod(lowerMethod) == null) {
+            return NO_MAGIC;
+        }
+        String guard = lowerMethod + ":" + name;
+        if (magicGuards == null) {
+            magicGuards = new java.util.HashSet<>();
+        }
+        if (!magicGuards.add(guard)) {
+            return NO_MAGIC;
+        }
+        try {
+            Object[] arguments = new Object[args.length + 1];
+            arguments[0] = Str.of(name);
+            System.arraycopy(args, 0, arguments, 1, args.length);
+            return callMethod(lowerMethod, arguments);
+        } finally {
+            magicGuards.remove(guard);
+        }
+    }
+
+    /** What magicProperty returns when it called no method. */
+    public static final Object NO_MAGIC = new Object();
 
     public Object getInternal() {
         return internal;

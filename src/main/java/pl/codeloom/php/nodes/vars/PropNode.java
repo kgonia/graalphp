@@ -57,9 +57,26 @@ public final class PropNode extends LValueNode {
     public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
         Object value = object.execute(frame);
         if (value instanceof PhpObject phpObject) {
-            return objects.getLongOrDefault(phpObject, name(frame), PhpNull.NULL);
+            String name = name(frame);
+            try {
+                return objects.getLongOrDefault(phpObject, name, ABSENT);
+            } catch (UnexpectedResultException e) {
+                Object result = e.getResult();
+                throw new UnexpectedResultException(result == ABSENT ? missing(phpObject, name)
+                        : PhpRef.deref(result));
+            }
         }
         throw new UnexpectedResultException(PhpNull.NULL);
+    }
+
+    /** The default of a property lookup: the property doesn't exist (declared ones exist until unset). */
+    private static final Object ABSENT = new Object();
+
+    /** Reading a property that doesn't exist: __get's result if the class has one, else null. */
+    @TruffleBoundary
+    private static Object missing(PhpObject phpObject, String name) {
+        Object magic = phpObject.magicProperty("__get", name);
+        return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
     }
 
     /** Stores an int unboxed (a long location), unless the property is a reference. */
@@ -70,6 +87,9 @@ public final class PropNode extends LValueNode {
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             ref.set(value);
+            return;
+        }
+        if (old == null && phpObject.magicProperty("__set", name, value) != PhpObject.NO_MAGIC) {
             return;
         }
         objects.putLong(phpObject, name, value);
@@ -87,7 +107,7 @@ public final class PropNode extends LValueNode {
             if (property instanceof PhpRef ref) {
                 return ref.get();
             }
-            return property == null ? PhpNull.NULL : property;
+            return property == null ? missing(phpObject, name) : property;
         }
         return PhpNull.NULL;
     }
@@ -99,6 +119,9 @@ public final class PropNode extends LValueNode {
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             ref.set(value);
+            return;
+        }
+        if (old == null && phpObject.magicProperty("__set", name, value) != PhpObject.NO_MAGIC) {
             return;
         }
         if (value instanceof Long l) {
@@ -186,6 +209,10 @@ public final class PropNode extends LValueNode {
         if (value instanceof PhpObject phpObject) {
             String name = name(frame);
             Object old = objects.getOrDefault(phpObject, name, null);
+            if (old == null) {
+                phpObject.magicProperty("__unset", name);
+                return;
+            }
             if (old instanceof PhpArray array) {
                 array.removeHolder();
             }
@@ -197,17 +224,36 @@ public final class PropNode extends LValueNode {
     public boolean isSet(VirtualFrame frame) {
         Object value = object.execute(frame);
         if (value instanceof PhpObject phpObject) {
-            Object property = PhpRef.deref(objects.getOrDefault(phpObject, name(frame), null));
-            return property != null && property != PhpNull.NULL;
+            String name = name(frame);
+            Object property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
+            if (property == null) {
+                return magicIsset(phpObject, name);
+            }
+            return property != PhpNull.NULL;
         }
         return false;
+    }
+
+    /** isset() of a property that doesn't exist: __isset's answer if the class has one. */
+    @TruffleBoundary
+    private static boolean magicIsset(PhpObject phpObject, String name) {
+        Object magic = phpObject.magicProperty("__isset", name);
+        return magic != PhpObject.NO_MAGIC && Convert.toBool(magic);
     }
 
     @Override
     public Object readIfSet(VirtualFrame frame) {
         Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
         if (value instanceof PhpObject phpObject) {
-            Object property = PhpRef.deref(objects.getOrDefault(phpObject, name(frame), null));
+            String name = name(frame);
+            Object property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
+            if (property == null) {
+                // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value
+                if (!magicIsset(phpObject, name)) {
+                    return null;
+                }
+                property = missing(phpObject, name);
+            }
             return property == PhpNull.NULL ? null : property;
         }
         return null;
