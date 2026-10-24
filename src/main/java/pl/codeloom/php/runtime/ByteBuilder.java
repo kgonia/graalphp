@@ -99,6 +99,14 @@ public final class ByteBuilder {
         write(bytes.getArray(), bytes.getOffset(), bytes.getLength());
     }
 
+    /** Appends ASCII text, a byte per character. */
+    public void writeAscii(String text) {
+        ensure(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            buf[count++] = (byte) text.charAt(i);
+        }
+    }
+
     /** Appends an int in decimal, as PHP converts it to a string. */
     public void writeLong(long value) {
         if (value == Long.MIN_VALUE) {

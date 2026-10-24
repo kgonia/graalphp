@@ -4,7 +4,6 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
@@ -12,10 +11,10 @@ import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -47,10 +46,14 @@ public final class ErrorFunctions {
     public static final int E_USER_ERROR = 256;
     public static final int E_USER_WARNING = 512;
     public static final int E_USER_NOTICE = 1024;
+    /** No longer raised, still defined. */
+    public static final int E_STRICT = 2048;
     public static final int E_RECOVERABLE_ERROR = 4096;
     public static final int E_DEPRECATED = 8192;
     public static final int E_USER_DEPRECATED = 16384;
     public static final int E_ALL = 30719;
+    /** The exit status after a fatal error. */
+    public static final int FATAL_EXIT_STATUS = 255;
     /** The errors that end the script, which `@` doesn't silence. */
     public static final int E_FATAL_ERRORS = E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR
             | E_RECOVERABLE_ERROR | E_PARSE;
@@ -64,22 +67,26 @@ public final class ErrorFunctions {
     private ErrorFunctions() {
     }
 
+    /** An error handler set_error_handler() replaced, with the levels it was set for. */
+    private record SavedHandler(Object handler, int levels) {
+    }
+
+    /** The last error displayed or logged (PG(last_error_*)), which error_get_last() gives. */
+    private record LastError(int type, TruffleString message, String file, int line) {
+    }
+
     /** A context's error state: php_core_globals' and the executor's (the ini settings are the context's Ini). */
     public static final class State {
         Object errorHandler = PhpNull.NULL;
-        long errorHandlerLevels = E_ALL;
-        /** set_error_handler()'s earlier handlers and their levels, for restore_error_handler(). */
-        final Deque<Object[]> errorHandlers = new ArrayDeque<>();
+        int errorHandlerLevels = E_ALL;
+        final Deque<SavedHandler> errorHandlers = new ArrayDeque<>();
         Object exceptionHandler = PhpNull.NULL;
         final Deque<Object> exceptionHandlers = new ArrayDeque<>();
-        /** The last error error_get_last() gives; lastMessage is null when there is none. */
-        int lastType;
-        TruffleString lastMessage;
-        String lastFile;
-        int lastLine;
-        /** The backtrace of the last error if it was fatal (fatal_error_backtraces), else null. */
+        /** Null when there is none. */
+        LastError lastError;
+        /** EG(last_fatal_error_backtrace): where the last fatal error was raised (fatal_error_backtraces), or null. */
         PhpArray fatalBacktrace;
-        /** 255 after a fatal error; the script's exit status unless exit() gives another. */
+        /** FATAL_EXIT_STATUS after a fatal error; the script's exit status unless exit() gives another. */
         int exitStatus;
 
         public int exitStatus() {
@@ -96,19 +103,8 @@ public final class ErrorFunctions {
      */
     @TruffleBoundary
     public static void raise(PhpContext context, int type, TruffleString message, SourceLocation at) {
-        raise(context, type, message, at, 0);
-    }
-
-    /** As raise; a fatal error's backtrace leaves out the innermost skip frames. */
-    @TruffleBoundary
-    public static void raise(PhpContext context, int type, TruffleString message, SourceLocation at, int skip) {
         State state = context.errors();
-        state.fatalBacktrace = null;
-        PhpArray backtrace = null;
-        if ((type & E_FATAL_ERRORS) != 0 && context.ini().fatalErrorBacktraces()) {
-            backtrace = Backtrace.here(Backtrace.exceptionOptions(), 0, skip);
-            state.fatalBacktrace = backtrace;
-        }
+        PhpArray backtrace = fatalBacktrace(context, type, 0);
         Object handler = state.errorHandler;
         if (handler == PhpNull.NULL || (state.errorHandlerLevels & type) == 0 || (type & NOT_USER_HANDLED) != 0) {
             report(context, type, message, at, backtrace, true);
@@ -129,6 +125,25 @@ public final class ErrorFunctions {
     }
 
     /**
+     * zend_error_noreturn for a fatal error no user handler takes (E_ERROR, E_COMPILE_ERROR): reported, and the
+     * script ends with the bailout the caller throws. The backtrace leaves out the innermost skip frames.
+     */
+    @TruffleBoundary
+    public static PhpBailout fatal(PhpContext context, int type, TruffleString message, SourceLocation at, int skip) {
+        assert (type & E_FATAL_ERRORS & NOT_USER_HANDLED) == type : type;
+        report(context, type, message, at, fatalBacktrace(context, type, skip), false);
+        return new PhpBailout();
+    }
+
+    /** EG(last_fatal_error_backtrace), cleared by every error and taken for a fatal one: where it was raised. */
+    private static PhpArray fatalBacktrace(PhpContext context, int type, int skip) {
+        State state = context.errors();
+        state.fatalBacktrace = (type & E_FATAL_ERRORS) != 0 && context.ini().fatalErrorBacktraces()
+                ? Backtrace.here(Backtrace.exceptionOptions(), 0, skip) : null;
+        return state.fatalBacktrace;
+    }
+
+    /**
      * php_error_cb: records the last error, then displays and logs it as error_reporting, display_errors,
      * html_errors and log_errors say. A fatal error makes the exit status 255 and, when it isn't displayed, the
      * response a 500 (if its headers haven't gone out); then it ends the script unless bail is false (an uncaught
@@ -139,60 +154,80 @@ public final class ErrorFunctions {
                        boolean bail) {
         State state = context.errors();
         Ini ini = context.ini();
-        boolean display = true;
-        if (ini.ignoreRepeatedErrors() && state.lastMessage != null) {
-            display = !Str.equal(state.lastMessage, message) || !ini.ignoreRepeatedSource()
-                    && (state.lastLine != at.line() || !state.lastFile.equals(at.file()));
-        }
+        LastError last = state.lastError;
+        boolean display = !ini.ignoreRepeatedErrors() || last == null || !Str.equal(last.message(), message)
+                || !ini.ignoreRepeatedSource() && (last.line() != at.line() || !last.file().equals(at.file()));
         if (display) {
-            state.lastType = type;
-            state.lastMessage = message;
-            state.lastFile = at.file();
-            state.lastLine = at.line();
+            state.lastError = new LastError(type, message, at.file(), at.line());
         }
         Ini.DisplayMode displayMode = ini.displayErrors();
         if (display && ((ini.errorReporting() & type) != 0 || (type & E_CORE) != 0)
                 && (ini.logErrors() || displayMode != Ini.DisplayMode.OFF)) {
             String typeName = typeName(type);
-            byte[] trace = backtrace == null ? new byte[0] : concat(ascii("\nStack trace:\n"),
-                    Str.bytes(Backtrace.toString(backtrace, true)));
-            byte[] file = Str.bytes(Str.of(at.file()));
-            byte[] text = Str.bytes(message);
+            TruffleString trace = backtrace == null ? null : Backtrace.toString(backtrace, true);
             if (ini.logErrors()) {
-                log(context, concat(ascii("PHP " + typeName + ":  "), text, ascii(" in "), file,
-                        ascii(" on line " + at.line()), trace));
+                ByteBuilder line = new ByteBuilder();
+                line.writeAscii("PHP " + typeName + ":  ");
+                located(line, message, at, false, trace);
+                log(context, line.toByteArray());
             }
             if (displayMode != Ini.DisplayMode.OFF) {
-                byte[] prepend = bytesOf(ini.errorPrependString());
-                byte[] append = bytesOf(ini.errorAppendString());
-                if (ini.htmlErrors()) {
-                    if (type == E_ERROR || type == E_PARSE) {
-                        context.write(Str.of(concat(prepend, ascii("<br />\n<b>" + typeName + "</b>:  "),
-                                Str.bytes(Html.escapeForError(message)), ascii(" in <b>"), file,
-                                ascii("</b> on line <b>" + at.line() + "</b><br />\n"), append)));
-                    } else {
-                        context.write(Str.of(concat(prepend, ascii("<br />\n<b>" + typeName + "</b>:  "), text,
-                                ascii(" in <b>"), file, ascii("</b> on line <b>" + at.line() + "</b><br />"), trace,
-                                ascii("\n"), append)));
-                    }
-                } else if (displayMode == Ini.DisplayMode.STDERR) {
-                    context.writeError(concat(ascii(typeName + ": "), text, ascii(" in "), file,
-                            ascii(" on line " + at.line()), trace, ascii("\n")));
+                ByteBuilder out = new ByteBuilder();
+                if (displayMode == Ini.DisplayMode.STDERR && !ini.htmlErrors()) {
+                    out.writeAscii(typeName + ": ");
+                    located(out, message, at, false, trace);
+                    out.write('\n');
+                    context.writeError(out.toByteArray());
                 } else {
-                    context.write(Str.of(concat(prepend, ascii("\n" + typeName + ": "), text, ascii(" in "), file,
-                            ascii(" on line " + at.line()), trace, ascii("\n"), append)));
+                    writeUtf8(out, ini.errorPrependString());
+                    if (!ini.htmlErrors()) {
+                        out.writeAscii("\n" + typeName + ": ");
+                        located(out, message, at, false, trace);
+                        out.write('\n');
+                    } else if (type == E_ERROR || type == E_PARSE) {
+                        out.writeAscii("<br />\n<b>" + typeName + "</b>:  ");
+                        located(out, Html.escapeForError(message), at, true, null);
+                        out.write('\n');
+                    } else {
+                        out.writeAscii("<br />\n<b>" + typeName + "</b>:  ");
+                        located(out, message, at, true, trace);
+                        out.write('\n');
+                    }
+                    writeUtf8(out, ini.errorAppendString());
+                    context.write(Str.of(out.toByteArray()));
                 }
             }
         }
         if ((type & E_FATAL_ERRORS) != 0) {
-            state.exitStatus = 255;
+            state.exitStatus = FATAL_EXIT_STATUS;
             CgiSapi.Response response = context.response();
-            if (displayMode == Ini.DisplayMode.OFF && response != null && !response.isSent() && response.status() == 200) {
+            if (displayMode == Ini.DisplayMode.OFF && response != null && !response.isSent()
+                    && response.status() == 200) {
                 response.setStatus(500);
             }
             if (bail) {
                 throw new PhpBailout();
             }
+        }
+    }
+
+    /**
+     * "{message} in {file} on line {line}", with HTML's markup around the file and line, then the trace (fatal
+     * errors' with fatal_error_backtraces).
+     */
+    private static void located(ByteBuilder out, TruffleString message, SourceLocation at, boolean html,
+                                TruffleString trace) {
+        out.write(message);
+        out.writeAscii(html ? " in <b>" : " in ");
+        writeUtf8(out, at.file());
+        out.writeAscii(html ? "</b> on line <b>" : " on line ");
+        out.writeLong(at.line());
+        if (html) {
+            out.writeAscii("</b><br />");
+        }
+        if (trace != null) {
+            out.writeAscii("\nStack trace:\n");
+            out.write(trace);
         }
     }
 
@@ -220,15 +255,21 @@ public final class ErrorFunctions {
                 try (OutputStream out = file.newOutputStream(StandardOpenOption.CREATE, StandardOpenOption.APPEND,
                         StandardOpenOption.WRITE)) {
                     ZonedDateTime now = ZonedDateTime.now(context.timezone());
-                    out.write(concat(ascii("[" + LOG_TIME.format(now) + " " + context.timezone().getId() + "] "), line,
-                            ascii("\n")));
+                    ByteBuilder entry = new ByteBuilder();
+                    entry.writeAscii("[" + LOG_TIME.format(now) + " " + context.timezone().getId() + "] ");
+                    entry.write(line);
+                    entry.write('\n');
+                    out.write(entry.toByteArray());
                 }
                 return;
             } catch (IOException | SecurityException | UnsupportedOperationException e) {
                 // php-src falls back to the SAPI's log
             }
         }
-        context.writeError(concat(line, ascii("\n")));
+        ByteBuilder entry = new ByteBuilder();
+        entry.write(line);
+        entry.write('\n');
+        context.writeError(entry.toByteArray());
     }
 
     // ---- uncaught exceptions ----
@@ -238,10 +279,10 @@ public final class ErrorFunctions {
      * zend_exception_error reports it as a fatal error. One the handler throws is reported as uncaught.
      */
     @TruffleBoundary
-    public static void uncaught(PhpContext context, RuntimeException exception) {
+    public static void uncaught(PhpContext context, PhpThrowable exception) {
         State state = context.errors();
         try {
-            PhpObject throwable = throwableOf(context, exception);
+            PhpObject throwable = exception.toThrowable(context);
             if (state.exceptionHandler == PhpNull.NULL) {
                 exceptionError(context, throwable);
                 return;
@@ -253,8 +294,8 @@ public final class ErrorFunctions {
             if (state.exceptionHandler == PhpNull.NULL && !state.exceptionHandlers.isEmpty()) {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }
-        } catch (PhpException | PhpError thrown) {
-            exceptionError(context, throwableOf(context, thrown));
+        } catch (PhpThrowable thrown) {
+            exceptionError(context, thrown.toThrowable(context));
         } catch (PhpBailout ended) {
             // reported where it was raised
         }
@@ -262,13 +303,8 @@ public final class ErrorFunctions {
 
     /** An exception thrown out of code the runtime called with no PHP frame below (a shutdown function). */
     @TruffleBoundary
-    public static void uncaughtInternal(PhpContext context, RuntimeException exception) {
-        exceptionError(context, throwableOf(context, exception));
-    }
-
-    public static PhpObject throwableOf(PhpContext context, RuntimeException exception) {
-        return exception instanceof PhpException thrown ? thrown.getThrowable()
-                : ((PhpError) exception).toThrowable(context);
+    public static void uncaughtInternal(PhpContext context, PhpThrowable exception) {
+        exceptionError(context, exception.toThrowable(context));
     }
 
     /**
@@ -287,28 +323,25 @@ public final class ErrorFunctions {
                 raise(context, E_WARNING, Str.of(throwable.getPhpClass().getName()
                         + "::__toString() must return a string"), SourceLocation.UNKNOWN);
             }
-        } catch (PhpException | PhpError thrown) {
-            PhpObject inner = throwableOf(context, thrown);
+        } catch (PhpThrowable thrown) {
+            PhpObject inner = thrown.toThrowable(context);
             boolean located = throwable.getPhpClass().isSubclassOf("exception")
                     || throwable.getPhpClass().isSubclassOf("error");
             raise(context, E_WARNING, Str.of("Uncaught " + inner.getPhpClass().getName()
                     + " in exception handling during call to " + throwable.getPhpClass().getName() + "::__toString()"),
                     located ? locationOf(inner) : SourceLocation.UNKNOWN);
         }
-        TruffleString text = Convert.toStr(property(throwable, "string"));
-        report(context, E_ERROR, Str.of(concat(ascii("Uncaught "), Str.bytes(text), ascii("\n  thrown"))),
-                locationOf(throwable), null, false);
+        ByteBuilder text = new ByteBuilder();
+        text.writeAscii("Uncaught ");
+        text.write(Convert.toStr(Builtins.property(throwable, "string")));
+        text.writeAscii("\n  thrown");
+        report(context, E_ERROR, Str.of(text.toByteArray()), locationOf(throwable), null, false);
     }
 
     private static SourceLocation locationOf(PhpObject throwable) {
-        String file = Str.java(Convert.toStr(property(throwable, "file")));
+        String file = Str.java(Convert.toStr(Builtins.property(throwable, "file")));
         return new SourceLocation(file.isEmpty() ? SourceLocation.UNKNOWN.file() : file,
-                (int) Convert.toLong(property(throwable, "line")));
-    }
-
-    private static Object property(PhpObject object, String name) {
-        Object value = PhpRef.deref(object.getProperty(name));
-        return value == null ? PhpNull.NULL : value;
+                (int) Convert.toLong(Builtins.property(throwable, "line")));
     }
 
     // ---- the functions ----
@@ -328,17 +361,21 @@ public final class ErrorFunctions {
                 Callables.check(context, handler, new Callables.Parameter("set_error_handler", 1, true));
             }
             Object previous = state.errorHandler;
-            state.errorHandlers.push(new Object[] {state.errorHandler, state.errorHandlerLevels});
+            state.errorHandlers.push(new SavedHandler(state.errorHandler, state.errorHandlerLevels));
             state.errorHandler = handler;
-            state.errorHandlerLevels = handler == PhpNull.NULL ? state.errorHandlerLevels : Args.lng(a, 1, E_ALL);
+            if (handler != PhpNull.NULL) {
+                state.errorHandlerLevels = (int) Args.lng(a, 1, E_ALL);
+            }
             return previous;
         });
         r.fn("restore_error_handler", (context, a) -> {
             State state = context.errors();
-            Object[] previous = state.errorHandlers.poll();
-            state.errorHandler = previous == null ? PhpNull.NULL : previous[0];
-            if (previous != null) {
-                state.errorHandlerLevels = (long) previous[1];
+            SavedHandler previous = state.errorHandlers.poll();
+            if (previous == null) {
+                state.errorHandler = PhpNull.NULL;
+            } else {
+                state.errorHandler = previous.handler();
+                state.errorHandlerLevels = previous.levels();
             }
             return Boolean.TRUE;
         });
@@ -364,10 +401,7 @@ public final class ErrorFunctions {
         r.fn("error_get_last", (context, a) -> lastError(context.errors()));
         r.fn("error_clear_last", (context, a) -> {
             State state = context.errors();
-            state.lastType = 0;
-            state.lastLine = 0;
-            state.lastMessage = null;
-            state.lastFile = null;
+            state.lastError = null;
             state.fatalBacktrace = null;
             return PhpNull.NULL;
         });
@@ -393,35 +427,25 @@ public final class ErrorFunctions {
     }
 
     private static Object lastError(State state) {
-        if (state.lastMessage == null) {
+        LastError last = state.lastError;
+        if (last == null) {
             return PhpNull.NULL;
         }
         PhpArray error = new PhpArray();
-        error.put(ArrayKey.of(Str.of("type")), (long) state.lastType);
-        error.put(ArrayKey.of(Str.of("message")), state.lastMessage);
-        error.put(ArrayKey.of(Str.of("file")), Str.of(state.lastFile));
-        error.put(ArrayKey.of(Str.of("line")), (long) state.lastLine);
+        error.put(Str.of("type"), (long) last.type());
+        error.put(Str.of("message"), last.message());
+        error.put(Str.of("file"), Str.of(last.file()));
+        error.put(Str.of("line"), (long) last.line());
         if (state.fatalBacktrace != null) {
-            error.put(ArrayKey.of(Str.of("trace")), state.fatalBacktrace);
+            error.put(Str.of("trace"), state.fatalBacktrace);
         }
         return error;
     }
 
-    // ---- bytes ----
-
-    private static byte[] ascii(String text) {
-        return text.getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] bytesOf(String value) {
-        return value == null ? new byte[0] : value.getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] concat(byte[]... parts) {
-        ByteBuilder out = new ByteBuilder();
-        for (byte[] part : parts) {
-            out.write(part);
+    /** A string from the ini settings or the host (a path), as its UTF-8 bytes; nothing for null. */
+    private static void writeUtf8(ByteBuilder out, String text) {
+        if (text != null) {
+            out.write(text.getBytes(StandardCharsets.UTF_8));
         }
-        return out.toByteArray();
     }
 }

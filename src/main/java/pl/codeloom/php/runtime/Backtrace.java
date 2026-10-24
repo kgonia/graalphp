@@ -11,7 +11,6 @@ import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -224,14 +223,14 @@ public final class Backtrace {
             out.write(' ');
             Object file = entry.get(FILE);
             if (file == null) {
-                ascii(out, "[internal function]: ");
+                out.writeAscii("[internal function]: ");
             } else if (!(file instanceof TruffleString name)) {
-                ascii(out, "[unknown file]: ");
+                out.writeAscii("[unknown file]: ");
             } else {
                 out.write(name);
                 out.write('(');
                 out.writeLong(entry.get(LINE) instanceof Long line ? line : 0);
-                ascii(out, "): ");
+                out.writeAscii("): ");
             }
             appendKey(out, entry, CLASS);
             appendKey(out, entry, TYPE);
@@ -241,18 +240,18 @@ public final class Backtrace {
                 for (int a = args.firstPosition(); a >= 0; a = args.nextPosition(a)) {
                     if (args.keyAt(a) instanceof TruffleString name) {
                         out.write(name);
-                        ascii(out, ": ");
+                        out.writeAscii(": ");
                     }
                     appendArgument(out, PhpRef.deref(args.valueAt(a)), maxLength);
                 }
                 out.truncate(out.size() - 2);
             }
-            ascii(out, ")\n");
+            out.writeAscii(")\n");
         }
         if (includeMain) {
             out.write('#');
             out.writeLong(number);
-            ascii(out, " {main}");
+            out.writeAscii(" {main}");
         }
         return Str.of(out.toByteArray());
     }
@@ -262,45 +261,45 @@ public final class Backtrace {
         if (value instanceof TruffleString text) {
             out.write(text);
         } else if (value != null) {
-            ascii(out, "[unknown]");
+            out.writeAscii("[unknown]");
         }
     }
 
     /** _build_trace_args: a scalar as smart_str_append_scalar shows it, a string truncated; then ", ". */
     private static void appendArgument(ByteBuilder out, Object value, int maxLength) {
         if (value == PhpNull.NULL || value == null) {
-            ascii(out, "NULL");
+            out.writeAscii("NULL");
         } else if (value instanceof Boolean b) {
-            ascii(out, b ? "true" : "false");
+            out.writeAscii(b ? "true" : "false");
         } else if (value instanceof Long l) {
             out.writeLong(l);
         } else if (value instanceof Double d) {
             String text = Convert.gcvt(d, PRECISION, 'E');
-            ascii(out, text);
+            out.writeAscii(text);
             if (Double.isFinite(d) && text.indexOf('.') < 0) {
-                ascii(out, ".0");
+                out.writeAscii(".0");
             }
         } else if (value instanceof TruffleString s) {
             byte[] bytes = Str.bytes(s);
             out.write('\'');
             appendEscaped(out, bytes, Math.min(bytes.length, maxLength));
             if (bytes.length > maxLength) {
-                ascii(out, "...");
+                out.writeAscii("...");
             }
             out.write('\'');
         } else if (value instanceof PhpArray) {
-            ascii(out, "Array");
+            out.writeAscii("Array");
         } else if (value instanceof PhpClosure) {
-            ascii(out, "Object(Closure)");
+            out.writeAscii("Object(Closure)");
         } else if (value instanceof PhpObject object) {
-            ascii(out, "Object(");
+            out.writeAscii("Object(");
             out.write(Str.of(object.getPhpClass().getName()));
             out.write(')');
         } else if (value instanceof PhpResource resource) {
-            ascii(out, "Resource id #");
+            out.writeAscii("Resource id #");
             out.writeLong(resource.getId());
         }
-        ascii(out, ", ");
+        out.writeAscii(", ");
     }
 
     /** smart_str_append_escaped: control bytes, backslash and bytes above 126 as C escapes. */
@@ -327,9 +326,5 @@ public final class Backtrace {
                 }
             }
         }
-    }
-
-    private static void ascii(ByteBuilder out, String text) {
-        out.write(text.getBytes(StandardCharsets.ISO_8859_1));
     }
 }

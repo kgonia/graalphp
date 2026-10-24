@@ -7,6 +7,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.ClassTemplate;
+import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.SourceLocation;
@@ -53,7 +54,7 @@ public final class DeclareNodes {
             SourceLocation declared = previous.getDeclaredAt();
             String message = "Cannot redeclare function " + function.getName() + "()" + (declared != null
                     ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
-            ErrorFunctions.raise(context, compileTime ? ErrorFunctions.E_COMPILE_ERROR : ErrorFunctions.E_ERROR,
+            throw ErrorFunctions.fatal(context, compileTime ? ErrorFunctions.E_COMPILE_ERROR : ErrorFunctions.E_ERROR,
                     Str.of(message), SourceLocation.of(this), compileTime ? 1 : 0);
         }
     }
@@ -62,18 +63,15 @@ public final class DeclareNodes {
      * zend_class_redeclaration_error when the name is taken (E_COMPILE_ERROR), before the class is linked: named
      * by what the declared one is (class, interface, trait).
      */
-    @TruffleBoundary
-    private static void checkFree(PhpContext context, ClassTemplate template, StmtNode site) {
-        PhpClass previous = context.findClass(Str.lower(template.getName()));
-        if (previous == null) {
-            return;
-        }
-        SourceLocation declared = previous.getDeclaration() instanceof ClassTemplate old ? old.getDeclaredAt() : null;
-        String kind = previous.isInterface() ? "interface"
-                : previous.getDeclaration() instanceof ClassTemplate old && old.isTrait() ? "trait" : "class";
+    private static PhpBailout redeclared(PhpContext context, PhpClass previous, ClassTemplate template,
+                                         StmtNode site) {
+        ClassTemplate old = previous.getDeclaration() instanceof ClassTemplate declaration ? declaration : null;
+        SourceLocation declared = old == null ? null : old.getDeclaredAt();
+        String kind = previous.isInterface() ? "interface" : old != null && old.isTrait() ? "trait" : "class";
         String message = "Cannot redeclare " + kind + " " + template.getName() + (declared != null
                 ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
-        ErrorFunctions.raise(context, ErrorFunctions.E_COMPILE_ERROR, Str.of(message), SourceLocation.of(site));
+        return ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of(message), SourceLocation.of(site),
+                0);
     }
 
     public static final class DeclareClassNode extends StmtNode {
@@ -94,7 +92,10 @@ public final class DeclareNodes {
 
         @TruffleBoundary
         private void declare(PhpContext context) {
-            checkFree(context, template, this);
+            PhpClass previous = context.findClass(Str.lower(template.getName()));
+            if (previous != null) {
+                throw redeclared(context, previous, template, this);
+            }
             context.declareClass(template.instantiate(context));
         }
     }

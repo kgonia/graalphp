@@ -9,8 +9,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.PhpBailout;
-import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpException;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 
@@ -43,7 +42,7 @@ public final class ScriptRootNode extends RootNode {
         Object result = PhpNull.NULL;
         try {
             result = call.call(new Object[PhpFunction.ARG_FIRST]);
-        } catch (PhpError | PhpException e) {
+        } catch (PhpThrowable e) {
             ErrorFunctions.uncaught(context, e);
         } catch (PhpBailout ended) {
             // the fatal error was reported where it was raised

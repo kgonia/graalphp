@@ -16,11 +16,14 @@ import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
 import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.BufferedOutputStream;
@@ -71,7 +74,7 @@ public final class PhpContext {
     private final BuiltinState builtinState;
     /** Static variables (`static $x`) by function, then name. */
     private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
-    private final pl.codeloom.php.runtime.Callables.LastCall lastCall = new pl.codeloom.php.runtime.Callables.LastCall();
+    private final Callables.LastCall lastCall = new Callables.LastCall();
 
     /** The prelude files this context has run (see {@link Prelude}). */
     private final java.util.Set<String> preludeLoaded = new java.util.HashSet<>();
@@ -173,7 +176,7 @@ public final class PhpContext {
     }
 
     /** The callable that Callables.call resolved last in this context. */
-    public pl.codeloom.php.runtime.Callables.LastCall lastCall() {
+    public Callables.LastCall lastCall() {
         return lastCall;
     }
 
@@ -387,7 +390,7 @@ public final class PhpContext {
         }
         try {
             for (Object autoloader : List.copyOf(autoloaders)) {
-                pl.codeloom.php.runtime.Callables.call(this, autoloader, Str.of(className));
+                Callables.call(this, autoloader, Str.of(className));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -544,17 +547,12 @@ public final class PhpContext {
             return;
         }
         shuttingDown = true;
-        try {
+        guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
                 Object[] entry = shutdownFunctions.get(i);
-                pl.codeloom.php.runtime.Callables.call(this, entry[0],
-                        java.util.Arrays.copyOfRange(entry, 1, entry.length));
+                Callables.call(this, entry[0], Arrays.copyOfRange(entry, 1, entry.length));
             }
-        } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
-            ErrorFunctions.uncaughtInternal(this, e);
-        } catch (pl.codeloom.php.runtime.PhpBailout ended) {
-            // the fatal error was reported where it was raised
-        }
+        });
         shutdownFunctions.clear();
     }
 
@@ -573,17 +571,25 @@ public final class PhpContext {
     @TruffleBoundary
     public void endScript() {
         runShutdownFunctions();
-        try {
-            endRequest();
-        } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
-            // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
-            ErrorFunctions.uncaughtInternal(this, e);
-        } catch (pl.codeloom.php.runtime.PhpBailout ended) {
-            // reported where it was raised
-        }
+        // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
+        guarded(this::endRequest);
         int status = errors().exitStatus();
         if (status != 0) {
             env.getContext().closeExited(null, status);
+        }
+    }
+
+    /**
+     * php-src's zend_try around a step of the request's end: an exception it doesn't catch is reported as uncaught,
+     * and a fatal error (already reported) ends the step.
+     */
+    private void guarded(Runnable step) {
+        try {
+            step.run();
+        } catch (PhpThrowable e) {
+            ErrorFunctions.uncaughtInternal(this, e);
+        } catch (PhpBailout ended) {
+            // reported where it was raised
         }
     }
 
@@ -638,7 +644,6 @@ public final class PhpContext {
     public int globalsVersion() {
         return globalsVersion;
     }
-
 
     // ---- output ----
 
@@ -728,7 +733,7 @@ public final class PhpContext {
         }
         int mode = buffer.started ? phase : phase | PHASE_START;
         buffer.started = true;
-        Object result = pl.codeloom.php.runtime.Callables.call(this, buffer.handler, contents, (long) mode);
+        Object result = Callables.call(this, buffer.handler, contents, (long) mode);
         return result == Boolean.FALSE ? contents : pl.codeloom.php.runtime.Convert.toStr(result);
     }
 

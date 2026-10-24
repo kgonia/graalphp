@@ -7,9 +7,9 @@ import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -111,7 +111,7 @@ final class DateFunctions {
         PhpObject object = context.getClass(className).instantiate();
         try {
             object.callMethod("__construct", arguments(a, 0));
-        } catch (PhpException | PhpError e) {
+        } catch (PhpThrowable e) {
             return Boolean.FALSE;
         }
         return object;

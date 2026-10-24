@@ -16,7 +16,23 @@ import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-import java.nio.charset.StandardCharsets;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_ALL;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_COMPILE_ERROR;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_COMPILE_WARNING;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_CORE_ERROR;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_CORE_WARNING;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_DEPRECATED;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_ERROR;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_NOTICE;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_PARSE;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_RECOVERABLE_ERROR;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_STRICT;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_USER_DEPRECATED;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_USER_ERROR;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_USER_NOTICE;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_USER_WARNING;
+import static pl.codeloom.php.builtins.ErrorFunctions.E_WARNING;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -94,12 +110,16 @@ public final class Builtins {
                 {"PHP_RELEASE_VERSION", 12L}, {"PHP_VERSION_ID", 80512L}, {"PHP_OS", Str.of("Linux")},
                 {"PHP_OS_FAMILY", Str.of("Linux")}, {"DIRECTORY_SEPARATOR", Str.of("/")},
                 {"PATH_SEPARATOR", Str.of(":")}, {"M_PI", Math.PI},
-                {"E_ERROR", 1L}, {"E_WARNING", 2L}, {"E_PARSE", 4L}, {"E_NOTICE", 8L}, {"E_CORE_ERROR", 16L},
-                {"E_CORE_WARNING", 32L}, {"E_COMPILE_ERROR", 64L}, {"E_COMPILE_WARNING", 128L},
-                {"DEBUG_BACKTRACE_PROVIDE_OBJECT", 1L}, {"DEBUG_BACKTRACE_IGNORE_ARGS", 2L},
-                {"E_USER_ERROR", 256L}, {"E_USER_WARNING", 512L}, {"E_USER_NOTICE", 1024L}, {"E_STRICT", 2048L},
-                {"E_RECOVERABLE_ERROR", 4096L}, {"E_DEPRECATED", 8192L}, {"E_USER_DEPRECATED", 16384L},
-                {"E_ALL", 30719L},
+                {"E_ERROR", (long) E_ERROR}, {"E_WARNING", (long) E_WARNING}, {"E_PARSE", (long) E_PARSE},
+                {"E_NOTICE", (long) E_NOTICE}, {"E_CORE_ERROR", (long) E_CORE_ERROR},
+                {"E_CORE_WARNING", (long) E_CORE_WARNING}, {"E_COMPILE_ERROR", (long) E_COMPILE_ERROR},
+                {"E_COMPILE_WARNING", (long) E_COMPILE_WARNING}, {"E_USER_ERROR", (long) E_USER_ERROR},
+                {"E_USER_WARNING", (long) E_USER_WARNING}, {"E_USER_NOTICE", (long) E_USER_NOTICE},
+                {"E_STRICT", (long) E_STRICT}, {"E_RECOVERABLE_ERROR", (long) E_RECOVERABLE_ERROR},
+                {"E_DEPRECATED", (long) E_DEPRECATED}, {"E_USER_DEPRECATED", (long) E_USER_DEPRECATED},
+                {"E_ALL", (long) E_ALL},
+                {"DEBUG_BACKTRACE_PROVIDE_OBJECT", (long) Backtrace.PROVIDE_OBJECT},
+                {"DEBUG_BACKTRACE_IGNORE_ARGS", (long) Backtrace.IGNORE_ARGS},
                 {"ENT_HTML_QUOTE_NONE", 0L}, {"ENT_HTML_QUOTE_SINGLE", 1L}, {"ENT_HTML_QUOTE_DOUBLE", 2L},
                 {"ENT_COMPAT", 2L}, {"ENT_QUOTES", 3L}, {"ENT_NOQUOTES", 0L}, {"ENT_IGNORE", 4L},
                 {"ENT_SUBSTITUTE", 8L}, {"ENT_DISALLOWED", 128L}, {"ENT_HTML401", 0L}, {"ENT_XML1", 16L},
@@ -265,11 +285,13 @@ public final class Builtins {
     }
 
     private static TruffleString traceString(PhpObject exception) {
-        if (!(PhpRef.deref(property(exception, "trace")) instanceof PhpArray trace)) {
+        if (!(property(exception, "trace") instanceof PhpArray trace)) {
             throw new PhpError("TypeError", "Trace is not an array");
         }
         return Backtrace.toString(trace, true);
     }
+
+    private static final TruffleString CALLED_IN = Str.of(", called in ");
 
     /**
      * Exception::__toString: the exception and those before it (getPrevious), the first one first, each with its
@@ -282,21 +304,21 @@ public final class Builtins {
         while (current instanceof PhpObject e && e.getPhpClass().isThrowable()) {
             ByteBuilder part = new ByteBuilder();
             part.write(Str.of(e.getPhpClass().getName()));
-            byte[] message = Str.bytes(Convert.toStr(property(e, "message")));
-            if (message.length > 0) {
-                part.write(": ".getBytes(StandardCharsets.ISO_8859_1));
+            TruffleString message = Convert.toStr(property(e, "message"));
+            if (!message.isEmpty()) {
+                part.writeAscii(": ");
                 part.write(message);
                 String name = e.getPhpClass().getLowerName();
                 if ((name.equals("typeerror") || name.equals("argumentcounterror"))
-                        && new String(message, StandardCharsets.ISO_8859_1).contains(", called in ")) {
-                    part.write(" and defined".getBytes(StandardCharsets.ISO_8859_1));
+                        && Str.indexOf(message, CALLED_IN, 0) >= 0) {
+                    part.writeAscii(" and defined");
                 }
             }
-            part.write(" in ".getBytes(StandardCharsets.ISO_8859_1));
+            part.writeAscii(" in ");
             part.write(Convert.toStr(property(e, "file")));
             part.write(':');
             part.writeLong(Convert.toLong(property(e, "line")));
-            part.write("\nStack trace:\n".getBytes(StandardCharsets.ISO_8859_1));
+            part.writeAscii("\nStack trace:\n");
             part.write(traceString(e));
             parts.add(part.toByteArray());
             current = property(e, "previous");
@@ -305,14 +327,15 @@ public final class Builtins {
         for (int i = parts.size() - 1; i >= 0; i--) {
             text.write(parts.get(i));
             if (i > 0) {
-                text.write("\n\nNext ".getBytes(StandardCharsets.ISO_8859_1));
+                text.writeAscii("\n\nNext ");
             }
         }
         return Str.of(text.toByteArray());
     }
 
-    private static Object property(PhpObject object, String name) {
-        Object value = object.getProperty(name);
+    /** A Throwable's property as its methods read it: null if unset. */
+    static Object property(PhpObject object, String name) {
+        Object value = PhpRef.deref(object.getProperty(name));
         return value == null ? PhpNull.NULL : value;
     }
 

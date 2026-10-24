@@ -38,6 +38,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class BatchMain {
     /** Exit status when a script could not be stopped; the remaining scripts need a new JVM. */
     public static final int HUNG = 3;
+    /** PHP's exit status after a fatal error, and how its log line starts. */
+    private static final int FATAL_EXIT_STATUS = 255;
+    private static final String FATAL_LOG_PREFIX = "PHP Fatal error:  ";
 
     private BatchMain() {
     }
@@ -150,7 +153,8 @@ public final class BatchMain {
             }
             if (e.isExit()) {
                 String fatal = lastFatal(err);
-                return fatal != null && e.getExitStatus() == 255 ? "fatal " + oneLine(fatal) : "exit:" + e.getExitStatus();
+                return fatal != null && e.getExitStatus() == FATAL_EXIT_STATUS ? "fatal " + oneLine(fatal)
+                        : "exit:" + e.getExitStatus();
             }
             if (e.isInternalError() || !e.isGuestException()) {
                 return "internal " + oneLine(String.valueOf(e.getMessage()));
@@ -161,12 +165,12 @@ public final class BatchMain {
 
     /** The first line of the last fatal error the script's log has, as the oracle's log gives PHP's. */
     private static String lastFatal(ByteArrayOutputStream err) {
-        String log = err.toString(java.nio.charset.StandardCharsets.UTF_8);
-        int at = log.lastIndexOf("PHP Fatal error:  ");
+        String log = err.toString(StandardCharsets.UTF_8);
+        int at = log.lastIndexOf(FATAL_LOG_PREFIX);
         if (at < 0) {
             return null;
         }
-        int start = at + "PHP Fatal error:  ".length();
+        int start = at + FATAL_LOG_PREFIX.length();
         int end = log.indexOf('\n', start);
         return log.substring(start, end < 0 ? log.length() : end);
     }

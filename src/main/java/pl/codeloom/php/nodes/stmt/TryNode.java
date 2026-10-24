@@ -10,6 +10,7 @@ import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.PhpObject;
 
 /**
@@ -46,7 +47,7 @@ public final class TryNode extends StmtNode {
         }
         try {
             tryCatch(frame);
-        } catch (ControlFlowException | PhpException | PhpError leaving) {
+        } catch (ControlFlowException | PhpThrowable leaving) {
             finallyBody.execute(frame);
             throw leaving;
         }
