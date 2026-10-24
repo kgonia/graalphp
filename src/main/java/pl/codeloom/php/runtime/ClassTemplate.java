@@ -94,6 +94,17 @@ public final class ClassTemplate {
         this.unsupported = unsupported;
     }
 
+    /** Where the class was declared. */
+    private SourceLocation declaredAt;
+
+    public void setDeclaredAt(SourceLocation declaredAt) {
+        this.declaredAt = declaredAt;
+    }
+
+    public SourceLocation getDeclaredAt() {
+        return declaredAt;
+    }
+
     public String getName() {
         return name;
     }

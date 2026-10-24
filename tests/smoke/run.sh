@@ -12,7 +12,8 @@ fi
 mkdir -p target/smoke
 files=()
 for n in "${names[@]}"; do files+=("tests/smoke/$n.php"); done
-MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast "${files[@]}"
+# with the files they include (tests/smoke/*.inc)
+MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast "${files[@]}" tests/smoke/*.inc
 failed=0
 for n in "${names[@]}"; do
   MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php "tests/smoke/$n.php" > "target/smoke/$n.expected" 2>&1

@@ -91,6 +91,17 @@ public final class PhpFunction {
         return isAbstract;
     }
 
+    /** Where a user function was declared; null for a built-in. */
+    private SourceLocation declaredAt;
+
+    public void setDeclaredAt(SourceLocation declaredAt) {
+        this.declaredAt = declaredAt;
+    }
+
+    public SourceLocation getDeclaredAt() {
+        return declaredAt;
+    }
+
     public void setClassName(String className) {
         this.className = className;
     }

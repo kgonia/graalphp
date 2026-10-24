@@ -122,11 +122,17 @@ public final class ErrorFunctions {
      */
     @TruffleBoundary
     public static void raise(PhpContext context, int type, TruffleString message, SourceLocation at) {
+        raise(context, type, message, at, 0);
+    }
+
+    /** As raise; a fatal error's backtrace leaves out the innermost skip frames. */
+    @TruffleBoundary
+    public static void raise(PhpContext context, int type, TruffleString message, SourceLocation at, int skip) {
         State state = context.errors();
         state.fatalBacktrace = null;
         PhpArray backtrace = null;
         if ((type & E_FATAL_ERRORS) != 0 && state.ini.bool("fatal_error_backtraces")) {
-            backtrace = Backtrace.here(Backtrace.exceptionOptions(), 0, 0);
+            backtrace = Backtrace.here(Backtrace.exceptionOptions(), 0, skip);
             state.fatalBacktrace = backtrace;
         }
         Object handler = state.errorHandler;

@@ -65,6 +65,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.file.Path;
@@ -168,9 +169,12 @@ public final class Translator {
                 continue;
             }
             switch (statement.kind) {
-                case "AST_FUNC_DECL":
-                    prologue.add(new DeclareNodes.DeclareFunctionNode(declareFunction(statement, null)));
+                case "AST_FUNC_DECL": {
+                    StmtNode declaration = new DeclareNodes.DeclareFunctionNode(declareFunction(statement, null), true);
+                    declaration.setLine(statement.line);
+                    prologue.add(declaration);
                     break;
+                }
                 case "AST_NAMESPACE":
                     names = Names.namespace((String) statement.get("name"));
                     if (statement.get("stmts") != null) {
@@ -301,7 +305,7 @@ public final class Translator {
                 return tryStatement(node);
             case "AST_FUNC_DECL": {
                 PhpFunction declared = declareFunction(node, null);
-                return new DeclareNodes.DeclareFunctionNode(declared);
+                return new DeclareNodes.DeclareFunctionNode(declared, false);
             }
             case "AST_CLASS":
                 return classDeclaration(node);
@@ -569,6 +573,7 @@ public final class Translator {
         self[0] = new PhpFunction(name, params, (flags & FUNC_RETURNS_REF) != 0, isStatic, isPublic, isAbstract,
                 () -> translateBody(node, owner, self[0], name, params, new String[0], new boolean[0],
                         declaredNames));
+        self[0].setDeclaredAt(new SourceLocation(path, node.line));
         return self[0];
     }
 
@@ -793,7 +798,10 @@ public final class Translator {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
             unsupported = error.getMessage();
         }
-        return new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members, unsupported);
+        ClassTemplate template = new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members,
+                unsupported);
+        template.setDeclaredAt(new SourceLocation(path, node.line));
+        return template;
     }
 
     /** A trait: its members are translated for each class that uses it, on that class's first declaration. */
