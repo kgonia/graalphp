@@ -15,7 +15,7 @@ import pl.codeloom.php.runtime.SourceLocation;
 
 /**
  * A statement. Statements that come from a source line are instrumentable with {@link StandardTags.StatementTag},
- * so tools like the CPU sampler (--cpusampler.Mode=statements) can attribute time to lines.
+ * so tools like the CPU tracer (--cputracer.TraceStatements) and debuggers see lines.
  */
 @GenerateWrapper
 public abstract class StmtNode extends Node implements InstrumentableNode, SourceLocation.Line {
@@ -34,12 +34,15 @@ public abstract class StmtNode extends Node implements InstrumentableNode, Sourc
     }
 
     /**
-     * Statement lists call this for a runtime error leaving one of their statements: the innermost statement with a
-     * line is where the error surfaced, which its Error object reports as its file and line.
+     * Statement lists call this for a runtime error leaving one of their statements (behind a branch profile, so
+     * compiled code has no handler until an error passes): the innermost statement with a line is where the error
+     * surfaced, which its Error object reports as its file and line.
      */
     protected static void surfaced(PhpError error, StmtNode statement) {
-        if (statement.line > 0) {
-            error.surfacedAt(statement);
+        // a tool's wrapper stands in the list for the statement
+        StmtNode original = statement instanceof WrapperNode wrapper ? (StmtNode) wrapper.getDelegateNode() : statement;
+        if (original.line > 0) {
+            error.surfacedAt(original);
         }
     }
 

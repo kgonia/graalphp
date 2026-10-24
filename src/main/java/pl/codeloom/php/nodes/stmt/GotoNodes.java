@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.runtime.PhpError;
 
@@ -42,6 +43,7 @@ public final class GotoNodes {
     /** A statement list with labels: labels[i] names the statement it precedes (statements[targets[i]]). */
     public static final class LabeledBlockNode extends StmtNode {
         @Children private final StmtNode[] statements;
+        private final BranchProfile errorSurfaced = BranchProfile.create();
         @CompilationFinal(dimensions = 1) private final String[] labels;
         @CompilationFinal(dimensions = 1) private final int[] targets;
 
@@ -77,6 +79,7 @@ public final class GotoNodes {
                     }
                 }
             } catch (PhpError e) {
+                errorSurfaced.enter();
                 surfaced(e, statements[i]);
                 throw e;
             }

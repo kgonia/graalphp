@@ -8,6 +8,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ConditionNode;
@@ -212,6 +213,7 @@ public final class GeneratorNodes {
     /** A statement list: the slot holds the index of the statement that yielded. */
     public static final class BlockNode extends StmtNode {
         @Children private final StmtNode[] statements;
+        private final BranchProfile errorSurfaced = BranchProfile.create();
         private final int slot;
 
         public BlockNode(StmtNode[] statements, int slot) {
@@ -245,6 +247,7 @@ public final class GeneratorNodes {
                     }
                 }
             } catch (PhpError e) {
+                errorSurfaced.enter();
                 surfaced(e, statements[i]);
                 throw e;
             }

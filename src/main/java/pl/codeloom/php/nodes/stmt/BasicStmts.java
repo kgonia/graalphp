@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
@@ -29,6 +30,7 @@ public final class BasicStmts {
 
     public static final class BlockNode extends StmtNode {
         @Children private final StmtNode[] statements;
+        private final BranchProfile errorSurfaced = BranchProfile.create();
 
         public BlockNode(StmtNode[] statements) {
             this.statements = statements;
@@ -43,6 +45,7 @@ public final class BasicStmts {
                     statements[i].execute(frame);
                 }
             } catch (PhpError e) {
+                errorSurfaced.enter();
                 surfaced(e, statements[i]);
                 throw e;
             }
