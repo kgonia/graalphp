@@ -76,12 +76,7 @@ public final class GeneratorNodes {
         /** A trace lists a generator's run as a call of its function, with the function's arguments. */
         @Override
         public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
-            function.describeCall(frame == null ? null : (Frame) frame.getArguments()[0], entry, options);
-            return true;
-        }
-
-        @Override
-        protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
+            function.describeCall((Frame) frame.getArguments()[0], entry, options);
             return true;
         }
 

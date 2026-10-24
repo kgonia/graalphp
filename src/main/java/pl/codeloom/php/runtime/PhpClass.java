@@ -199,7 +199,7 @@ public final class PhpClass {
     public PhpObject instantiate() {
         PhpObject object = instantiateBare();
         if (isThrowable()) {
-            initThrowable(object, SourceLocation.current(), Backtrace.here(Backtrace.exceptionOptions(), 0, 0));
+            initThrowable(object, SourceLocation.current(), Backtrace.forThrowable());
         }
         return object;
     }

@@ -10,6 +10,6 @@ public final class PhpBailout extends AbstractTruffleException {
     private static final long serialVersionUID = 1L;
 
     public PhpBailout() {
-        super("bailout after a fatal error");
+        super("bailout after a fatal error", null, 0, null);
     }
 }

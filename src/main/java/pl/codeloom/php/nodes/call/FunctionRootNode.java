@@ -279,12 +279,6 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         return scopeName;
     }
 
-    /** Traces list a call as php-src does, with its arguments: the frames exceptions pass are captured. */
-    @Override
-    protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
-        return true;
-    }
-
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
         describeCall(frame, entry, options);
@@ -302,26 +296,24 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         String scope = className;
         PhpObject self = null;
         PhpArray args = new PhpArray();
-        if (frame != null) {
-            Object[] arguments = frame.getArguments();
-            if (arguments[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure) {
-                scope = closure.getScope() == null ? null : closure.getScope().getName();
+        Object[] arguments = frame.getArguments();
+        if (arguments[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure) {
+            scope = closure.getScope() == null ? null : closure.getScope().getName();
+        }
+        if (arguments[PhpFunction.ARG_THIS] instanceof PhpObject object) {
+            self = object;
+            if (scope == null) {
+                scope = object.getPhpClass().getName();
             }
-            if (arguments[PhpFunction.ARG_THIS] instanceof PhpObject object) {
-                self = object;
-                if (scope == null) {
-                    scope = object.getPhpClass().getName();
-                }
-            }
-            if ((options & Backtrace.IGNORE_ARGS) == 0) {
-                int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1
-                        : params.length;
-                for (int i = 0; i < arguments.length - PhpFunction.ARG_FIRST; i++) {
-                    Object value = i < declared ? frame.getValue(paramSlots[i])
-                            : arguments[PhpFunction.ARG_FIRST + i];
-                    value = PhpRef.deref(value);
-                    args.append(value == null ? PhpNull.NULL : value);
-                }
+        }
+        if ((options & Backtrace.IGNORE_ARGS) == 0) {
+            int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1
+                    : params.length;
+            for (int i = 0; i < arguments.length - PhpFunction.ARG_FIRST; i++) {
+                Object value = i < declared ? frame.getValue(paramSlots[i])
+                        : arguments[PhpFunction.ARG_FIRST + i];
+                value = PhpRef.deref(value);
+                args.append(value == null ? PhpNull.NULL : value);
             }
         }
         Backtrace.describeCall(entry, function, scope, self, options, args);

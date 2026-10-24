@@ -7,7 +7,8 @@ import pl.codeloom.php.PhpContext;
 
 /**
  * A PHP Throwable the runtime itself raises (TypeError, ValueError, JsonException...): a catch block sees an
- * object of that class, made when it is first caught. Uncaught, it ends the script as a fatal error.
+ * object of that class, made when it is first caught. Uncaught, it ends the script as a fatal error. Its trace is
+ * taken when it is raised, as zend_throw_error's object takes it, so it keeps no Truffle stack trace.
  */
 public final class PhpError extends AbstractTruffleException {
     private static final long serialVersionUID = 1L;
@@ -17,12 +18,14 @@ public final class PhpError extends AbstractTruffleException {
     /** The message without the class; getMessage() is what an uncaught error prints, "TypeError: ...". */
     private final String phpMessage;
     private final long code;
+    /** The calls leading to where the error was raised. */
+    private final transient PhpArray trace;
+    /** Whether a frameless built-in's entry heads the trace. */
+    private transient boolean raisedInBuiltin;
     /** The innermost statement the error left, recorded on the way out: the object's file and line. */
     private transient Node origin;
     /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
     private transient PhpObject throwable;
-    /** The trace entry of a built-in that raised the error without a frame of its own (a compiled-in one's). */
-    private transient PhpArray builtin;
 
     /** An Error. */
     public PhpError(String message) {
@@ -34,10 +37,11 @@ public final class PhpError extends AbstractTruffleException {
     }
 
     public PhpError(String phpClass, String message, long code) {
-        super(phpClass.equals("Error") ? message : phpClass + ": " + message);
+        super(phpClass.equals("Error") ? message : phpClass + ": " + message, null, 0, null);
         this.phpClass = phpClass;
         this.phpMessage = message;
         this.code = code;
+        this.trace = Backtrace.forThrowable();
     }
 
     public String getPhpClass() {
@@ -61,9 +65,11 @@ public final class PhpError extends AbstractTruffleException {
     }
 
     /** Records the frameless built-in call the error was raised in, as the first entry of its trace. */
+    @TruffleBoundary
     public void raisedIn(PhpArray entry) {
-        if (builtin == null && throwable == null) {
-            builtin = entry;
+        if (!raisedInBuiltin && throwable == null) {
+            trace.prepend(entry);
+            raisedInBuiltin = true;
         }
     }
 
@@ -71,10 +77,6 @@ public final class PhpError extends AbstractTruffleException {
     @TruffleBoundary
     public PhpObject toThrowable(PhpContext context) {
         if (throwable == null) {
-            PhpArray trace = Backtrace.of(this, Backtrace.exceptionOptions());
-            if (builtin != null) {
-                trace.prepend(builtin);
-            }
             PhpObject object = context.getClass(phpClass)
                     .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin), trace);
             object.setProperty("message", Str.of(phpMessage));

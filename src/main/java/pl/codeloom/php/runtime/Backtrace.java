@@ -3,8 +3,6 @@ package pl.codeloom.php.runtime;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
-import com.oracle.truffle.api.TruffleStackTrace;
-import com.oracle.truffle.api.TruffleStackTraceElement;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameInstance;
 import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
@@ -48,8 +46,8 @@ public final class Backtrace {
     public interface Callee {
         /**
          * Adds the entry's keys after file and line, in php-src's order: function, class, object, type, args (an
-         * include's: args, function). frame is the call's frame (null if it wasn't captured), site the node that
-         * made the call (null if none did). False leaves the call out of the trace.
+         * include's: args, function). frame is the call's frame, site the node that made the call (null if none
+         * did). False leaves the call out of the trace.
          */
         boolean describe(Frame frame, PhpArray entry, int options, CallSite site);
     }
@@ -80,7 +78,7 @@ public final class Backtrace {
         }
     }
 
-    /** A frame: its root, the frame itself (null if not captured), and the node in it that made the call above. */
+    /** A frame: its root, the frame itself, and the node in it that made the call above. */
     private record Level(RootNode root, Frame frame, Node call) {
     }
 
@@ -96,15 +94,10 @@ public final class Backtrace {
         return build(levels.subList(Math.min(skip, levels.size()), levels.size()), options, limit);
     }
 
-    /** The trace of where a runtime error was raised: the frames it left and those it is in now. */
+    /** The trace a Throwable made now records (zend_default_exception_new's). */
     @TruffleBoundary
-    public static PhpArray of(Throwable error, int options) {
-        TruffleStackTrace.fillIn(error);
-        List<Level> levels = new ArrayList<>();
-        for (TruffleStackTraceElement element : TruffleStackTrace.getStackTrace(error)) {
-            levels.add(new Level(element.getTarget().getRootNode(), element.getFrame(), element.getLocation()));
-        }
-        return build(levels, options, 0);
+    public static PhpArray forThrowable() {
+        return here(exceptionOptions(), 0, 0);
     }
 
     private static PhpArray build(List<Level> levels, int options, int limit) {
@@ -131,8 +124,7 @@ public final class Backtrace {
                 Frame frame = levels.get(caller).frame();
                 PhpArray builtin = new PhpArray();
                 locate(builtin, SourceLocation.of((Node) site));
-                describeCall(builtin, inline, null, null, options,
-                        arguments(frame == null ? new Object[0] : site.inlineArguments(frame)));
+                describeCall(builtin, inline, null, null, options, arguments(site.inlineArguments(frame)));
                 trace.append(builtin);
             }
         }

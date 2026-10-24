@@ -70,7 +70,7 @@ public abstract class InstantiateNode extends Node {
     /** A Throwable's trace: the calls leading to this `new`. */
     @TruffleBoundary
     private static PhpArray trace() {
-        return Backtrace.here(Backtrace.exceptionOptions(), 0, 0);
+        return Backtrace.forThrowable();
     }
 
     @ExplodeLoop

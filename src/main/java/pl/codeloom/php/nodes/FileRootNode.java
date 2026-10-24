@@ -46,12 +46,6 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
         return 1L;
     }
 
-    /** Traces show the arguments of calls made from a file's code (array_map's, kept in a frame slot). */
-    @Override
-    protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
-        return true;
-    }
-
     /** An included file is listed as its include; the script itself is {main}, and the prelude's aren't. */
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {

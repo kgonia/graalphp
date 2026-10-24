@@ -47,16 +47,10 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         return body.call(arguments);
     }
 
-    /** Traces list a call with its arguments: the frames exceptions pass are captured. */
-    @Override
-    protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
-        return true;
-    }
-
     /** A method in the class that declares it (the topmost one with this implementation), as php-src's scope. */
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
-        Object[] arguments = frame == null ? new Object[PhpFunction.ARG_FIRST] : frame.getArguments();
+        Object[] arguments = frame.getArguments();
         PhpObject self = method && arguments[PhpFunction.ARG_THIS] instanceof PhpObject object ? object : null;
         String className = null;
         if (method) {
