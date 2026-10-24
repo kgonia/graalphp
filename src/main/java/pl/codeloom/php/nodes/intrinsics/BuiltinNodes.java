@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
+import com.oracle.truffle.api.dsl.NodeField;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -25,7 +26,6 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
-import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -42,35 +42,25 @@ public final class BuiltinNodes {
 
     /** A built-in function compiled in place. */
     @NodeChild(value = "arguments", type = ExprNode[].class)
+    @NodeField(name = "compiledSpecially", type = boolean.class)
     public abstract static class BuiltinNode extends ExprNode {
+        /** php-src compiles the call into an opcode of its own, which makes no frame (Translator.compiledSpecially). */
+        protected abstract boolean isCompiledSpecially();
+
         /**
-         * The regular built-in for the cases the specializations leave out, found in the current context: its Java
-         * body is called directly, as its call target would (a call through the target from here costs a frame
-         * and the call profiling on top).
+         * The regular built-in for the cases the specializations leave out, found in the current context, called from
+         * this node. A call php-src compiles in makes no frame: its Java body is called directly, and what it calls
+         * back (Countable::count) seems called from here. Another call has a frame, which traces list.
          */
         @TruffleBoundary
         protected final Object callFull(String name, Object... values) {
             PhpFunction function = PhpContext.get(this).findFunction(name);
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
-            try {
-                // what a call php-src compiles in calls back (Countable::count) is called from the call's site
-                return PhpRef.deref(SPECIAL.contains(name)
-                        ? Backtrace.callFrom(this, () -> function.getBuiltin().call(arguments))
-                        : function.getBuiltin().call(arguments));
-            } catch (PhpError e) {
-                // the call php-src makes has a frame (unless it compiles the function in): the trace's first entry
-                if (!SPECIAL.contains(name)) {
-                    e.raisedIn(Backtrace.entry(SourceLocation.of(this), name, values));
-                }
-                throw e;
-            }
+            return PhpRef.deref(Backtrace.callFrom(this, isCompiledSpecially()
+                    ? () -> function.getBuiltin().call(arguments)
+                    : () -> function.getCallTarget().call(arguments)));
         }
-
-        /** The intrinsics php-src compiles into opcodes of their own, which make no frame. */
-        private static final java.util.Set<String> SPECIAL = java.util.Set.of("strlen", "count", "sizeof",
-                "gettype", "array_key_exists", "is_array", "is_string", "is_int", "is_integer", "is_long",
-                "is_float", "is_double", "is_bool", "is_null", "is_object");
 
         protected static boolean isString(Object value) {
             return value instanceof TruffleString;

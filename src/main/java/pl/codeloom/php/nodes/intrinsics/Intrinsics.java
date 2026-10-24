@@ -57,9 +57,10 @@ public final class Intrinsics {
 
     /**
      * The node for `name(args)`, or null when this arity or argument shape isn't covered. argsSlot is the frame slot
-     * of an intrinsic that calls back (see callsBack), -1 for the others.
+     * of an intrinsic that calls back (see callsBack), -1 for the others; compiledSpecially is whether php-src
+     * compiles this call into an opcode of its own.
      */
-    public static ExprNode create(String lowerName, ExprNode[] args, int argsSlot) {
+    public static ExprNode create(String lowerName, ExprNode[] args, int argsSlot, boolean compiledSpecially) {
         int n = args.length;
         switch (lowerName) {
             case "is_array":
@@ -81,9 +82,9 @@ public final class Intrinsics {
                 return n == 1 ? new TypeTestNode(args[0], TypeTestNode.OBJECT) : null;
             case "count":
             case "sizeof":
-                return n == 1 ? BuiltinNodesFactory.CountNodeGen.create(args) : null;
+                return n == 1 ? BuiltinNodesFactory.CountNodeGen.create(args, compiledSpecially) : null;
             case "strlen":
-                return n == 1 ? BuiltinNodesFactory.StrlenNodeGen.create(args) : null;
+                return n == 1 ? BuiltinNodesFactory.StrlenNodeGen.create(args, compiledSpecially) : null;
             case "current":
             case "pos":
                 return n == 1 ? new CurrentNode(args[0], false) : null;
@@ -95,23 +96,26 @@ public final class Intrinsics {
             case "end":
                 return n == 1 && writable(args[0]) ? new MoveNode((LValueNode) args[0], lowerName) : null;
             case "ord":
-                return n == 1 ? BuiltinNodesFactory.OrdNodeGen.create(args) : null;
+                return n == 1 ? BuiltinNodesFactory.OrdNodeGen.create(args, compiledSpecially) : null;
             case "chr":
                 return n == 1 ? new ChrNode(args[0]) : null;
             case "substr":
-                return n == 2 || n == 3
-                        ? BuiltinNodesFactory.SubstrNodeGen.create(withDefaults(args, 2, PhpNull.NULL)) : null;
+                return n == 2 || n == 3 ? BuiltinNodesFactory.SubstrNodeGen.create(withDefaults(args, 2, PhpNull.NULL),
+                        compiledSpecially) : null;
             case "strpos":
-                return n == 2 ? BuiltinNodesFactory.StrposNodeGen.create(args) : null;
+                return n == 2 ? BuiltinNodesFactory.StrposNodeGen.create(args, compiledSpecially) : null;
             case "str_contains":
-                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.CONTAINS, args) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.CONTAINS, args,
+                        compiledSpecially) : null;
             case "str_starts_with":
-                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.STARTS, args) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.STARTS, args,
+                        compiledSpecially) : null;
             case "str_ends_with":
-                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.ENDS, args) : null;
+                return n == 2 ? BuiltinNodesFactory.ContainsNodeGen.create(BuiltinNodes.ContainsNode.ENDS, args,
+                        compiledSpecially) : null;
             case "array_key_exists":
             case "key_exists":
-                return n == 2 ? BuiltinNodesFactory.KeyExistsNodeGen.create(args) : null;
+                return n == 2 ? BuiltinNodesFactory.KeyExistsNodeGen.create(args, compiledSpecially) : null;
             case "gettype":
                 return n == 1 ? new GettypeNode(args[0]) : null;
             case "strspn":
@@ -120,49 +124,58 @@ public final class Intrinsics {
             // DSL nodes (D10 step 2): missing optional arguments become their default values
             case "strtolower":
             case "strtoupper":
-                return n == 1 ? BuiltinNodesFactory.CaseNodeGen.create(lowerName.equals("strtoupper"), args) : null;
+                return n == 1 ? BuiltinNodesFactory.CaseNodeGen.create(lowerName.equals("strtoupper"), args,
+                        compiledSpecially) : null;
             case "trim":
-                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(3, args) : null;
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(3, args, compiledSpecially) : null;
             case "ltrim":
-                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(1, args) : null;
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(1, args, compiledSpecially) : null;
             case "rtrim":
             case "chop":
-                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(2, args) : null;
+                return n == 1 ? BuiltinNodesFactory.TrimNodeGen.create(2, args, compiledSpecially) : null;
             case "ucfirst":
-                return n == 1 ? BuiltinNodesFactory.UcfirstNodeGen.create(args) : null;
+                return n == 1 ? BuiltinNodesFactory.UcfirstNodeGen.create(args, compiledSpecially) : null;
             case "str_replace":
-                return n == 3 ? BuiltinNodesFactory.StrReplaceNodeGen.create(args) : null;
+                return n == 3 ? BuiltinNodesFactory.StrReplaceNodeGen.create(args, compiledSpecially) : null;
             case "in_array":
                 return n == 2 || n == 3
-                        ? BuiltinNodesFactory.InArrayNodeGen.create(withDefaults(args, 2, Boolean.FALSE)) : null;
+                        ? BuiltinNodesFactory.InArrayNodeGen.create(
+                                withDefaults(args, 2, Boolean.FALSE), compiledSpecially)
+                        : null;
             case "array_pop":
                 return n == 1 && writable(args[0]) ? BuiltinNodesFactory.ArrayPopNodeGen.create(
-                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0])}) : null;
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0])}, compiledSpecially)
+                        : null;
             case "array_push":
                 return n == 2 && writable(args[0]) ? BuiltinNodesFactory.ArrayPushNodeGen.create(
-                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]}) : null;
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]},
+                        compiledSpecially) : null;
             case "array_slice":
                 return n >= 2 && n <= 4
-                        ? BuiltinNodesFactory.ArraySliceNodeGen.create(withDefaults(args, 2, PhpNull.NULL, Boolean.FALSE))
+                        ? BuiltinNodesFactory.ArraySliceNodeGen.create(
+                                withDefaults(args, 2, PhpNull.NULL, Boolean.FALSE), compiledSpecially)
                         : null;
             case "array_unshift":
                 return n == 2 && writable(args[0]) ? BuiltinNodesFactory.ArrayUnshiftNodeGen.create(
-                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]}) : null;
+                        new ExprNode[] {new BuiltinNodes.WritableArrayNode((LValueNode) args[0]), args[1]},
+                        compiledSpecially) : null;
             case "array_keys":
-                return n == 1 ? BuiltinNodesFactory.ArrayKeysNodeGen.create(args) : null;
+                return n == 1 ? BuiltinNodesFactory.ArrayKeysNodeGen.create(args, compiledSpecially) : null;
             case "implode":
             case "join":
-                return n == 2 ? BuiltinNodesFactory.ImplodeNodeGen.create(args) : null;
+                return n == 2 ? BuiltinNodesFactory.ImplodeNodeGen.create(args, compiledSpecially) : null;
             case "explode":
                 return n == 2 || n == 3
-                        ? BuiltinNodesFactory.ExplodeNodeGen.create(withDefaults(args, 2, Long.MAX_VALUE)) : null;
+                        ? BuiltinNodesFactory.ExplodeNodeGen.create(
+                                withDefaults(args, 2, Long.MAX_VALUE), compiledSpecially)
+                        : null;
             case "array_filter":
                 return n >= 1 && n <= 3
                         ? BuiltinNodesFactory.ArrayFilterNodeGen.create(argsSlot, n,
-                                withDefaults(args, 1, PhpNull.NULL, 0L))
+                                withDefaults(args, 1, PhpNull.NULL, 0L), compiledSpecially)
                         : null;
             case "array_map":
-                return n == 2 ? BuiltinNodesFactory.ArrayMapNodeGen.create(argsSlot, args) : null;
+                return n == 2 ? BuiltinNodesFactory.ArrayMapNodeGen.create(argsSlot, args, compiledSpecially) : null;
             default:
                 return null;
         }

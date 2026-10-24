@@ -20,8 +20,6 @@ public final class PhpError extends AbstractTruffleException {
     private final long code;
     /** The calls leading to where the error was raised. */
     private final transient PhpArray trace;
-    /** Whether a frameless built-in's entry heads the trace. */
-    private transient boolean raisedInBuiltin;
     /** The innermost statement the error left, recorded on the way out: the object's file and line. */
     private transient Node origin;
     /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
@@ -61,15 +59,6 @@ public final class PhpError extends AbstractTruffleException {
     public void surfacedAt(Node statement) {
         if (origin == null && SourceLocation.isUserCode(statement.getRootNode())) {
             origin = statement;
-        }
-    }
-
-    /** Records the frameless built-in call the error was raised in, as the first entry of its trace. */
-    @TruffleBoundary
-    public void raisedIn(PhpArray entry) {
-        if (!raisedInBuiltin && throwable == null) {
-            trace.prepend(entry);
-            raisedInBuiltin = true;
         }
     }
 

@@ -196,15 +196,6 @@ public final class Backtrace {
         }
     }
 
-    /** A built-in call's entry, for a call made without a Truffle frame: at the call site, with the values. */
-    @TruffleBoundary
-    public static PhpArray entry(SourceLocation at, String function, Object[] values) {
-        PhpArray entry = new PhpArray();
-        locate(entry, at);
-        describeCall(entry, function, null, null, exceptionOptions(), arguments(values));
-        return entry;
-    }
-
     /** An include's entry: the included file as its argument (unless IGNORE_ARGS), then include, require... */
     public static void describeInclude(PhpArray entry, String kind, String path, int options) {
         if ((options & IGNORE_ARGS) == 0) {

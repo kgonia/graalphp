@@ -1598,13 +1598,14 @@ public final class Translator {
             default:
                 break;
         }
-        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args);
+        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
+        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
+        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args, special);
         if (intrinsic != null) {
             return intrinsic;
         }
         return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args),
-                resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args));
+                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args), special);
     }
 
     /**
@@ -1679,7 +1680,7 @@ public final class Translator {
     }
 
     /** The in-place node for a small built-in (see {@link Intrinsics}), or null for a regular call. */
-    private ExprNode intrinsic(String lowerName, Ast args) {
+    private ExprNode intrinsic(String lowerName, Ast args, boolean compiledSpecially) {
         if (!Intrinsics.handles(lowerName)) {
             return null;
         }
@@ -1701,7 +1702,8 @@ public final class Translator {
                 nodes[i] = expression(arg);
             }
         }
-        return Intrinsics.create(lowerName, nodes, Intrinsics.callsBack(lowerName) ? hiddenSlot("callback") : -1);
+        return Intrinsics.create(lowerName, nodes, Intrinsics.callsBack(lowerName) ? hiddenSlot("callback") : -1,
+                compiledSpecially);
     }
 
     private static Ast dropFirst(Ast list) {
