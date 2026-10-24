@@ -100,7 +100,6 @@ final class RuntimeFunctions {
         r.fn("php_uname", a -> Str.of(Args.str(a, 0, Str.of("a")).equals(Str.of("s")) ? "Linux"
                 : "Linux localhost 6.0 #1 SMP x86_64"));
         r.fn("get_loaded_extensions", a -> PhpArray.ofStrings(EXTENSIONS.toArray(new String[0])));
-        r.fn("ini_get_all", a -> new PhpArray());
         r.fn("error_log", (context, a) -> errorLog(context, Str.bytes(Args.str(a, 0))));
         // the trace without debug_backtrace's own frame (php-src's skip_last)
         r.fn("debug_backtrace", a -> Backtrace.here((int) Args.lng(a, 0, Backtrace.PROVIDE_OBJECT),

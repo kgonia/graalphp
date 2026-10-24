@@ -33,7 +33,7 @@ import java.util.Locale;
  * PHP's error handling: zend_error (a user error handler first), php_error_cb (the last error, the display and
  * the log, a fatal error's 500 and bailout), uncaught exceptions (the user exception handler, else
  * zend_exception_error), and the functions over them: error_reporting, set_error_handler, trigger_error,
- * error_get_last, the error ini directives.
+ * error_get_last.
  */
 public final class ErrorFunctions {
     public static final int E_ERROR = 1;
@@ -58,17 +58,14 @@ public final class ErrorFunctions {
     /** Errors not safe to handle in user code: zend_error never passes them to the user error handler. */
     private static final int NOT_USER_HANDLED = E_ERROR | E_PARSE | E_CORE_ERROR | E_CORE_WARNING | E_COMPILE_ERROR
             | E_COMPILE_WARNING;
-    private static final int DISPLAY_STDERR = 2;
 
     private static final DateTimeFormatter LOG_TIME = DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss", Locale.ROOT);
 
     private ErrorFunctions() {
     }
 
-    /** A context's error state: php_core_globals' and the executor's. */
+    /** A context's error state: php_core_globals' and the executor's (the ini settings are the context's Ini). */
     public static final class State {
-        final Ini ini;
-        int errorReporting;
         Object errorHandler = PhpNull.NULL;
         long errorHandlerLevels = E_ALL;
         /** set_error_handler()'s earlier handlers and their levels, for restore_error_handler(). */
@@ -85,32 +82,9 @@ public final class ErrorFunctions {
         /** 255 after a fatal error; the script's exit status unless exit() gives another. */
         int exitStatus;
 
-        State(Ini ini) {
-            this.ini = ini;
-            this.errorReporting = reportingOf(ini.get("error_reporting"));
-        }
-
-        /** EG(error_reporting): what errors are displayed and logged (`@` narrows it to the fatal ones). */
-        public int errorReporting() {
-            return errorReporting;
-        }
-
-        public void setErrorReporting(int level) {
-            errorReporting = level;
-        }
-
         public int exitStatus() {
             return exitStatus;
         }
-
-        public Ini ini() {
-            return ini;
-        }
-    }
-
-    /** OnUpdateErrorReporting: the number, or E_ALL for no value. */
-    private static int reportingOf(String value) {
-        return value == null ? E_ALL : (int) Ini.atol(value);
     }
 
     // ---- raising ----
@@ -131,7 +105,7 @@ public final class ErrorFunctions {
         State state = context.errors();
         state.fatalBacktrace = null;
         PhpArray backtrace = null;
-        if ((type & E_FATAL_ERRORS) != 0 && state.ini.bool("fatal_error_backtraces")) {
+        if ((type & E_FATAL_ERRORS) != 0 && context.ini().fatalErrorBacktraces()) {
             backtrace = Backtrace.here(Backtrace.exceptionOptions(), 0, skip);
             state.fatalBacktrace = backtrace;
         }
@@ -164,10 +138,10 @@ public final class ErrorFunctions {
     static void report(PhpContext context, int type, TruffleString message, SourceLocation at, PhpArray backtrace,
                        boolean bail) {
         State state = context.errors();
-        Ini ini = state.ini;
+        Ini ini = context.ini();
         boolean display = true;
-        if (ini.bool("ignore_repeated_errors") && state.lastMessage != null) {
-            display = !Str.equal(state.lastMessage, message) || !ini.bool("ignore_repeated_source")
+        if (ini.ignoreRepeatedErrors() && state.lastMessage != null) {
+            display = !Str.equal(state.lastMessage, message) || !ini.ignoreRepeatedSource()
                     && (state.lastLine != at.line() || !state.lastFile.equals(at.file()));
         }
         if (display) {
@@ -176,22 +150,22 @@ public final class ErrorFunctions {
             state.lastFile = at.file();
             state.lastLine = at.line();
         }
-        int displayMode = displayMode(ini.get("display_errors"));
-        if (display && ((state.errorReporting & type) != 0 || (type & E_CORE) != 0)
-                && (ini.bool("log_errors") || displayMode != 0)) {
+        Ini.DisplayMode displayMode = ini.displayErrors();
+        if (display && ((ini.errorReporting() & type) != 0 || (type & E_CORE) != 0)
+                && (ini.logErrors() || displayMode != Ini.DisplayMode.OFF)) {
             String typeName = typeName(type);
             byte[] trace = backtrace == null ? new byte[0] : concat(ascii("\nStack trace:\n"),
                     Str.bytes(Backtrace.toString(backtrace, true)));
             byte[] file = Str.bytes(Str.of(at.file()));
             byte[] text = Str.bytes(message);
-            if (ini.bool("log_errors")) {
+            if (ini.logErrors()) {
                 log(context, concat(ascii("PHP " + typeName + ":  "), text, ascii(" in "), file,
                         ascii(" on line " + at.line()), trace));
             }
-            if (displayMode != 0) {
-                byte[] prepend = bytesOf(ini.get("error_prepend_string"));
-                byte[] append = bytesOf(ini.get("error_append_string"));
-                if (ini.bool("html_errors")) {
+            if (displayMode != Ini.DisplayMode.OFF) {
+                byte[] prepend = bytesOf(ini.errorPrependString());
+                byte[] append = bytesOf(ini.errorAppendString());
+                if (ini.htmlErrors()) {
                     if (type == E_ERROR || type == E_PARSE) {
                         context.write(Str.of(concat(prepend, ascii("<br />\n<b>" + typeName + "</b>:  "),
                                 Str.bytes(Html.escapeForError(message)), ascii(" in <b>"), file,
@@ -201,7 +175,7 @@ public final class ErrorFunctions {
                                 ascii(" in <b>"), file, ascii("</b> on line <b>" + at.line() + "</b><br />"), trace,
                                 ascii("\n"), append)));
                     }
-                } else if (displayMode == DISPLAY_STDERR) {
+                } else if (displayMode == Ini.DisplayMode.STDERR) {
                     context.writeError(concat(ascii(typeName + ": "), text, ascii(" in "), file,
                             ascii(" on line " + at.line()), trace, ascii("\n")));
                 } else {
@@ -213,29 +187,13 @@ public final class ErrorFunctions {
         if ((type & E_FATAL_ERRORS) != 0) {
             state.exitStatus = 255;
             CgiSapi.Response response = context.response();
-            if (displayMode == 0 && response != null && !response.isSent() && response.status() == 200) {
+            if (displayMode == Ini.DisplayMode.OFF && response != null && !response.isSent() && response.status() == 200) {
                 response.setStatus(500);
             }
             if (bail) {
                 throw new PhpBailout();
             }
         }
-    }
-
-    /** php_get_display_errors_mode: 0 off, 1 stdout, 2 stderr. */
-    private static int displayMode(String value) {
-        if (value == null) {
-            return 1;
-        }
-        String lower = Str.lower(value);
-        if (lower.equals("on") || lower.equals("yes") || lower.equals("true") || lower.equals("stdout")) {
-            return 1;
-        }
-        if (lower.equals("stderr")) {
-            return DISPLAY_STDERR;
-        }
-        long mode = Ini.atol(value) & 0xFF;
-        return mode != 0 && mode != 1 && mode != DISPLAY_STDERR ? 1 : (int) mode;
     }
 
     private static String typeName(int type) {
@@ -255,7 +213,7 @@ public final class ErrorFunctions {
      * one or when it can't be opened, the SAPI's log, which the CLI and CGI SAPIs write to stderr.
      */
     private static void log(PhpContext context, byte[] line) {
-        String path = context.errors().ini.get("error_log");
+        String path = context.ini().errorLog();
         if (path != null && !path.isEmpty()) {
             try {
                 TruffleFile file = context.getEnv().getPublicTruffleFile(path);
@@ -357,12 +315,9 @@ public final class ErrorFunctions {
 
     static void register(Registry r) {
         r.fn("error_reporting", (context, a) -> {
-            State state = context.errors();
-            long previous = state.errorReporting;
+            long previous = context.ini().errorReporting();
             if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL) {
-                int level = (int) Args.lng(a, 0, 0);
-                state.ini.set("error_reporting", Integer.toString(level));
-                state.errorReporting = level;
+                context.ini().set("error_reporting", Integer.toString((int) Args.lng(a, 0, 0)));
             }
             return previous;
         });
@@ -416,46 +371,6 @@ public final class ErrorFunctions {
             state.fatalBacktrace = null;
             return PhpNull.NULL;
         });
-        r.fn("ini_get", (context, a) -> {
-            Ini ini = context.errors().ini;
-            String name = Str.java(Args.str(a, 0));
-            if (!ini.isKnown(name)) {
-                return Boolean.FALSE;
-            }
-            String value = ini.get(name);
-            return value == null ? Str.EMPTY : Str.of(value);
-        });
-        r.fn("ini_set", (context, a) -> iniSet(context, Str.java(Args.str(a, 0)), Args.get(a, 1)));
-        r.fn("ini_alter", (context, a) -> iniSet(context, Str.java(Args.str(a, 0)), Args.get(a, 1)));
-        r.fn("ini_restore", (context, a) -> {
-            State state = context.errors();
-            String name = Str.java(Args.str(a, 0));
-            state.ini.restore(name);
-            if (name.equals("error_reporting")) {
-                state.errorReporting = reportingOf(state.ini.get(name));
-            }
-            return PhpNull.NULL;
-        });
-    }
-
-    /** ini_set(): the old value, or false for an unknown directive or a value it doesn't take. */
-    @TruffleBoundary
-    private static Object iniSet(PhpContext context, String name, Object newValue) {
-        State state = context.errors();
-        if (!state.ini.isKnown(name)) {
-            return Boolean.FALSE;
-        }
-        String old = state.ini.get(name);
-        Object value = PhpRef.deref(newValue);
-        String text = value == PhpNull.NULL ? "" : value instanceof Boolean b ? (b ? "1" : "")
-                : Str.java(Convert.toStr(value));
-        if (!state.ini.set(name, text)) {
-            return Boolean.FALSE;
-        }
-        if (name.equals("error_reporting")) {
-            state.errorReporting = reportingOf(text);
-        }
-        return old == null ? Str.EMPTY : Str.of(old);
     }
 
     /**

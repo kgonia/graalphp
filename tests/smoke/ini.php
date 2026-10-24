@@ -1,0 +1,26 @@
+<?php
+// ini_get_all, ini_set's values, and error_reporting as the directive and the function both change it.
+ob_start(function ($text) {
+    // "/" after the directory: Truffle PHP runs the smoke tests on the host
+    return str_replace([__DIR__ . "\\", __DIR__ . "/"], "DIR/", $text);
+});
+
+var_dump(ini_get_all('core') === false, ini_get_all('Core') === false);
+var_dump(ini_get_all('nope'));
+$values = ini_get_all(null, false);
+var_dump($values['display_errors'], $values['error_log'], $values['zend.exception_string_param_max_len']);
+$details = ini_get_all();
+var_dump($details['error_log'], $details['html_errors']);
+ini_set('zend.exception_string_param_max_len', '20');
+var_dump(ini_get_all(null, true)['zend.exception_string_param_max_len']);
+var_dump(ini_set('zend.exception_string_param_max_len', '-1'), ini_get('zend.exception_string_param_max_len'));
+var_dump(ini_set('html_errors', false), ini_get('html_errors'), ini_set('html_errors', true), ini_get('html_errors'));
+var_dump(ini_set('error_log', null), ini_get('error_log'));
+
+var_dump(ini_set('error_reporting', E_ALL & ~E_USER_NOTICE), error_reporting());
+trigger_error("not reported");
+var_dump(error_reporting(E_ALL), ini_get('error_reporting'));
+var_dump(@ini_get('error_reporting'), @error_reporting());
+ini_restore('error_reporting');
+var_dump(error_reporting(), ini_get('error_reporting'));
+trigger_error("reported");

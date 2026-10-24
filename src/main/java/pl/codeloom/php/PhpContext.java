@@ -9,6 +9,8 @@ import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.builtins.BuiltinState;
 import pl.codeloom.php.builtins.Builtins;
+import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.builtins.Ini;
 import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
@@ -549,7 +551,7 @@ public final class PhpContext {
                         java.util.Arrays.copyOfRange(entry, 1, entry.length));
             }
         } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
-            pl.codeloom.php.builtins.ErrorFunctions.uncaughtInternal(this, e);
+            ErrorFunctions.uncaughtInternal(this, e);
         } catch (pl.codeloom.php.runtime.PhpBailout ended) {
             // the fatal error was reported where it was raised
         }
@@ -575,7 +577,7 @@ public final class PhpContext {
             endRequest();
         } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
             // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
-            pl.codeloom.php.builtins.ErrorFunctions.uncaughtInternal(this, e);
+            ErrorFunctions.uncaughtInternal(this, e);
         } catch (pl.codeloom.php.runtime.PhpBailout ended) {
             // reported where it was raised
         }
@@ -585,9 +587,14 @@ public final class PhpContext {
         }
     }
 
-    /** The error state: error_reporting, the handlers, the last error, the error ini directives. */
-    public pl.codeloom.php.builtins.ErrorFunctions.State errors() {
+    /** The error state: the handlers, the last error, the exit status. */
+    public ErrorFunctions.State errors() {
         return builtinState.errors();
+    }
+
+    /** The ini settings. */
+    public Ini ini() {
+        return builtinState.ini();
     }
 
     /**

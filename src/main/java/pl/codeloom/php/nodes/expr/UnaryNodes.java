@@ -9,6 +9,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.builtins.Ini;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.runtime.Convert;
@@ -39,17 +40,17 @@ public final class UnaryNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            ErrorFunctions.State errors = PhpContext.get(this).errors();
-            int saved = errors.errorReporting();
+            Ini ini = PhpContext.get(this).ini();
+            int saved = ini.errorReporting();
             boolean silenced = (saved & ~ErrorFunctions.E_FATAL_ERRORS) != 0;
             if (silenced) {
-                errors.setErrorReporting(saved & ErrorFunctions.E_FATAL_ERRORS);
+                ini.setErrorReporting(saved & ErrorFunctions.E_FATAL_ERRORS);
             }
             try {
                 return operand.execute(frame);
             } finally {
-                if (silenced && (errors.errorReporting() & ~ErrorFunctions.E_FATAL_ERRORS) == 0) {
-                    errors.setErrorReporting(saved);
+                if (silenced && (ini.errorReporting() & ~ErrorFunctions.E_FATAL_ERRORS) == 0) {
+                    ini.setErrorReporting(saved);
                 }
             }
         }

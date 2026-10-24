@@ -56,6 +56,7 @@ public final class Builtins {
         Registry registry = new Registry(language);
         CoreFunctions.register(registry);
         ErrorFunctions.register(registry);
+        Ini.register(registry);
         StringFunctions.register(registry);
         ArrayFunctions.register(registry);
         PcreFunctions.register(registry);

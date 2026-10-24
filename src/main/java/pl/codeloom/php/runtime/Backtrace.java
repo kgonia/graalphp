@@ -206,13 +206,13 @@ public final class Backtrace {
 
     /** The options a Throwable's trace is taken with: its arguments unless zend.exception_ignore_args. */
     public static int exceptionOptions() {
-        return PhpContext.get(null).errors().ini().bool("zend.exception_ignore_args") ? IGNORE_ARGS : 0;
+        return PhpContext.get(null).ini().exceptionIgnoreArgs() ? IGNORE_ARGS : 0;
     }
 
     /** zend_trace_to_string: "#0 file(line): Class->function(args)" per entry, then "#n {main}" if asked. */
     @TruffleBoundary
     public static TruffleString toString(PhpArray trace, boolean includeMain) {
-        int maxLength = (int) PhpContext.get(null).errors().ini().lng("zend.exception_string_param_max_len");
+        int maxLength = PhpContext.get(null).ini().exceptionStringParamMaxLen();
         ByteBuilder out = new ByteBuilder();
         long number = 0;
         for (int p = trace.firstPosition(); p >= 0; p = trace.nextPosition(p)) {

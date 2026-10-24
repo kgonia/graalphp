@@ -1,11 +1,12 @@
 package pl.codeloom.php.builtins;
 
 /**
- * The built-ins' per-context state: pattern caches and preg_last_error(), json_last_error(), the mbstring
- * substitute character. A context owns one; the built-in functions themselves are language-level.
+ * The built-ins' per-context state: the ini settings, error handling's, pattern caches and preg_last_error(),
+ * json_last_error(), the mbstring substitute character. A context owns one; the built-in functions themselves are language-level.
  */
 public final class BuiltinState {
-    final ErrorFunctions.State errors;
+    final Ini ini;
+    final ErrorFunctions.State errors = new ErrorFunctions.State();
     final PcreFunctions pcre = new PcreFunctions();
     final JsonFunctions.State json = new JsonFunctions.State();
     final MbFunctions.State mb = new MbFunctions.State();
@@ -29,7 +30,11 @@ public final class BuiltinState {
 
     /** cgi: the SAPI, whose defaults php.ini starts from; ini: the php.Ini option's settings. */
     public BuiltinState(boolean cgi, String ini) {
-        errors = new ErrorFunctions.State(new Ini(cgi, ini));
+        this.ini = new Ini(cgi, ini);
+    }
+
+    public Ini ini() {
+        return ini;
     }
 
     public ErrorFunctions.State errors() {
