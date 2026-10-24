@@ -235,7 +235,7 @@ public final class PhpContext {
         } catch (IOException e) {
             throw noExport(path, json);
         }
-        return new Translator(language, canonical, phpSource(canonical)).translateFile(ast);
+        return new Translator(language, canonical, phpSource(canonical), false).translateFile(ast);
     }
 
     private static PhpError noExport(String path, Path json) {

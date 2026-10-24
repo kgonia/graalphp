@@ -51,16 +51,11 @@ public final class DeclareNodes {
                 return;
             }
             SourceLocation declared = previous.getDeclaredAt();
-            String message = "Cannot redeclare function " + function.getName() + "()" + (isUser(declared)
+            String message = "Cannot redeclare function " + function.getName() + "()" + (declared != null
                     ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
             ErrorFunctions.raise(context, compileTime ? ErrorFunctions.E_COMPILE_ERROR : ErrorFunctions.E_ERROR,
                     Str.of(message), SourceLocation.of(this), compileTime ? 1 : 0);
         }
-    }
-
-    /** A declaration in user code (the prelude stands for php-src's internal functions and classes). */
-    private static boolean isUser(SourceLocation declared) {
-        return declared != null && !declared.file().startsWith(SourceLocation.PRELUDE);
     }
 
     /**
@@ -76,7 +71,7 @@ public final class DeclareNodes {
         SourceLocation declared = previous.getDeclaration() instanceof ClassTemplate old ? old.getDeclaredAt() : null;
         String kind = previous.isInterface() ? "interface"
                 : previous.getDeclaration() instanceof ClassTemplate old && old.isTrait() ? "trait" : "class";
-        String message = "Cannot redeclare " + kind + " " + template.getName() + (isUser(declared)
+        String message = "Cannot redeclare " + kind + " " + template.getName() + (declared != null
                 ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
         ErrorFunctions.raise(context, ErrorFunctions.E_COMPILE_ERROR, Str.of(message), SourceLocation.of(site));
     }

@@ -74,6 +74,11 @@ public final class GeneratorNodes {
             return function.getPath();
         }
 
+        @Override
+        public boolean isInternal() {
+            return function.isInternal();
+        }
+
         /** A trace lists a generator's run as a call of its function, with the function's arguments. */
         @Override
         public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {

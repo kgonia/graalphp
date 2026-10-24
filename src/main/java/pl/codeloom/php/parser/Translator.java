@@ -120,6 +120,7 @@ public final class Translator {
     private final String path;
     /** The PHP file's source, for root nodes' source sections (profilers, stack traces); null if unreadable. */
     private final Source source;
+    private final boolean internal;
     private final ClassInfo classInfo;
     private final String functionName;
     private final PhpFunction function;
@@ -133,15 +134,17 @@ public final class Translator {
     /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
     private Names names;
 
-    public Translator(PhpLanguage language, String path, Source source) {
-        this(language, path, source, null, "", null, null, Names.GLOBAL);
+    /** internal: the file is the prelude's, which stands for php-src's internal code (RootNode.isInternal). */
+    public Translator(PhpLanguage language, String path, Source source, boolean internal) {
+        this(language, path, source, internal, null, "", null, null, Names.GLOBAL);
     }
 
-    private Translator(PhpLanguage language, String path, Source source, ClassInfo classInfo,
+    private Translator(PhpLanguage language, String path, Source source, boolean internal, ClassInfo classInfo,
                        String functionName, PhpFunction function, Scope scope, Names names) {
         this.language = language;
         this.path = path;
         this.source = source;
+        this.internal = internal;
         this.classInfo = classInfo;
         this.functionName = functionName;
         this.function = function;
@@ -208,8 +211,13 @@ public final class Translator {
         List<StmtNode> prologue = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();
         fileStatements(file, prologue, body);
-        return new FileRootNode(language, fileSlots.frame.build(), path, block(prologue), block(body),
+        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), block(body),
                 source == null ? null : source.createSection(0, source.getLength()));
+    }
+
+    /** Where a function or class is declared: null in internal code, as php-src's internal ones have no file. */
+    private SourceLocation declaredAt(Ast node) {
+        return internal ? null : new SourceLocation(path, node.line);
     }
 
     /** A statement list, also of one: a block records which statement a runtime error left (StmtNode.surfaced). */
@@ -573,7 +581,7 @@ public final class Translator {
         self[0] = new PhpFunction(name, params, (flags & FUNC_RETURNS_REF) != 0, isStatic, isPublic, isAbstract,
                 () -> translateBody(node, owner, self[0], name, params, new String[0], new boolean[0],
                         declaredNames));
-        self[0].setDeclaredAt(new SourceLocation(path, node.line));
+        self[0].setDeclaredAt(declaredAt(node));
         return self[0];
     }
 
@@ -630,7 +638,8 @@ public final class Translator {
                                          Names declaredNames) {
         Scope bodyScope = new Scope();
         String display = owner == null ? name : owner.name() + "::" + name;
-        Translator body = new Translator(language, path, source, owner, display, target, bodyScope, declaredNames);
+        Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,
+                declaredNames);
         Ast paramList = node.node("params");
         int[] paramSlots = new int[params.length];
         ExprNode[] defaults = new ExprNode[params.length];
@@ -673,7 +682,7 @@ public final class Translator {
         FrameDescriptor descriptor = bodyScope.frame.build();
         if (generator) {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
-                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(), path,
+                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(), path, internal,
                     lineSection(node.line));
             root.setScope(owner == null ? null : owner.name());
             root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, root)
@@ -682,7 +691,7 @@ public final class Translator {
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
-                statements, path, lineSection(node.line));
+                statements, path, internal, lineSection(node.line));
         root.setScope(owner == null ? null : owner.name());
         return root.getCallTarget();
     }
@@ -787,7 +796,7 @@ public final class Translator {
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
         ClassInfo info = new ClassInfo(name, parentName);
-        Translator inClass = new Translator(language, path, source, info, "", null, null, names);
+        Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
         try {
@@ -800,7 +809,7 @@ public final class Translator {
         }
         ClassTemplate template = new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members,
                 unsupported);
-        template.setDeclaredAt(new SourceLocation(path, node.line));
+        template.setDeclaredAt(declaredAt(node));
         return template;
     }
 
@@ -810,7 +819,8 @@ public final class Translator {
         Names declaredNames = names;
         ClassTemplate.TraitBody body = (className, parentName) -> {
             ClassInfo info = new ClassInfo(className, parentName);
-            Translator inClass = new Translator(language, path, source, info, "", null, null, declaredNames);
+            Translator inClass = new Translator(language, path, source, internal, info, "", null, null,
+                    declaredNames);
             List<ClassTemplate.Member> members = new ArrayList<>();
             for (Object child : statements.children()) {
                 inClass.addMember(members, (Ast) child, className, info);

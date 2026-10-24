@@ -54,7 +54,7 @@ final class Prelude {
 
     /** The file's path as the runtime names it (in errors, __FILE__): "prelude/spl.php". */
     static String path(String file) {
-        return pl.codeloom.php.runtime.SourceLocation.PRELUDE + file;
+        return "prelude/" + file;
     }
 
     static FileRootNode translate(PhpLanguage language, String file) {
@@ -67,6 +67,6 @@ final class Prelude {
         } catch (IOException e) {
             throw new PhpError("reading prelude file " + file + " failed: " + e.getMessage());
         }
-        return new Translator(language, path(file), null).translateFile(ast);
+        return new Translator(language, path(file), null, true).translateFile(ast);
     }
 }

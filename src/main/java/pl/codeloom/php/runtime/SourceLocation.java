@@ -14,12 +14,6 @@ public record SourceLocation(String file, int line) {
     /** php-src's location when no PHP code runs. */
     public static final SourceLocation UNKNOWN = new SourceLocation("Unknown", 0);
 
-    /**
-     * The directory the prelude's files (built-in classes written in PHP) are named in. Their code stands for
-     * php-src's internal code: locations and traces skip it as php-src skips internal frames.
-     */
-    public static final String PRELUDE = "prelude/";
-
     /** The root of PHP code (a file's, a function's): the file it is in. */
     public interface Code {
         String getPath();
@@ -30,9 +24,12 @@ public record SourceLocation(String file, int line) {
         int getLine();
     }
 
-    /** User code: PHP code outside the prelude (php-src's ZEND_USER_CODE). */
+    /**
+     * User code (php-src's ZEND_USER_CODE): PHP code that isn't internal. The prelude's (built-in classes written in
+     * PHP) stands for php-src's internal code: locations and traces skip it as php-src skips internal frames.
+     */
     public static boolean isUserCode(RootNode root) {
-        return root instanceof Code code && !code.getPath().startsWith(PRELUDE);
+        return root instanceof Code && !root.isInternal();
     }
 
     /** The innermost statement around the node, in its root's file; for the prelude's code, as current(). */

@@ -37,6 +37,7 @@ import pl.codeloom.php.runtime.Str;
 public final class FunctionRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
     private final String name;
     private final String path;
+    private final boolean internal;
     @CompilationFinal(dimensions = 1) private final PhpFunction.Param[] params;
     @CompilationFinal(dimensions = 1) private final int[] paramSlots;
     @Children private final ExprNode[] defaults;
@@ -54,10 +55,11 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
 
     public FunctionRootNode(PhpLanguage language, FrameDescriptor frame, String name, PhpFunction.Param[] params,
                             int[] paramSlots, ExprNode[] defaults, int[] captureSlots, boolean[] captureByRef,
-                            char returnCoerce, boolean returnNullable, StmtNode body, String path,
+                            char returnCoerce, boolean returnNullable, StmtNode body, String path, boolean internal,
                             SourceSection sourceSection) {
         super(language, frame);
         this.sourceSection = sourceSection;
+        this.internal = internal;
         this.name = name;
         this.path = path;
         this.params = params;
@@ -338,6 +340,12 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     @Override
     public SourceSection getSourceSection() {
         return sourceSection;
+    }
+
+    /** A prelude function or method: php-src's internal code, which tools and traces leave out. */
+    @Override
+    public boolean isInternal() {
+        return internal;
     }
 
     @Override

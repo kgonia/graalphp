@@ -16,16 +16,18 @@ import pl.codeloom.php.runtime.SourceLocation;
  */
 public final class FileRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
     private final String path;
+    private final boolean internal;
     @Child private StmtNode prologue;
     @Child private StmtNode body;
 
     private final SourceSection sourceSection;
 
-    public FileRootNode(PhpLanguage language, FrameDescriptor frame, String path, StmtNode prologue, StmtNode body,
-                        SourceSection sourceSection) {
+    public FileRootNode(PhpLanguage language, FrameDescriptor frame, String path, boolean internal,
+                        StmtNode prologue, StmtNode body, SourceSection sourceSection) {
         super(language, frame);
         this.sourceSection = sourceSection;
         this.path = path;
+        this.internal = internal;
         this.prologue = prologue;
         this.body = body;
     }
@@ -60,6 +62,12 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
     @Override
     public SourceSection getSourceSection() {
         return sourceSection;
+    }
+
+    /** The prelude's code: php-src's internal code, which tools and traces leave out. */
+    @Override
+    public boolean isInternal() {
+        return internal;
     }
 
     @Override
