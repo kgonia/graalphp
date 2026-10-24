@@ -12,6 +12,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -28,13 +29,14 @@ public final class Backtrace {
     /** ini precision's default, which a float argument is shown with. */
     private static final int PRECISION = 14;
 
-    static final TruffleString FILE = Str.of("file");
-    static final TruffleString LINE = Str.of("line");
-    static final TruffleString FUNCTION = Str.of("function");
-    static final TruffleString CLASS = Str.of("class");
-    static final TruffleString OBJECT = Str.of("object");
-    static final TruffleString TYPE = Str.of("type");
-    static final TruffleString ARGS = Str.of("args");
+    private static final TruffleString FILE = Str.of("file");
+    private static final TruffleString LINE = Str.of("line");
+    private static final TruffleString FUNCTION = Str.of("function");
+    private static final TruffleString CLASS = Str.of("class");
+    private static final TruffleString OBJECT = Str.of("object");
+    private static final TruffleString TYPE = Str.of("type");
+    private static final TruffleString ARGS = Str.of("args");
+    private static final HexFormat HEX = HexFormat.of().withUpperCase();
     private static final TruffleString ARROW = Str.of("->");
     private static final TruffleString DOUBLE_COLON = Str.of("::");
 
@@ -89,8 +91,8 @@ public final class Backtrace {
             levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
                     frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode()));
             return null;
-        });
-        return build(levels.subList(Math.min(skip, levels.size()), levels.size()), options, limit);
+        }, skip);
+        return build(levels, options, limit);
     }
 
     /** The trace a Throwable made now records (zend_default_exception_new's). */
@@ -131,7 +133,7 @@ public final class Backtrace {
     }
 
     private static void locate(PhpArray entry, SourceLocation at) {
-        if (at != SourceLocation.UNKNOWN) {
+        if (!SourceLocation.UNKNOWN.equals(at)) {
             entry.put(FILE, Str.of(at.file()));
             entry.put(LINE, (long) at.line());
         }
@@ -210,7 +212,7 @@ public final class Backtrace {
 
     /** zend_trace_to_string: "#0 file(line): Class->function(args)" per entry, then "#n {main}" if asked. */
     @TruffleBoundary
-    public static TruffleString toString(PhpArray trace, boolean includeMain) {
+    public static TruffleString traceToString(PhpArray trace, boolean includeMain) {
         int maxLength = PhpContext.get(null).ini().exceptionStringParamMaxLen();
         ByteBuilder out = new ByteBuilder();
         long number = 0;
@@ -321,8 +323,7 @@ public final class Backtrace {
                 case 0x1B -> out.write('e');
                 default -> {
                     out.write('x');
-                    out.write(Character.toUpperCase(Character.forDigit(c >> 4, 16)));
-                    out.write(Character.toUpperCase(Character.forDigit(c & 0xF, 16)));
+                    out.writeAscii(HEX.toHexDigits((byte) c));
                 }
             }
         }

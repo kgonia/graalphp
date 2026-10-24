@@ -233,25 +233,26 @@ public final class ForeachNode extends StmtNode {
     /** An iteration step: the Iterator's method, or the Generator's own operation for it. */
     @TruffleBoundary
     private Object step(PhpObject object, String method) {
-        return Backtrace.callFrom(this, () -> {
-            if (!(object.getInternal() instanceof PhpGenerator generator)) {
-                return object.callMethod(method);
+        if (!(object.getInternal() instanceof PhpGenerator generator)) {
+            return object.callMethod(this, method);
+        }
+        return Backtrace.callFrom(this, () -> generatorStep(generator, method));
+    }
+
+    private static Object generatorStep(PhpGenerator generator, String method) {
+        return switch (method) {
+            case "valid" -> generator.valid();
+            case "current" -> generator.current();
+            case "key" -> generator.key();
+            case "rewind" -> {
+                generator.rewind();
+                yield PhpNull.NULL;
             }
-            switch (method) {
-                case "rewind" -> generator.rewind();
-                case "valid" -> {
-                    return generator.valid();
-                }
-                case "current" -> {
-                    return generator.current();
-                }
-                case "key" -> {
-                    return generator.key();
-                }
-                default -> generator.next();
+            default -> {
+                generator.next();
+                yield PhpNull.NULL;
             }
-            return PhpNull.NULL;
-        });
+        };
     }
 
     /** Follows getIterator() to the Iterator (a loop, not recursion: partial evaluation would inline it forever). */
@@ -259,8 +260,7 @@ public final class ForeachNode extends StmtNode {
     private PhpObject unwrapAggregates(PhpObject subject) {
         PhpObject object = subject;
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            PhpObject aggregate = object;
-            if (!(Backtrace.callFrom(this, () -> aggregate.callMethod("getiterator")) instanceof PhpObject inner)) {
+            if (!(object.callMethod(this, "getiterator") instanceof PhpObject inner)) {
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

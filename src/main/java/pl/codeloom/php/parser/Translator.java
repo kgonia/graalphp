@@ -96,6 +96,12 @@ public final class Translator {
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
     private static final int ARRAY_SYNTAX_LIST = 1;
+    private static final int EXEC_EVAL = 1;
+    private static final int EXEC_INCLUDE_ONCE = 4;
+    private static final int EXEC_REQUIRE = 8;
+    private static final int EXEC_REQUIRE_ONCE = 16;
+    /** How PHP 8.4 names a closure: {closure:the enclosing function or file:its line}. */
+    private static final String CLOSURE_PREFIX = "{closure:";
 
     /** The class whose members are being translated, for self::, parent:: and __CLASS__. */
     private record ClassInfo(String name, String parentName) {
@@ -730,8 +736,8 @@ public final class Translator {
         }
         // php-src's name: after the file at top level, the enclosing closure, or Class::function() it's declared in
         String enclosing = function == null ? path
-                : function.getName().startsWith("{closure:") ? function.getName() : functionName + "()";
-        String name = "{closure:" + enclosing + ":" + node.line + "}";
+                : function.getName().startsWith(CLOSURE_PREFIX) ? function.getName() : functionName + "()";
+        String name = CLOSURE_PREFIX + enclosing + ":" + node.line + "}";
         ClassInfo owner = classInfo;
         Names declaredNames = this.names;
         PhpFunction[] self = new PhpFunction[1];
@@ -1097,14 +1103,13 @@ public final class Translator {
             case "AST_ARROW_FUNC":
                 return closure(node);
             case "AST_INCLUDE_OR_EVAL": {
-                if (node.flags == 1) {
+                if (node.flags == EXEC_EVAL) {
                     throw unsupported(node, "eval");
                 }
-                // php-ast's flags: 2 include, 4 include_once, 8 require, 16 require_once
                 return new IncludeNode(expression(node.get("expr")), switch (node.flags) {
-                    case 4 -> "include_once";
-                    case 8 -> "require";
-                    case 16 -> "require_once";
+                    case EXEC_INCLUDE_ONCE -> "include_once";
+                    case EXEC_REQUIRE -> "require";
+                    case EXEC_REQUIRE_ONCE -> "require_once";
                     default -> "include";
                 });
             }
@@ -1629,28 +1634,20 @@ public final class Translator {
                 return false;
             }
         }
-        switch (name) {
+        return switch (name) {
             case "strlen", "is_null", "is_bool", "is_long", "is_int", "is_integer", "is_float", "is_double",
                  "is_string", "is_array", "is_object", "is_resource", "is_scalar", "boolval", "intval", "floatval",
-                 "doubleval", "strval", "count", "sizeof", "gettype", "clone":
-                return count == 1;
-            case "get_class":
-                return count <= 1;
-            case "array_key_exists":
-                return count == 2;
-            case "defined":
-                return count == 1 && args.child(0) instanceof String constant && constant.indexOf('\\') < 0
-                        && constant.indexOf(':') < 0;
-            case "chr":
-                return count == 1 && args.child(0) instanceof Long;
-            case "ord":
-                return count == 1 && args.child(0) instanceof String;
-            case "sprintf":
-                return count >= 1 && args.child(0) instanceof String format && format.length() < 256
-                        && sprintfPlaceholders(format) == count - 1;
-            default:
-                return false;
-        }
+                 "doubleval", "strval", "count", "sizeof", "gettype", "clone" -> count == 1;
+            case "get_class" -> count <= 1;
+            case "array_key_exists" -> count == 2;
+            case "defined" -> count == 1 && args.child(0) instanceof String constant && constant.indexOf('\\') < 0
+                    && constant.indexOf(':') < 0;
+            case "chr" -> count == 1 && args.child(0) instanceof Long;
+            case "ord" -> count == 1 && args.child(0) instanceof String;
+            case "sprintf" -> count >= 1 && args.child(0) instanceof String format && format.length() < 256
+                    && sprintfPlaceholders(format) == count - 1;
+            default -> false;
+        };
     }
 
     /** zend_compile_func_sprintf's test: the number of %s and %d in a format of only those (and %%), else -1. */

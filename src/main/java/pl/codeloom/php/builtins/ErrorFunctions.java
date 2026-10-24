@@ -164,7 +164,7 @@ public final class ErrorFunctions {
         if (display && ((ini.errorReporting() & type) != 0 || (type & E_CORE) != 0)
                 && (ini.logErrors() || displayMode != Ini.DisplayMode.OFF)) {
             String typeName = typeName(type);
-            TruffleString trace = backtrace == null ? null : Backtrace.toString(backtrace, true);
+            TruffleString trace = backtrace == null ? null : Backtrace.traceToString(backtrace, true);
             if (ini.logErrors()) {
                 ByteBuilder line = new ByteBuilder();
                 line.writeAscii("PHP " + typeName + ":  ");

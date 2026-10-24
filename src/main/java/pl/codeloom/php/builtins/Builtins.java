@@ -288,7 +288,7 @@ public final class Builtins {
         if (!(property(exception, "trace") instanceof PhpArray trace)) {
             throw new PhpError("TypeError", "Trace is not an array");
         }
-        return Backtrace.toString(trace, true);
+        return Backtrace.traceToString(trace, true);
     }
 
     private static final TruffleString CALLED_IN = Str.of(", called in ");

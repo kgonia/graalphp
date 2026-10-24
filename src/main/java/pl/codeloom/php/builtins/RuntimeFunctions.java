@@ -105,7 +105,7 @@ final class RuntimeFunctions {
         r.fn("debug_backtrace", a -> Backtrace.here((int) Args.lng(a, 0, Backtrace.PROVIDE_OBJECT),
                 (int) Args.lng(a, 1, 0), 1));
         r.fn("debug_print_backtrace", (context, a) -> {
-            context.write(Backtrace.toString(Backtrace.here((int) Args.lng(a, 0, 0), (int) Args.lng(a, 1, 0), 1),
+            context.write(Backtrace.traceToString(Backtrace.here((int) Args.lng(a, 0, 0), (int) Args.lng(a, 1, 0), 1),
                     false));
             return PhpNull.NULL;
         });

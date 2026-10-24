@@ -457,24 +457,18 @@ public final class BuiltinNodes {
      * array_filter($a[, $callback]): the callback goes through an inline cache of direct calls, which Graal can
      * inline, where the regular built-in calls it from behind a boundary.
      */
-    public abstract static class ArrayFilterNode extends BuiltinNode {
-        /** The frame slot the call's arguments are kept in while it calls back, for traces; how many were passed. */
-        private final int argsSlot;
+    public abstract static class ArrayFilterNode extends CallingBackNode {
+        /** How many arguments were passed, as the trace lists them. */
         private final int passed;
 
         protected ArrayFilterNode(int argsSlot, int passed) {
-            this.argsSlot = argsSlot;
+            super(argsSlot);
             this.passed = passed;
         }
 
         @Override
         public String inlineBuiltin() {
             return "array_filter";
-        }
-
-        @Override
-        public Object[] inlineArguments(Frame frame) {
-            return frame.getValue(argsSlot) instanceof Object[] values ? values : new Object[0];
         }
 
         @Specialization(guards = {"isNull(callback)", "mode == 0"})
@@ -497,7 +491,7 @@ public final class BuiltinNodes {
             if (array.size() == 0) {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
-            frame.setObject(argsSlot, passed == 2 ? new Object[] {array, callback} : new Object[] {array, callback, mode});
+            keepArguments(frame, passed == 2 ? new Object[] {array, callback} : new Object[] {array, callback, mode});
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = array.valueAt(p);
@@ -514,24 +508,38 @@ public final class BuiltinNodes {
         }
     }
 
-    /** array_map($callback, $a) with one array: keys kept, the callback through an inline cache of direct calls. */
-    public abstract static class ArrayMapNode extends BuiltinNode {
-        static final Callables.Parameter CALLBACK = new Callables.Parameter("array_map", 1, true);
-        /** The frame slot the call's arguments are kept in while it calls back, for traces. */
+    /**
+     * A built-in compiled in place that calls back (Intrinsics.callsBack): php-src's call of it has a frame, which
+     * traces list with its arguments, so they wait in a frame slot while it calls back.
+     */
+    public abstract static class CallingBackNode extends BuiltinNode {
         private final int argsSlot;
 
-        protected ArrayMapNode(int argsSlot) {
+        protected CallingBackNode(int argsSlot) {
             this.argsSlot = argsSlot;
         }
 
-        @Override
-        public String inlineBuiltin() {
-            return "array_map";
+        protected final void keepArguments(VirtualFrame frame, Object[] values) {
+            frame.setObject(argsSlot, values);
         }
 
         @Override
         public Object[] inlineArguments(Frame frame) {
             return frame.getValue(argsSlot) instanceof Object[] values ? values : new Object[0];
+        }
+    }
+
+    /** array_map($callback, $a) with one array: keys kept, the callback through an inline cache of direct calls. */
+    public abstract static class ArrayMapNode extends CallingBackNode {
+        static final Callables.Parameter CALLBACK = new Callables.Parameter("array_map", 1, true);
+
+        protected ArrayMapNode(int argsSlot) {
+            super(argsSlot);
+        }
+
+        @Override
+        public String inlineBuiltin() {
+            return "array_map";
         }
 
         @Specialization(guards = "!isNull(callback)")
@@ -540,7 +548,7 @@ public final class BuiltinNodes {
             if (array.size() == 0) {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
-            frame.setObject(argsSlot, new Object[] {callback, array});
+            keepArguments(frame, new Object[] {callback, array});
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));
