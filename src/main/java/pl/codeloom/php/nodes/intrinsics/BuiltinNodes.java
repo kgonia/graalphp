@@ -9,6 +9,7 @@ import com.oracle.truffle.api.dsl.NodeField;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.strings.TruffleStringBuilder;
@@ -27,6 +28,8 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
+
+import java.util.concurrent.locks.Lock;
 
 /**
  * Hot built-ins as Truffle DSL nodes (D10 step 2), compiled in place of the call: arguments are child nodes,
@@ -47,19 +50,46 @@ public final class BuiltinNodes {
         /** php-src compiles the call into an opcode of its own, which makes no frame (Translator.compiledSpecially). */
         protected abstract boolean isCompiledSpecially();
 
+        /** The call of the regular built-in, made the first time a case falls to it (built-ins are language-wide). */
+        @Child private DirectCallNode fullCall;
+
         /**
-         * The regular built-in for the cases the specializations leave out, found in the current context, called from
-         * this node. A call php-src compiles in makes no frame: its Java body is called directly, and what it calls
-         * back (Countable::count) seems called from here. Another call has a frame, which traces list.
+         * The regular built-in for the cases the specializations leave out, called from this node with a frame, which
+         * traces list. A call php-src compiles in makes none: its Java body is called in place.
          */
-        @TruffleBoundary
         protected final Object callFull(String name, Object... values) {
-            PhpFunction function = PhpContext.get(this).findFunction(name);
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
-            return PhpRef.deref(Backtrace.callFrom(this, isCompiledSpecially()
-                    ? () -> function.getBuiltin().call(arguments)
-                    : () -> function.getCallTarget().call(arguments)));
+            if (isCompiledSpecially()) {
+                return callInPlace(name, arguments);
+            }
+            DirectCallNode call = fullCall;
+            if (call == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                call = fullCall(name);
+            }
+            return PhpRef.deref(call.call(arguments));
+        }
+
+        /** Inserted under the AST lock: contexts on several threads share the node. */
+        private DirectCallNode fullCall(String name) {
+            Lock lock = getLock();
+            lock.lock();
+            try {
+                if (fullCall == null) {
+                    fullCall = insert(DirectCallNode.create(PhpContext.get(this).findFunction(name).getCallTarget()));
+                }
+                return fullCall;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        /** What a call php-src compiles in calls back (Countable::count) is called from the call's site. */
+        @TruffleBoundary
+        private Object callInPlace(String name, Object[] arguments) {
+            PhpFunction function = PhpContext.get(this).findFunction(name);
+            return PhpRef.deref(Backtrace.callFrom(this, () -> function.getBuiltin().call(arguments)));
         }
 
         protected static boolean isString(Object value) {
