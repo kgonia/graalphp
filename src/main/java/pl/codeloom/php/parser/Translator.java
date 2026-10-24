@@ -1335,7 +1335,7 @@ public final class Translator {
             case 13:
                 return UnaryNodes.BitNotNode.create(operand);
             case 260:
-                return operand;
+                return new UnaryNodes.SilenceNode(operand);
             case 261:
                 return UnaryNodes.PlusNode.create(operand);
             case 262: {

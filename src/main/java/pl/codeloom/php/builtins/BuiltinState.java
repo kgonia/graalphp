@@ -5,6 +5,7 @@ package pl.codeloom.php.builtins;
  * substitute character. A context owns one; the built-in functions themselves are language-level.
  */
 public final class BuiltinState {
+    final ErrorFunctions.State errors;
     final PcreFunctions pcre = new PcreFunctions();
     final JsonFunctions.State json = new JsonFunctions.State();
     final MbFunctions.State mb = new MbFunctions.State();
@@ -25,6 +26,15 @@ public final class BuiltinState {
      */
     final java.util.Set<FileFunctions.Stream> openStreams =
             java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    /** cgi: the SAPI, whose defaults php.ini starts from; ini: the php.Ini option's settings. */
+    public BuiltinState(boolean cgi, String ini) {
+        errors = new ErrorFunctions.State(new Ini(cgi, ini));
+    }
+
+    public ErrorFunctions.State errors() {
+        return errors;
+    }
 
     /** Closes what the context left open. */
     public void close() {

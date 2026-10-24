@@ -49,8 +49,6 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
     private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
-    /** php.ini's display_errors (the php.DisplayErrors option). */
-    private final boolean displayErrors;
     /** How many of the first functions and classes declared are the built-ins (the prelude's come later). */
     private final int internalFunctions;
     private final int internalClasses;
@@ -66,10 +64,9 @@ public final class PhpContext {
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
     private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
-    private Object errorHandler = pl.codeloom.php.runtime.PhpNull.NULL;
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
-    private final BuiltinState builtinState = new BuiltinState();
+    private final BuiltinState builtinState;
     /** Static variables (`static $x`) by function, then name. */
     private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
     private final pl.codeloom.php.runtime.Callables.LastCall lastCall = new pl.codeloom.php.runtime.Callables.LastCall();
@@ -82,8 +79,8 @@ public final class PhpContext {
     private final byte[] requestBody;
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
-                      boolean debug, boolean displayErrors) {
-        this.displayErrors = displayErrors;
+                      boolean debug, String ini) {
+        this.builtinState = new BuiltinState(cgi, ini);
         this.language = language;
         this.env = env;
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
@@ -524,6 +521,8 @@ public final class PhpContext {
 
     /** register_shutdown_function's callables with their arguments, run when the script ends or exits. */
     private final List<Object[]> shutdownFunctions = new java.util.ArrayList<>();
+    /** The shutdown functions have started: exit() in one doesn't run them again. */
+    private boolean shuttingDown;
 
     @TruffleBoundary
     public void addShutdownFunction(Object callable, Object[] arguments) {
@@ -533,12 +532,26 @@ public final class PhpContext {
         shutdownFunctions.add(entry);
     }
 
-    /** Runs the shutdown functions (also those they register), once. */
+    /**
+     * Runs the shutdown functions (also those they register), once. An exception one of them doesn't catch is an
+     * uncaught fatal error, and it, a fatal error or exit() in one ends them all (php-src's zend_try around them).
+     */
     @TruffleBoundary
     public void runShutdownFunctions() {
-        for (int i = 0; i < shutdownFunctions.size(); i++) {
-            Object[] entry = shutdownFunctions.get(i);
-            pl.codeloom.php.runtime.Callables.call(this, entry[0], java.util.Arrays.copyOfRange(entry, 1, entry.length));
+        if (shuttingDown) {
+            return;
+        }
+        shuttingDown = true;
+        try {
+            for (int i = 0; i < shutdownFunctions.size(); i++) {
+                Object[] entry = shutdownFunctions.get(i);
+                pl.codeloom.php.runtime.Callables.call(this, entry[0],
+                        java.util.Arrays.copyOfRange(entry, 1, entry.length));
+            }
+        } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
+            pl.codeloom.php.builtins.ErrorFunctions.uncaughtInternal(this, e);
+        } catch (pl.codeloom.php.runtime.PhpBailout ended) {
+            // the fatal error was reported where it was raised
         }
         shutdownFunctions.clear();
     }
@@ -549,6 +562,42 @@ public final class PhpContext {
         runShutdownFunctions();
         endRequest();
         env.getContext().closeExited(null, status);
+    }
+
+    /**
+     * The script's end (php_request_shutdown), also after an uncaught exception or a fatal error: the shutdown
+     * functions, the output; the context closes with the exit status a fatal error left (255).
+     */
+    @TruffleBoundary
+    public void endScript() {
+        runShutdownFunctions();
+        endRequest();
+        int status = errors().exitStatus();
+        if (status != 0) {
+            env.getContext().closeExited(null, status);
+        }
+    }
+
+    /** The error state: error_reporting, the handlers, the last error, the error ini directives. */
+    public pl.codeloom.php.builtins.ErrorFunctions.State errors() {
+        return builtinState.errors();
+    }
+
+    /**
+     * Writes to stderr (an error displayed there, the SAPI's log). Under the CLI the output written so far goes
+     * first, as php-cli's unbuffered stdout keeps the order.
+     */
+    @TruffleBoundary
+    public void writeError(byte[] bytes) {
+        try {
+            if (response == null) {
+                out.flush();
+            }
+            env.err().write(bytes);
+            env.err().flush();
+        } catch (IOException e) {
+            // php-src ignores a failed write to stderr
+        }
     }
 
     /** get_defined_constants(): the defined constants by name. */
@@ -576,16 +625,6 @@ public final class PhpContext {
         return globalsVersion;
     }
 
-    /** set_error_handler(): stores the handler and returns the previous one. This runtime raises no warnings. */
-    public Object swapErrorHandler(Object handler) {
-        Object previous = errorHandler;
-        errorHandler = handler;
-        return previous;
-    }
-
-    public Object errorHandler() {
-        return errorHandler;
-    }
 
     // ---- output ----
 
@@ -712,17 +751,6 @@ public final class PhpContext {
     }
 
     /** The end of the script or request: open output buffers are flushed, then the output (and headers). */
-    /**
-     * An uncaught error ends the script: as php_error_cb, a CGI response whose headers haven't gone out becomes a
-     * 500 unless the error is displayed or the script chose another status.
-     */
-    @TruffleBoundary
-    public void fatalError() {
-        if (response != null && !response.isSent() && response.status() == 200 && !displayErrors) {
-            response.setStatus(500);
-        }
-    }
-
     @TruffleBoundary
     public void endRequest() {
         while (flushBuffer()) {

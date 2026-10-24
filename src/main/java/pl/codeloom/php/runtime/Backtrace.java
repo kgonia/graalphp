@@ -11,6 +11,7 @@ import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -27,8 +28,6 @@ public final class Backtrace {
     /** debug_backtrace()'s options. */
     public static final int PROVIDE_OBJECT = 1;
     public static final int IGNORE_ARGS = 2;
-    /** zend.exception_string_param_max_len's default: how much of a string argument a trace string shows. */
-    private static final int STRING_PARAM_MAX_LEN = 15;
     /** ini precision's default, which a float argument is shown with. */
     private static final int PRECISION = 14;
 
@@ -224,12 +223,13 @@ public final class Backtrace {
 
     /** The options a Throwable's trace is taken with: its arguments unless zend.exception_ignore_args. */
     public static int exceptionOptions() {
-        return 0;
+        return PhpContext.get(null).errors().ini().bool("zend.exception_ignore_args") ? IGNORE_ARGS : 0;
     }
 
     /** zend_trace_to_string: "#0 file(line): Class->function(args)" per entry, then "#n {main}" if asked. */
     @TruffleBoundary
     public static TruffleString toString(PhpArray trace, boolean includeMain) {
+        int maxLength = (int) PhpContext.get(null).errors().ini().lng("zend.exception_string_param_max_len");
         ByteBuilder out = new ByteBuilder();
         long number = 0;
         for (int p = trace.firstPosition(); p >= 0; p = trace.nextPosition(p)) {
@@ -260,7 +260,7 @@ public final class Backtrace {
                         out.write(name);
                         ascii(out, ": ");
                     }
-                    appendArgument(out, PhpRef.deref(args.valueAt(a)));
+                    appendArgument(out, PhpRef.deref(args.valueAt(a)), maxLength);
                 }
                 out.truncate(out.size() - 2);
             }
@@ -284,7 +284,7 @@ public final class Backtrace {
     }
 
     /** _build_trace_args: a scalar as smart_str_append_scalar shows it, a string truncated; then ", ". */
-    private static void appendArgument(ByteBuilder out, Object value) {
+    private static void appendArgument(ByteBuilder out, Object value, int maxLength) {
         if (value == PhpNull.NULL || value == null) {
             ascii(out, "NULL");
         } else if (value instanceof Boolean b) {
@@ -300,8 +300,8 @@ public final class Backtrace {
         } else if (value instanceof TruffleString s) {
             byte[] bytes = Str.bytes(s);
             out.write('\'');
-            appendEscaped(out, bytes, Math.min(bytes.length, STRING_PARAM_MAX_LEN));
-            if (bytes.length > STRING_PARAM_MAX_LEN) {
+            appendEscaped(out, bytes, Math.min(bytes.length, maxLength));
+            if (bytes.length > maxLength) {
                 ascii(out, "...");
             }
             out.write('\'');

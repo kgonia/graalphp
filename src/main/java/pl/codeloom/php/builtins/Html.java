@@ -451,6 +451,13 @@ final class Html {
 
     // ---- htmlspecialchars, htmlentities ----
 
+    /** main.c's escape_html for a displayed error: ENT_COMPAT, retried substituting invalid bytes if it fails. */
+    static TruffleString escapeForError(TruffleString message) {
+        TruffleString escaped = escape(message, false, ENT_HTML_QUOTE_DOUBLE, null, true);
+        return Str.length(escaped) > 0 ? escaped
+                : escape(message, false, ENT_HTML_QUOTE_DOUBLE | ENT_HTML_SUBSTITUTE_ERRORS, null, true);
+    }
+
     /** htmlspecialchars (all false) and htmlentities (all true): php_escape_html_entities_ex. */
     @TruffleBoundary
     static TruffleString escape(TruffleString text, boolean all, long longFlags, TruffleString charsetHint,

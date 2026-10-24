@@ -172,7 +172,6 @@ public final class HttpMain {
             return;
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        String failure = null;
         try (Context context = Context.newBuilder("php")
                 .engine(engine)
                 // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
@@ -184,7 +183,8 @@ public final class HttpMain {
                 .in(new ByteArrayInputStream(body))
                 .out(out)
                 .option("php.Sapi", "cgi")
-                .option("php.DisplayErrors", Boolean.toString(displayErrors))
+                // php.ini-production's error settings, or the development ones with --display-errors
+                .option("php.Ini", "display_errors=" + (displayErrors ? "1" : "0") + "\nlog_errors=1")
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", new String[] {script.toString()})
@@ -192,14 +192,14 @@ public final class HttpMain {
             context.eval(Source.newBuilder("php", script.toFile()).build());
         } catch (PolyglotException e) {
             if (!e.isExit()) {
-                failure = e.getMessage();
-                System.err.println("PHP Fatal error:  " + failure + " (" + exchange.getRequestURI() + ")");
+                // the runtime reports PHP's errors itself (to stderr with log_errors); this failed outside them
+                System.err.println("PHP Fatal error:  " + e.getMessage() + " (" + exchange.getRequestURI() + ")");
                 if (e.isInternalError() || !e.isGuestException()) {
                     e.printStackTrace();
                 }
             }
         }
-        sendCgiResponse(exchange, out.toByteArray(), failure, displayErrors);
+        sendCgiResponse(exchange, out.toByteArray());
     }
 
     private Map<String, String> cgiEnvironment(HttpExchange exchange, Path script, String scriptName, int length) {
@@ -239,12 +239,7 @@ public final class HttpMain {
     }
 
     /** A CGI response: a header block (Status and headers) up to an empty line, then the body. */
-    /**
-     * The CGI response; after a fatal error with display_errors, the message is appended (without, the runtime
-     * made the response a 500 if its headers hadn't gone out).
-     */
-    private static void sendCgiResponse(HttpExchange exchange, byte[] output, String failure, boolean displayErrors)
-            throws IOException {
+    private static void sendCgiResponse(HttpExchange exchange, byte[] output) throws IOException {
         int status = 200;
         int bodyStart = 0;
         Headers headers = exchange.getResponseHeaders();
@@ -267,16 +262,6 @@ public final class HttpMain {
             bodyStart = end + 4;
         }
         byte[] body = java.util.Arrays.copyOfRange(output, bodyStart, output.length);
-        if (failure != null && displayErrors) {
-            if (end < 0) {
-                headers.set("Content-Type", "text/html; charset=UTF-8");
-            }
-            byte[] message = ("<br />\n<b>Fatal error</b>:  " + failure.replace("&", "&amp;").replace("<", "&lt;")
-                    + "<br />\n").getBytes(StandardCharsets.UTF_8);
-            byte[] joined = java.util.Arrays.copyOf(body, body.length + message.length);
-            System.arraycopy(message, 0, joined, body.length, message.length);
-            body = joined;
-        }
         boolean noBody = exchange.getRequestMethod().equals("HEAD") || status == 204 || status == 304;
         exchange.sendResponseHeaders(status, noBody ? -1 : body.length == 0 ? -1 : body.length);
         if (!noBody && body.length > 0) {

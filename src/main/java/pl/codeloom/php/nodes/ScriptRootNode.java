@@ -7,14 +7,19 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpNull;
 
 import java.util.concurrent.locks.Lock;
 
 /**
- * The entry script: calls its file with the standard frame arguments (no $this, no static class, no closure).
+ * The entry script: calls its file with the standard frame arguments (no $this, no static class, no closure), then
+ * ends it as php-src does: an uncaught exception goes to the exception handler or is a fatal error, and the
+ * shutdown functions and the output's end follow.
  * Parsing may happen without a context, so the file is loaded when the script first runs; translations are
  * language-level, so the call is direct for every context.
  */
@@ -34,14 +39,16 @@ public final class ScriptRootNode extends RootNode {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             call = fileCall();
         }
-        Object result;
+        PhpContext context = PhpContext.get(this);
+        Object result = PhpNull.NULL;
         try {
             result = call.call(new Object[PhpFunction.ARG_FIRST]);
         } catch (PhpError | PhpException e) {
-            PhpContext.get(this).fatalError();
-            throw e;
+            ErrorFunctions.uncaught(context, e);
+        } catch (PhpBailout ended) {
+            // the fatal error was reported where it was raised
         }
-        PhpContext.get(this).runShutdownFunctions();
+        context.endScript();
         return result;
     }
 

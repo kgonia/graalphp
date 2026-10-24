@@ -55,6 +55,7 @@ public final class Builtins {
     public static Table build(PhpLanguage language, boolean debug) {
         Registry registry = new Registry(language);
         CoreFunctions.register(registry);
+        ErrorFunctions.register(registry);
         StringFunctions.register(registry);
         ArrayFunctions.register(registry);
         PcreFunctions.register(registry);

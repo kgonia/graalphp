@@ -6,7 +6,9 @@ import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.strings.TruffleString;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.runtime.Convert;
@@ -21,6 +23,36 @@ import pl.codeloom.php.runtime.Str;
 /** Unary minus/plus, bitwise not, and casts, specialized on the operand's type. */
 public final class UnaryNodes {
     private UnaryNodes() {
+    }
+
+    /**
+     * `@expr` (ZEND_BEGIN_SILENCE / END_SILENCE): while it runs, error_reporting keeps only the fatal errors, so
+     * the others aren't displayed or logged (error_get_last() and a user error handler still see them); it is
+     * restored however the expression ends, unless the expression changed it.
+     */
+    public static final class SilenceNode extends ExprNode {
+        @Child private ExprNode operand;
+
+        public SilenceNode(ExprNode operand) {
+            this.operand = operand;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            ErrorFunctions.State errors = PhpContext.get(this).errors();
+            int saved = errors.errorReporting();
+            boolean silenced = (saved & ~ErrorFunctions.E_FATAL_ERRORS) != 0;
+            if (silenced) {
+                errors.setErrorReporting(saved & ErrorFunctions.E_FATAL_ERRORS);
+            }
+            try {
+                return operand.execute(frame);
+            } finally {
+                if (silenced && (errors.errorReporting() & ~ErrorFunctions.E_FATAL_ERRORS) == 0) {
+                    errors.setErrorReporting(saved);
+                }
+            }
+        }
     }
 
     @NodeChild("operand")

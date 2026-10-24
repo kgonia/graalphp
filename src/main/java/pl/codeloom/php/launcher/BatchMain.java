@@ -129,6 +129,8 @@ public final class BatchMain {
         Source source = Source.newBuilder("php", new File(script)).build();
         try (Context context = Context.newBuilder("php")
                 .option("php.AstRoot", astRoot)
+                // the oracle's settings (tests/phpt/oracle.sh): errors logged (to stderr), not displayed
+                .option("php.Ini", "display_errors=0\nlog_errors=1")
                 .arguments("php", new String[] {script})
                 .out(out)
                 .err(err)
@@ -146,13 +148,26 @@ public final class BatchMain {
                 return "timeout";
             }
             if (e.isExit()) {
-                return "exit:" + e.getExitStatus();
+                String fatal = lastFatal(err);
+                return fatal != null && e.getExitStatus() == 255 ? "fatal " + oneLine(fatal) : "exit:" + e.getExitStatus();
             }
             if (e.isInternalError() || !e.isGuestException()) {
                 return "internal " + oneLine(String.valueOf(e.getMessage()));
             }
             return "fatal " + oneLine(String.valueOf(e.getMessage()));
         }
+    }
+
+    /** The first line of the last fatal error the script's log has, as the oracle's log gives PHP's. */
+    private static String lastFatal(ByteArrayOutputStream err) {
+        String log = err.toString(java.nio.charset.StandardCharsets.UTF_8);
+        int at = log.lastIndexOf("PHP Fatal error:  ");
+        if (at < 0) {
+            return null;
+        }
+        int start = at + "PHP Fatal error:  ".length();
+        int end = log.indexOf('\n', start);
+        return log.substring(start, end < 0 ? log.length() : end);
     }
 
     private static Thread daemon(Runnable task) {
