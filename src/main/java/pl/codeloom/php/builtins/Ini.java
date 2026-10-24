@@ -66,9 +66,9 @@ public final class Ini {
 
     /**
      * The startup values: php-src's defaults, the CLI's own (html_errors=0, from php_cli.c's HARDCODED_INI), then
-     * the settings, "name=value" lines; a setting its directive rejects leaves the default, as at php-src's startup.
+     * the settings; a setting its directive rejects leaves the default, as at php-src's startup.
      */
-    Ini(boolean cgi, String settings) {
+    Ini(boolean cgi, Map<String, String> settings) {
         for (Map.Entry<String, String> directive : DEFAULTS.entrySet()) {
             boolean accepted = set(directive.getKey(), directive.getValue());
             assert accepted : directive;
@@ -76,11 +76,8 @@ public final class Ini {
         if (!cgi) {
             set("html_errors", "0");
         }
-        for (String line : settings.split("\n")) {
-            int equals = line.indexOf('=');
-            if (equals > 0) {
-                set(line.substring(0, equals).trim(), line.substring(equals + 1).trim());
-            }
+        for (Map.Entry<String, String> setting : settings.entrySet()) {
+            set(setting.getKey(), setting.getValue());
         }
         startup.putAll(values);
     }

@@ -13,6 +13,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
+import org.graalvm.options.OptionMap;
 import org.graalvm.options.OptionStability;
 import org.graalvm.options.OptionValues;
 import pl.codeloom.php.builtins.Builtins;
@@ -22,6 +23,7 @@ import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.NameIds;
 import pl.codeloom.php.runtime.PhpObject;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -53,10 +55,10 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
 
-    @Option(help = "The php.ini settings, a name=value line each (as php -d gives them): display_errors, "
+    @Option(help = "A php.ini setting, as php -d gives it (php.Ini.display_errors=0): display_errors, "
             + "error_reporting, log_errors, error_log, html_errors and the other directives the runtime implements.",
             category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
-    static final OptionKey<String> Ini = new OptionKey<>("");
+    static final OptionKey<OptionMap<String>> Ini = OptionKey.mapOf(String.class);
 
     @Option(help = "Declares the runtime's debugging functions for its own tools (truffle_translate, "
             + "truffle_native_ns, truffle_pcre_record); PHP has none of them.", category = OptionCategory.INTERNAL,
@@ -161,7 +163,15 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     protected PhpContext createContext(Env env) {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
                 env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
-                env.getOptions().get(Ini));
+                iniSettings(env.getOptions().get(Ini)));
+    }
+
+    private static Map<String, String> iniSettings(OptionMap<String> option) {
+        Map<String, String> settings = new HashMap<>();
+        for (Map.Entry<String, String> setting : option.entrySet()) {
+            settings.put(setting.getKey(), setting.getValue());
+        }
+        return settings;
     }
 
     /** The id of a function name (lowercase); a context keeps its functions by id. */

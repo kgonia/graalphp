@@ -33,9 +33,9 @@ import java.util.concurrent.Executors;
  * the request goes in as CGI variables and stdin, the response comes back as a CGI response.
  *
  * <p>{@code HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] [--ast-root=dir]
- * [--source-root=dir] [--server-name=name] [--display-errors]}: SERVER_NAME is the request's host unless set.
- * --display-errors is php.ini's display_errors=On (php -S's default): a fatal error's message goes to the client;
- * without it, as in php.ini-production, it is only logged and the response is a 500. Routing is php -S's:
+ * [--source-root=dir] [--server-name=name] [-d name=value...]}: SERVER_NAME is the request's host unless set.
+ * The error settings are php.ini-production's: a fatal error is only logged and the response is a 500;
+ * -d display_errors=1 (php -S's default) sends its message to the client. Routing is php -S's:
  * an existing .php file runs, another existing file is served as is, a directory runs its index.php, and anything
  * else runs the document root's index.php (a front controller, as WordPress's permalinks need).
  *
@@ -61,11 +61,11 @@ public final class HttpMain {
     private final String sourceRoot;
     private final int port;
     private final String serverName;
-    /** Each request's php.ini settings (the php.Ini option). */
-    private final String ini;
+    /** Each request's php.ini settings, as php.Ini options. */
+    private final Map<String, String> ini;
 
     private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName,
-                     String ini) {
+                     Map<String, String> ini) {
         this.serverName = serverName;
         this.ini = ini;
         this.engine = engine;
@@ -83,9 +83,12 @@ public final class HttpMain {
         String astRoot = "target/ast";
         String sourceRoot = ".";
         String serverName = null;
-        boolean displayErrors = false;
-        StringBuilder settings = new StringBuilder();
-        for (String arg : args) {
+        // php.ini-production's error settings, which -d changes (php -S shows errors: -ddisplay_errors=1)
+        Map<String, String> ini = new HashMap<>();
+        PhpMain.putIni(ini, "display_errors=0");
+        PhpMain.putIni(ini, "log_errors=1");
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
             String value = arg.substring(arg.indexOf('=') + 1);
             if (arg.startsWith("--host=")) {
                 host = value;
@@ -101,22 +104,19 @@ public final class HttpMain {
                 sourceRoot = value;
             } else if (arg.startsWith("--server-name=")) {
                 serverName = value;
-            } else if (arg.equals("--display-errors")) {
-                displayErrors = true;
-            } else if (arg.startsWith("-d") && arg.length() > 2) {
-                settings.append(arg.substring(2)).append('\n');
+            } else if (arg.equals("-d") && i + 1 < args.length) {
+                PhpMain.putIni(ini, args[++i]);
+            } else if (arg.startsWith("-d")) {
+                PhpMain.putIni(ini, arg.substring(2));
             } else {
                 System.err.println("usage: HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] "
-                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name] [--display-errors] "
-                        + "[-dname=value...]");
+                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name] [-d name=value...]");
                 System.exit(2);
             }
         }
         // the JDK server's time limit for receiving a request (seconds; read when the server class loads)
         System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
         Engine engine = Engine.create("php");
-        // php.ini-production's error settings, or the development ones with --display-errors; then -d's
-        String ini = "display_errors=" + (displayErrors ? "1" : "0") + "\nlog_errors=1\n" + settings;
         HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName,
                 ini);
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
@@ -190,7 +190,7 @@ public final class HttpMain {
                 .in(new ByteArrayInputStream(body))
                 .out(out)
                 .option("php.Sapi", "cgi")
-                .option("php.Ini", ini)
+                .options(ini)
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", new String[] {script.toString()})

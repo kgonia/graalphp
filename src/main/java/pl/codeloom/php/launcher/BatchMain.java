@@ -130,7 +130,8 @@ public final class BatchMain {
         try (Context context = Context.newBuilder("php")
                 .option("php.AstRoot", astRoot)
                 // the oracle's settings (tests/phpt/oracle.sh): errors logged (to stderr), not displayed
-                .option("php.Ini", "display_errors=0\nlog_errors=1")
+                .option("php.Ini.display_errors", "0")
+                .option("php.Ini.log_errors", "1")
                 .arguments("php", new String[] {script})
                 .out(out)
                 .err(err)

@@ -29,7 +29,7 @@ public final class BuiltinState {
             java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     /** cgi: the SAPI, whose defaults php.ini starts from; ini: the php.Ini option's settings. */
-    public BuiltinState(boolean cgi, String ini) {
+    public BuiltinState(boolean cgi, java.util.Map<String, String> ini) {
         this.ini = new Ini(cgi, ini);
     }
 

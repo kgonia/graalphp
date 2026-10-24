@@ -81,7 +81,7 @@ public final class PhpContext {
     private final byte[] requestBody;
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
-                      boolean debug, String ini) {
+                      boolean debug, Map<String, String> ini) {
         this.builtinState = new BuiltinState(cgi, ini);
         this.language = language;
         this.env = env;

@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Runs a PHP script: {@code PhpMain [--ast-root=dir] [--source-root=dir] [--contexts=n] [-d name=value...]
@@ -30,13 +32,13 @@ public final class PhpMain {
         String astRoot = "target/ast";
         String sourceRoot = ".";
         int contexts = 1;
-        StringBuilder ini = new StringBuilder();
+        Map<String, String> ini = new HashMap<>();
         int i = 0;
         for (; i < args.length && args[i].startsWith("-"); i++) {
             if (args[i].equals("-d") && i + 1 < args.length) {
-                ini.append(args[++i]).append('\n');
+                putIni(ini, args[++i]);
             } else if (args[i].startsWith("-d")) {
-                ini.append(args[i].substring(2)).append('\n');
+                putIni(ini, args[i].substring(2));
             } else if (args[i].startsWith("--ast-root=")) {
                 astRoot = args[i].substring("--ast-root=".length());
             } else if (args[i].startsWith("--source-root=")) {
@@ -57,26 +59,33 @@ public final class PhpMain {
         String[] phpArgs = Arrays.copyOfRange(args, i, args.length);
         Source source = Source.newBuilder("php", new File(script)).build();
         if (contexts <= 1) {
-            run(Context.newBuilder("php"), source, astRoot, sourceRoot, ini.toString(), phpArgs, true);
+            run(Context.newBuilder("php"), source, astRoot, sourceRoot, ini, phpArgs, true);
             return;
         }
         try (Engine engine = Engine.newBuilder("php").allowExperimentalOptions(true).build()) {
             for (int n = 1; n <= contexts; n++) {
-                run(Context.newBuilder("php").engine(engine), source, astRoot, sourceRoot, ini.toString(), phpArgs,
+                run(Context.newBuilder("php").engine(engine), source, astRoot, sourceRoot, ini, phpArgs,
                         n == contexts);
             }
         }
     }
 
-    private static void run(Context.Builder builder, Source source, String astRoot, String sourceRoot, String ini,
-                            String[] phpArgs, boolean keepOutput) {
+    /** A -d setting, name=value (or a name alone, for 1, as php's), as its php.Ini option. */
+    static void putIni(Map<String, String> options, String setting) {
+        int equals = setting.indexOf('=');
+        String name = (equals < 0 ? setting : setting.substring(0, equals)).trim();
+        options.put("php.Ini." + name, equals < 0 ? "1" : setting.substring(equals + 1).trim());
+    }
+
+    private static void run(Context.Builder builder, Source source, String astRoot, String sourceRoot,
+                            Map<String, String> ini, String[] phpArgs, boolean keepOutput) {
         if (!keepOutput) {
             builder.out(OutputStream.nullOutputStream());
         }
         try (Context context = builder
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
-                .option("php.Ini", ini)
+                .options(ini)
                 .arguments("php", phpArgs)
                 // php-cli's access: files, the process environment, native code (PCRE2)
                 .allowIO(IOAccess.ALL)
