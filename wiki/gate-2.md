@@ -142,10 +142,34 @@ Left as they are, deliberately: `PhpFunction.isPublic` (needed once method visib
 php-src `.phpt` at `078e824`: 2868 of 7341 strict (39.1%) and 3048 lenient, from 2622 (35.7%) and 2821 before: 247 cases fixed, one broken (a closure of an abstract method, fixed in `312e1cb` and checked by hand).
 
 Found on the way, still open:
-- after a fatal error php-src runs the shutdown functions and fills `error_get_last()`; WordPress's `WP_Fatal_Error_Handler` depends on both;
-- `trigger_error(E_USER_ERROR)` is catchable here, fatal in PHP;
 - named arguments are unsupported;
 - php-src binds an anonymous class at compile time;
 - var_dump doesn't show `:protected`/`:private` or a closure's name, file and parameters;
 - object ids aren't reused after an object is freed;
 - `match` and enums are unsupported in the translator.
+
+## Errors, exceptions and traces (2026-10-24)
+
+WordPress's fatal error handler (`WP_Fatal_Error_Handler`) is a shutdown function that reads `error_get_last()` and renders the "There has been a critical error on this website." page with a 500. Neither worked before: an uncaught error ended the context, no shutdown function ran, and `error_get_last()` returned null. The error model now follows php-src. `tests/gate2/http.sh` fetches `?fatal=exception` and `?fatal=error` (a must-use plugin fails during `init`), and both pages are byte-identical with PHP's.
+
+| Commit | What |
+|---|---|
+| `1d2a783` | A Throwable's file and line are where it was made (zend_default_exception_new), whatever its constructor does. A runtime error records the innermost statement it left; every statement list is a block for that. `Exception::__toString` follows zend_exceptions.c. |
+| `8f4a978` | Stack traces as zend_fetch_debug_backtrace and zend_trace_to_string build them: `getTrace`, `getTraceAsString`, `debug_backtrace`, `debug_print_backtrace`. Arguments are as the parameter variables are now. `[internal function]` is shown for calls the runtime makes, and include frames are listed. Calls php-src compiles into opcodes (strlen, count, call_user_func...) have no entry. The prelude counts as internal code. Closures are named as in PHP 8.4. |
+| `afc0ade` | zend_error and php_error_cb: the user error handler, `error_get_last`, display (stdout, stderr, HTML), the log, `error_reporting` and `@`. Fatal errors set exit status 255, a 500 when not displayed, and end the script without catch or finally; shutdown functions and the output still run. `trigger_error(E_USER_ERROR)` is fatal. Uncaught exceptions go to `set_exception_handler`. The error ini directives and the `php.Ini` option (`PhpMain -d`). |
+| `2081cc5` | The fatal error pages in the HTTP comparison. |
+| `fe95202`, `c95d043` | An output handler's error at the end is reported. Redeclaring a function or class is php-src's fatal error (E_COMPILE_ERROR or E_ERROR, "previously declared in"). |
+
+Probes on PHP 8.5 and Truffle PHP give the same stdout, stderr and exit status for: uncaught exceptions, `E_USER_ERROR` with its backtrace, an exception handler (plain and throwing), shutdown functions that throw or call exit, the ini directives, HTML and stderr display, the log, and `ignore_repeated_errors`. Smoke tests: `exception-location`, `traces`, `errors`, `redeclare-*`.
+
+php-src `.phpt` at `2081cc5`: 2920 of 7341 strict (39.8%) and 3092 lenient, from 2868 and 3048. Against the 2622 baseline, 5 cases newly fail. Two are nondeterministic (`random_int`, today's date). One is a timing test (`preg_match` 64k times in under 0.5 s), which fails on the build before the series too when the machine is loaded. The other two passed by accident: both engines died, ours on the then-missing `set_exception_handler`. They need the `#[\Deprecated]` attribute and "Undefined array key" warnings.
+
+Gate 1 kernels, `20a3134` → `c95d043` → `20a3134` (interleaved, 10 rounds, CPUs 14–21; median of per-round ratios, there and back). All kernels: hooks 0.94/1.20, escape 1.05/0.97, slugs 0.97/1.05, wpautop 1.14/0.88, wptexturize 1.06/0.91, blocks 0.88/0.99, kses 1.00/0.97. The machine was loaded (per-round ratios 0.4–2.4), so wpautop and wptexturize got a second run of their own with 80 iterations: wpautop 1.02/0.96, wptexturize 1.06/0.85. wptexturize is bimodal on both builds: a run settles at about 4.4 ms or at 11–16 ms, with 3 or 4 fast runs in 10 for each build. That decides its median, so it is no regression; why compilation lands in two states is open. A `preg_match` loop inside a function is faster than before (0.42 against 0.52 s steady).
+
+Still open after it:
+- built-ins don't check their arguments' types as zend_parse_parameters does: `strlen([])` returns instead of throwing a TypeError;
+- the ini directives beyond the error ones (`memory_limit`, `precision`...) are unknown to `ini_get`;
+- `STDIN`, `STDOUT` and `STDERR` are undefined;
+- `__toString` called by a conversion (echo, concatenation) shows `[internal function]` in a trace instead of the line;
+- an invalid callback given to the compiled-in `array_map`/`array_filter` has no `array_map` entry in its trace;
+- PHP's warnings and notices (undefined variable, array key...) aren't raised yet: the error model is ready for them.
