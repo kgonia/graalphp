@@ -55,8 +55,10 @@ public abstract class InstantiateNode extends Node {
     }
 
     @Specialization(replaces = {"sameClass", "sameKey"})
+    @TruffleBoundary
     protected PhpObject generic(PhpClass phpClass) {
-        return phpClass.instantiate(location(), trace());
+        // a stack walk only for a Throwable: arguments are evaluated before instantiate() looks at the class
+        return phpClass.isThrowable() ? phpClass.instantiate(location(), trace()) : phpClass.instantiate();
     }
 
     /** Where a Throwable made here was made: this `new`'s statement. */

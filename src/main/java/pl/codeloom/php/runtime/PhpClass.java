@@ -197,19 +197,19 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public PhpObject instantiate() {
-        return instantiate(null, null);
+        PhpObject object = instantiateBare();
+        if (isThrowable()) {
+            initThrowable(object, SourceLocation.current(), Backtrace.here(Backtrace.exceptionOptions(), 0, 0));
+        }
+        return object;
     }
 
-    /**
-     * As instantiate(); a Throwable is made at location with trace, or, when they are null, where the code running
-     * is (a built-in making one is the trace's first call).
-     */
+    /** As instantiate(); a Throwable is made at location with trace. */
     @TruffleBoundary
     public PhpObject instantiate(SourceLocation location, PhpArray trace) {
         PhpObject object = instantiateBare();
         if (isThrowable()) {
-            initThrowable(object, location != null ? location : SourceLocation.current(),
-                    trace != null ? trace : Backtrace.here(Backtrace.exceptionOptions(), 0, 0));
+            initThrowable(object, location, trace);
         }
         return object;
     }
