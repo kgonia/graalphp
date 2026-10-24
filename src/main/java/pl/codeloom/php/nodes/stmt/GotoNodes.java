@@ -5,6 +5,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.runtime.PhpError;
 
 /**
  * goto. PHP jumps only to a label in the same statement list or an enclosing one (not into a loop or switch), so
@@ -68,10 +69,16 @@ public final class GotoNodes {
 
         @ExplodeLoop
         private void runFrom(VirtualFrame frame, int start) {
-            for (int i = 0; i < statements.length; i++) {
-                if (i >= start) {
-                    statements[i].execute(frame);
+            int i = 0;
+            try {
+                for (; i < statements.length; i++) {
+                    if (i >= start) {
+                        statements[i].execute(frame);
+                    }
                 }
+            } catch (PhpError e) {
+                surfaced(e, statements[i]);
+                throw e;
             }
         }
 

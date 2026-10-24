@@ -37,8 +37,14 @@ public final class BasicStmts {
         @Override
         @ExplodeLoop
         public void execute(VirtualFrame frame) {
-            for (StmtNode statement : statements) {
-                statement.execute(frame);
+            int i = 0;
+            try {
+                for (; i < statements.length; i++) {
+                    statements[i].execute(frame);
+                }
+            } catch (PhpError e) {
+                surfaced(e, statements[i]);
+                throw e;
             }
         }
     }

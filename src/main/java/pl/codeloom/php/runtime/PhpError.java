@@ -1,10 +1,13 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
+import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.PhpContext;
 
 /**
  * A PHP Throwable the runtime itself raises (TypeError, ValueError, JsonException...): a catch block sees an
- * object of that class, made when it catches. Uncaught, it ends the script as a fatal error.
+ * object of that class, made when it is first caught. Uncaught, it ends the script as a fatal error.
  */
 public final class PhpError extends AbstractTruffleException {
     private static final long serialVersionUID = 1L;
@@ -14,6 +17,10 @@ public final class PhpError extends AbstractTruffleException {
     /** The message without the class; getMessage() is what an uncaught error prints, "TypeError: ...". */
     private final String phpMessage;
     private final long code;
+    /** The innermost statement the error left, recorded on the way out: the object's file and line. */
+    private transient Node origin;
+    /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
+    private transient PhpObject throwable;
 
     /** An Error. */
     public PhpError(String message) {
@@ -41,5 +48,27 @@ public final class PhpError extends AbstractTruffleException {
 
     public long getCode() {
         return code;
+    }
+
+    /** Records the statement the error surfaced in, unless an inner one already did. */
+    public void surfacedAt(Node statement) {
+        if (origin == null) {
+            origin = statement;
+        }
+    }
+
+    /** The object a catch block sees, made once: of the error's class, where the error surfaced. */
+    @TruffleBoundary
+    public PhpObject toThrowable(PhpContext context) {
+        if (throwable == null) {
+            PhpObject object = context.getClass(phpClass)
+                    .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin));
+            object.setProperty("message", Str.of(phpMessage));
+            if (code != 0) {
+                object.setProperty("code", code);
+            }
+            throwable = object;
+        }
+        return throwable;
     }
 }

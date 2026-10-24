@@ -208,10 +208,8 @@ public final class Translator {
                 source == null ? null : source.createSection(0, source.getLength()));
     }
 
+    /** A statement list, also of one: a block records which statement a runtime error left (StmtNode.surfaced). */
     private static StmtNode block(List<StmtNode> statements) {
-        if (statements.size() == 1) {
-            return statements.get(0);
-        }
         return new BasicStmts.BlockNode(statements.toArray(new StmtNode[0]));
     }
 
@@ -222,7 +220,7 @@ public final class Translator {
             return new BasicStmts.NopNode();
         }
         if (!list.is("AST_STMT_LIST")) {
-            return statement(list);
+            return block(List.of(statement(list)));
         }
         if (generatorSlot >= 0 && containsYield(list)) {
             return resumableStatement(list);
@@ -670,17 +668,17 @@ public final class Translator {
         FrameDescriptor descriptor = bodyScope.frame.build();
         if (generator) {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
-                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(),
+                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(), path,
                     lineSection(node.line));
             String scope = owner == null ? null : Str.lower(owner.name());
             root.setScopeName(scope);
-            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display, scope)
+            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display, scope, path)
                     .getCallTarget(), body.generatorSlot);
             return root.getCallTarget();
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
-                statements, lineSection(node.line));
+                statements, path, lineSection(node.line));
         root.setScopeName(owner == null ? null : Str.lower(owner.name()));
         return root.getCallTarget();
     }

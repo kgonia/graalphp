@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -13,6 +14,7 @@ import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.SourceLocation;
 
 /**
  * Creates an instance with its declared properties at their defaults. A `new` site that sees one class (nearly
@@ -37,25 +39,34 @@ public abstract class InstantiateNode extends Node {
                                   @Cached("phpClass") PhpClass cachedClass,
                                   @Cached(value = "cachedClass.declaredNames()", dimensions = 1) String[] names,
                                   @Cached(value = "cachedClass.defaults()", dimensions = 1) Object[] defaults,
-                                  @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts) {
-        return initialize(cachedClass, names, defaults, puts);
+                                  @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
+                                  @Cached("cachedClass.isThrowable()") boolean throwable) {
+        return initialize(cachedClass, names, defaults, puts, throwable);
     }
 
     @Specialization(guards = {"phpClass.getKey() == cachedKey", "phpClass.isInstantiable()"}, limit = "1")
     protected PhpObject sameKey(PhpClass phpClass,
                                 @Cached("phpClass.getKey()") ClassKey cachedKey,
                                 @Cached(value = "phpClass.declaredNames()", dimensions = 1) String[] names,
-                                @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts) {
-        return initialize(phpClass, names, phpClass.defaults(), puts);
+                                @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
+                                @Cached("phpClass.isThrowable()") boolean throwable) {
+        return initialize(phpClass, names, phpClass.defaults(), puts, throwable);
     }
 
     @Specialization(replaces = {"sameClass", "sameKey"})
     protected PhpObject generic(PhpClass phpClass) {
-        return phpClass.instantiate();
+        return phpClass.instantiate(location());
+    }
+
+    /** Where a Throwable made here was made: this `new`'s statement. */
+    @TruffleBoundary
+    private SourceLocation location() {
+        return SourceLocation.of(this);
     }
 
     @ExplodeLoop
-    private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, DynamicObjectLibrary[] puts) {
+    private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, DynamicObjectLibrary[] puts,
+                                 boolean throwable) {
         PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
@@ -67,6 +78,9 @@ public abstract class InstantiateNode extends Node {
                 }
                 puts[i].put(object, names[i], value);
             }
+        }
+        if (throwable) {
+            PhpClass.locate(object, location());
         }
         return object;
     }

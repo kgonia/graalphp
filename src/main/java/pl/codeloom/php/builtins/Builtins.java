@@ -1,7 +1,11 @@
 package pl.codeloom.php.builtins;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -9,6 +13,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -245,7 +250,58 @@ public final class Builtins {
                 registry.method("getFile", false, arguments -> property(arguments, "file")),
                 registry.method("getLine", false, arguments -> property(arguments, "line")),
                 registry.method("getTrace", false, arguments -> new PhpArray()),
-                registry.method("getTraceAsString", false, arguments -> Str.of("#0 {main}")));
+                registry.method("getTraceAsString", false, arguments -> traceString()),
+                registry.method("__toString", false,
+                        arguments -> describe((PhpObject) arguments[PhpFunction.ARG_THIS])));
+    }
+
+    private static TruffleString traceString() {
+        return Str.of("#0 {main}");
+    }
+
+    /**
+     * Exception::__toString: the exception and those before it (getPrevious), the first one first, each with its
+     * class, message, file, line and trace, joined by "Next".
+     */
+    @TruffleBoundary
+    static TruffleString describe(PhpObject exception) {
+        List<byte[]> parts = new java.util.ArrayList<>();
+        Object current = exception;
+        while (current instanceof PhpObject e && e.getPhpClass().isThrowable()) {
+            ByteBuilder part = new ByteBuilder();
+            part.write(Str.of(e.getPhpClass().getName()));
+            byte[] message = Str.bytes(Convert.toStr(property(e, "message")));
+            if (message.length > 0) {
+                part.write(": ".getBytes(StandardCharsets.ISO_8859_1));
+                part.write(message);
+                String name = e.getPhpClass().getLowerName();
+                if ((name.equals("typeerror") || name.equals("argumentcounterror"))
+                        && new String(message, StandardCharsets.ISO_8859_1).contains(", called in ")) {
+                    part.write(" and defined".getBytes(StandardCharsets.ISO_8859_1));
+                }
+            }
+            part.write(" in ".getBytes(StandardCharsets.ISO_8859_1));
+            part.write(Convert.toStr(property(e, "file")));
+            part.write(':');
+            part.writeLong(Convert.toLong(property(e, "line")));
+            part.write("\nStack trace:\n".getBytes(StandardCharsets.ISO_8859_1));
+            part.write(traceString());
+            parts.add(part.toByteArray());
+            current = property(e, "previous");
+        }
+        ByteBuilder text = new ByteBuilder();
+        for (int i = parts.size() - 1; i >= 0; i--) {
+            text.write(parts.get(i));
+            if (i > 0) {
+                text.write("\n\nNext ".getBytes(StandardCharsets.ISO_8859_1));
+            }
+        }
+        return Str.of(text.toByteArray());
+    }
+
+    private static Object property(PhpObject object, String name) {
+        Object value = object.getProperty(name);
+        return value == null ? PhpNull.NULL : value;
     }
 
     /** Generator: the Iterator methods plus send, throw and getReturn, on the object's PhpGenerator. */

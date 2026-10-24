@@ -23,6 +23,7 @@ import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.SourceLocation;
 
 /**
  * Generators. Calling a generator function binds its parameters and returns a Generator holding the frame; the
@@ -49,23 +50,30 @@ public final class GeneratorNodes {
     }
 
     /** Runs a generator body on the frame the call made (the first argument). */
-    public static final class BodyRootNode extends RootNode {
+    public static final class BodyRootNode extends RootNode implements SourceLocation.Code {
         @Child private StmtNode body;
         private final String name;
+        private final String path;
 
         /** As FunctionRootNode's: the declaring class's lowercase name, or null. */
         private final String scopeName;
 
         public BodyRootNode(PhpLanguage language, FrameDescriptor descriptor, StmtNode body, String name,
-                            String scopeName) {
+                            String scopeName, String path) {
             super(language, descriptor);
             this.body = body;
             this.name = name;
             this.scopeName = scopeName;
+            this.path = path;
         }
 
         public String getScopeName() {
             return scopeName;
+        }
+
+        @Override
+        public String getPath() {
+            return path;
         }
 
         @Override
@@ -224,11 +232,17 @@ public final class GeneratorNodes {
 
         @ExplodeLoop
         private void runFrom(VirtualFrame frame, int start) {
-            for (int i = 0; i < statements.length; i++) {
-                if (i >= start) {
-                    frame.setLong(slot, i);
-                    statements[i].execute(frame);
+            int i = 0;
+            try {
+                for (; i < statements.length; i++) {
+                    if (i >= start) {
+                        frame.setLong(slot, i);
+                        statements[i].execute(frame);
+                    }
                 }
+            } catch (PhpError e) {
+                surfaced(e, statements[i]);
+                throw e;
             }
         }
     }
@@ -528,7 +542,7 @@ public final class GeneratorNodes {
                 } catch (PhpException e) {
                     handle(frame, e, e.getThrowable());
                 } catch (PhpError e) {
-                    handle(frame, e, pl.codeloom.php.nodes.stmt.TryNode.toErrorObject(PhpContext.get(this), e));
+                    handle(frame, e, e.toThrowable(PhpContext.get(this)));
                 }
             } catch (Yield y) {
                 yielded = true;

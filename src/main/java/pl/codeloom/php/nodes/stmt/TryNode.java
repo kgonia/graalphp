@@ -11,7 +11,6 @@ import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.Str;
 
 /**
  * try / catch / finally. Runtime errors (PhpError) are offered to catch clauses as PHP Error objects, so
@@ -60,7 +59,7 @@ public final class TryNode extends StmtNode {
         } catch (PhpException e) {
             handle(frame, e, e.getThrowable());
         } catch (PhpError e) {
-            handle(frame, e, toErrorObject(PhpContext.get(this), e));
+            handle(frame, e, e.toThrowable(PhpContext.get(this)));
         }
     }
 
@@ -86,16 +85,5 @@ public final class TryNode extends StmtNode {
             }
         }
         return false;
-    }
-
-    /** The Throwable a catch block sees for an error the runtime raised: an object of its class. */
-    @TruffleBoundary
-    static PhpObject toErrorObject(PhpContext context, PhpError error) {
-        PhpObject object = context.getClass(error.getPhpClass()).instantiate();
-        object.setProperty("message", Str.of(error.getPhpMessage()));
-        if (error.getCode() != 0) {
-            object.setProperty("code", error.getCode());
-        }
-        return object;
     }
 }

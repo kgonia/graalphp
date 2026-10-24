@@ -191,9 +191,37 @@ public final class PhpClass {
         return decl == null || decl.isPublic();
     }
 
-    /** A new object with declared properties at their defaults, in declaration order (no constructor call). */
+    /**
+     * A new object with declared properties at their defaults, in declaration order (no constructor call). A
+     * Throwable records the PHP code running (a built-in's caller) as where it was made.
+     */
     @TruffleBoundary
     public PhpObject instantiate() {
+        return instantiate(null);
+    }
+
+    /** As instantiate(); a Throwable is made at the given location, or at the code running if it's null. */
+    @TruffleBoundary
+    public PhpObject instantiate(SourceLocation location) {
+        PhpObject object = instantiateBare();
+        if (isThrowable()) {
+            locate(object, location != null ? location : SourceLocation.current());
+        }
+        return object;
+    }
+
+    public boolean isThrowable() {
+        return ancestors.contains("throwable");
+    }
+
+    /** zend_default_exception_new: a Throwable's file and line are where it was made, whatever its constructor. */
+    @TruffleBoundary
+    public static void locate(PhpObject throwable, SourceLocation location) {
+        throwable.setProperty("file", Str.of(location.file()));
+        throwable.setProperty("line", (long) location.line());
+    }
+
+    private PhpObject instantiateBare() {
         if (!isInstantiable()) {
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }

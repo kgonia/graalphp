@@ -24,14 +24,16 @@ import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 
 /**
  * A user function's body. Binds parameters (with coercive scalar typing) and closure captures to frame slots,
  * runs the body, and on exit releases the arrays its locals held, so copy-on-write sees exact holder counts for
  * locals.
  */
-public final class FunctionRootNode extends RootNode {
+public final class FunctionRootNode extends RootNode implements SourceLocation.Code {
     private final String name;
+    private final String path;
     @CompilationFinal(dimensions = 1) private final PhpFunction.Param[] params;
     @CompilationFinal(dimensions = 1) private final int[] paramSlots;
     @Children private final ExprNode[] defaults;
@@ -49,10 +51,12 @@ public final class FunctionRootNode extends RootNode {
 
     public FunctionRootNode(PhpLanguage language, FrameDescriptor frame, String name, PhpFunction.Param[] params,
                             int[] paramSlots, ExprNode[] defaults, int[] captureSlots, boolean[] captureByRef,
-                            char returnCoerce, boolean returnNullable, StmtNode body, SourceSection sourceSection) {
+                            char returnCoerce, boolean returnNullable, StmtNode body, String path,
+                            SourceSection sourceSection) {
         super(language, frame);
         this.sourceSection = sourceSection;
         this.name = name;
+        this.path = path;
         this.params = params;
         this.paramSlots = paramSlots;
         this.defaults = defaults;
@@ -289,5 +293,10 @@ public final class FunctionRootNode extends RootNode {
     @Override
     public SourceSection getSourceSection() {
         return sourceSection;
+    }
+
+    @Override
+    public String getPath() {
+        return path;
     }
 }
