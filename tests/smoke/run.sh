@@ -4,6 +4,7 @@
 # translations and compiled code, per-context state), whose last output must match too.
 # Usage: tests/smoke/run.sh [name...]   (default: every tests/smoke/*.php). Build first: mvn package -DskipTests
 set -uo pipefail
+shopt -s nullglob
 cd "$(dirname "$0")/../.."
 names=("$@")
 if [ ${#names[@]} -eq 0 ]; then

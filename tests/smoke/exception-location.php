@@ -56,7 +56,7 @@ try {
     $first = $e;
 }
 
-// a runtime error caught twice is the same object
+// a runtime error keeps where it was raised through a catch that doesn't take it, and a rethrow keeps the object
 try {
     try {
         json_decode("{", false, 512, JSON_THROW_ON_ERROR);
@@ -65,7 +65,17 @@ try {
     }
 } catch (JsonException $e) {
     where($e);
-    $again = $e;
+    $caught = $e;
+}
+try {
+    try {
+        json_decode("{", false, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $e) {
+        $caught = $e;
+        throw $e;
+    }
+} catch (JsonException $e) {
+    var_dump($e === $caught);
 }
 
 $previous = new LogicException("inner", 3);
