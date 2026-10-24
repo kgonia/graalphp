@@ -571,7 +571,14 @@ public final class PhpContext {
     @TruffleBoundary
     public void endScript() {
         runShutdownFunctions();
-        endRequest();
+        try {
+            endRequest();
+        } catch (PhpError | pl.codeloom.php.runtime.PhpException e) {
+            // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
+            pl.codeloom.php.builtins.ErrorFunctions.uncaughtInternal(this, e);
+        } catch (pl.codeloom.php.runtime.PhpBailout ended) {
+            // reported where it was raised
+        }
         int status = errors().exitStatus();
         if (status != 0) {
             env.getContext().closeExited(null, status);
