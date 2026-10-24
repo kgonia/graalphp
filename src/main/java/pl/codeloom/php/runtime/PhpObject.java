@@ -1,6 +1,7 @@
 package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
@@ -51,6 +52,12 @@ public final class PhpObject extends DynamicObject {
         }
     }
 
+    /** magicProperty for a node's access: the node is where traces show the call made. */
+    @TruffleBoundary
+    public Object magicProperty(Node site, String lowerMethod, String name, Object... args) {
+        return Backtrace.callFrom(site, () -> magicProperty(lowerMethod, name, args));
+    }
+
     /** What magicProperty returns when it called no method. */
     public static final Object NO_MAGIC = new Object();
 
@@ -99,6 +106,12 @@ public final class PhpObject extends DynamicObject {
             throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
         }
         return method.invoke(this, phpClass, args);
+    }
+
+    /** callMethod for a node's operation (ArrayAccess, iteration): the node is where traces show the call made. */
+    @TruffleBoundary
+    public Object callMethod(Node site, String lowerName, Object... args) {
+        return Backtrace.callFrom(site, () -> callMethod(lowerName, args));
     }
 
     public boolean isArrayAccess() {

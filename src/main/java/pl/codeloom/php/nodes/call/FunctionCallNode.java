@@ -28,11 +28,19 @@ public final class FunctionCallNode extends ExprNode {
     @Child private ArgumentsNode args;
     @Child private Lookup lookup;
     @Child private Dispatch dispatch = FunctionCallNodeFactory.DispatchNodeGen.create();
+    /** A call php-src compiles to an opcode instead (strlen, count...): stack traces list no frame for it. */
+    private final boolean frameless;
 
     /** id is the lowercase name's {@link pl.codeloom.php.PhpLanguage#functionId}. */
-    public FunctionCallNode(String displayName, int id, int fallbackId, ArgumentsNode args) {
+    public FunctionCallNode(String displayName, int id, int fallbackId, ArgumentsNode args, boolean frameless) {
         this.args = args;
         this.lookup = FunctionCallNodeFactory.LookupNodeGen.create(displayName, id, fallbackId);
+        this.frameless = frameless;
+    }
+
+    @Override
+    public boolean isFrameless() {
+        return frameless;
     }
 
     @Override

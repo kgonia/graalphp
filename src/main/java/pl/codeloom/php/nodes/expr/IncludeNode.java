@@ -17,10 +17,18 @@ public final class IncludeNode extends ExprNode {
     @Child private ExprNode path;
     @Child private IndirectCallNode call = IndirectCallNode.create();
     private final boolean once;
+    /** include, require, include_once or require_once, as traces name the call. */
+    private final String kind;
 
-    public IncludeNode(ExprNode path, boolean once) {
+    public IncludeNode(ExprNode path, String kind) {
         this.path = path;
-        this.once = once;
+        this.kind = kind;
+        this.once = kind.endsWith("_once");
+    }
+
+    @Override
+    public String includeKind() {
+        return kind;
     }
 
     @Override

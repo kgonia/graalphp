@@ -14,9 +14,12 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpGenerator;
+import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
@@ -193,20 +196,24 @@ public final class ForeachNode extends StmtNode {
         runArray(frame, array);
     }
 
+    /**
+     * An Iterator through its methods, a Generator directly (php-src iterates it without calling its methods); the
+     * calls are made from this statement, as traces show them.
+     */
     private void iterateObject(VirtualFrame frame, PhpObject subject) {
         PhpObject object = unwrapAggregates(subject);
         if (object.getPhpClass().isSubclassOf("iterator")) {
-            object.callMethod("rewind");
-            while (Convert.toBool(object.callMethod("valid"))) {
-                Object current = PhpRef.deref(object.callMethod("current"));
+            step(object, "rewind");
+            while (Convert.toBool(step(object, "valid"))) {
+                Object current = PhpRef.deref(step(object, "current"));
                 if (bind.hasKey()) {
-                    bind.writeKey(frame, PhpRef.deref(object.callMethod("key")));
+                    bind.writeKey(frame, PhpRef.deref(step(object, "key")));
                 }
                 bind.assignValue(frame, current);
                 if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                     return;
                 }
-                object.callMethod("next");
+                step(object, "next");
             }
             return;
         }
@@ -223,11 +230,37 @@ public final class ForeachNode extends StmtNode {
         }
     }
 
+    /** An iteration step: the Iterator's method, or the Generator's own operation for it. */
+    @TruffleBoundary
+    private Object step(PhpObject object, String method) {
+        return Backtrace.callFrom(this, () -> {
+            if (!(object.getInternal() instanceof PhpGenerator generator)) {
+                return object.callMethod(method);
+            }
+            switch (method) {
+                case "rewind" -> generator.rewind();
+                case "valid" -> {
+                    return generator.valid();
+                }
+                case "current" -> {
+                    return generator.current();
+                }
+                case "key" -> {
+                    return generator.key();
+                }
+                default -> generator.next();
+            }
+            return PhpNull.NULL;
+        });
+    }
+
     /** Follows getIterator() to the Iterator (a loop, not recursion: partial evaluation would inline it forever). */
     @TruffleBoundary
-    private static PhpObject unwrapAggregates(PhpObject object) {
+    private PhpObject unwrapAggregates(PhpObject subject) {
+        PhpObject object = subject;
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            if (!(object.callMethod("getiterator") instanceof PhpObject inner)) {
+            PhpObject aggregate = object;
+            if (!(Backtrace.callFrom(this, () -> aggregate.callMethod("getiterator")) instanceof PhpObject inner)) {
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

@@ -15,7 +15,9 @@ import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -50,30 +52,37 @@ public final class GeneratorNodes {
     }
 
     /** Runs a generator body on the frame the call made (the first argument). */
-    public static final class BodyRootNode extends RootNode implements SourceLocation.Code {
+    public static final class BodyRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
         @Child private StmtNode body;
-        private final String name;
-        private final String path;
+        /** The generator function: its name, scope and file are the body's. */
+        private final FunctionRootNode function;
 
-        /** As FunctionRootNode's: the declaring class's lowercase name, or null. */
-        private final String scopeName;
-
-        public BodyRootNode(PhpLanguage language, FrameDescriptor descriptor, StmtNode body, String name,
-                            String scopeName, String path) {
+        public BodyRootNode(PhpLanguage language, FrameDescriptor descriptor, StmtNode body,
+                            FunctionRootNode function) {
             super(language, descriptor);
             this.body = body;
-            this.name = name;
-            this.scopeName = scopeName;
-            this.path = path;
+            this.function = function;
         }
 
         public String getScopeName() {
-            return scopeName;
+            return function.getScopeName();
         }
 
         @Override
         public String getPath() {
-            return path;
+            return function.getPath();
+        }
+
+        /** A trace lists a generator's run as a call of its function, with the function's arguments. */
+        @Override
+        public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
+            function.describeCall(frame == null ? null : (Frame) frame.getArguments()[0], entry, options);
+            return true;
+        }
+
+        @Override
+        protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
+            return true;
         }
 
         @Override
@@ -96,7 +105,7 @@ public final class GeneratorNodes {
 
         @Override
         public String getName() {
-            return name;
+            return function.getName();
         }
     }
 
@@ -159,7 +168,7 @@ public final class GeneratorNodes {
                     frame.setLong(positionSlot, array.firstPosition());
                 } else if (inner instanceof PhpObject object) {
                     inner = iterator(object);
-                    ((PhpObject) inner).callMethod("rewind");
+                    ((PhpObject) inner).callMethod(this, "rewind");
                 } else {
                     throw new PhpError("Can use \"yield from\" only with arrays and Traversables");
                 }
@@ -170,7 +179,7 @@ public final class GeneratorNodes {
                 if (inner instanceof PhpArray array) {
                     frame.setLong(positionSlot, array.nextPosition((int) frame.getLong(positionSlot)));
                 } else {
-                    ((PhpObject) inner).callMethod("next");
+                    ((PhpObject) inner).callMethod(this, "next");
                 }
             }
             if (inner instanceof PhpArray array) {
@@ -184,8 +193,8 @@ public final class GeneratorNodes {
                 return PhpNull.NULL;
             }
             PhpObject iterator = (PhpObject) inner;
-            if (Convert.toBool(iterator.callMethod("valid"))) {
-                generator.yielded(ArrayKey.of(iterator.callMethod("key")), iterator.callMethod("current"));
+            if (Convert.toBool(iterator.callMethod(this, "valid"))) {
+                generator.yielded(ArrayKey.of(iterator.callMethod(this, "key")), iterator.callMethod(this, "current"));
                 frame.setLong(stateSlot, 1);
                 throw Yield.INSTANCE;
             }
@@ -193,10 +202,10 @@ public final class GeneratorNodes {
             return iterator.getInternal() instanceof PhpGenerator delegate ? delegate.getReturn() : PhpNull.NULL;
         }
 
-        private static PhpObject iterator(PhpObject traversable) {
+        private PhpObject iterator(PhpObject traversable) {
             Object current = traversable;
             while (current instanceof PhpObject object && object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-                current = object.callMethod("getiterator");
+                current = object.callMethod(this, "getiterator");
             }
             if (!(current instanceof PhpObject object) || !object.getPhpClass().isSubclassOf("iterator")) {
                 throw new PhpError("Can use \"yield from\" only with arrays and Traversables");
@@ -456,12 +465,12 @@ public final class GeneratorNodes {
             if (value instanceof PhpObject object) {
                 PhpObject iterator = object;
                 while (iterator.getPhpClass().isSubclassOf("iteratoraggregate")) {
-                    iterator = (PhpObject) iterator.callMethod("getiterator");
+                    iterator = (PhpObject) iterator.callMethod(this, "getiterator");
                 }
                 if (!iterator.getPhpClass().isSubclassOf("iterator")) {
                     throw new PhpError("foreach over an object's properties in a generator is not supported");
                 }
-                iterator.callMethod("rewind");
+                iterator.callMethod(this, "rewind");
                 frame.setObject(subjectSlot, iterator);
                 return true;
             }
@@ -480,11 +489,11 @@ public final class GeneratorNodes {
                 value = array.valueAt(position);
             } else {
                 PhpObject iterator = (PhpObject) iterated;
-                if (!Convert.toBool(iterator.callMethod("valid"))) {
+                if (!Convert.toBool(iterator.callMethod(this, "valid"))) {
                     return false;
                 }
-                value = iterator.callMethod("current");
-                key = keyTarget == null ? null : iterator.callMethod("key");
+                value = iterator.callMethod(this, "current");
+                key = keyTarget == null ? null : iterator.callMethod(this, "key");
             }
             if (value instanceof PhpArray array) {
                 array.addHolder();
@@ -500,7 +509,7 @@ public final class GeneratorNodes {
             if (iterated instanceof PhpArray array) {
                 frame.setLong(positionSlot, array.nextPosition((int) frame.getLong(positionSlot)));
             } else {
-                ((PhpObject) iterated).callMethod("next");
+                ((PhpObject) iterated).callMethod(this, "next");
             }
         }
     }

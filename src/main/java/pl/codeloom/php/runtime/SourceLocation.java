@@ -14,6 +14,12 @@ public record SourceLocation(String file, int line) {
     /** php-src's location when no PHP code runs. */
     public static final SourceLocation UNKNOWN = new SourceLocation("Unknown", 0);
 
+    /**
+     * The directory the prelude's files (built-in classes written in PHP) are named in. Their code stands for
+     * php-src's internal code: locations and traces skip it as php-src skips internal frames.
+     */
+    public static final String PRELUDE = "prelude/";
+
     /** The root of PHP code (a file's, a function's): the file it is in. */
     public interface Code {
         String getPath();
@@ -24,9 +30,18 @@ public record SourceLocation(String file, int line) {
         int getLine();
     }
 
-    /** The innermost statement around the node, in its root's file. */
+    /** User code: PHP code outside the prelude (php-src's ZEND_USER_CODE). */
+    public static boolean isUserCode(RootNode root) {
+        return root instanceof Code code && !code.getPath().startsWith(PRELUDE);
+    }
+
+    /** The innermost statement around the node, in its root's file; for the prelude's code, as current(). */
     @TruffleBoundary
     public static SourceLocation of(Node node) {
+        RootNode root = node.getRootNode();
+        if (!isUserCode(root)) {
+            return current();
+        }
         int line = 0;
         for (Node n = node; n != null; n = n.getParent()) {
             if (n instanceof Line statement && statement.getLine() > 0) {
@@ -34,22 +49,22 @@ public record SourceLocation(String file, int line) {
                 break;
             }
         }
-        return node.getRootNode() instanceof Code code ? new SourceLocation(code.getPath(), line) : UNKNOWN;
+        return new SourceLocation(((Code) root).getPath(), line);
     }
 
     /**
-     * The PHP code running now, as seen from a built-in: the call in the nearest frame of PHP code (php-src's
+     * The user code running now, as seen from a built-in: the call in the nearest frame of user code (php-src's
      * zend_get_executed_lineno, which skips internal frames).
      */
     @TruffleBoundary
     public static SourceLocation current() {
         SourceLocation found = Truffle.getRuntime().iterateFrames(frame -> {
             RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
-            if (!(root instanceof Code code)) {
+            if (!isUserCode(root)) {
                 return null;
             }
             Node call = frame.getCallNode();
-            return call != null ? of(call) : new SourceLocation(code.getPath(), 0);
+            return call != null ? of(call) : new SourceLocation(((Code) root).getPath(), 0);
         });
         return found == null ? UNKNOWN : found;
     }

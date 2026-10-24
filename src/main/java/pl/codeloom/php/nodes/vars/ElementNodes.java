@@ -126,8 +126,8 @@ public final class ElementNodes {
         }
 
         @Specialization(guards = "object.isArrayAccess()")
-        protected static Object arrayAccess(PhpObject object, Object key) {
-            return PhpRef.deref(object.callMethod("offsetget", key));
+        protected Object arrayAccess(PhpObject object, Object key) {
+            return PhpRef.deref(object.callMethod(this, "offsetget", key));
         }
 
         @Fallback

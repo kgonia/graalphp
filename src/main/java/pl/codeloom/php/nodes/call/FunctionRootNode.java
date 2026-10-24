@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.SourceSection;
@@ -15,6 +16,7 @@ import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.vars.FrameSlots;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
@@ -25,13 +27,14 @@ import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.SourceLocation;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * A user function's body. Binds parameters (with coercive scalar typing) and closure captures to frame slots,
  * runs the body, and on exit releases the arrays its locals held, so copy-on-write sees exact holder counts for
  * locals.
  */
-public final class FunctionRootNode extends RootNode implements SourceLocation.Code {
+public final class FunctionRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
     private final String name;
     private final String path;
     @CompilationFinal(dimensions = 1) private final PhpFunction.Param[] params;
@@ -262,16 +265,66 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         }
     }
 
-    /** The lowercase name of the class the function is declared in (a method's, a trait's user), or null. */
+    /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
+    private String className;
     private String scopeName;
 
-    public void setScopeName(String scopeName) {
-        this.scopeName = scopeName;
+    public void setScope(String className) {
+        this.className = className;
+        this.scopeName = className == null ? null : Str.lower(className);
     }
 
     /** What self:: means in this function's code: callables named "self::m" or "parent::m" resolve with it. */
     public String getScopeName() {
         return scopeName;
+    }
+
+    /** Traces list a call as php-src does, with its arguments: the frames exceptions pass are captured. */
+    @Override
+    protected boolean isCaptureFramesForTrace(boolean compiledFrame) {
+        return true;
+    }
+
+    @Override
+    public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
+        describeCall(frame, entry, options);
+        return true;
+    }
+
+    /**
+     * A trace entry's function, class and arguments for a call on frame (also the generator body's, on the
+     * generator's frame): a method by its name in its class, a closure in the class it is bound to; the
+     * arguments passed, a parameter's as its variable is now (php-src's debug_backtrace_get_args).
+     */
+    public void describeCall(Frame frame, PhpArray entry, int options) {
+        String function = className != null && name.startsWith(className + "::")
+                ? name.substring(className.length() + 2) : name;
+        String scope = className;
+        PhpObject self = null;
+        PhpArray args = new PhpArray();
+        if (frame != null) {
+            Object[] arguments = frame.getArguments();
+            if (arguments[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure) {
+                scope = closure.getScope() == null ? null : closure.getScope().getName();
+            }
+            if (arguments[PhpFunction.ARG_THIS] instanceof PhpObject object) {
+                self = object;
+                if (scope == null) {
+                    scope = object.getPhpClass().getName();
+                }
+            }
+            if ((options & Backtrace.IGNORE_ARGS) == 0) {
+                int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1
+                        : params.length;
+                for (int i = 0; i < arguments.length - PhpFunction.ARG_FIRST; i++) {
+                    Object value = i < declared ? frame.getValue(paramSlots[i])
+                            : arguments[PhpFunction.ARG_FIRST + i];
+                    value = PhpRef.deref(value);
+                    args.append(value == null ? PhpNull.NULL : value);
+                }
+            }
+        }
+        Backtrace.describeCall(entry, function, scope, self, options, args);
     }
 
     /** Splitting: a function called with different types from different sites gets a copy per caller profile. */

@@ -50,8 +50,16 @@ public final class Intrinsics {
         return index == 0 && BY_REF_FIRST.contains(lowerName);
     }
 
-    /** The node for `name(args)`, or null when this arity or argument shape isn't covered. */
-    public static ExprNode create(String lowerName, ExprNode[] args) {
+    /** The intrinsics that call back into PHP code: they keep their arguments in a frame slot for traces. */
+    public static boolean callsBack(String lowerName) {
+        return lowerName.equals("array_map") || lowerName.equals("array_filter");
+    }
+
+    /**
+     * The node for `name(args)`, or null when this arity or argument shape isn't covered. argsSlot is the frame slot
+     * of an intrinsic that calls back (see callsBack), -1 for the others.
+     */
+    public static ExprNode create(String lowerName, ExprNode[] args, int argsSlot) {
         int n = args.length;
         switch (lowerName) {
             case "is_array":
@@ -150,9 +158,11 @@ public final class Intrinsics {
                         ? BuiltinNodesFactory.ExplodeNodeGen.create(withDefaults(args, 2, Long.MAX_VALUE)) : null;
             case "array_filter":
                 return n >= 1 && n <= 3
-                        ? BuiltinNodesFactory.ArrayFilterNodeGen.create(withDefaults(args, 1, PhpNull.NULL, 0L)) : null;
+                        ? BuiltinNodesFactory.ArrayFilterNodeGen.create(argsSlot, n,
+                                withDefaults(args, 1, PhpNull.NULL, 0L))
+                        : null;
             case "array_map":
-                return n == 2 ? BuiltinNodesFactory.ArrayMapNodeGen.create(args) : null;
+                return n == 2 ? BuiltinNodesFactory.ArrayMapNodeGen.create(argsSlot, args) : null;
             default:
                 return null;
         }

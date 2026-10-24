@@ -4,13 +4,16 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -91,6 +94,7 @@ public final class Builtins {
                 {"PATH_SEPARATOR", Str.of(":")}, {"M_PI", Math.PI},
                 {"E_ERROR", 1L}, {"E_WARNING", 2L}, {"E_PARSE", 4L}, {"E_NOTICE", 8L}, {"E_CORE_ERROR", 16L},
                 {"E_CORE_WARNING", 32L}, {"E_COMPILE_ERROR", 64L}, {"E_COMPILE_WARNING", 128L},
+                {"DEBUG_BACKTRACE_PROVIDE_OBJECT", 1L}, {"DEBUG_BACKTRACE_IGNORE_ARGS", 2L},
                 {"E_USER_ERROR", 256L}, {"E_USER_WARNING", 512L}, {"E_USER_NOTICE", 1024L}, {"E_STRICT", 2048L},
                 {"E_RECOVERABLE_ERROR", 4096L}, {"E_DEPRECATED", 8192L}, {"E_USER_DEPRECATED", 16384L},
                 {"E_ALL", 30719L},
@@ -214,14 +218,16 @@ public final class Builtins {
         return phpClass;
     }
 
-    /** Exception and Error: message, code and previous, with the usual getters. */
+    /** Exception and Error: their properties in php-src's order, with the usual getters. */
     private static void throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
         PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape(), name);
         phpClass.addInterface(throwable);
         phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, false));
+        phpClass.addProperty(new PhpClass.PropertyDecl("string", Str.EMPTY, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("code", 0L, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("file", Str.EMPTY, false));
         phpClass.addProperty(new PhpClass.PropertyDecl("line", 0L, false));
+        phpClass.addProperty(new PhpClass.PropertyDecl("trace", new PhpArray(), false));
         phpClass.addProperty(new PhpClass.PropertyDecl("previous", PhpNull.NULL, false));
         for (PhpFunction method : table.throwableMethods) {
             phpClass.addMethod(method);
@@ -249,14 +255,18 @@ public final class Builtins {
                 registry.method("getPrevious", false, arguments -> property(arguments, "previous")),
                 registry.method("getFile", false, arguments -> property(arguments, "file")),
                 registry.method("getLine", false, arguments -> property(arguments, "line")),
-                registry.method("getTrace", false, arguments -> new PhpArray()),
-                registry.method("getTraceAsString", false, arguments -> traceString()),
+                registry.method("getTrace", false, arguments -> property(arguments, "trace")),
+                registry.method("getTraceAsString", false,
+                        arguments -> traceString((PhpObject) arguments[PhpFunction.ARG_THIS])),
                 registry.method("__toString", false,
                         arguments -> describe((PhpObject) arguments[PhpFunction.ARG_THIS])));
     }
 
-    private static TruffleString traceString() {
-        return Str.of("#0 {main}");
+    private static TruffleString traceString(PhpObject exception) {
+        if (!(PhpRef.deref(property(exception, "trace")) instanceof PhpArray trace)) {
+            throw new PhpError("TypeError", "Trace is not an array");
+        }
+        return Backtrace.toString(trace, true);
     }
 
     /**
@@ -285,7 +295,7 @@ public final class Builtins {
             part.write(':');
             part.writeLong(Convert.toLong(property(e, "line")));
             part.write("\nStack trace:\n".getBytes(StandardCharsets.ISO_8859_1));
-            part.write(traceString());
+            part.write(traceString(e));
             parts.add(part.toByteArray());
             current = property(e, "previous");
         }

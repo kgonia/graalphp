@@ -670,16 +670,15 @@ public final class Translator {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
                     defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(), path,
                     lineSection(node.line));
-            String scope = owner == null ? null : Str.lower(owner.name());
-            root.setScopeName(scope);
-            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, display, scope, path)
+            root.setScope(owner == null ? null : owner.name());
+            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, root)
                     .getCallTarget(), body.generatorSlot);
             return root.getCallTarget();
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
                 statements, path, lineSection(node.line));
-        root.setScopeName(owner == null ? null : Str.lower(owner.name()));
+        root.setScope(owner == null ? null : owner.name());
         return root.getCallTarget();
     }
 
@@ -715,7 +714,10 @@ public final class Translator {
             byRef[i] = captureRefs.get(i);
             captureNodes[i] = variable(names[i]);
         }
-        String name = "{closure:" + Path.of(path).getFileName() + ":" + node.line + "}";
+        // php-src's name: after the file at top level, the enclosing closure, or Class::function() it's declared in
+        String enclosing = function == null ? path
+                : function.getName().startsWith("{closure:") ? function.getName() : functionName + "()";
+        String name = "{closure:" + enclosing + ":" + node.line + "}";
         ClassInfo owner = classInfo;
         Names declaredNames = this.names;
         PhpFunction[] self = new PhpFunction[1];
@@ -1080,7 +1082,13 @@ public final class Translator {
                 if (node.flags == 1) {
                     throw unsupported(node, "eval");
                 }
-                return new IncludeNode(expression(node.get("expr")), node.flags == 4 || node.flags == 16);
+                // php-ast's flags: 2 include, 4 include_once, 8 require, 16 require_once
+                return new IncludeNode(expression(node.get("expr")), switch (node.flags) {
+                    case 4 -> "include_once";
+                    case 8 -> "require";
+                    case 16 -> "require_once";
+                    default -> "include";
+                });
             }
             case "AST_PRINT":
                 return new LogicNodes.TernaryNode(new ConstNode(Boolean.TRUE),
@@ -1587,7 +1595,60 @@ public final class Translator {
             return intrinsic;
         }
         return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args));
+                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args),
+                resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args));
+    }
+
+    /**
+     * Whether php-src compiles a call to this built-in into an opcode of its own, which makes no frame
+     * (zend_try_compile_special_func): for a name resolved at compile time, without unpacking or named arguments.
+     */
+    private boolean compiledSpecially(String name, Ast args) {
+        int count = args.size();
+        for (Object arg : args.children()) {
+            if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG"))) {
+                return false;
+            }
+        }
+        switch (name) {
+            case "strlen", "is_null", "is_bool", "is_long", "is_int", "is_integer", "is_float", "is_double",
+                 "is_string", "is_array", "is_object", "is_resource", "is_scalar", "boolval", "intval", "floatval",
+                 "doubleval", "strval", "count", "sizeof", "gettype", "clone":
+                return count == 1;
+            case "get_class":
+                return count <= 1;
+            case "array_key_exists":
+                return count == 2;
+            case "defined":
+                return count == 1 && args.child(0) instanceof String constant && constant.indexOf('\\') < 0
+                        && constant.indexOf(':') < 0;
+            case "chr":
+                return count == 1 && args.child(0) instanceof Long;
+            case "ord":
+                return count == 1 && args.child(0) instanceof String;
+            case "sprintf":
+                return count >= 1 && args.child(0) instanceof String format && format.length() < 256
+                        && sprintfPlaceholders(format) == count - 1;
+            default:
+                return false;
+        }
+    }
+
+    /** zend_compile_func_sprintf's test: the number of %s and %d in a format of only those (and %%), else -1. */
+    private static int sprintfPlaceholders(String format) {
+        int count = 0;
+        for (int i = format.indexOf('%'); i >= 0; i = format.indexOf('%', i + 2)) {
+            if (i + 1 == format.length()) {
+                return -1;
+            }
+            char c = format.charAt(i + 1);
+            if (c == 's' || c == 'd') {
+                count++;
+            } else if (c != '%') {
+                return -1;
+            }
+        }
+        return count;
     }
 
     /** compact()'s variable names when they are string literals or arrays of them; false otherwise. */
@@ -1632,7 +1693,7 @@ public final class Translator {
                 nodes[i] = expression(arg);
             }
         }
-        return Intrinsics.create(lowerName, nodes);
+        return Intrinsics.create(lowerName, nodes, Intrinsics.callsBack(lowerName) ? hiddenSlot("callback") : -1);
     }
 
     private static Ast dropFirst(Ast list) {

@@ -130,6 +130,11 @@ public final class ByteBuilder {
         return count;
     }
 
+    /** Drops what was written after the first size bytes. */
+    public void truncate(int size) {
+        count = size;
+    }
+
     public void reset() {
         count = 0;
     }

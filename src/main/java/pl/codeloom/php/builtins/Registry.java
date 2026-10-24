@@ -39,7 +39,7 @@ public final class Registry {
      * '*' makes all further parameters by reference.
      */
     public void fn(String name, String refMask, Builtin body) {
-        functions.add(make(name, refMask, body, false));
+        functions.add(make(name, refMask, body, false, false));
     }
 
     public void fn(String name, String refMask, ContextBuiltin body) {
@@ -48,10 +48,10 @@ public final class Registry {
 
     /** A built-in method, for built-in classes to add in each context. */
     public PhpFunction method(String name, boolean isStatic, Builtin body) {
-        return make(name, "", body, isStatic);
+        return make(name, "", body, isStatic, true);
     }
 
-    private PhpFunction make(String name, String refMask, Builtin body, boolean isStatic) {
+    private PhpFunction make(String name, String refMask, Builtin body, boolean isStatic, boolean method) {
         boolean variadicRef = refMask.endsWith("*");
         String mask = variadicRef ? refMask.substring(0, refMask.length() - 1) : refMask;
         int count = mask.length() + (variadicRef ? 1 : 0);
@@ -63,7 +63,7 @@ public final class Registry {
             params[count - 1] = new PhpFunction.Param("rest", true, true, Boolean.TRUE, (char) 0, true);
         }
         PhpFunction function = new PhpFunction(name, params, false, isStatic, true, false,
-                () -> new BuiltinRootNode(language, name, body).getCallTarget());
+                () -> new BuiltinRootNode(language, name, body, method).getCallTarget());
         function.setBuiltin(body);
         return function;
     }

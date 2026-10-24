@@ -6,6 +6,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -16,6 +17,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -23,6 +25,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -50,8 +53,24 @@ public final class BuiltinNodes {
             PhpFunction function = PhpContext.get(this).findFunction(name);
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
-            return PhpRef.deref(function.getBuiltin().call(arguments));
+            try {
+                // what a call php-src compiles in calls back (Countable::count) is called from the call's site
+                return PhpRef.deref(SPECIAL.contains(name)
+                        ? Backtrace.callFrom(this, () -> function.getBuiltin().call(arguments))
+                        : function.getBuiltin().call(arguments));
+            } catch (PhpError e) {
+                // the call php-src makes has a frame (unless it compiles the function in): the trace's first entry
+                if (!SPECIAL.contains(name)) {
+                    e.raisedIn(Backtrace.entry(SourceLocation.of(this), name, values));
+                }
+                throw e;
+            }
         }
+
+        /** The intrinsics php-src compiles into opcodes of their own, which make no frame. */
+        private static final java.util.Set<String> SPECIAL = java.util.Set.of("strlen", "count", "sizeof",
+                "gettype", "array_key_exists", "is_array", "is_string", "is_int", "is_integer", "is_long",
+                "is_float", "is_double", "is_bool", "is_null", "is_object");
 
         protected static boolean isString(Object value) {
             return value instanceof TruffleString;
@@ -419,6 +438,25 @@ public final class BuiltinNodes {
      * inline, where the regular built-in calls it from behind a boundary.
      */
     public abstract static class ArrayFilterNode extends BuiltinNode {
+        /** The frame slot the call's arguments are kept in while it calls back, for traces; how many were passed. */
+        private final int argsSlot;
+        private final int passed;
+
+        protected ArrayFilterNode(int argsSlot, int passed) {
+            this.argsSlot = argsSlot;
+            this.passed = passed;
+        }
+
+        @Override
+        public String inlineBuiltin() {
+            return "array_filter";
+        }
+
+        @Override
+        public Object[] inlineArguments(Frame frame) {
+            return frame.getValue(argsSlot) instanceof Object[] values ? values : new Object[0];
+        }
+
         @Specialization(guards = {"isNull(callback)", "mode == 0"})
         protected PhpArray truthy(PhpArray array, Object callback, long mode) {
             PhpArray result = new PhpArray();
@@ -434,11 +472,12 @@ public final class BuiltinNodes {
         static final Callables.Parameter CALLBACK = new Callables.Parameter("array_filter", 2, true);
 
         @Specialization(guards = {"!isNull(callback)", "mode == 0"})
-        protected PhpArray callback(PhpArray array, Object callback, long mode,
+        protected PhpArray callback(VirtualFrame frame, PhpArray array, Object callback, long mode,
                                     @Cached("create(CALLBACK)") CallableDispatchNode dispatch) {
             if (array.size() == 0) {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
+            frame.setObject(argsSlot, passed == 2 ? new Object[] {array, callback} : new Object[] {array, callback, mode});
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = array.valueAt(p);
@@ -458,13 +497,30 @@ public final class BuiltinNodes {
     /** array_map($callback, $a) with one array: keys kept, the callback through an inline cache of direct calls. */
     public abstract static class ArrayMapNode extends BuiltinNode {
         static final Callables.Parameter CALLBACK = new Callables.Parameter("array_map", 1, true);
+        /** The frame slot the call's arguments are kept in while it calls back, for traces. */
+        private final int argsSlot;
+
+        protected ArrayMapNode(int argsSlot) {
+            this.argsSlot = argsSlot;
+        }
+
+        @Override
+        public String inlineBuiltin() {
+            return "array_map";
+        }
+
+        @Override
+        public Object[] inlineArguments(Frame frame) {
+            return frame.getValue(argsSlot) instanceof Object[] values ? values : new Object[0];
+        }
 
         @Specialization(guards = "!isNull(callback)")
-        protected PhpArray map(Object callback, PhpArray array,
+        protected PhpArray map(VirtualFrame frame, Object callback, PhpArray array,
                                @Cached("create(CALLBACK)") CallableDispatchNode dispatch) {
             if (array.size() == 0) {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
+            frame.setObject(argsSlot, new Object[] {callback, array});
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));

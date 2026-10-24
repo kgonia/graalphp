@@ -5,12 +5,16 @@ import com.oracle.truffle.api.dsl.TypeSystemReference;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 
-/** An expression. execute() returns a dereferenced PHP value, never a PhpRef or Java null. */
+/**
+ * An expression. execute() returns a dereferenced PHP value, never a PhpRef or Java null. An expression making a
+ * call is that call's site in stack traces.
+ */
 @TypeSystemReference(PhpTypes.class)
 @ReportPolymorphism
-public abstract class ExprNode extends Node {
+public abstract class ExprNode extends Node implements Backtrace.CallSite {
     public abstract Object execute(VirtualFrame frame);
 
     /**

@@ -197,15 +197,19 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public PhpObject instantiate() {
-        return instantiate(null);
+        return instantiate(null, null);
     }
 
-    /** As instantiate(); a Throwable is made at the given location, or at the code running if it's null. */
+    /**
+     * As instantiate(); a Throwable is made at location with trace, or, when they are null, where the code running
+     * is (a built-in making one is the trace's first call).
+     */
     @TruffleBoundary
-    public PhpObject instantiate(SourceLocation location) {
+    public PhpObject instantiate(SourceLocation location, PhpArray trace) {
         PhpObject object = instantiateBare();
         if (isThrowable()) {
-            locate(object, location != null ? location : SourceLocation.current());
+            initThrowable(object, location != null ? location : SourceLocation.current(),
+                    trace != null ? trace : Backtrace.here(Backtrace.exceptionOptions(), 0, 0));
         }
         return object;
     }
@@ -214,11 +218,16 @@ public final class PhpClass {
         return ancestors.contains("throwable");
     }
 
-    /** zend_default_exception_new: a Throwable's file and line are where it was made, whatever its constructor. */
+    /**
+     * zend_default_exception_new: a Throwable's file, line and trace are where it was made, whatever its
+     * constructor does.
+     */
     @TruffleBoundary
-    public static void locate(PhpObject throwable, SourceLocation location) {
+    public static void initThrowable(PhpObject throwable, SourceLocation location, PhpArray trace) {
         throwable.setProperty("file", Str.of(location.file()));
         throwable.setProperty("line", (long) location.line());
+        trace.addHolder();
+        throwable.setProperty("trace", trace);
     }
 
     private PhpObject instantiateBare() {

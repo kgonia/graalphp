@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -103,7 +104,14 @@ final class RuntimeFunctions {
         r.fn("error_get_last", a -> PhpNull.NULL);
         r.fn("error_clear_last", a -> PhpNull.NULL);
         r.fn("error_log", (context, a) -> errorLog(context, Str.bytes(Args.str(a, 0))));
-        r.fn("debug_backtrace", a -> new PhpArray());
+        // the trace without debug_backtrace's own frame (php-src's skip_last)
+        r.fn("debug_backtrace", a -> Backtrace.here((int) Args.lng(a, 0, Backtrace.PROVIDE_OBJECT),
+                (int) Args.lng(a, 1, 0), 1));
+        r.fn("debug_print_backtrace", (context, a) -> {
+            context.write(Backtrace.toString(Backtrace.here((int) Args.lng(a, 0, 0), (int) Args.lng(a, 1, 0), 1),
+                    false));
+            return PhpNull.NULL;
+        });
         r.fn("get_defined_constants", (context, a) -> context.constantsArray());
         r.fn("gc_collect_cycles", a -> 0L);
         r.fn("gc_enable", a -> PhpNull.NULL);

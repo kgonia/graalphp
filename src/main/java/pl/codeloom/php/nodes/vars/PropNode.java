@@ -76,8 +76,8 @@ public final class PropNode extends LValueNode {
 
     /** Reading a property that doesn't exist: __get's result if the class has one, else null. */
     @TruffleBoundary
-    private static Object missing(PhpObject phpObject, String name) {
-        Object magic = phpObject.magicProperty("__get", name);
+    private Object missing(PhpObject phpObject, String name) {
+        Object magic = phpObject.magicProperty(this, "__get", name);
         return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
     }
 
@@ -91,7 +91,7 @@ public final class PropNode extends LValueNode {
             ref.set(value);
             return;
         }
-        if (old == null && phpObject.magicProperty("__set", name, value) != PhpObject.NO_MAGIC) {
+        if (old == null && phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
             return;
         }
         objects.putLong(phpObject, name, value);
@@ -123,7 +123,7 @@ public final class PropNode extends LValueNode {
             ref.set(value);
             return;
         }
-        if (old == null && phpObject.magicProperty("__set", name, value) != PhpObject.NO_MAGIC) {
+        if (old == null && phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
             return;
         }
         if (value instanceof Long l) {
@@ -212,7 +212,7 @@ public final class PropNode extends LValueNode {
             String name = name(frame);
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                phpObject.magicProperty("__unset", name);
+                phpObject.magicProperty(this, "__unset", name);
                 return;
             }
             if (old instanceof PhpArray array) {
@@ -238,8 +238,8 @@ public final class PropNode extends LValueNode {
 
     /** isset() of a property that doesn't exist: __isset's answer if the class has one. */
     @TruffleBoundary
-    private static boolean magicIsset(PhpObject phpObject, String name) {
-        Object magic = phpObject.magicProperty("__isset", name);
+    private boolean magicIsset(PhpObject phpObject, String name) {
+        Object magic = phpObject.magicProperty(this, "__isset", name);
         return magic != PhpObject.NO_MAGIC && Convert.toBool(magic);
     }
 

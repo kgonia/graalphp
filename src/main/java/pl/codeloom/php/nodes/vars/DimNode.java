@@ -120,7 +120,7 @@ public final class DimNode extends LValueNode {
         objectWrite.enter();
         Object target = container.execute(frame);
         if (target instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod("offsetset", isAppend() ? PhpNull.NULL : rawKey(frame), value);
+            object.callMethod(this, "offsetset", isAppend() ? PhpNull.NULL : rawKey(frame), value);
             return;
         }
         CompilerDirectives.transferToInterpreter();
@@ -153,7 +153,7 @@ public final class DimNode extends LValueNode {
         if (array == null) {
             Object target = container.execute(frame);
             if (target instanceof PhpObject object && object.isArrayAccess()) {
-                Object element = PhpRef.deref(object.callMethod("offsetget", rawKey(frame)));
+                Object element = PhpRef.deref(object.callMethod(this, "offsetget", rawKey(frame)));
                 if (element instanceof PhpArray) {
                     CompilerDirectives.transferToInterpreter();
                     throw new PhpError("Indirect modification of overloaded element");
@@ -185,7 +185,7 @@ public final class DimNode extends LValueNode {
                 array.remove(k);
             }
         } else if (value instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod("offsetunset", rawKey(frame));
+            object.callMethod(this, "offsetunset", rawKey(frame));
         }
     }
 
@@ -205,7 +205,7 @@ public final class DimNode extends LValueNode {
             return offset < 0 ? -offset <= length : offset < length;
         }
         if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return Convert.toBool(object.callMethod("offsetexists", rawKey(frame)));
+            return Convert.toBool(object.callMethod(this, "offsetexists", rawKey(frame)));
         }
         return false;
     }

@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -55,13 +56,19 @@ public abstract class InstantiateNode extends Node {
 
     @Specialization(replaces = {"sameClass", "sameKey"})
     protected PhpObject generic(PhpClass phpClass) {
-        return phpClass.instantiate(location());
+        return phpClass.instantiate(location(), trace());
     }
 
     /** Where a Throwable made here was made: this `new`'s statement. */
     @TruffleBoundary
     private SourceLocation location() {
         return SourceLocation.of(this);
+    }
+
+    /** A Throwable's trace: the calls leading to this `new`. */
+    @TruffleBoundary
+    private static PhpArray trace() {
+        return Backtrace.here(Backtrace.exceptionOptions(), 0, 0);
     }
 
     @ExplodeLoop
@@ -80,7 +87,7 @@ public abstract class InstantiateNode extends Node {
             }
         }
         if (throwable) {
-            PhpClass.locate(object, location());
+            PhpClass.initThrowable(object, location(), trace());
         }
         return object;
     }

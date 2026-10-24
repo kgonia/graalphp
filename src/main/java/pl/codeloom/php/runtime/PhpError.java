@@ -21,6 +21,8 @@ public final class PhpError extends AbstractTruffleException {
     private transient Node origin;
     /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
     private transient PhpObject throwable;
+    /** The trace entry of a built-in that raised the error without a frame of its own (a compiled-in one's). */
+    private transient PhpArray builtin;
 
     /** An Error. */
     public PhpError(String message) {
@@ -50,10 +52,18 @@ public final class PhpError extends AbstractTruffleException {
         return code;
     }
 
-    /** Records the statement the error surfaced in, unless an inner one already did. */
+    /** Records the statement of user code the error surfaced in, unless an inner one already did. */
+    @TruffleBoundary
     public void surfacedAt(Node statement) {
-        if (origin == null) {
+        if (origin == null && SourceLocation.isUserCode(statement.getRootNode())) {
             origin = statement;
+        }
+    }
+
+    /** Records the frameless built-in call the error was raised in, as the first entry of its trace. */
+    public void raisedIn(PhpArray entry) {
+        if (builtin == null && throwable == null) {
+            builtin = entry;
         }
     }
 
@@ -61,8 +71,12 @@ public final class PhpError extends AbstractTruffleException {
     @TruffleBoundary
     public PhpObject toThrowable(PhpContext context) {
         if (throwable == null) {
+            PhpArray trace = Backtrace.of(this, Backtrace.exceptionOptions());
+            if (builtin != null) {
+                trace.prepend(builtin);
+            }
             PhpObject object = context.getClass(phpClass)
-                    .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin));
+                    .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin), trace);
             object.setProperty("message", Str.of(phpMessage));
             if (code != 0) {
                 object.setProperty("code", code);
