@@ -173,3 +173,33 @@ Still open after it:
 - `__toString` called by a conversion (echo, concatenation) shows `[internal function]` in a trace instead of the line;
 - an invalid callback given to the compiled-in `array_map`/`array_filter` has no `array_map` entry in its trace;
 - PHP's warnings and notices (undefined variable, array key...) aren't raised yet: the error model is ready for them.
+
+## Idiomaticity review of the error series (2026-10-24)
+
+Three reviewers read `20a3134..16f4079`: the nodes for Truffle idioms, the runtime classes, and the built-ins, launchers and tests. What they found and what was done:
+
+| Commit | What |
+|---|---|
+| `3ac2512` | A megamorphic `new` computed a Throwable's location and trace (a full stack walk) for every class: arguments were evaluated before `instantiate()` looked at the class. |
+| `846d838` | Every root captured frames for every exception that left it, for a trace only `PhpError` read. `PhpError` takes its trace when raised, as zend_throw_error's object does; no exception keeps a Truffle stack trace and no root overrides `isCaptureFramesForTrace`. |
+| `6aec54d` | The language never declared `@ProvidedTags`, so no tool could attach to statements; with one attached, a runtime error took an outer statement's line (the wrapper's line is 0). Statement lists' catch is behind a `BranchProfile`. The exception-location smoke test also runs under the CPU tracer. |
+| `e084cba`, `35d94c3`, `5da6a2d` | The intrinsics' second list of functions php-src compiles in had drifted (an unqualified call in a namespace, `key_exists`): the translator's answer reaches the node. A built-in php-src calls with a frame gets one: the intrinsic's fallback is a `DirectCallNode`, so traces list it and its callbacks without the `raisedIn` stand-in. A trace through array_map's fallback no longer reads the slot only its calls back fill. |
+| `5a993f9` | `Ini` as php-src keeps it: OnUpdate handlers parse into typed settings (no string parsing per reported error), one `error_reporting`, owned by the context's `BuiltinState`; `ini_get_all`; a rejected startup value keeps the default. |
+| `f35d7db` | The prelude is internal by `RootNode.isInternal()`, not by a path prefix tested on every frame. |
+| `531966a` | `php.Ini` is a map option (`php.Ini.display_errors=0`); `-d name=value`, `-dname=value` and `-d name` alike in both launchers; `--display-errors` goes. |
+| `bedde28` | A sealed `PhpThrowable` over `PhpError` and `PhpException`; `SavedHandler` and `LastError` records; php_error_cb's formats through one `ByteBuilder`; `ErrorFunctions.fatal()` returns the bailout to throw (zend_error_noreturn); constants from their definitions. |
+| `1f8fe99`, `7cb4f30` | Smaller idioms (iterateFrames' skip, named php-ast flags, switch expressions, `callMethod(Node, ...)` in foreach, `CallingBackNode`), and two test fixes. |
+
+Left as they are, on purpose:
+- the statement lists still catch `PhpError` to record the line it left: nodes and runtime helpers raise errors in 165 places, most without a node to pass, and php-src's equivalent is the current opline. Behind a profile, compiled code has no handler until an error passes;
+- `declaredAt` stays a setter, like `PhpFunction`'s other optional properties (`setBuiltin`, `setClassName`);
+- the smoke tests' path normalisation stays per test, and the reference runs keep php.ini's absence implicit: `php -n` would also drop the extensions the image loads through conf.d.
+
+Checks after each commit: smoke (also 3 contexts, and exception-location under the tracer), Gate 1 and K0 checksums, 40 shared contexts, boot, mysqli; the HTTP comparison after the launcher and error-report commits (9 of 11 pages identical, the 2 oEmbed lines as before). Gate 1 kernels `16f4079` → `35d94c3` → `16f4079` (10 rounds): hooks 0.95/1.05, escape 1.18/1.03, slugs 1.03/0.99, wpautop 0.99/1.04, wptexturize 1.00/0.93, blocks 0.96/0.89, kses 1.06/1.00. kses was measured again on its own, 14 rounds: `6aec54d` 32.1 ms, `35d94c3` 31.4 ms (0.97); forcing the fallback's call to inline gave nothing more (1.01). The built-in fallback through the call target from a boundary (`e084cba`, before `35d94c3`) had looked 6–7% slower on kses.
+
+php-src `.phpt` at `5da6a2d`: 2932 of 7341 strict (39.9%) and 3092 lenient, from 2920 and 3092 at `2081cc5`. 12 cases newly pass (redeclaration and name-collision messages, exception messages, line numbers), none newly fails; the first run found two (`bug70895`, `bug70898`), fixed by `5da6a2d`.
+
+Still open, found on the way:
+- an alias compiled in (`key_exists`, `join`, `chop`, `sizeof`) is listed and named in messages under the function it aliases;
+- built-ins' TypeError messages say "integer given" where php-src says "int", and `array_key_exists`'s omits the type;
+- a -d or php.ini value is not run through the ini parser: `error_reporting=E_ALL & ~E_NOTICE` is read as 0.
