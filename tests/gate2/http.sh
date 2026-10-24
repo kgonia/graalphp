@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Gate 2, the home page over HTTP: WordPress served by Truffle PHP's HTTP server (launcher.HttpMain, a context per
 # request) and by regular PHP with mysqli (php -S in the wordpress:cli image), the same pages fetched from both and
-# compared. Our SERVER_NAME is php -S's (0.0.0.0): WordPress compares it with asset hosts (dns-prefetch).
+# compared. Our SERVER_NAME is php -S's (0.0.0.0): WordPress compares it with asset hosts (dns-prefetch). Both
+# display errors as php -S does (display_errors=1, html_errors=0); ?fatal=... ends a request with a fatal error
+# (tests/gate2/fatal-plugin.php), which WordPress's fatal error handler turns into its error page.
 # Run after fetch.sh, export.sh, db.sh and install.sh; build first.
 # Usage: tests/gate2/http.sh [start|stop|compare]   (default: start both, compare, leave them running)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
 out=target/gate2/http
-pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?s=hello" /nonexistent-page/)
+pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?s=hello" /nonexistent-page/
+       "/?fatal=exception" "/?fatal=error")
 
 stop() {
   docker rm -f gate2-truffle-http gate2-php-http > /dev/null 2>&1 || true
@@ -17,12 +20,15 @@ stop() {
 start() {
   stop
   cp tests/gate2/wp-config.php target/gate2/wordpress/wp-config.php
-  MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast target/gate2/wordpress/wp-config.php
+  mkdir -p target/gate2/wordpress/wp-content/mu-plugins
+  cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
+  MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast target/gate2/wordpress/wp-config.php \
+    target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
   MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
     -v "$root:/w" -w /w gate1-truffle:8.5 sh -c '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED \
     --sun-misc-unsafe-memory-access=allow $JAVA_OPTS_BASE -Dpolyglot.engine.WarnInterpreterOnly=false \
     -cp "target/classes:target/lib/*" pl.codeloom.php.launcher.HttpMain --port=8080 --threads=4 \
-    --docroot=target/gate2/wordpress --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0 --display-errors' > /dev/null
+    --docroot=target/gate2/wordpress --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0 --display-errors -dhtml_errors=0' > /dev/null
   MSYS_NO_PATHCONV=1 docker run -d --name gate2-php-http -p 8081:8081 --add-host=host.docker.internal:host-gateway \
     -v "$root:/w" -w /w/target/gate2/wordpress wordpress:cli-php8.4 php -S 0.0.0.0:8081 > /dev/null
   for port in 8080 8081; do

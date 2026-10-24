@@ -61,12 +61,13 @@ public final class HttpMain {
     private final String sourceRoot;
     private final int port;
     private final String serverName;
-    private final boolean displayErrors;
+    /** Each request's php.ini settings (the php.Ini option). */
+    private final String ini;
 
     private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName,
-                     boolean displayErrors) {
+                     String ini) {
         this.serverName = serverName;
-        this.displayErrors = displayErrors;
+        this.ini = ini;
         this.engine = engine;
         this.docroot = docroot;
         this.astRoot = astRoot;
@@ -83,6 +84,7 @@ public final class HttpMain {
         String sourceRoot = ".";
         String serverName = null;
         boolean displayErrors = false;
+        StringBuilder settings = new StringBuilder();
         for (String arg : args) {
             String value = arg.substring(arg.indexOf('=') + 1);
             if (arg.startsWith("--host=")) {
@@ -101,17 +103,22 @@ public final class HttpMain {
                 serverName = value;
             } else if (arg.equals("--display-errors")) {
                 displayErrors = true;
+            } else if (arg.startsWith("-d") && arg.length() > 2) {
+                settings.append(arg.substring(2)).append('\n');
             } else {
                 System.err.println("usage: HttpMain [--host=127.0.0.1] [--port=8080] [--threads=n] [--docroot=dir] "
-                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name] [--display-errors]");
+                        + "[--ast-root=dir] [--source-root=dir] [--server-name=name] [--display-errors] "
+                        + "[-dname=value...]");
                 System.exit(2);
             }
         }
         // the JDK server's time limit for receiving a request (seconds; read when the server class loads)
         System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
         Engine engine = Engine.create("php");
+        // php.ini-production's error settings, or the development ones with --display-errors; then -d's
+        String ini = "display_errors=" + (displayErrors ? "1" : "0") + "\nlog_errors=1\n" + settings;
         HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName,
-                displayErrors);
+                ini);
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
@@ -183,8 +190,7 @@ public final class HttpMain {
                 .in(new ByteArrayInputStream(body))
                 .out(out)
                 .option("php.Sapi", "cgi")
-                // php.ini-production's error settings, or the development ones with --display-errors
-                .option("php.Ini", "display_errors=" + (displayErrors ? "1" : "0") + "\nlog_errors=1")
+                .option("php.Ini", ini)
                 .option("php.AstRoot", astRoot)
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", new String[] {script.toString()})
