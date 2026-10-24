@@ -10,6 +10,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.strings.TruffleStringBuilder;
@@ -83,6 +84,11 @@ public final class BuiltinNodes {
             } finally {
                 lock.unlock();
             }
+        }
+
+        /** Whether call is the regular built-in's call, which has a frame of its own. */
+        protected final boolean isFullCall(Node call) {
+            return call != null && call == fullCall;
         }
 
         /** What a call php-src compiles in calls back (Countable::count) is called from the call's site. */
@@ -462,13 +468,8 @@ public final class BuiltinNodes {
         private final int passed;
 
         protected ArrayFilterNode(int argsSlot, int passed) {
-            super(argsSlot);
+            super(argsSlot, "array_filter");
             this.passed = passed;
-        }
-
-        @Override
-        public String inlineBuiltin() {
-            return "array_filter";
         }
 
         @Specialization(guards = {"isNull(callback)", "mode == 0"})
@@ -514,9 +515,17 @@ public final class BuiltinNodes {
      */
     public abstract static class CallingBackNode extends BuiltinNode {
         private final int argsSlot;
+        private final String name;
 
-        protected CallingBackNode(int argsSlot) {
+        protected CallingBackNode(int argsSlot, String name) {
             this.argsSlot = argsSlot;
+            this.name = name;
+        }
+
+        /** Its own name for its calls back; its fallback's call has the built-in's frame instead. */
+        @Override
+        public String inlineBuiltin(Node call) {
+            return isFullCall(call) ? null : name;
         }
 
         protected final void keepArguments(VirtualFrame frame, Object[] values) {
@@ -534,12 +543,7 @@ public final class BuiltinNodes {
         static final Callables.Parameter CALLBACK = new Callables.Parameter("array_map", 1, true);
 
         protected ArrayMapNode(int argsSlot) {
-            super(argsSlot);
-        }
-
-        @Override
-        public String inlineBuiltin() {
-            return "array_map";
+            super(argsSlot, "array_map");
         }
 
         @Specialization(guards = "!isNull(callback)")

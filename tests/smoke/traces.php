@@ -133,3 +133,10 @@ class D {
 (new D)->call();
 var_dump(debug_backtrace());
 echo rel((new Exception("top"))->getTraceAsString()), "\n";
+
+// the compiled-in array_map's fallback (not an array) is a call of the built-in, with its frame
+try {
+    array_map("%n", 0);
+} catch (TypeError $e) {
+    echo $e->getMessage(), "\n", rel($e->getTraceAsString()), "\n";
+}

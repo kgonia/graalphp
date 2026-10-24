@@ -67,9 +67,10 @@ public final class Backtrace {
 
         /**
          * A built-in compiled in place that calls back (array_map): its name, for the entry php-src's frame of it
-         * makes; null for other calls. What it calls is called from internal code.
+         * makes, when call is one of its calls back; null for other calls. What it calls is called from internal
+         * code.
          */
-        default String inlineBuiltin() {
+        default String inlineBuiltin(Node call) {
             return null;
         }
 
@@ -113,7 +114,7 @@ public final class Backtrace {
             }
             Node call = caller < levels.size() ? levels.get(caller).call() : null;
             CallSite site = callSite(call);
-            String inline = site == null ? null : site.inlineBuiltin();
+            String inline = site == null ? null : site.inlineBuiltin(call);
             PhpArray entry = new PhpArray();
             if (call != null && inline == null && SourceLocation.isUserCode(levels.get(caller).root())) {
                 locate(entry, SourceLocation.of(call));
