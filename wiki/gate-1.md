@@ -294,14 +294,21 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
 
   - **Profile:** JFR with 1 ms sampling over the last 40% of 500 iterations, samples put in categories by their top Java frame. Truffle-compiled PHP code shows as the runtime methods inlined into it. Native time isn't sampled, so "regex" below is the Java around PCRE2.
 
+    The driver's checksum (`bench_render`, `crc32`) runs outside the timed region but inside the process, so a profile of `run.php` includes it. The table comes from a copy of the driver that checksums only the last iteration:
+
     | Kernel | Arrays | Strings | Calls | Regex |
     |---|---:|---:|---:|---:|
-    | hooks | 59% | 8% | 14% | 0% |
-    | kses | 38% | 17% | 17% | 12% |
-    | blocks | 36% | 39% | 2% | 3% |
-    | wptexturize | 33% | 19% | 16% | 8% |
+    | hooks | 62% | 2% | 14% | 0% |
+    | kses | 31% | 16% | 22% | 13% |
+    | blocks | 48% | 11% | 5% | 11% |
+    | wptexturize | 33% | 14% | 13% | 9% |
 
-    In blocks, 27% is TruffleString's lazy concatenation being flattened and copied (`.=` on a string that is then read).
+    **Correction:** the first profile, with the checksum, showed 39% strings in blocks, 27% of it lazy concatenation being flattened. That was the checksum: `bench_render`'s `.=` and `crc32` reading the result. In the timed region concatenation is 0.1–1.4% of the samples in all four kernels.
+
+    The top frames that do count:
+    - blocks: hash lookups (`Hash.find` 15%) and hash building (insert, add, new stores, conversions about 15%, much of it `json_decode`'s objects);
+    - hooks: `Hash.find` 13%, holder counting (`countIn`, `addHolder` 12%);
+    - kses: group arrays, holder counting, built-in calls.
   - **Array stores, three commits:**
     - `68ebd0d`: the elements are one field whose class is the strategy (`long[]`, `Object[]` or a `Hash`), as in TruffleRuby. A hash of up to 8 slots has no bucket index and is scanned. An int key hashes to itself, as in php-src.
     - `6f8a2bb`: literal records (distinct literal keys, one a string) are built as hashes directly, with keys normalized and hashed once. `foreach` by value finds the next position by the layout it binds with.
@@ -374,5 +381,8 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
   - **State at the end of the day, and next:**
     - **Arrays:** strategy stores are in (`68ebd0d`–`bb2f5d4`). Still open: the hash lookups that stay out of line, holder counting, and copy-on-write copies.
     - **Regex:** PCRE2 through FFM. TRegex beside it, chosen per pattern, is decided ([D12](decisions.md)) but not built; the experiment stays on `exp/tregex`. Front-end costs are measured and need no change now.
-    - **Strings:** in progress, `.=` and flattening of lazy concatenations (27% of blocks).
+    - **Strings:** `.=` is not a hot spot of the timed kernels (above); no work planned.
+    - **Next:**
+      - hash lookups and building (blocks, hooks);
+      - holder counting (hooks, kses).
     - **Pending:** a re-measurement against PHP in a quiet window. The last comparable number is still 0.70× end to end and 0.58× on PHP code (2026-10-23).
