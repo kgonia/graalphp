@@ -324,9 +324,11 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - Raw `long` addresses instead of `MemorySegment`s in the downcall measured the same (16.1 vs 16.6 ns; `FfmBench`): the segment checks are free.
 
     The cost is the thread-state transition: `critical` downcalls are 11.6 ns, but stay rejected for the `vzeroupper` reason above.
-  - **TRegex instead of PCRE2: ruled out.** Branch `exp/tregex` (`078c552`) replays the kernels' recorded PCRE2 calls through TRegex 25.0.4's Python flavor (the closest to PCRE; it has no PCRE flavor) in one JVM. PCRE2 runs through FFM as the wrappers call it. TRegex runs from a compiled loop with cached interop, as a node would call it.
+  - **TRegex beside PCRE2, per pattern: worth it.** Branch `exp/tregex` replays the kernels' recorded PCRE2 calls through TRegex 25.0.4's Python flavor (the closest to PCRE; it has no PCRE flavor) in one JVM. PCRE2 runs through FFM as the wrappers call it. TRegex runs from a compiled loop with cached interop, as a node would call it.
 
-    No match differs. TRegex time over PCRE2 time (150 passes, cores 14–21):
+    No match differs, comparing every capture group's bounds (`3ede04a`).
+
+    **Per kernel, TRegex alone loses** (`078c552`; TRegex time over PCRE2 time, 150 passes):
 
     | Kernel | TRegex / PCRE2 |
     |---|---:|
@@ -337,7 +339,38 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     | kses | 6.9× |
     | blocks | 22.7× |
 
-    Over all covered matches that is 55.7 vs 7.7 ms. WordPress's heavy patterns (long alternations, possessive quantifiers, lookarounds) take TRegex's slow paths. 11 patterns can't be written in its flavors at all: conditionals, variable-width lookbehind, recursion, `\g`. A PCRE flavor (its flavors are pluggable, `RegexFlavorProvider`) would add semantics, not speed, so D7 stands.
+    That is 55.7 vs 7.7 ms over all covered matches. 11 patterns can't be written in its flavors at all: conditionals, variable-width lookbehind, recursion, `\g`.
+
+    **Per pattern the picture splits** (`dc5a734`, `bench/gate1/results/tregex-*.txt`; the Java flavor measures the same):
+    - TRegex is 2–4× faster on character classes, literals and short anchored patterns.
+    - It is 8–20× slower on:
+      - long tag-name alternations (wpautop);
+      - `wp_kses_split`'s big pattern;
+      - lazy quantifiers;
+      - a lookbehind before `\s*`;
+      - backreferences.
+
+    A rule on syntax doesn't separate the two: the slow ones mostly have no lookaround or backreference either.
+
+    **Adaptive choice** (`3ede04a`, simulated on the recording). A pattern TRegex accepts runs its first 1024 matches on both engines, timed in batches of 64. The first half is TRegex's warmup; the second decides, and TRegex must be 20% faster to be chosen. Steady-state regex time against PCRE2 alone, with the per-pattern oracle beside it:
+
+    | Kernel | Adaptive | Oracle | Patterns on TRegex |
+    |---|---:|---:|---:|
+    | escape | 0.59 | 0.56 | 4 |
+    | slugs | 0.31 | 0.30 | 1 |
+    | wpautop | 0.98 | 0.98 | 3 |
+    | wptexturize | 0.99 | 0.99 | 1 |
+    | blocks | 1.01 | 1.00 | 0 |
+    | kses | 0.68 | 0.67 | 14 |
+
+    On the kernels that is about 1.1 ms of kses (about 5% of it), 0.2 ms of slugs (about 17%) and 2% of escape. D7 stands for the general case (PCRE2 is the reference and the fallback).
+
+    A product version needs:
+    - **A syntax subset that means the same in TRegex and PCRE**, translated by our own parser; everything else stays on PCRE2. `/u` patterns stay out at first: PCRE checks UTF-8 validity, and its UCP classes differ from Python's.
+    - **The empty-match retries** (`NOTEMPTY_ATSTART|ANCHORED`) on TRegex's `MustAdvance` and `MatchingMode=match`.
+    - **Cached interop from a node**, so a preg call doesn't pay uncached dispatch.
+    - **Language-level decisions shared by contexts.**
+    - **Shadowing only hot patterns**, to bound TRegex's compile time and memory.
   - **Next:**
     - the hash lookups that stay out of line, and holder counting;
     - `.=` and flattening of lazy concatenations (blocks);
