@@ -140,3 +140,21 @@ No match differs in any capture group.
 - shadowing only hot patterns.
 
 A PCRE flavor for TRegex (its flavors are pluggable) is not the goal: it would add the constructs TRegex's engine lacks (conditionals, recursion, variable-width lookbehind), not speed.
+
+## D13: curl through libcurl by FFM; sockets and stream transports on the JDK (2026-10-26)
+**Decision:** WordPress's outgoing HTTP (update checks, plugin and theme installs, the cron and Site Health loopbacks) gets two transports, both as php-src has them:
+1. **`curl_*` is a port of ext/curl over libcurl, bound by FFM**, as PCRE2 is (D7). The callbacks (`CURLOPT_WRITEFUNCTION`, `HEADERFUNCTION`, `READFUNCTION`, `PROGRESSFUNCTION`) are FFM upcalls.
+2. **`fsockopen` and `stream_socket_client` run on the JDK's `Socket` and `SSLSocket`**, under a stream layer as php-src's. The `http://` and `https://` wrappers of `file_get_contents`/`fopen` are a port of `http_fopen_wrapper.c` on it.
+
+**Why:** plan.md had curl on `java.net.http`. That client can't reproduce what PHP code sees from curl:
+- the raw response headers with the status line and its reason phrase (Requests' cURL transport parses them from `CURLOPT_HEADERFUNCTION`); with HTTP/2 the header names come lowercased;
+- restricted request headers (`Host`, `Connection`, `Content-Length`, `Expect`);
+- per-request TLS, CA, proxy, resolve and interface options, which `java.net.http` sets per client or lacks;
+- `curl_getinfo`'s timings and the `CURLE_*` codes.
+
+Every one of about a hundred `curl_setopt` options would be our own reading of libcurl's behaviour. ext/curl is a thin layer over libcurl, so a port of that layer behaves as PHP does. libcurl is a native dependency of the same kind as PCRE2, and every Linux image has it.
+
+Requests' streams transport writes raw HTTP over `stream_socket_client` itself, and `get_filesystem_method()` looks for `fsockopen`, so sockets are needed beside curl. On sockets, PHP's own stream code is the spec, and the JDK's sockets and TLS match it.
+
+`java.net.http` isn't used. Jetty has no role here: D11 is about the server.
+
