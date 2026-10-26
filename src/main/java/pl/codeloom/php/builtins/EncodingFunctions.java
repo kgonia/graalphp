@@ -31,7 +31,7 @@ final class EncodingFunctions {
     private EncodingFunctions() {
     }
 
-    private static final SecureRandom RANDOM = new SecureRandom();
+    static final SecureRandom RANDOM = new SecureRandom();
 
     static void register(Registry r) {
         r.fn("serialize", a -> serialize(Args.get(a, 0)));

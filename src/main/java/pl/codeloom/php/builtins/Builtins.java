@@ -81,6 +81,7 @@ public final class Builtins {
         RuntimeFunctions.register(registry);
         DateFunctions.register(registry);
         EncodingFunctions.register(registry);
+        PasswordFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
         if (debug) {
@@ -164,7 +165,7 @@ public final class Builtins {
                 {"PHP_OUTPUT_HANDLER_STDFLAGS", 112L}, {"PHP_OUTPUT_HANDLER_CLEANABLE", 16L},
                 {"PHP_OUTPUT_HANDLER_FLUSHABLE", 32L}, {"PHP_OUTPUT_HANDLER_REMOVABLE", 64L},
                 {"CRYPT_BLOWFISH", 1L}, {"PASSWORD_DEFAULT", Str.of("2y")}, {"PASSWORD_BCRYPT", Str.of("2y")},
-                {"PASSWORD_BCRYPT_DEFAULT_COST", 10L},
+                {"PASSWORD_BCRYPT_DEFAULT_COST", PasswordFunctions.BCRYPT_DEFAULT_COST},
                 {"INI_USER", 1L}, {"INI_PERDIR", 2L}, {"INI_SYSTEM", 4L}, {"INI_ALL", 7L},
                 {"DATE_ATOM", Str.of("Y-m-d\\TH:i:sP")}, {"DATE_RFC2822", Str.of("D, d M Y H:i:s O")},
                 {"DATE_RFC3339", Str.of("Y-m-d\\TH:i:sP")}, {"DATE_ISO8601", Str.of("Y-m-d\\TH:i:sO")},
