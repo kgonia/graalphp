@@ -378,11 +378,20 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - **Cached interop from a node**, so a preg call doesn't pay uncached dispatch.
     - **Language-level decisions shared by contexts.**
     - **Shadowing only hot patterns**, to bound TRegex's compile time and memory.
+  - **Hash lookups and building**, from the profile without the checksum:
+    - `4cd3588`: an `(array)` cast of an object, and `preg_match`'s groups with distinct names, build their hash at its size with no lookups. They were most of blocks' hash work (`WP_Block_Parser` casts its block objects, its token regex has named groups). A key the code has as a literal is that interned literal (`PhpLanguage.propertyKeyString`; only literals enter the map, so `json_decode`'s keys can't grow it), so `$cast['blockName']` hits the slot cache by identity. `array_slice`'s result is sized for the slice.
+
+      Against `bb2f5d4` (10 rounds): blocks **0.88×** (IQR 0.84–0.93), kses 0.96×, escape 0.95×. Over 6 rounds: wptexturize 0.91×, wpautop 0.92×, hooks 0.98×, slugs 1.01×.
+    - `a1c2ca5`: a read with an int key into a hash walks the bucket chain inline. This is a specialization of its own, so sites that only meet packed arrays don't carry it. These are WP_Hook's priority-keyed callbacks and the iteration stacks.
+
+      Against `4cd3588`: hooks **0.87–0.93×**, escape **0.79–0.86×**, slugs 0.86×, wpautop 0.92–0.97×, kses 0.94–0.99×. Blocks measured 1.09×, 0.99× and 1.02× over three runs (8, 8 and 10 rounds), within the noise.
+    - **Tried and dropped:**
+      - A remembered slot for int keys and for writes measured nothing: hooks asks for a different priority each time round its loop.
+      - One specialization with a profiled packed/hash branch gave hooks 0.82× but blocks 1.05×.
+      - Doubling Truffle's inlining budgets (`InliningInliningBudget`, `InliningExpansionBudget` 24000) gave nothing either: hooks 1.01×, wpautop 0.95×, kses 1.10×.
+  - **Holder counting** (`addHolder`, `removeHolder`, `countIn`; 2–5% per kernel) is the refcount approximation's own work, one field update per binding as in php-src. It doesn't shrink without changing the model, so it was left.
   - **State at the end of the day, and next:**
-    - **Arrays:** strategy stores are in (`68ebd0d`–`bb2f5d4`). Still open: the hash lookups that stay out of line, holder counting, and copy-on-write copies.
+    - **Arrays:** strategy stores; hashes built at their size where the key count is known; int-key hash reads inline (`68ebd0d`–`a1c2ca5`). Next: string-key normalization of computed keys (`ArrayKeyNode.string`, 5% of kses), and the copy-on-write copies.
     - **Regex:** PCRE2 through FFM. TRegex beside it, chosen per pattern, is decided ([D12](decisions.md)) but not built; the experiment stays on `exp/tregex`. Front-end costs are measured and need no change now.
     - **Strings:** `.=` is not a hot spot of the timed kernels (above); no work planned.
-    - **Next:**
-      - hash lookups and building (blocks, hooks);
-      - holder counting (hooks, kses).
     - **Pending:** a re-measurement against PHP in a quiet window. The last comparable number is still 0.70× end to end and 0.58× on PHP code (2026-10-23).
