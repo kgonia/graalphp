@@ -33,15 +33,28 @@ public final class PropNode extends LValueNode {
     private final String constantName;
     /** The class (lowercase) the code is written in, or null outside classes. */
     private final String lexicalClass;
+    /**
+     * In a closure or a file's top-level code, whose scope the frame carries (a closure's bound scope, the scope
+     * a file was included into); elsewhere the scope is the lexical class.
+     */
+    private final boolean scopeInFrame;
+    /**
+     * `$this->name` in a method: a protected property is always accessible there, as the method's class and the
+     * class that declared the property are both ancestors of $this's.
+     */
+    private final boolean thisInMethod;
     /** A class whose non-public property (the constant name) the site's lexical scope may access. */
     @CompilationFinal private PhpClass accessibleClass;
 
     /** constantName is an interned property name, or null with nameExpr computing it. */
-    public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass) {
+    public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
+                    boolean scopeInFrame) {
         this.object = object;
         this.constantName = constantName;
         this.nameExpr = nameExpr;
         this.lexicalClass = lexicalClass;
+        this.scopeInFrame = scopeInFrame;
+        this.thisInMethod = object instanceof ThisNode && !scopeInFrame;
     }
 
     private String name(VirtualFrame frame) {
@@ -71,10 +84,11 @@ public final class PropNode extends LValueNode {
 
     /** Whether the calling scope may access the property: public and undeclared ones need no check. */
     private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name) {
-        if (objects.getPropertyFlagsOrDefault(phpObject, name, 0) == 0) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if (flags == 0 || thisInMethod && flags == PhpClass.PROPERTY_PROTECTED) {
             return true;
         }
-        Object scope = frame.getArguments()[PhpFunction.ARG_CLOSURE];
+        Object scope = scopeInFrame ? frame.getArguments()[PhpFunction.ARG_CLOSURE] : null;
         boolean lexical = scope == null && constantName != null;
         if (lexical && phpObject.getPhpClass() == accessibleClass) {
             return true;

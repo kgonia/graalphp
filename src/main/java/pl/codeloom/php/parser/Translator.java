@@ -1198,9 +1198,9 @@ public final class Translator {
                 ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
-                    return new PropNode(object, Str.sourceKey(name), null, lexicalClass());
+                    return new PropNode(object, Str.sourceKey(name), null, lexicalClass(), scopeInFrame());
                 }
-                return new PropNode(object, null, expression(prop), lexicalClass());
+                return new PropNode(object, null, expression(prop), lexicalClass(), scopeInFrame());
             }
             case "AST_STATIC_PROP": {
                 if (!(node.get("prop") instanceof String name)) {
@@ -1229,6 +1229,11 @@ public final class Translator {
     /** The class (lowercase) the code being translated is written in, or null outside classes. */
     private String lexicalClass() {
         return classInfo == null ? null : Str.lower(classInfo.name());
+    }
+
+    /** Whether the calling scope comes from the frame: in a closure or a file's top-level code. */
+    private boolean scopeInFrame() {
+        return scope == null || function != null && function.getName().startsWith(CLOSURE_PREFIX);
     }
 
     private ExprNode variable(String name) {
