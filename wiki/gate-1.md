@@ -277,3 +277,68 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - holder updates take a branch for frozen arrays.
 
     Worth recovering during Gate 1 tuning, measured in both modes.
+- **2026-10-26, where Gate 1 time goes now, the array stores, `preg_*` and TRegex.**
+  - **Re-measured at `c51feb0`** (`compare.sh`, 400 iterations): 0.93× end to end, 0.92× on PHP code. **Not comparable** with the 0.70× above. Five processes of another job ran at 100% on all cores, and PHP's own times were 1.5–1.8× those of the last quiet window (blocks 6.77 vs 3.86 ms, wpautop 4.04 vs 2.66 ms). Load slows PHP more than Truffle, so the ratio flatters Truffle.
+
+    The micro kernels at the same time:
+
+    | Primitive | Speedup |
+    |---|---:|
+    | string-key read | 0.27× |
+    | built-in call | 0.30× |
+    | `foreach` over a hash | 0.34× |
+    | `foreach` over a list | 0.43× |
+    | copy-on-write copy | 0.44× |
+    | literal record | 0.49× |
+    | `.=` | 0.49× |
+
+  - **Profile:** JFR with 1 ms sampling over the last 40% of 500 iterations, samples put in categories by their top Java frame. Truffle-compiled PHP code shows as the runtime methods inlined into it. Native time isn't sampled, so "regex" below is the Java around PCRE2.
+
+    | Kernel | Arrays | Strings | Calls | Regex |
+    |---|---:|---:|---:|---:|
+    | hooks | 59% | 8% | 14% | 0% |
+    | kses | 38% | 17% | 17% | 12% |
+    | blocks | 36% | 39% | 2% | 3% |
+    | wptexturize | 33% | 19% | 16% | 8% |
+
+    In blocks, 27% is TruffleString's lazy concatenation being flattened and copied (`.=` on a string that is then read).
+  - **Array stores, three commits:**
+    - `68ebd0d`: the elements are one field whose class is the strategy (`long[]`, `Object[]` or a `Hash`), as in TruffleRuby. A hash of up to 8 slots has no bucket index and is scanned. An int key hashes to itself, as in php-src.
+    - `6f8a2bb`: literal records (distinct literal keys, one a string) are built as hashes directly, with keys normalized and hashed once. `foreach` by value finds the next position by the layout it binds with.
+    - `bb2f5d4`: removes `6f8a2bb`'s inline small-hash reads and writes.
+
+    `68ebd0d` alone cost hooks 1.2×: sites that don't specialize paid for the dispatch (`rawAt` tried two strategies before the hash; `foreach`'s hash guard was two negations). `6f8a2bb` fixed those.
+
+    **Inline code at element access sites costs more than it saves.** `6f8a2bb` also scanned small hashes inline on reads and inserted inline on writes, with TruffleString's hash and equality nodes. That grew every string-key access in the PHP function's graph. In hooks it pushed `WP_Hook::apply_filters` out of `apply_filters`' inlining budget (0 of 1 calls inlined instead of 7 of 8; `TraceInlining`), about 20% slower. Even the identity-only scan kept it out. A site now keeps one inline check (its remembered slot) and looks a key up out of line. **The inlining budget for PHP call trees is the scarcer resource.**
+
+    Against `c51feb0` (6 rounds; hooks and slugs again over 10): kses **0.92×**, blocks **0.94×**, hooks 1.00×, slugs 1.01×, escape 1.00×, wpautop 1.01×, wptexturize 1.04×. On the micro kernels the literal record vanishes (escape analysis removes it) and the copy-on-write copy is 0.76×. Smoke (with a new `array-stores` test, also with `CompileImmediately`), both checksum sets, 40 contexts, boot, mysqli and php-src (2932 strict, the same) all pass.
+  - **`preg_*` front ends.** The Java around PCRE2 in kses:
+    - group arrays 4.7%;
+    - group string copies 2.0%;
+    - FFM transitions about 5% (97k matches at about 12–16 ns);
+    - pattern and template map lookups about 1.7%.
+
+    What was tried:
+    - Presizing the group lists measured nothing (reverted).
+    - A call-site pattern cache would save at most the 1.7%, below this box's noise, so it wasn't built.
+    - Raw `long` addresses instead of `MemorySegment`s in the downcall measured the same (16.1 vs 16.6 ns; `FfmBench`): the segment checks are free.
+
+    The cost is the thread-state transition: `critical` downcalls are 11.6 ns, but stay rejected for the `vzeroupper` reason above.
+  - **TRegex instead of PCRE2: ruled out.** Branch `exp/tregex` (`078c552`) replays the kernels' recorded PCRE2 calls through TRegex 25.0.4's Python flavor (the closest to PCRE; it has no PCRE flavor) in one JVM. PCRE2 runs through FFM as the wrappers call it. TRegex runs from a compiled loop with cached interop, as a node would call it.
+
+    No match differs. TRegex time over PCRE2 time (150 passes, cores 14–21):
+
+    | Kernel | TRegex / PCRE2 |
+    |---|---:|
+    | escape | 0.72× |
+    | slugs | 0.30× |
+    | wptexturize | 1.75× |
+    | wpautop | 7.1× |
+    | kses | 6.9× |
+    | blocks | 22.7× |
+
+    Over all covered matches that is 55.7 vs 7.7 ms. WordPress's heavy patterns (long alternations, possessive quantifiers, lookarounds) take TRegex's slow paths. 11 patterns can't be written in its flavors at all: conditionals, variable-width lookbehind, recursion, `\g`. A PCRE flavor (its flavors are pluggable, `RegexFlavorProvider`) would add semantics, not speed, so D7 stands.
+  - **Next:**
+    - the hash lookups that stay out of line, and holder counting;
+    - `.=` and flattening of lazy concatenations (blocks);
+    - a re-measurement against PHP in a quiet window.

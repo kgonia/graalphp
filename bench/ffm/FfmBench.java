@@ -18,6 +18,11 @@ public class FfmBench {
     static final MethodHandle NORMAL = LINKER.downcallHandle(LIB.find("pcre2_jit_match_8").get(), SIG);
     static final MethodHandle CRITICAL = LINKER.downcallHandle(LIB.find("pcre2_jit_match_8").get(), SIG,
             Linker.Option.critical(false));
+    /** The same call with the pointers passed as raw addresses: no segment checks in the handle's adapter. */
+    static final MethodHandle NORMAL_LONGS = LINKER.downcallHandle(LIB.find("pcre2_jit_match_8").get(),
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
+                    ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG,
+                    ValueLayout.JAVA_LONG));
     static final MethodHandle CRITICAL_HEAP = LINKER.downcallHandle(LIB.find("pcre2_jit_match_8").get(), SIG,
             Linker.Option.critical(true));
 
@@ -56,10 +61,14 @@ public class FfmBench {
             time("4KB normal + AVX before", () -> { System.arraycopy(from, 0, to, 0, 64); return (int) NORMAL.invokeExact(code, big, 4096L, 0L, noUtf, md, MemorySegment.NULL); });
             time("4KB critical + AVX before", () -> { System.arraycopy(from, 0, to, 0, 64); return (int) CRITICAL.invokeExact(code, big, 4096L, 0L, noUtf, md, MemorySegment.NULL); });
         }
-        for (int round = 0; round < 1; round++) {
+        for (int round = 0; round < 3; round++) {
             time("normal, global segment", () -> (int) NORMAL.invokeExact(code, nativeGlobal, n, 0L, noUtf, md, MemorySegment.NULL));
             time("normal, shared segment", () -> (int) NORMAL.invokeExact(code, nativeShared, n, 0L, noUtf, md, MemorySegment.NULL));
             time("normal, auto segment", () -> (int) NORMAL.invokeExact(code, nativeAuto, n, 0L, noUtf, md, MemorySegment.NULL));
+            long codeAddress = code.address();
+            long subjectAddress = nativeAuto.address();
+            long dataAddress = md.address();
+            time("normal, raw long addresses", () -> (int) NORMAL_LONGS.invokeExact(codeAddress, subjectAddress, n, 0L, noUtf, dataAddress, 0L));
             time("critical(false), auto", () -> (int) CRITICAL.invokeExact(code, nativeAuto, n, 0L, noUtf, md, MemorySegment.NULL));
             time("critical(false), global", () -> (int) CRITICAL.invokeExact(code, nativeGlobal, n, 0L, noUtf, md, MemorySegment.NULL));
             time("critical(true), heap array", () -> (int) CRITICAL_HEAP.invokeExact(code, heap, n, 0L, noUtf, md, MemorySegment.NULL));
