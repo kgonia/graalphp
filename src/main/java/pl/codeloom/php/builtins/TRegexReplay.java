@@ -76,13 +76,16 @@ final class TRegexReplay {
         Map<Integer, MemorySegment> codes = new HashMap<>();
         Map<Integer, MemorySegment> data = new HashMap<>();
         Map<Integer, MemorySegment> ovectors = new HashMap<>();
+        Map<Integer, Integer> groupCounts = new HashMap<>();
         for (Map.Entry<Integer, Pattern> e : patterns.entrySet()) {
             MemorySegment code = PcreFunctions.Native.compile(e.getValue().source(), e.getValue().options());
             PcreFunctions.Native.jitCompile(code);
             MemorySegment md = PcreFunctions.Native.createMatchData(code);
             codes.put(e.getKey(), code);
             data.put(e.getKey(), md);
-            ovectors.put(e.getKey(), PcreFunctions.Native.ovector(md, 1));
+            int groups = PcreFunctions.Native.info(code, 4) + 1;
+            groupCounts.put(e.getKey(), groups);
+            ovectors.put(e.getKey(), PcreFunctions.Native.ovector(md, groups));
         }
         Map<Integer, MemorySegment> nativeSubjects = new HashMap<>();
         Map<Integer, TruffleString> stringSubjects = new HashMap<>();
@@ -102,6 +105,7 @@ final class TRegexReplay {
 
         StringBuilder out = new StringBuilder("flavor " + flavor + "\n");
         Map<String, List<Match>> byPattern = new LinkedHashMap<>();
+        java.util.Set<Integer> differing = new java.util.HashSet<>();
         out.append(String.format("%-12s %7s %7s %7s %9s %11s %11s %7s %11s%n", "kernel", "matches", "tregex",
                 "differ", "time-cov", "pcre ns", "tregex ns", "ratio", "pcre-all ns"));
         CallTarget loop = new ExecLoop(php.getLanguage()).getCallTarget();
@@ -117,13 +121,15 @@ final class TRegexReplay {
                 if (exec == null) {
                     continue;
                 }
-                long[] pcre = pcreMatch(codes, data, ovectors, nativeSubjects, subjects, context, p, m);
-                long[] tregex = tregexMatch(interop, exec, stringSubjects.get(m.subject()), m.start());
-                if (pcre[0] != tregex[0] || pcre[0] >= 0 && pcre[1] != tregex[1]) {
+                int groups = groupCounts.get(m.pattern());
+                long[] pcre = pcreMatch(codes, data, ovectors, nativeSubjects, subjects, context, p, m, groups);
+                long[] tregex = tregexMatch(interop, exec, stringSubjects.get(m.subject()), m.start(), groups);
+                if (!java.util.Arrays.equals(pcre, tregex)) {
+                    differing.add(m.pattern());
                     if (differ++ < 3) {
-                        differences.append(String.format("    differ: /%s/ opts %x at %d: pcre %d-%d tregex %d-%d%n",
+                        differences.append(String.format("    differ: /%s/ opts %x at %d: pcre %s tregex %s%n",
                                 new String(p.source(), StandardCharsets.ISO_8859_1), p.options(), m.start(),
-                                pcre[0], pcre[1], tregex[0], tregex[1]));
+                                java.util.Arrays.toString(pcre), java.util.Arrays.toString(tregex)));
                     }
                     continue;
                 }
@@ -163,8 +169,10 @@ final class TRegexReplay {
                     covered.size(), differ, 100.0 * pc / Math.max(1, pa), pc, tc, (double) tc / Math.max(1, pc), pa));
             out.append(differences);
         }
-        perPattern(out, byPattern, passes, patterns, codes, data, nativeSubjects, subjects, context, stringSubjects,
-                loop, env, interop, execs, unsupported, flavor);
+        Map<String, Boolean> oracle = perPattern(out, byPattern, passes, patterns, codes, data, nativeSubjects,
+                subjects, context, stringSubjects, loop, env, interop, execs, unsupported, flavor);
+        adaptive(out, sections, differing, oracle, passes, patterns, codes, data, nativeSubjects, subjects, context,
+                stringSubjects, loop, env, interop, execs, unsupported, flavor);
         out.append("unsupported patterns: ").append(unsupported.size()).append('\n');
         unsupported.entrySet().stream().limit(25).forEach(e -> out.append("  ").append(e.getValue()).append('\n'));
         return out.toString();
@@ -175,7 +183,7 @@ final class TRegexReplay {
      * 100 us), with the pattern's features: which patterns TRegex runs faster, and whether a rule on the syntax
      * picks them.
      */
-    private static void perPattern(StringBuilder out, Map<String, List<Match>> byPattern, int passes,
+    private static Map<String, Boolean> perPattern(StringBuilder out, Map<String, List<Match>> byPattern, int passes,
                                    Map<Integer, Pattern> patterns, Map<Integer, MemorySegment> codes,
                                    Map<Integer, MemorySegment> data, Map<Integer, MemorySegment> nativeSubjects,
                                    Map<Integer, byte[]> subjects, MemorySegment context,
@@ -225,11 +233,13 @@ final class TRegexReplay {
         out.append(String.format("%-12s %5s %7s %10s %10s %6s  %-28s %s%n", "kernel", "id", "matches", "pcre",
                 "tregex", "ratio", "features", "pattern"));
         Map<String, double[]> wins = new LinkedHashMap<>();
+        Map<String, Boolean> oracle = new HashMap<>();
         for (Row r : rows) {
             String source = new String(patterns.get(r.pattern()).source(), StandardCharsets.ISO_8859_1);
             out.append(String.format("%-12s %5d %7d %10.0f %10.0f %6.2f  %-28s /%s/%n", r.kernel(), r.pattern(),
                     r.count(), r.pcre(), r.tregex(), r.tregex() / r.pcre(), r.features(),
                     source.length() > 70 ? source.substring(0, 70) + "..." : source));
+            oracle.put(r.kernel() + " " + r.pattern(), r.tregex() < r.pcre());
             double[] w = wins.computeIfAbsent(r.kernel(), k -> new double[4]);
             w[0] += r.pcre();
             if (r.tregex() < r.pcre()) {
@@ -244,6 +254,153 @@ final class TRegexReplay {
                 + " TRegex ns, TRegex-PCRE2 ns of featureless patterns%n"));
         wins.forEach((k, w) -> out.append(String.format("%-12s %10.0f %10.0f %10.0f %10.0f%n", k, w[0], w[1], w[2],
                 w[3])));
+        return oracle;
+    }
+
+    /** Matches a pattern runs on both engines before it chooses one, and the batch they are timed in. */
+    private static final int SHADOW = 1024;
+    private static final int BATCH = 64;
+    /** TRegex must be this much faster to be chosen. */
+    private static final double MARGIN = 0.8;
+    private static final int DECIDING_ITERATIONS = 40;
+
+    /**
+     * Adaptive choice, simulated: each kernel iteration's matches run in their recorded order for
+     * DECIDING_ITERATIONS iterations. A pattern TRegex can run (and that never differed) runs its first SHADOW
+     * matches on both engines, timed per batch of BATCH; the first half warms TRegex up, the second decides. Then
+     * the steady state of PCRE2 alone, the adaptive choice and the per-pattern oracle are timed over one iteration.
+     */
+    private static void adaptive(StringBuilder out, Map<String, List<Match>> sections, java.util.Set<Integer> differing,
+                                 Map<String, Boolean> oracle, int passes, Map<Integer, Pattern> patterns,
+                                 Map<Integer, MemorySegment> codes, Map<Integer, MemorySegment> data,
+                                 Map<Integer, MemorySegment> nativeSubjects, Map<Integer, byte[]> subjects,
+                                 MemorySegment context, Map<Integer, TruffleString> stringSubjects, CallTarget loop,
+                                 TruffleLanguage.Env env, InteropLibrary interop, Map<Long, Object> execs,
+                                 Map<Integer, String> unsupported, String flavor) {
+        out.append(String.format("%nadaptive choice (shadow %d matches, batches of %d, margin %.1f), ns per iteration%n",
+                SHADOW, BATCH, MARGIN));
+        out.append(String.format("%-12s %11s %11s %11s %8s %8s %6s %6s%n", "kernel", "pcre only", "adaptive", "oracle",
+                "adapt/p", "orac/p", "#adapt", "#orac"));
+        for (Map.Entry<String, List<Match>> section : sections.entrySet()) {
+            List<Match> all = section.getValue();
+            Map<Integer, Boolean> decided = new HashMap<>();
+            Map<Integer, List<Match>> pending = new HashMap<>();
+            Map<Integer, long[]> stats = new HashMap<>();
+            for (int iteration = 0; iteration < DECIDING_ITERATIONS; iteration++) {
+                for (Match m : all) {
+                    int id = m.pattern();
+                    if (decided.containsKey(id)) {
+                        continue;
+                    }
+                    if (differing.contains(id) || execFor(env, interop, execs, unsupported, m, patterns.get(id),
+                            flavor) == null) {
+                        decided.put(id, false);
+                        continue;
+                    }
+                    List<Match> batch = pending.computeIfAbsent(id, k -> new ArrayList<>());
+                    batch.add(m);
+                    if (batch.size() < BATCH) {
+                        continue;
+                    }
+                    long[] st = stats.computeIfAbsent(id, k -> new long[3]);
+                    Object[][] t = tregexArrays(batch, env, interop, execs, unsupported, patterns, stringSubjects,
+                            flavor);
+                    long a = System.nanoTime();
+                    pcreRun(codes, data, nativeSubjects, subjects, context, patterns, batch);
+                    long b = System.nanoTime();
+                    loop.call(t[0], t[1], (long[]) t[2][0]);
+                    long c = System.nanoTime();
+                    st[0] += batch.size();
+                    if (st[0] > SHADOW / 2) {
+                        st[1] += b - a;
+                        st[2] += c - b;
+                    }
+                    batch.clear();
+                    if (st[0] >= SHADOW) {
+                        decided.put(id, st[2] < MARGIN * st[1]);
+                    }
+                }
+            }
+            List<Match> pcreAdaptive = new ArrayList<>();
+            List<Match> tregexAdaptive = new ArrayList<>();
+            List<Match> pcreOracle = new ArrayList<>();
+            List<Match> tregexOracle = new ArrayList<>();
+            java.util.Set<Integer> chosenAdaptive = new java.util.HashSet<>();
+            java.util.Set<Integer> chosenOracle = new java.util.HashSet<>();
+            for (Match m : all) {
+                int id = m.pattern();
+                boolean adaptiveTregex = Boolean.TRUE.equals(decided.get(id));
+                boolean oracleTregex = !differing.contains(id)
+                        && Boolean.TRUE.equals(oracle.get(section.getKey() + " " + id));
+                (adaptiveTregex ? tregexAdaptive : pcreAdaptive).add(m);
+                (oracleTregex ? tregexOracle : pcreOracle).add(m);
+                if (adaptiveTregex) {
+                    chosenAdaptive.add(id);
+                }
+                if (oracleTregex) {
+                    chosenOracle.add(id);
+                }
+            }
+            Object[][] ta = tregexArrays(tregexAdaptive, env, interop, execs, unsupported, patterns, stringSubjects,
+                    flavor);
+            Object[][] to = tregexArrays(tregexOracle, env, interop, execs, unsupported, patterns, stringSubjects,
+                    flavor);
+            long[] pcreOnly = new long[passes];
+            long[] adaptiveTime = new long[passes];
+            long[] oracleTime = new long[passes];
+            for (int pass = -passes; pass < passes; pass++) {
+                long a = System.nanoTime();
+                pcreRun(codes, data, nativeSubjects, subjects, context, patterns, all);
+                long b = System.nanoTime();
+                pcreRun(codes, data, nativeSubjects, subjects, context, patterns, pcreAdaptive);
+                loop.call(ta[0], ta[1], (long[]) ta[2][0]);
+                long c = System.nanoTime();
+                pcreRun(codes, data, nativeSubjects, subjects, context, patterns, pcreOracle);
+                loop.call(to[0], to[1], (long[]) to[2][0]);
+                long d = System.nanoTime();
+                if (pass >= 0) {
+                    pcreOnly[pass] = b - a;
+                    adaptiveTime[pass] = c - b;
+                    oracleTime[pass] = d - c;
+                }
+            }
+            long p = median(pcreOnly);
+            long ad = median(adaptiveTime);
+            long or = median(oracleTime);
+            out.append(String.format("%-12s %11d %11d %11d %8.2f %8.2f %6d %6d%n", section.getKey(), p, ad, or,
+                    (double) ad / Math.max(1, p), (double) or / Math.max(1, p), chosenAdaptive.size(),
+                    chosenOracle.size()));
+            for (int id : chosenOracle) {
+                if (!chosenAdaptive.contains(id)) {
+                    long[] st = stats.get(id);
+                    out.append(String.format("    oracle only: pattern %d (%s)%n", id,
+                            st == null ? "undecided" : String.format("shadowed %d, pcre %d tregex %d ns", st[0], st[1],
+                                    st[2])));
+                }
+            }
+            for (int id : chosenAdaptive) {
+                if (!chosenOracle.contains(id)) {
+                    out.append(String.format("    adaptive only: pattern %d%n", id));
+                }
+            }
+        }
+    }
+
+    /** The exec functions, subjects and starts of matches, as ExecLoop takes them (starts in [2][0]). */
+    private static Object[][] tregexArrays(List<Match> matches, TruffleLanguage.Env env, InteropLibrary interop,
+                                           Map<Long, Object> execs, Map<Integer, String> unsupported,
+                                           Map<Integer, Pattern> patterns, Map<Integer, TruffleString> stringSubjects,
+                                           String flavor) {
+        Object[] fns = new Object[matches.size()];
+        Object[] subjectArray = new Object[matches.size()];
+        long[] starts = new long[matches.size()];
+        for (int i = 0; i < matches.size(); i++) {
+            Match m = matches.get(i);
+            fns[i] = execFor(env, interop, execs, unsupported, m, patterns.get(m.pattern()), flavor);
+            subjectArray[i] = stringSubjects.get(m.subject());
+            starts[i] = m.start();
+        }
+        return new Object[][] {fns, subjectArray, {starts}};
     }
 
     /** The syntax a backtracking-free engine finds hard: lookaround, backreferences, possessive, atomic, flags. */
@@ -351,26 +508,37 @@ final class TRegexReplay {
         return exec;
     }
 
+    /** Start and end of every group (-1 when unset), or {-1, -1} for no match. */
     private static long[] pcreMatch(Map<Integer, MemorySegment> codes, Map<Integer, MemorySegment> data,
                                     Map<Integer, MemorySegment> ovectors, Map<Integer, MemorySegment> nativeSubjects,
-                                    Map<Integer, byte[]> subjects, MemorySegment context, Pattern p, Match m) {
+                                    Map<Integer, byte[]> subjects, MemorySegment context, Pattern p, Match m,
+                                    int groups) {
         int rc = PcreFunctions.Native.match(codes.get(m.pattern()), p.jit(), nativeSubjects.get(m.subject()),
                 subjects.get(m.subject()).length, m.start(), m.options(), data.get(m.pattern()), context);
         if (rc < 0) {
             return new long[] {-1, -1};
         }
         MemorySegment ovector = ovectors.get(m.pattern());
-        return new long[] {ovector.getAtIndex(ValueLayout.JAVA_LONG, 0), ovector.getAtIndex(ValueLayout.JAVA_LONG, 1)};
+        long[] bounds = new long[2 * groups];
+        for (int i = 0; i < 2 * groups; i++) {
+            bounds[i] = i < 2 * rc ? ovector.getAtIndex(ValueLayout.JAVA_LONG, i) : -1;
+        }
+        return bounds;
     }
 
-    private static long[] tregexMatch(InteropLibrary interop, Object exec, TruffleString subject, long start) {
+    private static long[] tregexMatch(InteropLibrary interop, Object exec, TruffleString subject, long start,
+                                      int groups) {
         try {
             Object result = interop.execute(exec, subject, start);
             if (!interop.asBoolean(interop.readMember(result, "isMatch"))) {
                 return new long[] {-1, -1};
             }
-            return new long[] {interop.asInt(interop.invokeMember(result, "getStart", 0)),
-                    interop.asInt(interop.invokeMember(result, "getEnd", 0))};
+            long[] bounds = new long[2 * groups];
+            for (int i = 0; i < groups; i++) {
+                bounds[2 * i] = interop.asInt(interop.invokeMember(result, "getStart", i));
+                bounds[2 * i + 1] = interop.asInt(interop.invokeMember(result, "getEnd", i));
+            }
+            return bounds;
         } catch (InteropException e) {
             throw new IllegalStateException(e);
         }
