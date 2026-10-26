@@ -817,68 +817,6 @@ public final class PhpArray implements TruffleObject {
         return hash(key);
     }
 
-    /** Whether the array is hashed and small enough to have no index: its lookups are cheap enough to inline. */
-    public boolean isSmallHash() {
-        return store instanceof Hash hash && hash.buckets == null;
-    }
-
-    /** Whether the array is empty and not hashed: its first string key makes it a small hash. */
-    public boolean isEmptyPacked() {
-        return size == 0 && !(store instanceof Hash);
-    }
-
-    /**
-     * The slot of a string key (with hash h) in a small hash, or -1. A key written as a literal is usually the very
-     * instance stored, so identity decides before the hashes and contents are compared.
-     */
-    public int smallSlotOf(TruffleString key, int h, TruffleString.EqualNode equal) {
-        Hash hash = (Hash) store;
-        Object[] keys = hash.keys;
-        int[] hashes = hash.hashes;
-        for (int slot = 0; slot < hash.used; slot++) {
-            Object stored = keys[slot];
-            if (stored == key || hashes[slot] == h && stored instanceof TruffleString string
-                    && equal.execute(string, key, Str.ENC)) {
-                return slot;
-            }
-        }
-        return -1;
-    }
-
-    /** Replaces the value at a hash slot, keeping references: a PhpRef slot receives the value. */
-    public void setHashValueAt(int slot, Object value) {
-        Object[] values = ((Hash) store).values;
-        Object old = values[slot];
-        if (old instanceof PhpRef ref) {
-            ref.set(value);
-            return;
-        }
-        countIn(value);
-        values[slot] = value;
-        countOut(old, value);
-    }
-
-    /**
-     * Adds a string key (with hash h) that a small hash or an empty packed array doesn't hold: inline while the
-     * small store has room, out of line when it has to grow.
-     */
-    public void insertSmall(TruffleString key, int h, Object value) {
-        Hash hash;
-        if (store instanceof Hash existing) {
-            hash = existing;
-            if (hash.used == hash.keys.length) {
-                putSlow(key, value);
-                return;
-            }
-        } else {
-            hash = new Hash(MIN_CAPACITY);
-            store = hash;
-        }
-        countIn(value);
-        hash.add(key, h, value);
-        size++;
-    }
-
     // ---- the hash strategy ----
 
     /** The store as a Hash, converting a packed one: its index i becomes slot i, so positions stay valid. */
