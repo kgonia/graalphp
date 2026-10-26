@@ -334,7 +334,8 @@ public final class BuiltinNodes {
             } else {
                 end = n;
             }
-            PhpArray result = new PhpArray();
+            // sized for the slice, except a slice of ints, which stays unboxed
+            PhpArray result = array.holdsLongs() ? new PhpArray() : PhpArray.ofCapacity((int) (end - start));
             for (int p = (int) start; p < end; p++) {
                 result.append(array.valueAt(p));
             }

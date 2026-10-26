@@ -8,6 +8,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Ini;
 import pl.codeloom.php.nodes.ExprNode;
@@ -226,16 +227,19 @@ public final class UnaryNodes {
             }
         }
 
+        /** An object's properties become a hash made at its size: distinct names make distinct keys. */
         @TruffleBoundary
-        private static PhpArray toArray(Object value) {
+        private PhpArray toArray(Object value) {
             if (value == PhpNull.NULL) {
                 return new PhpArray();
             }
             if (value instanceof PhpObject object) {
-                PhpArray array = new PhpArray();
-                for (Object name : object.propertyNames()) {
-                    array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.ofKey((String) name)),
-                            PhpRef.deref(object.getProperty((String) name)));
+                Object[] names = object.propertyNames();
+                PhpLanguage language = PhpLanguage.get(this);
+                PhpArray array = PhpArray.ofHashCapacity(names.length);
+                for (Object name : names) {
+                    Object key = pl.codeloom.php.runtime.ArrayKey.of(language.propertyKeyString((String) name));
+                    array.addEntry(key, PhpArray.hashOf(key), PhpRef.deref(object.getProperty((String) name)));
                 }
                 return array;
             }

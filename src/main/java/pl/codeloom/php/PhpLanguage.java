@@ -22,6 +22,7 @@ import pl.codeloom.php.nodes.ScriptRootNode;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.NameIds;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.Str;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -122,6 +123,12 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
     /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
     private final Map<TruffleString, TruffleString> literals = new ConcurrentHashMap<>();
+    /**
+     * The same literals by property key (Str.key): an array made from an object's properties takes its keys from
+     * here when the code has them as literals, so reads with literal keys find them by identity. Only literals
+     * enter it, so data (json_decode's keys) can't grow it.
+     */
+    private final Map<String, TruffleString> literalsByKey = new ConcurrentHashMap<>();
     /** Numbers the anonymous classes, as php-src's runtime-definition keys keep their names apart. */
     private final AtomicInteger anonymousClasses = new AtomicInteger();
     /** Compiled regular expressions, shared by the contexts (and threads) of the engine. */
@@ -229,7 +236,17 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The canonical instance of a literal string. */
     public TruffleString intern(TruffleString literal) {
         TruffleString existing = literals.putIfAbsent(literal, literal);
-        return existing != null ? existing : literal;
+        if (existing != null) {
+            return existing;
+        }
+        literalsByKey.putIfAbsent(Str.key(literal), literal);
+        return literal;
+    }
+
+    /** The string a property key stands for: the interned literal when the code has one, else a new string. */
+    public TruffleString propertyKeyString(String key) {
+        TruffleString literal = literalsByKey.get(key);
+        return literal != null ? literal : Str.ofKey(key);
     }
 
     /** The next anonymous class number (class@anonymous names). */

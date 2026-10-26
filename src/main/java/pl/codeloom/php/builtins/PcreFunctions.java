@@ -104,6 +104,8 @@ public final class PcreFunctions {
         final boolean utf;
         final int groups;
         final TruffleString[] names;
+        /** Whether there are named groups and no two share a name. */
+        final boolean namedDistinct;
         final MemorySegment matchData;
         final MemorySegment ovector;
         boolean matchDataInUse;
@@ -118,6 +120,12 @@ public final class PcreFunctions {
             this.utf = compiled.utf();
             this.groups = compiled.groups();
             this.names = compiled.names();
+            java.util.Set<TruffleString> seen = new java.util.HashSet<>();
+            boolean distinct = true;
+            for (TruffleString name : names) {
+                distinct &= name == null || seen.add(name);
+            }
+            this.namedDistinct = !seen.isEmpty() && distinct;
             this.pattern = compiled.pattern();
             this.options = compiled.options();
             this.matchData = Native.createMatchData(code);
@@ -505,10 +513,30 @@ public final class PcreFunctions {
         return PhpArray.list(value, present ? (long) m.start(group) : -1L);
     }
 
-    /** populate_subpat_array: groups up to the last one that matched, plus all of them with UNMATCHED_AS_NULL. */
+    /**
+     * populate_subpat_array: groups up to the last one that matched, plus all of them with UNMATCHED_AS_NULL. With
+     * named groups of distinct names the hash is made at its size; a name used twice (?J) takes put()'s path.
+     */
     private static PhpArray groups(Matcher m, int count, long flags) {
-        PhpArray result = new PhpArray();
         int last = (flags & UNMATCHED_AS_NULL) != 0 ? m.regex.groups : count;
+        if (m.regex.namedDistinct) {
+            TruffleString[] names = m.regex.names;
+            int entries = last;
+            for (int i = 0; i < last; i++) {
+                entries += names[i] != null ? 1 : 0;
+            }
+            PhpArray hash = PhpArray.ofHashCapacity(entries);
+            for (int i = 0; i < last; i++) {
+                Object value = entry(m, i, i < count, flags);
+                if (names[i] != null) {
+                    hash.addEntry(names[i], PhpArray.hashOf(names[i]), value);
+                }
+                long index = i;
+                hash.addEntry(index, PhpArray.hashOf(index), value);
+            }
+            return hash;
+        }
+        PhpArray result = new PhpArray();
         for (int i = 0; i < last; i++) {
             Object value = entry(m, i, i < count, flags);
             if (m.regex.names[i] != null) {

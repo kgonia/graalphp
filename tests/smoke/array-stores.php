@@ -71,3 +71,25 @@ $g = ['r' => 0];
 $ref = &$g['r'];
 $g['r'] = 5;
 var_dump($ref);
+
+// (array) of an object: properties in order, numeric names become int keys, literal keys find them
+$o = new stdClass();
+$o->blockName = 'core/paragraph';
+$o->{'7'} = 'seven';
+$o->attrs = ['a' => 1];
+$o->{'07'} = 'zero-seven';
+$cast = (array) $o;
+var_dump($cast, $cast['blockName'], $cast[7], $cast['07']);
+$cast[] = 'next';
+var_dump(array_keys($cast));
+
+// named groups: sizes, unmatched groups, offsets, a name used twice
+preg_match('/(?<word>[a-z]+)(?:-(?<num>\d+))?(?<tail>x)?/', 'abc-12', $m);
+var_dump($m);
+preg_match('/(?<word>[a-z]+)(?<num>\d+)?/', 'abc', $m, PREG_UNMATCHED_AS_NULL | PREG_OFFSET_CAPTURE);
+var_dump($m);
+preg_match('/(?J)(?<n>a)|(?<n>b)/', 'b', $m);
+var_dump($m);
+
+// array_slice of ints stays a list of ints; of strings, a list
+var_dump(array_slice([1, 2, 3, 4], 1, 2), array_slice(['a', 'b', 'c'], -2), array_slice(['x'], 5));
