@@ -14,6 +14,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
+import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -137,14 +138,20 @@ public final class BasicStmts {
     public static final class GlobalNode extends StmtNode {
         @Child private LValueNode local;
         @Child private GlobalRefNode global;
+        /** In a file's top-level code: a no-op in the global scope, a binding in a file included from a function. */
+        private final boolean fileLevel;
 
-        public GlobalNode(LValueNode local, String name) {
+        public GlobalNode(LValueNode local, String name, boolean fileLevel) {
             this.local = local;
             this.global = GlobalRefNode.create(name);
+            this.fileLevel = fileLevel;
         }
 
         @Override
         public void execute(VirtualFrame frame) {
+            if (fileLevel && IncludeScope.of(frame) == null) {
+                return;
+            }
             local.bindRef(frame, global.execute(PhpContext.get(this), true));
         }
     }

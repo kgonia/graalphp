@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
 /**
  * `extract($array, $flags, $prefix)`: the array's string keys become variables of the calling scope. A
  * function's variables are its frame slots by name (see {@link DynamicCompactNode}); a name the function never
- * mentions has no slot and nothing can read it, so it is skipped. At the top level the variables are globals.
+ * mentions has no slot and nothing can read it, so it is skipped. At the top level the variables are globals, or
+ * those of the call the file is included from ({@link IncludeScope}).
  * EXTR_REFS binds values, not references.
  */
 public final class ExtractNode extends ExprNode {
@@ -51,18 +52,19 @@ public final class ExtractNode extends ExprNode {
         if (!(source instanceof PhpArray values)) {
             throw new PhpError("TypeError", "extract(): Argument #1 ($array) must be of type array");
         }
-        return extract(frame.materialize(), values, mode, prefixText, slots,
+        IncludeScope included = slots == null ? IncludeScope.of(frame) : null;
+        return extract(frame.materialize(), values, mode, prefixText, slots, included,
                 slots == null ? PhpContext.get(this) : null);
     }
 
     @TruffleBoundary
     private static long extract(MaterializedFrame frame, PhpArray values, long mode, String prefix,
-                                Map<String, Integer> slots, PhpContext context) {
+                                Map<String, Integer> slots, IncludeScope included, PhpContext context) {
         long count = 0;
         for (int p = values.firstPosition(); p >= 0; p = values.nextPosition(p)) {
             Object key = values.keyAt(p);
             String name = Str.java(Convert.toStr(key));
-            boolean exists = exists(frame, name, slots, context);
+            boolean exists = included != null ? included.isDefined(name) : exists(frame, name, slots, context);
             if (mode == SKIP && exists || mode == IF_EXISTS && !exists || mode == PREFIX_IF_EXISTS && !exists) {
                 continue;
             }
@@ -75,7 +77,10 @@ public final class ExtractNode extends ExprNode {
                 continue;
             }
             Object value = values.valueAt(p);
-            if (slots == null) {
+            if (included != null) {
+                included.set(name, value);
+                count++;
+            } else if (slots == null) {
                 if (value instanceof PhpArray array) {
                     array.addHolder();
                 }

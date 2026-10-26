@@ -49,6 +49,7 @@ import pl.codeloom.php.nodes.vars.CompactNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.DynamicCompactNode;
 import pl.codeloom.php.nodes.vars.ExtractNode;
+import pl.codeloom.php.nodes.vars.FileVarNode;
 import pl.codeloom.php.nodes.vars.GlobalVarNode;
 import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
@@ -111,6 +112,8 @@ public final class Translator {
     private static final class Scope {
         final FrameDescriptor.Builder frame = FrameDescriptor.newBuilder().defaultValueIllegal();
         final Map<String, Integer> slots = new HashMap<>();
+        /** The slot keeping the call's IncludeScope (one per call, shared by its includes); -1 until needed. */
+        int includeScopeSlot = -1;
 
         int slot(String name) {
             Integer slot = slots.get(name);
@@ -504,9 +507,9 @@ public final class Translator {
             throw unsupported(node, "dynamic global variable name");
         }
         if (scope == null) {
-            return new BasicStmts.NopNode();
+            return new BasicStmts.GlobalNode(new FileVarNode(name), name, true);
         }
-        return new BasicStmts.GlobalNode(new LocalVarNode(scope.slot(name), name), name);
+        return new BasicStmts.GlobalNode(new LocalVarNode(scope.slot(name), name), name, false);
     }
 
     private StmtNode staticStatement(Ast node) {
@@ -1106,12 +1109,20 @@ public final class Translator {
                 if (node.flags == EXEC_EVAL) {
                     throw unsupported(node, "eval");
                 }
-                return new IncludeNode(expression(node.get("expr")), switch (node.flags) {
+                String kind = switch (node.flags) {
                     case EXEC_INCLUDE_ONCE -> "include_once";
                     case EXEC_REQUIRE -> "require";
                     case EXEC_REQUIRE_ONCE -> "require_once";
                     default -> "include";
-                });
+                };
+                if (scope == null) {
+                    return new IncludeNode(expression(node.get("expr")), kind, null, -1, null);
+                }
+                if (scope.includeScopeSlot < 0) {
+                    scope.includeScopeSlot = hiddenSlot("includeScope");
+                }
+                return new IncludeNode(expression(node.get("expr")), kind, scope.slots, scope.includeScopeSlot,
+                        lexicalClass());
             }
             case "AST_PRINT":
                 return new LogicNodes.TernaryNode(new ConstNode(Boolean.TRUE),
@@ -1215,6 +1226,11 @@ public final class Translator {
         return (scope != null ? scope : fileSlots).slot("\0" + purpose + hiddenCounter++);
     }
 
+    /** The class (lowercase) the code being translated is written in, or null outside classes. */
+    private String lexicalClass() {
+        return classInfo == null ? null : Str.lower(classInfo.name());
+    }
+
     private ExprNode variable(String name) {
         if (name.equals("this")) {
             return new ThisNode();
@@ -1225,7 +1241,7 @@ public final class Translator {
         if (PhpContext.SUPERGLOBALS.contains(name)) {
             return new GlobalVarNode(name);
         }
-        return scope == null ? new GlobalVarNode(name) : new LocalVarNode(scope.slot(name), name);
+        return scope == null ? new FileVarNode(name) : new LocalVarNode(scope.slot(name), name);
     }
 
     private ListAssignNode listTarget(Ast list) {
