@@ -354,6 +354,7 @@ public final class PcreFunctions {
     /** The measurement functions of bench/gate1/run.php (php.Debug). */
     static void registerDebug(Registry r) {
         r.fn("truffle_native_ns", a -> NativeClock.nanos());
+        TRegexReplay.register(r);
         if (PcreRecorder.ENABLED) {
             r.fn("truffle_pcre_record", a -> {
                 PcreRecorder.section(Str.java(Args.str(a, 0)));
@@ -1006,7 +1007,7 @@ public final class PcreFunctions {
     // ---- the PCRE2 library ----
 
     /** Downcalls into libpcre2-8. Set the library with -Dphp.pcre2=<path>; the default is the platform's name. */
-    private static final class Native {
+    static final class Native {
         private static final Linker LINKER = Linker.nativeLinker();
         private static final SymbolLookup LIBRARY = SymbolLookup.libraryLookup(libraryPath(), Arena.global());
         private static final MethodHandle COMPILE = handle("pcre2_compile_8", ValueLayout.ADDRESS,
