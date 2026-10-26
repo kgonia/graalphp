@@ -216,6 +216,30 @@ public final class PhpArray implements TruffleObject {
         return store instanceof Hash hash ? hash.find(key, hash(key)) : -1;
     }
 
+    /**
+     * The value (possibly a PhpRef) under an int key of a hashed array, or null: inline, for sites that meet
+     * hashes with int keys (priorities, sparse indexes). Int keys compare without calls, so the walk stays small.
+     */
+    public Object hashGetLong(long index) {
+        Hash hash = (Hash) store;
+        Object[] keys = hash.keys;
+        if (hash.buckets == null) {
+            for (int slot = 0; slot < hash.used; slot++) {
+                if (keys[slot] instanceof Long key && key == index) {
+                    return hash.values[slot];
+                }
+            }
+            return null;
+        }
+        for (int slot = hash.buckets[Long.hashCode(index) & (hash.buckets.length - 1)]; slot >= 0;
+             slot = hash.chain[slot]) {
+            if (keys[slot] instanceof Long key && key == index) {
+                return hash.values[slot];
+            }
+        }
+        return null;
+    }
+
     /** Whether slot holds this very key instance (a cheap check of a remembered slotOf result). */
     public boolean isKeyAt(int slot, Object key) {
         return store instanceof Hash hash && slot >= 0 && slot < hash.used && hash.keys[slot] == key;

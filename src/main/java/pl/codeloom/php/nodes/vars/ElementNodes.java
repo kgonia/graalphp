@@ -100,9 +100,15 @@ public final class ElementNodes {
             return array.longAt(index);
         }
 
-        @Specialization
+        @Specialization(guards = "array.isPacked()")
         protected static Object intKey(PhpArray array, long index) {
             Object element = array.get(index);
+            return element == null ? PhpNull.NULL : element;
+        }
+
+        @Specialization(guards = "!array.isPacked()")
+        protected static Object hashIntKey(PhpArray array, long index) {
+            Object element = PhpRef.deref(array.hashGetLong(index));
             return element == null ? PhpNull.NULL : element;
         }
 
