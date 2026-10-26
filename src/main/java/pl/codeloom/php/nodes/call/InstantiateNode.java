@@ -40,18 +40,20 @@ public abstract class InstantiateNode extends Node {
                                   @Cached("phpClass") PhpClass cachedClass,
                                   @Cached(value = "cachedClass.declaredNames()", dimensions = 1) String[] names,
                                   @Cached(value = "cachedClass.defaults()", dimensions = 1) Object[] defaults,
+                                  @Cached(value = "cachedClass.declaredFlags()", dimensions = 1) int[] flags,
                                   @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
                                   @Cached("cachedClass.isThrowable()") boolean throwable) {
-        return initialize(cachedClass, names, defaults, puts, throwable);
+        return initialize(cachedClass, names, defaults, flags, puts, throwable);
     }
 
     @Specialization(guards = {"phpClass.getKey() == cachedKey", "phpClass.isInstantiable()"}, limit = "1")
     protected PhpObject sameKey(PhpClass phpClass,
                                 @Cached("phpClass.getKey()") ClassKey cachedKey,
                                 @Cached(value = "phpClass.declaredNames()", dimensions = 1) String[] names,
+                                @Cached(value = "phpClass.declaredFlags()", dimensions = 1) int[] flags,
                                 @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
                                 @Cached("phpClass.isThrowable()") boolean throwable) {
-        return initialize(phpClass, names, phpClass.defaults(), puts, throwable);
+        return initialize(phpClass, names, phpClass.defaults(), flags, puts, throwable);
     }
 
     @Specialization(replaces = {"sameClass", "sameKey"})
@@ -74,17 +76,19 @@ public abstract class InstantiateNode extends Node {
     }
 
     @ExplodeLoop
-    private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, DynamicObjectLibrary[] puts,
-                                 boolean throwable) {
+    private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, int[] flags,
+                                 DynamicObjectLibrary[] puts, boolean throwable) {
         PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
-            if (value instanceof Long l) {
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            if (flags[i] != 0) {
+                puts[i].putWithFlags(object, names[i], value, flags[i]);
+            } else if (value instanceof Long l) {
                 puts[i].putLong(object, names[i], l);
             } else {
-                if (value instanceof PhpArray array) {
-                    array.addHolder();
-                }
                 puts[i].put(object, names[i], value);
             }
         }

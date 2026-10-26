@@ -50,6 +50,7 @@ import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.DynamicCompactNode;
 import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.FileVarNode;
+import pl.codeloom.php.nodes.vars.ObjectVarsNode;
 import pl.codeloom.php.nodes.vars.GlobalVarNode;
 import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
@@ -476,10 +477,10 @@ public final class Translator {
         StmtNode body = statements(node.node("stmts"));
         if (value.is("AST_ARRAY")) {
             return new ForeachNode(subject, key, null, listTarget(value), body, false, hiddenSlot("array"),
-                    hiddenSlot("position"));
+                    hiddenSlot("position"), lexicalClass());
         }
         return new ForeachNode(subject, key, place(value), null, body, byRef, hiddenSlot("array"),
-                hiddenSlot("position"));
+                hiddenSlot("position"), lexicalClass());
     }
 
     private StmtNode switchStatement(Ast node) {
@@ -876,9 +877,8 @@ public final class Translator {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
-                            boolean isPublic = (param.flags & 6) == 0;
                             promoted.add(new PhpClass.PropertyDecl(Str.sourceKey((String) param.get("name")),
-                                    PhpNull.NULL, isPublic));
+                                    PhpNull.NULL, PhpClass.PropertyDecl.visibilityOf(param.flags)));
                         }
                     }
                 }
@@ -896,13 +896,13 @@ public final class Translator {
             }
             case "AST_PROP_GROUP": {
                 boolean isStatic = (member.flags & MODIFIER_STATIC) != 0;
-                boolean isPublic = (member.flags & 7) == 0 || (member.flags & MODIFIER_PUBLIC) != 0;
+                int visibility = PhpClass.PropertyDecl.visibilityOf(member.flags);
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
                     Object initial = element.get("default") == null ? PhpNull.NULL
                             : constantOrDeferred(element.get("default"));
-                    members.add(new ClassTemplate.Property(propertyName, initial, isPublic, isStatic));
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic));
                 }
                 break;
             }
@@ -1198,9 +1198,9 @@ public final class Translator {
                 ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
-                    return new PropNode(object, Str.sourceKey(name), null);
+                    return new PropNode(object, Str.sourceKey(name), null, lexicalClass());
                 }
-                return new PropNode(object, null, expression(prop));
+                return new PropNode(object, null, expression(prop), lexicalClass());
             }
             case "AST_STATIC_PROP": {
                 if (!(node.get("prop") instanceof String name)) {
@@ -1623,6 +1623,13 @@ public final class Translator {
                 }
                 return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
                         extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots);
+            }
+            case "get_object_vars": {
+                ExprNode[] objectArgs = expressionList(args);
+                if (objectArgs.length != 1) {
+                    break;
+                }
+                return new ObjectVarsNode(objectArgs[0], lexicalClass());
             }
             case "get_defined_vars":
                 throw unsupported(node, name + "()");

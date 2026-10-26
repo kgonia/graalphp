@@ -34,7 +34,7 @@ public final class ClassTemplate {
     }
 
     /** A property: its default value, or a {@link Deferred} initializer. */
-    public record Property(String name, Object initial, boolean isPublic, boolean isStatic) implements Member {
+    public record Property(String name, Object initial, int visibility, boolean isStatic) implements Member {
     }
 
     /**
@@ -158,7 +158,7 @@ public final class ClassTemplate {
             if (property.isStatic()) {
                 phpClass.addStaticProperty(property.name(), initial);
             } else {
-                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.isPublic()));
+                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility()));
             }
         }
     }

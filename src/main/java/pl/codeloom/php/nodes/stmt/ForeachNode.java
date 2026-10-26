@@ -14,6 +14,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
+import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -42,11 +43,14 @@ public final class ForeachNode extends StmtNode {
      */
     private final int arraySlot;
     private final int positionSlot;
+    /** The class (lowercase) the loop is written in: foreach over an object sees what that scope may access. */
+    private final String lexicalClass;
     /** Until this loop iterates an object, compiled code leaves the object path out. */
     private final BranchProfile objectSubject = BranchProfile.create();
 
     public ForeachNode(ExprNode subject, LValueNode keyTarget, LValueNode valueTarget, ListAssignNode valueList,
-                       StmtNode body, boolean byRef, int arraySlot, int positionSlot) {
+                       StmtNode body, boolean byRef, int arraySlot, int positionSlot, String lexicalClass) {
+        this.lexicalClass = lexicalClass;
         this.subject = subject;
         this.bind = ForeachNodeFactory.BindNodeGen.create(keyTarget, valueTarget, valueList);
         this.body = body;
@@ -228,13 +232,11 @@ public final class ForeachNode extends StmtNode {
             }
             return;
         }
-        for (Object name : object.propertyNames()) {
-            String property = (String) name;
-            if (!object.getPhpClass().isPublicProperty(property)) {
-                continue;
-            }
-            bind.writeKey(frame, Str.ofKey(property));
-            bind.assignValue(frame, PhpRef.deref(object.getProperty(property)));
+        // the properties the scope may access, as they were when the loop began
+        PhpArray properties = object.visibleProperties(PropNode.callingScope(frame, lexicalClass));
+        for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
+            bind.writeKey(frame, properties.keyAt(p));
+            bind.assignValue(frame, properties.valueAt(p));
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;
             }

@@ -21,9 +21,36 @@ import java.util.Set;
  * case-sensitive constant and property names, as PHP.
  */
 public final class PhpClass {
-    /** A declared instance property: its default (or a thunk evaluating the constant expression) and visibility. */
-    public record PropertyDecl(String name, Object defaultValue, boolean isPublic) {
+    /**
+     * A declared instance property: its default (or a thunk evaluating the constant expression), its visibility,
+     * and the class that declared it (lowercase; set when a class adds it).
+     */
+    public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass) {
+        public static final int PUBLIC = 0;
+        public static final int PROTECTED = 1;
+        public static final int PRIVATE = 2;
+
+        public PropertyDecl(String name, Object defaultValue, int visibility) {
+            this(name, defaultValue, visibility, null);
+        }
+
+        public boolean isPublic() {
+            return visibility == PUBLIC;
+        }
+
+        /** The visibility from php-ast's modifier flags (public 1, protected 2, private 4; none is public). */
+        public static int visibilityOf(int flags) {
+            return (flags & 4) != 0 ? PRIVATE : (flags & 2) != 0 ? PROTECTED : PUBLIC;
+        }
     }
+
+    /**
+     * The flags a declared property has in an object's shape: which properties a site has to check access to. A
+     * private property of an ancestor has none: php-src treats it from other scopes as an undeclared property,
+     * which this runtime's one slot per name approximates by the inherited one.
+     */
+    public static final int PROPERTY_PROTECTED = 1;
+    public static final int PROPERTY_PRIVATE = 2;
 
     private final String name;
     private final String lowerName;
@@ -172,7 +199,48 @@ public final class PhpClass {
         if (decl.defaultValue() instanceof PhpArray array) {
             array.addHolder();
         }
-        properties.put(decl.name(), decl);
+        properties.put(decl.name(), decl.declaringClass() != null ? decl
+                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName));
+    }
+
+    /** The declared (or inherited) instance property, or null for an undeclared one. */
+    @TruffleBoundary
+    public PropertyDecl findProperty(String propertyName) {
+        return properties.get(propertyName);
+    }
+
+    /**
+     * Whether code in the scope (a class's lowercase name, or null outside classes) may access the declared
+     * property (zend_get_property_offset): a private one only from its class, a protected one from a class related
+     * to the one that first declared it (is_protected_compatible_scope).
+     */
+    @TruffleBoundary
+    public boolean canAccessProperty(String propertyName, String scope) {
+        PropertyDecl decl = properties.get(propertyName);
+        if (decl == null || decl.isPublic()) {
+            return true;
+        }
+        if (scope == null) {
+            return decl.visibility() == PropertyDecl.PRIVATE && !decl.declaringClass().equals(lowerName);
+        }
+        if (decl.visibility() == PropertyDecl.PRIVATE) {
+            if (decl.declaringClass().equals(scope) || !decl.declaringClass().equals(lowerName)) {
+                return true;
+            }
+            // the scope's own private property, which this subclass declares again (ZEND_ACC_CHANGED): php-src
+            // gives the scope its own (zend_get_parent_private_property); here both share the one slot
+            PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+            return scopeClass != null && isSubclassOf(scope)
+                    && scopeClass.properties.get(propertyName) instanceof PropertyDecl own
+                    && own.visibility() == PropertyDecl.PRIVATE && scope.equals(own.declaringClass());
+        }
+        PhpClass root = this;
+        while (root.parent != null && root.parent.properties.get(propertyName) instanceof PropertyDecl inherited
+                && inherited.visibility() == PropertyDecl.PROTECTED) {
+            root = root.parent;
+        }
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return root.isSubclassOf(scope) || scopeClass != null && scopeClass.isSubclassOf(root.lowerName);
     }
 
     public Iterable<PropertyDecl> getProperties() {
@@ -238,14 +306,17 @@ public final class PhpClass {
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
         String[] names = declaredNames();
         Object[] defaults = declaredDefaults();
+        int[] flags = declaredFlags();
         for (int i = 0; i < names.length; i++) {
             Object value = defaults[i];
-            if (value instanceof Long l) {
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            if (flags[i] != 0) {
+                library.putWithFlags(object, names[i], value, flags[i]);
+            } else if (value instanceof Long l) {
                 library.putLong(object, names[i], l);
             } else {
-                if (value instanceof PhpArray array) {
-                    array.addHolder();
-                }
                 library.put(object, names[i], value);
             }
         }
@@ -302,6 +373,19 @@ public final class PhpClass {
         return properties.keySet().toArray(new String[0]);
     }
 
+    /** The properties' shape flags (PROPERTY_PROTECTED, PROPERTY_PRIVATE) in an object of this class. */
+    @TruffleBoundary
+    public int[] declaredFlags() {
+        int[] flags = new int[properties.size()];
+        int i = 0;
+        for (PropertyDecl decl : properties.values()) {
+            flags[i++] = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+                    : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
+                    ? PROPERTY_PRIVATE : 0;
+        }
+        return flags;
+    }
+
     /**
      * The properties' default values, in declaredNames order. Deferred defaults (constant expressions) are
      * evaluated on first use and kept; an array default holds one reference for the declaration itself.
@@ -317,7 +401,8 @@ public final class PhpClass {
                 if (value instanceof PhpArray array) {
                     array.addHolder();
                 }
-                entry.setValue(new PropertyDecl(entry.getKey(), value, entry.getValue().isPublic()));
+                entry.setValue(new PropertyDecl(entry.getKey(), value, entry.getValue().visibility(),
+                        entry.getValue().declaringClass()));
             }
             values[i++] = value;
         }

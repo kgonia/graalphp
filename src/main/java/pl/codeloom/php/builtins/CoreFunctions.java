@@ -402,20 +402,13 @@ final class CoreFunctions {
         return phpClass.getStaticProperty(name) != null;
     }
 
-    /** get_object_vars from outside the class: public properties, in order. */
+    /**
+     * get_object_vars called as a callback, without the caller's scope: the public properties. A direct call is
+     * translated to {@link pl.codeloom.php.nodes.vars.ObjectVarsNode}, which has it.
+     */
     @TruffleBoundary
     private static PhpArray objectVars(Object value) {
-        PhpArray result = new PhpArray();
-        if (value instanceof PhpObject object) {
-            for (Object name : object.propertyNames()) {
-                String property = (String) name;
-                if (object.getPhpClass().isPublicProperty(property)) {
-                    result.put(pl.codeloom.php.runtime.ArrayKey.of(Str.ofKey(property)),
-                            PhpRef.deref(object.getProperty(property)));
-                }
-            }
-        }
-        return result;
+        return value instanceof PhpObject object ? object.visibleProperties(null) : new PhpArray();
     }
 
     private static int objectId(Object value) {

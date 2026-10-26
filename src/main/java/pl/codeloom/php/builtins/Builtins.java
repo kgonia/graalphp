@@ -245,13 +245,15 @@ public final class Builtins {
     private static void throwableClass(PhpContext context, Table table, String name, PhpClass throwable) {
         PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape(), name);
         phpClass.addInterface(throwable);
-        phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("string", Str.EMPTY, false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("code", 0L, false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("file", Str.EMPTY, false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("line", 0L, false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("trace", new PhpArray(), false));
-        phpClass.addProperty(new PhpClass.PropertyDecl("previous", PhpNull.NULL, false));
+        int protectedProperty = PhpClass.PropertyDecl.PROTECTED;
+        int privateProperty = PhpClass.PropertyDecl.PRIVATE;
+        phpClass.addProperty(new PhpClass.PropertyDecl("message", Str.EMPTY, protectedProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("string", Str.EMPTY, privateProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("code", 0L, protectedProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("file", Str.EMPTY, protectedProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("line", 0L, protectedProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("trace", new PhpArray(), privateProperty));
+        phpClass.addProperty(new PhpClass.PropertyDecl("previous", PhpNull.NULL, privateProperty));
         for (PhpFunction method : table.throwableMethods) {
             phpClass.addMethod(method);
         }

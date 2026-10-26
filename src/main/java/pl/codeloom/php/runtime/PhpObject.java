@@ -58,6 +58,22 @@ public final class PhpObject extends DynamicObject {
         return Backtrace.callFrom(site, () -> magicProperty(lowerMethod, name, args));
     }
 
+    /**
+     * get_object_vars(), and foreach over a plain object: the properties code in the scope (a class's lowercase
+     * name, or null outside classes) may access, dereferenced, in order.
+     */
+    @TruffleBoundary
+    public PhpArray visibleProperties(String scope) {
+        PhpArray result = new PhpArray();
+        for (Object name : propertyNames()) {
+            String property = (String) name;
+            if (phpClass.canAccessProperty(property, scope)) {
+                result.put(ArrayKey.of(Str.ofKey(property)), PhpRef.deref(getProperty(property)));
+            }
+        }
+        return result;
+    }
+
     /** What magicProperty returns when it called no method. */
     public static final Object NO_MAGIC = new Object();
 
