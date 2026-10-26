@@ -24,3 +24,17 @@ var_dump(@ini_get('error_reporting'), @error_reporting());
 ini_restore('error_reporting');
 var_dump(error_reporting(), ini_get('error_reporting'));
 trigger_error("reported");
+
+// Core's directives WordPress reads: their defaults, and where a script may change them
+// memory_limit is left out: the reference image sets its own
+foreach (['max_execution_time', 'upload_max_filesize', 'post_max_size', 'file_uploads',
+          'max_file_uploads', 'upload_tmp_dir', 'open_basedir', 'disable_functions', 'allow_url_fopen',
+          'default_mimetype', 'max_input_vars', 'max_input_time', 'sendmail_path', 'sendmail_from',
+          'mail.add_x_header', 'arg_separator.output'] as $name) {
+    var_dump($name, ini_get($name), $details[$name]['access'] ?? null);
+}
+var_dump(ini_set('default_mimetype', 'text/plain'), ini_get('default_mimetype'), ini_set('upload_max_filesize', '64M'),
+    ini_get('upload_max_filesize'), ini_set('file_uploads', '0'), ini_set('max_execution_time', '5'));
+ini_restore('default_mimetype');
+ini_restore('upload_max_filesize');
+var_dump(ini_get('default_mimetype'), ini_get('upload_max_filesize'), ini_get('mbstring.func_overload'));

@@ -18,33 +18,57 @@ import java.util.TreeMap;
  * The php.ini directives the runtime implements, per context: their startup values (php-src's defaults for the
  * SAPI, then the php.Ini option, as php.ini and -d give them) and the values ini_set() changed. As in php-src, a
  * directive's OnUpdate handler parses a value into the setting the runtime reads, or rejects it. Other directives
- * are unknown: ini_get() and ini_set() give false for them.
+ * are unknown: ini_get() and ini_set() give false for them, as for an extension that isn't loaded.
  */
 public final class Ini {
     /** php_get_display_errors_mode. */
     public enum DisplayMode { OFF, STDOUT, STDERR }
 
-    /** PHP_INI_ALL: every directive here can be changed anywhere. */
-    private static final long ACCESS_ALL = 7;
+    /** PHP_INI_USER, PHP_INI_PERDIR, PHP_INI_SYSTEM: where a directive may be changed (ini_set() needs USER). */
+    private static final long USER = 1;
+    private static final long PERDIR = 2;
+    private static final long SYSTEM = 4;
+    private static final long ALL = USER | PERDIR | SYSTEM;
 
-    /** Each directive's default, by name (null: no value, which ini_get() shows as ""). */
-    private static final Map<String, String> DEFAULTS = defaults();
+    /** A directive's default (null: no value, which ini_get() shows as "") and where it may be changed. */
+    private record Directive(String value, long access) {
+    }
 
-    private static Map<String, String> defaults() {
-        Map<String, String> defaults = new TreeMap<>();
-        defaults.put("display_errors", "1");
-        defaults.put("error_append_string", null);
-        defaults.put("error_log", null);
-        defaults.put("error_prepend_string", null);
-        defaults.put("error_reporting", null);
-        defaults.put("fatal_error_backtraces", "1");
-        defaults.put("html_errors", "1");
-        defaults.put("ignore_repeated_errors", "0");
-        defaults.put("ignore_repeated_source", "0");
-        defaults.put("log_errors", "0");
-        defaults.put("zend.exception_ignore_args", "0");
-        defaults.put("zend.exception_string_param_max_len", "15");
-        return Collections.unmodifiableMap(defaults);
+    /** Core's directives, by name, as main.c declares them. */
+    private static final Map<String, Directive> DIRECTIVES = directives();
+
+    private static Map<String, Directive> directives() {
+        Map<String, Directive> directives = new TreeMap<>();
+        directives.put("allow_url_fopen", new Directive("1", SYSTEM));
+        directives.put("arg_separator.output", new Directive("&", ALL));
+        directives.put("default_mimetype", new Directive("text/html", ALL));
+        directives.put("disable_functions", new Directive("", SYSTEM));
+        directives.put("display_errors", new Directive("1", ALL));
+        directives.put("error_append_string", new Directive(null, ALL));
+        directives.put("error_log", new Directive(null, ALL));
+        directives.put("error_prepend_string", new Directive(null, ALL));
+        directives.put("error_reporting", new Directive(null, ALL));
+        directives.put("fatal_error_backtraces", new Directive("1", ALL));
+        directives.put("file_uploads", new Directive("1", SYSTEM));
+        directives.put("html_errors", new Directive("1", ALL));
+        directives.put("ignore_repeated_errors", new Directive("0", ALL));
+        directives.put("ignore_repeated_source", new Directive("0", ALL));
+        directives.put("log_errors", new Directive("0", ALL));
+        directives.put("mail.add_x_header", new Directive("0", SYSTEM | PERDIR));
+        directives.put("max_execution_time", new Directive("30", ALL));
+        directives.put("max_file_uploads", new Directive("20", SYSTEM | PERDIR));
+        directives.put("max_input_time", new Directive("-1", SYSTEM | PERDIR));
+        directives.put("max_input_vars", new Directive("1000", SYSTEM | PERDIR));
+        directives.put("memory_limit", new Directive("128M", ALL));
+        directives.put("open_basedir", new Directive(null, ALL));
+        directives.put("post_max_size", new Directive("8M", SYSTEM | PERDIR));
+        directives.put("sendmail_from", new Directive(null, ALL));
+        directives.put("sendmail_path", new Directive("/usr/sbin/sendmail -t -i", SYSTEM));
+        directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
+        directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
+        directives.put("zend.exception_ignore_args", new Directive("0", ALL));
+        directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
+        return Collections.unmodifiableMap(directives);
     }
 
     private final Map<String, String> startup = new HashMap<>();
@@ -63,18 +87,20 @@ public final class Ini {
     private boolean fatalErrorBacktraces;
     private boolean exceptionIgnoreArgs;
     private int exceptionStringParamMaxLen;
+    private String argSeparatorOutput;
 
     /**
-     * The startup values: php-src's defaults, the CLI's own (html_errors=0, from php_cli.c's HARDCODED_INI), then
+     * The startup values: php-src's defaults, the CLI's own (from php_cli.c's HARDCODED_INI), then
      * the settings; a setting its directive rejects leaves the default, as at php-src's startup.
      */
     Ini(boolean cgi, Map<String, String> settings) {
-        for (Map.Entry<String, String> directive : DEFAULTS.entrySet()) {
-            boolean accepted = set(directive.getKey(), directive.getValue());
+        for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
+            boolean accepted = set(directive.getKey(), directive.getValue().value());
             assert accepted : directive;
         }
         if (!cgi) {
             set("html_errors", "0");
+            set("max_execution_time", "0");
         }
         for (Map.Entry<String, String> setting : settings.entrySet()) {
             set(setting.getKey(), setting.getValue());
@@ -83,7 +109,13 @@ public final class Ini {
     }
 
     public boolean isKnown(String name) {
-        return DEFAULTS.containsKey(name);
+        return DIRECTIVES.containsKey(name);
+    }
+
+    /** Whether a script may change the directive (PHP_INI_USER): ini_set() and ini_restore() need it. */
+    private static boolean userCanChange(String name) {
+        Directive directive = DIRECTIVES.get(name);
+        return directive != null && (directive.access() & USER) != 0;
     }
 
     /** The value; null if it has none. */
@@ -103,7 +135,7 @@ public final class Ini {
 
     /** ini_restore(): back to the startup value. */
     public void restore(String name) {
-        if (isKnown(name)) {
+        if (userCanChange(name)) {
             set(name, startup.get(name));
         }
     }
@@ -111,6 +143,12 @@ public final class Ini {
     /** The directive's OnUpdate handler: the value parsed into its setting; false if the directive rejects it. */
     private boolean update(String name, String value) {
         switch (name) {
+            case "arg_separator.output" -> {
+                if (value == null || value.isEmpty()) {
+                    return false; // OnUpdateStrNotEmpty
+                }
+                argSeparatorOutput = value;
+            }
             case "display_errors" -> displayErrors = displayMode(value);
             case "error_reporting" -> errorReporting = value == null ? ErrorFunctions.E_ALL : (int) atol(value);
             case "log_errors" -> logErrors = bool(value);
@@ -122,6 +160,16 @@ public final class Ini {
             case "ignore_repeated_source" -> ignoreRepeatedSource = bool(value);
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
+            case "upload_tmp_dir" -> {
+                if (value != null && value.isEmpty()) {
+                    return false; // OnUpdateStringUnempty
+                }
+            }
+            case "max_input_vars" -> {
+                if (value != null && atol(value) < 0) {
+                    return false; // OnUpdateLongGEZero
+                }
+            }
             case "zend.exception_string_param_max_len" -> {
                 long length = value == null ? 0 : atol(value);
                 if (length < 0 || length > 1_000_000) {
@@ -130,7 +178,8 @@ public final class Ini {
                 exceptionStringParamMaxLen = (int) length;
             }
             default -> {
-                return false;
+                // stored only: nothing in the runtime reads it (memory_limit, max_execution_time and the upload
+                // and mail directives aren't enforced), but scripts read and set it
             }
         }
         return true;
@@ -187,6 +236,10 @@ public final class Ini {
 
     public int exceptionStringParamMaxLen() {
         return exceptionStringParamMaxLen;
+    }
+
+    public String argSeparatorOutput() {
+        return argSeparatorOutput;
     }
 
     /** A boolean directive as zend_ini_parse_bool reads it: on, yes, true, or a non-zero number. */
@@ -259,7 +312,7 @@ public final class Ini {
     /** ini_set(): the old value, or false for an unknown directive or a value it doesn't take. */
     @TruffleBoundary
     private static Object iniSet(Ini ini, String name, Object newValue) {
-        if (!ini.isKnown(name)) {
+        if (!userCanChange(name)) {
             return Boolean.FALSE;
         }
         String old = ini.get(name);
@@ -285,13 +338,14 @@ public final class Ini {
         boolean details = Args.bool(a, 1, true);
         Ini ini = context.ini();
         PhpArray all = new PhpArray();
-        for (String name : DEFAULTS.keySet()) {
+        for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
+            String name = directive.getKey();
             Object current = valueOf(ini.get(name));
             if (details) {
                 PhpArray entry = new PhpArray();
                 entry.put(Str.of("global_value"), valueOf(ini.startup.get(name)));
                 entry.put(Str.of("local_value"), current);
-                entry.put(Str.of("access"), ACCESS_ALL);
+                entry.put(Str.of("access"), directive.getValue().access());
                 all.put(Str.of(name), entry);
             } else {
                 all.put(Str.of(name), current);
