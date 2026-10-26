@@ -7,6 +7,8 @@ import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.vars.FileVarNode;
+import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
@@ -72,9 +74,36 @@ public final class ArgumentsNode extends Node {
         return values;
     }
 
+    /**
+     * With unpacked arguments a parameter's position is known only as the values come: an argument or an unpacked
+     * element that lands on a by-reference parameter is passed by reference (ZEND_SEND_UNPACK).
+     */
     private Object[] buildWithSpread(VirtualFrame frame, PhpFunction callee, Object thisObject, PhpClass staticClass,
                                      Object closure) {
-        Object[] values = valuesWithSpread(frame);
+        List<Object> list = new ArrayList<>();
+        for (int i = 0; i < args.length; i++) {
+            int position = size(list);
+            if (!spread[i]) {
+                if (callee.isByRef(position) && args[i] instanceof LValueNode place) {
+                    add(list, place.makeRef(frame));
+                } else {
+                    add(list, args[i].execute(frame));
+                }
+                continue;
+            }
+            Object value = args[i].execute(frame);
+            if (value instanceof PhpArray array && takesRef(callee, position, array.size())) {
+                if (args[i] instanceof LocalVarNode || args[i] instanceof FileVarNode) {
+                    // a variable's array is separated, and its elements passed by reference become references
+                    addSpreadRefs(list, ((LValueNode) args[i]).arrayForWrite(frame), callee, position, true);
+                } else {
+                    addSpreadRefs(list, array, callee, position, false);
+                }
+            } else {
+                addSpread(list, value);
+            }
+        }
+        Object[] values = toArray(list);
         Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
         arguments[PhpFunction.ARG_THIS] = thisObject;
         arguments[PhpFunction.ARG_STATIC] = staticClass;
@@ -108,6 +137,40 @@ public final class ArgumentsNode extends Node {
         }
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             values.add(array.valueAt(p));
+        }
+    }
+
+    @TruffleBoundary
+    private static int size(List<Object> values) {
+        return values.size();
+    }
+
+    /** Whether one of count arguments from position on lands on a by-reference parameter. */
+    private static boolean takesRef(PhpFunction callee, int position, int count) {
+        for (int i = 0; i < count; i++) {
+            if (callee.isByRef(position + i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * An unpacked array's elements, by reference where the parameter is: an element of a variable's array becomes
+     * a reference in it; an element of a temporary one is passed as it is, as a by-reference argument that is no
+     * place.
+     */
+    @TruffleBoundary
+    private static void addSpreadRefs(List<Object> values, PhpArray array, PhpFunction callee, int position,
+                                      boolean variable) {
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            if (!callee.isByRef(position++)) {
+                values.add(array.valueAt(p));
+            } else if (variable) {
+                values.add(array.refAtPosition(p));
+            } else {
+                values.add(array.rawAt(p)); // a reference stays one; a value is bound as a by-reference argument
+            }
         }
     }
 

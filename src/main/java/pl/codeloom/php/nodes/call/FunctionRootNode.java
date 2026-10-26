@@ -119,7 +119,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             PhpFunction.Param param = params[i];
             int slot = paramSlots[i];
             if (param.variadic()) {
-                FrameSlots.setObject(frame, slot, collectVariadic(arguments, i, given));
+                FrameSlots.setObject(frame, slot, collectVariadic(arguments, i, given, param.byRef()));
                 continue;
             }
             Object value;
@@ -167,10 +167,16 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     }
 
     /** Not a boundary: inlined into the caller, the array can be escape-analyzed away (apply_filters' ...$args). */
-    private static PhpArray collectVariadic(Object[] arguments, int from, int given) {
+    private static PhpArray collectVariadic(Object[] arguments, int from, int given, boolean byRef) {
         PhpArray rest = PhpArray.ofCapacity(given - from);
         for (int i = from; i < given; i++) {
-            rest.append(PhpRef.deref(arguments[PhpFunction.ARG_FIRST + i]));
+            Object value = arguments[PhpFunction.ARG_FIRST + i];
+            if (byRef) {
+                // &...$rest: each element is the argument's reference
+                rest.putRef((long) (i - from), value instanceof PhpRef ref ? ref : new PhpRef(value));
+            } else {
+                rest.append(PhpRef.deref(value));
+            }
         }
         rest.addHolder();
         return rest;
