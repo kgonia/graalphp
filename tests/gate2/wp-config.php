@@ -1,7 +1,9 @@
 <?php
 // Gate 2's wp-config.php (copied into target/gate2/wordpress by tests/gate2/boot.sh): the MariaDB of
 // tests/gate2/db.sh, fixed salts, debug output on.
-define('DB_NAME', 'wordpress');
+// tests/gate2/installer.sh installs into a database of each engine's own, named by a request header
+define('DB_NAME', in_array($_SERVER['HTTP_X_GATE2_DB'] ?? '', ['wp_install_truffle', 'wp_install_php'], true)
+    ? $_SERVER['HTTP_X_GATE2_DB'] : 'wordpress');
 define('DB_USER', 'wp');
 define('DB_PASSWORD', 'wp');
 define('DB_HOST', 'host.docker.internal:3307'); // boot.sh runs in the gate1 containers
@@ -24,6 +26,9 @@ if (!empty($_SERVER['HTTP_HOST'])) {
     define('WP_HOME', 'http://' . $_SERVER['HTTP_HOST']);
     define('WP_SITEURL', 'http://' . $_SERVER['HTTP_HOST']);
 }
+
+// the comparisons can't depend on what api.wordpress.org answers (update checks, the PHP and browser checks)
+define('WP_HTTP_BLOCK_EXTERNAL', true);
 
 define('WP_DEBUG', true);
 define('WP_DEBUG_DISPLAY', false); // notices would differ: Truffle PHP displays no diagnostics
