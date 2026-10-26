@@ -1,6 +1,5 @@
 package pl.codeloom.php.runtime;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.TruffleObject;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -10,11 +9,12 @@ import java.util.Arrays;
 /**
  * PHP's array: an ordered map from int (Long) or string (TruffleString) keys to values, with value semantics.
  *
- * <p>Storage is packed (keys 0..size-1 in order, no holes) until a string key, a non-sequential int key or a
- * removal from the middle forces the hash layout: insertion-ordered slots plus chained buckets, as in php-src.
- * A packed array holding only ints keeps them unboxed in a {@code long[]} (a storage strategy, as in graalphp and
- * TruffleRuby) and moves to {@code Object[]} at the first other value: an int element then needs no checks for
- * nested arrays (holders) or references on its way in or out.
+ * <p>The elements live in one store, and the store's class is the storage strategy (as in TruffleRuby, where raw
+ * Java arrays are stores): a {@code long[]} while the array is packed (keys 0..size-1 in order, no holes) with
+ * only ints, unboxed; an {@code Object[]} while it is packed with other values; a {@link Hash} once a string key,
+ * a non-sequential int key or a removal from the middle forces it. Nodes specialize on the store's class, so a
+ * site compiles only the strategies it has met. An int element of a {@code long[]} needs no checks for nested
+ * arrays (holders) or references on its way in or out.
  *
  * <p>Value semantics use copy-on-write keyed on {@link #holders}: the number of slots (variables, elements,
  * properties, references) that hold this array. It may overestimate (heap slots only ever add), never
@@ -28,7 +28,7 @@ import java.util.Arrays;
  */
 public final class PhpArray implements TruffleObject {
     private static final int MIN_CAPACITY = 8;
-    /** The storage of a new empty array: an array that never gets an element allocates none. */
+    /** The store of a new empty array: an array that never gets an element allocates none. */
     private static final long[] NO_LONGS = new long[0];
 
     private int holders;
@@ -40,22 +40,9 @@ public final class PhpArray implements TruffleObject {
      */
     private boolean mayHoldRefs;
 
-    /** Packed values, or null in hash layout and while the values are all ints (then {@link #longs}). */
-    private Object[] packed;
-    /** Packed int values, or null; at most one of packed and longs is set, neither in hash layout. */
-    private long[] longs;
+    /** The elements: a long[] or an Object[] (packed; the capacity is its length), or a {@link Hash}. */
+    private Object store;
     private int size;
-
-    /**
-     * Hash layout: slot keys (null = deleted), their hashes (compared before the keys), slot values, bucket heads
-     * and chains, and the slots used including deleted ones. keys is null exactly when the array is packed.
-     */
-    private Object[] keys;
-    private int[] hashes;
-    private Object[] values;
-    private int[] buckets;
-    private int[] chain;
-    private int used;
 
     /** Next key for an append: one more than the largest int key ever used, as in php-src. */
     private long nextIndex;
@@ -64,11 +51,11 @@ public final class PhpArray implements TruffleObject {
     private int pointer;
 
     public PhpArray() {
-        this.longs = NO_LONGS;
+        this.store = NO_LONGS;
     }
 
     private PhpArray(int capacity) {
-        this.packed = new Object[Math.max(capacity, 1)];
+        this.store = new Object[Math.max(capacity, 1)];
     }
 
     public static PhpArray ofCapacity(int capacity) {
@@ -154,37 +141,34 @@ public final class PhpArray implements TruffleObject {
         copy.nextIndex = nextIndex;
         copy.pointer = pointer;
         copy.mayHoldRefs = mayHoldRefs;
-        if (longs != null) {
-            copy.packed = null;
-            copy.longs = longs.length == 0 ? NO_LONGS : longs.clone();
-        } else if (packed != null) {
-            copy.packed = Arrays.copyOf(packed, Math.max(packed.length, MIN_CAPACITY));
+        if (store instanceof long[] longs) {
+            copy.store = longs.length == 0 ? NO_LONGS : longs.clone();
+        } else if (store instanceof Object[] packed) {
+            Object[] values = Arrays.copyOf(packed, Math.max(packed.length, MIN_CAPACITY));
             for (int i = 0; i < size; i++) {
-                if (packed[i] instanceof PhpRef ref) {
-                    copy.packed[i] = ref.copyElement(this, holders > 0);
-                }
-                if (copy.packed[i] instanceof PhpArray nested) {
-                    nested.addHolder();
-                }
+                copyElement(values, i);
             }
+            copy.store = values;
         } else {
-            copy.packed = null;
-            copy.keys = keys.clone();
-            copy.hashes = hashes.clone();
-            copy.values = values.clone();
-            copy.buckets = buckets.clone();
-            copy.chain = chain.clone();
-            copy.used = used;
-            for (int i = 0; i < used; i++) {
-                if (keys[i] != null && values[i] instanceof PhpRef ref) {
-                    copy.values[i] = ref.copyElement(this, holders > 0);
-                }
-                if (keys[i] != null && copy.values[i] instanceof PhpArray nested) {
-                    nested.addHolder();
+            Hash hash = ((Hash) store).copy();
+            for (int i = 0; i < hash.used; i++) {
+                if (hash.keys[i] != null) {
+                    copyElement(hash.values, i);
                 }
             }
+            copy.store = hash;
         }
         return copy;
+    }
+
+    /** An element of a fresh copy: a reference only this array holds becomes a value, a nested array gains one. */
+    private void copyElement(Object[] values, int i) {
+        if (values[i] instanceof PhpRef ref) {
+            values[i] = ref.copyElement(this, holders > 0);
+        }
+        if (values[i] instanceof PhpArray nested) {
+            nested.addHolder();
+        }
     }
 
     // ---- reads ----
@@ -194,22 +178,23 @@ public final class PhpArray implements TruffleObject {
     }
 
     public boolean isPacked() {
-        return keys == null;
+        return !(store instanceof Hash);
     }
 
     /** The value (possibly a PhpRef) under a normalized key, or null when absent. */
     public Object getRaw(Object key) {
-        if (keys == null) {
-            if (key instanceof Long index) {
-                long i = index;
-                if (i < 0 || i >= size) {
-                    return null;
-                }
-                return longs != null ? (Object) longs[(int) i] : packed[(int) i];
-            }
-            return null;
+        Object elements = store;
+        if (elements instanceof Hash hash) {
+            return hashGet(hash, key);
         }
-        return hashGet(key);
+        if (key instanceof Long index) {
+            long i = index;
+            if (i < 0 || i >= size) {
+                return null;
+            }
+            return elements instanceof long[] longs ? (Object) longs[(int) i] : ((Object[]) elements)[(int) i];
+        }
+        return null;
     }
 
     /** The dereferenced value under a normalized key, or null when absent. */
@@ -222,18 +207,18 @@ public final class PhpArray implements TruffleObject {
     }
 
     /**
-     * The hash-layout slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} and {@link #rawAt}
-     * a lookup site can remember where a key was and confirm it next time with one identity check: arrays built
-     * the same way keep a key at the same slot.
+     * The hash slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} and {@link #rawAt} a lookup
+     * site can remember where a key was and confirm it next time with one identity check: arrays built the same
+     * way keep a key at the same slot.
      */
     @TruffleBoundary
     public int slotOf(Object key) {
-        return keys == null ? -1 : find(key, hash(key));
+        return store instanceof Hash hash ? hash.find(key, hash(key)) : -1;
     }
 
     /** Whether slot holds this very key instance (a cheap check of a remembered slotOf result). */
     public boolean isKeyAt(int slot, Object key) {
-        return keys != null && slot >= 0 && slot < used && keys[slot] == key;
+        return store instanceof Hash hash && slot >= 0 && slot < hash.used && hash.keys[slot] == key;
     }
 
     /**
@@ -241,20 +226,20 @@ public final class PhpArray implements TruffleObject {
      * PHP functions, one copy per element read.
      */
     @TruffleBoundary
-    private Object hashGet(Object key) {
-        int slot = find(key, hash(key));
-        return slot < 0 ? null : values[slot];
+    private static Object hashGet(Hash hash, Object key) {
+        int slot = hash.find(key, hash(key));
+        return slot < 0 ? null : hash.values[slot];
     }
 
     // ---- writes (callers have made this array exclusive) ----
 
     /** Stores under a normalized key, keeping references: a PhpRef slot receives the value. */
     public void put(Object key, Object value) {
-        if (keys == null && key instanceof Long index) {
+        if (!(store instanceof Hash) && key instanceof Long index) {
             long i = index;
             boolean inPlace = i >= 0 && i < size;
             if (inPlace || (i == size && i >= nextIndex)) {
-                if (longs != null) {
+                if (store instanceof long[] longs) {
                     if (value instanceof Long number) {
                         if (inPlace) {
                             longs[(int) i] = number;
@@ -266,6 +251,7 @@ public final class PhpArray implements TruffleObject {
                     toObjects();
                 }
                 if (inPlace) {
+                    Object[] packed = (Object[]) store;
                     Object old = packed[(int) i];
                     if (old instanceof PhpRef ref) {
                         ref.set(value);
@@ -286,26 +272,26 @@ public final class PhpArray implements TruffleObject {
 
     /** Whether the array is packed with only ints, stored unboxed (the int strategy). */
     public boolean holdsLongs() {
-        return longs != null;
+        return store instanceof long[];
     }
 
     /** Whether index holds an unboxed int (the int strategy); {@link #longAt} then reads it. */
     public boolean holdsLongAt(long index) {
-        return longs != null && index >= 0 && index < size;
+        return store instanceof long[] && index >= 0 && index < size;
     }
 
     public long longAt(long index) {
-        return longs[(int) index];
+        return ((long[]) store)[(int) index];
     }
 
     /** Replaces the int at an index that {@link #holdsLongAt}. */
     public void setLongAt(long index, long value) {
-        longs[(int) index] = value;
+        ((long[]) store)[(int) index] = value;
     }
 
     /** put() of an int, which stays unboxed while the array holds only ints. */
     public void putLong(Object key, long value) {
-        if (longs != null && key instanceof Long index) {
+        if (store instanceof long[] longs && key instanceof Long index) {
             long i = index;
             if (i >= 0 && i < size) {
                 longs[(int) i] = value;
@@ -321,7 +307,7 @@ public final class PhpArray implements TruffleObject {
 
     /** append() of an int, which stays unboxed while the array holds only ints. */
     public void appendLong(long value) {
-        if (longs != null && nextIndex == size) {
+        if (store instanceof long[] && nextIndex == size) {
             pushLong(value);
             return;
         }
@@ -335,32 +321,32 @@ public final class PhpArray implements TruffleObject {
         if (holders > 0) {
             ref.bind();
         }
-        if (longs != null) {
+        if (store instanceof long[]) {
             toObjects();
         }
-        if (packed != null && key instanceof Long index && index >= 0 && index < size) {
+        if (store instanceof Object[] packed && key instanceof Long index && index >= 0 && index < size) {
             countOut(packed[(int) (long) index], null);
             packed[(int) (long) index] = ref;
             return;
         }
-        if (packed != null && key instanceof Long index && index == size && index >= nextIndex) {
+        if (store instanceof Object[] && key instanceof Long index && index == size && index >= nextIndex) {
             appendPacked(ref);
             return;
         }
-        toHash();
+        Hash hash = toHash();
         int h = hash(key);
-        int slot = find(key, h);
+        int slot = hash.find(key, h);
         if (slot >= 0) {
-            countOut(values[slot], null);
-            values[slot] = ref;
+            countOut(hash.values[slot], null);
+            hash.values[slot] = ref;
         } else {
-            insert(key, h, ref);
+            insert(hash, key, h, ref);
         }
     }
 
     public void append(Object value) {
-        if (keys == null && nextIndex == size) {
-            if (longs != null) {
+        if (!(store instanceof Hash) && nextIndex == size) {
+            if (store instanceof long[]) {
                 if (value instanceof Long number) {
                     pushLong(number);
                     return;
@@ -380,23 +366,27 @@ public final class PhpArray implements TruffleObject {
             throw new PhpError("Cannot add element to the array as the next element is already occupied");
         }
         countIn(value);
-        toHash();
+        Hash hash = toHash();
         long key = nextIndex;
-        insert(key, hash(key), value);
+        insert(hash, key, hash(key), value);
     }
 
     /** Growth stays inline: out of line, a boundary made short-lived arrays escape (slugs +27%, kses +16%). */
     private void appendPacked(Object value) {
+        Object[] packed = (Object[]) store;
         if (size == packed.length) {
             packed = Arrays.copyOf(packed, size * 2);
+            store = packed;
         }
         packed[size++] = value;
         nextIndex = size;
     }
 
     private void pushLong(long value) {
+        long[] longs = (long[]) store;
         if (size == longs.length) {
             longs = Arrays.copyOf(longs, Math.max(MIN_CAPACITY, size * 2));
+            store = longs;
         }
         longs[size++] = value;
         nextIndex = size;
@@ -405,8 +395,7 @@ public final class PhpArray implements TruffleObject {
     /** Leaves the int strategy for Object[]; inline when empty, the usual case (an array built from scratch). */
     private void toObjects() {
         if (size == 0) {
-            packed = new Object[Math.max(MIN_CAPACITY, longs.length)];
-            longs = null;
+            store = new Object[Math.max(MIN_CAPACITY, ((long[]) store).length)];
             return;
         }
         boxLongs();
@@ -414,44 +403,45 @@ public final class PhpArray implements TruffleObject {
 
     @TruffleBoundary
     private void boxLongs() {
+        long[] longs = (long[]) store;
         Object[] boxed = new Object[Math.max(MIN_CAPACITY, longs.length)];
         for (int i = 0; i < size; i++) {
             boxed[i] = longs[i];
         }
-        packed = boxed;
-        longs = null;
+        store = boxed;
     }
 
     @TruffleBoundary
     private void putSlow(Object key, Object value) {
-        toHash();
+        Hash hash = toHash();
         int h = hash(key);
-        int slot = find(key, h);
+        int slot = hash.find(key, h);
         if (slot >= 0) {
-            Object old = values[slot];
+            Object old = hash.values[slot];
             if (old instanceof PhpRef ref) {
                 ref.set(value);
                 return;
             }
             countIn(value);
-            values[slot] = value;
+            hash.values[slot] = value;
             countOut(old, value);
         } else {
             countIn(value);
-            insert(key, h, value);
+            insert(hash, key, h, value);
         }
     }
 
     @TruffleBoundary
     public void remove(Object key) {
-        if (keys == null) {
+        if (!(store instanceof Hash)) {
             if (!(key instanceof Long index) || index < 0 || index >= size) {
                 return;
             }
             if (index == size - 1) {
-                if (longs != null) {
+                if (store instanceof long[]) {
                     size--;
                 } else {
+                    Object[] packed = (Object[]) store;
                     countOut(packed[size - 1], null);
                     packed[--size] = null;
                 }
@@ -460,28 +450,18 @@ public final class PhpArray implements TruffleObject {
                 }
                 return;
             }
-            toHash();
         }
-        int h = hash(key);
-        int bucket = h & (buckets.length - 1);
-        int previous = -1;
-        for (int slot = buckets[bucket]; slot >= 0; slot = chain[slot]) {
-            if (keyEquals(keys[slot], key)) {
-                if (previous < 0) {
-                    buckets[bucket] = chain[slot];
-                } else {
-                    chain[previous] = chain[slot];
-                }
-                countOut(values[slot], null);
-                keys[slot] = null;
-                values[slot] = null;
-                size--;
-                if (pointer == slot) {
-                    pointer = nextPosition(slot);
-                }
-                return;
-            }
-            previous = slot;
+        Hash hash = toHash();
+        int slot = hash.unlink(key, hash(key));
+        if (slot < 0) {
+            return;
+        }
+        countOut(hash.values[slot], null);
+        hash.keys[slot] = null;
+        hash.values[slot] = null;
+        size--;
+        if (pointer == slot) {
+            pointer = nextPosition(slot);
         }
     }
 
@@ -551,15 +531,16 @@ public final class PhpArray implements TruffleObject {
      * goes back to the start and a popped trailing int key is reused by the next append. Packed arrays pop inline.
      */
     public Object pop() {
-        if (keys == null) {
+        if (!(store instanceof Hash)) {
             if (size == 0) {
                 return PhpNull.NULL;
             }
             int last = --size;
             Object value;
-            if (longs != null) {
+            if (store instanceof long[] longs) {
                 value = longs[last];
             } else {
+                Object[] packed = (Object[]) store;
                 Object raw = packed[last];
                 packed[last] = null;
                 countOut(raw, null);
@@ -579,11 +560,12 @@ public final class PhpArray implements TruffleObject {
      * the internal pointer goes back to the start. A packed list shifts its elements inline.
      */
     public void prepend(Object value) {
-        if (keys == null && nextIndex == size) {
-            if (longs != null) {
+        if (!(store instanceof Hash) && nextIndex == size) {
+            if (store instanceof long[] longs) {
                 if (value instanceof Long number) {
                     if (size == longs.length) {
                         longs = Arrays.copyOf(longs, Math.max(MIN_CAPACITY, size * 2));
+                        store = longs;
                     }
                     System.arraycopy(longs, 0, longs, 1, size);
                     longs[0] = number;
@@ -595,8 +577,10 @@ public final class PhpArray implements TruffleObject {
                 toObjects();
             }
             countIn(value);
+            Object[] packed = (Object[]) store;
             if (size == packed.length) {
                 packed = Arrays.copyOf(packed, Math.max(MIN_CAPACITY, size * 2));
+                store = packed;
             }
             System.arraycopy(packed, 0, packed, 1, size);
             packed[0] = value;
@@ -620,15 +604,8 @@ public final class PhpArray implements TruffleObject {
                 rebuilt.put(key, valueAt(p));
             }
         }
-        packed = rebuilt.packed;
-        longs = rebuilt.longs;
+        store = rebuilt.store;
         size = rebuilt.size;
-        keys = rebuilt.keys;
-        hashes = rebuilt.hashes;
-        values = rebuilt.values;
-        buckets = rebuilt.buckets;
-        chain = rebuilt.chain;
-        used = rebuilt.used;
         nextIndex = rebuilt.nextIndex;
         pointer = firstPosition();
     }
@@ -681,26 +658,26 @@ public final class PhpArray implements TruffleObject {
     // ---- iteration: positions are packed indexes or hash slots; -1 is the end ----
 
     public int firstPosition() {
-        if (keys == null) {
-            return size > 0 ? 0 : -1;
+        if (store instanceof Hash hash) {
+            return hash.nextUsed(0);
         }
-        return nextUsed(0);
+        return size > 0 ? 0 : -1;
     }
 
     public int nextPosition(int position) {
-        if (keys == null) {
-            return position + 1 < size ? position + 1 : -1;
+        if (store instanceof Hash hash) {
+            return hash.nextUsed(position + 1);
         }
-        return nextUsed(position + 1);
+        return position + 1 < size ? position + 1 : -1;
     }
 
     @TruffleBoundary
     public int lastPosition() {
-        if (keys == null) {
+        if (!(store instanceof Hash hash)) {
             return size - 1;
         }
-        for (int i = used - 1; i >= 0; i--) {
-            if (keys[i] != null) {
+        for (int i = hash.used - 1; i >= 0; i--) {
+            if (hash.keys[i] != null) {
                 return i;
             }
         }
@@ -709,20 +686,11 @@ public final class PhpArray implements TruffleObject {
 
     @TruffleBoundary
     public int previousPosition(int position) {
-        if (keys == null) {
+        if (!(store instanceof Hash hash)) {
             return position - 1;
         }
         for (int i = position - 1; i >= 0; i--) {
-            if (keys[i] != null) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private int nextUsed(int from) {
-        for (int i = from; i < used; i++) {
-            if (keys[i] != null) {
+            if (hash.keys[i] != null) {
                 return i;
             }
         }
@@ -734,44 +702,51 @@ public final class PhpArray implements TruffleObject {
         if (position < 0) {
             return false;
         }
-        return keys == null ? position < size : position < used && keys[position] != null;
+        if (store instanceof Hash hash) {
+            return position < hash.used && hash.keys[position] != null;
+        }
+        return position < size;
     }
 
     public Object keyAt(int position) {
-        return keys == null ? (Object) (long) position : keys[position];
+        return store instanceof Hash hash ? hash.keys[position] : (Object) (long) position;
     }
 
     public Object rawAt(int position) {
-        if (keys == null) {
-            return longs != null ? (Object) longs[position] : packed[position];
+        Object elements = store;
+        if (elements instanceof long[] longs) {
+            return longs[position];
         }
-        return values[position];
+        if (elements instanceof Object[] packed) {
+            return packed[position];
+        }
+        return ((Hash) elements).values[position];
     }
 
     public Object valueAt(int position) {
         return PhpRef.deref(rawAt(position));
     }
 
-    // ---- per-layout iteration, for sites that profile the layout (foreach); callers check the layout first ----
+    // ---- per-strategy iteration, for sites that specialize on the store (foreach); callers check it first ----
 
     /** Whether the array is packed with an Object[] (not the int strategy, not hashed). */
     public boolean holdsObjects() {
-        return packed != null;
+        return store instanceof Object[];
     }
 
     /** The raw element at a position of an Object[]-packed array. */
     public Object packedAt(int position) {
-        return packed[position];
+        return ((Object[]) store)[position];
     }
 
     /** The key at a position of a hashed array. */
     public Object hashKeyAt(int position) {
-        return keys[position];
+        return ((Hash) store).keys[position];
     }
 
     /** The raw value at a position of a hashed array. */
     public Object hashValueAt(int position) {
-        return values[position];
+        return ((Hash) store).values[position];
     }
 
     /** Makes the element at a position a reference and returns it (foreach by reference). */
@@ -789,13 +764,13 @@ public final class PhpArray implements TruffleObject {
         if (raw instanceof PhpArray array) {
             array.removeHolder();
         }
-        if (longs != null) {
+        if (store instanceof long[]) {
             toObjects();
         }
-        if (packed != null) {
+        if (store instanceof Object[] packed) {
             packed[position] = ref;
         } else {
-            values[position] = ref;
+            ((Hash) store).values[position] = ref;
         }
         return ref;
     }
@@ -808,45 +783,34 @@ public final class PhpArray implements TruffleObject {
         pointer = position;
     }
 
-    // ---- hash layout ----
+    // ---- the hash strategy ----
 
+    /** The store as a Hash, converting a packed one: its index i becomes slot i, so positions stay valid. */
     @TruffleBoundary
-    private void toHash() {
-        if (keys != null) {
-            return;
+    private Hash toHash() {
+        if (store instanceof Hash hash) {
+            return hash;
         }
-        if (longs != null) {
+        if (store instanceof long[]) {
             boxLongs();
         }
-        Object[] old = packed;
+        Object[] old = (Object[]) store;
         int count = size;
-        int capacity = Integer.highestOneBit(Math.max(MIN_CAPACITY, count * 2) - 1) << 1;
-        keys = new Object[capacity];
-        hashes = new int[capacity];
-        values = new Object[capacity];
-        chain = new int[capacity];
-        buckets = new int[capacity];
-        Arrays.fill(buckets, -1);
-        used = 0;
-        packed = null;
-        size = 0;
+        Hash hash = new Hash(Integer.highestOneBit(Math.max(MIN_CAPACITY, count * 2) - 1) << 1);
         for (int i = 0; i < count; i++) {
-            Long key = (long) i;
-            insert(key, hash(key), old[i]);
+            long key = i;
+            hash.add(key, hash(key), old[i]);
         }
+        store = hash;
+        return hash;
     }
 
-    private void insert(Object key, int h, Object value) {
-        if (used == keys.length) {
-            grow();
+    private void insert(Hash hash, Object key, int h, Object value) {
+        Hash target = hash;
+        if (target.used == target.keys.length) {
+            target = grow(target);
         }
-        int slot = used++;
-        keys[slot] = key;
-        hashes[slot] = h;
-        values[slot] = value;
-        int bucket = h & (buckets.length - 1);
-        chain[slot] = buckets[bucket];
-        buckets[bucket] = slot;
+        target.add(key, h, value);
         size++;
         if (key instanceof Long index && index >= nextIndex) {
             nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
@@ -854,52 +818,27 @@ public final class PhpArray implements TruffleObject {
     }
 
     /** Doubles capacity, or just compacts when many slots are deleted; keeps order and fixes the pointer. */
-    private void grow() {
-        int capacity = size * 2 >= keys.length ? keys.length * 2 : keys.length;
-        Object[] oldKeys = keys;
-        int[] oldHashes = hashes;
-        Object[] oldValues = values;
-        int oldUsed = used;
+    private Hash grow(Hash old) {
+        Hash grown = new Hash(size * 2 >= old.keys.length ? old.keys.length * 2 : old.keys.length);
         int oldPointer = pointer;
-        keys = new Object[capacity];
-        hashes = new int[capacity];
-        values = new Object[capacity];
-        chain = new int[capacity];
-        buckets = new int[capacity];
-        Arrays.fill(buckets, -1);
-        used = 0;
-        size = 0;
-        long savedNext = nextIndex;
         pointer = -1;
-        for (int i = 0; i < oldUsed; i++) {
-            if (oldKeys[i] != null) {
+        for (int i = 0; i < old.used; i++) {
+            if (old.keys[i] != null) {
                 if (i == oldPointer) {
-                    pointer = used;
+                    pointer = grown.used;
                 }
-                insert(oldKeys[i], oldHashes[i], oldValues[i]);
+                grown.add(old.keys[i], old.hashes[i], old.values[i]);
             }
         }
-        nextIndex = savedNext;
+        store = grown;
+        return grown;
     }
 
-    private int find(Object key, int h) {
-        for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
-            if (hashes[slot] == h && keyEquals(keys[slot], key)) {
-                return slot;
-            }
-        }
-        return -1;
-    }
-
+    /** php-src's hash of an int key is the int itself; TruffleString caches its own hash code. */
     private static int hash(Object key) {
         if (key instanceof Long index) {
-            long v = index;
-            v ^= v >>> 33;
-            v *= 0xff51afd7ed558ccdL;
-            v ^= v >>> 33;
-            return (int) v;
+            return Long.hashCode(index);
         }
-        // TruffleString caches its hash code in the string, so repeated lookups with one key don't rehash
         return key.hashCode();
     }
 
@@ -911,6 +850,110 @@ public final class PhpArray implements TruffleObject {
             return a == b || a.equals(b);
         }
         return false;
+    }
+
+    /**
+     * The hash strategy's store, php-src's layout: slots in insertion order (keys, their hashes, values; a deleted
+     * slot's key is null) and, once there are more than {@link #MIN_CAPACITY} slots, an index of bucket heads with
+     * a chain per slot. Below that a lookup scans the hashes, as TruffleRuby's packed hashes do: most hashed PHP
+     * arrays are small records, which then also copy as three arrays instead of five.
+     */
+    private static final class Hash {
+        final Object[] keys;
+        final int[] hashes;
+        final Object[] values;
+        /** Bucket heads and chains, or null while the store is small. */
+        final int[] buckets;
+        final int[] chain;
+        /** The slots used, including deleted ones. */
+        int used;
+
+        Hash(int capacity) {
+            keys = new Object[capacity];
+            hashes = new int[capacity];
+            values = new Object[capacity];
+            if (capacity > MIN_CAPACITY) {
+                buckets = new int[capacity];
+                Arrays.fill(buckets, -1);
+                chain = new int[capacity];
+            } else {
+                buckets = null;
+                chain = null;
+            }
+        }
+
+        private Hash(Hash original) {
+            keys = original.keys.clone();
+            hashes = original.hashes.clone();
+            values = original.values.clone();
+            buckets = original.buckets == null ? null : original.buckets.clone();
+            chain = original.chain == null ? null : original.chain.clone();
+            used = original.used;
+        }
+
+        Hash copy() {
+            return new Hash(this);
+        }
+
+        /** Appends a slot; the caller has checked there is room. */
+        void add(Object key, int h, Object value) {
+            int slot = used++;
+            keys[slot] = key;
+            hashes[slot] = h;
+            values[slot] = value;
+            if (buckets != null) {
+                int bucket = h & (buckets.length - 1);
+                chain[slot] = buckets[bucket];
+                buckets[bucket] = slot;
+            }
+        }
+
+        int find(Object key, int h) {
+            if (buckets == null) {
+                for (int slot = 0; slot < used; slot++) {
+                    if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                        return slot;
+                    }
+                }
+                return -1;
+            }
+            for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
+                if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                    return slot;
+                }
+            }
+            return -1;
+        }
+
+        /** Finds key and takes its slot out of the index (the caller clears the slot); -1 if absent. */
+        int unlink(Object key, int h) {
+            if (buckets == null) {
+                return find(key, h);
+            }
+            int bucket = h & (buckets.length - 1);
+            int previous = -1;
+            for (int slot = buckets[bucket]; slot >= 0; slot = chain[slot]) {
+                if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                    if (previous < 0) {
+                        buckets[bucket] = chain[slot];
+                    } else {
+                        chain[previous] = chain[slot];
+                    }
+                    return slot;
+                }
+                previous = slot;
+            }
+            return -1;
+        }
+
+        int nextUsed(int from) {
+            for (int i = from; i < used; i++) {
+                if (keys[i] != null) {
+                    return i;
+                }
+            }
+            return -1;
+        }
     }
 
     @Override
