@@ -119,3 +119,24 @@ The order for the rest of Gate 2:
    - The Gate 0 oracle is nginx + php-fpm: the same nginx with `fastcgi_pass` to either backend makes the comparison exact, which is Gate 3's drop-in setup.
    - Vert.x is an event loop and PHP code blocks (JDBC, files, `sleep`): every request would need `executeBlocking`. A context per request fits a thread per request, on virtual threads.
    - The CGI runner moves out of `HttpMain` into one class both servers call. `HttpMain` stays as the `php -S` of tests, on virtual threads. No server SPI: the server embeds the language, not the other way round, and a separate main per server is enough. Jetty only if a concrete need comes (a production server without nginx).
+
+## D12: TRegex beside PCRE2, chosen per pattern (2026-10-26)
+**Decision:** PCRE2 stays the reference engine and the fallback (D7). A pattern in a syntax subset that means the same in TRegex and in PCRE also gets a TRegex regex. While it is hot, its first matches run on both engines. It keeps TRegex when that is clearly faster (at least 20%), and the choice is shared by every context of the engine.
+
+**Why:** TRegex as the only engine loses on WordPress's regex-heavy kernels: 7–23× on wpautop, kses and blocks. That comes from a few patterns: long tag-name alternations, `wp_kses_split`'s pattern, lazy quantifiers. On character classes, literals and short anchored patterns it is 2–4× faster than PCRE2 through FFM, and no syntax rule separates the two groups.
+
+Simulated on the kernels' recorded matches (`exp/tregex`, gate-1.md 2026-10-26), the adaptive choice is within a few percent of a per-pattern oracle:
+- kses' regex time 0.68×;
+- slugs' 0.31×;
+- escape's 0.59×;
+- the rest about 1.0×.
+
+No match differs in any capture group.
+
+**Scope of the product version** (planned, not started):
+- our own parser for the subset (everything else stays on PCRE2; `/u` patterns stay out at first);
+- the empty-match retries on `MustAdvance` and `MatchingMode=match`;
+- TRegex called from a node through cached interop;
+- shadowing only hot patterns.
+
+A PCRE flavor for TRegex (its flavors are pluggable) is not the goal: it would add the constructs TRegex's engine lacks (conditionals, recursion, variable-width lookbehind), not speed.

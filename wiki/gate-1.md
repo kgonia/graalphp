@@ -371,7 +371,8 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - **Cached interop from a node**, so a preg call doesn't pay uncached dispatch.
     - **Language-level decisions shared by contexts.**
     - **Shadowing only hot patterns**, to bound TRegex's compile time and memory.
-  - **Next:**
-    - the hash lookups that stay out of line, and holder counting;
-    - `.=` and flattening of lazy concatenations (blocks);
-    - a re-measurement against PHP in a quiet window.
+  - **State at the end of the day, and next:**
+    - **Arrays:** strategy stores are in (`68ebd0d`–`bb2f5d4`). Still open: the hash lookups that stay out of line, holder counting, and copy-on-write copies.
+    - **Regex:** PCRE2 through FFM. TRegex beside it, chosen per pattern, is decided ([D12](decisions.md)) but not built; the experiment stays on `exp/tregex`. Front-end costs are measured and need no change now.
+    - **Strings:** in progress, `.=` and flattening of lazy concatenations (27% of blocks).
+    - **Pending:** a re-measurement against PHP in a quiet window. The last comparable number is still 0.70× end to end and 0.58× on PHP code (2026-10-23).
