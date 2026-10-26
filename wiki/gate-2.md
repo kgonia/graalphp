@@ -203,3 +203,43 @@ Still open, found on the way:
 - an alias compiled in (`key_exists`, `join`, `chop`, `sizeof`) is listed and named in messages under the function it aliases;
 - built-ins' TypeError messages say "integer given" where php-src says "int", and `array_key_exists`'s omits the type;
 - a -d or php.ini value is not run through the ini parser: `error_reporting=E_ALL & ~E_NOTICE` is read as 0.
+
+## Milestones: the installer and the wp-admin login (2026-10-26)
+
+`tests/gate2/http.sh install` and `tests/gate2/http.sh login` (after `start`) drive both engines through the same requests. Each engine works in a database of its own (`wp_install_truffle`, `wp_install_php`), named by an `X-Gate2-Db` header that the test's `wp-config.php` honours only for those two names:
+- **install:** each engine installs WordPress through `wp-admin/install.php` into an empty database: the welcome page, step 1, and the form post of step 2. The three pages are compared, then the two databases are dumped and compared, with times and the password hashes (random salts) masked.
+- **login:** each engine logs in to the site it installed, with a cookie jar of its own. The redirect is compared, then seven wp-admin pages: the dashboard, posts, a new post (the block editor's bootstrap), general settings, users, plugins and the profile. A login to the wp-cli site checks a password hash that regular PHP made.
+
+The comparison:
+- masks nonces (a logged-in user's depend on the random session token), times, the post date's seconds and the post lock, and generated passwords;
+- compares status codes, not reason phrases: the JDK server's phrase for 302 is "Temporary Redirect";
+- runs with `WP_HTTP_BLOCK_EXTERNAL`, which keeps api.wordpress.org's answers out of it (the update checks, the PHP and browser version checks).
+
+**Result at `2c018b0`, and at `3782f7e`:** the installer's three pages and the database (134 rows) are identical. The login redirect is identical, and so are the dashboard, posts, users and profile pages. Three pages still differ:
+- a new post and general settings, in the upload settings only: PHP has GD, so `wp_image_editor_supports()` accepts WebP and AVIF, and Truffle PHP has no image editor;
+- plugins: the filesystem credentials form offers FTP on PHP only. `get_filesystem_method()` finds `fsockopen`, and Truffle PHP has no sockets.
+
+The 9 public pages and the 2 fatal error pages are as before.
+
+What the installer and wp-admin needed, in the order they hit it:
+
+| Commit | What |
+|---|---|
+| `55f0127` | `password_hash` and its family, and `crypt()` for bcrypt. `Bcrypt.java` is a port of crypt_blowfish.c with the `$2a$`/`$2b$`/`$2x$`/`$2y$` variants and the sign-extension safety. WordPress 6.8+ hashes with bcrypt; the default cost is 12 since PHP 8.4. |
+| `e5e3587`, `5c59843` | `http_build_query` (http.c), with `arg_separator.output`. Core's ini directives WordPress reads (`memory_limit`, `upload_max_filesize`, `post_max_size`...) get php-src's defaults and access levels: `ini_get()` gave false, so `wp_max_upload_size()` was 0 B. |
+| `5e4c6e0` | **An included file runs in the including scope** (zend_attach_symbol_table). It used to run in the global scope: `wp_get_wp_version()` (`static $wp_version; require version.php`) returned null, and template parts never saw `load_template()`'s `$args`. A call's variables are its frame slots, reached by name through the materialized frame (`IncludeScope`); names it has no slot for live in the call's table. `$this`, the static class and the class scope carry over, and `global`, `compact()` and `extract()` in the included file act on that scope. |
+| `6758730` | By-reference parameters through unpacked arguments (ZEND_SEND_UNPACK) and by-reference variadics. `Walker::walk` passes `&$output` with `...array_values($args)`, so category lists were empty. |
+| `d9d77c5` | **Property visibility.** It was never checked, so the magic methods of an inaccessible property never ran: `WP_Block_Type`'s private `$variations`, behind `__get`/`__isset`, was missing from the block editor. Protected properties, and the private ones of an object's own class, carry shape flags. Only those sites check the calling scope: a closure's bound scope, the scope a file was included into, else the lexical class. From a scope that may not access a property, it gets the magic methods, else php-src's Error. `get_object_vars()` called directly and `foreach` over an object see what the scope may access (`Requests\Iri::__get` relies on it). |
+
+Gate 1 kernels (interleaved, 8 rounds, CPUs 14–21; median of per-round ratios):
+- The series up to the spread commit, against `3c77dd2`: neutral. Hooks 1.02, escape 1.00, slugs 0.93, wpautop 0.96, wptexturize 1.00, blocks 0.99, kses 1.00.
+- The visibility checks against the commit before them: hooks 1.04 (IQR 1.04–1.07) and kses 1.05, because `WP_Hook`'s private properties are read on every dispatch. A site in a method now takes its scope from its code, not the frame, and `$this->protected` needs no check. With that, hooks is 1.01 and kses 1.03 (1.01–1.04), escape 1.03, slugs 1.02, wpautop 0.97, blocks 1.00. wptexturize measured 1.06 (1.04–1.10); it is bimodal (see above), so it needs a run of its own.
+
+Gaps found on the way, not fixed yet:
+- `Closure` is no class: `Closure::bind`, `bindTo`, `call` and `fromCallable` are missing;
+- arithmetic on a non-numeric string returns as if it were 0, where PHP 8 throws `TypeError: Unsupported operand types: string + int`;
+- argon2, and `crypt()` with MD5, SHA-256, SHA-512 and DES salts;
+- `fsockopen`/`stream_socket_client` and so any HTTP transport (`WP_Http` reports "No working transports found"), and GD;
+- `get_object_vars` called as a callback, `get_class_vars`, `(array)` casts and `var_dump` don't mangle or annotate non-public properties by scope;
+- a private property declared again by a subclass shares one slot with the parent's;
+- static properties' visibility isn't checked.
