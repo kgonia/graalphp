@@ -2,15 +2,30 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Set;
 
-/** parse_url (a port of ext/standard/url.c) and parse_str (after main/php_variables.c, simplified). */
+/**
+ * parse_url (a port of ext/standard/url.c), parse_str (after main/php_variables.c, simplified) and http_build_query
+ * (ext/standard/http.c).
+ */
 final class UrlFunctions {
     private UrlFunctions() {
     }
@@ -328,5 +343,102 @@ final class UrlFunctions {
             }
         }
         return result;
+    }
+
+    /** PHP_QUERY_RFC3986: rawurlencode's encoding (PHP_QUERY_RFC1738, urlencode's, is the default). */
+    private static final long QUERY_RFC3986 = 2;
+
+    /** http_build_query(array|object $data, string $numeric_prefix = "", ?string $arg_separator, int $encoding_type). */
+    @TruffleBoundary
+    static TruffleString httpBuildQuery(PhpContext context, Object[] a) {
+        Object data = Args.get(a, 0, PhpNull.NULL);
+        if (!(data instanceof PhpArray) && !(data instanceof PhpObject)) {
+            throw new PhpError("TypeError", "http_build_query(): Argument #1 ($data) must be of type array, "
+                    + Convert.typeName(data) + " given");
+        }
+        byte[] numericPrefix = Args.has(a, 1) ? Str.bytes(Args.str(a, 1)) : null;
+        Object separator = Args.get(a, 2, PhpNull.NULL);
+        byte[] argSeparator = separator == PhpNull.NULL
+                ? context.ini().argSeparatorOutput().getBytes(StandardCharsets.UTF_8)
+                : Str.bytes(Convert.toStr(separator));
+        ByteBuilder query = new ByteBuilder();
+        encodeQuery(query, data, numericPrefix, null, argSeparator, Args.lng(a, 3, 1) == QUERY_RFC3986,
+                Collections.newSetFromMap(new IdentityHashMap<>()));
+        return Str.of(query.toByteArray());
+    }
+
+    /**
+     * php_url_encode_hash_ex: each entry of an array, or each public property of an object, as key=value; arrays and
+     * objects in it nest as key[inner]. A container already being encoded on this path is skipped (GC_IS_RECURSIVE).
+     */
+    private static void encodeQuery(ByteBuilder query, Object data, byte[] numericPrefix, byte[] keyPrefix,
+                                    byte[] argSeparator, boolean raw, Set<Object> encoding) {
+        if (!encoding.add(data)) {
+            return;
+        }
+        List<Object> keys = new ArrayList<>();
+        List<Object> values = new ArrayList<>();
+        if (data instanceof PhpArray array) {
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                keys.add(array.keyAt(p));
+                values.add(PhpRef.deref(array.valueAt(p)));
+            }
+        } else {
+            PhpObject object = (PhpObject) data;
+            for (Object name : object.propertyNames()) {
+                String property = (String) name;
+                if (object.getPhpClass().isPublicProperty(property)) {
+                    keys.add(Str.ofKey(property));
+                    values.add(PhpRef.deref(object.getProperty(property)));
+                }
+            }
+        }
+        for (int i = 0; i < keys.size(); i++) {
+            Object key = keys.get(i);
+            Object value = values.get(i);
+            if (value instanceof PhpArray || value instanceof PhpObject) {
+                ByteBuilder prefix = new ByteBuilder();
+                if (keyPrefix != null) {
+                    prefix.write(keyPrefix);
+                }
+                if (key instanceof TruffleString name) {
+                    prefix.write(StringFunctions.urlencode(name, raw));
+                } else {
+                    if (numericPrefix != null) {
+                        prefix.write(numericPrefix);
+                    }
+                    prefix.write(Str.of(key.toString()));
+                }
+                prefix.write(Str.of(keyPrefix != null ? "%5D%5B" : "%5B"));
+                encodeQuery(query, value, null, prefix.toByteArray(), argSeparator, raw, encoding);
+            } else if (value != PhpNull.NULL && !(value instanceof PhpResource)) {
+                if (query.size() > 0) {
+                    query.write(argSeparator);
+                }
+                if (keyPrefix != null) {
+                    query.write(keyPrefix);
+                }
+                if (key instanceof TruffleString name) {
+                    query.write(StringFunctions.urlencode(name, raw));
+                } else {
+                    if (numericPrefix != null) {
+                        query.write(numericPrefix);
+                    }
+                    query.write(Str.of(key.toString()));
+                }
+                if (keyPrefix != null) {
+                    query.write(Str.of("%5D"));
+                }
+                query.write('=');
+                if (value instanceof Boolean b) {
+                    query.write(b ? '1' : '0');
+                } else if (value instanceof Long) {
+                    query.write(Str.of(value.toString()));
+                } else {
+                    query.write(StringFunctions.urlencode(Convert.toStr(value), raw));
+                }
+            }
+        }
+        encoding.remove(data);
     }
 }

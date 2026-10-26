@@ -155,6 +155,7 @@ public final class StringFunctions {
             return PhpNull.NULL;
         });
         r.fn("parse_url", a -> UrlFunctions.parseUrl(Args.str(a, 0), Args.lng(a, 1, -1)));
+        r.fn("http_build_query", UrlFunctions::httpBuildQuery);
         r.fn("pack", a -> Pack.pack(a));
         r.fn("unpack", a -> Pack.unpack(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0)));
         r.fn("dirname", a -> dirname(Args.str(a, 0), Args.lng(a, 1, 1)));
