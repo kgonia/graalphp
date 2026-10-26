@@ -65,16 +65,21 @@ public final class ForeachNode extends StmtNode {
                 return false;
             }
             PhpArray array = (PhpArray) frame.getObject(arraySlot);
+            int next;
             if (byRef) {
                 bind.writeKey(frame, array.keyAt(p));
                 bind.bindRef(frame, array.refAtPosition(p));
+                if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
+                    return false;
+                }
+                // by reference the body may change the array, so the next position is found after it
+                next = array.nextPosition(p);
             } else {
-                bind.execute(frame, array, p);
+                next = bind.execute(frame, array, p);
+                if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
+                    return false;
+                }
             }
-            if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
-                return false;
-            }
-            int next = array.nextPosition(p);
             frame.setInt(positionSlot, next);
             return next >= 0;
         }
@@ -96,11 +101,14 @@ public final class ForeachNode extends StmtNode {
             this.valueList = valueList;
         }
 
-        /** Binds key and value of the element at position p. */
-        abstract void execute(VirtualFrame frame, PhpArray array, int p);
+        /**
+         * Binds key and value of the element at position p and returns the next position (-1 at the end), found by
+         * the same layout: by value the loop holds the array, so the body can't change it.
+         */
+        abstract int execute(VirtualFrame frame, PhpArray array, int p);
 
         @Specialization(guards = "array.holdsLongs()")
-        protected void longs(VirtualFrame frame, PhpArray array, int p) {
+        protected int longs(VirtualFrame frame, PhpArray array, int p) {
             if (keyTarget != null) {
                 keyTarget.writeLong(frame, p);
             }
@@ -109,20 +117,23 @@ public final class ForeachNode extends StmtNode {
             } else {
                 valueList.assign(frame, array.longAt(p));
             }
+            return array.nextPackedPosition(p);
         }
 
         @Specialization(guards = "array.holdsObjects()")
-        protected void objects(VirtualFrame frame, PhpArray array, int p) {
+        protected int objects(VirtualFrame frame, PhpArray array, int p) {
             if (keyTarget != null) {
                 keyTarget.writeLong(frame, p);
             }
             assignValue(frame, PhpRef.deref(array.packedAt(p)));
+            return array.nextPackedPosition(p);
         }
 
-        @Specialization(guards = {"!array.holdsLongs()", "!array.holdsObjects()"})
-        protected void hash(VirtualFrame frame, PhpArray array, int p) {
+        @Specialization(guards = "!array.isPacked()")
+        protected int hash(VirtualFrame frame, PhpArray array, int p) {
             writeKey(frame, array.hashKeyAt(p));
             assignValue(frame, PhpRef.deref(array.hashValueAt(p)));
+            return array.nextHashPosition(p);
         }
 
         void writeKey(VirtualFrame frame, Object key) {

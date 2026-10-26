@@ -739,6 +739,16 @@ public final class PhpArray implements TruffleObject {
         return ((Object[]) store)[position];
     }
 
+    /** The position after p in a packed array, or -1 at the end. */
+    public int nextPackedPosition(int position) {
+        return position + 1 < size ? position + 1 : -1;
+    }
+
+    /** The position after p in a hashed array, or -1 at the end. */
+    public int nextHashPosition(int position) {
+        return ((Hash) store).nextUsed(position + 1);
+    }
+
     /** The key at a position of a hashed array. */
     public Object hashKeyAt(int position) {
         return ((Hash) store).keys[position];
@@ -781,6 +791,92 @@ public final class PhpArray implements TruffleObject {
 
     public void setPointer(int position) {
         pointer = position;
+    }
+
+    // ---- small hashes inline, for nodes that specialize on them ----
+
+    /** An empty array with a hash store sized for count distinct keys: a literal's, filled by {@link #addEntry}. */
+    public static PhpArray ofHashCapacity(int count) {
+        PhpArray array = new PhpArray();
+        array.store = new Hash(Math.max(MIN_CAPACITY, Integer.highestOneBit(Math.max(count, 1) - 1) << 1));
+        return array;
+    }
+
+    /** Adds a key the array doesn't hold to an array made by {@link #ofHashCapacity}, with hashOf(key) as h. */
+    public void addEntry(Object key, int h, Object value) {
+        countIn(value);
+        ((Hash) store).add(key, h, value);
+        size++;
+        if (key instanceof Long index && index >= nextIndex) {
+            nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
+        }
+    }
+
+    /** The hash of a normalized key, as the hash store keeps it. */
+    public static int hashOf(Object key) {
+        return hash(key);
+    }
+
+    /** Whether the array is hashed and small enough to have no index: its lookups are cheap enough to inline. */
+    public boolean isSmallHash() {
+        return store instanceof Hash hash && hash.buckets == null;
+    }
+
+    /** Whether the array is empty and not hashed: its first string key makes it a small hash. */
+    public boolean isEmptyPacked() {
+        return size == 0 && !(store instanceof Hash);
+    }
+
+    /**
+     * The slot of a string key (with hash h) in a small hash, or -1. A key written as a literal is usually the very
+     * instance stored, so identity decides before the hashes and contents are compared.
+     */
+    public int smallSlotOf(TruffleString key, int h, TruffleString.EqualNode equal) {
+        Hash hash = (Hash) store;
+        Object[] keys = hash.keys;
+        int[] hashes = hash.hashes;
+        for (int slot = 0; slot < hash.used; slot++) {
+            Object stored = keys[slot];
+            if (stored == key || hashes[slot] == h && stored instanceof TruffleString string
+                    && equal.execute(string, key, Str.ENC)) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    /** Replaces the value at a hash slot, keeping references: a PhpRef slot receives the value. */
+    public void setHashValueAt(int slot, Object value) {
+        Object[] values = ((Hash) store).values;
+        Object old = values[slot];
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        countIn(value);
+        values[slot] = value;
+        countOut(old, value);
+    }
+
+    /**
+     * Adds a string key (with hash h) that a small hash or an empty packed array doesn't hold: inline while the
+     * small store has room, out of line when it has to grow.
+     */
+    public void insertSmall(TruffleString key, int h, Object value) {
+        Hash hash;
+        if (store instanceof Hash existing) {
+            hash = existing;
+            if (hash.used == hash.keys.length) {
+                putSlow(key, value);
+                return;
+            }
+        } else {
+            hash = new Hash(MIN_CAPACITY);
+            store = hash;
+        }
+        countIn(value);
+        hash.add(key, h, value);
+        size++;
     }
 
     // ---- the hash strategy ----

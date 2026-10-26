@@ -79,7 +79,7 @@ public final class ElementNodes {
                 }
                 slotGuess = slot;
             }
-            return PhpRef.deref(array.rawAt(slot));
+            return PhpRef.deref(array.hashValueAt(slot));
         }
     }
 
@@ -104,7 +104,21 @@ public final class ElementNodes {
             return element == null ? PhpNull.NULL : element;
         }
 
-        @Specialization
+        /** A small hash: the scan of its few slots for a string key is inline. */
+        @Specialization(guards = "array.isSmallHash()")
+        protected static Object smallHash(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
+                                          @Cached TruffleString.HashCodeNode hashCode,
+                                          @Cached TruffleString.EqualNode equal) {
+            Object normalized = toKey.execute(key);
+            if (!(normalized instanceof TruffleString string)) {
+                Object element = array.get(normalized);
+                return element == null ? PhpNull.NULL : element;
+            }
+            int slot = array.smallSlotOf(string, hashCode.execute(string, Str.ENC), equal);
+            return slot < 0 ? PhpNull.NULL : PhpRef.deref(array.hashValueAt(slot));
+        }
+
+        @Specialization(replaces = "smallHash")
         protected static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
                                          @Cached SlotCacheNode slots) {
             Object element = slots.lookup(array, toKey.execute(key));
@@ -153,9 +167,29 @@ public final class ElementNodes {
             array.put(index, value);
         }
 
-        @Specialization
+        /** A small hash, or an empty array that a string key makes one: inline while there is room. */
+        @Specialization(guards = "array.isSmallHash() || array.isEmptyPacked()")
+        protected static void smallHash(PhpArray array, Object key, Object value, @Cached ArrayKeyNode toKey,
+                                        @Cached TruffleString.HashCodeNode hashCode,
+                                        @Cached TruffleString.EqualNode equal) {
+            Object normalized = toKey.execute(key);
+            if (!(normalized instanceof TruffleString string)) {
+                array.put(normalized, value);
+                return;
+            }
+            int h = hashCode.execute(string, Str.ENC);
+            int slot = array.isSmallHash() ? array.smallSlotOf(string, h, equal) : -1;
+            if (slot >= 0) {
+                array.setHashValueAt(slot, value);
+            } else {
+                array.insertSmall(string, h, value);
+            }
+        }
+
+        @Specialization(replaces = "smallHash")
         protected static void otherKey(PhpArray array, Object key, Object value, @Cached ArrayKeyNode toKey) {
             array.put(toKey.execute(key), value);
         }
     }
+
 }
