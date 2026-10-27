@@ -395,3 +395,21 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
     - **Regex:** PCRE2 through FFM. TRegex beside it, chosen per pattern, is decided ([D12](decisions.md)) but not built; the experiment stays on `exp/tregex`. Front-end costs are measured and need no change now.
     - **Strings:** `.=` is not a hot spot of the timed kernels (above); no work planned.
     - **Pending:** a re-measurement against PHP in a quiet window. The last comparable number is still 0.70× end to end and 0.58× on PHP code (2026-10-23).
+
+## Quiet-window re-measurement against PHP, with memory (2026-10-27)
+
+`compare.sh all 400` at `cd1eaa6`, CPUs 14–21, PHP and Truffle PHP back to back. Native time is the C replay of the recorded PCRE2 calls; "code" is the ratio with that time taken out of both.
+
+| kernel | PHP ms | Truffle ms | native ms | share | end to end | PHP code |
+|---|---|---|---|---|---|---|
+| hooks | 6.99 | 9.95 | 0.00 | 0% | 0.70× | 0.70× |
+| escape | 1.34 | 1.21 | 0.04 | 3% | 1.11× | 1.11× |
+| slugs | 1.06 | 0.95 | 0.09 | 9% | 1.11× | 1.13× |
+| wpautop | 2.95 | 3.53 | 1.50 | 51% | 0.84× | 0.71× |
+| wptexturize | 1.53 | 2.24 | 0.33 | 22% | 0.68× | 0.63× |
+| blocks | 3.93 | 4.42 | 0.24 | 6% | 0.89× | 0.88× |
+| kses | 12.13 | 18.20 | 1.40 | 12% | 0.67× | 0.64× |
+
+Geomean **0.84× end to end, 0.81× PHP code**, from 0.70× and 0.58× on 2026-10-23. Checksums are the same. Escape and slugs are now faster than PHP's JIT. Hooks, kses and wptexturize are the furthest from 2×.
+
+**Peak memory: PHP 32 MB, Truffle PHP 1534 MB (48.6×).** That is the whole container's cgroup `memory.peak`: the JVM, Graal's compiler, the compiled code and a heap with no limit set. The JVM's default maximum is a quarter of the machine's memory, and a heap that size grows rather than collect. What the heap needs at a set limit (`-Xmx`), and what that limit costs in time, is the next memory measurement.
