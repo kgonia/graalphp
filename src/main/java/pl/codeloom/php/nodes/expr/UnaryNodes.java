@@ -79,7 +79,7 @@ public final class UnaryNodes {
 
         @Fallback
         protected Object other(Object value) {
-            return Operators.negate(value);
+            return Operators.negate(this, value);
         }
 
         protected static final long MIN = Long.MIN_VALUE;
@@ -119,8 +119,8 @@ public final class UnaryNodes {
         }
 
         @Fallback
-        protected long other(Object value) {
-            return ~Convert.toLong(value);
+        protected Object other(Object value) {
+            return Operators.bitNot(this, value);
         }
     }
 

@@ -298,7 +298,7 @@ final class CoreFunctions {
         r.fn("mt_getrandmax", a -> 2147483647L);
         r.fn("getrandmax", a -> 2147483647L);
         r.fn("lcg_value", a -> Math.random());
-        r.fn("pow", a -> pl.codeloom.php.runtime.Operators.pow(Args.get(a, 0), Args.get(a, 1)));
+        r.fn("pow", a -> pl.codeloom.php.runtime.Operators.pow(null, Args.get(a, 0), Args.get(a, 1)));
         r.fn("intdiv", a -> {
             long divisor = Args.lng(a, 1, 1);
             if (divisor == 0) {

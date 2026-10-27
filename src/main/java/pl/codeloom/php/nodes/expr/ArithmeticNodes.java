@@ -45,7 +45,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected Object add(Object a, Object b) {
-            return Operators.add(a, b);
+            return Operators.add(this, a, b);
         }
     }
 
@@ -68,7 +68,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected Object sub(Object a, Object b) {
-            return Operators.sub(a, b);
+            return Operators.sub(this, a, b);
         }
     }
 
@@ -91,7 +91,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected Object mul(Object a, Object b) {
-            return Operators.mul(a, b);
+            return Operators.mul(this, a, b);
         }
     }
 
@@ -112,7 +112,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected Object div(Object a, Object b) {
-            return Operators.div(a, b);
+            return Operators.div(this, a, b);
         }
     }
 
@@ -124,14 +124,14 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected long mod(Object a, Object b) {
-            return Operators.mod(a, b);
+            return Operators.mod(this, a, b);
         }
     }
 
     public abstract static class PowNode extends BinaryNode {
         @Specialization
         protected Object pow(Object a, Object b) {
-            return Operators.pow(a, b);
+            return Operators.pow(this, a, b);
         }
     }
 
@@ -142,8 +142,8 @@ public final class ArithmeticNodes {
         }
 
         @Fallback
-        protected long and(Object a, Object b) {
-            return Convert.toLong(a) & Convert.toLong(b);
+        protected Object and(Object a, Object b) {
+            return Operators.bitwise(this, "&", a, b);
         }
     }
 
@@ -154,8 +154,8 @@ public final class ArithmeticNodes {
         }
 
         @Fallback
-        protected long or(Object a, Object b) {
-            return Convert.toLong(a) | Convert.toLong(b);
+        protected Object or(Object a, Object b) {
+            return Operators.bitwise(this, "|", a, b);
         }
     }
 
@@ -166,8 +166,8 @@ public final class ArithmeticNodes {
         }
 
         @Fallback
-        protected long xor(Object a, Object b) {
-            return Convert.toLong(a) ^ Convert.toLong(b);
+        protected Object xor(Object a, Object b) {
+            return Operators.bitwise(this, "^", a, b);
         }
     }
 
@@ -179,7 +179,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected long shift(Object a, Object b) {
-            return Operators.shiftLeft(Convert.toLong(a), Convert.toLong(b));
+            return Operators.shift(this, "<<", a, b);
         }
     }
 
@@ -191,7 +191,7 @@ public final class ArithmeticNodes {
 
         @Fallback
         protected long shift(Object a, Object b) {
-            return Operators.shiftRight(Convert.toLong(a), Convert.toLong(b));
+            return Operators.shift(this, ">>", a, b);
         }
     }
 

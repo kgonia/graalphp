@@ -166,7 +166,7 @@ final class ArrayFunctions {
             Object total = 0L;
             PhpArray array = Args.array(a, 0, "array_sum");
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                total = pl.codeloom.php.runtime.Operators.add(total, Convert.toNumber(array.valueAt(p)));
+                total = pl.codeloom.php.runtime.Operators.add(null, total, Convert.toNumber(array.valueAt(p)));
             }
             return total;
         });
@@ -227,7 +227,7 @@ final class ArrayFunctions {
             PhpArray array = Args.array(a, 0, "array_product");
             Object product = 1L;
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                product = Operators.mul(product, Convert.toNumber(array.valueAt(p)));
+                product = Operators.mul(null, product, Convert.toNumber(array.valueAt(p)));
             }
             return product;
         });

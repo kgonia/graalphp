@@ -136,6 +136,8 @@ public final class StringFunctions {
                 Args.lng(a, 1, Html.DEFAULT_FLAGS), charsetArg(a, 2)));
         r.fn("strip_tags", a -> StripTags.strip(Args.str(a, 0), Args.get(a, 1)));
         r.fn("nl2br", a -> nl2br(Args.str(a, 0)));
+        r.fn("str_increment", a -> strStep(Args.str(a, 0), true));
+        r.fn("str_decrement", a -> strStep(Args.str(a, 0), false));
         r.fn("rawurlencode", a -> urlencode(Args.str(a, 0), true));
         r.fn("urlencode", a -> urlencode(Args.str(a, 0), false));
         r.fn("rawurldecode", a -> urldecode(Args.str(a, 0), false));
@@ -1030,6 +1032,61 @@ public final class StringFunctions {
             }
         }
         return Str.of(out.toByteArray());
+    }
+
+    /**
+     * str_increment and str_decrement (string.c): an ASCII alphanumeric string stepped as a number in mixed bases,
+     * carrying through z, Z and 9 (increment) or a, A and 0 (decrement).
+     */
+    @TruffleBoundary
+    private static TruffleString strStep(TruffleString string, boolean increment) {
+        String function = increment ? "str_increment" : "str_decrement";
+        byte[] s = Str.readBytes(string).clone();
+        if (s.length == 0) {
+            throw new PhpError("ValueError", function + "(): Argument #1 ($string) must not be empty");
+        }
+        for (byte c : s) {
+            if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9')) {
+                throw new PhpError("ValueError",
+                        function + "(): Argument #1 ($string) must be composed only of alphanumeric ASCII characters");
+            }
+        }
+        if (!increment && s[0] == '0') {
+            throw outOfDecrementRange(string);
+        }
+        int position = s.length - 1;
+        boolean carry;
+        do {
+            byte c = s[position];
+            if (increment) {
+                carry = c == 'z' || c == 'Z' || c == '9';
+                s[position] = !carry ? (byte) (c + 1) : c == '9' ? (byte) '0' : (byte) (c - 25);
+            } else {
+                carry = c == 'a' || c == 'A' || c == '0';
+                s[position] = !carry ? (byte) (c - 1) : c == '0' ? (byte) '9' : (byte) (c + 25);
+            }
+        } while (carry && position-- > 0);
+        if (increment) {
+            if (!carry) {
+                return Str.of(s);
+            }
+            byte[] longer = new byte[s.length + 1];
+            longer[0] = s[0] == '0' ? (byte) '1' : s[0];
+            System.arraycopy(s, 0, longer, 1, s.length);
+            return Str.of(longer);
+        }
+        if (carry || s[0] == '0' && s.length > 1) {
+            if (s.length == 1) {
+                throw outOfDecrementRange(string);
+            }
+            return Str.of(Arrays.copyOfRange(s, 1, s.length));
+        }
+        return Str.of(s);
+    }
+
+    private static PhpError outOfDecrementRange(TruffleString string) {
+        return new PhpError("ValueError", "str_decrement(): Argument #1 ($string) \"" + Str.java(string)
+                + "\" is out of decrement range");
     }
 
     @TruffleBoundary

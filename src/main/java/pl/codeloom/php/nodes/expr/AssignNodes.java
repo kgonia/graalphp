@@ -176,7 +176,7 @@ public final class AssignNodes {
         protected double doubles(VirtualFrame frame, double operand, double current) {
             if (op == 4 && operand == 0) {
                 CompilerDirectives.transferToInterpreter();
-                Operators.div(current, operand); // throws DivisionByZeroError
+                Operators.div(this, current, operand); // throws DivisionByZeroError
             }
             double result = switch (op) {
                 case 1 -> current + operand;
@@ -201,30 +201,30 @@ public final class AssignNodes {
                     if (a instanceof Long x && b instanceof Long y) {
                         return Operators.addLongs(x, y);
                     }
-                    return Operators.add(a, b);
+                    return Operators.add(this, a, b);
                 case 2:
                     if (a instanceof Long x && b instanceof Long y) {
                         return Operators.subLongs(x, y);
                     }
-                    return Operators.sub(a, b);
+                    return Operators.sub(this, a, b);
                 case 3:
-                    return Operators.mul(a, b);
+                    return Operators.mul(this, a, b);
                 case 4:
-                    return Operators.div(a, b);
+                    return Operators.div(this, a, b);
                 case 5:
-                    return Operators.mod(a, b);
+                    return Operators.mod(this, a, b);
                 case 12:
-                    return Operators.pow(a, b);
+                    return Operators.pow(this, a, b);
                 case 9:
-                    return Convert.toLong(a) | Convert.toLong(b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x | y) : Operators.bitwise(this, "|", a, b);
                 case 10:
-                    return Convert.toLong(a) & Convert.toLong(b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x & y) : Operators.bitwise(this, "&", a, b);
                 case 11:
-                    return Convert.toLong(a) ^ Convert.toLong(b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x ^ y) : Operators.bitwise(this, "^", a, b);
                 case 6:
-                    return Operators.shiftLeft(Convert.toLong(a), Convert.toLong(b));
+                    return Operators.shift(this, "<<", a, b);
                 case 7:
-                    return Operators.shiftRight(Convert.toLong(a), Convert.toLong(b));
+                    return Operators.shift(this, ">>", a, b);
                 default:
                     throw unsupportedOperator(op);
             }
@@ -287,15 +287,8 @@ public final class AssignNodes {
                 updated = increment ? Operators.addLongs(l, 1) : Operators.subLongs(l, 1);
             } else if (old instanceof Double d) {
                 updated = increment ? d + 1 : d - 1;
-            } else if (old == PhpNull.NULL) {
-                updated = increment ? (Object) 1L : PhpNull.NULL;
-            } else if (old instanceof TruffleString s && Convert.numericValue(s) != null) {
-                Object number = Convert.numericValue(s);
-                updated = increment ? Operators.add(number, 1L) : Operators.sub(number, 1L);
-            } else if (old instanceof Boolean) {
-                updated = old;
             } else {
-                throw unsupportedIncrement(old);
+                updated = Operators.step(this, old, increment);
             }
             getTarget().write(frame, updated);
             return prefix ? updated : old;
@@ -324,8 +317,4 @@ public final class AssignNodes {
         return new PhpError("unsupported compound assignment operator " + op);
     }
 
-    @TruffleBoundary
-    private static PhpError unsupportedIncrement(Object value) {
-        return new PhpError("Increment/decrement of " + Convert.typeName(value) + " is not supported");
-    }
 }
