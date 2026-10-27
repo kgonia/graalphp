@@ -4,7 +4,8 @@
 # servers, each copies the site (and Truffle PHP its ASTs) into its own file system and reaches MariaDB over the
 # Docker bridge: through the Windows bind mount and the host's port forwarding, PHP takes ~1 s a page instead of
 # tens of ms. Truffle PHP is slow on each page's first requests, until the JIT has compiled it.
-# CPUSET pins the servers (e.g. CPUSET=6-13), each to the same cores. A server is ready when it serves a static file:
+# CPUSET pins the servers (e.g. CPUSET=6-13), each to the same cores; JAVA_OPTS goes to Truffle PHP's JVM (e.g.
+# JAVA_OPTS=-Xmx256m, a heap limit). A server is ready when it serves a static file:
 # for Truffle PHP that is a started JVM that hasn't run any PHP yet.
 # Run after fetch.sh, export.sh, db.sh and install.sh, and bench/bootshare's image; build first.
 # Usage: tests/gate2/browse.sh [start|stop] [both|truffle|php]
@@ -23,10 +24,10 @@ db_host=$(docker inspect gate2-mariadb --format '{{.NetworkSettings.Networks.bri
 for server in "${servers[@]}"; do
   if [ $server = truffle ]; then
     MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
-      -e GATE2_DB_HOST=$db_host -v "$root:/w:ro" gate1-truffle:8.5 sh -c 'mkdir -p /srv/target/gate2 \
+      -e GATE2_DB_HOST=$db_host -e JAVA_OPTS="${JAVA_OPTS:-}" -v "$root:/w:ro" gate1-truffle:8.5 sh -c 'mkdir -p /srv/target/gate2 \
       && cp -r /w/target/ast /srv/target/ && cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cd /srv \
       && exec $GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
-      $JAVA_OPTS_BASE -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \
+      $JAVA_OPTS_BASE $JAVA_OPTS -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \
       -cp "/w/target/classes:/w/target/lib/*" pl.codeloom.php.launcher.HttpMain --port=8080 --threads=4 \
       --docroot=target/gate2/wordpress --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0' > /dev/null
     port=8080

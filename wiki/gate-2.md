@@ -295,3 +295,17 @@ WordPress uses it in `pomo/mo.php` (`$entry = &$this->make_entry(...)`), which f
 php-src `.phpt`: 3096 of 7341 strict (42.2%), from 3066 at `590e74b`, the only newly failing case being the `random_int` one. Of the 325 cases about references and returns (names with "ref", or sources with `function &`, `fn&` or `= &` of a call) 118 pass, from 89. Smoke (74 tests, also in 3 contexts), Gate 1 and K0 checksums and the shared contexts pass. A/B against `590e74b` on CPUs 6–13 (the benchmark cores were in use), 4 rounds: within noise (0.91–1.12 per kernel, IQRs up to ±0.15, peak memory 0.97–1.00); `k0_fib`, whose 8-round ratio was 1.04 (IQR 1.01–1.13), compiles to the same code before and after (Tier 2: 28 AST nodes, 6 calls inlined, 5408 bytes).
 
 Open, found on the way: [001](../issues/001-dynamic-call-by-ref-args.md), dynamic calls (`$f($x)`) don't pass arguments by reference; [002](../issues/002-by-ref-magic-get.md), writes through `&__get` and `&offsetGet`.
+
+## A heap limit on a WordPress server, 2026-10-27
+
+The video comparison's GraalVM server had no heap limit and held 2.1 GB of anonymous memory once warm, against PHP's 34 MB. Truffle PHP then started again with `-Xmx` (`JAVA_OPTS` for `tests/gate2/browse.sh`). Each run is one recorded visit (home page, a post, the login page, logging in, the posts list) right after start, and one after 200 paced visits, pinned to CPUs 6-13, on the same build (classes from 18:10, return by reference included). Memory is the container's anonymous memory, sampled every 100 ms.
+
+| Heap | Cold visit: wait, CPU, peak | After 200 visits: peak | Visits 101-200: median wait (IQR) |
+|---|---|---|---|
+| `-Xmx256m` | fails: `Java heap space` on the second page | | |
+| `-Xmx512m` | 6.2 s, 50.5 CPU-s, 1828 MB | 2614 MB | 2.55 s (2.44-2.72) |
+| none | 9.8 s, 65.9 CPU-s, 1474 MB | 2443 MB | 2.57 s (2.52-2.63) |
+
+- **A heap limit doesn't lower the footprint.** At 512 MB the heap is at most a fifth of the 2.6 GB. The rest is outside the heap, so `-Xmx` doesn't reach it. In Gate 1 that was mostly libgraal, the runtime compiler, with its own heap. A WordPress server compiles far more PHP code than a kernel does.
+- **The steady state doesn't change.** The median waits are equal. Each cold visit is a single run, and single runs vary by 15-30%, so the cold difference isn't read as an effect.
+- **Next:** Native Memory Tracking on a warm server, to split the 2.4 GB into heap, code cache, metaspace and the rest (libgraal stays untracked).
