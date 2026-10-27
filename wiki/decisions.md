@@ -158,3 +158,13 @@ Requests' streams transport writes raw HTTP over `stream_socket_client` itself, 
 
 `java.net.http` isn't used. Jetty has no role here: D11 is about the server.
 
+**Status (2026-10-27):** both parts are in (`e9eea8e`, `90a6797`); [gate-2.md](gate-2.md) has the comparisons.
+- **ext/curl** is ported whole from 8.5.12 over libcurl. CurlHandle, CurlMultiHandle and CurlShareHandle are objects with ext/curl's handlers: no `new`, no clone except `curl_copy_handle`, not serializable, not comparable, and `(int)` gives the id.
+- **Sockets:** a non-blocking `SocketChannel` and a `Selector` stand in for xp_socket.c's fd and `poll()`. TLS isn't `SSLSocket` but an `SSLEngine` that plays `SSL_connect`/`SSL_read`/`SSL_write`. That way xp_ssl.c's handshake and I/O loops, timeouts and warnings are ported as written, and OpenSSL's error texts are mapped. CAs come from OpenSSL's default paths, or from the JDK's store where the host has none.
+- **Not done yet:**
+  - the `http://` and `https://` stream wrappers;
+  - `stream_select`, `pfsockopen`, `udp://`;
+  - `capture_peer_cert` (it needs ext/openssl's `OpenSSLCertificate`);
+  - TLS options the JDK can't honour (`ciphers`, client certificates). Each is documented where it's refused.
+- **Address order:** the JVM orders IPv4 first unless started with `-Djava.net.preferIPv6Addresses=system`. Every script passes that flag; the launchers don't set it yet.
+

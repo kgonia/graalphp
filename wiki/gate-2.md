@@ -238,10 +238,46 @@ Gate 1 kernels (interleaved, 8 rounds, CPUs 14–21; median of per-round ratios)
 php-src `.phpt` at `d58df0b`: 2953 of 7341 strict (40.2%), from 2932. The series fixed 23 cases. It broke 2, both fixed by `d58df0b`: an `isset()` through an inaccessible property, and `foreach` over an object changed in the loop.
 
 Gaps found on the way, not fixed yet:
-- `Closure` is no class: `Closure::bind`, `bindTo`, `call` and `fromCallable` are missing;
-- arithmetic on a non-numeric string returns as if it were 0, where PHP 8 throws `TypeError: Unsupported operand types: string + int`;
 - argon2, and `crypt()` with MD5, SHA-256, SHA-512 and DES salts;
-- `fsockopen`/`stream_socket_client` and so any HTTP transport (`WP_Http` reports "No working transports found"), and GD;
+- GD (`webp_upload_error`/`avif_upload_error` on post-new.php and options-general.php);
 - `get_object_vars` called as a callback, `get_class_vars`, `(array)` casts and `var_dump` don't mangle or annotate non-public properties by scope;
 - a private property declared again by a subclass shares one slot with the parent's;
 - static properties' visibility isn't checked.
+
+## Arithmetic operands and the Closure class (2026-10-27)
+
+| Commit | What |
+|---|---|
+| `414a217` | **Arithmetic operands as zend_operators.c takes them.** Before, an operand that wasn't a number was taken as 0 or 1. Now a non-numeric string, an array, an object or a resource is zend_binop_error's TypeError ("Unsupported operand types: string + int"). A numeric string with trailing data warns "A non-numeric value encountered" at the operation's line. `%`, the shifts and the bitwise operators deprecate the precision a float loses. Two strings combine byte by byte under `&`, `|`, `^` and `~`. `++`/`--` follow increment_function: a Perl-style string increment with its deprecation, the bool and null warnings, "Cannot increment array". `str_increment()` and `str_decrement()` were added. |
+| `1583f52` | **The Closure class:** `bind`, `bindTo`, `call` and `fromCallable` with zend_valid_closure_binding's rules and warnings. Fake closures (from a function or method) keep their scope. Closures whose body uses `$this` can't be unbound from it. `new Closure` is an Error. |
+| `da59284` | **Benchmarks report peak memory beside time.** `PEAK_MEMORY=1` makes `truffle.sh` and `php.sh` print the container's cgroup `memory.peak`, the whole JVM's or php's footprint. `compare.sh` prints it for both engines. `bench/gate1/ab.sh` is the A/B of builds that so far lived outside the repo; it adds the median ratio of peak memory. From now on every comparison reports both. |
+
+`414a217` against `d58df0b` (8 rounds): time 0.97–1.01 on every kernel, peak memory 1.01 (IQR 0.97–1.07). The all-kernels run at 400 iterations peaks at about 1.58 GB on Truffle PHP. A first look at hooks alone, 20 iterations: 870 MB against PHP's 25 MB. The JVM has no heap limit set (its default maximum is a quarter of the machine's memory), and a quiet-window comparison with PHP will measure this properly.
+
+`d58df0b` fixed the two `.phpt` cases the visibility series broke. The score is 2953 of 7341 strict.
+
+## curl and client sockets (D13), 2026-10-27
+
+| Commit | What |
+|---|---|
+| `e9eea8e` | **ext/curl over libcurl by FFM**, ported whole from 8.5.12 ([D13](decisions.md)). Its handles use a general mechanism for a built-in class's object handlers (get_constructor, clone_obj, cast_object, not serializable, not comparable). `Closure` now uses the same mechanism; its field is `@CompilationFinal`, so `new` sites fold the check. `serialize()` of something that can't be serialized throws Exception, as PHP does. |
+| `90a6797` | **Client sockets and TLS on the JDK:** `fsockopen`, `stream_socket_client`, `stream_socket_enable_crypto`, stream contexts, `default_socket_timeout`. Contexts take resource ids as PHP's do. `http.sh sockets` runs a probe inside WordPress on both engines. The probe covers raw HTTP, timeouts, non-blocking reads, refused and unresolvable hosts, and Requests' fsockopen transport. |
+
+Gate 2 after both:
+- the public pages: 9 of 11 same, the two differences being the oEmbed XML link, which WordPress emits only when SimpleXML is there;
+- the installer and its database: same;
+- the login and wp-admin:
+  - `plugins.php` is now the same too, because the FTP credentials form follows `fsockopen`;
+  - post-new.php and options-general.php still differ by GD only.
+- `http.sh sockets`: same.
+- On the TLS checks against badssl.com and google.com, the warnings, OpenSSL error texts, protocols and ciphers are PHP's.
+
+php-src `.phpt`: 3064 of 7341 strict (41.7%), from 2953: the Closure class, the arithmetic operands and the stream contexts. Three cases newly fail; each test's output depends on `random_int`/`rand` or `memory_get_usage`, so they vary between runs.
+
+Gate 1 kernels, `da59284` (before the Closure class) against `90a6797`, 8 rounds, CPUs 14–21:
+
+| | hooks | escape | slugs | wpautop | wptexturize | blocks | kses | peak memory |
+|---|---|---|---|---|---|---|---|---|
+| time ratio | 1.01 | 0.98 | 0.99 | 1.00 | 0.99 | 1.00 | 0.98 | 0.99 (IQR 0.98–1.00) |
+
+The Closure commit alone had cost blocks and kses 2% (IQR 1.01–1.03), because a `new` site's guard read a field that wasn't `@CompilationFinal`; that cost is gone. Peak memory is 1.59 GB on both (all kernels, 400 iterations).
