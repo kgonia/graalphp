@@ -40,10 +40,13 @@ public final class PhpArray implements TruffleObject {
      */
     private boolean mayHoldRefs;
     /**
-     * A foreach by reference walks this array or an array it was copied from ({@link RefIteration}): its copies
-     * and rehashes are reported there, as php-src's hash iterators are copied and moved.
+     * How many foreach loops by reference walk this array or an array it was copied from ({@link RefIteration}),
+     * as php-src counts the hash iterators on a table: its copies and rehashes are reported there, as php-src's
+     * iterators are copied and moved. At {@link #ITERATED_MAX} it stays there (a few needless reports, never a
+     * missed one).
      */
-    private boolean iterated;
+    private byte iterations;
+    private static final byte ITERATED_MAX = Byte.MAX_VALUE;
 
     /** The elements: a long[] or an Object[] (packed; the capacity is its length), or a {@link Hash}. */
     private Object store;
@@ -163,18 +166,28 @@ public final class PhpArray implements TruffleObject {
             }
             copy.store = hash;
         }
-        if (iterated) {
+        if (iterations != 0) {
             RefIteration.copied(this, copy);
         }
         return copy;
     }
 
     public boolean isIterated() {
-        return iterated;
+        return iterations != 0;
     }
 
-    void setIterated(boolean iterated) {
-        this.iterated = iterated;
+    /** One more loop walks this array (or reports its copies). */
+    void track() {
+        if (iterations < ITERATED_MAX) {
+            iterations++;
+        }
+    }
+
+    /** A loop no longer walks this array. */
+    void untrack() {
+        if (iterations > 0 && iterations < ITERATED_MAX) {
+            iterations--;
+        }
     }
 
     /** An element of a fresh copy: a reference only this array holds becomes a value, a nested array gains one. */
@@ -913,7 +926,7 @@ public final class PhpArray implements TruffleObject {
             }
         }
         store = grown;
-        if (iterated) {
+        if (iterations != 0) {
             RefIteration.rehashed(this, old.keys, old.used);
         }
         return grown;

@@ -1,5 +1,7 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+
 /**
  * A PHP reference: a shared box that several variables, array elements or properties point at. Slots that are
  * references hold a PhpRef instead of the value; a PhpRef never holds another PhpRef.
@@ -82,20 +84,34 @@ public final class PhpRef {
     /** A variable is now bound to this reference, or an array element made it. */
     public void bind() {
         if (bindings++ == 0 && released) {
-            released = false;
-            if (value instanceof PhpArray array) {
-                array.addHolder();
-            }
+            takeBack();
         }
     }
 
     /** A variable bound to this reference was rebound, unset or went out of scope. */
     public void unbind() {
         if (bindings > 0 && --bindings == 0) {
-            released = true;
-            if (value instanceof PhpArray array) {
-                array.removeHolder();
-            }
+            release();
+        }
+    }
+
+    /**
+     * Out of line: unbind is inlined wherever a variable is rebound or a frame releases its locals, and the
+     * release is the rare end of it.
+     */
+    @TruffleBoundary
+    private void release() {
+        released = true;
+        if (value instanceof PhpArray array) {
+            array.removeHolder();
+        }
+    }
+
+    @TruffleBoundary
+    private void takeBack() {
+        released = false;
+        if (value instanceof PhpArray array) {
+            array.addHolder();
         }
     }
 

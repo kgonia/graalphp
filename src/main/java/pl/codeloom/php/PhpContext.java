@@ -75,8 +75,8 @@ public final class PhpContext {
     private final BuiltinState builtinState;
     /** Static variables (`static $x`) by function, then name. */
     private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
-    /** The foreach loops by reference in progress, innermost last. */
-    private final List<RefIteration> refIterations = new java.util.ArrayList<>();
+    /** The innermost foreach by reference in progress; it links the ones it runs inside. */
+    private RefIteration innermostRefIteration;
     private final Callables.LastCall lastCall = new Callables.LastCall();
 
     /** The prelude files this context has run (see {@link Prelude}). */
@@ -187,8 +187,12 @@ public final class PhpContext {
         return builtinState;
     }
 
-    public List<RefIteration> refIterations() {
-        return refIterations;
+    public RefIteration innermostRefIteration() {
+        return innermostRefIteration;
+    }
+
+    public void setInnermostRefIteration(RefIteration iteration) {
+        innermostRefIteration = iteration;
     }
 
     /** The reference of a function's `static $name` variable, or null before its first initialization. */

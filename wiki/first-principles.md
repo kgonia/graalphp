@@ -109,21 +109,27 @@ All checksums are identical.
 - **Changes:** only `$N` and `$iter`. graalphp's sizes (fannkuch-redux 12, spectral-norm 5500, binary-trees 21) take minutes per iteration on PHP; here it is 10, 1000 and 16, with 60 iterations.
 - **Timing:** each program's own hrtime around each iteration, on both engines. The steady state is the median of the last third.
 
-Results on 2026-10-27, cores 6–13:
+Results on 2026-10-27, cores 6–13, after return by reference was merged (`e446dc0`): three rounds on the same
+build. The speed-up is the median of the rounds; the range shows how much they differed.
 
-| Program | PHP 8.5 JIT | Truffle PHP | Speedup | First iteration (PHP / Truffle) | All 60, warm-up included | Peak memory (PHP / Truffle) |
-|---|---:|---:|---:|---:|---:|---:|
-| fannkuchredux.php-1 | 194.6 ms | 150.6 ms | 1.29× | 337 / 1405 ms | 1.08× | 11 / 390 MB |
-| spectralnorm.php-2-unmodified | 238.3 ms | 68.0 ms | 3.51× | 262 / 810 ms | 2.80× | 11 / 907 MB |
-| spectralnorm.php-2-val | 226.9 ms | 64.1 ms | 3.54× | 289 / 864 ms | 2.84× | 11 / 983 MB |
-| spectralnorm.php-2-ref | 201.1 ms | 59.2 ms | 3.40× | 247 / 869 ms | 3.18× | 12 / 898 MB |
-| binarytrees.php-3-val | 391.5 ms | 207.0 ms | 1.89× | 530 / 798 ms | 1.66× | 39 / 1316 MB |
-| binarytrees.php-3-ref | | fails | | | | |
+| Program | Speedup (median) | Rounds | All 60, warm-up included (median) | Peak memory (PHP / Truffle) |
+|---|---:|---|---:|---:|
+| fannkuchredux.php-1 | 1.72× | 1.57–1.94× | 1.22× | 11–12 / 397–422 MB |
+| spectralnorm.php-2-unmodified | 2.62× | 2.47–3.06× | 2.58× | 11–12 / 933–1002 MB |
+| spectralnorm.php-2-val | 4.81× | 3.79–4.85× | 3.24× | 12 / 862–890 MB |
+| spectralnorm.php-2-ref | 5.14× | 4.16–5.65× | 3.59× | 11–12 / 789–844 MB |
+| binarytrees.php-3-val | 1.72× | 1.66–1.81× | 1.63× | 39–40 / 1343–1370 MB |
+| binarytrees.php-3-ref | 1.91× | 1.38–1.94× | 1.59× | 43–44 / 1354–1554 MB |
 
-- The outputs match without the timing lines.
-- **binary-trees by value:** graalphp ran it at 0.16× of PHP 7, because it deep-copied every array passed by value. With copy-on-write it runs at 1.89× of PHP 8.5's JIT.
-- **binary-trees by reference:** it uses `function &bottomUpTree()` and `$t = & bottomUpTree(...)`. Return by reference was not implemented: `returnsRef` was parsed but never used.
-- **The first iteration** is 1.5–5× slower on Truffle PHP. Over all 60 iterations, Truffle PHP still comes out ahead on every program.
+- **Outputs:** they match PHP's in every round, without the timing lines.
+- **binary-trees by value:** graalphp ran it at 0.16× of PHP 7, because it deep-copied every array passed by value.
+  With copy-on-write it runs at 1.7× of PHP 8.5's JIT.
+- **binary-trees by reference:** it uses `function &bottomUpTree()` and `$t = & bottomUpTree(...)`. It failed until
+  return by reference landed (`e446dc0`; before it, `returnsRef` was parsed but never used).
+- **The first iteration** is 2–6× slower on Truffle PHP. Over all 60 iterations Truffle PHP still comes out ahead on
+  every program.
+- **Noise:** PHP's own times moved the most between rounds, e.g. spectralnorm-ref 194–299 ms. A first run before the
+  merge, on the same cores, gave 1.29–3.54× for the five programs that ran then.
 
 ## PHP correctness beyond WordPress: php-src's own tests
 
