@@ -24,6 +24,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.BufferedOutputStream;
@@ -74,6 +75,8 @@ public final class PhpContext {
     private final BuiltinState builtinState;
     /** Static variables (`static $x`) by function, then name. */
     private final Map<PhpFunction, Map<String, PhpRef>> staticVariables = new HashMap<>();
+    /** The foreach loops by reference in progress, innermost last. */
+    private final List<RefIteration> refIterations = new java.util.ArrayList<>();
     private final Callables.LastCall lastCall = new Callables.LastCall();
 
     /** The prelude files this context has run (see {@link Prelude}). */
@@ -182,6 +185,10 @@ public final class PhpContext {
 
     public BuiltinState builtinState() {
         return builtinState;
+    }
+
+    public List<RefIteration> refIterations() {
+        return refIterations;
     }
 
     /** The reference of a function's `static $name` variable, or null before its first initialization. */
