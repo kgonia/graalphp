@@ -308,4 +308,10 @@ The video comparison's GraalVM server had no heap limit and held 2.1 GB of anony
 
 - **A heap limit doesn't lower the footprint.** At 512 MB the heap is at most a fifth of the 2.6 GB. The rest is outside the heap, so `-Xmx` doesn't reach it. In Gate 1 that was mostly libgraal, the runtime compiler, with its own heap. A WordPress server compiles far more PHP code than a kernel does.
 - **The steady state doesn't change.** The median waits are equal. Each cold visit is a single run, and single runs vary by 15-30%, so the cold difference isn't read as an effect.
-- **Next:** Native Memory Tracking on a warm server, to split the 2.4 GB into heap, code cache, metaspace and the rest (libgraal stays untracked).
+- **Next: whose memory is it?** Is the ~2 GB outside the heap what a Truffle language on the JVM costs, or this implementation's fault? `tests/gate2/memory.sh libgraal -XX:-UseJVMCINativeLibrary` runs the same visits with Native Memory Tracking, once with libgraal and once with jargraal (Graal as Java code, its memory on the Java heap), and snapshots each server after start, after the cold visit and after 200 visits. The two runs take ~70 minutes, pinned to 6-13. A first run started on 2026-10-27 was cancelled before any warm snapshot, to be run on 2026-10-28.
+  - **NMT** splits what the JVM allocates: heap, code cache, metaspace, threads, GC and Unsafe/FFM memory.
+  - **Unnamed anonymous mappings that NMT misses** are libgraal's heap and native libraries' own `malloc`s.
+  - **libgraal's share** is the difference between the two runs.
+  - **Expected:** libgraal plus the code cache, both growing with the amount of compiled PHP.
+  - **Our fault:** a growing NMT category (Unsafe/FFM from our bindings), or an untracked remainder that jargraal doesn't remove.
+  - **Ruled out by reading the code:** unbounded PCRE2 memory. The compiled patterns are shared and capped at 4096 entries, as in php-src's cache, and a context frees its match blocks, JIT stack and unshared patterns when it closes.
