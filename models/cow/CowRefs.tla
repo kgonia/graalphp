@@ -320,8 +320,10 @@ N(n) == ToString(n)
 (* Findings left open (wiki/tla-cow.md): their triggers are not explored, so the check goes on past them. *)
 \* F1: php-src stores an array into itself through a reference alias; the runtime copies it first
 SelfStore(H, x, y) == IsR(H.v[x]) /\ H.v[x] = H.v[y]
-\* F3: unset($f) frees a closure and the references it captured; the runtime keeps their bindings
-\* (closures, like every object, are not refcounted)
+\* F3: unset($f) frees a closure and what it captured; the runtime keeps the captured reference's binding, or the
+\* captured array's holder and with it the bindings of the references in that array (closures, like every
+\* object, are not refcounted)
+CapturesRefs == clRef \/ IsA(I.cl)
 Allowed(f, cond) == f \notin Excluded \/ ~cond
 
 Do(i2, s2, desc) ==
@@ -494,7 +496,7 @@ MakeClosure(y, byRef) ==
 \* unset($f): php-src frees the closure and its captures; the runtime doesn't see it
 DropClosure ==
     /\ clOn
-    /\ Allowed("F3", clRef)
+    /\ Allowed("F3", CapturesRefs)
     /\ Do([I EXCEPT !.cl = NONE], [S EXCEPT !.cl = NONE], "unset($f);")
     /\ clOn' = FALSE /\ clRef' = FALSE
     /\ UNCHANGED <<mode, lk, lv, ipos, iKey, sKey, bad>>
