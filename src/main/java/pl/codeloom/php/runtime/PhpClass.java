@@ -257,13 +257,34 @@ public final class PhpClass {
                     && scopeClass.properties.get(propertyName) instanceof PropertyDecl own
                     && own.visibility() == PropertyDecl.PRIVATE && scope.equals(own.declaringClass());
         }
+        PhpClass root = protectedRoot(propertyName);
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return root.isSubclassOf(scope) || scopeClass != null && scopeClass.isSubclassOf(root.lowerName);
+    }
+
+    /** The topmost class declaring a protected property (zend_get_property_info's prototype for the check). */
+    private PhpClass protectedRoot(String propertyName) {
         PhpClass root = this;
         while (root.parent != null && root.parent.properties.get(propertyName) instanceof PropertyDecl inherited
                 && inherited.visibility() == PropertyDecl.PROTECTED) {
             root = root.parent;
         }
-        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
-        return root.isSubclassOf(scope) || scopeClass != null && scopeClass.isSubclassOf(root.lowerName);
+        return root;
+    }
+
+    /**
+     * Whether canAccessProperty's answer from the scope (the class the code is written in) follows from this
+     * class's ClassKey, so a site may keep it for every class with the key, in every context. It does unless a
+     * protected property is reached through the scope's own ancestors: they depend on the parent the scope's
+     * class was declared with in each context, which this key doesn't fix.
+     */
+    @TruffleBoundary
+    public boolean isPropertyAccessKeyed(String propertyName, String scope) {
+        PropertyDecl decl = properties.get(propertyName);
+        if (decl == null || decl.visibility() != PropertyDecl.PROTECTED || scope == null) {
+            return true;
+        }
+        return protectedRoot(propertyName).isSubclassOf(scope);
     }
 
     public Iterable<PropertyDecl> getProperties() {

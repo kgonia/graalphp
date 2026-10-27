@@ -120,11 +120,12 @@ public abstract class CallableDispatchNode extends Node {
     }
 
     /**
-     * A static method (or __callStatic) binds no $this, so it can be cached; a non-static one or __call takes
-     * the caller's $this, resolved per call by the generic path.
+     * A static method binds no $this, so it can be cached; a non-static one takes the caller's $this, resolved per
+     * call by the generic path. So does a missing method: whether __call, __callStatic or nothing stands in for it
+     * depends on the caller's $this (zend_is_callable_check_func), which the entry's guards don't see.
      */
     protected static boolean isStaticCall(PhpFunction method, TruffleString magicName) {
-        return method.isStatic();
+        return method.isStatic() && magicName == null;
     }
 
     /** A direct call `$f()` (no parameter) takes names literally; a built-in's callable resolves against its caller. */

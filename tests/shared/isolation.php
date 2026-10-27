@@ -62,4 +62,72 @@ for ($i = 0; $i < 300; $i++) {
         $bad++;
     }
 }
+// Classes declared differently in different contexts (as a conditional declaration is), so the contexts sharing
+// the AST disagree about them: each context picks its own way, and the shared call and property sites must answer
+// each context as it declared them (wiki/tla-engine.md).
+$linked = random_int(0, 1) === 1;
+class Root
+{
+    protected $p = 'root';
+}
+if ($linked) {
+    class Middle extends Root
+    {
+    }
+} else {
+    class Middle
+    {
+    }
+}
+class Reader extends Middle
+{
+    private $own = 'own';
+
+    // a protected property of Root: accessible from here only where Middle extends Root
+    public function read($object)
+    {
+        try {
+            return $object->p;
+        } catch (Error $e) {
+            return 'denied';
+        }
+    }
+
+    public function own()
+    {
+        return $this->own;
+    }
+}
+class Leaf extends Root
+{
+}
+class Magic
+{
+    public function __call($name, $args)
+    {
+        return '__call';
+    }
+
+    public static function __callStatic($name, $args)
+    {
+        return '__callStatic';
+    }
+}
+$unbound = function () {
+    return call_user_func(['Magic', 'missing']);
+};
+$bound = Closure::bind($unbound, new Magic(), Magic::class);
+$reader = new Reader();
+for ($i = 0; $i < 300; $i++) {
+    if ($reader->read(new Leaf()) !== ($linked ? 'root' : 'denied') || $reader->own() !== 'own') {
+        $bad++;
+    }
+    // ['Magic', 'missing']: __call from code running on a Magic, __callStatic elsewhere, in either order
+    $first = $i % 2 === 0;
+    if (($first ? $unbound() : $bound()) !== ($first ? '__callStatic' : '__call')
+        || ($first ? $bound() : $unbound()) !== ($first ? '__call' : '__callStatic')) {
+        $bad++;
+    }
+}
+
 echo $bad === 0 ? "isolated\n" : "corrupted $bad\n";
