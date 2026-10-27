@@ -46,7 +46,6 @@ HasCall(t) == t = "T1"
 Parents == {"P1", "P2"}
 
 Nodes == {"classRef", "method", "callable"}
-Kinds == {"classRef", "method", "callable", "prop", "lock", "match", "exit"}
 
 VARIABLES
     rstate,     \* each request: queued, running or closed
@@ -100,8 +99,8 @@ Check(r, v, expected) ==
 
 Done(t) == thr' = [thr EXCEPT ![t].ops = @ - 1, ![t].pend = NoPend]
 
-(* A thread takes a queued request and creates its context. A bound engine has one context; with several, *)
-(* Truffle calls initializeMultipleContexts before the second is created.                                 *)
+(* A thread takes a queued request and creates its context. Truffle's contract: initializeMultipleContexts *)
+(* before a second context exists (an explicit engine: before the first, see Init).                        *)
 Create(t, r) ==
     /\ thr[t].req = None
     /\ rstate[r] = "queued"
@@ -169,7 +168,7 @@ Callable(t) ==
             v == Target(k, this)
         IN Keyed(t, "callable", k, v, ~Fixed /\ IsStatic(v))
 
-(* The second step of a DSL specialization, under the node's lock: install the entry unless another thread *)
+(* The second step of a DSL specialization, atomic: install the entry unless another thread has            *)
 (* installed one meanwhile; one that doesn't match, or a target that may not be kept, makes the node generic. *)
 (* The thread's own call uses what it computed.                                                              *)
 Install(t) ==

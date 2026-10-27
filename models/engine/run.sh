@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Model-checks SharedEngine.tla with TLC (wiki/tla-engine.md).
-# Usage: models/engine/run.sh [config...]   (default: SharedEngine.cfg, the runtime as fixed; Before.cfg is the
-# runtime as it was, whose invariants TLC breaks). TLA2TOOLS is the tla2tools.jar, TLC_HEAP its heap (2g).
+# Usage: models/engine/run.sh [config...]   (default: SharedEngine.cfg, the server with the runtime as fixed).
+# Bound.cfg is a bound engine; BeforeHits.cfg, BeforeClose.cfg (the runtime as it was) and NaiveKey.cfg (a wrong
+# fix) are the counterexamples, so TLC reports a violated invariant there. TLA2TOOLS is the tla2tools.jar,
+# TLC_HEAP its heap (2g).
 set -euo pipefail
 cd "$(dirname "$0")"
 java="${GRAALVM_HOME:-$HOME/.jdks/graalvm-jdk-25.0.4+7.1}/bin/java"
