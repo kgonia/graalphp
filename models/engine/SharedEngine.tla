@@ -30,7 +30,8 @@ CONSTANTS
     Requests,       \* the requests; each runs in its own context
     Ops,            \* how many operations a request performs
     ExplicitEngine, \* the contexts share an Engine made with Engine.create() (HttpMain, SharedContexts)
-    Fixed           \* the runtime after this model's findings were fixed (FALSE: as it was at b4f3f52)
+    Fixed,          \* the runtime after this model's findings were fixed (FALSE: as it was at b4f3f52)
+    NaiveKey        \* with Fixed: PropNode keeps the key for any access, also one the key doesn't decide
 
 None == "none"
 Lang == "lang"
@@ -68,7 +69,9 @@ Val(o, k) == [owner |-> o, key |-> k]
 NoVal == Val(Lang, None)
 ClsVal(r) == Val(r, decl[r])                     \* the request's PhpClass for Foo
 MethodVal(k) == Val(Lang, k)                     \* the PhpFunction (and call target) the key determines
-Target(k, this) == Val(Lang, IF HasCall(k) /\ this THEN "__call" ELSE "__callStatic")
+(* What ['Foo', 'missing'] resolves to (Callables.method): from code running on a Foo, __call, or nothing     *)
+(* (the TypeError of a callable that isn't one) when Foo has no __call; elsewhere __callStatic.                *)
+Target(k, this) == Val(Lang, IF this THEN (IF HasCall(k) THEN "__call" ELSE "error") ELSE "__callStatic")
 IsStatic(v) == v.key = "__callStatic"
 
 EmptyCache == [st |-> "uninit", key |-> None, val |-> NoVal]
@@ -157,14 +160,14 @@ Keyed(t, n, key, expected, cacheable) ==
 (* `$obj->m()` (MethodCallNode.Dispatch): the method is what the receiver's ClassKey determines. *)
 Method(t) == Keyed(t, "method", decl[thr[t].req], MethodVal(decl[thr[t].req]), TRUE)
 
-(* call_user_func(['Foo', 'missing']) (CallableDispatchNode.classMethod), called with or without a $this the *)
-(* class accepts: a missing method resolves to __call on that $this, else to __callStatic. The entry is kept *)
-(* for a static target; once fixed, only for one that the caller's $this can't change.                       *)
+(* call_user_func(['Foo', 'missing']) (CallableDispatchNode.classMethod), from code running on a Foo or not  *)
+(* (the same closure, bound and unbound). The entry was kept for a static target, which __callStatic is;     *)
+(* fixed, a method standing in for a missing one is never kept. A target that throws installs nothing.      *)
 Callable(t) ==
     \E this \in BOOLEAN :
         LET k == decl[thr[t].req]
             v == Target(k, this)
-        IN Keyed(t, "callable", k, v, IF Fixed THEN IsStatic(v) /\ ~HasCall(k) ELSE IsStatic(v))
+        IN Keyed(t, "callable", k, v, ~Fixed /\ IsStatic(v))
 
 (* The second step of a DSL specialization, under the node's lock: install the entry unless another thread *)
 (* installed one meanwhile; one that doesn't match, or a target that may not be kept, makes the node generic. *)
@@ -176,6 +179,7 @@ Install(t) ==
     /\ cache' = [cache EXCEPT ![p.node] =
                     IF p.node = "classRef"
                     THEN IF c.st = "uninit" THEN [st |-> "single", key |-> None, val |-> p.val] ELSE c
+                    ELSE IF p.val.key = "error" THEN c
                     ELSE IF ~p.cacheable THEN [st |-> "generic", key |-> None, val |-> NoVal]
                     ELSE IF c.st = "uninit" THEN [st |-> "cached", key |-> p.key, val |-> p.val]
                     ELSE IF c.st = "cached" /\ c.key = p.key THEN c
@@ -204,7 +208,8 @@ Prop(t) ==
              \* the slow path (canAccessProperty); an empty field is filled in a second step
              /\ thr' = [thr EXCEPT ![t].pend =
                            [node |-> "prop", key |-> None, val |-> mine,
-                            cacheable |-> prop = NoVal /\ Allowed(r) /\ (~Fixed \/ KeyDetermined(decl[r]))]]
+                            cacheable |-> prop = NoVal /\ Allowed(r)
+                                         /\ (~Fixed \/ NaiveKey \/ KeyDetermined(decl[r]))]]
              /\ UNCHANGED <<isoBad, hitBad>>
        /\ UNCHANGED <<rstate, decl, parent, contexts, single, cache, prop, lock, views>>
 
