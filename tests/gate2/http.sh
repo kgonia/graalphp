@@ -3,9 +3,10 @@
 # request) and by regular PHP with mysqli (php -S in the wordpress:cli image), the same pages fetched from both and
 # compared. Our SERVER_NAME is php -S's (0.0.0.0): WordPress compares it with asset hosts (dns-prefetch). Both
 # display errors as php -S does (display_errors=1, html_errors=0); ?fatal=... ends a request with a fatal error
-# (tests/gate2/fatal-plugin.php), which WordPress's fatal error handler turns into its error page.
+# (tests/gate2/fatal-plugin.php), which WordPress's fatal error handler turns into its error page. PHP's server runs
+# workers, so a script it serves can make requests to it (tests/gate2/sockets-probe.php does).
 # Run after fetch.sh, export.sh, db.sh and install.sh; build first.
-# Usage: tests/gate2/http.sh [start|stop|compare|install|login]   (default: start both, compare, leave them running)
+# Usage: tests/gate2/http.sh [start|stop|compare|install|login|sockets]   (default: start both, compare, leave them running)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -22,14 +23,16 @@ start() {
   cp tests/gate2/wp-config.php target/gate2/wordpress/wp-config.php
   mkdir -p target/gate2/wordpress/wp-content/mu-plugins
   cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
+  cp tests/gate2/sockets-probe.php target/gate2/wordpress/sockets-probe.php
   MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast target/gate2/wordpress/wp-config.php \
-    target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
+    target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php target/gate2/wordpress/sockets-probe.php
   MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
     -v "$root:/w" -w /w gate1-truffle:8.5 sh -c '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED \
-    --sun-misc-unsafe-memory-access=allow $JAVA_OPTS_BASE -Dpolyglot.engine.WarnInterpreterOnly=false \
+    --sun-misc-unsafe-memory-access=allow $JAVA_OPTS_BASE -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \
     -cp "target/classes:target/lib/*" pl.codeloom.php.launcher.HttpMain --port=8080 --threads=4 \
     --docroot=target/gate2/wordpress --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0 -ddisplay_errors=1 -dhtml_errors=0' > /dev/null
   MSYS_NO_PATHCONV=1 docker run -d --name gate2-php-http -p 8081:8081 --add-host=host.docker.internal:host-gateway \
+    -e PHP_CLI_SERVER_WORKERS=4 \
     -v "$root:/w" -w /w/target/gate2/wordpress wordpress:cli-php8.4 php -S 0.0.0.0:8081 > /dev/null
   for port in 8080 8081; do
     for _ in $(seq 60); do
@@ -40,14 +43,16 @@ start() {
 }
 
 # what differs between two correct responses: nonces (10 hex digits, which a logged-in user's depend on the random
-# session token), timestamps, the seconds in wp-admin's date fields, generated passwords
+# session token), timestamps, the seconds in wp-admin's date fields, generated passwords; and the C library's texts
+# for EAI_NONAME and ETIMEDOUT, which PHP's image (Alpine, musl) words otherwise than glibc
 mask() {
   sed -E -e 's/(nonce|_wpnonce|"nonce")([^0-9a-f]{1,12})[0-9a-f]{10}/\1\2NONCE/g' -e 's/data-pw="[^"]*"/data-pw="PW"/' \
     -e 's/(\x22|\x27)[0-9a-f]{10}(\x22|\x27)/\1NONCE\2/g' \
     -e 's/(<div class="ss">|name="ss" value=")[0-9]{2}/\1SS/g' -e 's/"[0-9]{10}:/"TIME:/g' \
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}/DATETIME/g' \
     -e 's/[A-Z][a-z]{2}, [0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9:]{8} [+-][0-9]{4}/DATE/g' \
-    -e 's/ver=[0-9a-f.-]+/ver=V/g'
+    -e 's/ver=[0-9a-f.-]+/ver=V/g' \
+    -e 's/failed: Name does not resolve/failed: Name or service not known/g' -e 's/Operation timed out/Connection timed out/g'
 }
 
 # fetches a path from both servers and compares the status, the redirect and the masked body: prints "same" or
@@ -133,11 +138,21 @@ login() {
   return $failed
 }
 
+# client sockets (fsockopen, stream_socket_client, Requests' fsockopen transport), each engine in its container
+# against both servers: tests/gate2/sockets-probe.php
+sockets() {
+  mkdir -p "$out"
+  local failed=0
+  check sockets /sockets-probe.php || failed=1
+  return $failed
+}
+
 case "${1:-all}" in
   start) start ;;
   stop) stop ;;
   compare) compare ;;
   install) install ;;
   login) login ;;
+  sockets) sockets ;;
   all) start; compare ;;
 esac
