@@ -6,7 +6,9 @@ define('DB_NAME', in_array($_SERVER['HTTP_X_GATE2_DB'] ?? '', ['wp_install_truff
     ? $_SERVER['HTTP_X_GATE2_DB'] : 'wordpress');
 define('DB_USER', 'wp');
 define('DB_PASSWORD', 'wp');
-define('DB_HOST', 'host.docker.internal:3307'); // boot.sh runs in the gate1 containers
+// boot.sh runs in the gate1 containers; a server with the site in its own file system can reach the database
+// container over the Docker bridge instead (GATE2_DB_HOST, as tests/gate2/browse.sh does)
+define('DB_HOST', getenv('GATE2_DB_HOST') ?: 'host.docker.internal:3307');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');
 
