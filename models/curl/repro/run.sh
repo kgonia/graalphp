@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the open findings of the curl lifecycle model (wiki/tla-curl.md) on PHP 8.5 and on Truffle PHP and shows how
-# their outputs differ. These are known differences, kept out of tests/smoke until they are fixed.
+# Runs the findings' scripts of the curl lifecycle model (wiki/tla-curl.md) on PHP 8.5 and on Truffle PHP and shows how
+# their outputs differ: the open ones differ (kept out of tests/smoke until they are fixed), frame-args doesn't.
 # Usage: models/curl/repro/run.sh [name...]. Build first: mvn package -DskipTests
 set -uo pipefail
 shopt -s nullglob

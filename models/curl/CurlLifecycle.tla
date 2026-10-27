@@ -26,6 +26,8 @@
 (* php-src's call frame holds them. FRAME_ARGS = FALSE drops that, leaving *)
 (* only what the Java code itself keeps reachable (its locals used after a *)
 (* call), to show what the code relies on.                                 *)
+(*                                                                         *)
+(* The configurations, findings and how to rerun: wiki/tla-curl.md.        *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
