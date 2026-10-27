@@ -413,3 +413,25 @@ So the Truffle side times every native call (PCRE2 and any other FFM-bound built
 Geomean **0.84× end to end, 0.81× PHP code**, from 0.70× and 0.58× on 2026-10-23. Checksums are the same. Escape and slugs are now faster than PHP's JIT. Hooks, kses and wptexturize are the furthest from 2×.
 
 **Peak memory: PHP 32 MB, Truffle PHP 1534 MB (48.6×).** That is the whole container's cgroup `memory.peak`: the JVM, Graal's compiler, the compiled code and a heap with no limit set. The JVM's default maximum is a quarter of the machine's memory, and a heap that size grows rather than collect. What the heap needs at a set limit (`-Xmx`), and what that limit costs in time, is the next memory measurement.
+
+### Where Truffle PHP's memory goes (2026-10-27)
+
+`ab.sh` variants can now carry JVM options (`g9@-Xmx512m`). Heap limits at `90a6797`, 6 interleaved rounds, all kernels at 400 iterations:
+
+| heap limit | peak memory | memory ratio | time |
+|---|---|---|---|
+| none | 1583 MB | 1.00 | 1.00 |
+| `-Xmx1g` | 1053 MB | 0.66 (IQR 0.64–0.70) | 0.97–1.02, wpautop 1.06 |
+| `-Xmx512m` | 910 MB | 0.58 (IQR 0.57–0.60) | 0.98–1.02, wpautop 1.09 |
+| `-Xmx256m` | 772 MB | 0.50 (IQR 0.46–0.53) | 0.98–1.04 |
+
+A heap limit halves the footprint and costs little time; with no limit the heap only grows. Below that, about 500 MB stays outside the heap:
+- **Sampled at the peak (256 MB heap):** the process's anonymous memory is 692 MB, while Native Memory Tracking accounts for 249 MB. At exit NMT shows 356 MB: heap 202, GC structures 55, code cache 44, metaspace 21. The page cache charged to the container is under 1 MB.
+- **libgraal** is most of the untracked rest. libgraal is Graal compiled into a native-image shared library, and its isolate heap is invisible to NMT. Single runs at a 256 MB heap peaked at 746 MB with libgraal and 504 MB with jargraal (`-XX:-UseJVMCINativeLibrary`, the compiler as Java code on the heap). At 512 MB the jargraal run peaked at 707 MB.
+- **Ruled out:**
+  - `MALLOC_ARENA_MAX=2` (840 MB, one run).
+  - `-XX:CICompilerCount=2`: memory 1.00, while warmup got slower (hooks 1.34, escape 1.26).
+
+Not measured yet: jargraal's time. Its warmup is the known cost. That A/B was stopped when the machine ran short of memory.
+
+For a server this is a fixed cost per process, not per request: PHP-FPM pays its ~30 MB for each worker. The comparison that matters for Gate 3 is one JVM serving N concurrent requests against N workers.

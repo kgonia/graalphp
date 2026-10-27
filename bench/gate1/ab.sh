@@ -4,6 +4,7 @@
 # of the steady state (last quarter of the iterations) and of each run's peak memory, then the median per-round
 # ratio of each variant to the first, for the time of each kernel and for the peak memory.
 # Usage: bench/gate1/ab.sh kernels iterations rounds A B...   e.g. bench/gate1/ab.sh all 400 8 before after
+# A variant may carry JVM options after an @: bench/gate1/ab.sh all 400 8 g9 g9@-Xmx512m compares heap limits.
 # DRIVER=bench/k0/run.php compares another kernel set; CPUSET overrides the cores (default 14-21).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -16,8 +17,8 @@ n=${#variants[@]}
 for r in $(seq "$rounds"); do
   if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
   for i in $order; do
-    PHP_CLASSES=target/classes-${variants[$i]} bash bench/gate1/truffle.sh "${DRIVER:-bench/gate1/run.php}" \
-      "$kernels" "$iterations" > "$out/$i-$r.txt" 2>&1
+    PHP_CLASSES=target/classes-${variants[$i]%%@*} JAVA_OPTS=$(echo "${variants[$i]}" | sed -n 's/^[^@]*@//p') \
+      bash bench/gate1/truffle.sh "${DRIVER:-bench/gate1/run.php}" "$kernels" "$iterations" > "$out/$i-$r.txt" 2>&1
   done
 done
 python bench/gate1/ab.py "$out" "${variants[@]}"
