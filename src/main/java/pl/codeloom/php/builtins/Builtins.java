@@ -187,6 +187,7 @@ public final class Builtins {
         for (Object[] entry : table) {
             constants.put((String) entry[0], entry[1]);
         }
+        SocketFunctions.constants(constants);
         return Collections.unmodifiableMap(constants);
     }
 

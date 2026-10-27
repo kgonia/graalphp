@@ -880,7 +880,7 @@ public final class StringFunctions {
     // ---- escaping ----
 
     @TruffleBoundary
-    private static TruffleString addslashes(TruffleString s) {
+    static TruffleString addslashes(TruffleString s) {
         byte[] b = Str.readBytes(s);
         ByteBuilder out = new ByteBuilder(b.length + 8);
         for (byte c : b) {

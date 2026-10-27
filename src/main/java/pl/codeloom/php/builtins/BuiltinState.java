@@ -27,6 +27,8 @@ public final class BuiltinState {
      */
     final java.util.Set<FileFunctions.Stream> openStreams =
             java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    /** FG(default_context): the request's default stream context, made on first use. */
+    StreamContext defaultStreamContext;
 
     /** cgi: the SAPI, whose defaults php.ini starts from; ini: the php.Ini option's settings. */
     public BuiltinState(boolean cgi, java.util.Map<String, String> ini) {

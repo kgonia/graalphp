@@ -30,7 +30,7 @@ while [ $status -eq 3 ]; do
     status=0
     MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} -v "$root:/w" -w /w gate1-truffle:8.5 sh -c \
         '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
-         $JAVA_OPTS_BASE -Dpolyglot.engine.WarnInterpreterOnly=false -cp "target/classes:target/lib/*" \
+         $JAVA_OPTS_BASE -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false -cp "target/classes:target/lib/*" \
          pl.codeloom.php.launcher.BatchMain --ast-root=target/ast --list='"$dir"'/run-list.txt \
          --out='"$dir"'/actual --timeout=10' >> "$dir/batch.log" 2>&1 || status=$?
 done
