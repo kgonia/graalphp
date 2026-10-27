@@ -52,13 +52,16 @@ public final class Builtins {
         private final List<PhpFunction> functions;
         private final List<PhpFunction> throwableMethods;
         private final List<PhpFunction> generatorMethods;
+        /** CURLFile's and CURLStringFile's methods; null when libcurl isn't there (no curl extension). */
+        private final CurlFunctions.Methods curlMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
-                      List<PhpFunction> generatorMethods) {
+                      List<PhpFunction> generatorMethods, CurlFunctions.Methods curlMethods) {
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
             this.generatorMethods = generatorMethods;
+            this.curlMethods = curlMethods;
         }
 
         /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
@@ -84,12 +87,21 @@ public final class Builtins {
         PasswordFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
+        // ext/curl is loaded when libcurl is (as an extension php was built without isn't)
+        boolean curl = CurlNative.available();
+        CurlFunctions.Methods curlMethods = null;
+        if (curl) {
+            CurlFunctions.register(registry);
+            curlMethods = CurlFunctions.methods(registry);
+        } else {
+            RuntimeFunctions.EXTENSIONS.remove("curl");
+        }
         if (debug) {
             DebugFunctions.register(registry);
             PcreFunctions.registerDebug(registry);
         }
-        return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry),
-                generatorMethods(registry));
+        return new Table(constants(curl), List.copyOf(registry.functions()), throwableMethods(registry),
+                generatorMethods(registry), curlMethods);
     }
 
     public static void install(PhpContext context, Table table) {
@@ -102,7 +114,7 @@ public final class Builtins {
         }
     }
 
-    private static Map<String, Object> constants() {
+    private static Map<String, Object> constants(boolean curl) {
         Object[][] table = {
                 {"PHP_EOL", Str.of("\n")}, {"PHP_INT_MAX", Long.MAX_VALUE}, {"PHP_INT_MIN", Long.MIN_VALUE},
                 {"PHP_INT_SIZE", 8L}, {"PHP_FLOAT_EPSILON", Math.ulp(1.0)}, {"PHP_FLOAT_MAX", Double.MAX_VALUE},
@@ -187,6 +199,9 @@ public final class Builtins {
         for (Object[] entry : table) {
             constants.put((String) entry[0], entry[1]);
         }
+        if (curl) {
+            CurlFunctions.constants(constants);
+        }
         return Collections.unmodifiableMap(constants);
     }
 
@@ -212,6 +227,9 @@ public final class Builtins {
         context.declareClass(generator);
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
+        if (table.curlMethods != null) {
+            CurlFunctions.declareClasses(context, table.curlMethods);
+        }
 
         throwableClass(context, table, "Exception", throwable);
         throwableClass(context, table, "Error", throwable);

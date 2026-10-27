@@ -30,11 +30,17 @@ public final class Ini {
     private static final long SYSTEM = 4;
     private static final long ALL = USER | PERDIR | SYSTEM;
 
-    /** A directive's default (null: no value, which ini_get() shows as "") and where it may be changed. */
-    private record Directive(String value, long access) {
+    /**
+     * A directive's default (null: no value, which ini_get() shows as ""), where it may be changed, and the extension
+     * that declares it (as the module registry names it).
+     */
+    private record Directive(String value, long access, String extension) {
+        Directive(String value, long access) {
+            this(value, access, "core");
+        }
     }
 
-    /** Core's directives, by name, as main.c declares them. */
+    /** The directives, by name: Core's as main.c declares them, then the extensions'. */
     private static final Map<String, Directive> DIRECTIVES = directives();
 
     private static Map<String, Directive> directives() {
@@ -68,6 +74,8 @@ public final class Ini {
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
         directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
+        // ext/curl's PHP_INI_BEGIN
+        directives.put("curl.cainfo", new Directive("", SYSTEM, "curl"));
         return Collections.unmodifiableMap(directives);
     }
 
@@ -324,13 +332,14 @@ public final class Ini {
 
     /**
      * ini_get_all(?string $extension = null, bool $details = true): every directive by name, with its startup and
-     * current values and its access (or only the current value). The directives here are all Core's, which the
-     * module registry knows as "core" (its keys are lowercase; the name isn't lowered).
+     * current values and its access (or only the current value); with an extension, only its directives. The
+     * module registry's keys are lowercase ("core"), and the name isn't lowered.
      */
     @TruffleBoundary
     private static Object iniGetAll(PhpContext context, Object[] a) {
         Object extension = Args.get(a, 0, PhpNull.NULL);
-        if (extension != PhpNull.NULL && !Str.java(Convert.toStr(extension)).equals("core")) {
+        String module = extension == PhpNull.NULL ? null : Str.java(Convert.toStr(extension));
+        if (module != null && !RuntimeFunctions.EXTENSIONS.contains(module)) {
             ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("ini_get_all(): Extension \""
                     + Str.java(Convert.toStr(extension)) + "\" cannot be found"), SourceLocation.current());
             return Boolean.FALSE;
@@ -339,6 +348,9 @@ public final class Ini {
         Ini ini = context.ini();
         PhpArray all = new PhpArray();
         for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
+            if (module != null && !module.equals(directive.getValue().extension())) {
+                continue;
+            }
             String name = directive.getKey();
             Object current = valueOf(ini.get(name));
             if (details) {

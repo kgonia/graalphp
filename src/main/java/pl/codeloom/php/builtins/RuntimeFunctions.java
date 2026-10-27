@@ -30,8 +30,8 @@ final class RuntimeFunctions {
     }
 
     /** The extensions whose functions Truffle PHP provides (extension_loaded, get_loaded_extensions). */
-    static final java.util.Set<String> EXTENSIONS = new java.util.TreeSet<>(java.util.List.of("core", "standard", "date",
-            "pcre", "json", "mbstring", "ctype", "hash", "spl", "random", "mysqli"));
+    static final java.util.Set<String> EXTENSIONS = new java.util.TreeSet<>(java.util.List.of("core", "standard",
+            "date", "pcre", "json", "mbstring", "ctype", "hash", "spl", "random", "mysqli", "curl"));
 
     private static final Callables.Parameter CALL_USER_FUNC = new Callables.Parameter("call_user_func", 1, false);
     private static final Callables.Parameter CALL_USER_FUNC_ARRAY =

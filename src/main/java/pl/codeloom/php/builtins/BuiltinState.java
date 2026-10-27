@@ -10,6 +10,8 @@ public final class BuiltinState {
     final PcreFunctions pcre = new PcreFunctions();
     final JsonFunctions.State json = new JsonFunctions.State();
     final MbFunctions.State mb = new MbFunctions.State();
+    /** ext/curl's handles and the exception a callback left pending. */
+    final CurlFunctions.State curl = new CurlFunctions.State();
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;
@@ -43,6 +45,7 @@ public final class BuiltinState {
 
     /** Closes what the context left open. */
     public void close() {
+        curl.close();
         for (FileFunctions.Stream stream : new java.util.ArrayList<>(openStreams)) {
             FileFunctions.closeStream(stream);
         }
