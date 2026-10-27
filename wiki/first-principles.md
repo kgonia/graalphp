@@ -79,6 +79,52 @@ All checksums are identical.
 - **mandelbrot (0.81×).** No arrays. In the Tier 2 code, Graal's register allocator stores and reloads one double through the stack inside the inner loop, on its dependency chain. The Tier 1 code of the same function is faster (6.6 vs 9.4 ms per call). Steady state therefore depends on which tier and which OSR compilation wins: OSR off makes mandelbrot 8.5 → 6.2 ms and intloop 17.6 → 9.7 ms, but fannkuch, spectralnorm and binarytrees slower. **This is the "bimodal" run-to-run variance seen since M5.** It's a compiler-level issue to report or work around, not a node problem.
 - **sieve.** Uses a boolean array, still `Object[]`. A boolean strategy is cheap to add if it ever matters.
 
+### K0 on 2026-10-27
+
+`bench/gate1/compare.sh` with `DRIVER=bench/k0/run.php`, 400 iterations on cores 6–13, two rounds back to back:
+
+| Kernel | Round 1 | Round 2 |
+|---|---:|---:|
+| fannkuch | 1.23× | 1.90× |
+| spectralnorm | 3.49× | 4.14× |
+| binarytrees | 1.51× | 1.86× |
+| nbody | 1.51× | 1.64× |
+| fib | 2.17× | 2.57× |
+| intloop | 1.28× | 1.99× |
+| floatloop | 2.62× | 3.55× |
+| mandelbrot | 0.74× | 0.93× |
+| sieve | 1.36× | 1.08× |
+| bubblesort | 14.56× | 18.70× |
+| **geomean** | **2.00×** | **2.46×** |
+
+- The checksums match.
+- Peak memory was 20 MB for PHP and 1.5–1.7 GB for Truffle PHP.
+- fannkuch is no longer below PHP.
+- The rounds differ by up to 1.5× on one kernel: the box is shared. Read single rounds loosely.
+
+## graalphp's own benchmarks, re-run (`bench/graalphp/`)
+
+`bench/graalphp/run.sh` runs the PHP variants of the Benchmarks Game programs that graalphp measured against PHP 7.4 and PHP 8.0 alpha.
+- **Source:** `benchmarks/scripts-report/bench` at graalphp commit 29e22de.
+- **Changes:** only `$N` and `$iter`. graalphp's sizes (fannkuch-redux 12, spectral-norm 5500, binary-trees 21) take minutes per iteration on PHP; here it is 10, 1000 and 16, with 60 iterations.
+- **Timing:** each program's own hrtime around each iteration, on both engines. The steady state is the median of the last third.
+
+Results on 2026-10-27, cores 6–13:
+
+| Program | PHP 8.5 JIT | Truffle PHP | Speedup | First iteration (PHP / Truffle) | All 60, warm-up included | Peak memory (PHP / Truffle) |
+|---|---:|---:|---:|---:|---:|---:|
+| fannkuchredux.php-1 | 194.6 ms | 150.6 ms | 1.29× | 337 / 1405 ms | 1.08× | 11 / 390 MB |
+| spectralnorm.php-2-unmodified | 238.3 ms | 68.0 ms | 3.51× | 262 / 810 ms | 2.80× | 11 / 907 MB |
+| spectralnorm.php-2-val | 226.9 ms | 64.1 ms | 3.54× | 289 / 864 ms | 2.84× | 11 / 983 MB |
+| spectralnorm.php-2-ref | 201.1 ms | 59.2 ms | 3.40× | 247 / 869 ms | 3.18× | 12 / 898 MB |
+| binarytrees.php-3-val | 391.5 ms | 207.0 ms | 1.89× | 530 / 798 ms | 1.66× | 39 / 1316 MB |
+| binarytrees.php-3-ref | | fails | | | | |
+
+- The outputs match without the timing lines.
+- **binary-trees by value:** graalphp ran it at 0.16× of PHP 7, because it deep-copied every array passed by value. With copy-on-write it runs at 1.89× of PHP 8.5's JIT.
+- **binary-trees by reference:** it uses `function &bottomUpTree()` and `$t = & bottomUpTree(...)`. Return by reference was not implemented: `returnsRef` was parsed but never used.
+- **The first iteration** is 1.5–5× slower on Truffle PHP. Over all 60 iterations, Truffle PHP still comes out ahead on every program.
+
 ## PHP correctness beyond WordPress: php-src's own tests
 
 `tests/phpt/run.sh`:
