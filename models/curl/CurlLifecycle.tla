@@ -39,10 +39,11 @@ CONSTANTS
     FRAME_ARGS, \* see above
     MIGRATE,    \* a context may move to another thread between its calls
     DUP_SHARE,  \* curl_easy_duphandle attaches the copy to the source's share
+    GSHUTDOWN,  \* a thread's end cleans up its persistent shares (php-src's GSHUTDOWN)
     None        \* a model value
 
 ASSUME K \in Nat /\ MaxCb \in Nat /\ FRAME_ARGS \in BOOLEAN /\ MIGRATE \in BOOLEAN
-       /\ DUP_SHARE \in BOOLEAN
+       /\ DUP_SHARE \in BOOLEAN /\ GSHUTDOWN \in BOOLEAN
 
 Hs == Ctx \X (1..K)                    \* a context's handles
 PNat == {<<t, 0>> : t \in Thr}         \* the persistent shares' natives, one per thread
@@ -67,11 +68,14 @@ VARIABLES
     deferred,  \* [Ctx -> SUBSET Hs]: State.deferredShares
     closed,    \* [Ctx -> BOOLEAN]
     thread,    \* [Ctx -> Thr]
+    ended,     \* [Thr -> {"no", "freed", "leaked", "kept"}]: the thread has ended (after every
+               \* context on it closed), and its persistent shares were cleaned up, refused
+               \* (in use), or kept
     call,      \* [Ctx -> record or None]: the curl call running on the context's thread
     bad        \* the violations seen (a ghost)
 
 vars == <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat, inLive,
-          enq, queue, deferred, closed, thread, call, bad>>
+          enq, queue, deferred, closed, thread, ended, call, bad>>
 
 -----------------------------------------------------------------------------
 (* Reachability in the JVM: what keeps the object the Cleaner watches alive *)
@@ -157,10 +161,12 @@ Init ==
     /\ closed = [c \in Ctx |-> FALSE]
     /\ thread \in [Ctx -> Thr]
     /\ \A c, d \in Ctx : c # d => thread[c] # thread[d]
+    /\ ended = [t \in Thr |-> "no"]
     /\ call = [c \in Ctx |-> None]
     /\ bad = {}
 
-Use(hs) == IF \E h \in hs : h \in Hs /\ nat[h] # "live"
+Use(hs) == IF \/ \E h \in hs : h \in Hs /\ nat[h] # "live"
+              \/ \E p \in hs : p \in PNat /\ ended[p[1]] = "freed"
            THEN {"a native handle used after it was freed"} ELSE {}
 
 FreeSlot(c) == {h \in Hs : Owner(h) = c /\ kind[h] = "unused"}
@@ -174,7 +180,7 @@ New(c, k) ==
         /\ nat' = [nat EXCEPT ![h] = "live"]
         /\ inLive' = [inLive EXCEPT ![h] = TRUE]
     /\ UNCHANGED <<easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, enq, queue,
-                   deferred, closed, thread, call, bad>>
+                   deferred, closed, thread, ended, call, bad>>
 
 \* curl_share_init_persistent: PERSISTENT_SHARES' handle of the current thread, not tracked
 NewPersistent(c) ==
@@ -184,7 +190,7 @@ NewPersistent(c) ==
         /\ rooted' = [rooted EXCEPT ![h] = TRUE]
         /\ pnat' = [pnat EXCEPT ![h] = <<thread[c], 0>>]
     /\ UNCHANGED <<easyh, shareOf, attached, lmulti, group, toFreeDone, nat, inLive, enq, queue,
-                   deferred, closed, thread, call, bad>>
+                   deferred, closed, thread, ended, call, bad>>
 
 \* unset(), reassignment, a scope's end: the last PHP reference outside the curl internals goes
 Drop(h) ==
@@ -192,7 +198,7 @@ Drop(h) ==
     /\ rooted[h]
     /\ rooted' = [rooted EXCEPT ![h] = FALSE]
     /\ UNCHANGED <<kind, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat, inLive,
-                   enq, queue, deferred, closed, thread, call, bad>>
+                   enq, queue, deferred, closed, thread, ended, call, bad>>
 
 \* curl_copy_handle (cloneHandle, setupEasyCopyHandlers: the clone shares the ToFree)
 Copy(e) ==
@@ -207,7 +213,7 @@ Copy(e) ==
         /\ attached' = [attached EXCEPT ![h] = IF DUP_SHARE THEN attached[e] ELSE None]
     /\ bad' = bad \cup Use({e})
     /\ UNCHANGED <<easyh, shareOf, lmulti, pnat, toFreeDone, enq, queue, deferred, closed,
-                   thread, call>>
+                   thread, ended, call>>
 
 \* curl_setopt($ch, CURLOPT_SHARE, $sh)
 SetShare(e, s) ==
@@ -218,7 +224,7 @@ SetShare(e, s) ==
     /\ shareOf' = [shareOf EXCEPT ![e] = s]
     /\ bad' = bad \cup Use({e, ShareNative(s)})
     /\ UNCHANGED <<kind, rooted, easyh, lmulti, pnat, group, toFreeDone, nat, inLive, enq, queue,
-                   deferred, closed, thread, call>>
+                   deferred, closed, thread, ended, call>>
 
 \* curl_multi_remove_handle (between calls: from a callback libcurl refuses it, CURLM_RECURSIVE_API_CALL)
 MultiRemove(m, e) ==
@@ -230,7 +236,7 @@ MultiRemove(m, e) ==
     /\ easyh' = [easyh EXCEPT ![m] = @ \ {e}]
     /\ bad' = bad \cup Use({m, e})
     /\ UNCHANGED <<kind, rooted, shareOf, attached, pnat, group, toFreeDone, nat, inLive, enq,
-                   queue, deferred, closed, thread, call>>
+                   queue, deferred, closed, thread, ended, call>>
 
 -----------------------------------------------------------------------------
 (* Calls that run PHP code before libcurl returns: callbacks (upcalls), and *)
@@ -240,7 +246,7 @@ Begin(c, rec) ==
     /\ ~closed[c] /\ call[c] = None
     /\ call' = [call EXCEPT ![c] = rec]
     /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
-                   inLive, enq, queue, deferred, closed, thread, bad>>
+                   inLive, enq, queue, deferred, closed, thread, ended, bad>>
 
 Rec(op, h, h2, args, frame, cbs, inflight, post, phase) ==
     [op |-> op, h |-> h, h2 |-> h2, args |-> args, frame |-> frame, cbs |-> cbs,
@@ -289,13 +295,13 @@ EnterCb(c, e) ==
        ELSE /\ call' = [call EXCEPT ![c].n = @ + 1]
             /\ bad' = bad \cup {"a callback skipped: the Easy was collected while libcurl ran it"}
     /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
-                   inLive, enq, queue, deferred, closed, thread>>
+                   inLive, enq, queue, deferred, closed, thread, ended>>
 
 LeaveCb(c) ==
     /\ Running(c) /\ call[c].phase = "cb"
     /\ call' = [call EXCEPT ![c].phase = "lib", ![c].cbh = None]
     /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
-                   inLive, enq, queue, deferred, closed, thread, bad>>
+                   inLive, enq, queue, deferred, closed, thread, ended, bad>>
 
 \* libcurl returns; then the post-callback native calls
 End(c) ==
@@ -311,7 +317,7 @@ End(c) ==
             [] OTHER -> UNCHANGED <<easyh, lmulti>>
     /\ call' = [call EXCEPT ![c] = None]
     /\ UNCHANGED <<kind, rooted, shareOf, attached, pnat, group, toFreeDone, nat, inLive, enq,
-                   queue, deferred, closed, thread>>
+                   queue, deferred, closed, thread, ended>>
 
 -----------------------------------------------------------------------------
 (* Freeing                                                                  *)
@@ -327,7 +333,7 @@ Clean(h) ==
     /\ enq' = [enq EXCEPT ![h] = TRUE]
     /\ queue' = [queue EXCEPT ![Owner(h)] = @ \cup {h}]
     /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
-                   inLive, deferred, closed, thread, call, bad>>
+                   inLive, deferred, closed, thread, ended, call, bad>>
 
 \* State.drain, at the start of a curl function: free(handle) for one queued handle
 Drain(c, h) ==
@@ -369,7 +375,7 @@ Drain(c, h) ==
                          ELSE /\ nat' = [nat EXCEPT ![h] = "freed"]
                               /\ UNCHANGED deferred
                       /\ UNCHANGED <<attached, lmulti, toFreeDone, bad>>
-    /\ UNCHANGED <<kind, rooted, easyh, shareOf, pnat, group, enq, closed, thread, call>>
+    /\ UNCHANGED <<kind, rooted, easyh, shareOf, pnat, group, enq, closed, thread, ended, call>>
 
 \* State.close (BuiltinState.close, from finalizeContext after the script and its shutdown
 \* functions): the released queue cleared, every live handle freed (easy, then multi, then share),
@@ -390,15 +396,28 @@ Close(c) ==
           /\ toFreeDone' = [g \in Hs |-> IF Owner(g) = c THEN TRUE ELSE toFreeDone[g]]
     /\ inLive' = [h \in Hs |-> IF Owner(h) = c THEN FALSE ELSE inLive[h]]
     /\ deferred' = [deferred EXCEPT ![c] = {}]
-    /\ UNCHANGED <<kind, rooted, easyh, shareOf, pnat, group, enq, thread, call, bad>>
+    /\ UNCHANGED <<kind, rooted, easyh, shareOf, pnat, group, enq, thread, ended, call, bad>>
 
 \* An embedder enters the context from another thread between two calls
 Migrate(c, t) ==
     /\ MIGRATE /\ ~closed[c] /\ call[c] = None
+    /\ ended[t] = "no"
     /\ \A d \in Ctx : d # c /\ ~closed[d] => thread[d] # t
     /\ thread' = [thread EXCEPT ![c] = t]
     /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
-                   inLive, enq, queue, deferred, closed, call, bad>>
+                   inLive, enq, queue, deferred, closed, ended, call, bad>>
+
+\* A thread ends once every context on it has closed (an embedder's pool shrinking). With
+\* GSHUTDOWN, its persistent shares are cleaned up: libcurl refuses a share an easy still uses.
+EndThread(t) ==
+    /\ ended[t] = "no"
+    /\ \A c \in Ctx : thread[c] = t => closed[c]
+    /\ ended' = [ended EXCEPT ![t] =
+                    IF ~GSHUTDOWN THEN "kept"
+                    ELSE IF \E e \in Hs : attached[e] = <<t, 0>> /\ nat[e] = "live" THEN "leaked"
+                    ELSE "freed"]
+    /\ UNCHANGED <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDone, nat,
+                   inLive, enq, queue, deferred, closed, thread, call, bad>>
 
 Next ==
     \/ \E c \in Ctx : \/ \E k \in {"easy", "multi", "share"} : New(c, k)
@@ -411,6 +430,7 @@ Next ==
     \/ \E h \in Hs : Drop(h) \/ Copy(h) \/ Exec(h) \/ Pause(h) \/ MultiExec(h) \/ MultiClose(h)
                      \/ Clean(h)
     \/ \E e, s \in Hs : SetShare(e, s) \/ MultiAdd(s, e) \/ MultiRemove(s, e)
+    \/ \E t \in Thr : EndThread(t)
 
 Spec == Init /\ [][Next]_vars
 
@@ -428,6 +448,9 @@ NoDoubleFree == \A h \in Hs : nat[h] \in {"freed", "leaked"} => ~inLive[h]
 NoLeakAfterClose ==
     \A h \in Hs : closed[Owner(h)] /\ kind[h] \in {"easy", "multi", "share"}
                   => nat[h] = "freed" /\ (kind[h] = "easy" => toFreeDone[group[h]])
+
+\* A thread's end cleans up its persistent shares, as php-src's GSHUTDOWN
+NoLeakAfterThreadEnd == \A t \in Thr : ended[t] # "no" => ended[t] = "freed"
 
 \* No state of one context is reachable from another: a multi's easies, an easy's share and
 \* libcurl's links stay within the context; two threads never run libcurl on the same native at
