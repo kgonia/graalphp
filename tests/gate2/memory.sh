@@ -5,8 +5,9 @@
 # name (what NMT doesn't see: libgraal's heap, mallocs from native libraries such as PCRE2). Out: target/memory/<variant>/.
 # The visits are the video comparison's (ThreeJsBlender productions/wordpress-graalvm, CAPTURE_DIR); its GraalVM facts
 # and frames are put back afterwards.
-# A variant is JVM options with commas for spaces; "libgraal" is none (the default compiler).
-# Usage: tests/gate2/memory.sh libgraal -XX:-UseJVMCINativeLibrary   (after browse.sh's setup; build first)
+# A variant is JVM options with commas for spaces; "libgraal" is none (the default compiler). Compare the compilers
+# at one heap limit: jargraal keeps the compiler's memory on the Java heap, which without a limit just grows.
+# Usage: tests/gate2/memory.sh -Xmx512m -Xmx512m,-XX:-UseJVMCINativeLibrary   (after browse.sh's setup; build first)
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 wp=$(pwd)
@@ -27,6 +28,7 @@ snap() { # out-file
     echo "## cgroup $(grep "^anon " /sys/fs/cgroup/memory.stat)"; echo "## threads $(ls /proc/1/task | wc -l)"
     echo "## nmt"; $GRAALVM_HOME/bin/jcmd 1 VM.native_memory summary scale=MB
     echo "## codecache"; $GRAALVM_HOME/bin/jcmd 1 Compiler.codecache
+    echo "## live heap (after a full GC)"; $GRAALVM_HOME/bin/jcmd 1 GC.run > /dev/null; $GRAALVM_HOME/bin/jcmd 1 GC.heap_info
     echo "## unnamed anonymous mappings (Rss kB, size kB, start)"
     awk "/^[0-9a-f]+-[0-9a-f]+ /{split(\$1,a,\"-\"); name=\$6; start=a[1]; size=0} /^Size:/{size=\$2} /^Rss:/{if(name==\"\") print \$2, size, start}" /proc/1/smaps | sort -rn | head -40
     echo "## named mappings over 10 MB (Rss kB)"; awk "/^[0-9a-f]+-[0-9a-f]+ /{name=\$6} /^Rss:/{r[name]+=\$2} END{for(n in r) if(r[n]>10000) print r[n], n}" /proc/1/smaps | sort -rn
