@@ -12,6 +12,7 @@
 | [graalphp-assessment.md](graalphp-assessment.md) | Why graalphp is a reference, not a base to fork |
 | [gate-1.md](gate-1.md) | Gate 1 spec, method, go/no-go criteria and status log |
 | [gate-2.md](gate-2.md) | Gate 2 probe: syntax and built-in gaps of WordPress core |
+| [bootstrap-share.md](bootstrap-share.md) | How much of a WordPress request on PHP 8.5 is bootstrap, what of it depends on the request, and what a post-bootstrap snapshot could gain |
 | [tla-cow.md](tla-cow.md) | TLA+ model of copy-on-write arrays and PHP references against php-src, with its findings |
 | [tla-curl.md](tla-curl.md) | TLA+ model of the curl handles' lifecycle (Cleaner, multi, share, threads), with its findings |
 | [tla-engine.md](tla-engine.md) | Per-request state in the shared engine: inventory, TLA+ model, findings |
