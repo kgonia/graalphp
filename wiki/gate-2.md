@@ -233,7 +233,9 @@ What the installer and wp-admin needed, in the order they hit it:
 
 Gate 1 kernels (interleaved, 8 rounds, CPUs 14–21; median of per-round ratios):
 - The series up to the spread commit, against `3c77dd2`: neutral. Hooks 1.02, escape 1.00, slugs 0.93, wpautop 0.96, wptexturize 1.00, blocks 0.99, kses 1.00.
-- The visibility checks against the commit before them: hooks 1.04 (IQR 1.04–1.07) and kses 1.05, because `WP_Hook`'s private properties are read on every dispatch. A site in a method now takes its scope from its code, not the frame, and `$this->protected` needs no check. With that, hooks is 1.01 and kses 1.03 (1.01–1.04), escape 1.03, slugs 1.02, wpautop 0.97, blocks 1.00. wptexturize measured 1.06 (1.04–1.10); it is bimodal (see above), so it needs a run of its own.
+- The visibility checks against the commit before them: hooks 1.04 (IQR 1.04–1.07) and kses 1.05, because `WP_Hook`'s private properties are read on every dispatch. A site in a method now takes its scope from its code, not the frame, and `$this->protected` needs no check. With that, hooks is 1.01 and kses 1.03 (1.01–1.04), escape 1.03, slugs 1.02, wpautop 0.97, blocks 1.00. wptexturize measured 1.06 (1.04–1.10). Its own run of 10 rounds, with kses and escape, at `d58df0b` against the series' start gave wptexturize 1.01 (1.00–1.03), kses 1.03 (1.00–1.04), escape 1.00, so the 1.06 was noise. kses's 3% is left to find.
+
+php-src `.phpt` at `d58df0b`: 2953 of 7341 strict (40.2%), from 2932. The series fixed 23 cases. It broke 2, both fixed by `d58df0b`: an `isset()` through an inaccessible property, and `foreach` over an object changed in the loop.
 
 Gaps found on the way, not fixed yet:
 - `Closure` is no class: `Closure::bind`, `bindTo`, `call` and `fromCallable` are missing;
