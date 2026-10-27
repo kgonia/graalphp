@@ -20,10 +20,12 @@
 (* ref), a multi's easyh (Z_ADDREF in curl_multi_add_handle), an easy's    *)
 (* share (GC_ADDREF in CURLOPT_SHARE). PhpAlive below is that refcount.    *)
 (*                                                                         *)
-(* Fixes = {} models the code as of b4f3f52; each element turns a fix on:  *)
-(*   "multi": the Cleaner watches the Multi, not its PHP object (the       *)
-(*            native part split off as MultiNative, as EasyNative is);     *)
-(*   "pause": curl_pause keeps its Easy reachable until libcurl returns.   *)
+(* A built-in runs in a Truffle frame whose arguments array holds the      *)
+(* values passed (debug_backtrace() reads them from it), so the PHP        *)
+(* objects passed to a curl function stay reachable until it returns, as   *)
+(* php-src's call frame holds them. FRAME_ARGS = FALSE drops that, leaving *)
+(* only what the Java code itself keeps reachable (its locals used after a *)
+(* call), to show what the code relies on.                                 *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -32,12 +34,12 @@ CONSTANTS
     Thr,        \* the threads
     K,          \* handle slots per context
     MaxCb,      \* callbacks into PHP per curl call
-    Fixes,      \* see above
+    FRAME_ARGS, \* see above
     MIGRATE,    \* a context may move to another thread between its calls
     DUP_SHARE,  \* curl_easy_duphandle attaches the copy to the source's share
     None        \* a model value
 
-ASSUME K \in Nat /\ MaxCb \in Nat /\ Fixes \subseteq {"multi", "pause"} /\ MIGRATE \in BOOLEAN
+ASSUME K \in Nat /\ MaxCb \in Nat /\ FRAME_ARGS \in BOOLEAN /\ MIGRATE \in BOOLEAN
        /\ DUP_SHARE \in BOOLEAN
 
 Hs == Ctx \X (1..K)                    \* a context's handles
@@ -72,15 +74,20 @@ vars == <<kind, rooted, easyh, shareOf, attached, lmulti, pnat, group, toFreeDon
 -----------------------------------------------------------------------------
 (* Reachability in the JVM: what keeps the object the Cleaner watches alive *)
 
-\* The Java objects a curl call's frame holds: its locals used after libcurl returns, and the
-\* Easy an upcall looked up for the callback running (callCallback's ch).
-FrameHeld(c) ==
+\* The PHP objects the frames of a curl call hold: its arguments (in its Truffle frame), and the
+\* CurlHandle of the callback running (the upcall's ch, passed to the callable).
+FrameObjects(c) ==
     IF call[c] = None THEN {}
-    ELSE call[c].frame \cup (IF call[c].phase = "cb" THEN {call[c].cbh} ELSE {})
+    ELSE (IF FRAME_ARGS THEN call[c].args ELSE {})
+         \cup (IF call[c].phase = "cb" THEN {call[c].cbh} ELSE {})
 
-\* A Multi's easyh list is reachable while the Multi is: from State.live (the native part,
-\* the Multi itself in the code; MultiNative holding the list with the fix), from the Cleaner's
-\* action or State.released until drained, from a frame, or from its PHP object.
+\* The Java objects a curl call's frames hold: those, and the internals its Java locals hold after
+\* libcurl returns (an Easy or a Multi, not the PHP object).
+FrameHeld(c) == FrameObjects(c) \cup (IF call[c] = None THEN {} ELSE call[c].frame)
+
+\* A Multi's easyh list is reachable while the Multi is: from State.live (the Multi is the native
+\* part), from the Cleaner's action or State.released until drained, from a frame, or from its PHP
+\* object.
 EasyhHeld(m) ==
     \/ inLive[m]
     \/ (nat[m] = "live" /\ ~enq[m])
@@ -96,8 +103,8 @@ EasyAlive(e) ==
 \* The object the Cleaner watches is reachable.
 Watched(h) ==
     CASE kind[h] = "easy"  -> EasyAlive(h)
-      [] kind[h] = "multi" -> rooted[h] \/ ("multi" \in Fixes /\ h \in FrameHeld(Owner(h)))
-      [] kind[h] = "share" -> rooted[h]
+      [] kind[h] = "multi" -> rooted[h] \/ h \in FrameObjects(Owner(h))
+      [] kind[h] = "share" -> rooted[h] \/ h \in FrameObjects(Owner(h))
       [] OTHER -> TRUE
 
 (* php-src's refcount *)
@@ -248,8 +255,7 @@ Exec(e) ==
 \* easy in a multi.
 Pause(e) ==
     /\ kind[e] = "easy" /\ rooted[e]
-    /\ Begin(Owner(e), Rec("pause", e, None, {e}, IF "pause" \in Fixes THEN {e} ELSE {},
-                           IF lmulti[e] # None THEN {e} ELSE {},
+    /\ Begin(Owner(e), Rec("pause", e, None, {e}, {}, IF lmulti[e] # None THEN {e} ELSE {},
                            {e}, {}, "lib"))
 
 \* curl_multi_exec: the frame holds the Multi (mh.errNo after multiPerform), not its PHP object
