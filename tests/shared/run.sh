@@ -41,4 +41,5 @@ for sequence in "callable-unbound callable-bound" "callable-bound callable-unbou
 done
 
 shared --retained tests/shared/requests/retained.php 64 || failed=1
+shared --retained tests/shared/requests/retained-zones.php 64 || failed=1
 exit $failed
