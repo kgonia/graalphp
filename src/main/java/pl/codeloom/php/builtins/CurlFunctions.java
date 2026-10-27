@@ -2210,8 +2210,27 @@ final class CurlFunctions {
      * curl_share_init_persistent's handles, by the set of options: module globals, which ZTS php-src keeps per
      * thread, as here; they live as long as the thread.
      */
-    private static final ThreadLocal<Map<Long, MemorySegment>> PERSISTENT_SHARES =
-            ThreadLocal.withInitial(HashMap::new);
+    private static final ThreadLocal<PersistentShares> PERSISTENT_SHARES =
+            ThreadLocal.withInitial(PersistentShares::new);
+
+    /**
+     * A thread's persistent share handles. The thread's end drops its thread-local values, and the cleaner then
+     * cleans the handles up, as GSHUTDOWN destroys CURL_G(persistent_curlsh). By then every context that ran on the
+     * thread has closed, so no easy handle uses them.
+     */
+    private static final class PersistentShares {
+        /** Written on the owning thread, read by the cleaner's thread after that thread has ended. */
+        final Map<Long, MemorySegment> handles = new ConcurrentHashMap<>();
+
+        PersistentShares() {
+            Map<Long, MemorySegment> handles = this.handles;
+            CLEANER.register(this, () -> {
+                for (MemorySegment handle : handles.values()) {
+                    CurlNative.shareCleanup(handle);
+                }
+            });
+        }
+    }
 
     @TruffleBoundary
     private static Object curlShareInitPersistent(PhpContext context, Object[] a) {
@@ -2260,7 +2279,7 @@ final class CurlFunctions {
         }
         shareOptions.addHolder();
         object.setProperty("options", shareOptions);
-        Map<Long, MemorySegment> persisted = PERSISTENT_SHARES.get();
+        Map<Long, MemorySegment> persisted = PERSISTENT_SHARES.get().handles;
         MemorySegment handle = persisted.get(persistentId);
         if (handle == null) {
             handle = CurlNative.shareInit();
