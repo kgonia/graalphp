@@ -8,6 +8,7 @@ import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
@@ -149,6 +150,14 @@ final class RuntimeFunctions {
         if (!(value instanceof PhpObject object)) {
             throw new PhpError("clone(): Argument #1 ($object) must be of type object, "
                     + Convert.typeName(value) + " given");
+        }
+        PhpClass.ObjectHandlers handlers = object.getPhpClass().getHandlers();
+        if (handlers != null && handlers.uncloneable()) {
+            throw new PhpError("Trying to clone an uncloneable object of class " + object.getPhpClass().getName());
+        }
+        if (handlers != null && handlers.cloneObject() != null) {
+            // a built-in class's clone_obj
+            return handlers.cloneObject().apply(object);
         }
         PhpObject copy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
                 context.nextObjectId());

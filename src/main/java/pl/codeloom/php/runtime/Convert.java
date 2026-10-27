@@ -68,6 +68,11 @@ public final class Convert {
         if (value instanceof PhpResource r) {
             return r.getId();
         }
+        if (value instanceof PhpObject o && o.getPhpClass().getHandlers() != null
+                && o.getPhpClass().getHandlers().castsToId()) {
+            // a cast_object handler that gives the object's id (ext/curl's handles, once resources)
+            return o.id();
+        }
         return 1;
     }
 
