@@ -8,6 +8,7 @@ import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -43,8 +44,12 @@ public final class PropNode extends LValueNode {
      * class that declared the property are both ancestors of $this's.
      */
     private final boolean thisInMethod;
-    /** A class whose non-public property (the constant name) the site's lexical scope may access. */
-    @CompilationFinal private PhpClass accessibleClass;
+    /**
+     * The key of classes whose non-public property (the constant name) the site's lexical scope may access. A key,
+     * not the PhpClass: the AST is shared by contexts, and a context's class must neither stay reachable from it
+     * once the context is closed nor be the only class the shortcut serves.
+     */
+    @CompilationFinal private ClassKey accessibleKey;
 
     /** constantName is an interned property name, or null with nameExpr computing it. */
     public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
@@ -90,13 +95,14 @@ public final class PropNode extends LValueNode {
         }
         Object scope = scopeInFrame ? frame.getArguments()[PhpFunction.ARG_CLOSURE] : null;
         boolean lexical = scope == null && constantName != null;
-        if (lexical && phpObject.getPhpClass() == accessibleClass) {
+        PhpClass phpClass = phpObject.getPhpClass();
+        if (lexical && phpClass.getKey() == accessibleKey) {
             return true;
         }
-        boolean allowed = phpObject.getPhpClass().canAccessProperty(name, callingScope(scope, lexicalClass));
-        if (allowed && lexical && accessibleClass == null) {
+        boolean allowed = phpClass.canAccessProperty(name, callingScope(scope, lexicalClass));
+        if (allowed && lexical && accessibleKey == null && phpClass.isPropertyAccessKeyed(name, lexicalClass)) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
-            accessibleClass = phpObject.getPhpClass();
+            accessibleKey = phpClass.getKey();
         }
         return allowed;
     }

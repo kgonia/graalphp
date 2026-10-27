@@ -212,8 +212,13 @@ final class DateFunctions {
     private record Era(long start, int[] offsets, boolean[] dsts, String[] abbreviations) {
     }
 
-    /** A parsed zone per zone name: the prelude passes names, and formats a date with the same zone again. */
+    /**
+     * A parsed zone per zone name: the prelude passes names, and formats a date with the same zone again. Shared by
+     * every context, and the names are any strings scripts pass, so it stops growing at ZONE_CACHE_LIMIT names (the
+     * identifiers, abbreviations and offsets in use fit many times over); later names are parsed on each use.
+     */
     private static final Map<String, PhpZone> ZONE_CACHE = new ConcurrentHashMap<>();
+    private static final int ZONE_CACHE_LIMIT = 4096;
     private static final PhpZone NO_ZONE = new PhpZone(0, "", ZoneOffset.UTC, 0, false);
 
     private static final Pattern OFFSET = Pattern.compile("([+-])(\\d{1,2})(?::?(\\d{2}))?(?::?(\\d{2}))?");
@@ -225,7 +230,13 @@ final class DateFunctions {
      */
     @TruffleBoundary
     static PhpZone parseZone(String given) {
-        PhpZone zone = ZONE_CACHE.computeIfAbsent(given, DateFunctions::parseZoneUncached);
+        PhpZone zone = ZONE_CACHE.get(given);
+        if (zone == null) {
+            zone = parseZoneUncached(given);
+            if (ZONE_CACHE.size() < ZONE_CACHE_LIMIT) {
+                ZONE_CACHE.putIfAbsent(given, zone);
+            }
+        }
         return zone == NO_ZONE ? null : zone;
     }
 
