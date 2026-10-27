@@ -68,6 +68,11 @@ public final class Convert {
         if (value instanceof PhpResource r) {
             return r.getId();
         }
+        if (value instanceof PhpObject o && o.getPhpClass().getHandlers() != null
+                && o.getPhpClass().getHandlers().castsToId()) {
+            // a cast_object handler that gives the object's id (ext/curl's handles, once resources)
+            return o.id();
+        }
         return 1;
     }
 
@@ -815,6 +820,10 @@ public final class Convert {
      * null or a bool: zend_std_compare_objects, with ext/date's handlers for the prelude's date classes.
      */
     private static int compareObjects(Object a, Object b, boolean objectLeft, Guard guard) {
+        if (notComparable(a) || notComparable(b)) {
+            // zend_objects_not_comparable (ext/curl's handles): uncomparable but to themselves
+            return a == b ? 0 : 1;
+        }
         Object object = objectLeft ? a : b;
         Object value = objectLeft ? b : a;
         if (typeOrder(value) != OBJECT) {
@@ -899,6 +908,11 @@ public final class Convert {
             }
         }
         return true;
+    }
+
+    private static boolean notComparable(Object value) {
+        return value instanceof PhpObject o && o.getPhpClass().getHandlers() != null
+                && o.getPhpClass().getHandlers().notComparable();
     }
 
     /** PHP type name as gettype() reports it. */

@@ -1376,7 +1376,7 @@ final class FileFunctions {
         return new PhpResource(context.nextResourceId(), "stream", stream);
     }
 
-    private static Stream openStream(PhpContext context, String name, String mode) {
+    static Stream openStream(PhpContext context, String name, String mode) {
         if (name.regionMatches(true, 0, "php://", 0, 6)) {
             String target = Str.lower(name.substring(6));
             return switch (target) {

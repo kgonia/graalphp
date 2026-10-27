@@ -8,6 +8,7 @@ import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
@@ -29,8 +30,8 @@ final class RuntimeFunctions {
     }
 
     /** The extensions whose functions Truffle PHP provides (extension_loaded, get_loaded_extensions). */
-    static final java.util.Set<String> EXTENSIONS = new java.util.TreeSet<>(java.util.List.of("core", "standard", "date",
-            "pcre", "json", "mbstring", "ctype", "hash", "spl", "random", "mysqli"));
+    static final java.util.Set<String> EXTENSIONS = new java.util.TreeSet<>(java.util.List.of("core", "standard",
+            "date", "pcre", "json", "mbstring", "ctype", "hash", "spl", "random", "mysqli", "curl"));
 
     private static final Callables.Parameter CALL_USER_FUNC = new Callables.Parameter("call_user_func", 1, false);
     private static final Callables.Parameter CALL_USER_FUNC_ARRAY =
@@ -149,6 +150,14 @@ final class RuntimeFunctions {
         if (!(value instanceof PhpObject object)) {
             throw new PhpError("clone(): Argument #1 ($object) must be of type object, "
                     + Convert.typeName(value) + " given");
+        }
+        PhpClass.ObjectHandlers handlers = object.getPhpClass().getHandlers();
+        if (handlers != null && handlers.uncloneable()) {
+            throw new PhpError("Trying to clone an uncloneable object of class " + object.getPhpClass().getName());
+        }
+        if (handlers != null && handlers.cloneObject() != null) {
+            // a built-in class's clone_obj
+            return handlers.cloneObject().apply(object);
         }
         PhpObject copy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
                 context.nextObjectId());

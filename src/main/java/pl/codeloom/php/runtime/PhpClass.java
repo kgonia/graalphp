@@ -75,6 +75,20 @@ public final class PhpClass {
 
     @CompilationFinal private PhpFunction constructor;
 
+    /**
+     * The zend_object_handlers a built-in class replaces, as ext/curl's classes do: get_constructor's Error for
+     * `new` (null: `new` works), clone_obj (null: the standard copy, unless uncloneable: clone_obj NULL),
+     * cast_object's (int) cast to the object's id, whether serialize() and unserialize() refuse it
+     * (@not-serializable), and compare as zend_objects_not_comparable (equal to nothing but itself).
+     */
+    public record ObjectHandlers(String constructError, java.util.function.UnaryOperator<PhpObject> cloneObject,
+                                 boolean uncloneable, boolean castsToId, boolean notSerializable,
+                                 boolean notComparable) {
+    }
+
+    /** Set once, when a built-in class is made; `new` sites read it in their guards, so it folds. */
+    @CompilationFinal private ObjectHandlers handlers;
+
     public PhpClass(String name, PhpClass parent, boolean isInterface, boolean isAbstract, Shape rootShape,
                     Object declaration) {
         this.declaration = declaration;
@@ -113,6 +127,15 @@ public final class PhpClass {
 
     public boolean isAbstract() {
         return isAbstract;
+    }
+
+    /** The built-in class's own object handlers, or null for the standard ones. */
+    public ObjectHandlers getHandlers() {
+        return handlers;
+    }
+
+    public void setHandlers(ObjectHandlers handlers) {
+        this.handlers = handlers;
     }
 
     /** instanceof: this class, a parent, or an implemented interface (lowercase name). */
@@ -265,7 +288,7 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public PhpObject instantiate() {
-        PhpObject object = instantiateBare();
+        PhpObject object = instantiateBare(false);
         if (isThrowable()) {
             initThrowable(object, SourceLocation.current(), Backtrace.forThrowable());
         }
@@ -275,7 +298,7 @@ public final class PhpClass {
     /** As instantiate(); a Throwable is made at location with trace. */
     @TruffleBoundary
     public PhpObject instantiate(SourceLocation location, PhpArray trace) {
-        PhpObject object = instantiateBare();
+        PhpObject object = instantiateBare(false);
         if (isThrowable()) {
             initThrowable(object, location, trace);
         }
@@ -298,10 +321,21 @@ public final class PhpClass {
         throwable.setProperty("trace", trace);
     }
 
-    private PhpObject instantiateBare() {
-        if (!isInstantiable()) {
-            throw new PhpError(instantiationError != null ? instantiationError
-                    : "Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
+    /**
+     * object_init_ex for a built-in class whose get_constructor refuses `new` (curl_init's CurlHandle): the object,
+     * which the built-in then gives its native state.
+     */
+    @TruffleBoundary
+    public PhpObject instantiateInternal() {
+        return instantiateBare(true);
+    }
+
+    private PhpObject instantiateBare(boolean internal) {
+        if (!internal && handlers != null && handlers.constructError() != null) {
+            throw new PhpError(handlers.constructError());
+        }
+        if (isAbstract || isInterface) {
+            throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
         PhpObject object = new PhpObject(rootShape, this, PhpContext.get(null).nextObjectId());
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
@@ -361,14 +395,7 @@ public final class PhpClass {
     }
 
     public boolean isInstantiable() {
-        return !isAbstract && !isInterface && instantiationError == null;
-    }
-
-    /** A built-in class `new` can't make (Closure, Generator): the Error it raises instead. */
-    private String instantiationError;
-
-    public void setInstantiationError(String message) {
-        this.instantiationError = message;
+        return !isAbstract && !isInterface && (handlers == null || handlers.constructError() == null);
     }
 
     public Shape getRootShape() {

@@ -100,6 +100,10 @@ final class EncodingFunctions {
             }
             out.append("}");
         } else if (value instanceof PhpObject object) {
+            if (object.getPhpClass().getHandlers() != null && object.getPhpClass().getHandlers().notSerializable()) {
+                throw new PhpError("Exception", "Serialization of '" + object.getPhpClass().getName()
+                        + "' is not allowed");
+            }
             Object[] names = object.propertyNames();
             TruffleString className = Str.of(object.getPhpClass().getName());
             out.append("O:").append(Integer.toString(className.byteLength(Str.ENC)))
@@ -111,7 +115,7 @@ final class EncodingFunctions {
             }
             out.append("}");
         } else {
-            throw new PhpError("Serialization of '" + Convert.typeName(value) + "' is not allowed");
+            throw new PhpError("Exception", "Serialization of '" + Convert.typeName(value) + "' is not allowed");
         }
     }
 
@@ -268,6 +272,9 @@ final class EncodingFunctions {
             boolean allowed = allowedClasses == null || allowedClasses.contains(Str.lower(className));
             PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
             PhpObject object;
+            if (phpClass != null && phpClass.getHandlers() != null && phpClass.getHandlers().notSerializable()) {
+                throw new PhpError("Exception", "Unserialization of '" + phpClass.getName() + "' is not allowed");
+            }
             if (phpClass != null) {
                 object = phpClass.instantiate();
             } else {
