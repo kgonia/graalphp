@@ -1,5 +1,7 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import pl.codeloom.php.PhpContext;
@@ -68,8 +70,13 @@ public final class IncludeNode extends ExprNode {
         // a closure's scope is the class it is bound to
         String classScope = frame.getArguments()[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure
                 ? closure.getScope() == null ? null : closure.getScope().getLowerName() : lexicalClass;
-        IncludeScope scope = new IncludeScope(frame.materialize(), slots, classScope);
+        IncludeScope scope = newScope(frame.materialize(), slots, classScope);
         FrameSlots.setObject(frame, scopeSlot, scope);
         return scope;
+    }
+
+    @TruffleBoundary
+    private static IncludeScope newScope(MaterializedFrame frame, Map<String, Integer> slots, String classScope) {
+        return new IncludeScope(frame, slots, classScope);
     }
 }

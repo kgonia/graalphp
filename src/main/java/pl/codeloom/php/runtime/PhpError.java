@@ -34,11 +34,16 @@ public final class PhpError extends PhpThrowable {
     }
 
     public PhpError(String phpClass, String message, long code) {
-        super(phpClass.equals("Error") ? message : phpClass + ": " + message);
+        super(fullMessage(phpClass, message));
         this.phpClass = phpClass;
         this.phpMessage = message;
         this.code = code;
         this.trace = Backtrace.forThrowable();
+    }
+
+    @TruffleBoundary
+    private static String fullMessage(String phpClass, String message) {
+        return phpClass.equals("Error") ? message : phpClass + ": " + message;
     }
 
     public String getPhpClass() {
