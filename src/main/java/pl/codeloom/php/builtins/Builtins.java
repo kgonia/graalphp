@@ -205,6 +205,7 @@ public final class Builtins {
         if (curl) {
             CurlFunctions.constants(constants);
         }
+        SocketFunctions.constants(constants);
         return Collections.unmodifiableMap(constants);
     }
 

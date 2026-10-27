@@ -1,6 +1,8 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -80,5 +82,16 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
     @Override
     public String getName() {
         return name;
+    }
+
+    /**
+     * get_active_function_name for a built-in's messages: the innermost built-in function on the stack, or null.
+     * Code that runs inside a stream layer (a socket's send) doesn't know which function called it.
+     */
+    @TruffleBoundary
+    public static String activeName() {
+        return Truffle.getRuntime().iterateFrames(frame ->
+                frame.getCallTarget() instanceof RootCallTarget target
+                        && target.getRootNode() instanceof BuiltinRootNode builtin ? builtin.name : null);
     }
 }

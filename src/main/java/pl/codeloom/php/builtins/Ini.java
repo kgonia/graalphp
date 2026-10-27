@@ -18,7 +18,8 @@ import java.util.TreeMap;
  * The php.ini directives the runtime implements, per context: their startup values (php-src's defaults for the
  * SAPI, then the php.Ini option, as php.ini and -d give them) and the values ini_set() changed. As in php-src, a
  * directive's OnUpdate handler parses a value into the setting the runtime reads, or rejects it. Other directives
- * are unknown: ini_get() and ini_set() give false for them, as for an extension that isn't loaded.
+ * are unknown: ini_get() and ini_set() give false for them, as for an extension that isn't loaded. The directives
+ * are Core's (main.c) and the few of ext/standard's the runtime implements.
  */
 public final class Ini {
     /** php_get_display_errors_mode. */
@@ -32,7 +33,7 @@ public final class Ini {
 
     /**
      * A directive's default (null: no value, which ini_get() shows as ""), where it may be changed, and the extension
-     * that declares it (as the module registry names it).
+     * that declares it, as ini_get_all() selects them ("core" for main.c's).
      */
     private record Directive(String value, long access, String extension) {
         Directive(String value, long access) {
@@ -48,6 +49,7 @@ public final class Ini {
         directives.put("allow_url_fopen", new Directive("1", SYSTEM));
         directives.put("arg_separator.output", new Directive("&", ALL));
         directives.put("default_mimetype", new Directive("text/html", ALL));
+        directives.put("default_socket_timeout", new Directive("60", ALL, "standard"));
         directives.put("disable_functions", new Directive("", SYSTEM));
         directives.put("display_errors", new Directive("1", ALL));
         directives.put("error_append_string", new Directive(null, ALL));
@@ -96,6 +98,10 @@ public final class Ini {
     private boolean exceptionIgnoreArgs;
     private int exceptionStringParamMaxLen;
     private String argSeparatorOutput;
+    /** FG(default_socket_timeout), in seconds. */
+    private long defaultSocketTimeout;
+    /** The warning the last OnUpdate handler raised (zend_ini_parse_quantity_warn's), for ini_set() to report. */
+    private String updateWarning;
 
     /**
      * The startup values: php-src's defaults, the CLI's own (from php_cli.c's HARDCODED_INI), then
@@ -168,6 +174,7 @@ public final class Ini {
             case "ignore_repeated_source" -> ignoreRepeatedSource = bool(value);
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
+            case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "upload_tmp_dir" -> {
                 if (value != null && value.isEmpty()) {
                     return false; // OnUpdateStringUnempty
@@ -250,6 +257,243 @@ public final class Ini {
         return argSeparatorOutput;
     }
 
+    public long defaultSocketTimeout() {
+        return defaultSocketTimeout;
+    }
+
+    /**
+     * The warning the last change raised, cleared. A startup value's (the php.Ini option's) is dropped: php-src
+     * prints it while starting up, before any script runs.
+     */
+    String takeWarning() {
+        String warning = updateWarning;
+        updateWarning = null;
+        return warning;
+    }
+
+    /** zend_ini_parse_quantity_warn: the value, keeping the warning for an invalid quantity. */
+    private long quantity(String name, String value) {
+        long[] result = new long[1];
+        String error = parseQuantity(value == null ? "" : value, result);
+        if (error != null) {
+            updateWarning = "Invalid \"" + name + "\" setting. " + error;
+        }
+        return result[0];
+    }
+
+    /**
+     * zend_ini_parse_quantity (signed): a decimal, octal (leading 0, or 0o), hexadecimal (0x) or binary (0b)
+     * integer, with an optional K, M or G multiplier. result[0] receives the value; the return is the error text
+     * when the value isn't a clean quantity (the value is then the one php-src falls back to), or null.
+     */
+    static String parseQuantity(String text, long[] result) {
+        byte[] str = Str.bytes(Str.of(text));
+        result[0] = 0;
+        int digits = 0;
+        int end = str.length;
+        while (digits < end && isWhitespace(at(str, digits))) {
+            digits++;
+        }
+        while (digits < end && isWhitespace(at(str, end - 1))) {
+            end--;
+        }
+        if (digits == end) {
+            return null;
+        }
+        boolean negative = false;
+        if (at(str, digits) == '+') {
+            digits++;
+        } else if (at(str, digits) == '-') {
+            negative = true;
+            digits++;
+        }
+        if (!isDigit(at(str, digits))) {
+            return "Invalid quantity \"" + escaped(str, 0, str.length) + "\": no valid leading digits, interpreting as "
+                    + "\"0\" for backwards compatibility";
+        }
+        int base = 0;
+        if (at(str, digits) == '0' && !isDigit(at(str, digits + 1))) {
+            if (digits + 1 == end) {
+                return null;
+            }
+            switch (at(str, digits + 1)) {
+                case 'g', 'G', 'm', 'M', 'k', 'K' -> base = -1;
+                case 'x', 'X' -> base = 16;
+                case 'o', 'O' -> base = 8;
+                case 'b', 'B' -> base = 2;
+                default -> {
+                    return "Invalid prefix \"0" + (char) at(str, digits + 1) + "\", interpreting as \"0\" for backwards "
+                            + "compatibility";
+                }
+            }
+            if (base > 0) {
+                digits += 2;
+                if (digits == end || digits != consumeQuantityPrefix(str, digits, end, base)) {
+                    return "Invalid quantity \"" + escaped(str, 0, str.length) + "\": no digits after base prefix, "
+                            + "interpreting as \"0\" for backwards compatibility";
+                }
+            } else {
+                base = 0;
+            }
+        }
+        long[] parsed = strtoul(str, digits, base);
+        long value = parsed[0];
+        int digitsEnd = (int) parsed[1];
+        boolean overflow = false;
+        if (parsed[2] != 0) {
+            overflow = true;
+        } else if (negative && value == Long.MIN_VALUE) {
+            value = Long.MIN_VALUE; // PHP_INT_MIN
+        } else if (value < 0) {
+            overflow = true;
+        } else if (negative) {
+            value = -value;
+        }
+        if (digitsEnd == digits) {
+            return "Invalid quantity \"" + escaped(str, 0, str.length) + "\": no valid leading digits, interpreting as "
+                    + "\"0\" for backwards compatibility";
+        }
+        while (digitsEnd < end && isWhitespace(at(str, digitsEnd))) {
+            digitsEnd++;
+        }
+        if (digitsEnd != end) {
+            long factor;
+            switch (at(str, end - 1)) {
+                case 'g', 'G' -> factor = 1L << 30;
+                case 'm', 'M' -> factor = 1L << 20;
+                case 'k', 'K' -> factor = 1L << 10;
+                default -> {
+                    result[0] = value;
+                    return "Invalid quantity \"" + escaped(str, 0, str.length) + "\": unknown multiplier \""
+                            + escaped(str, end - 1, end) + "\", interpreting as \"" + escaped(str, 0, digitsEnd)
+                            + "\" for backwards compatibility";
+                }
+            }
+            if (!overflow) {
+                overflow = value > 0 ? value > Long.MAX_VALUE / factor : value < Long.MIN_VALUE / factor;
+            }
+            value *= factor;
+            if (digitsEnd != end - 1) {
+                result[0] = value;
+                return "Invalid quantity \"" + escaped(str, 0, str.length) + "\", interpreting as \""
+                        + escaped(str, 0, digitsEnd) + escaped(str, end - 1, end) + "\" for backwards compatibility";
+            }
+        }
+        result[0] = value;
+        if (overflow) {
+            return "Invalid quantity \"" + escaped(str, 0, str.length) + "\": value is out of range, using overflow "
+                    + "result for backwards compatibility";
+        }
+        return null;
+    }
+
+    /** zend_ini_consume_quantity_prefix: past whitespace, a sign and a base prefix (0b only outside base 16). */
+    private static int consumeQuantityPrefix(byte[] str, int digits, int end, int base) {
+        int consumed = digits;
+        while (consumed < end && isWhitespace(at(str, consumed))) {
+            consumed++;
+        }
+        if (at(str, consumed) == '+' || at(str, consumed) == '-') {
+            consumed++;
+        }
+        if (at(str, consumed) == '0' && !isDigit(at(str, consumed + 1))) {
+            if (consumed + 1 == end) {
+                return consumed;
+            }
+            switch (at(str, consumed + 1)) {
+                case 'x', 'X', 'o', 'O' -> consumed += 2;
+                case 'b', 'B' -> {
+                    if (base != 16) {
+                        consumed += 2;
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        return consumed;
+    }
+
+    /**
+     * C's strtoul from index i: {value, the index after the digits (i when there are none), 1 on overflow (ERANGE,
+     * the value then ULONG_MAX)}. Base 0 reads a 0x prefix as hexadecimal and a leading 0 as octal.
+     */
+    private static long[] strtoul(byte[] str, int i, int base) {
+        int p = i;
+        while (isWhitespace(at(str, p))) {
+            p++;
+        }
+        boolean negative = false;
+        if (at(str, p) == '+' || at(str, p) == '-') {
+            negative = at(str, p) == '-';
+            p++;
+        }
+        if ((base == 0 || base == 16) && at(str, p) == '0' && (at(str, p + 1) | 0x20) == 'x'
+                && Character.digit(at(str, p + 2), 16) >= 0) {
+            p += 2;
+            base = 16;
+        } else if (base == 0) {
+            base = at(str, p) == '0' ? 8 : 10;
+        }
+        int start = p;
+        long value = 0;
+        boolean overflow = false;
+        for (int d; (d = Character.digit(at(str, p), base)) >= 0 && at(str, p) < 0x80; p++) {
+            long high = Math.unsignedMultiplyHigh(value, base);
+            long product = value * base;
+            long sum = product + d;
+            if (high != 0 || Long.compareUnsigned(sum, product) < 0) {
+                overflow = true;
+            }
+            value = sum;
+        }
+        if (p == start) {
+            return new long[] {0, i, 0};
+        }
+        if (overflow) {
+            return new long[] {-1, p, 1};
+        }
+        return new long[] {negative ? -value : value, p, 0};
+    }
+
+    /** The byte at i, or 0 past the end (C's terminating NUL). */
+    private static int at(byte[] str, int i) {
+        return i < str.length ? str[i] & 0xFF : 0;
+    }
+
+    private static boolean isDigit(int c) {
+        return c >= '0' && c <= '9';
+    }
+
+    /** zend_is_whitespace. */
+    private static boolean isWhitespace(int c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0B || c == '\f';
+    }
+
+    /** smart_str_append_escaped of bytes [from, to). */
+    private static String escaped(byte[] str, int from, int to) {
+        StringBuilder out = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            int c = str[i] & 0xFF;
+            if (c >= 32 && c != '\\' && c <= 126) {
+                out.append((char) c);
+                continue;
+            }
+            out.append('\\');
+            switch (c) {
+                case '\n' -> out.append('n');
+                case '\r' -> out.append('r');
+                case '\t' -> out.append('t');
+                case '\f' -> out.append('f');
+                case 0x0B -> out.append('v');
+                case '\\' -> out.append('\\');
+                case 0x1B -> out.append('e');
+                default -> out.append('x').append(String.format("%02X", c));
+            }
+        }
+        return out.toString();
+    }
+
     /** A boolean directive as zend_ini_parse_bool reads it: on, yes, true, or a non-zero number. */
     private static boolean bool(String value) {
         if (value == null) {
@@ -308,10 +552,11 @@ public final class Ini {
             String value = ini.get(name);
             return value == null ? Str.EMPTY : Str.of(value);
         });
-        r.fn("ini_set", (context, a) -> iniSet(context.ini(), Str.java(Args.str(a, 0)), Args.get(a, 1)));
-        r.fn("ini_alter", (context, a) -> iniSet(context.ini(), Str.java(Args.str(a, 0)), Args.get(a, 1)));
+        r.fn("ini_set", (context, a) -> iniSet(context, Str.java(Args.str(a, 0)), Args.get(a, 1)));
+        r.fn("ini_alter", (context, a) -> iniSet(context, Str.java(Args.str(a, 0)), Args.get(a, 1)));
         r.fn("ini_restore", (context, a) -> {
             context.ini().restore(Str.java(Args.str(a, 0)));
+            warn(context);
             return PhpNull.NULL;
         });
         r.fn("ini_get_all", (context, a) -> iniGetAll(context, a));
@@ -319,21 +564,33 @@ public final class Ini {
 
     /** ini_set(): the old value, or false for an unknown directive or a value it doesn't take. */
     @TruffleBoundary
-    private static Object iniSet(Ini ini, String name, Object newValue) {
+    private static Object iniSet(PhpContext context, String name, Object newValue) {
         if (!userCanChange(name)) {
             return Boolean.FALSE;
         }
+        Ini ini = context.ini();
         String old = ini.get(name);
-        if (!ini.set(name, Str.java(Convert.toStr(PhpRef.deref(newValue))))) {
+        boolean accepted = ini.set(name, Str.java(Convert.toStr(PhpRef.deref(newValue))));
+        warn(context);
+        if (!accepted) {
             return Boolean.FALSE;
         }
         return old == null ? Str.EMPTY : Str.of(old);
     }
 
+    /** Raises the warning the directive's OnUpdate handler gave (zend_error, without a function's name). */
+    private static void warn(PhpContext context) {
+        String warning = context.ini().takeWarning();
+        if (warning != null) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(warning), SourceLocation.current());
+        }
+    }
+
     /**
      * ini_get_all(?string $extension = null, bool $details = true): every directive by name, with its startup and
-     * current values and its access (or only the current value); with an extension, only its directives. The
-     * module registry's keys are lowercase ("core"), and the name isn't lowered.
+     * current values and its access (or only the current value); with an extension, only its directives, except
+     * that Core's module number is 0, which php_ini_get_option takes as no filter. The module registry's keys are
+     * lowercase ("core"), and the name isn't lowered.
      */
     @TruffleBoundary
     private static Object iniGetAll(PhpContext context, Object[] a) {
@@ -348,10 +605,10 @@ public final class Ini {
         Ini ini = context.ini();
         PhpArray all = new PhpArray();
         for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
-            if (module != null && !module.equals(directive.getValue().extension())) {
+            String name = directive.getKey();
+            if (module != null && !module.equals("core") && !module.equals(directive.getValue().extension())) {
                 continue;
             }
-            String name = directive.getKey();
             Object current = valueOf(ini.get(name));
             if (details) {
                 PhpArray entry = new PhpArray();

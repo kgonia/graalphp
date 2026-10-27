@@ -67,6 +67,8 @@ final class FileFunctions {
     private static final int SEEK_CUR = 1;
     private static final int SEEK_END = 2;
     private static final byte[] EMPTY = new byte[0];
+    /** PHP_STREAM_OPTION_RETURN_NOTIMPL. */
+    static final int OPTION_NOT_IMPLEMENTED = -2;
 
     /**
      * An open stream, as php-src's php_stream (main/streams/streams.c): a read buffer and a logical position over
@@ -83,6 +85,13 @@ final class FileFunctions {
         long position;
         /** stream->eof: set when a raw read returns nothing. */
         boolean eof;
+        /**
+         * stream->has_buffered_data: set while a read has taken bytes from the buffer, so a socket's raw read
+         * doesn't wait for more (php_sockop_read).
+         */
+        boolean hasBufferedData;
+        /** stream->ctx: the context the stream was opened with, or null (plain files have none). */
+        StreamContext context;
 
         Stream(String mode, String uri) {
             this.mode = mode;
@@ -138,10 +147,46 @@ final class FileFunctions {
             return false;
         }
 
+        /**
+         * PHP_STREAM_OPTION_CHECK_LIVENESS with no wait, as php_stream_eof asks it: false when the wrapper finds the
+         * stream dead (a socket's peer closed it); streams without the option are alive.
+         */
+        boolean alive() {
+            return true;
+        }
+
+        /**
+         * PHP_STREAM_OPTION_META_DATA_API: adds the wrapper's own entries to stream_get_meta_data()'s array; false
+         * if the wrapper has none, for the generic timed_out, blocked and eof.
+         */
+        boolean populateMeta(PhpArray meta) {
+            if (streamType().equals("TEMP")) {
+                return true; // php_stream_temp_set_option: only the temp stream's own meta, none here
+            }
+            return false;
+        }
+
+        /** PHP_STREAM_OPTION_BLOCKING: the old mode (1 or 0), or OPTION_NOT_IMPLEMENTED; -1 on an error. */
+        int setBlocking(boolean block) {
+            return OPTION_NOT_IMPLEMENTED;
+        }
+
+        /** PHP_STREAM_OPTION_READ_TIMEOUT: false where the wrapper has no timeout. */
+        boolean setReadTimeout(long seconds, long microseconds) {
+            return false;
+        }
+
         // ---- php-src's buffered layer ----
 
+        /** _php_stream_eof: not with data buffered; otherwise asks the wrapper whether the stream is alive. */
         final boolean atEof() {
-            return writePos - readPos <= 0 && eof;
+            if (writePos - readPos > 0) {
+                return false;
+            }
+            if (!eof && !alive()) {
+                eof = true;
+            }
+            return eof;
         }
 
         final int unreadBytes() {
@@ -184,6 +229,7 @@ final class FileFunctions {
                     readPos += n;
                     size -= n;
                     didread += n;
+                    hasBufferedData = true;
                 }
                 if (size == 0) {
                     break;
@@ -218,9 +264,13 @@ final class FileFunctions {
                 }
                 didread += got;
                 size -= got;
+                hasBufferedData = true;
                 if (!greedy()) {
                     break;
                 }
+            }
+            if (didread > 0) {
+                hasBufferedData = false;
             }
             position += didread;
             return didread == out.length ? out : Arrays.copyOf(out, didread);
@@ -981,7 +1031,10 @@ final class FileFunctions {
 
     static void register(Registry r) {
         // ---- streams ----
-        r.fn("fopen", (context, a) -> open(context, Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1))));
+        r.fn("fopen", (context, a) -> {
+            StreamContext.fromArgument(context, a, 3, "fopen", "context", false);
+            return open(context, Str.java(Args.str(a, 0)), Str.java(Args.str(a, 1)));
+        });
         r.fn("fclose", (context, a) -> {
             Stream stream = stream(a, "fclose");
             if (stream instanceof Directory) {
@@ -1065,14 +1118,8 @@ final class FileFunctions {
             return Str.of(stream.readAll(length));
         });
         r.fn("stream_get_meta_data", a -> meta(stream(a, "stream_get_meta_data")));
-        r.fn("stream_set_timeout", a -> Boolean.TRUE);
-        r.fn("stream_set_blocking", a -> Boolean.TRUE);
-        r.fn("stream_context_create", (context, a) -> new PhpResource(context.nextResourceId(), "stream-context",
-                Args.get(a, 0, new PhpArray())));
-        r.fn("stream_context_get_options", a -> {
-            Object options = resource(a, 0, "stream_context_get_options", "stream_or_context").getHandle();
-            return options instanceof PhpArray array ? array : new PhpArray();
-        });
+        StreamContext.register(r);
+        SocketFunctions.register(r);
         r.fn("stream_get_wrappers", a -> list(List.of("php", "file")));
         r.fn("stream_is_local", a -> Boolean.TRUE);
         r.fn("is_resource", a -> Args.get(a, 0) instanceof PhpResource resource && !resource.isClosed());
@@ -1080,15 +1127,22 @@ final class FileFunctions {
         r.fn("get_resource_id", a -> (long) resource(a, 0, "get_resource_id", "resource", false).getId());
 
         // ---- whole files ----
-        r.fn("file_put_contents", (context, a) -> putContents(context, Str.java(Args.str(a, 0)), Args.get(a, 1),
-                Args.lng(a, 2, 0)));
-        r.fn("file", (context, a) -> lines(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("file_put_contents", (context, a) -> {
+            StreamContext.fromArgument(context, a, 3, "file_put_contents", "context", (Args.lng(a, 2, 0) & 16) != 0);
+            return putContents(context, Str.java(Args.str(a, 0)), Args.get(a, 1), Args.lng(a, 2, 0));
+        });
+        r.fn("file", (context, a) -> {
+            StreamContext.fromArgument(context, a, 2, "file", "context", (Args.lng(a, 1, 0) & 16) != 0);
+            return lines(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0));
+        });
         r.fn("file_get_contents", (context, a) -> {
+            StreamContext.fromArgument(context, a, 2, "file_get_contents", "context", false);
             Object length = Args.get(a, 4, PhpNull.NULL);
             return getContents(context, Str.java(Args.str(a, 0)), Args.lng(a, 3, 0),
                     length == PhpNull.NULL ? null : Convert.toLong(length));
         });
         r.fn("readfile", (context, a) -> {
+            StreamContext.fromArgument(context, a, 2, "readfile", "context", false);
             byte[] bytes = readAll(context, Str.java(Args.str(a, 0)));
             if (bytes == null) {
                 return Boolean.FALSE;
@@ -1131,7 +1185,7 @@ final class FileFunctions {
 
         // ---- changes ----
         r.fn("touch", (context, a) -> io(() -> touch(file(context, a, 0), a)));
-        r.fn("unlink", (context, a) -> io(() -> {
+        r.fn("unlink", (context, a) -> io(context, a, 1, "unlink", () -> {
             TruffleFile file = file(context, a, 0);
             if (!file.exists(LinkOption.NOFOLLOW_LINKS) || file.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
                 return Boolean.FALSE;
@@ -1139,9 +1193,9 @@ final class FileFunctions {
             file.delete();
             return Boolean.TRUE;
         }));
-        r.fn("mkdir", (context, a) -> io(() -> mkdir(file(context, a, 0), Args.lng(a, 1, 0777),
+        r.fn("mkdir", (context, a) -> io(context, a, 3, "mkdir", () -> mkdir(file(context, a, 0), Args.lng(a, 1, 0777),
                 Args.bool(a, 2, false))));
-        r.fn("rmdir", (context, a) -> io(() -> {
+        r.fn("rmdir", (context, a) -> io(context, a, 1, "rmdir", () -> {
             TruffleFile file = file(context, a, 0);
             if (!file.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
                 return Boolean.FALSE;
@@ -1149,11 +1203,11 @@ final class FileFunctions {
             file.delete();
             return Boolean.TRUE;
         }));
-        r.fn("rename", (context, a) -> io(() -> {
+        r.fn("rename", (context, a) -> io(context, a, 2, "rename", () -> {
             file(context, a, 0).move(file(context, a, 1), StandardCopyOption.REPLACE_EXISTING);
             return Boolean.TRUE;
         }));
-        r.fn("copy", (context, a) -> io(() -> copy(file(context, a, 0), file(context, a, 1))));
+        r.fn("copy", (context, a) -> io(context, a, 2, "copy", () -> copy(file(context, a, 0), file(context, a, 1))));
         r.fn("chmod", (context, a) -> io(() -> {
             file(context, a, 0).setPosixPermissions(permissions(Args.lng(a, 1, 0)));
             return Boolean.TRUE;
@@ -1165,7 +1219,7 @@ final class FileFunctions {
         r.fn("tmpfile", (context, a) -> io(() -> tmpfile(context)));
 
         // ---- directories ----
-        r.fn("scandir", (context, a) -> io(() -> {
+        r.fn("scandir", (context, a) -> io(context, a, 2, "scandir", () -> {
             long order = Args.lng(a, 1, 0);
             List<String> names = entries(file(context, a, 0), order != 2);
             if (order == 1) {
@@ -1174,7 +1228,7 @@ final class FileFunctions {
             return list(names);
         }));
         r.fn("glob", (context, a) -> glob(context, Str.java(Args.str(a, 0)), Args.lng(a, 1, 0)));
-        r.fn("opendir", (context, a) -> io(() -> new PhpResource(context.nextResourceId(), "stream",
+        r.fn("opendir", (context, a) -> io(context, a, 1, "opendir", () -> new PhpResource(context.nextResourceId(), "stream",
                 new Directory(entries(file(context, a, 0), false), Str.java(Args.str(a, 0))))));
         r.fn("readdir", a -> {
             Directory directory = directory(a, "readdir");
@@ -1216,6 +1270,13 @@ final class FileFunctions {
         }
     }
 
+    /** io() for a function with a context parameter: php_stream_context_from_zval first (the default if none). */
+    @TruffleBoundary
+    private static Object io(PhpContext context, Object[] a, int contextIndex, String function, IoBody body) {
+        StreamContext.fromArgument(context, a, contextIndex, function, "context", false);
+        return io(body);
+    }
+
     @TruffleBoundary
     private static Object test(PhpContext context, Object[] a, FileTest test) {
         try {
@@ -1238,12 +1299,12 @@ final class FileFunctions {
         return time.toMillis() / 1000;
     }
 
-    private static Object key(String name) {
+    static Object key(String name) {
         return ArrayKey.of(Str.of(name));
     }
 
     /** The argument as an open resource, with php-src's TypeErrors. */
-    private static PhpResource resource(Object[] a, int index, String function, String parameter) {
+    static PhpResource resource(Object[] a, int index, String function, String parameter) {
         return resource(a, index, function, parameter, true);
     }
 
@@ -1260,7 +1321,7 @@ final class FileFunctions {
         return resource;
     }
 
-    private static Stream stream(Object[] a, String function) {
+    static Stream stream(Object[] a, String function) {
         if (resource(a, 0, function, "stream").getHandle() instanceof Stream stream) {
             return stream;
         }
@@ -1345,14 +1406,17 @@ final class FileFunctions {
         }
     }
 
+    /** stream_get_meta_data(); a stream without a wrapper (a socket) has no wrapper_type. */
     private static PhpArray meta(Stream stream) {
         PhpArray meta = new PhpArray();
-        if (!stream.streamType().equals("TEMP")) {
+        if (!stream.populateMeta(meta)) {
             meta.put(key("timed_out"), Boolean.FALSE);
             meta.put(key("blocked"), Boolean.TRUE);
             meta.put(key("eof"), stream.atEof());
         }
-        meta.put(key("wrapper_type"), Str.of(stream.wrapperType()));
+        if (stream.wrapperType() != null) {
+            meta.put(key("wrapper_type"), Str.of(stream.wrapperType()));
+        }
         meta.put(key("stream_type"), Str.of(stream.streamType()));
         meta.put(key("mode"), Str.of(stream.mode));
         meta.put(key("unread_bytes"), (long) stream.unreadBytes());
@@ -1369,8 +1433,8 @@ final class FileFunctions {
     }
 
     /** A stream's resource; the context closes the stream at its end if the script doesn't. */
-    private static PhpResource resource(PhpContext context, Stream stream) {
-        if (stream instanceof FileStream) {
+    static PhpResource resource(PhpContext context, Stream stream) {
+        if (stream instanceof FileStream || stream instanceof SocketStream) {
             context.builtinState().openStreams.add(stream);
         }
         return new PhpResource(context.nextResourceId(), "stream", stream);
