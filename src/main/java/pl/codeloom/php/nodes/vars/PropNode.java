@@ -374,7 +374,7 @@ public final class PropNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
         if (value instanceof PhpObject phpObject) {
             String name = name(frame);
             if (!accessible(frame, phpObject, name)) {

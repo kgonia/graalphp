@@ -7,6 +7,9 @@ import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
 import com.oracle.truffle.api.strings.TruffleString;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * A PHP object. Properties live in the Truffle object model keyed by interned Java Strings, so property access
  * nodes get shape-based inline caches. Property order is insertion order: declared properties first, as PHP.
@@ -65,13 +68,23 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public PhpArray visibleProperties(String scope) {
         PhpArray result = new PhpArray();
+        for (String property : visiblePropertyNames(scope)) {
+            result.put(ArrayKey.of(Str.ofKey(property)), PhpRef.deref(getProperty(property)));
+        }
+        return result;
+    }
+
+    /** The names of the properties code in the scope may access, in order. */
+    @TruffleBoundary
+    public List<String> visiblePropertyNames(String scope) {
+        List<String> names = new ArrayList<>();
         for (Object name : propertyNames()) {
             String property = (String) name;
             if (phpClass.canAccessProperty(property, scope)) {
-                result.put(ArrayKey.of(Str.ofKey(property)), PhpRef.deref(getProperty(property)));
+                names.add(property);
             }
         }
-        return result;
+        return names;
     }
 
     /** What magicProperty returns when it called no method. */

@@ -232,11 +232,15 @@ public final class ForeachNode extends StmtNode {
             }
             return;
         }
-        // the properties the scope may access, as they were when the loop began
-        PhpArray properties = object.visibleProperties(PropNode.callingScope(frame, lexicalClass));
-        for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
-            bind.writeKey(frame, properties.keyAt(p));
-            bind.assignValue(frame, properties.valueAt(p));
+        // the properties the scope may access; their values as they are when the loop reaches them, as php-src
+        // walks the object's property table (one unset meanwhile is skipped)
+        for (String property : object.visiblePropertyNames(PropNode.callingScope(frame, lexicalClass))) {
+            Object value = object.getProperty(property);
+            if (value == null) {
+                continue;
+            }
+            bind.writeKey(frame, Str.ofKey(property));
+            bind.assignValue(frame, PhpRef.deref(value));
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;
             }
