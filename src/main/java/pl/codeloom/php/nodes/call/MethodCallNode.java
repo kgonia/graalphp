@@ -19,7 +19,6 @@ import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 import pl.codeloom.php.runtime.Callables;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -27,7 +26,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import java.util.concurrent.locks.Lock;
 
 /** `$obj->name(args)`, inline-cached on the receiver's class. */
-public final class MethodCallNode extends ExprNode {
+public final class MethodCallNode extends CallNode {
     @Child private ExprNode receiver;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
@@ -42,7 +41,7 @@ public final class MethodCallNode extends ExprNode {
     }
 
     @Override
-    public Object execute(VirtualFrame frame) {
+    public Object executeRef(VirtualFrame frame) {
         Object target = receiver.execute(frame);
         if (target instanceof PhpObject object) {
             return dispatch.execute(frame, object, args);
@@ -78,7 +77,7 @@ public final class MethodCallNode extends ExprNode {
         lock.lock();
         try {
             if (closureCall == null) {
-                closureCall = insert(CallableDispatchNode.create());
+                closureCall = insert(CallableDispatchNode.create(null, true));
             }
             return closureCall;
         } finally {
@@ -116,11 +115,11 @@ public final class MethodCallNode extends ExprNode {
                                 @Cached("create(method.getCallTarget())") DirectCallNode call) {
             PhpClass phpClass = receiver.getPhpClass();
             if (magic) {
-                return PhpRef.deref(call.call(ArgumentsNode.frameArguments(receiver, phpClass, null,
-                        Callables.magicValues(calledName, args.values(frame)))));
+                return call.call(ArgumentsNode.frameArguments(receiver, phpClass, null,
+                        Callables.magicValues(calledName, args.values(frame))));
             }
             Object self = method.isStatic() ? null : receiver;
-            return PhpRef.deref(call.call(args.build(frame, method, self, phpClass, null)));
+            return call.call(args.build(frame, method, self, phpClass, null));
         }
 
         @Specialization(replaces = "cached")
@@ -129,11 +128,11 @@ public final class MethodCallNode extends ExprNode {
             PhpClass phpClass = receiver.getPhpClass();
             PhpFunction method = find(phpClass);
             if (isMagic(phpClass)) {
-                return PhpRef.deref(call.call(method.getCallTarget(), ArgumentsNode.frameArguments(receiver,
-                        phpClass, null, Callables.magicValues(calledName, args.values(frame)))));
+                return call.call(method.getCallTarget(), ArgumentsNode.frameArguments(receiver,
+                        phpClass, null, Callables.magicValues(calledName, args.values(frame))));
             }
             Object self = method.isStatic() ? null : receiver;
-            return PhpRef.deref(call.call(method.getCallTarget(), args.build(frame, method, self, phpClass, null)));
+            return call.call(method.getCallTarget(), args.build(frame, method, self, phpClass, null));
         }
 
         /** The method, or __call standing in for it. */

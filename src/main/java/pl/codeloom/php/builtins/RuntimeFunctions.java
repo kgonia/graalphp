@@ -13,6 +13,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.IOException;
@@ -163,6 +164,14 @@ final class RuntimeFunctions {
                 context.nextObjectId());
         for (Object name : object.propertyNames()) {
             Object property = object.getProperty((String) name);
+            // zval_add_ref: a reference only this property holds is copied as its value, a shared one is shared
+            if (property instanceof PhpRef ref) {
+                if (ref.isShared()) {
+                    ref.bind();
+                } else {
+                    property = ref.get();
+                }
+            }
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }

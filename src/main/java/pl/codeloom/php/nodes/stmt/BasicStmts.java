@@ -13,6 +13,7 @@ import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
@@ -113,6 +114,51 @@ public final class BasicStmts {
         @Override
         public void execute(VirtualFrame frame) {
             throw new ControlFlow.Return(value == null ? PhpNull.NULL : value.execute(frame));
+        }
+    }
+
+    /**
+     * `return place;` in a function returning by reference (ZEND_RETURN_BY_REF): the reference of the variable,
+     * element or property, made as a write would make it (a missing element is created as null).
+     */
+    public static final class ReturnRefNode extends StmtNode {
+        @Child private LValueNode place;
+
+        public ReturnRefNode(LValueNode place) {
+            this.place = place;
+        }
+
+        @Override
+        public void execute(VirtualFrame frame) {
+            throw new ControlFlow.Return(place.makeRef(frame));
+        }
+    }
+
+    /**
+     * `return expr;` (or `return;`) in a function returning by reference when expr is no place: a call's
+     * reference when its callee returned one; else a new reference to the value, with php-src's notice. $this is
+     * fetched for writing, which php-src allows without the notice.
+     */
+    public static final class ReturnRefValueNode extends StmtNode {
+        @Child private ExprNode value;
+        private final boolean notice;
+
+        public ReturnRefValueNode(ExprNode value, boolean notice) {
+            this.value = value;
+            this.notice = notice;
+        }
+
+        @Override
+        public void execute(VirtualFrame frame) {
+            Object result = value == null ? PhpNull.NULL
+                    : value instanceof CallNode call ? call.executeRef(frame) : value.execute(frame);
+            if (result instanceof PhpRef) {
+                throw new ControlFlow.Return(result);
+            }
+            if (notice) {
+                CallNode.notice(this, CallNode.RETURNED_VALUE);
+            }
+            throw new ControlFlow.Return(PhpRef.unbound(result));
         }
     }
 

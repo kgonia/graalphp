@@ -30,17 +30,25 @@ public abstract class CallableDispatchNode extends Node {
 
     /** The built-in parameter the callable was given to, for its TypeError; null for a direct call `$f()`. */
     protected final Callables.Parameter parameter;
+    /** Whether a callee returning by reference gives its reference ({@link CallNode#executeRef}), not its value. */
+    private final boolean keepRef;
 
-    protected CallableDispatchNode(Callables.Parameter parameter) {
+    protected CallableDispatchNode(Callables.Parameter parameter, boolean keepRef) {
         this.parameter = parameter;
+        this.keepRef = keepRef;
     }
 
     public static CallableDispatchNode create() {
-        return CallableDispatchNodeGen.create(null);
+        return CallableDispatchNodeGen.create(null, false);
     }
 
     public static CallableDispatchNode create(Callables.Parameter parameter) {
-        return CallableDispatchNodeGen.create(parameter);
+        return CallableDispatchNodeGen.create(parameter, false);
+    }
+
+    /** keepRef: for a call made in PHP code (`$f()`), whose result a by-reference context can bind to. */
+    public static CallableDispatchNode create(Callables.Parameter parameter, boolean keepRef) {
+        return CallableDispatchNodeGen.create(parameter, keepRef);
     }
 
     public abstract Object execute(Object callable, Object[] values);
@@ -53,7 +61,7 @@ public abstract class CallableDispatchNode extends Node {
         PhpClass scope = self != null ? self.getPhpClass() : callable.getScope();
         Object[] arguments = callable.getMagicName() == null ? values
                 : Callables.magicValues(callable.getMagicName(), values);
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, scope, callable, arguments)));
+        return result(call.call(ArgumentsNode.frameArguments(self, scope, callable, arguments)));
     }
 
     /**
@@ -68,7 +76,7 @@ public abstract class CallableDispatchNode extends Node {
                            @Cached("resolve(callable).function()") PhpFunction function,
                            @Cached("functionId(callable)") int functionId,
                            @Cached("create(function.getCallTarget())") DirectCallNode call) {
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(null, null, null, values)));
+        return result(call.call(ArgumentsNode.frameArguments(null, null, null, values)));
     }
 
     /**
@@ -86,7 +94,7 @@ public abstract class CallableDispatchNode extends Node {
                                   @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object self = method.isStatic() ? null : callable.get(0L);
         Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, arguments)));
+        return result(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, arguments)));
     }
 
     /**
@@ -108,7 +116,7 @@ public abstract class CallableDispatchNode extends Node {
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
-        return PhpRef.deref(call.call(ArgumentsNode.frameArguments(null,
+        return result(call.call(ArgumentsNode.frameArguments(null,
                 PhpContext.get(this).classAt(classId), null, arguments)));
     }
 
@@ -116,7 +124,11 @@ public abstract class CallableDispatchNode extends Node {
     protected Object generic(Object callable, Object[] values,
                              @Cached IndirectCallNode call) {
         Callables.Target target = resolve(callable);
-        return PhpRef.deref(call.call(target.function().getCallTarget(), target.frameArguments(values)));
+        return result(call.call(target.function().getCallTarget(), target.frameArguments(values)));
+    }
+
+    private Object result(Object returned) {
+        return keepRef ? returned : PhpRef.deref(returned);
     }
 
     /**

@@ -15,6 +15,7 @@ import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.nodes.vars.PropNode;
@@ -230,8 +231,8 @@ public final class ForeachNode extends StmtNode {
 
     private void executeByRef(VirtualFrame frame) {
         if (!(subject instanceof LValueNode place)) {
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Cannot iterate a temporary by reference");
+            executeByRefOver(frame, temporaryRef(frame));
+            return;
         }
         Object value = subject.execute(frame);
         if (!(value instanceof PhpArray)) {
@@ -247,8 +248,31 @@ public final class ForeachNode extends StmtNode {
             return;
         }
         // FE_RESET_RW: the variable becomes a reference, which the loop holds while it runs
+        executeByRefOver(frame, place.makeRef(frame));
+    }
+
+    /**
+     * The subject of a foreach by reference that is no variable: the reference a function returning by reference
+     * returned, whose array the loop then changes; else a temporary reference to the value (FE_RESET_RW's
+     * ZVAL_NEW_REF), which the loop changes unseen.
+     */
+    private PhpRef temporaryRef(VirtualFrame frame) {
+        Object value = subject instanceof CallNode call ? call.executeRef(frame) : subject.execute(frame);
+        return value instanceof PhpRef ref ? ref : PhpRef.unbound(value);
+    }
+
+    private void executeByRefOver(VirtualFrame frame, PhpRef ref) {
+        Object value = ref.get();
+        if (!(value instanceof PhpArray)) {
+            CompilerDirectives.transferToInterpreter();
+            if (value instanceof PhpObject) {
+                throw new PhpError("foreach by reference over an object is not supported");
+            }
+            notIterable(value);
+            return;
+        }
         PhpContext context = PhpContext.get(this);
-        RefIteration iteration = RefIteration.start(context, place.makeRef(frame));
+        RefIteration iteration = RefIteration.start(context, ref);
         frame.setObject(arraySlot, iteration);
         try {
             arrayLoop.execute(frame);

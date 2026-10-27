@@ -12,10 +12,8 @@ import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
-import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
-import pl.codeloom.php.runtime.PhpRef;
 
 /**
  * `name(args)`. The function is looked up in the calling context by the name's language-level id (an array
@@ -24,7 +22,7 @@ import pl.codeloom.php.runtime.PhpRef;
  * inline the callee. While the language serves one context, the function found first is kept as a compile-time
  * constant (functions can't be redeclared), and the lookup leaves compiled code.
  */
-public final class FunctionCallNode extends ExprNode {
+public final class FunctionCallNode extends CallNode {
     @Child private ArgumentsNode args;
     @Child private Lookup lookup;
     @Child private Dispatch dispatch = FunctionCallNodeFactory.DispatchNodeGen.create();
@@ -44,8 +42,8 @@ public final class FunctionCallNode extends ExprNode {
     }
 
     @Override
-    public Object execute(VirtualFrame frame) {
-        return PhpRef.deref(dispatch.execute(frame, lookup.execute(), args));
+    public Object executeRef(VirtualFrame frame) {
+        return dispatch.execute(frame, lookup.execute(), args);
     }
 
     /** Finds the function in the calling context; with one context, once (functions can't be redeclared). */

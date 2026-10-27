@@ -8,7 +8,6 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
-import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.ClassKey;
@@ -16,7 +15,6 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Str;
@@ -26,7 +24,7 @@ import pl.codeloom.php.runtime.Str;
  * caller's late-static-binding class; a non-static method called this way receives the caller's $this when it
  * is an instance of the class, as PHP does for `parent::__construct()`.
  */
-public final class StaticCallNode extends ExprNode {
+public final class StaticCallNode extends CallNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
@@ -41,7 +39,7 @@ public final class StaticCallNode extends ExprNode {
     }
 
     @Override
-    public Object execute(VirtualFrame frame) {
+    public Object executeRef(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
         Object[] callerArgs = frame.getArguments();
         Object self = callerArgs[PhpFunction.ARG_THIS];
@@ -84,7 +82,7 @@ public final class StaticCallNode extends ExprNode {
                 return magic(frame, phpClass, self, staticClass, args, magicCall);
             }
             Object thisObject = method.isStatic() ? null : self;
-            return PhpRef.deref(call.call(args.build(frame, method, thisObject, staticClass, null)));
+            return call.call(args.build(frame, method, thisObject, staticClass, null));
         }
 
         @Specialization(replaces = "cached")
@@ -95,8 +93,7 @@ public final class StaticCallNode extends ExprNode {
                 return magic(frame, phpClass, self, staticClass, args, call);
             }
             Object thisObject = method.isStatic() ? null : self;
-            return PhpRef.deref(call.call(method.getCallTarget(),
-                    args.build(frame, method, thisObject, staticClass, null)));
+            return call.call(method.getCallTarget(), args.build(frame, method, thisObject, staticClass, null));
         }
 
         /** __call on the caller's $this (an instance of the class) or __callStatic, with the name as called. */
@@ -105,15 +102,13 @@ public final class StaticCallNode extends ExprNode {
             Object[] values = Callables.magicValues(calledName, args.values(frame));
             PhpFunction viaCall = self != null ? magicMethod(phpClass, "__call") : null;
             if (viaCall != null) {
-                return PhpRef.deref(call.call(viaCall.getCallTarget(),
-                        ArgumentsNode.frameArguments(self, staticClass, null, values)));
+                return call.call(viaCall.getCallTarget(), ArgumentsNode.frameArguments(self, staticClass, null, values));
             }
             PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
             if (viaStatic == null) {
                 throw undefined(phpClass);
             }
-            return PhpRef.deref(call.call(viaStatic.getCallTarget(),
-                    ArgumentsNode.frameArguments(null, staticClass, null, values)));
+            return call.call(viaStatic.getCallTarget(), ArgumentsNode.frameArguments(null, staticClass, null, values));
         }
 
         protected static DirectCallNode createCall(PhpFunction method) {

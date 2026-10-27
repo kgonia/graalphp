@@ -32,6 +32,18 @@ public final class PhpRef {
         this.value = value;
     }
 
+    /**
+     * A new reference nothing is bound to: a temporary php-src makes with ZVAL_NEW_REF (the value a function
+     * returning by reference returns when it has no place to return, a temporary iterated by reference). Like a
+     * reference whose last binding went, it holds its array only once something binds it.
+     */
+    public static PhpRef unbound(Object value) {
+        PhpRef ref = new PhpRef(null);
+        ref.value = value;
+        ref.released = true;
+        return ref;
+    }
+
     public Object get() {
         return value;
     }
