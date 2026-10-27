@@ -7,9 +7,10 @@ ext/curl is a port of php-src 8.5.12's ext/curl over libcurl, bound by FFM: `src
 This page checks that design with a TLA+ model and TLC, and compares it with php-src. The model is `models/curl/CurlLifecycle.tla`; the configurations are beside it.
 
 **Result:**
-- The safety properties hold in every configuration that matches how the runtime runs. TLC checked 6.2 million distinct states for one context and 2.6 million for two contexts on two threads.
+- The safety properties hold in every configuration that matches how the runtime runs. TLC checked 6.8 million distinct states for one context and 4.4 million for two contexts on two threads.
 - The code relies on one fact for that: a built-in call's Truffle frame keeps its arguments reachable. Without it, TLC finds a multi handle freed under `curl_multi_add_handle`.
 - Two observable differences from php-src stay open. Both are destruction timing: php-src writes `CURLOPT_COOKIEJAR`, and flushes a `CURLOPT_FILE` stream, when the last reference goes. Truffle PHP does it later, and it writes `CURLOPT_FILE` data without a C `FILE*` buffer.
+- One real bug is fixed: a thread's persistent shares weren't cleaned up when the thread ended (php-src does that in `GSHUTDOWN`).
 - One assumption is latent: a persistent share is shared by every context on a thread, so a context must not move to another thread. The launchers never move one.
 
 ## What the code does
@@ -19,7 +20,7 @@ This page checks that design with a TLA+ model and TLC, and compares it with php
 | CurlHandle | The PHP object holds an `Easy`. Its native part (`EasyNative`: the `CURL*`, the error buffer's arena, the `ToFree` its copies share) is in `State.live`. The Cleaner watches the `Easy`. | `kind = "easy"`, `nat`, `inLive`, `group` (the `ToFree`), `toFreeDone` |
 | CurlMultiHandle | The PHP object holds a `Multi`. The `Multi` is itself the native part in `State.live`. Its `easyh` holds the CurlHandle objects added. The Cleaner watches the **PHP object**. | `kind = "multi"`, `easyh`, `lmulti` (libcurl's `data->multi`) |
 | CurlShareHandle | The PHP object holds a `Share`; a `ShareNative` is in `State.live`. The Cleaner watches the **PHP object**. `Easy.share` holds the `Share` for `CURLOPT_SHARE`. Freeing a share that easy handles still use is refused by libcurl (`CURLSHE_IN_USE`); the share goes to `State.deferredShares` and is retried whenever an easy handle is freed, and at the context's end. | `kind = "share"`, `shareOf` (`Easy.share`), `attached` (libcurl's `data->share`), `deferred` |
-| CurlSharePersistentHandle | `PERSISTENT_SHARES`, a `ThreadLocal`: one native share per thread and option set, never tracked or freed. php-src's ZTS keeps them per thread too. | `kind = "pshare"`, `pnat`: one native per thread |
+| CurlSharePersistentHandle | `PERSISTENT_SHARES`, a `ThreadLocal`: one native share per thread and option set, not tracked by any context. php-src's ZTS keeps them per thread too. They are cleaned up when the thread ends (finding G1). | `kind = "pshare"`, `pnat`: one native per thread; `EndThread`, `ended` |
 | `curl_copy_handle` | `curl_easy_duphandle`. The copy shares the `ToFree`; its last holder frees it. | `Copy`; `DUP_SHARE`: whether libcurl attaches the copy to the source's share |
 | Callbacks | FFM upcalls look the `Easy` up in `EASIES` (a `WeakReference`) by the id passed as userdata. `callCallback` holds the `Easy` while PHP code runs. | `EnterCb`/`LeaveCb`. A callback whose `Easy` was collected is skipped (`easyOrNull`); the model counts that as a violation, since php-src would run it. |
 | Error handlers | `_php_curl_verify_handlers` warns about a closed `CURLOPT_FILE`/`INFILE`/`WRITEHEADER`/`STDERR` stream. The warning runs the user's error handler before libcurl is called. | `MultiAdd`, `MultiClose`: a `"warn"` window, then the native calls |
@@ -50,7 +51,6 @@ Global state shared by every context: `EASIES`, `MULTIS`, `MIME_SOURCES` (by ids
   - server push (`CURLMOPT_PUSHFUNCTION`);
   - `CURLOPT_STDERR`'s `fopencookie` `FILE*`;
   - `curl_reset`;
-  - threads ending (see "Persistent shares at a thread's end");
   - nested transfers (`curl_exec` from a callback).
 
 ## Properties
@@ -61,6 +61,7 @@ Global state shared by every context: `EASIES`, `MULTIS`, `MIME_SOURCES` (by ids
 | `NoDoubleFree` | A freed handle isn't in `State.live`: the next `free` of it is a no-op. |
 | `NoLeakAfterClose` | Once a context has closed, all its handles are freed (not leaked), and so are all its `ToFree`s. |
 | `Isolation` | A multi's easies, an easy handle's share, and libcurl's links never cross contexts. Two threads never run libcurl on the same native handle at once (a persistent share has no lock callbacks). |
+| `NoLeakAfterThreadEnd` | Once a thread has ended (after every context on it closed), its persistent shares are cleaned up, as php-src's `GSHUTDOWN` does. |
 | `NoEarlyFree` | Nothing is freed while php-src would still hold it. |
 | `DestroyedWhenPhpDoes` | Whenever PHP code runs after php-src would have destroyed a handle, the handle has been freed. Only `Timing.cfg` checks this; it is expected to fail. |
 
@@ -70,13 +71,16 @@ TLC 2.19, `-workers 4 -Xmx2g`, breadth-first.
 
 | Configuration | Contexts × threads | `K` | `MaxCb` | Other | Result | Distinct states | Depth | Time |
 |---|---|---:|---:|---|---|---:|---:|---|
-| `Safety.cfg` | 1 × 1 | 3 | 2 | | holds | 76,062 | 20 | 1 s |
-| `Wide.cfg` | 1 × 1 | 4 | 2 | `DUP_SHARE` | holds | 6,207,050 | 28 | 2 min 13 s |
-| `Threads.cfg` | 2 × 2 | 2 | 1 | | holds | 2,635,808 | 23 | 1 min 9 s |
-| `Threads3.cfg` | 2 × 2 | 3 | 1 | | THREADS3 | | | |
-| `NoFrameArgs.cfg` | 1 × 1 | 3 | 2 | arguments not held | fails (finding M3) | | 7 | |
-| `Timing.cfg` | 1 × 1 | 2 | 1 | `DestroyedWhenPhpDoes` | fails (findings T1, T2) | | 4 | |
-| `Migrate.cfg` | 2 × 3 | 2 | 1 | `MIGRATE` | fails (finding P1) | | 11 | |
+| `Safety.cfg` | 1 × 1 | 3 | 2 | | holds | 87,735 | 20 | 1 s |
+| `Wide.cfg` | 1 × 1 | 4 | 2 | `DUP_SHARE` | holds | 6,834,667 | 28 | 3 min 35 s |
+| `Threads.cfg` | 2 × 2 | 2 | 1 | | holds | 4,363,058 | 23 | 2 min 28 s |
+| `Threads3.cfg` | 2 × 2 | 3 | 1 | | no error found; stopped (bounded) | 35,554,841 | 11+ | 15 min |
+| `NoFrameArgs.cfg` | 1 × 1 | 3 | 2 | arguments not held | fails (finding M3) | | 7 | 1 s |
+| `Timing.cfg` | 1 × 1 | 2 | 1 | `DestroyedWhenPhpDoes` | fails (findings T1, T2) | | 4 | 0 s |
+| `Migrate.cfg` | 2 × 3 | 2 | 1 | `MIGRATE` | fails (finding P1) | | 11 | 3 min 23 s |
+| `ThreadEnd.cfg` | 1 × 1 | 3 | 2 | no `GSHUTDOWN` | fails (finding G1) | | 5 | 0 s |
+
+`Threads3.cfg` doesn't finish: after 15 minutes, breadth-first through depth 11, it had 35.6 million distinct states and 23.8 million more on the queue. So it is a bounded check of the shorter behaviours. All configurations but `ThreadEnd.cfg` model the code with G1's fix (`GSHUTDOWN = TRUE`). A failing configuration stops at its first counterexample; its depth is the number of states in the trace.
 
 The model was widened step by step: one context with 3 slots and one callback per call, then two callbacks, then 4 slots with `DUP_SHARE`, then two contexts. Every widening that matches the runtime held.
 
@@ -171,19 +175,33 @@ Its flushes at the stream's destruction would also need T1. That is the stream l
 
 **Verdict:** this can't happen in this runtime. HttpMain builds, runs and closes each request's context in one task on one pool thread, and the tests' harnesses do too. php-src's ZTS has the same per-thread map, and a request stays on its thread. An embedder that enters a context from several threads, which Truffle allows one thread at a time, would break this assumption. Such an embedder would need the persistent shares keyed by context, or lock callbacks on them.
 
-### Persistent shares at a thread's end (open, not modelled)
+### G1: persistent shares outlive their thread (real, fixed)
 
-php-src frees the persistent shares in `GSHUTDOWN`, when a thread ends. `PERSISTENT_SHARES` is a `ThreadLocal` of native pointers. When a thread ends, the map goes, but the native shares aren't cleaned up.
+**Trace** (`ThreadEnd.cfg`, `GSHUTDOWN = FALSE`, 5 states):
+1. `curl_share_init_persistent` on thread t1.
+2. The context closes.
+3. t1 ends. Its persistent share is never cleaned up (`NoLeakAfterThreadEnd`).
 
-HttpMain's pool threads live as long as the server, so nothing leaks there. An embedder with short-lived threads would leak one share per thread and option set. A Cleaner on the per-thread map could clean them up when the thread's map becomes unreachable. By then every context of that thread has closed, so no easy handle still uses them.
+php-src destroys `CURL_G(persistent_curlsh)` in `GSHUTDOWN`, when the thread ends, and that runs `curl_share_cleanup` on each share. `PERSISTENT_SHARES` was a `ThreadLocal` map of native pointers: the thread's end dropped the map, and the shares, with the connections they kept, stayed open until the process ended. HttpMain's pool threads live as long as the server, but an embedder whose threads come and go leaked a share, and its connections, per thread and option set.
+
+**Test:** `tests/shared/PersistentShares.java`, run by `tests/shared/run.sh`.
+1. A context on its own thread fetches from a local keep-alive HTTP server through `curl_share_init_persistent([CURL_LOCK_DATA_CONNECT])`.
+2. The context closes, and the thread ends.
+3. The server must see the connection closed within 10 seconds, with `System.gc()` run between checks.
+
+Before the fix the connection stayed open.
+
+**Fix:** the per-thread value is a `PersistentShares` object that the Cleaner watches. The JDK drops a thread's thread-local values when it ends, and the Cleaner's action then runs `curl_share_cleanup` on the shares. By then every context that ran on the thread has closed, so no easy handle uses them. If one did (P1), libcurl would refuse the cleanup, not free a share in use. The model has this as `GSHUTDOWN = TRUE` and `EndThread`.
 
 ## How to rerun
 
 ```
-models/curl/tlc.sh Safety.cfg          # also Wide.cfg, Threads.cfg, Threads3.cfg; each prints "No error has been found"
+models/curl/tlc.sh Safety.cfg          # also Wide.cfg, Threads.cfg: each prints "No error has been found"
+timeout 900 models/curl/tlc.sh Threads3.cfg   # doesn't finish in hours: a bounded search
 models/curl/tlc.sh NoFrameArgs.cfg     # M3's trace
 models/curl/tlc.sh Timing.cfg          # T1's trace
 models/curl/tlc.sh Migrate.cfg         # P1's trace
+models/curl/tlc.sh ThreadEnd.cfg       # G1's trace (the code before its fix)
 tests/shared/run.sh                    # the contexts test (after mvn package -DskipTests)
 models/curl/repro/run.sh               # M3's probe (same), T1 and T2 (differ while open) on PHP 8.5 and Truffle PHP
 ```
