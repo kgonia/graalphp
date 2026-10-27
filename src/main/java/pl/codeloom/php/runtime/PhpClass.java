@@ -78,11 +78,12 @@ public final class PhpClass {
     /**
      * The zend_object_handlers a built-in class replaces, as ext/curl's classes do: get_constructor's Error for
      * `new` (null: `new` works), clone_obj (null: the standard copy, unless uncloneable: clone_obj NULL),
-     * cast_object's (int) cast to the object's id, and whether serialize() and unserialize() refuse it
-     * (@not-serializable).
+     * cast_object's (int) cast to the object's id, whether serialize() and unserialize() refuse it
+     * (@not-serializable), and compare as zend_objects_not_comparable (equal to nothing but itself).
      */
     public record ObjectHandlers(String constructError, java.util.function.UnaryOperator<PhpObject> cloneObject,
-                                 boolean uncloneable, boolean castsToId, boolean notSerializable) {
+                                 boolean uncloneable, boolean castsToId, boolean notSerializable,
+                                 boolean notComparable) {
     }
 
     private ObjectHandlers handlers;

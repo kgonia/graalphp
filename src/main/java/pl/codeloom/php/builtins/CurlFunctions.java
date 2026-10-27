@@ -464,7 +464,7 @@ final class CurlFunctions {
         for (PhpFunction method : methods.curlFile()) {
             curlFile.addMethod(method);
         }
-        curlFile.setHandlers(new PhpClass.ObjectHandlers(null, null, false, false, true));
+        curlFile.setHandlers(new PhpClass.ObjectHandlers(null, null, false, false, true, false));
         context.declareClass(curlFile);
         PhpClass curlStringFile = new PhpClass("CURLStringFile", null, false, false,
                 context.getLanguage().rootShape(), "CURLStringFile");
@@ -483,7 +483,7 @@ final class CurlFunctions {
         PhpClass phpClass = new PhpClass(name, null, false, false, context.getLanguage().rootShape(), name);
         // curl_cast_object: CurlHandle and CurlMultiHandle cast to int as their resources did; the share handles don't
         boolean castsToId = name.equals("CurlHandle") || name.equals("CurlMultiHandle");
-        phpClass.setHandlers(new PhpClass.ObjectHandlers(constructError, clone, clone == null, castsToId, true));
+        phpClass.setHandlers(new PhpClass.ObjectHandlers(constructError, clone, clone == null, castsToId, true, true));
         context.declareClass(phpClass);
         return phpClass;
     }

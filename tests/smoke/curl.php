@@ -230,6 +230,8 @@ curl_setopt($ch, CURLOPT_PRIVATE, 'source');
 $copy = curl_copy_handle($ch);
 $clone = clone $ch;
 show($copy);
+// the handles are equal to themselves only (zend_objects_not_comparable)
+var_dump($copy == $ch, $ch == $ch, $copy < $ch, $ch > $copy, $ch == 1, $ch != $copy, $ch == new stdClass());
 var_dump($copy !== $ch, curl_exec($copy), curl_getinfo($copy, CURLINFO_PRIVATE), curl_exec($clone));
 curl_setopt($copy, CURLOPT_URL, "$base/curl-data/missing.txt");
 var_dump(curl_exec($copy), curl_exec($ch));
