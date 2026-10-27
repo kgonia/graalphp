@@ -300,7 +300,8 @@ public final class PhpClass {
 
     private PhpObject instantiateBare() {
         if (!isInstantiable()) {
-            throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
+            throw new PhpError(instantiationError != null ? instantiationError
+                    : "Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
         PhpObject object = new PhpObject(rootShape, this, PhpContext.get(null).nextObjectId());
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
@@ -360,7 +361,14 @@ public final class PhpClass {
     }
 
     public boolean isInstantiable() {
-        return !isAbstract && !isInterface;
+        return !isAbstract && !isInterface && instantiationError == null;
+    }
+
+    /** A built-in class `new` can't make (Closure, Generator): the Error it raises instead. */
+    private String instantiationError;
+
+    public void setInstantiationError(String message) {
+        this.instantiationError = message;
     }
 
     public Shape getRootShape() {

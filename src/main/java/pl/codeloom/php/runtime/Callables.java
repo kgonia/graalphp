@@ -253,7 +253,7 @@ public final class Callables {
     }
 
     /** zend_is_callable_error's reason a value isn't callable. */
-    private static String invalidReason(PhpContext context, Object callable) {
+    public static String invalidReason(PhpContext context, Object callable) {
         if (callable instanceof TruffleString name) {
             String text = Str.java(name);
             int separator = text.indexOf("::");

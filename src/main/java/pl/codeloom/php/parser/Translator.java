@@ -73,6 +73,7 @@ import pl.codeloom.php.runtime.Str;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -747,6 +748,9 @@ public final class Translator {
         PhpFunction[] self = new PhpFunction[1];
         self[0] = new PhpFunction(name, params, false, (node.flags & MODIFIER_STATIC) != 0, true, false,
                 () -> translateBody(node, owner, self[0], name, params, names, byRef, declaredNames));
+        Set<String> bodyVariables = new HashSet<>();
+        collectVariables(node.get("stmts"), bodyVariables);
+        self[0].setUsesThis(bodyVariables.contains("this"));
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
         return new ClosureNode(self[0], captureNodes, byRef, (node.flags & MODIFIER_STATIC) != 0, scopeRef);
     }

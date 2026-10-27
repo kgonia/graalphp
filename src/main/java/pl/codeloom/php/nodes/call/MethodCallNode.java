@@ -10,6 +10,8 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
@@ -45,15 +47,29 @@ public final class MethodCallNode extends ExprNode {
         if (target instanceof PhpObject object) {
             return dispatch.execute(frame, object, args);
         }
-        if (target instanceof PhpClosure closure && lowerName.equals("__invoke")) {
-            CallableDispatchNode call = closureCall;
-            if (call == null) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                call = closureCall();
+        if (target instanceof PhpClosure closure) {
+            if (lowerName.equals("__invoke")) {
+                CallableDispatchNode call = closureCall;
+                if (call == null) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    call = closureCall();
+                }
+                return call.execute(closure, args.values(frame));
             }
-            return call.execute(closure, args.values(frame));
+            return closureMethod(closure, args.values(frame));
         }
         throw memberOnNonObject(target);
+    }
+
+    /** The Closure class's other methods (bindTo, call) on a closure value. */
+    @TruffleBoundary
+    private Object closureMethod(PhpClosure closure, Object[] values) {
+        PhpFunction method = PhpContext.get(this).getClass("Closure").findMethod(lowerName);
+        if (method == null) {
+            throw new PhpError("Call to undefined method Closure::" + lowerName + "()");
+        }
+        return Backtrace.callFrom(this, () -> method.getCallTarget().call(
+                ArgumentsNode.frameArguments(closure, null, null, values)));
     }
 
     /** Inserted under the AST lock: the AST is shared by contexts that may run on several threads. */

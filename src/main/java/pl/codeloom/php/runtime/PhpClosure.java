@@ -44,6 +44,10 @@ public final class PhpClosure {
         return scope;
     }
 
+    public int getCaptureCount() {
+        return captured.length;
+    }
+
     public Object getCaptured(int index) {
         return captured[index];
     }

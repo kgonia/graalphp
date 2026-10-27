@@ -52,13 +52,15 @@ public final class Builtins {
         private final List<PhpFunction> functions;
         private final List<PhpFunction> throwableMethods;
         private final List<PhpFunction> generatorMethods;
+        private final List<PhpFunction> closureMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
-                      List<PhpFunction> generatorMethods) {
+                      List<PhpFunction> generatorMethods, List<PhpFunction> closureMethods) {
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
             this.generatorMethods = generatorMethods;
+            this.closureMethods = closureMethods;
         }
 
         /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
@@ -89,7 +91,7 @@ public final class Builtins {
             PcreFunctions.registerDebug(registry);
         }
         return new Table(constants(), List.copyOf(registry.functions()), throwableMethods(registry),
-                generatorMethods(registry));
+                generatorMethods(registry), ClosureMethods.methods(registry));
     }
 
     public static void install(PhpContext context, Table table) {
@@ -210,6 +212,12 @@ public final class Builtins {
             generator.addMethod(method);
         }
         context.declareClass(generator);
+        PhpClass closure = new PhpClass("Closure", null, false, false, context.getLanguage().rootShape(), "Closure");
+        closure.setInstantiationError("Instantiation of class Closure is not allowed");
+        for (PhpFunction method : table.closureMethods) {
+            closure.addMethod(method);
+        }
+        context.declareClass(closure);
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
 

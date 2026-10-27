@@ -102,6 +102,17 @@ public final class PhpFunction {
         return declaredAt;
     }
 
+    /** A closure whose body uses $this (ZEND_ACC_USES_THIS): Closure::bind can't unbind its $this. */
+    private boolean usesThis;
+
+    public void setUsesThis(boolean usesThis) {
+        this.usesThis = usesThis;
+    }
+
+    public boolean usesThis() {
+        return usesThis;
+    }
+
     public void setClassName(String className) {
         this.className = className;
     }
