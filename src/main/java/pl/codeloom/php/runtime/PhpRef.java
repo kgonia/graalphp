@@ -9,13 +9,20 @@ package pl.codeloom.php.runtime;
  * counted while their array has holders (PhpArray binds its references when it gains its first holder and
  * releases them when it loses its last; a slot overwritten or removed releases its own). A reference only one
  * array slot holds behaves as a value when that array is copied, as php-src does for a reference whose refcount
- * fell to 1 (after `foreach ($a as &$v)` has moved on, or the function that bound it returned). Holders the
+ * fell to 1 (after `foreach ($a as &$v)` has moved on, or the function that bound it returned). A reference
+ * whose bindings all went away releases its array, as php-src frees it, until something binds it again. Holders the
  * runtime can't see go away (an outer array no longer referenced, a reference no variable is bound to) leave
  * counts higher, never lower: such a reference stays shared, as it would in php-src until the holder is freed.
  */
 public final class PhpRef {
     private Object value;
     private int bindings;
+    /**
+     * Every binding has gone: php-src would have freed the reference, so it no longer holds its array (whose own
+     * references then lose this holder's count). Binding it again (an array that held it gains a holder) takes
+     * the array back.
+     */
+    private boolean released;
 
     /** The ref counts as a holder of an array value, like any other slot. */
     public PhpRef(Object value) {
@@ -32,11 +39,12 @@ public final class PhpRef {
     /** Stores a value; arrays count this ref as one more holder. */
     public void set(Object newValue) {
         Object old = value;
-        if (newValue instanceof PhpArray array) {
+        boolean holds = !released;
+        if (holds && newValue instanceof PhpArray array) {
             array.addHolder();
         }
         value = newValue;
-        if (old instanceof PhpArray array && old != newValue) {
+        if (holds && old instanceof PhpArray array && old != newValue) {
             array.removeHolder();
         }
     }
@@ -47,8 +55,10 @@ public final class PhpRef {
         if (current instanceof PhpArray array) {
             if (array.isShared()) {
                 PhpArray copy = array.copy();
-                copy.addHolder();
-                array.removeHolder();
+                if (!released) {
+                    copy.addHolder();
+                    array.removeHolder();
+                }
                 value = copy;
                 return copy;
             }
@@ -59,13 +69,21 @@ public final class PhpRef {
 
     /** A variable is now bound to this reference, or an array element made it. */
     public void bind() {
-        bindings++;
+        if (bindings++ == 0 && released) {
+            released = false;
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+        }
     }
 
     /** A variable bound to this reference was rebound, unset or went out of scope. */
     public void unbind() {
-        if (bindings > 0) {
-            bindings--;
+        if (bindings > 0 && --bindings == 0) {
+            released = true;
+            if (value instanceof PhpArray array) {
+                array.removeHolder();
+            }
         }
     }
 

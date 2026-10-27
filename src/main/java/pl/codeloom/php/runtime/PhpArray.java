@@ -39,6 +39,11 @@ public final class PhpArray implements TruffleObject {
      * scan when they gain their first holder or lose their last (see {@link PhpRef}).
      */
     private boolean mayHoldRefs;
+    /**
+     * A foreach by reference walks this array or an array it was copied from ({@link RefIteration}): its copies
+     * and rehashes are reported there, as php-src's hash iterators are copied and moved.
+     */
+    private boolean iterated;
 
     /** The elements: a long[] or an Object[] (packed; the capacity is its length), or a {@link Hash}. */
     private Object store;
@@ -158,7 +163,18 @@ public final class PhpArray implements TruffleObject {
             }
             copy.store = hash;
         }
+        if (iterated) {
+            RefIteration.copied(this, copy);
+        }
         return copy;
+    }
+
+    public boolean isIterated() {
+        return iterated;
+    }
+
+    void setIterated(boolean iterated) {
+        this.iterated = iterated;
     }
 
     /** An element of a fresh copy: a reference only this array holds becomes a value, a nested array gains one. */
@@ -721,6 +737,14 @@ public final class PhpArray implements TruffleObject {
         return -1;
     }
 
+    /** The first position at or after the given one holding an element, or -1 (php-src's _zend_hash_get_valid_pos). */
+    public int positionFrom(int position) {
+        if (store instanceof Hash hash) {
+            return position >= hash.used ? -1 : hash.nextUsed(position);
+        }
+        return position < size ? position : -1;
+    }
+
     /** True if the position still holds an element (it may have been removed during iteration). */
     public boolean isValidPosition(int position) {
         if (position < 0) {
@@ -889,6 +913,9 @@ public final class PhpArray implements TruffleObject {
             }
         }
         store = grown;
+        if (iterated) {
+            RefIteration.rehashed(this, old.keys, old.used);
+        }
         return grown;
     }
 

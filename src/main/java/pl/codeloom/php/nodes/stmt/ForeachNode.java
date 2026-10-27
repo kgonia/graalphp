@@ -10,9 +10,12 @@ import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.profiles.BranchProfile;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
+import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.runtime.Backtrace;
@@ -23,12 +26,15 @@ import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefIteration;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 /**
  * foreach. By value it iterates a snapshot: the loop holds the array, so writes to the variable inside the loop
- * copy it and the iteration is unaffected. By reference it makes the variable's array exclusive and binds the
- * value variable to each element's reference. Objects iterate their Iterator methods or public properties.
+ * copy it and the iteration is unaffected. By reference it holds the variable's reference and walks whatever array
+ * that reference holds at each step ({@link RefIteration}), binding the value variable to each element's
+ * reference. Objects iterate their Iterator methods or public properties.
  */
 public final class ForeachNode extends StmtNode {
     @Child private ExprNode subject;
@@ -57,10 +63,10 @@ public final class ForeachNode extends StmtNode {
         this.byRef = byRef;
         this.arraySlot = arraySlot;
         this.positionSlot = positionSlot;
-        this.arrayLoop = Truffle.getRuntime().createLoopNode(new ArrayStep());
+        this.arrayLoop = Truffle.getRuntime().createLoopNode(byRef ? new RefStep() : new ArrayStep());
     }
 
-    /** One element of an array foreach: bind key and value (or the element's reference), run the body. */
+    /** One element of an array foreach by value: bind key and value, run the body. */
     private final class ArrayStep extends Node implements RepeatingNode {
         @Override
         public boolean executeRepeating(VirtualFrame frame) {
@@ -69,23 +75,37 @@ public final class ForeachNode extends StmtNode {
                 return false;
             }
             PhpArray array = (PhpArray) frame.getObject(arraySlot);
-            int next;
-            if (byRef) {
-                bind.writeKey(frame, array.keyAt(p));
-                bind.bindRef(frame, array.refAtPosition(p));
-                if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
-                    return false;
-                }
-                // by reference the body may change the array, so the next position is found after it
-                next = array.nextPosition(p);
-            } else {
-                next = bind.execute(frame, array, p);
-                if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
-                    return false;
-                }
+            int next = bind.execute(frame, array, p);
+            if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
+                return false;
             }
             frame.setInt(positionSlot, next);
             return next >= 0;
+        }
+    }
+
+    /**
+     * One element of a foreach by reference (FE_FETCH_RW): the array now in the loop's reference, the next element
+     * from the iterator's position made a reference, the value variable bound to it, then the key; the body.
+     */
+    private final class RefStep extends Node implements RepeatingNode {
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            RefIteration iteration = (RefIteration) frame.getObject(arraySlot);
+            PhpArray array = iteration.current();
+            if (array == null) {
+                notIterable(iteration.ref().get());
+                return false;
+            }
+            int from = iteration.position();
+            int p = from == RefIteration.END ? -1 : array.positionFrom(from);
+            if (p < 0) {
+                return false;
+            }
+            iteration.setPosition(p + 1);
+            bind.bindRef(frame, array.refAtPosition(p));
+            bind.writeKey(frame, array.keyAt(p));
+            return LoopNodes.runBody(body, frame) != LoopNodes.EXIT;
         }
     }
 
@@ -186,7 +206,17 @@ public final class ForeachNode extends StmtNode {
         } else if (value instanceof PhpObject object) {
             objectSubject.enter();
             iterateObject(frame, object);
+        } else {
+            notIterable(value);
         }
+    }
+
+    /** FE_RESET's and FE_FETCH_RW's warning for a subject that is neither an array nor an object. */
+    @TruffleBoundary
+    private void notIterable(Object value) {
+        String type = value instanceof Boolean b ? (b ? "true" : "false") : Convert.debugType(value);
+        ErrorFunctions.raise(PhpContext.get(this), ErrorFunctions.E_WARNING,
+                Str.of("foreach() argument must be of type array|object, " + type + " given"), SourceLocation.of(this));
     }
 
     private void iterate(VirtualFrame frame, PhpArray array) {
@@ -203,12 +233,29 @@ public final class ForeachNode extends StmtNode {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Cannot iterate a temporary by reference");
         }
-        PhpArray array = place.arrayForWrite(frame);
-        if (array == null) {
+        Object value = subject.execute(frame);
+        if (!(value instanceof PhpArray)) {
             CompilerDirectives.transferToInterpreter();
-            throw new PhpError("foreach by reference over an object is not supported");
+            if (value instanceof PhpObject) {
+                throw new PhpError("foreach by reference over an object is not supported");
+            }
+            if (subject instanceof DimNode) {
+                // FETCH_DIM_W has created the element (null) before FE_RESET_RW looks at it
+                place.makeRef(frame);
+            }
+            notIterable(value);
+            return;
         }
-        runArray(frame, array);
+        // FE_RESET_RW: the variable becomes a reference, which the loop holds while it runs
+        PhpContext context = PhpContext.get(this);
+        RefIteration iteration = RefIteration.start(context, place.makeRef(frame));
+        frame.setObject(arraySlot, iteration);
+        try {
+            arrayLoop.execute(frame);
+        } finally {
+            frame.clear(arraySlot);
+            iteration.end(context);
+        }
     }
 
     /**
