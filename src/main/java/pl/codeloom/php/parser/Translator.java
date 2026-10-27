@@ -138,6 +138,8 @@ public final class Translator {
     private final Scope scope;
     /** In a generator function's body: the frame slot of its Generator state; -1 elsewhere. */
     private int generatorSlot = -1;
+    /** In the body of a function returning by reference (not a generator, whose `&` is for its yields). */
+    private boolean returnsRef;
     /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
     private int hiddenCounter;
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
@@ -311,7 +313,7 @@ public final class Translator {
                 return new BasicStmts.BreakNode(node.get("depth") instanceof Long depth ? depth.intValue() : 1,
                         node.is("AST_CONTINUE"));
             case "AST_RETURN":
-                return new BasicStmts.ReturnNode(node.get("expr") == null ? null : expression(node.get("expr")));
+                return returnStatement(node.get("expr"));
             case "AST_GLOBAL":
                 return globalStatement(node);
             case "AST_STATIC":
@@ -416,6 +418,32 @@ public final class Translator {
         }
     }
 
+    /**
+     * `return expr;`. In a function returning by reference (zend_compile_return), a variable, element or property
+     * returns its reference and a call the reference its callee returned; anything else returns its value.
+     */
+    private StmtNode returnStatement(Object expr) {
+        if (!returnsRef) {
+            return new BasicStmts.ReturnNode(expr == null ? null : expression(expr));
+        }
+        if (expr instanceof Ast ast && isPlace(ast) && !isThis(ast)
+                && !(ast.is("AST_VAR") && "GLOBALS".equals(ast.get("name")))) {
+            return new BasicStmts.ReturnRefNode(place(ast));
+        }
+        return new BasicStmts.ReturnRefValueNode(expr == null ? null : expression(expr), !isThis(expr));
+    }
+
+    /** A variable, element or property (zend_is_variable): what `&` can take the reference of. */
+    private static boolean isPlace(Ast node) {
+        return node.is("AST_VAR") || node.is("AST_DIM") || node.is("AST_PROP") || node.is("AST_STATIC_PROP");
+    }
+
+    /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
+    private static boolean isCall(Object value) {
+        return value instanceof Ast node && (node.is("AST_CALL") || node.is("AST_METHOD_CALL")
+                || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
+    }
+
     private StmtNode resumableIf(Ast node, int index) {
         if (index >= node.size()) {
             return null;
@@ -470,9 +498,6 @@ public final class Translator {
         boolean byRef = value.is("AST_REF");
         if (byRef) {
             value = value.node("var");
-            if (!(subject instanceof LValueNode)) {
-                throw unsupported(node, "foreach by reference over an expression");
-            }
         }
         LValueNode key = node.get("key") == null ? null : place(node.get("key"));
         StmtNode body = statements(node.node("stmts"));
@@ -667,12 +692,12 @@ public final class Translator {
         if (generator) {
             body.generatorSlot = bodyScope.slot("\0generator");
         }
+        body.returnsRef = target.returnsRef() && !generator;
         StmtNode statements;
         if (node.is("AST_ARROW_FUNC")) {
             Ast stmts = node.node("stmts");
             Ast returned = stmts.is("AST_RETURN") ? stmts : null;
-            statements = returned != null ? body.statement(returned)
-                    : new BasicStmts.ReturnNode(body.expression(stmts));
+            statements = returned != null ? body.statement(returned) : body.returnStatement(stmts);
         } else {
             statements = body.statements(node.node("stmts"));
         }
@@ -704,6 +729,9 @@ public final class Translator {
                 paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
                 statements, path, internal, lineSection(node.line));
         root.setScope(owner == null ? null : owner.name());
+        if (body.returnsRef) {
+            root.setReturnsRef(node.endLine);
+        }
         return root.getCallTarget();
     }
 
@@ -746,7 +774,8 @@ public final class Translator {
         ClassInfo owner = classInfo;
         Names declaredNames = this.names;
         PhpFunction[] self = new PhpFunction[1];
-        self[0] = new PhpFunction(name, params, false, (node.flags & MODIFIER_STATIC) != 0, true, false,
+        self[0] = new PhpFunction(name, params, (node.flags & FUNC_RETURNS_REF) != 0,
+                (node.flags & MODIFIER_STATIC) != 0, true, false,
                 () -> translateBody(node, owner, self[0], name, params, names, byRef, declaredNames));
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(node.get("stmts"), bodyVariables);
@@ -1020,6 +1049,9 @@ public final class Translator {
             case "AST_ASSIGN":
                 return assignment(node);
             case "AST_ASSIGN_REF":
+                if (isCall(node.get("expr"))) {
+                    return new AssignNodes.CallRefAssignNode(place(node.get("var")), expression(node.get("expr")));
+                }
                 return new AssignNodes.RefAssignNode(place(node.get("var")), place(node.get("expr")));
             case "AST_ASSIGN_OP":
                 return compoundAssignment(node);
@@ -1545,8 +1577,10 @@ public final class Translator {
         int count = list == null ? 0 : list.size();
         ExprNode[] args = new ExprNode[count];
         boolean[] spread = new boolean[count];
+        boolean[] calls = new boolean[count];
         for (int i = 0; i < count; i++) {
             Object arg = list.child(i);
+            calls[i] = isCall(arg) && !compiledInPlace((Ast) arg);
             if (arg instanceof Ast ast && ast.is("AST_UNPACK")) {
                 spread[i] = true;
                 args[i] = expression(ast.get("expr"));
@@ -1561,7 +1595,7 @@ public final class Translator {
                 args[i] = expression(arg);
             }
         }
-        return new ArgumentsNode(args, spread);
+        return new ArgumentsNode(args, spread, calls);
     }
 
     /** `f(...)`: the call's arguments are the first-class callable marker, not a list. */
@@ -1584,7 +1618,7 @@ public final class Translator {
                     resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
         }
         if (!callee.is("AST_NAME") || method) {
-            return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null);
+            return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null, true);
         }
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)
@@ -1594,15 +1628,18 @@ public final class Translator {
                 return new FrameArgsNode(false);
             case "func_num_args":
                 return new FrameArgsNode(true);
+            // a name resolved at compile time is compiled into the call itself (zend_compile_func_cuf), whose
+            // result is the callee's; the built-in function, called by a name resolved at run time, returns a value
             case "call_user_func": {
                 ArgumentsNode rest = arguments(dropFirst(args));
                 return new CallableCallNode(expression(args.child(0)), rest, null,
-                        new Callables.Parameter("call_user_func", 1, false));
+                        new Callables.Parameter("call_user_func", 1, false), resolved[1] == null);
             }
             case "call_user_func_array":
                 return new CallableCallNode(expression(args.child(0)), new ArgumentsNode(new ExprNode[0],
-                        new boolean[0]), expression(args.child(1)),
-                        new Callables.Parameter("call_user_func_array", 1, false));
+                        new boolean[0], new boolean[0]), expression(args.child(1)),
+                        new Callables.Parameter("call_user_func_array", 1, false),
+                        resolved[1] == null && args.size() == 2);
             case "get_class":
             case "get_called_class":
                 if (args.size() == 0) {
@@ -1653,6 +1690,25 @@ public final class Translator {
         }
         return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
                 resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args), special);
+    }
+
+    /**
+     * A call php-src compiles into an opcode giving a temporary (zend_try_compile_special_func), not a call's result:
+     * as an argument it is sent as a value (SEND_VAL_EX), never as a call's result (SEND_VAR_NO_REF).
+     */
+    private boolean compiledInPlace(Ast call) {
+        if (isCallableConvert(call)) {
+            return true; // a closure (ZEND_CALLABLE_CONVERT)
+        }
+        Ast callee = call.node("expr");
+        if (!call.is("AST_CALL") || !callee.is("AST_NAME")) {
+            return false;
+        }
+        String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
+        String name = Str.lower(resolved[0]);
+        Ast args = call.node("args");
+        return resolved[1] == null && (compiledSpecially(name, args) || (name.equals("func_get_args")
+                || name.equals("func_num_args") || name.equals("get_called_class")) && args.size() == 0);
     }
 
     /**

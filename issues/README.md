@@ -4,3 +4,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 
 | # | Title | State |
 |---|---|---|
+| [001](001-dynamic-call-by-ref-args.md) | Dynamic calls don't pass arguments by reference | Open |
+| [002](002-by-ref-magic-get.md) | `&__get` and `&offsetGet` aren't written through | Open |

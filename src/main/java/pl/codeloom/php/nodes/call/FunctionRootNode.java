@@ -50,6 +50,12 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     /** A generator function's body (run by the Generator), or null; its frame slot for the Generator's state. */
     @CompilationFinal private RootCallTarget generatorBody;
     @CompilationFinal private int generatorSlot;
+    /**
+     * `function &f()` (not a generator): every return gives a {@link PhpRef}, also the implicit one at the closing
+     * brace (endLine), which raises php-src's notice as returning a value does.
+     */
+    @CompilationFinal private boolean returnsRef;
+    private int endLine;
 
     private final SourceSection sourceSection;
 
@@ -71,6 +77,12 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         this.returnCoerce = returnCoerce;
         this.returnNullable = returnNullable;
         this.body = body;
+    }
+
+    /** Makes this a function returning by reference; endLine is the line of its closing brace. */
+    public void setReturnsRef(int endLine) {
+        this.returnsRef = true;
+        this.endLine = endLine;
     }
 
     /** Makes this a generator function: a call binds the parameters and returns a Generator running body. */
@@ -97,12 +109,38 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         try {
             bindArguments(frame, arguments);
             body.execute(frame);
+            if (returnsRef) {
+                result = implicitReturnRef();
+            }
         } catch (ControlFlow.Return ret) {
             result = ret.value;
         } finally {
             releaseLocals(frame);
         }
-        return returnCoerce == 0 ? result : coerce(result, returnCoerce, returnNullable, "return value");
+        if (returnCoerce == 0) {
+            return result;
+        }
+        if (returnsRef) {
+            return coerceRef((PhpRef) result);
+        }
+        return coerce(result, returnCoerce, returnNullable, "return value");
+    }
+
+    /** The end of a function returning by reference: php-src's final ZEND_RETURN_BY_REF of null, with its notice. */
+    @TruffleBoundary
+    private PhpRef implicitReturnRef() {
+        CallNode.notice(this, CallNode.RETURNED_VALUE, new SourceLocation(path, endLine));
+        return PhpRef.unbound(PhpNull.NULL);
+    }
+
+    /** A declared scalar return type converts the value in the returned reference, as php-src does. */
+    private PhpRef coerceRef(PhpRef ref) {
+        Object value = ref.get();
+        Object coerced = coerce(value, returnCoerce, returnNullable, "return value");
+        if (coerced != value) {
+            ref.set(coerced);
+        }
+        return ref;
     }
 
     private void bindArguments(VirtualFrame frame, Object[] arguments) {

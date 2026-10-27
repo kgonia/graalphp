@@ -13,6 +13,7 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpRef;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,11 +25,17 @@ import java.util.List;
 public final class ArgumentsNode extends Node {
     @Children private final ExprNode[] args;
     @CompilationFinal(dimensions = 1) private final boolean[] spread;
+    /**
+     * The arguments that are calls (zend_is_call: also of built-ins compiled in place): a by-reference parameter
+     * takes the reference a callee returning by reference returned, else the value with a notice.
+     */
+    @CompilationFinal(dimensions = 1) private final boolean[] calls;
     private final boolean hasSpread;
 
-    public ArgumentsNode(ExprNode[] args, boolean[] spread) {
+    public ArgumentsNode(ExprNode[] args, boolean[] spread, boolean[] calls) {
         this.args = args;
         this.spread = spread;
+        this.calls = calls;
         boolean any = false;
         for (boolean s : spread) {
             any |= s;
@@ -54,11 +61,25 @@ public final class ArgumentsNode extends Node {
         for (int i = 0; i < args.length; i++) {
             if (callee.isByRef(i) && args[i] instanceof LValueNode place) {
                 arguments[PhpFunction.ARG_FIRST + i] = place.makeRef(frame);
+            } else if (calls[i] && callee.isByRef(i)) {
+                arguments[PhpFunction.ARG_FIRST + i] = refArgument(frame, args[i]);
             } else {
                 arguments[PhpFunction.ARG_FIRST + i] = args[i].execute(frame);
             }
         }
         return arguments;
+    }
+
+    /**
+     * A call's result passed to a by-reference parameter (SEND_VAR_NO_REF): the reference a function returning by
+     * reference returned; a value, which the parameter binds as a new reference, with php-src's notice.
+     */
+    private Object refArgument(VirtualFrame frame, ExprNode call) {
+        Object result = call instanceof CallNode node ? node.executeRef(frame) : call.execute(frame);
+        if (!(result instanceof PhpRef)) {
+            CallNode.notice(this, CallNode.PASSED_VALUE);
+        }
+        return result;
     }
 
     /** Values only (no references): for callables whose target isn't known until the values are. */
@@ -86,6 +107,8 @@ public final class ArgumentsNode extends Node {
             if (!spread[i]) {
                 if (callee.isByRef(position) && args[i] instanceof LValueNode place) {
                     add(list, place.makeRef(frame));
+                } else if (calls[i] && callee.isByRef(position)) {
+                    add(list, refArgument(frame, args[i]));
                 } else {
                     add(list, args[i].execute(frame));
                 }

@@ -6,12 +6,12 @@ import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.runtime.PhpArray;
 
 /** `$object->$name(args)`: dispatched like the callable [$object, $name], cached per class and method name. */
-public final class DynamicMethodCallNode extends ExprNode {
+public final class DynamicMethodCallNode extends CallNode {
     @Child private ExprNode object;
     @Child private ExprNode name;
     @Child private ArgumentsNode args;
     @Child private ToStrNode toStr = ToStrNode.create();
-    @Child private CallableDispatchNode dispatch = CallableDispatchNode.create();
+    @Child private CallableDispatchNode dispatch = CallableDispatchNode.create(null, true);
 
     public DynamicMethodCallNode(ExprNode object, ExprNode name, ArgumentsNode args) {
         this.object = object;
@@ -20,7 +20,7 @@ public final class DynamicMethodCallNode extends ExprNode {
     }
 
     @Override
-    public Object execute(VirtualFrame frame) {
+    public Object executeRef(VirtualFrame frame) {
         Object target = object.execute(frame);
         Object method = toStr.execute(name.execute(frame));
         return dispatch.execute(PhpArray.list(target, method), args.values(frame));

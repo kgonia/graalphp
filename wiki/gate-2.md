@@ -281,3 +281,17 @@ Gate 1 kernels, `da59284` (before the Closure class) against `90a6797`, 8 rounds
 | time ratio | 1.01 | 0.98 | 0.99 | 1.00 | 0.99 | 1.00 | 0.98 | 0.99 (IQR 0.98–1.00) |
 
 The Closure commit alone had cost blocks and kses 2% (IQR 1.01–1.03), because a `new` site's guard read a field that wasn't `@CompilationFinal`; that cost is gone. Peak memory is 1.59 GB on both (all kernels, 400 iterations).
+
+## Return by reference, 2026-10-27
+
+| Commit | What |
+|---|---|
+| `ff344d6` | **Return by reference as php-src does it.** `function &f`, methods, closures and `fn&` return a reference: `return` of a variable, element, property or static property returns that place's reference (a missing element is created as null); `return` of a call passes on the reference its callee returned; anything else, and the implicit return at the closing brace, returns a new reference with "Only variable references should be returned by reference". `$x = &f()` (also `&$o->m()`, `&C::m()`, `&$f()`, into `$a[]` and `$o->p`) binds to it, or assigns the value with "Only variables should be assigned by reference". A call passed to a by-reference parameter passes the reference, or the value with "Only variables should be passed by reference". `foreach (f() as &$v)` changes the array the returned reference holds; over any other expression it iterates a temporary. `clone` now copies a property reference only it holds as its value (`zval_add_ref`). |
+
+**Where it is decided:** at translation. A by-value function keeps the plain `ReturnNode`, and `FunctionRootNode.returnsRef` is `@CompilationFinal`. Call nodes are `CallNode`s: `executeRef()` is the callee's result as it came, `execute()` dereferences it, which the call nodes did before inside their specializations. Runtime callers (callbacks, magic methods) dereference too. A returned reference whose bindings all went (a local's, after the frame is released) holds no array until the caller binds it (`PhpRef.unbound` for a new one), so a value context leaves no extra holder behind.
+
+WordPress uses it in `pomo/mo.php` (`$entry = &$this->make_entry(...)`), which failed to translate before, and in SimplePie and Text_Diff. graalphp's binary-trees by-reference benchmark (N=16, 60 iterations) prints what PHP prints.
+
+php-src `.phpt`: 3096 of 7341 strict (42.2%), from 3066 at `590e74b`, the only newly failing case being the `random_int` one. Of the 325 cases about references and returns (names with "ref", or sources with `function &`, `fn&` or `= &` of a call) 118 pass, from 89. Smoke (74 tests, also in 3 contexts), Gate 1 and K0 checksums and the shared contexts pass. A/B against `590e74b` on CPUs 6–13 (the benchmark cores were in use), 4 rounds: within noise (0.91–1.12 per kernel, IQRs up to ±0.15, peak memory 0.97–1.00); `k0_fib`, whose 8-round ratio was 1.04 (IQR 1.01–1.13), compiles to the same code before and after (Tier 2: 28 AST nodes, 6 calls inlined, 5408 bytes).
+
+Open, found on the way: [001](../issues/001-dynamic-call-by-ref-args.md), dynamic calls (`$f($x)`) don't pass arguments by reference; [002](../issues/002-by-ref-magic-get.md), writes through `&__get` and `&offsetGet`.

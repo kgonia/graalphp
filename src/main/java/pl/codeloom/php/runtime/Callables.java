@@ -27,7 +27,7 @@ public final class Callables {
         /** Calls the target from runtime code (a built-in calling back): no inline caching. */
         @TruffleBoundary
         public Object call(Object... values) {
-            return function.getCallTarget().call(frameArguments(values));
+            return PhpRef.deref(function.getCallTarget().call(frameArguments(values)));
         }
 
         public Object[] frameArguments(Object[] values) {
@@ -363,7 +363,7 @@ public final class Callables {
     @TruffleBoundary
     public static Object call(PhpContext context, Object callable, Object... values) {
         Target target = target(context, callable, null);
-        return target.function().getCallTarget().call(target.frameArguments(values));
+        return PhpRef.deref(target.function().getCallTarget().call(target.frameArguments(values)));
     }
 
     /**

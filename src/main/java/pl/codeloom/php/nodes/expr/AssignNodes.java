@@ -11,6 +11,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.ToStrNode;
+import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
@@ -92,6 +93,32 @@ public final class AssignNodes {
             PhpRef ref = source.makeRef(frame);
             target.bindRef(frame, ref);
             return ref.get();
+        }
+    }
+
+    /**
+     * `$a = &f()`, `$a = &$o->m()` (ASSIGN_REF of a call's result): binds the target to the reference a function
+     * returning by reference returned; a value is assigned, with php-src's notice.
+     */
+    public static final class CallRefAssignNode extends ExprNode {
+        @Child private LValueNode target;
+        @Child private ExprNode source;
+
+        public CallRefAssignNode(LValueNode target, ExprNode source) {
+            this.target = target;
+            this.source = source;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object result = source instanceof CallNode call ? call.executeRef(frame) : source.execute(frame);
+            if (result instanceof PhpRef ref) {
+                target.bindRef(frame, ref);
+                return ref.get();
+            }
+            CallNode.notice(this, CallNode.ASSIGNED_VALUE);
+            target.write(frame, result);
+            return result;
         }
     }
 
