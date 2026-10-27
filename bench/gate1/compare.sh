@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the kernels on PHP and on the Truffle PHP back to back on the same cores, measures the regex time by
-# replaying the recorded PCRE2 calls in C (pcre-replay.c), then prints the comparison. Comparing runs made at different times is unreliable on a shared
+# replaying the recorded PCRE2 calls in C (pcre-replay.c), then prints the comparison with each engine's peak memory. Comparing runs made at different times is unreliable on a shared
 # machine: PHP's own timings moved by 30% between quiet and loaded periods.
 # Usage: bench/gate1/compare.sh [kernels|all] [iterations] [cpuset]   (defaults: all 400 14-21)
 # Truffle reaches its plateau after 250-300 iterations of the WordPress kernels (Tier 2 compiles of the big
@@ -14,8 +14,9 @@ export CPUSET=${3:-14-21}
 driver=${DRIVER:-bench/gate1/run.php}
 out=target/compare
 mkdir -p "$out"
-bash bench/gate1/php.sh php "$driver" "$kernels" "$iterations" > "$out/php.txt"
-bash bench/gate1/truffle.sh "$driver" "$kernels" "$iterations" > "$out/truffle.txt"
+# each run's peak memory (the container's, so the whole JVM or php process) is appended to its output
+PEAK_MEMORY=1 bash bench/gate1/php.sh php "$driver" "$kernels" "$iterations" > "$out/php.txt" 2>&1
+PEAK_MEMORY=1 bash bench/gate1/truffle.sh "$driver" "$kernels" "$iterations" > "$out/truffle.txt" 2>&1
 if [ "$driver" = bench/gate1/run.php ]; then
     # native time: the last iteration's PCRE2 calls, recorded and replayed in C against the same pcre2lib
     root=$(pwd -W 2>/dev/null || pwd)

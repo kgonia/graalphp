@@ -2,7 +2,7 @@
 
 Usage: python summarize.py <php.txt> <truffle.txt> [<native.txt>]
 
-The run files have lines "kernel iteration ns checksum". Steady state is the median of the second half of the PHP
+The run files have lines "kernel iteration ns checksum", and "peak_memory <bytes>" when run with PEAK_MEMORY=1. Steady state is the median of the second half of the PHP
 iterations and of the last quarter of the Truffle ones (Truffle warms up longer). native.txt is pcre-replay's output,
 "kernel matches median-ns min-ns": one iteration's PCRE2 work replayed in C, the same for both engines. Without it
 the PHP-code column equals end to end. PHP-code speedup = (T_php - T_native) / (T_truffle - T_native).
@@ -20,6 +20,14 @@ def load(path):
         if len(parts) >= 4 and parts[1].isdigit():
             rows[parts[0]].append((int(parts[2]), int(parts[4]) if len(parts) > 4 else 0, parts[3]))
     return rows
+
+
+def peak_memory(path):
+    """The run's peak memory in MB ("peak_memory <bytes>", from PEAK_MEMORY=1), or None."""
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if line.startswith("peak_memory "):
+            return int(line.split()[1]) / 2**20
+    return None
 
 
 def geomean(values):
@@ -46,3 +54,6 @@ for kernel in php:
     same = {r[2] for r in php[kernel]} == {r[2] for r in truffle[kernel]}
     print(f"{kernel:12} {tp:8.2f} {tt:8.2f} {tn:7.2f} {tn / tp:6.0%} {tp / tt:6.2f} {c:6.2f}  {'same' if same else 'DIFFER'}")
 print(f"geomean end-to-end {geomean(e2e):.2f}  PHP-code {geomean(code):.2f}")
+mp, mt = peak_memory(sys.argv[1]), peak_memory(sys.argv[2])
+if mp and mt:
+    print(f"peak memory: php {mp:.0f} MB, truffle {mt:.0f} MB ({mt / mp:.1f}x)")
