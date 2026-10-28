@@ -351,3 +351,18 @@ What a warm WordPress server needs with splitting off is ~280 MB of live heap, ~
 
 - **Speed is a separate question.** No run changed the warm wait by more than its noise: 2.5-2.8 s, against PHP's 1.1 s. So it isn't compile churn or memory pressure. The cause is still open.
 
+
+### Splitting on the kernels, 2026-10-28
+
+The splitting option (`engine.Splitting=false`) was A/B tested on the build with both fixes (`acc9a32`), using `bench/gate1/ab.sh`: 6 interleaved rounds, 400 iterations, CPUs 14-21, with the machine otherwise quiet. Each ratio is the time with splitting off divided by the time with it on, so above 1 means splitting helps.
+
+| Kernels | With splitting off |
+|---|---|
+| Gate 1 (WordPress functions) | hooks 1.16 (IQR 1.11-1.26), escape 1.11, slugs 1.25 (1.06-1.38), wpautop 1.07, wptexturize 0.98, blocks 0.89 (0.85-0.98), kses 0.98; peak memory 0.92 |
+| K0 (hot loops) | 0.97-1.02 on every kernel; peak memory 1.04 |
+
+- **Splitting pays on WordPress's own hot code:** hooks, escape and slugs are 11-25% faster with it. These are the dispatch of hook callbacks and string helpers called from many sites.
+- **It does nothing for the K0 loops**, which are monomorphic.
+- **So turning it off is not the fix.** In the server, though, it compiled 14,518 copies, mostly of functions that only run once per request: `add_filter` and `add_action` are called from ~2000 sites while plugins and the theme register their hooks.
+- **The likely cause:** since `607dda8`, `ExprNode`, the base of every expression node, has carried `@ReportPolymorphism`. Any operator that sees two types makes its function a splitting candidate. Truffle languages usually report polymorphism only on nodes where a copy per call site specializes something that matters, such as calls, property and element access, and dispatch.
+- **Next:** report polymorphism on those nodes only. Then measure both the kernels (hooks, escape and slugs must keep their gain) and the server (splits, CPU, code).
