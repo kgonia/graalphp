@@ -430,3 +430,22 @@ Every "median wait, visits 101-200" above, and the video's earlier "2.5× slower
 The recorded visit waits 1.5 s before its first click, and the warm-up visits now do too. The comparisons above still stand, since every server carried the same ~1 s. The absolute waits don't. With the pause, a warm server's median is 1.86 s (IQR 1.81-1.92) with `SERVER_OPTS` and 1.94 s (1.82-2.12) without them. PHP's recorded visit takes 1.09 s, so warm GraalVM is ~1.7-1.8× slower, not 2.5×.
 
 **What `SERVER_OPTS` costs:** 8.1 CPU-s per warm-up visit with them against 7.3 without, over visits 51-191 of a run each (cgroup `usage_usec`). That is about 10% more CPU for 0.95 instead of 2.5 GB. A warm server still uses ~7 CPU-s per 9.4 s visit, against 0.6 for PHP's recorded visit. That is an open question.
+
+### Parsed php-ast held for good, and CPU per visit, 2026-10-28
+
+**The parsed source stayed on the heap.** A class histogram of the warm server, which `memsnap.sh` now takes, showed ~133 MB of the 287 MB live heap in parsed php-ast trees: `Ast` objects and their `LinkedHashMap` children. Each `PhpFunction` kept, in a final field, the translator's lambda over its function's subtree. `b6000dd` drops the lambda once the call target is made.
+
+| Warm, 200 visits, `SERVER_OPTS` | Before `b6000dd` | After |
+|---|---|---|
+| RssAnon | 948 MB | 897 MB |
+| live heap / parsed php-ast in it | 287 / 133 MB | 214 / 81 MB |
+| Median wait, visits 101-200 (IQR) | 1.86 s (1.81-1.92) | 1.80 s (1.77-1.85) |
+| CPU per visit, visits 51-191 | 8.1 s | 6.1 s |
+
+The 81 MB that is left belongs to functions that haven't been called yet. Translation is lazy, so a function that is never called keeps its tree. Two ways to remove it: parse with our own parser (D5), or keep the source and parse a function on its first call.
+
+**CPU per visit, measured over many visits:**
+- **PHP:** 0.46 CPU-s per visit (visits 11-71).
+- **Warm GraalVM:** 6.1 CPU-s per visit (visits 51-191), 13× PHP.
+- **The recorded visit understates it.** It counts only the visit's own 7 s window: 2.25 CPU-s against 0.58 for PHP.
+- **Where it goes:** a warm server still compiles ~40 call targets per visit (8105 compilations in 200 visits), and runs GC and trims. Where exactly is open.
