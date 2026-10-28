@@ -308,10 +308,46 @@ The video comparison's GraalVM server had no heap limit and held 2.1 GB of anony
 
 - **A heap limit doesn't lower the footprint.** At 512 MB the heap is at most a fifth of the 2.6 GB. The rest is outside the heap, so `-Xmx` doesn't reach it. In Gate 1 that was mostly libgraal, the runtime compiler, with its own heap. A WordPress server compiles far more PHP code than a kernel does.
 - **The steady state doesn't change.** The median waits are equal. Each cold visit is a single run, and single runs vary by 15-30%, so the cold difference isn't read as an effect.
-- **Next: whose memory is it?** Is the ~2 GB outside the heap what a Truffle language on the JVM costs, or this implementation's fault? `tests/gate2/memory.sh -Xmx512m -Xmx512m,-XX:-UseJVMCINativeLibrary` runs the same visits with Native Memory Tracking, once with libgraal and once with jargraal (Graal as Java code, its memory on the Java heap), both at a 512 MB heap. Without a heap limit, jargraal's compiler memory would only move into a heap that can grow to ~14 GB, and the totals would no longer compare. It snapshots each server after start, after the cold visit and after 200 visits. The two runs take ~70 minutes, pinned to 6-13. A first run started on 2026-10-27 was cancelled before any warm snapshot, to be run on 2026-10-28.
-  - **NMT** splits what the JVM allocates: heap, code cache, metaspace, threads, GC and Unsafe/FFM memory.
-  - **Unnamed anonymous mappings that NMT misses** are libgraal's heap and native libraries' own `malloc`s.
-  - **libgraal's share** is the difference between the two runs, checked against jargraal's live heap after a full GC (in each snapshot).
-  - **Expected:** libgraal plus the code cache, both growing with the amount of compiled PHP.
-  - **Our fault:** a growing NMT category (Unsafe/FFM from our bindings), or an untracked remainder that jargraal doesn't remove.
-  - **Ruled out by reading the code:** unbounded PCRE2 memory. The compiled patterns are shared and capped at 4096 entries, as in php-src's cache, and a context frees its match blocks, JIT stack and unshared patterns when it closes.
+- **Whose memory it is:** answered on 2026-10-28, in the next section.
+
+## Whose memory: deopt loops, splitting and the JVM's own habits, 2026-10-28
+
+`tests/gate2/memory.sh` runs the video comparison's visits (one cold visit, then 200 paced ones; pinned to CPUs 6-13) with Native Memory Tracking, and `tests/gate2/memsplit.py` splits the warm server's anonymous memory (RssAnon) by owner. The split puts each mapping where its address says: the Java heap and the code cache by the ranges the JVM reports, glibc's malloc arenas by their 64 MB alignment, and the JVM's other mappings by NMT. Inside the arenas, NMT's malloc count is the JVM's share, and the rest is memory glibc freed and kept. Whatever is left over is libgraal's own heap. Two runs check it. With jargraal (Graal as Java code), the leftover is ~0 MB. With `-XX:TrimNativeHeapInterval`, the kept malloc falls from 591 to 21 MB. All runs had `-Xmx1g`. Each is one run, so the waits carry run-to-run noise.
+
+**The compiler moves; it doesn't grow.** Libgraal and jargraal end at the same total (2.24 against 2.36 GB, before the fixes): jargraal keeps the compiler's ~500 MB on the Java heap (798 MB live against 305). During the cold visit's compilation burst, libgraal holds ~1.1 GB that NMT can't see.
+
+**Two deopt loops: our fault, fixed.** Each request is a new context. Its classes are new objects, and its built-in and autoloaded classes are declared on first use. Two lookups transferred to the interpreter whenever they met such a class, so compiled `new`, static calls and `self::` accesses deoptimized once per request:
+- `b0b4715`: `PhpClass.getKey()` and `defaults()`
+- `acc9a32`: `ClassRefNode.Named.find`, for a class not yet declared in the context
+
+Over 200 visits, deopts fell from ~12,300 to 134. A loop over a namespaced class, a plain one and `new DateTimeZone` in 20 contexts on one engine now has 0 transfers, against 19 before.
+
+**The JVM unloads "cold" compiled code, and WordPress has a lot of it.** Without deopts, the same call targets still compiled 20-29 times each, Tier 1 and Tier 2 in turn, with no invalidation in between. Since JDK 20 the GC unloads compiled methods it considers cold, and does so more eagerly the fuller the code cache is. A function used once per login goes cold between logins. With `-XX:-UseCodeCacheFlushing`, the call targets compiled three times or more fell from 2011 to 52, and compilation stopped after ~110 visits. But the default 240 MB code cache then filled up, so no new code could be compiled after that.
+
+**Splitting is most of the code.** Truffle compiles a copy of a function per call site when its nodes report polymorphism. `add_filter` was split 1935 times and `add_action` 1500 times, and splits were 14,518 of 25,302 compilations. With `engine.Splitting=false` (experimental):
+
+| Fixed build, 200 visits | Splitting on | Splitting off |
+|---|---|---|
+| Compilations (call targets) | 25,302 (8290) | 5972 (3244) |
+| Machine code compiled / code cache used | 512 / 221 MB | 162 / 120 MB |
+| CPU per warm visit | 8.1 s | 2.0 s |
+| Median wait, visits 101-200 (IQR) | 2.75 s (2.65-2.94) | 2.61 s (2.55-2.66) |
+| RssAnon | 2539 MB | 2412 MB |
+| live heap / heap kept free | 304 / 445 | 279 / 685 |
+| compiled code / JVM runtime | 556 / 200 | 306 / 143 |
+| malloc kept / libgraal | 715 / 318 | 876 / 123 |
+
+**Verdict.**
+- **Our fault, fixed:** the two deopt loops.
+- **Ours to change:**
+  - What triggers splitting. WordPress's small helpers, called from thousands of sites, became polymorphic. Splitting off cut the CPU of a warm visit to a quarter and the compiled code by 45%, and pages weren't slower. Whether to split less, and where, needs Gate 1's kernels first: splitting is what makes polymorphic hot loops fast.
+  - The code size: ~245 bytes of machine code per AST node at Tier 1, e.g. `wp_render_layout_support_flag` with 2147 nodes compiles to 525 KB.
+- **The JVM's defaults, tunable:**
+  - **glibc keeps freed malloc memory:** 550-880 MB after compilation bursts. A trim every 5 s returned ~470 MB of it, and waits stayed within noise.
+  - **G1 keeps committed heap it no longer uses:** 445-685 MB here, against 280-300 MB live.
+  - **The code cache:** 240 MB is too small to hold WordPress with splitting.
+
+What a warm WordPress server needs with splitting off is ~280 MB of live heap, ~300 MB of compiled code, ~140 MB of JVM runtime and ~120 MB for libgraal: ~0.85 GB, against PHP's 34 MB per worker. The rest is memory that the allocator and the GC hold on to.
+
+- **Speed is a separate question.** No run changed the warm wait by more than its noise: 2.5-2.8 s, against PHP's 1.1 s. So it isn't compile churn or memory pressure. The cause is still open.
+
