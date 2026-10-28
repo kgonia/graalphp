@@ -365,4 +365,28 @@ The splitting option (`engine.Splitting=false`) was A/B tested on the build with
 - **It does nothing for the K0 loops**, which are monomorphic.
 - **So turning it off is not the fix.** In the server, though, it compiled 14,518 copies, mostly of functions that only run once per request: `add_filter` and `add_action` are called from ~2000 sites while plugins and the theme register their hooks.
 - **The likely cause:** since `607dda8`, `ExprNode`, the base of every expression node, has carried `@ReportPolymorphism`. Any operator that sees two types makes its function a splitting candidate. Truffle languages usually report polymorphism only on nodes where a copy per call site specializes something that matters, such as calls, property and element access, and dispatch.
-- **Next:** report polymorphism on those nodes only. Then measure both the kernels (hooks, escape and slugs must keep their gain) and the server (splits, CPU, code).
+- **Not `ExprNode` after all.** Without `@ReportPolymorphism` on `ExprNode`, the kernels didn't change (Gate 1 0.93-1.01, K0 0.92-1.05). But the server split more, 20,569 times in a single run, so the change was reverted.
+- **The trigger was `ArrayKeyNode`.** It carries the annotation itself, so the change above never touched it. Truffle's `SplittingTraceEvents` shows which node made a function a splitting candidate. Over 60 home page requests, 240 of ~400 such decisions came from `ArrayKeyNode`, then `ToBoolean` (45), `StableValue` (29) and `===` (20). `ArrayKeyNode` keeps one constant string key, and a site's second key ends that state. `add_filter`'s `$wp_filter[$hook_name]` meets ~2000 hook names from ~2000 callers, so `add_filter` was split per caller (774 times on the home page alone), for copies that fold one key into a function run once per request.
+
+`2ceb7e7` drops the annotation from `ArrayKeyNode` only. Over the 60 requests, splits fell from 3976 to 900.
+
+| 200 visits, single runs | Splitting on (before) | `2ceb7e7` | Splitting off |
+|---|---|---|---|
+| Compilations (call targets) | 25,302 (8290) | 8486 (4793) | 5972 (3244) |
+| Split compilations | 14,518 | 2689 | 0 |
+| Call targets compiled 3+ times | 2011 | 166 | 149 |
+| Machine code compiled | 512 MB | 204 MB | 162 MB |
+| CPU per warm visit | 8.1 s | 1.8 s | 2.0 s |
+| Median wait, visits 101-200 (IQR) | 2.75 s (2.65-2.94) | 2.86 s (2.76-2.97) | 2.61 s (2.55-2.66) |
+| RssAnon | 2539 MB | 2535 MB | 2412 MB |
+| live heap / heap kept free | 304 / 445 | 287 / 680 | 279 / 685 |
+| compiled code / JVM runtime | 556 / 200 | 382 / 135 | 306 / 143 |
+| malloc kept / libgraal | 715 / 318 | 824 / 228 | 876 / 123 |
+
+Gate 1 A/B, `2ceb7e7` against the build before it (6 rounds, 14-21):
+- **Faster:** hooks 0.91 (IQR 0.83-1.02) and wpautop 0.92.
+- **Slower:** escape 1.04 (1.02-1.13) and slugs 1.13 (0.98-1.16).
+- **Unchanged:** wptexturize 1.07, and blocks and kses at 1.01.
+- **K0:** 0.97-1.05.
+
+The compile churn is gone, and the compiler's CPU with it. What remains is not the JIT's: ~0.8 GB of heap that G1 keeps committed and malloc memory that glibc keeps. That is the next lever, through the server's defaults: a trim interval, the heap's sizing, and a code cache large enough for WordPress.
