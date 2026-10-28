@@ -415,3 +415,18 @@ Same build (`2ceb7e7`), 200 visits, single runs:
 | Recorded warm visit: wait, CPU | 1.57 s, 1.8 s | 2.04 s, 5.0 s |
 
 The recorded visits are one sample each. Over 100 visits the median waits are equal. The trims and periodic collections cost some CPU, and their cost per visit hasn't been measured over many visits yet.
+
+### Correction: the warm-up waits include ~1 s of the browser, 2026-10-28
+
+Every "median wait, visits 101-200" above, and the video's earlier "2.5× slower than PHP", includes about 1 s that belongs to the client, not the server. Each warm-up visit opened a new browser tab and went straight to the home page, so the tab's start-up landed in the home page's time:
+
+| Median of the last 20 warm-up visits, ms | Home page | Post | Login | Dashboard | Posts list |
+|---|---|---|---|---|---|
+| PHP, warm-up | 1063 | 94 | 66 | 593 | 202 |
+| PHP, recorded visit | 76 | 90 | 67 | 647 | 209 |
+| GraalVM, warm-up | 1218 | 250 | 92 | 944 | 356 |
+| GraalVM, recorded visit | 246 | 251 | 94 | 949 | 376 |
+
+The recorded visit waits 1.5 s before its first click, and the warm-up visits now do too. The comparisons above still stand, since every server carried the same ~1 s. The absolute waits don't. With the pause, a warm server's median is 1.86 s (IQR 1.81-1.92) with `SERVER_OPTS` and 1.94 s (1.82-2.12) without them. PHP's recorded visit takes 1.09 s, so warm GraalVM is ~1.7-1.8× slower, not 2.5×.
+
+**What `SERVER_OPTS` costs:** 8.1 CPU-s per warm-up visit with them against 7.3 without, over visits 51-191 of a run each (cgroup `usage_usec`). That is about 10% more CPU for 0.95 instead of 2.5 GB. A warm server still uses ~7 CPU-s per 9.4 s visit, against 0.6 for PHP's recorded visit. That is an open question.
