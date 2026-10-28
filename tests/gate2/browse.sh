@@ -4,14 +4,17 @@
 # servers, each copies the site (and Truffle PHP its ASTs) into its own file system and reaches MariaDB over the
 # Docker bridge: through the Windows bind mount and the host's port forwarding, PHP takes ~1 s a page instead of
 # tens of ms. Truffle PHP is slow on each page's first requests, until the JIT has compiled it.
-# CPUSET pins the servers (e.g. CPUSET=6-13), each to the same cores; JAVA_OPTS goes to Truffle PHP's JVM (e.g.
-# JAVA_OPTS=-Xmx256m, a heap limit). A server is ready when it serves a static file:
+# CPUSET pins the servers (e.g. CPUSET=6-13), each to the same cores. Truffle PHP's JVM runs with SERVER_OPTS, then
+# JAVA_OPTS (e.g. JAVA_OPTS=-Xmx512m overrides the heap limit). SERVER_OPTS gives back what the JVM and glibc keep
+# but no longer use, and gives WordPress's compiled code room: a warm server held 947 MB instead of 2535 MB at the
+# same page times (wiki/gate-2.md). A server is ready when it serves a static file:
 # for Truffle PHP that is a started JVM that hasn't run any PHP yet.
 # Run after fetch.sh, export.sh, db.sh and install.sh, and bench/bootshare's image; build first.
 # Usage: tests/gate2/browse.sh [start|stop] [both|truffle|php]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
+SERVER_OPTS="-Xmx1g -XX:TrimNativeHeapInterval=5000 -XX:G1PeriodicGCInterval=10000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:ReservedCodeCacheSize=512m"
 action=${1:-start}; which=${2:-both}
 servers=()
 [ "$which" = php ] || servers+=(truffle)
@@ -24,7 +27,7 @@ db_host=$(docker inspect gate2-mariadb --format '{{.NetworkSettings.Networks.bri
 for server in "${servers[@]}"; do
   if [ $server = truffle ]; then
     MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
-      -e GATE2_DB_HOST=$db_host -e JAVA_OPTS="${JAVA_OPTS:-}" -v "$root:/w:ro" gate1-truffle:8.5 sh -c 'mkdir -p /srv/target/gate2 \
+      -e GATE2_DB_HOST=$db_host -e JAVA_OPTS="$SERVER_OPTS ${JAVA_OPTS:-}" -v "$root:/w:ro" gate1-truffle:8.5 sh -c 'mkdir -p /srv/target/gate2 \
       && cp -r /w/target/ast /srv/target/ && cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cd /srv \
       && exec $GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
       $JAVA_OPTS_BASE $JAVA_OPTS -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \

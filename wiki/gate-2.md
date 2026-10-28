@@ -390,3 +390,28 @@ Gate 1 A/B, `2ceb7e7` against the build before it (6 rounds, 14-21):
 - **K0:** 0.97-1.05.
 
 The compile churn is gone, and the compiler's CPU with it. What remains is not the JIT's: ~0.8 GB of heap that G1 keeps committed and malloc memory that glibc keeps. That is the next lever, through the server's defaults: a trim interval, the heap's sizing, and a code cache large enough for WordPress.
+
+### The server's JVM options, 2026-10-28
+
+`tests/gate2/browse.sh` now starts Truffle PHP with `SERVER_OPTS`. `JAVA_OPTS` comes after them and still overrides them.
+
+| Option | Why |
+|---|---|
+| `-Xmx1g` | a warm server holds ~290 MB live (it ran out of heap at 256 MB) |
+| `-XX:TrimNativeHeapInterval=5000` | glibc returns the malloc memory left from compilation bursts |
+| `-XX:G1PeriodicGCInterval=10000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30` | G1 uncommits heap it no longer uses |
+| `-XX:ReservedCodeCacheSize=512m` | WordPress's compiled code fits without cold code being evicted (~165 MB used at peak) |
+
+Same build (`2ceb7e7`), 200 visits, single runs:
+
+| | JVM defaults (`-Xmx1g` only) | `SERVER_OPTS` |
+|---|---|---|
+| RssAnon after the visits | 2535 MB | 947 MB |
+| Peak during the recorded visit | 2536 MB | 948 MB |
+| live heap / heap kept free | 287 / 680 | 287 / 127 |
+| compiled code / JVM runtime | 382 / 135 | 389 / 126 |
+| malloc kept / libgraal | 824 / 228 | 12 / 7 |
+| Median wait, visits 101-200 (IQR) | 2.86 s (2.76-2.97) | 2.81 s (2.74-2.94) |
+| Recorded warm visit: wait, CPU | 1.57 s, 1.8 s | 2.04 s, 5.0 s |
+
+The recorded visits are one sample each. Over 100 visits the median waits are equal. The trims and periodic collections cost some CPU, and their cost per visit hasn't been measured over many visits yet.
