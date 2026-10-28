@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Where a WordPress server's memory goes: per variant, starts Truffle PHP (browse.sh) with Native Memory Tracking and
-# snapshots it right after start, after one cold visit and after 200 paced visits more. A snapshot holds the
-# process's RssAnon, the cgroup's anon, the NMT summary, the code cache, and the largest anonymous mappings with no
-# name (what NMT doesn't see: libgraal's heap, mallocs from native libraries such as PCRE2). Out: target/memory/<variant>/.
+# snapshots it (tests/gate2/memsnap.sh) right after start, after one cold visit and after 200 paced visits more, and
+# prints the warm server's memory split by owner (memsplit.py). Out: target/memory/<variant>/.
 # The visits are the video comparison's (ThreeJsBlender productions/wordpress-graalvm, CAPTURE_DIR); its GraalVM facts
 # and frames are put back afterwards.
 # A variant is JVM options with commas for spaces; "libgraal" is none (the default compiler). Compare the compilers
@@ -23,16 +22,7 @@ restore() {
 }
 trap restore EXIT
 snap() { # out-file
-  MSYS_NO_PATHCONV=1 docker exec gate2-truffle-http sh -c '
-    echo "## status"; grep -E "VmRSS|RssAnon|RssFile" /proc/1/status
-    echo "## cgroup $(grep "^anon " /sys/fs/cgroup/memory.stat)"; echo "## threads $(ls /proc/1/task | wc -l)"
-    echo "## nmt"; $GRAALVM_HOME/bin/jcmd 1 VM.native_memory summary scale=MB
-    echo "## codecache"; $GRAALVM_HOME/bin/jcmd 1 Compiler.codecache
-    echo "## live heap (after a full GC)"; $GRAALVM_HOME/bin/jcmd 1 GC.run > /dev/null; $GRAALVM_HOME/bin/jcmd 1 GC.heap_info
-    echo "## unnamed anonymous mappings (Rss kB, size kB, start)"
-    awk "/^[0-9a-f]+-[0-9a-f]+ /{split(\$1,a,\"-\"); name=\$6; start=a[1]; size=0} /^Size:/{size=\$2} /^Rss:/{if(name==\"\") print \$2, size, start}" /proc/1/smaps | sort -rn | head -40
-    echo "## named mappings over 10 MB (Rss kB)"; awk "/^[0-9a-f]+-[0-9a-f]+ /{name=\$6} /^Rss:/{r[name]+=\$2} END{for(n in r) if(r[n]>10000) print r[n], n}" /proc/1/smaps | sort -rn
-  ' > $1 2>&1
+  bash $wp/tests/gate2/memsnap.sh gate2-truffle-http > $1 2>&1
 }
 for variant in "$@"; do
   opts="-XX:NativeMemoryTracking=summary"; [ $variant = libgraal ] || opts="$opts ${variant//,/ }"
@@ -46,5 +36,5 @@ for variant in "$@"; do
   # the next variant (or the exit) removes the container, and a failed visit's cause is in its log
   docker logs gate2-truffle-http > $out/server.log 2>&1
   grep -c "heap space\|OutOfMemory" $out/server.log > $out/oom.count
-  grep -E "RssAnon|cgroup anon" $out/*.txt
+  [ -f $out/warm.txt ] && python $wp/tests/gate2/memsplit.py $out/warm.txt
 done
