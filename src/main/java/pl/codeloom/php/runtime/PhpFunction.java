@@ -35,7 +35,11 @@ public final class PhpFunction {
     private final boolean isStatic;
     private final boolean isPublic;
     private final boolean isAbstract;
-    private final Supplier<RootCallTarget> factory;
+    /**
+     * Makes the call target on first call; dropped then, as it holds the function's parsed php-ast (a WordPress
+     * server kept ~130 MB of trees for functions translated long before). Guarded by createCallTarget's lock.
+     */
+    private Supplier<RootCallTarget> factory;
     /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
     private Builtin builtin;
     /** The declaring class's name for messages ("C::m"); null for functions and shared built-in methods. */
@@ -142,6 +146,7 @@ public final class PhpFunction {
                 throw new PhpError("Cannot call abstract method " + displayName() + "()");
             }
             callTarget = factory.get();
+            factory = null;
         }
         return callTarget;
     }
