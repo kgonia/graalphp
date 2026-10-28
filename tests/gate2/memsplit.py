@@ -82,21 +82,26 @@ def split(text):
     return {"rss_anon": rss_anon, "parts": parts, "factors": factors(text, parts, nmt, code_rss, code_malloc)}
 
 
-# The live heap's classes by owner (a class histogram's shallow sizes, in proportion to the live heap): Truffle PHP's
-# code (its AST nodes, translator, Truffle's call targets and profiles), PHP values (runtime objects, strings), and
-# the rest, which the histogram can't attribute (byte[] and Object[] both hold strings' bytes and nodes' children).
-HEAP_CODE = ("pl.codeloom.php.nodes.", "pl.codeloom.php.parser.", "com.oracle.truffle.")
+# The live heap's classes by owner (a class histogram's shallow sizes, in proportion to the live heap): the parsed
+# php-ast trees (AstReader keeps each node's named children in a LinkedHashMap; the runtime's other LinkedHashMaps,
+# built-in tables and class members, are small), Truffle PHP's code (its AST nodes, Truffle's call targets and
+# profiles), PHP values (runtime objects, strings), and the rest, which the histogram can't attribute (String,
+# byte[] and Object[] hold parts of all of them).
+HEAP_AST = ("pl.codeloom.php.parser.", "java.util.LinkedHashMap", "[Ljava.util.HashMap$Node;")
+HEAP_CODE = ("pl.codeloom.php.nodes.", "com.oracle.truffle.")
 HEAP_VALUES = ("pl.codeloom.php.runtime.", "com.oracle.truffle.api.strings.")
 
 
 def factors(text, parts, nmt, code_rss, code_malloc):
     """The parts split further: the live heap by class, compiled code into machine code and its metadata, and the
     JVM runtime by NMT category. Each split adds up to its part."""
-    heap = {"heap_code": 0, "heap_values": 0, "heap_other": 0}
+    heap = {"heap_ast": 0, "heap_code": 0, "heap_values": 0, "heap_other": 0}
     if "## class histogram" in text:
         rows = re.findall(r"^\s*\d+:\s+\d+\s+(\d+)\s+(\S+)", text[text.index("## class histogram"):], re.M)
         for size, name in ((int(b), n) for b, n in rows):
-            if name.startswith(HEAP_VALUES):
+            if name.startswith(HEAP_AST):
+                heap["heap_ast"] += size
+            elif name.startswith(HEAP_VALUES):
                 heap["heap_values"] += size
             elif name.startswith(HEAP_CODE):
                 heap["heap_code"] += size
