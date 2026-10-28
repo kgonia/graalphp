@@ -85,12 +85,15 @@ public final class ClassRefNode extends Node {
             return find(id);
         }
 
-        /** The class under the name's id; else (not declared yet) by name, which autoloads or throws. */
+        /**
+         * The class under the name's id; else (not declared yet) by name, which autoloads or throws. The miss stays
+         * in compiled code: in a server each request is a new context, where built-in classes are loaded and
+         * autoloaded ones declared on first use, so a transfer to the interpreter here deoptimized once per request.
+         */
         protected PhpClass find(int id) {
             PhpContext context = PhpContext.get(this);
             PhpClass phpClass = context.classAt(id);
-            if (phpClass == null) {
-                CompilerDirectives.transferToInterpreter();
+            if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, phpClass == null)) {
                 phpClass = context.getClass(name); // throws "not found"
             }
             return phpClass;
