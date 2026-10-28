@@ -379,11 +379,14 @@ public final class PhpClass {
         return object;
     }
 
-    /** The language-level identity of this class: equal for the same declarations in every context. */
+    /**
+     * The language-level identity of this class: equal for the same declarations in every context. Made on first
+     * use without leaving compiled code: each request declares its classes anew, so a transfer to the interpreter
+     * here deoptimized every compiled `new` and static call once per request, and they were compiled again.
+     */
     public ClassKey getKey() {
         ClassKey k = key;
-        if (k == null) {
-            CompilerDirectives.transferToInterpreter();
+        if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, k == null)) {
             k = makeKey();
         }
         return k;
@@ -404,11 +407,13 @@ public final class PhpClass {
         return List.copyOf(keys);
     }
 
-    /** The property defaults in declaredNames order, evaluated on first use and kept (don't modify). */
+    /**
+     * The property defaults in declaredNames order, evaluated on first use and kept (don't modify). Like getKey,
+     * this stays in compiled code: compiled `new` reaches it once per request with the request's own class.
+     */
     public Object[] defaults() {
         Object[] values = defaults;
-        if (values == null) {
-            CompilerDirectives.transferToInterpreter();
+        if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, values == null)) {
             values = declaredDefaults();
             defaults = values;
         }
