@@ -40,9 +40,11 @@ for variant in "$@"; do
   echo "== $variant ($opts) $(date +%H:%M)"
   JAVA_OPTS="$opts" bash $wp/tests/gate2/browse.sh start truffle
   snap $out/start.txt
-  (cd $capture && node scripts/capture.mjs graal-cold) && snap $out/cold.txt || continue
-  (cd $capture && node scripts/capture.mjs graal-warm --warmup 200) && snap $out/warm.txt || continue
-  cp $capture/facts/graal-*.json $out/
-  docker logs gate2-truffle-http 2>&1 | grep -c "heap space\|OutOfMemory" > $out/oom.count
+  (cd $capture && node scripts/capture.mjs graal-cold) && snap $out/cold.txt \
+    && (cd $capture && node scripts/capture.mjs graal-warm --warmup 200) && snap $out/warm.txt \
+    && cp $capture/facts/graal-*.json $out/
+  # the next variant (or the exit) removes the container, and a failed visit's cause is in its log
+  docker logs gate2-truffle-http > $out/server.log 2>&1
+  grep -c "heap space\|OutOfMemory" $out/server.log > $out/oom.count
   grep -E "RssAnon|cgroup anon" $out/*.txt
 done
