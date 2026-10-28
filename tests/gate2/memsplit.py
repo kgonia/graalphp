@@ -29,7 +29,8 @@ def parse(text):
             malloc = re.search(r"\(malloc=(\d+)MB", line)
             if malloc:
                 nmt[category]["malloc"] = int(malloc.group(1)) << 20
-            mmap = re.search(r"\(mmap: reserved=\d+MB, committed=(\d+)MB", line)
+            # thread stacks are mappings too, listed as "stack:"
+            mmap = re.search(r"\((?:mmap|stack): reserved=\d+MB, committed=(\d+)MB", line)
             if mmap:
                 nmt[category]["mmap"] = int(mmap.group(1)) << 20
     malloc_total = int(re.search(r"^\s+malloc: (\d+)MB", text, re.M).group(1)) << 20
@@ -78,16 +79,56 @@ def split(text):
         "malloc_kept": arena_rss - malloc_total,
     }
     parts["untracked"] = rss_anon - sum(parts.values())
-    return {"rss_anon": rss_anon, "parts": parts}
+    return {"rss_anon": rss_anon, "parts": parts, "factors": factors(text, parts, nmt, code_rss, code_malloc)}
+
+
+# The live heap's classes by owner (a class histogram's shallow sizes, in proportion to the live heap): Truffle PHP's
+# code (its AST nodes, translator, Truffle's call targets and profiles), PHP values (runtime objects, strings), and
+# the rest, which the histogram can't attribute (byte[] and Object[] both hold strings' bytes and nodes' children).
+HEAP_CODE = ("pl.codeloom.php.nodes.", "pl.codeloom.php.parser.", "com.oracle.truffle.")
+HEAP_VALUES = ("pl.codeloom.php.runtime.", "com.oracle.truffle.api.strings.")
+
+
+def factors(text, parts, nmt, code_rss, code_malloc):
+    """The parts split further: the live heap by class, compiled code into machine code and its metadata, and the
+    JVM runtime by NMT category. Each split adds up to its part."""
+    heap = {"heap_code": 0, "heap_values": 0, "heap_other": 0}
+    if "## class histogram" in text:
+        rows = re.findall(r"^\s*\d+:\s+\d+\s+(\d+)\s+(\S+)", text[text.index("## class histogram"):], re.M)
+        for size, name in ((int(b), n) for b, n in rows):
+            if name.startswith(HEAP_VALUES):
+                heap["heap_values"] += size
+            elif name.startswith(HEAP_CODE):
+                heap["heap_code"] += size
+            else:
+                heap["heap_other"] += size
+    total = sum(heap.values())
+    if total:
+        heap = {k: parts["heap_live"] * v / total for k, v in heap.items()}
+    else:
+        heap["heap_other"] = parts["heap_live"]
+
+    def nmt_of(*names):
+        return sum(nmt.get(n, {}).get("mmap", 0) + nmt.get(n, {}).get("malloc", 0) for n in names)
+
+    runtime = {"gc": nmt_of("GC"), "class_metadata": nmt_of("Class", "Metaspace", "Symbol"),
+               "threads": nmt_of("Thread")}
+    runtime["jvm_other"] = parts["jvm_runtime"] - sum(runtime.values())
+    return {**heap, "heap_garbage": parts["heap_garbage"], "machine_code": code_rss, "code_metadata": code_malloc,
+            **runtime, "untracked": parts["untracked"], "malloc_kept": parts["malloc_kept"]}
 
 
 def main():
     result = split(open(sys.argv[1], encoding="utf-8", errors="replace").read())
     if "--json" in sys.argv:
-        print(json.dumps({k: round(v / 2 ** 20) for k, v in {"rss_anon": result["rss_anon"], **result["parts"]}.items()}))
+        print(json.dumps({k: round(v / 2 ** 20) for k, v in {"rss_anon": result["rss_anon"], **result["parts"]}.items()}
+                         | {"factors": {k: round(v / 2 ** 20) for k, v in result["factors"].items()}}))
         return
     print(f"{'RssAnon':16} {result['rss_anon'] / 2 ** 20:7.0f} MB")
     for name, value in result["parts"].items():
+        print(f"  {name:14} {value / 2 ** 20:7.0f} MB")
+    print("factors:")
+    for name, value in result["factors"].items():
         print(f"  {name:14} {value / 2 ** 20:7.0f} MB")
 
 
