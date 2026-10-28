@@ -24,8 +24,12 @@ public final class ElementNodes {
     private ElementNodes() {
     }
 
-    /** Normalizes an array key ({@link ArrayKey}); a site that always sees one string instance does it once. */
-    @ReportPolymorphism
+    /**
+     * Normalizes an array key ({@link ArrayKey}); a site that always sees one string instance does it once. It
+     * reports no polymorphism: a site meeting a second key (add_filter's $wp_filter[$hook_name], called from ~2000
+     * sites with ~2000 hook names) made its function split per caller, 63% of a WordPress server's split decisions,
+     * for copies that fold one key in functions run once per request.
+     */
     public abstract static class ArrayKeyNode extends Node {
         public abstract Object execute(Object key);
 
