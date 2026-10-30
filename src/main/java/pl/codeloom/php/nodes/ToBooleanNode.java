@@ -1,6 +1,5 @@
 package pl.codeloom.php.nodes;
 
-import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
@@ -16,7 +15,6 @@ import pl.codeloom.php.runtime.Str;
  * sees one type (nearly all of them) compiles to that one test.
  */
 @ReportPolymorphism
-@OperationProxy.Proxyable(allowUncached = true)
 public abstract class ToBooleanNode extends Node {
     public abstract boolean execute(Object value);
 
@@ -25,40 +23,40 @@ public abstract class ToBooleanNode extends Node {
     }
 
     @Specialization
-    public static boolean bool(boolean value) {
+    protected static boolean bool(boolean value) {
         return value;
     }
 
     @Specialization
-    public static boolean number(long value) {
+    protected static boolean number(long value) {
         return value != 0;
     }
 
     @Specialization
-    public static boolean number(double value) {
+    protected static boolean number(double value) {
         return value != 0.0;
     }
 
     /** "" and "0" are false. */
     @Specialization
-    public static boolean string(TruffleString value, @Cached TruffleString.ReadByteNode readByte) {
+    protected static boolean string(TruffleString value, @Cached TruffleString.ReadByteNode readByte) {
         int length = value.byteLength(Str.ENC);
         return !(length == 0 || length == 1 && readByte.execute(value, 0, Str.ENC) == '0');
     }
 
     @Specialization
-    public static boolean nil(PhpNull value) {
+    protected static boolean nil(PhpNull value) {
         return false;
     }
 
     @Specialization
-    public static boolean array(PhpArray value) {
+    protected static boolean array(PhpArray value) {
         return value.size() > 0;
     }
 
     /** Objects and closures. */
     @Fallback
-    public static boolean other(Object value) {
+    protected static boolean other(Object value) {
         return true;
     }
 }

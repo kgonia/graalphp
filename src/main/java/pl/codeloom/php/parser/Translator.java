@@ -107,7 +107,7 @@ public final class Translator {
     private static final String CLOSURE_PREFIX = "{closure:";
 
     /** The class whose members are being translated, for self::, parent:: and __CLASS__. */
-    record ClassInfo(String name, String parentName) {
+    private record ClassInfo(String name, String parentName) {
     }
 
     /** A function's local variables: name to frame slot. */
@@ -165,17 +165,7 @@ public final class Translator {
         this.names = names;
     }
 
-    /**
-     * A translator for one function's constant expressions (literals, folded constants, constant arrays, magic
-     * constants), which the bytecode translator takes from the tree's translation.
-     */
-    static Translator forConstants(PhpLanguage language, String path, Source source, boolean internal,
-                                   ClassInfo classInfo, String functionName, PhpFunction function, Names names) {
-        return new Translator(language, path, source, internal, classInfo, functionName, function, new Scope(),
-                names);
-    }
-
-    SourceSection lineSection(int line) {
+    private SourceSection lineSection(int line) {
         return source == null || line < 1 || line > source.getLineCount() ? null : source.createSection(line);
     }
 
@@ -354,7 +344,7 @@ public final class Translator {
     // ---- generators ----
 
     /** Whether the code yields: a yield in it, not in a function, closure or class nested in it. */
-    static boolean containsYield(Object value) {
+    private static boolean containsYield(Object value) {
         if (!(value instanceof Ast node)) {
             return false;
         }
@@ -449,7 +439,7 @@ public final class Translator {
     }
 
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
-    static boolean isCall(Object value) {
+    private static boolean isCall(Object value) {
         return value instanceof Ast node && (node.is("AST_CALL") || node.is("AST_METHOD_CALL")
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
     }
@@ -646,7 +636,7 @@ public final class Translator {
         return params;
     }
 
-    static boolean isNullable(Ast type) {
+    private static boolean isNullable(Ast type) {
         return type != null && type.is("AST_NULLABLE_TYPE");
     }
 
@@ -656,7 +646,7 @@ public final class Translator {
     }
 
     /** The scalar type a declared type coerces to: 's', 'i', 'f', 'b', or 0 for anything else. */
-    static char coerceType(Ast type) {
+    private static char coerceType(Ast type) {
         if (type == null) {
             return 0;
         }
@@ -683,17 +673,8 @@ public final class Translator {
     private RootCallTarget translateBody(Ast node, ClassInfo owner, PhpFunction target, String name,
                                          PhpFunction.Param[] params, String[] captures, boolean[] captureByRef,
                                          Names declaredNames) {
-        String display = owner == null ? name : owner.name() + "::" + name;
-        Ast stmts = node.body();
-        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
-        if (language.bytecode() && !generator) {
-            RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
-                    owner, target, display, params, captures, captureByRef, declaredNames);
-            if (bytecode != null) {
-                return bytecode;
-            }
-        }
         Scope bodyScope = new Scope();
+        String display = owner == null ? name : owner.name() + "::" + name;
         Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,
                 declaredNames);
         Ast paramList = node.node("params");
@@ -708,6 +689,8 @@ public final class Translator {
         for (int i = 0; i < captures.length; i++) {
             captureSlots[i] = bodyScope.slot(captures[i]);
         }
+        Ast stmts = node.body();
+        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
         if (generator) {
             body.generatorSlot = bodyScope.slot("\0generator");
         }
@@ -1620,7 +1603,7 @@ public final class Translator {
     }
 
     /** `f(...)`: the call's arguments are the first-class callable marker, not a list. */
-    static boolean isCallableConvert(Ast call) {
+    private static boolean isCallableConvert(Ast call) {
         return call.get("args") instanceof Ast args && args.is("AST_CALLABLE_CONVERT");
     }
 
@@ -1717,7 +1700,7 @@ public final class Translator {
      * A call php-src compiles into an opcode giving a temporary (zend_try_compile_special_func), not a call's result:
      * as an argument it is sent as a value (SEND_VAL_EX), never as a call's result (SEND_VAR_NO_REF).
      */
-    boolean compiledInPlace(Ast call) {
+    private boolean compiledInPlace(Ast call) {
         if (isCallableConvert(call)) {
             return true; // a closure (ZEND_CALLABLE_CONVERT)
         }
@@ -1736,7 +1719,7 @@ public final class Translator {
      * Whether php-src compiles a call to this built-in into an opcode of its own, which makes no frame
      * (zend_try_compile_special_func): for a name resolved at compile time, without unpacking or named arguments.
      */
-    boolean compiledSpecially(String name, Ast args) {
+    private boolean compiledSpecially(String name, Ast args) {
         int count = args.size();
         for (Object arg : args.children()) {
             if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG"))) {

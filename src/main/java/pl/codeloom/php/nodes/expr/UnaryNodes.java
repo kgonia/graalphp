@@ -1,15 +1,12 @@
 package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.bytecode.OperationProxy;
-import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
@@ -65,68 +62,65 @@ public final class UnaryNodes {
     }
 
     /** `-x`. PHP_INT_MIN has no int negation: it takes the float specialization (an int widens to a float). */
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class NegateNode extends UnaryNode {
         public static NegateNode create(ExprNode operand) {
             return UnaryNodesFactory.NegateNodeGen.create(operand);
         }
 
         @Specialization(guards = "value != MIN")
-        public static long negate(long value) {
+        protected long negate(long value) {
             return -value;
         }
 
         @Specialization
-        public static double negate(double value) {
+        protected double negate(double value) {
             return -value;
         }
 
         @Fallback
-        public static Object other(Object value, @Bind Node node) {
-            return Operators.negate(node, value);
+        protected Object other(Object value) {
+            return Operators.negate(this, value);
         }
 
-        public static final long MIN = Long.MIN_VALUE;
+        protected static final long MIN = Long.MIN_VALUE;
     }
 
     /** `+x`: the operand as a number. */
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class PlusNode extends UnaryNode {
         public static PlusNode create(ExprNode operand) {
             return UnaryNodesFactory.PlusNodeGen.create(operand);
         }
 
         @Specialization
-        public static long number(long value) {
+        protected long number(long value) {
             return value;
         }
 
         @Specialization
-        public static double number(double value) {
+        protected double number(double value) {
             return value;
         }
 
         @Fallback
-        public static Object other(Object value) {
+        protected Object other(Object value) {
             return Convert.toNumber(value);
         }
     }
 
     /** `~x`. */
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class BitNotNode extends UnaryNode {
         public static BitNotNode create(ExprNode operand) {
             return UnaryNodesFactory.BitNotNodeGen.create(operand);
         }
 
         @Specialization
-        public static long not(long value) {
+        protected long not(long value) {
             return ~value;
         }
 
         @Fallback
-        public static Object other(Object value, @Bind Node node) {
-            return Operators.bitNot(node, value);
+        protected Object other(Object value) {
+            return Operators.bitNot(this, value);
         }
     }
 

@@ -1,14 +1,8 @@
 package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.bytecode.BytecodeLocation;
-import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * A PHP Throwable the runtime itself raises (TypeError, ValueError, JsonException...): a catch block sees an
@@ -27,12 +21,6 @@ public final class PhpError extends PhpThrowable {
     private final transient PhpArray trace;
     /** The innermost statement the error left, recorded on the way out: the object's file and line. */
     private transient Node origin;
-    /**
-     * The instructions of functions on bytecode the error left before it reached origin's statement, innermost
-     * first. Whether one is in a statement is known only once its function's sources are built, which waits until
-     * the location is asked for: the first that is decides.
-     */
-    private transient List<BytecodeLocation> instructions;
     /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
     private transient PhpObject throwable;
 
@@ -78,37 +66,13 @@ public final class PhpError extends PhpThrowable {
         }
     }
 
-    /** surfacedAt for a function on bytecode: the instruction at bytecodeIndex, if it is in a statement. */
-    @TruffleBoundary
-    public void surfacedAt(BytecodeNode bytecode, int bytecodeIndex) {
-        if (origin == null && SourceLocation.isUserCode((RootNode) bytecode.getBytecodeRootNode())) {
-            if (instructions == null) {
-                instructions = new ArrayList<>();
-            }
-            instructions.add(bytecode.getBytecodeLocation(bytecodeIndex));
-        }
-    }
-
-    /** Where the error surfaced: the innermost statement it left, as surfacedAt recorded them. */
-    private SourceLocation location() {
-        if (instructions != null) {
-            for (BytecodeLocation instruction : instructions) {
-                SourceLocation at = SourceLocation.ofStatement(instruction);
-                if (at != null) {
-                    return at;
-                }
-            }
-        }
-        return origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin);
-    }
-
     /** The object a catch block sees, made once: of the error's class, where the error surfaced. */
     @Override
     @TruffleBoundary
     public PhpObject toThrowable(PhpContext context) {
         if (throwable == null) {
             PhpObject object = context.getClass(phpClass)
-                    .instantiate(location(), trace);
+                    .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin), trace);
             object.setProperty("message", Str.of(phpMessage));
             if (code != 0) {
                 object.setProperty("code", code);

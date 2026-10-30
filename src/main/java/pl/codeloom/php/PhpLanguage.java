@@ -66,11 +66,6 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<Boolean> Debug = new OptionKey<>(false);
 
-    @Option(help = "How functions run: tree (the AST interpreter) or bytecode (the Bytecode DSL interpreter, for the "
-            + "functions it supports; the others stay on the tree).", category = OptionCategory.EXPERT,
-            stability = OptionStability.EXPERIMENTAL)
-    static final OptionKey<String> Interpreter = new OptionKey<>("tree");
-
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 
     private final Shape rootShape = Shape.newBuilder().layout(PhpObject.class, java.lang.invoke.MethodHandles.lookup())
@@ -171,17 +166,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return table;
     }
 
-    /** Set by the first context: options are the same for every context of the language (areOptionsCompatible). */
-    private volatile boolean bytecode;
-
-    /** Whether functions the bytecode translator supports run on bytecode (php.Interpreter=bytecode). */
-    public boolean bytecode() {
-        return bytecode;
-    }
-
     @Override
     protected PhpContext createContext(Env env) {
-        bytecode = env.getOptions().get(Interpreter).equals("bytecode");
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
                 env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
                 iniSettings(env.getOptions().get(Ini)));
@@ -288,8 +274,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     protected boolean areOptionsCompatible(OptionValues firstOptions, OptionValues newOptions) {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
                 && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
-                && firstOptions.get(Debug).equals(newOptions.get(Debug))
-                && firstOptions.get(Interpreter).equals(newOptions.get(Interpreter));
+                && firstOptions.get(Debug).equals(newOptions.get(Debug));
     }
 
     @Override

@@ -62,7 +62,7 @@ public final class BuiltinNodes {
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
             if (isCompiledSpecially()) {
-                return callInPlace(this, name, arguments);
+                return callInPlace(name, arguments);
             }
             DirectCallNode call = fullCall;
             if (call == null) {
@@ -91,14 +91,11 @@ public final class BuiltinNodes {
             return call != null && call == fullCall;
         }
 
-        /**
-         * The regular built-in's Java body for a call php-src compiles in, which makes no frame: what it calls back
-         * (Countable::count) is called from the call's site. arguments are frame arguments.
-         */
+        /** What a call php-src compiles in calls back (Countable::count) is called from the call's site. */
         @TruffleBoundary
-        public static Object callInPlace(Node site, String name, Object[] arguments) {
-            PhpFunction function = PhpContext.get(site).findFunction(name);
-            return PhpRef.deref(Backtrace.callFrom(site, () -> function.getBuiltin().call(arguments)));
+        private Object callInPlace(String name, Object[] arguments) {
+            PhpFunction function = PhpContext.get(this).findFunction(name);
+            return PhpRef.deref(Backtrace.callFrom(this, () -> function.getBuiltin().call(arguments)));
         }
 
         protected static boolean isString(Object value) {

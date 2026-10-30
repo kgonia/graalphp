@@ -6,14 +6,13 @@
 # Usage: bench/gate1/ab.sh kernels iterations rounds A B...   e.g. bench/gate1/ab.sh all 400 8 before after
 # A variant may carry JVM options after an @: bench/gate1/ab.sh all 400 8 g9 g9@-Xmx512m compares heap limits.
 # A variant native/NAME runs the native-image build target/native/NAME instead of a class directory.
-# DRIVER=bench/k0/run.php compares another kernel set; CPUSET overrides the cores (default 14-21); AB_OUT the runs'
-# directory (default target/ab, emptied first).
+# DRIVER=bench/k0/run.php compares another kernel set; CPUSET overrides the cores (default 14-21).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 kernels=$1; iterations=$2; rounds=$3; shift 3
 variants=("$@")
 export CPUSET=${CPUSET:-14-21} PEAK_MEMORY=1
-out=${AB_OUT:-target/ab}
+out=target/ab
 rm -rf "$out" && mkdir -p "$out"
 n=${#variants[@]}
 for r in $(seq "$rounds"); do

@@ -1,11 +1,14 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -48,7 +51,11 @@ public final class LocalVarNode extends LValueNode {
         if (!frame.isObject(slot)) {
             return PhpNull.NULL;
         }
-        return Variables.value(frame.getObject(slot));
+        Object value = frame.getObject(slot);
+        if (value instanceof PhpRef ref) {
+            return ref.get();
+        }
+        return value == null ? PhpNull.NULL : value;
     }
 
     @Override
@@ -115,7 +122,9 @@ public final class LocalVarNode extends LValueNode {
             return;
         }
         FrameSlots.setLong(frame, slot, value);
-        Variables.released(old);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
     }
 
     @Override
@@ -126,7 +135,9 @@ public final class LocalVarNode extends LValueNode {
             return;
         }
         FrameSlots.setDouble(frame, slot, value);
-        Variables.released(old);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
     }
 
     private void writeObject(VirtualFrame frame, Object value) {
@@ -139,7 +150,9 @@ public final class LocalVarNode extends LValueNode {
             array.addHolder();
         }
         FrameSlots.setObject(frame, slot, value);
-        Variables.replaced(old, value);
+        if (old instanceof PhpArray array && old != value) {
+            array.removeHolder();
+        }
     }
 
     // ---- references and in-place updates ----
@@ -150,14 +163,23 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpRef ref) {
             return ref;
         }
-        PhpRef ref = Variables.newRef(value);
+        PhpRef ref = new PhpRef(value == null ? PhpNull.NULL : value);
+        if (value instanceof PhpArray array) {
+            array.removeHolder();
+        }
+        ref.bind();
         FrameSlots.setObject(frame, slot, ref);
         return ref;
     }
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        Variables.released(storedObject(frame));
+        Object old = storedObject(frame);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        } else if (old instanceof PhpRef previous) {
+            previous.unbind();
+        }
         ref.bind();
         FrameSlots.setObject(frame, slot, ref);
     }
@@ -168,7 +190,9 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpArray array) {
             if (array.isShared()) {
                 sharedArray.enter();
-                PhpArray copy = Variables.separated(array);
+                PhpArray copy = array.copy();
+                copy.addHolder();
+                array.removeHolder();
                 FrameSlots.setObject(frame, slot, copy);
                 return copy;
             }
@@ -178,16 +202,17 @@ public final class LocalVarNode extends LValueNode {
             refArray.enter();
             return Places.refArrayForWrite(ref);
         }
-        if (Variables.becomesArray(value)) {
+        if (value == null || value == PhpNull.NULL || value == Boolean.FALSE) {
             createdArray.enter();
-            PhpArray created = Variables.created();
+            PhpArray created = new PhpArray();
+            created.addHolder();
             FrameSlots.setObject(frame, slot, created);
             return created;
         }
         if (value instanceof PhpObject) {
             return null;
         }
-        throw Variables.scalarAsArray();
+        throw scalarAsArray();
     }
 
     /**
@@ -199,9 +224,19 @@ public final class LocalVarNode extends LValueNode {
     private final BranchProfile refArray = BranchProfile.create();
     private final BranchProfile createdArray = BranchProfile.create();
 
+    @TruffleBoundary
+    private static PhpError scalarAsArray() {
+        return new PhpError("Cannot use a scalar value as an array");
+    }
+
     @Override
     public void unset(VirtualFrame frame) {
-        Variables.released(storedObject(frame));
+        Object old = storedObject(frame);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        } else if (old instanceof PhpRef ref) {
+            ref.unbind();
+        }
         frame.clear(slot);
     }
 

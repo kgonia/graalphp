@@ -2,7 +2,6 @@ package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -120,16 +119,8 @@ public final class DimNode extends LValueNode {
     private void writeObject(VirtualFrame frame, Object value) {
         objectWrite.enter();
         Object target = container.execute(frame);
-        writeToObject(this, target, isAppend() ? PhpNull.NULL : rawKey(frame), value);
-    }
-
-    /**
-     * `$o[key] = value` (key null for `$o[]`) where the container's arrayForWrite gave no array: an ArrayAccess
-     * object's offsetSet(), called from site; anything else is an error.
-     */
-    public static void writeToObject(Node site, Object target, Object key, Object value) {
         if (target instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod(site, "offsetset", key, value);
+            object.callMethod(this, "offsetset", isAppend() ? PhpNull.NULL : rawKey(frame), value);
             return;
         }
         CompilerDirectives.transferToInterpreter();
