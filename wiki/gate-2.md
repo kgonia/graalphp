@@ -449,3 +449,36 @@ The 81 MB that is left belongs to functions that haven't been called yet. Transl
 - **Warm GraalVM:** 6.1 CPU-s per visit (visits 51-191), 13× PHP.
 - **The recorded visit understates it.** It counts only the visit's own 7 s window: 2.25 CPU-s against 0.58 for PHP.
 - **Where it goes:** a warm server still compiles ~40 call targets per visit (8105 compilations in 200 visits), and runs GC and trims. Where exactly is open.
+
+## Our own parser (D14), 2026-10-30
+php-src 8.5.12's grammar and scanner through Bison 3.8.2 and re2c 4.6 ([D14](decisions.md)), on branch `parser`. `-Dpolyglot.php.Parser=java` runs the runtime on it; the php-ast export stays the default.
+
+**Parity** (`ZendParserCorpusTest`, against PHP 8.5.12 with php-ast 1.1.3; `tests/parser/reference.sh` writes the tokens and errors):
+
+| | equal / total |
+|---|---|
+| tokens (`token_get_all`, kind, text and line) | 9672 / 9672 files, 4,710,499 tokens |
+| trees, Gate 2's WordPress (core and plugins) | 2084 / 2084 files |
+| trees, php-src's `.phpt` cases | 7444 / 7444 files |
+| files PHP rejects: class, line and message | 143 / 143 |
+| bodies parsed again alone (`SourceBody`) against the file's parse | 12,919 on WordPress, 8,207 on the `.phpt` cases: all equal |
+
+**Size:** generated 34,777 lines (Bison 8,903, re2c 25,874), derived 3,589 (the grammar 1,732, the scanner block 998, php-src's constants and php-ast's names 859), hand-written ports 3,312, the scripts and the image 1,234.
+
+**Heap**, WordPress's 2084 files held (`ZendParserCorpusTest.heapOfTrees`, as `AstCorpusTest.heapEagerAndLazy`):
+
+| | MB |
+|---|---|
+| export, eager | 413 |
+| export, bodies as JSON bytes (`AstReader`) | 160 |
+| parser, eager | 344 |
+| parser, bodies as ranges of the text, the texts included | 104 |
+| the texts alone (held by the runtime's `Source` either way) | 30 |
+
+**Time**, the same files from bytes in memory, 12 interleaved rounds on CPUs 2-5 (`parseTimeAgainstJsonRead`; median, best): `AstReader` 302 and 208 ms, `EagerAstReader` 422 and 293, the parser with bodies left 511 and 363, eager 555 and 388. That is 23.9 MB of PHP against 76.8 MB of JSON, so reading the export from disk also reads three times the bytes. A JFR profile spreads the parser's time over the scanner (36%), the actions (24%) and the conversion to php-ast's shape (23%).
+
+**The runtime on it:**
+- `tests/smoke/run.sh`: 76 of 76 pass, also in three contexts and with statements instrumented.
+- php-src `.phpt` (`--reuse-oracle`, CPUs 6-13): 3255 of 7341 strict (44.3%), against 3112 (42.4%) on the export at the same commit. 145 cases newly pass, all of them files without an export: their compile errors (`Multiple access type modifiers are not allowed`, ...) now come out as PHP's, the error logs equal. 78 more such files now run and fail further on. Two cases fail only on the parser, and both print a random number (`random_int`, `rand`).
+- Gate 1 (`bench/gate1/run.php all 20`, CPUs 2-5): the checksums of all 140 kernel iterations are PHP's, on the export and on the parser alike. The container's peak memory was 786 MB on the parser against 1034 MB on the export (one run each).
+- A file that doesn't parse throws PHP's ParseError or CompileError at the include; the script itself is reported as PHP reports it (`Parse error: ... on line N`, status 255). The parse's deprecations come once per translation, as PHP with opcache, which the reference runs with, gives them.
