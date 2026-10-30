@@ -8,6 +8,7 @@ import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.EpilogExceptional;
 import com.oracle.truffle.api.bytecode.EpilogReturn;
+import com.oracle.truffle.api.bytecode.ForceQuickening;
 import com.oracle.truffle.api.bytecode.GenerateBytecode;
 import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.bytecode.Operation;
@@ -473,6 +474,98 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         public static boolean isFloatOperator(int op) {
             return op == 1 || op == 2 || op == 3 || op == 4;
+        }
+    }
+
+    /** `$x = value;` as a statement: WriteVar without the result. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class WriteVarStatement {
+        @ForceQuickening
+        @Specialization
+        public static void writeLong(VirtualFrame frame, LocalAccessor variable, long value,
+                                     @Bind BytecodeNode bytecode) {
+            Locals.writeLong(frame, variable, bytecode, value);
+        }
+
+        @ForceQuickening
+        @Specialization
+        public static void writeDouble(VirtualFrame frame, LocalAccessor variable, double value,
+                                       @Bind BytecodeNode bytecode) {
+            Locals.writeDouble(frame, variable, bytecode, value);
+        }
+
+        @Specialization(replaces = {"writeLong", "writeDouble"})
+        public static void write(VirtualFrame frame, LocalAccessor variable, Object value,
+                                 @Bind BytecodeNode bytecode) {
+            Locals.write(frame, variable, bytecode, value);
+        }
+    }
+
+    /** `$x++;` as a statement: IncDecVar without the result. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = boolean.class, name = "increment")
+    public static final class IncDecVarStatement {
+        @ForceQuickening
+        @Specialization(rewriteOn = {Locals.KindMismatch.class, ArithmeticException.class})
+        public static void longs(VirtualFrame frame, LocalAccessor variable, boolean increment,
+                                 @Bind BytecodeNode bytecode) throws Locals.KindMismatch {
+            IncDecVar.longs(frame, variable, increment, true, bytecode);
+        }
+
+        @Specialization(replaces = "longs")
+        public static void generic(VirtualFrame frame, LocalAccessor variable, boolean increment,
+                                   @Bind BytecodeNode bytecode, @Bind Node node) {
+            IncDecVar.generic(frame, variable, increment, true, bytecode, node);
+        }
+    }
+
+    /** `$x op= value;` as a statement: CompoundVar without the result. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class, name = "op")
+    public static final class CompoundVarStatement {
+        @Specialization(guards = "op == 8")
+        public static void concat(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
+                                  @Bind BytecodeNode bytecode, @Cached ToStrNode currentToStr,
+                                  @Cached ToStrNode operandToStr, @Cached TruffleString.ConcatNode concat) {
+            CompoundVar.concat(frame, variable, op, operand, bytecode, currentToStr, operandToStr, concat);
+        }
+
+        @ForceQuickening
+        @Specialization(guards = "isIntOperator(op)", rewriteOn = {Locals.KindMismatch.class,
+                ArithmeticException.class})
+        public static void longs(VirtualFrame frame, LocalAccessor variable, int op, long operand,
+                                 @Bind BytecodeNode bytecode) throws Locals.KindMismatch {
+            CompoundVar.longs(frame, variable, op, operand, bytecode);
+        }
+
+        @Specialization(guards = "op != 8")
+        public static void longOperand(VirtualFrame frame, LocalAccessor variable, int op, long operand,
+                                       @Bind BytecodeNode bytecode, @Bind Node node) {
+            CompoundVar.generic(frame, variable, op, operand, bytecode, node);
+        }
+
+        @ForceQuickening
+        @Specialization(guards = "isFloatOperator(op)", rewriteOn = Locals.KindMismatch.class)
+        public static void doubles(VirtualFrame frame, LocalAccessor variable, int op, double operand,
+                                   @Bind BytecodeNode bytecode, @Bind Node node) throws Locals.KindMismatch {
+            CompoundVar.doubles(frame, variable, op, operand, bytecode, node);
+        }
+
+        @Specialization(guards = "op != 8", replaces = {"longs", "longOperand", "doubles"})
+        public static void generic(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
+                                   @Bind BytecodeNode bytecode, @Bind Node node) {
+            CompoundVar.generic(frame, variable, op, operand, bytecode, node);
+        }
+
+        public static boolean isIntOperator(int op) {
+            return CompoundVar.isIntOperator(op);
+        }
+
+        public static boolean isFloatOperator(int op) {
+            return CompoundVar.isFloatOperator(op);
         }
     }
 

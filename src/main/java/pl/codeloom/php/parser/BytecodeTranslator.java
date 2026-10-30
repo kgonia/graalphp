@@ -359,8 +359,38 @@ public final class BytecodeTranslator {
                     b.emitUnsetVar(variable(node.node("var"), "unset of"));
                     break;
                 default:
-                    expression(node);
+                    expressionStatement(node);
             }
+        }
+
+        /** An expression whose value is dropped: a variable's assignment or step without the result. */
+        private void expressionStatement(Object value) {
+            if (value instanceof Ast node && node.get("var") instanceof Ast target && target.is("AST_VAR")) {
+                switch (node.kind) {
+                    case "AST_ASSIGN" -> {
+                        b.beginWriteVarStatement(variable(target, "assignment to"));
+                        expression(node.get("expr"));
+                        b.endWriteVarStatement();
+                        return;
+                    }
+                    case "AST_ASSIGN_OP" -> {
+                        if (node.flags != 260) {
+                            b.beginCompoundVarStatement(variable(target, "compound assignment to"), node.flags);
+                            expression(node.get("expr"));
+                            b.endCompoundVarStatement();
+                            return;
+                        }
+                    }
+                    case "AST_PRE_INC", "AST_PRE_DEC", "AST_POST_INC", "AST_POST_DEC" -> {
+                        b.emitIncDecVarStatement(variable(target, "increment of"),
+                                node.is("AST_PRE_INC") || node.is("AST_POST_INC"));
+                        return;
+                    }
+                    default -> {
+                    }
+                }
+            }
+            expression(value);
         }
 
         private void returnValue(Object value, Ast node) {
@@ -435,7 +465,7 @@ public final class BytecodeTranslator {
             Ast init = node.node("init");
             if (init != null) {
                 for (Object expression : init.children()) {
-                    expression(expression);
+                    expressionStatement(expression);
                 }
             }
             Loop loop = new Loop(b.createLabel(), null);
@@ -454,7 +484,7 @@ public final class BytecodeTranslator {
             Ast step = node.node("loop");
             loopBody(loop, node.node("stmts"), step == null ? null : () -> {
                 for (Object expression : step.children()) {
-                    expression(expression);
+                    expressionStatement(expression);
                 }
             });
             b.endWhile();
