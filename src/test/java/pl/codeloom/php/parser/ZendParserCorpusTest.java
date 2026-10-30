@@ -1,6 +1,7 @@
 package pl.codeloom.php.parser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayInputStream;
@@ -20,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import pl.codeloom.php.parser.zend.CompilerGlobals;
+import pl.codeloom.php.parser.zend.ScriptText;
 import pl.codeloom.php.parser.zend.ZendCompileError;
 import pl.codeloom.php.parser.zend.ZendParser;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageParser;
@@ -236,6 +238,172 @@ class ZendParserCorpusTest {
     @Test
     void treesArePhptExports() {
         treesAreExports("target/phpt/cases");
+    }
+
+    /** The sources of a corpus's exports that are still there, with their exports. */
+    private static List<Path[]> sourcesAndExports(String corpus) {
+        List<Path[]> pairs = new ArrayList<>();
+        for (Path export : exports(corpus)) {
+            Path source = sourceOf(export);
+            if (Files.exists(source)) {
+                pairs.add(new Path[]{source, export});
+            }
+        }
+        return pairs;
+    }
+
+    /** The bodies a lazy parse leaves unparsed in a tree: every function's, method's and closure's, nested too. */
+    private static long bodies(Object tree) {
+        long count = 0;
+        if (tree instanceof Ast ast) {
+            if ((ast.is("AST_FUNC_DECL") || ast.is("AST_METHOD") || ast.is("AST_CLOSURE"))
+                    && ast.get("stmts") != null) {
+                count++;
+            }
+            for (Object child : ast.children()) {
+                count += bodies(child);
+            }
+            for (Object child : ast.namedValues()) {
+                count += bodies(child);
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Parsed with its bodies left as ranges of the text (SourceBody), each body read alone is the tree the whole
+     * file's parse gives for it: the trees are the same, and every function, method and closure body was left.
+     */
+    private static void lazyTreesAreEager(String corpus) {
+        List<Path[]> files = sourcesAndExports(corpus);
+        assumeTrue(!files.isEmpty(), "no exports at " + EXPORTS.resolve(corpus));
+        long bodies = 0;
+        AstTrees.bodiesRead = 0;
+        for (Path[] file : files) {
+            byte[] script = read(file[0]);
+            Ast eager = ZendParser.parse(script).ast();
+            Ast lazy = ZendParser.parse(script, ScriptText.decode(script), true).ast();
+            String difference = AstTrees.firstDifference(eager, lazy);
+            assertNull(difference, () -> file[0] + ": " + difference);
+            bodies += bodies(eager);
+            assertEquals(bodies, AstTrees.bodiesRead, () -> file[0] + ": not every body was left unparsed");
+        }
+        System.out.printf("%s, %d files: the same trees with bodies parsed again from the text, %d bodies%n",
+                corpus, files.size(), bodies);
+    }
+
+    @Test
+    void lazyTreesAreEagerOnWordPress() {
+        lazyTreesAreEager("target/gate2/wordpress");
+    }
+
+    @Test
+    void lazyTreesAreEagerOnPhpt() {
+        lazyTreesAreEager("target/phpt/cases");
+    }
+
+    private static long liveHeap() {
+        Runtime runtime = Runtime.getRuntime();
+        for (int i = 0; i < 3; i++) {
+            System.gc();
+        }
+        return runtime.totalMemory() - runtime.freeMemory();
+    }
+
+    /**
+     * The heap WordPress's trees take, as AstCorpusTest.heapEagerAndLazy measures it: from the exports (eager, and
+     * bodies as JSON bytes) and from the parser (eager, and bodies as ranges of the text, the text counted: the
+     * runtime holds it as the file's Source either way).
+     */
+    @Test
+    void heapOfTrees() throws IOException {
+        List<Path[]> files = sourcesAndExports("target/gate2/wordpress");
+        assumeTrue(!files.isEmpty(), "no exports");
+        List<Object> held = new ArrayList<>();
+        long base = liveHeap();
+        for (Path[] file : files) {
+            held.add(EagerAstReader.read(new ByteArrayInputStream(read(file[1]))));
+        }
+        long exportEager = liveHeap() - base;
+        held.clear();
+        base = liveHeap();
+        for (Path[] file : files) {
+            held.add(AstReader.read(new ByteArrayInputStream(read(file[1]))));
+        }
+        long exportLazy = liveHeap() - base;
+        held.clear();
+        base = liveHeap();
+        for (Path[] file : files) {
+            held.add(ZendParser.parse(read(file[0])).ast());
+        }
+        long javaEager = liveHeap() - base;
+        held.clear();
+        base = liveHeap();
+        for (Path[] file : files) {
+            held.add(ScriptText.decode(read(file[0])));
+        }
+        long texts = liveHeap() - base;
+        held.clear();
+        base = liveHeap();
+        for (Path[] file : files) {
+            byte[] script = read(file[0]);
+            held.add(ZendParser.parse(script, ScriptText.decode(script), true).ast());
+        }
+        long javaLazy = liveHeap() - base;
+        System.out.printf("trees of %d files: exports %.0f MB eager, %.0f MB bodies as JSON; parser %.0f MB eager, "
+                        + "%.0f MB bodies as text (the texts alone %.0f MB)%n", held.size(), exportEager / 1e6,
+                exportLazy / 1e6, javaEager / 1e6, javaLazy / 1e6, texts / 1e6);
+    }
+
+    /**
+     * Reading WordPress's trees from the exports against parsing the sources, each from bytes in memory, in
+     * interleaved rounds (-Dphp.parseRounds, 10): the median of each.
+     */
+    @Test
+    void parseTimeAgainstJsonRead() throws IOException {
+        List<Path[]> files = sourcesAndExports("target/gate2/wordpress");
+        assumeTrue(!files.isEmpty(), "no exports");
+        List<byte[]> sources = new ArrayList<>();
+        List<byte[]> exports = new ArrayList<>();
+        long sourceBytes = 0;
+        long exportBytes = 0;
+        for (Path[] file : files) {
+            byte[] source = read(file[0]);
+            byte[] export = read(file[1]);
+            sources.add(source);
+            exports.add(export);
+            sourceBytes += source.length;
+            exportBytes += export.length;
+        }
+        String[] names = {"export, bodies as JSON (AstReader)", "export, eager (EagerAstReader)",
+                "parser, bodies as text", "parser, eager"};
+        int rounds = Integer.getInteger("php.parseRounds", 10);
+        long[][] times = new long[names.length][rounds];
+        long sink = 0;
+        for (int round = 0; round < rounds; round++) {
+            for (int variant = 0; variant < names.length; variant++) {
+                long start = System.nanoTime();
+                for (int i = 0; i < sources.size(); i++) {
+                    byte[] source = sources.get(i);
+                    Ast ast = switch (variant) {
+                        case 0 -> AstReader.read(new ByteArrayInputStream(exports.get(i)));
+                        case 1 -> EagerAstReader.read(new ByteArrayInputStream(exports.get(i)));
+                        case 2 -> ZendParser.parse(source, ScriptText.decode(source), true).ast();
+                        default -> ZendParser.parse(source).ast();
+                    };
+                    sink += ast.line;
+                }
+                times[variant][round] = System.nanoTime() - start;
+            }
+        }
+        System.out.printf("%d files, %.1f MB of PHP, %.1f MB of JSON, %d rounds (sink %d):%n", files.size(),
+                sourceBytes / 1e6, exportBytes / 1e6, rounds, sink);
+        for (int variant = 0; variant < names.length; variant++) {
+            long[] sorted = times[variant].clone();
+            java.util.Arrays.sort(sorted);
+            System.out.printf("  %-38s median %6.0f ms  (first round %6.0f ms, best %6.0f ms)%n", names[variant],
+                    sorted[rounds / 2] / 1e6, times[variant][0] / 1e6, sorted[0] / 1e6);
+        }
     }
 
     /** A file php-ast rejects, the parser rejects as PHP does: errors.tsv's class, line and message. */

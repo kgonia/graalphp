@@ -293,7 +293,9 @@ public abstract class ZendScannerBase {
             report_bad_nesting(opening, nest_location_stack.topLineno(), closing);
             return FAILURE;
         }
-        closedBrace(nest_location_stack.topOffset(), yy_text);
+        if (opening == '{') {
+            closedBrace(nest_location_stack.topOffset(), yy_text);
+        }
         nest_location_stack.pop();
         return SUCCESS;
     }
@@ -306,8 +308,11 @@ public abstract class ZendScannerBase {
         return SUCCESS;
     }
 
-    /** A '{', '[' or '(' at opening was closed at closing; ZendParser keeps where function bodies end. */
-    protected void closedBrace(int opening, int closing) {
+    /** Where each '{' (by its offset) was closed: where a function body ends, to parse it again. */
+    final java.util.HashMap<Integer, Integer> brace_ends = new java.util.HashMap<>();
+
+    private void closedBrace(int opening, int closing) {
+        brace_ends.put(opening, closing);
     }
 
     // ---- numbers ----

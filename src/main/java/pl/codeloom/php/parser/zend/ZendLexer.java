@@ -21,15 +21,36 @@ public final class ZendLexer implements ZendLanguageParser.Lexer {
     private final ZendParserStackElem elem = new ZendParserStackElem();
     private final zval zv = new zval();
     private Object value;
+    /** Tokens to give the parser before the scanner's, with their values (see {@link #prefix}). */
+    private int[] prefixTokens = new int[0];
+    private Object[] prefixValues;
+    private int prefixAt;
+    private boolean docCommentPending;
+    private byte[] docComment;
 
     public ZendLexer(CompilerGlobals CG, ZendScannerBase scanner) {
         this.CG = CG;
         this.scanner = scanner;
     }
 
+    /**
+     * Tokens the parser gets before the scanner's, and the CG(doc_comment) to set once the scanner's first token
+     * is scanned: how a function body is parsed again on its own (ZendParser.parseBody).
+     */
+    void prefix(int[] tokens, Object[] values, byte[] docCommentAfterFirstToken) {
+        prefixTokens = tokens;
+        prefixValues = values;
+        docCommentPending = true;
+        docComment = docCommentAfterFirstToken;
+    }
+
     /** zendlex */
     @Override
     public int yylex() {
+        if (prefixAt < prefixTokens.length) {
+            value = prefixValues[prefixAt];
+            return prefixTokens[prefixAt++];
+        }
         if (CG.increment_lineno != 0) {
             CG.zend_lineno++;
             CG.increment_lineno = 0;
@@ -37,6 +58,10 @@ public final class ZendLexer implements ZendLanguageParser.Lexer {
         elem.value = null;
         int ret = scanner.lex_scan(zv, elem);
         value = elem.value;
+        if (docCommentPending) {
+            CG.doc_comment = docComment;
+            docCommentPending = false;
+        }
         return ret;
     }
 
