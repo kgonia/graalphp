@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 cfg=${1:-CowRefs.cfg}
 shift || true
-java=${JAVA:-$HOME/.jdks/graalvm-jdk-25.0.4+7.1/bin/java}
+java=${JAVA:-$HOME/.jdks/graalvm-25.4.4.1.1+1.1/bin/java}
 jar=${TLA2TOOLS:-$HOME/tools/tla2tools.jar}
 meta=$(mktemp -d)
 trap 'rm -rf "$meta"' EXIT

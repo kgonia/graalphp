@@ -27,7 +27,7 @@ db_host=$(docker inspect gate2-mariadb --format '{{.NetworkSettings.Networks.bri
 for server in "${servers[@]}"; do
   if [ $server = truffle ]; then
     MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
-      -e GATE2_DB_HOST=$db_host -e JAVA_OPTS="$SERVER_OPTS ${JAVA_OPTS:-}" -v "$root:/w:ro" gate1-truffle:8.5 sh -c 'mkdir -p /srv/target/gate2 \
+      -e GATE2_DB_HOST=$db_host -e JAVA_OPTS="$SERVER_OPTS ${JAVA_OPTS:-}" -v "$root:/w:ro" ${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} sh -c 'mkdir -p /srv/target/gate2 \
       && cp -r /w/target/ast /srv/target/ && cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cd /srv \
       && exec $GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
       $JAVA_OPTS_BASE $JAVA_OPTS -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \
