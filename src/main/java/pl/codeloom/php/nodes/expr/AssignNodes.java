@@ -6,6 +6,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
@@ -223,35 +224,40 @@ public final class AssignNodes {
         }
 
         private Object apply(Object a, Object b) {
+            return apply(this, op, a, b);
+        }
+
+        /** `a op= b`'s result for every operator but `.=` and `??=`; site is where notices and errors are. */
+        public static Object apply(Node site, int op, Object a, Object b) {
             switch (op) {
                 case 1:
                     if (a instanceof Long x && b instanceof Long y) {
                         return Operators.addLongs(x, y);
                     }
-                    return Operators.add(this, a, b);
+                    return Operators.add(site, a, b);
                 case 2:
                     if (a instanceof Long x && b instanceof Long y) {
                         return Operators.subLongs(x, y);
                     }
-                    return Operators.sub(this, a, b);
+                    return Operators.sub(site, a, b);
                 case 3:
-                    return Operators.mul(this, a, b);
+                    return Operators.mul(site, a, b);
                 case 4:
-                    return Operators.div(this, a, b);
+                    return Operators.div(site, a, b);
                 case 5:
-                    return Operators.mod(this, a, b);
+                    return Operators.mod(site, a, b);
                 case 12:
-                    return Operators.pow(this, a, b);
+                    return Operators.pow(site, a, b);
                 case 9:
-                    return a instanceof Long x && b instanceof Long y ? (Object) (x | y) : Operators.bitwise(this, "|", a, b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x | y) : Operators.bitwise(site, "|", a, b);
                 case 10:
-                    return a instanceof Long x && b instanceof Long y ? (Object) (x & y) : Operators.bitwise(this, "&", a, b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x & y) : Operators.bitwise(site, "&", a, b);
                 case 11:
-                    return a instanceof Long x && b instanceof Long y ? (Object) (x ^ y) : Operators.bitwise(this, "^", a, b);
+                    return a instanceof Long x && b instanceof Long y ? (Object) (x ^ y) : Operators.bitwise(site, "^", a, b);
                 case 6:
-                    return Operators.shift(this, "<<", a, b);
+                    return Operators.shift(site, "<<", a, b);
                 case 7:
-                    return Operators.shift(this, ">>", a, b);
+                    return Operators.shift(site, ">>", a, b);
                 default:
                     throw unsupportedOperator(op);
             }
@@ -309,16 +315,20 @@ public final class AssignNodes {
 
         @Specialization(replaces = "longs")
         protected Object generic(VirtualFrame frame, Object old) {
-            Object updated;
-            if (old instanceof Long l) {
-                updated = increment ? Operators.addLongs(l, 1) : Operators.subLongs(l, 1);
-            } else if (old instanceof Double d) {
-                updated = increment ? d + 1 : d - 1;
-            } else {
-                updated = Operators.step(this, old, increment);
-            }
+            Object updated = stepped(this, old, increment);
             getTarget().write(frame, updated);
             return prefix ? updated : old;
+        }
+
+        /** The value `++` (increment) or `--` makes of old; site is where notices are. */
+        public static Object stepped(Node site, Object old, boolean increment) {
+            if (old instanceof Long l) {
+                return increment ? Operators.addLongs(l, 1) : Operators.subLongs(l, 1);
+            }
+            if (old instanceof Double d) {
+                return increment ? d + 1 : d - 1;
+            }
+            return Operators.step(site, old, increment);
         }
     }
 
@@ -340,7 +350,7 @@ public final class AssignNodes {
     }
 
     @TruffleBoundary
-    private static PhpError unsupportedOperator(int op) {
+    public static PhpError unsupportedOperator(int op) {
         return new PhpError("unsupported compound assignment operator " + op);
     }
 
