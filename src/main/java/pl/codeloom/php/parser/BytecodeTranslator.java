@@ -7,6 +7,7 @@ import com.oracle.truffle.api.bytecode.BytecodeLocal;
 import com.oracle.truffle.api.bytecode.BytecodeParser;
 import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
 import com.oracle.truffle.api.bytecode.LocalAccessor;
+import com.oracle.truffle.api.bytecode.StackValue;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -24,9 +25,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -160,8 +159,6 @@ public final class BytecodeTranslator {
         private final PhpBytecodeRootNodeGen.Builder b;
         private final Translator constants;
         private final Map<String, BytecodeLocal> variables = new HashMap<>();
-        /** Hidden locals free for a call's callee, reused once the call is emitted. */
-        private final Deque<BytecodeLocal> freeCallees = new ArrayDeque<>();
         private final List<Loop> loops = new ArrayList<>();
         /** The next object of made to take, or to make. */
         private int madeIndex;
@@ -837,35 +834,28 @@ public final class BytecodeTranslator {
                 }
                 needsCallee |= !plainArgument(arg);
             }
-            BytecodeLocal calleeLocal = null;
-            if (needsCallee) {
-                calleeLocal = freeCallees.isEmpty() ? b.createLocal() : freeCallees.pop();
-                b.beginBlock();
-                b.beginStoreLocal(calleeLocal);
-                b.emitResolveFunction(info);
-                b.endStoreLocal();
-            }
             if (byRefContext) {
                 b.beginCallRef(info);
             } else {
                 b.beginCall(info);
             }
-            if (calleeLocal == null) {
+            // an argument that may go by reference asks the callee about its parameter: the callee stays on the
+            // operand stack for it
+            StackValue calleeValue = null;
+            if (needsCallee) {
+                b.beginBindStackValue();
                 b.emitResolveFunction(info);
+                calleeValue = b.endBindStackValue();
             } else {
-                b.emitLoadLocal(calleeLocal);
+                b.emitResolveFunction(info);
             }
             for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeLocal);
+                argument(args.child(i), i, calleeValue);
             }
             if (byRefContext) {
                 b.endCallRef();
             } else {
                 b.endCall();
-            }
-            if (needsCallee) {
-                b.endBlock();
-                freeCallees.push(calleeLocal);
             }
         }
 
@@ -880,7 +870,7 @@ public final class BytecodeTranslator {
             return !(Translator.isCall(ast) && !constants.compiledInPlace(ast));
         }
 
-        private void argument(Object arg, int index, BytecodeLocal callee) {
+        private void argument(Object arg, int index, StackValue callee) {
             if (plainArgument(arg)) {
                 expression(arg);
                 return;
@@ -888,16 +878,16 @@ public final class BytecodeTranslator {
             Ast ast = (Ast) arg;
             if (ast.is("AST_VAR")) {
                 b.beginSendVar(variable(ast, "argument"), index);
-                b.emitLoadLocal(callee);
+                b.emitLoadStackValue(callee);
                 b.endSendVar();
             } else if (ast.is("AST_DIM") && ast.node("expr").is("AST_VAR") && ast.get("dim") != null) {
                 b.beginSendElement(variable(ast.node("expr"), "argument element of"), index);
-                b.emitLoadLocal(callee);
+                b.emitLoadStackValue(callee);
                 key(ast.get("dim"));
                 b.endSendElement();
             } else if (ast.is("AST_CALL")) {
                 b.beginSendCall(index);
-                b.emitLoadLocal(callee);
+                b.emitLoadStackValue(callee);
                 call(ast, true);
                 b.endSendCall();
             } else {
