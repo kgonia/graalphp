@@ -56,6 +56,18 @@ public final class Ast {
         return named != null ? named.get(name) : null;
     }
 
+    /**
+     * The "stmts" child as a tree: a function's, method's or closure's body, read from the export each time it is
+     * asked for ({@link AstBody}), so a caller reads it once and lets it go; any other node's statements as they are.
+     */
+    public Ast body() {
+        Object stmts = get("stmts");
+        if (stmts instanceof AstBody unread) {
+            return unread.read();
+        }
+        return stmts instanceof Ast ast ? ast : null;
+    }
+
     public Ast node(String name) {
         Object child = get(name);
         return child instanceof Ast ast ? ast : null;

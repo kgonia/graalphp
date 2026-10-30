@@ -9,12 +9,26 @@ final class AstTrees {
     private AstTrees() {
     }
 
-    /** The path to the first difference between a and b, or null if they are the same tree. */
+    /** Bodies read while comparing (see {@link #firstDifference}). */
+    static long bodiesRead;
+
+    /**
+     * The path to the first difference between a and b, or null if they are the same tree. An unread body
+     * ({@link AstBody}) on either side is read and compared as the tree it gives.
+     */
     static String firstDifference(Object a, Object b) {
         return difference("", a, b);
     }
 
     private static String difference(String path, Object a, Object b) {
+        if (a instanceof AstBody unread) {
+            bodiesRead++;
+            return difference(path + "(read)", unread.read(), b);
+        }
+        if (b instanceof AstBody unread) {
+            bodiesRead++;
+            return difference(path + "(read)", a, unread.read());
+        }
         if (a instanceof Ast x && b instanceof Ast y) {
             if (!x.kind.equals(y.kind)) {
                 return path + ".kind: " + x.kind + " != " + y.kind;

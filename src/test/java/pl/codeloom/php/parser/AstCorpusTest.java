@@ -21,9 +21,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * The php-ast export corpus (Gate 2's WordPress and plugins; -Dphp.astCorpus=dir for another): what reading a
- * function body on its own, from its byte range in the file's export, relies on. Skipped when the corpus isn't
- * exported.
+ * The php-ast export corpus (Gate 2's WordPress and plugins; -Dphp.astCorpus=dir for another): AstReader's unread
+ * function bodies against the eager reader, and what they save. Skipped when the corpus isn't exported.
  */
 class AstCorpusTest {
     /** The kinds whose "stmts" child is a function body, translated on the function's first call. */
@@ -52,26 +51,26 @@ class AstCorpusTest {
         }
     }
 
-    /** Each body's byte range, read on its own, gives the same tree as the body in the whole file's tree. */
+    /**
+     * AstReader leaves every function body unread, and each one, read through its AstBody, is the tree the eager
+     * reader (AstReader before bodies were left unread) gives for it: the trees are the same, bodies included.
+     */
     @Test
-    void bodiesReadOnTheirOwnAreTheSameTrees() throws IOException {
+    void lazyTreesAreTheEagerTrees() throws IOException {
         long bodies = 0;
+        AstTrees.bodiesRead = 0;
         for (Path file : corpus) {
             byte[] json = Files.readAllBytes(file);
-            List<Ast> expected = new ArrayList<>();
-            functionBodies(AstReader.read(new ByteArrayInputStream(json)), expected);
-            List<Range> ranges = bodyRanges(json);
-            assertEquals(expected.size(), ranges.size(), file + ": bodies found by the scan");
-            for (int i = 0; i < ranges.size(); i++) {
-                Range range = ranges.get(i);
-                Ast alone = AstReader.read(new ByteArrayInputStream(json, (int) range.start(), (int) range.length()));
-                Ast body = expected.get(i);
-                String difference = AstTrees.firstDifference(body, alone);
-                assertNull(difference, () -> file + " body " + body + ": " + difference);
-            }
-            bodies += ranges.size();
+            Ast eager = EagerAstReader.read(new ByteArrayInputStream(json));
+            Ast lazy = AstReader.read(new ByteArrayInputStream(json));
+            String difference = AstTrees.firstDifference(eager, lazy);
+            assertNull(difference, () -> file + ": " + difference);
+            bodies += bodyRanges(json).size();
         }
-        System.out.printf("%d bodies in %d files read on their own: same trees%n", bodies, corpus.size());
+        // every body was left unread and read once by the comparison
+        assertEquals(bodies, AstTrees.bodiesRead);
+        System.out.printf("%d files: the same trees read lazily, %d bodies read through AstBody%n", corpus.size(),
+                bodies);
     }
 
     /** What a lazily read body could leave out of memory: the share of the export in bodies and doc comments. */
@@ -102,42 +101,27 @@ class AstCorpusTest {
     }
 
     /**
-     * The heap the corpus's trees take, read whole and with every outermost body left out (its range replaced by
-     * null, as reading bodies lazily would leave them): the most a lazily read body can save. Live heap after a GC
-     * with each set of trees held, so a rough number.
+     * The heap the corpus's trees take read eagerly and read as AstReader does, bodies left unread as bytes: what
+     * a lazily read body saves while the function isn't called. Live heap after a GC with each set of trees held,
+     * so a rough number.
      */
     @Test
-    void heapWithAndWithoutBodies() throws IOException {
+    void heapEagerAndLazy() throws IOException {
         long base = liveHeap();
-        List<Object> whole = new ArrayList<>();
+        List<Object> eager = new ArrayList<>();
         for (Path file : corpus) {
-            whole.add(AstReader.read(new ByteArrayInputStream(Files.readAllBytes(file))));
+            eager.add(EagerAstReader.read(new ByteArrayInputStream(Files.readAllBytes(file))));
         }
-        long wholeBytes = liveHeap() - base;
-        whole.clear();
+        long eagerBytes = liveHeap() - base;
+        eager.clear();
         base = liveHeap();
-        List<Object> withoutBodies = new ArrayList<>();
+        List<Object> lazy = new ArrayList<>();
         for (Path file : corpus) {
-            withoutBodies.add(AstReader.read(new ByteArrayInputStream(withoutBodies(Files.readAllBytes(file)))));
+            lazy.add(AstReader.read(new ByteArrayInputStream(Files.readAllBytes(file))));
         }
-        long withoutBytes = liveHeap() - base;
-        System.out.printf("trees of %d files: %.0f MB whole, %.0f MB without function bodies (%.0f%% less)%n",
-                withoutBodies.size(), wholeBytes / 1e6, withoutBytes / 1e6, 100.0 - 100.0 * withoutBytes / wholeBytes);
-    }
-
-    /** The export with each outermost function body replaced by null. */
-    private static byte[] withoutBodies(byte[] json) {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(json.length);
-        long end = 0;
-        for (Range range : bodyRanges(json)) {
-            if (range.start() >= end) {
-                out.write(json, (int) end, (int) (range.start() - end));
-                out.writeBytes("null".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-                end = range.end();
-            }
-        }
-        out.write(json, (int) end, json.length - (int) end);
-        return out.toByteArray();
+        long lazyBytes = liveHeap() - base;
+        System.out.printf("trees of %d files: %.0f MB read eagerly, %.0f MB with bodies unread (%.0f%% less)%n",
+                lazy.size(), eagerBytes / 1e6, lazyBytes / 1e6, 100.0 - 100.0 * lazyBytes / eagerBytes);
     }
 
     private static long liveHeap() {
@@ -146,22 +130,6 @@ class AstCorpusTest {
             System.gc();
         }
         return runtime.totalMemory() - runtime.freeMemory();
-    }
-
-    /** The bodies of a tree's functions, methods and closures in document order (an outer one before those in it). */
-    private static void functionBodies(Object value, List<Ast> out) {
-        if (!(value instanceof Ast node)) {
-            return;
-        }
-        if (FUNCTIONS.contains(node.kind) && node.node("stmts") != null) {
-            out.add(node.node("stmts"));
-        }
-        List<Object> list = node.listOrNull();
-        Iterable<Object> children = list != null ? list
-                : node.namedOrNull() != null ? node.namedOrNull().values() : List.of();
-        for (Object child : children) {
-            functionBodies(child, out);
-        }
     }
 
     /** The byte range of every function body in an export, in document order, found by scanning its tokens. */
