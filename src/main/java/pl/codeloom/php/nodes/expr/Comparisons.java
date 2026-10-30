@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.bytecode.ForceQuickening;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
@@ -15,7 +16,8 @@ import pl.codeloom.php.runtime.Str;
  * The comparison operators for the bytecode interpreter's operations ({@link OperationProxy}): one class per
  * operator, since a proxied node has no fields to tell `<` from `<=`. The specializations are {@link CompareNodes}'
  * and call its rules, with the same type system (an int meets a float as a float); the tree keeps CompareNodes'
- * classes (see there why).
+ * classes (see there why). The int and float specializations are {@link ForceQuickening}: without it the DSL's
+ * quickenings pair ints with floats (Less$Longs$Doubles, operands boxed), so `$i < $n` read both variables boxed.
  */
 public final class Comparisons {
     private Comparisons() {
@@ -27,6 +29,7 @@ public final class Comparisons {
     public abstract static class Identical extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a == b;
@@ -54,6 +57,7 @@ public final class Comparisons {
     public abstract static class NotIdentical extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a != b;
@@ -81,11 +85,13 @@ public final class Comparisons {
     public abstract static class Equal extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a == b;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return a == b;
@@ -114,11 +120,13 @@ public final class Comparisons {
     public abstract static class NotEqual extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a != b;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return a != b;
@@ -147,11 +155,13 @@ public final class Comparisons {
     public abstract static class Less extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a < b;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return a < b;
@@ -169,11 +179,13 @@ public final class Comparisons {
     public abstract static class LessEqual extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return a <= b;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return a <= b;
@@ -191,11 +203,13 @@ public final class Comparisons {
     public abstract static class Greater extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return b < a;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return b < a;
@@ -213,11 +227,13 @@ public final class Comparisons {
     public abstract static class GreaterEqual extends Node {
         public abstract boolean execute(Object left, Object right);
 
+        @ForceQuickening
         @Specialization
         public static boolean longs(long a, long b) {
             return b <= a;
         }
 
+        @ForceQuickening
         @Specialization
         public static boolean doubles(double a, double b) {
             return b <= a;
