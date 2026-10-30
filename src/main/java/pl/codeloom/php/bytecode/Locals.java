@@ -41,6 +41,10 @@ final class Locals {
      * UnexpectedResultException, so each such read would deoptimize. The operation goes generic instead.
      */
     static long readLong(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) throws KindMismatch {
+        if (variable.isCleared(bytecode, frame)) {
+            // unset: the frame has no value to put in the exception getLong would throw
+            throw new KindMismatch();
+        }
         try {
             return variable.getLong(bytecode, frame);
         } catch (UnexpectedResultException e) {
@@ -50,6 +54,9 @@ final class Locals {
 
     /** The variable's float, unboxed (see readLong). */
     static double readDouble(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) throws KindMismatch {
+        if (variable.isCleared(bytecode, frame)) {
+            throw new KindMismatch();
+        }
         try {
             return variable.getDouble(bytecode, frame);
         } catch (UnexpectedResultException e) {

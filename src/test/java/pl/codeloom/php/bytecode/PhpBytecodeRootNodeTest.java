@@ -11,6 +11,8 @@ import com.oracle.truffle.api.bytecode.BytecodeLocal;
 import com.oracle.truffle.api.bytecode.BytecodeParser;
 import org.graalvm.polyglot.Context;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -45,10 +47,16 @@ class PhpBytecodeRootNodeTest {
     /** A function of one parameter (variable 0) and variables more variables, built by body. */
     private static RootCallTarget function(PhpLanguage language, PhpFunction.Param param, int variables,
                                            BytecodeParser<PhpBytecodeRootNodeGen.Builder> body) {
+        return function(language, param, variables, 16, body);
+    }
+
+    /** The same, starting on the cached interpreter when uncached is 0 (php.bytecode.uncached's default). */
+    private static RootCallTarget function(PhpLanguage language, PhpFunction.Param param, int variables, int uncached,
+                                           BytecodeParser<PhpBytecodeRootNodeGen.Builder> body) {
         PhpBytecodeRootNode root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, body).getNode(0);
         root.initialize("test", "test.php", false, null, new PhpFunction.Param[] {param}, new int[] {0}, (char) 0,
                 false, variables, null);
-        root.getBytecodeNode().setUncachedThreshold(16);
+        root.getBytecodeNode().setUncachedThreshold(uncached);
         return root.getCallTarget();
     }
 
@@ -93,11 +101,15 @@ class PhpBytecodeRootNodeTest {
         });
     }
 
-    /** `$s = 0; for ($i = 0; $i < $p; $i++) { $s += $i; } return [$s, $unset];` with ints, then a float. */
-    @Test
-    void loopsOverVariables() {
+    /**
+     * `$s = 0; for ($i = 0; $i < $p; $i++) { $s += $i; } return [$s, $unset];` with ints, then a float; from the
+     * uncached interpreter and from the cached one, whose first read of $unset finds the local cleared.
+     */
+    @ParameterizedTest
+    @ValueSource(ints = {16, 0})
+    void loopsOverVariables(int uncached) {
         inContext(language -> {
-            RootCallTarget target = function(language, VALUE, 4, b -> {
+            RootCallTarget target = function(language, VALUE, 4, uncached, b -> {
                 BytecodeLocal[] v = prologue(b, 4);
                 b.beginWriteVar(v[1]);
                 b.emitLoadConstant(0L);

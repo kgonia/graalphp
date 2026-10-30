@@ -180,6 +180,12 @@ public final class BytecodeTranslator {
             for (String capture : captures) {
                 names.add(capture);
             }
+            for (String name : names) {
+                if (!plainVariable(name)) {
+                    // PHP refuses these at compile time; the tree has its own handling of the names
+                    throw new Unsupported("$" + name + " as a parameter or capture", declaration);
+                }
+            }
             collectVariables(body, names);
             for (String name : names) {
                 variables.put(name, b.createLocal(name, null));
@@ -955,6 +961,11 @@ public final class BytecodeTranslator {
     private static final int ARRAY_ELEM_REF = 1;
     private static final int PROMOTED = 7 | 128;
 
+    /** Whether a variable of this name is a local: $this, $GLOBALS and the superglobals are not. */
+    private static boolean plainVariable(String name) {
+        return !name.equals("this") && !name.equals("GLOBALS") && !PhpContext.SUPERGLOBALS.contains(name);
+    }
+
     /** The variables a body names, in the order it names them; nested functions and classes have their own. */
     private static void collectVariables(Object node, Set<String> names) {
         if (!(node instanceof Ast ast)) {
@@ -964,8 +975,7 @@ public final class BytecodeTranslator {
             case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
                 return;
             case "AST_VAR":
-                if (ast.get("name") instanceof String name && !name.equals("this") && !name.equals("GLOBALS")
-                        && !PhpContext.SUPERGLOBALS.contains(name)) {
+                if (ast.get("name") instanceof String name && plainVariable(name)) {
                     names.add(name);
                 }
                 break;
