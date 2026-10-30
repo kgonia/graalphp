@@ -3,8 +3,6 @@ package pl.codeloom.php.runtime;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
-import com.oracle.truffle.api.bytecode.BytecodeLocation;
-import com.oracle.truffle.api.bytecode.Instruction;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameInstance;
 import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
@@ -82,24 +80,8 @@ public final class Backtrace {
         }
     }
 
-    /**
-     * A frame: its root, the frame itself, and the node in it that made the call above; on bytecode, also the
-     * instruction that made it.
-     */
-    private record Level(RootNode root, Frame frame, Node call, BytecodeLocation instruction) {
-        /** The expression the call belongs to; on bytecode, the constant operand describing the call, if any. */
-        CallSite site() {
-            if (instruction != null) {
-                for (Instruction.Argument argument : instruction.getInstruction().getArguments()) {
-                    if (argument.getKind() == Instruction.Argument.Kind.CONSTANT
-                            && argument.asConstant() instanceof CallSite site) {
-                        return site;
-                    }
-                }
-                return null;
-            }
-            return callSite(call);
-        }
+    /** A frame: its root, the frame itself, and the node in it that made the call above. */
+    private record Level(RootNode root, Frame frame, Node call) {
     }
 
     /** The trace of the code running now, leaving out the innermost skip frames (debug_backtrace's own). */
@@ -108,8 +90,7 @@ public final class Backtrace {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
             levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
-                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
-                    SourceLocation.callingInstruction(frame)));
+                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode()));
             return null;
         }, skip);
         return build(levels, options, limit);
@@ -131,14 +112,12 @@ public final class Backtrace {
             if (isFrameless(levels, caller)) {
                 caller++;
             }
-            Level from = caller < levels.size() ? levels.get(caller) : null;
-            Node call = from == null ? null : from.call();
-            CallSite site = from == null ? null : from.site();
+            Node call = caller < levels.size() ? levels.get(caller).call() : null;
+            CallSite site = callSite(call);
             String inline = site == null ? null : site.inlineBuiltin(call);
             PhpArray entry = new PhpArray();
-            if (from != null && (call != null || from.instruction() != null) && inline == null
-                    && SourceLocation.isUserCode(from.root())) {
-                locate(entry, SourceLocation.ofCall(from.root(), call, from.instruction()));
+            if (call != null && inline == null && SourceLocation.isUserCode(levels.get(caller).root())) {
+                locate(entry, SourceLocation.of(call));
             }
             if (callee.describe(levels.get(i).frame(), entry, options, site)) {
                 trace.append(entry);
@@ -174,7 +153,7 @@ public final class Backtrace {
         if (index + 1 >= levels.size()) {
             return false;
         }
-        CallSite site = levels.get(index + 1).site();
+        CallSite site = callSite(levels.get(index + 1).call());
         return site != null && site.isFrameless();
     }
 

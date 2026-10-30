@@ -29,8 +29,6 @@ import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
-import java.util.function.IntFunction;
-
 /**
  * A user function's body. Binds parameters (with coercive scalar typing) and closure captures to frame slots,
  * runs the body, and on exit releases the arrays its locals held, so copy-on-write sees exact holder counts for
@@ -194,13 +192,8 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         return object;
     }
 
-    private PhpError tooFewArguments(int given) {
-        return tooFewArguments(name, params, given);
-    }
-
-    /** php-src's ArgumentCountError for a call of the function name that passed given arguments. */
     @TruffleBoundary
-    public static PhpError tooFewArguments(String name, PhpFunction.Param[] params, int given) {
+    private PhpError tooFewArguments(int given) {
         int required = 0;
         for (PhpFunction.Param param : params) {
             if (param.defaultValue() == null && !param.variadic()) {
@@ -212,7 +205,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     }
 
     /** Not a boundary: inlined into the caller, the array can be escape-analyzed away (apply_filters' ...$args). */
-    public static PhpArray collectVariadic(Object[] arguments, int from, int given, boolean byRef) {
+    private static PhpArray collectVariadic(Object[] arguments, int from, int given, boolean byRef) {
         PhpArray rest = PhpArray.ofCapacity(given - from);
         for (int i = from; i < given; i++) {
             Object value = arguments[PhpFunction.ARG_FIRST + i];
@@ -258,7 +251,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
      * Coercive typing mode (no strict_types): scalars convert to the declared scalar type where PHP would.
      * Values PHP would reject are passed through unchanged; this runtime doesn't raise TypeErrors.
      */
-    public static Object coerce(Object value, char type, boolean nullable, String what) {
+    static Object coerce(Object value, char type, boolean nullable, String what) {
         boolean scalarType = type == 's' || type == 'i' || type == 'f' || type == 'b';
         if (!scalarType || value == PhpNull.NULL || type == 's' && value instanceof TruffleString
                 || type == 'i' && value instanceof Long || type == 'f' && value instanceof Double
@@ -344,21 +337,12 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
      * arguments passed, a parameter's as its variable is now (php-src's debug_backtrace_get_args).
      */
     public void describeCall(Frame frame, PhpArray entry, int options) {
-        describeCall(name, className, params, frame.getArguments(), i -> frame.getValue(paramSlots[i]), entry,
-                options);
-    }
-
-    /**
-     * describeCall for any function's frame: its display name, the class it is declared in (or null), its
-     * parameters, the frame's arguments and the current value of the variable of parameter i (null when unset).
-     */
-    public static void describeCall(String name, String className, PhpFunction.Param[] params, Object[] arguments,
-                                    IntFunction<Object> parameter, PhpArray entry, int options) {
         String function = className != null && name.startsWith(className + "::")
                 ? name.substring(className.length() + 2) : name;
         String scope = className;
         PhpObject self = null;
         PhpArray args = new PhpArray();
+        Object[] arguments = frame.getArguments();
         if (arguments[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure) {
             scope = closure.getScope() == null ? null : closure.getScope().getName();
         }
@@ -372,7 +356,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1
                     : params.length;
             for (int i = 0; i < arguments.length - PhpFunction.ARG_FIRST; i++) {
-                Object value = i < declared ? parameter.apply(i)
+                Object value = i < declared ? frame.getValue(paramSlots[i])
                         : arguments[PhpFunction.ARG_FIRST + i];
                 value = PhpRef.deref(value);
                 args.append(value == null ? PhpNull.NULL : value);

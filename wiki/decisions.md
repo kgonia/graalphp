@@ -168,3 +168,14 @@ Requests' streams transport writes raw HTTP over `stream_socket_client` itself, 
   - TLS options the JDK can't honour (`ciphers`, client certificates). Each is documented where it's refused.
 - **Address order:** the JVM orders IPv4 first unless started with `-Djava.net.preferIPv6Addresses=system`. Every script passes that flag; the launchers don't set it yet.
 
+## D14: the parser is php-src's own grammar and scanner, run through their generators (2026-10-30)
+**Decision:** the Java parser (D5's replacement, D11's track) isn't written by hand. php-src 8.5.12's `zend_language_parser.y` goes through Bison 3.8.2's Java skeleton, and `zend_language_scanner.l` through re2c 4.6's Java backend, in a pinned toolchain image (`tools/parser/Dockerfile`). What php-src's C does around them is ported by hand under php-src's names, and php-ast's `ast_to_zval` turns php-src's tree into the `Ast` that `AstReader` reads from the JSON today, so `Translator` doesn't change. The runtime picks the source of its trees with `php.Parser`: `export` (the default for now) or `java`.
+
+**Why:**
+- **Parity by construction.** The grammar (rules, precedences, the error messages Bison words) and the scanner (~1000 DFA states: heredocs, nesting, casts, numbers) are php-src's own files. Only their C actions are rewritten, by script (`derive_parser.py`, `derive_scanner.py`), and the 17 scanner actions with C beyond php-src's macros call hand ports, each pinned by the SHA-256 of its C. A hand-written parser would be our reading of those 2700 lines.
+- **Reproducible.** `tools/parser/generate.sh` regenerates everything in the image; `--check` regenerates into a scratch copy and fails on any byte of difference. The generated Java is committed, so the build needs neither tool.
+- **Three kinds of code, each file saying which:** derived by script from php-src and php-ast (`src/main/grammar`, `parser/zend/derived`), generated (`parser/zend/generated`, with scripted splits for the JVM: javac refuses methods over 64 KB, HotSpot doesn't compile ones over 8000 bytes), and hand-written ports (`parser/zend`).
+- **Function bodies as ranges of the source text.** A body is left unparsed as its range in the file's text (`SourceBody`), which the runtime's `Source` holds anyway, and is parsed alone when the function is translated. The grammar gets the tokens `function x()` and then the scanner's from the body's `{`: no start symbol is added. Arrow functions, whose expression ends at whatever token follows it, stay parsed with their file.
+
+**Status:** [gate-2.md](gate-2.md), "Our own parser (D14)".
+

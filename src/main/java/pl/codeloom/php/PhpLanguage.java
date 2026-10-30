@@ -52,6 +52,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> SourceRoot = new OptionKey<>(".");
 
+    @Option(help = "Where a PHP file's tree comes from: export (its php-ast JSON export under AstRoot) or java (the "
+            + "file itself, parsed by the runtime's port of php-src's parser).", category = OptionCategory.USER,
+            stability = OptionStability.EXPERIMENTAL)
+    static final OptionKey<String> Parser = new OptionKey<>("export");
+
     @Option(help = "The server API: cli (php-cli) or cgi (a request from the environment and stdin, a CGI response "
             + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
@@ -65,11 +70,6 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             + "truffle_native_ns, truffle_pcre_record); PHP has none of them.", category = OptionCategory.INTERNAL,
             stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<Boolean> Debug = new OptionKey<>(false);
-
-    @Option(help = "How functions run: tree (the AST interpreter) or bytecode (the Bytecode DSL interpreter, for the "
-            + "functions it supports; the others stay on the tree).", category = OptionCategory.EXPERT,
-            stability = OptionStability.EXPERIMENTAL)
-    static final OptionKey<String> Interpreter = new OptionKey<>("tree");
 
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 
@@ -171,17 +171,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return table;
     }
 
-    /** Set by the first context: options are the same for every context of the language (areOptionsCompatible). */
-    private volatile boolean bytecode;
-
-    /** Whether functions the bytecode translator supports run on bytecode (php.Interpreter=bytecode). */
-    public boolean bytecode() {
-        return bytecode;
-    }
-
     @Override
     protected PhpContext createContext(Env env) {
-        bytecode = env.getOptions().get(Interpreter).equals("bytecode");
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
                 env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
                 iniSettings(env.getOptions().get(Ini)));
@@ -283,13 +274,13 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));
     }
 
-    /** Contexts share translated files only when they read the same AST exports. */
+    /** Contexts share translated files only when they read the same AST exports, or parse the files alike. */
     @Override
     protected boolean areOptionsCompatible(OptionValues firstOptions, OptionValues newOptions) {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
+                && firstOptions.get(Parser).equals(newOptions.get(Parser))
                 && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
-                && firstOptions.get(Debug).equals(newOptions.get(Debug))
-                && firstOptions.get(Interpreter).equals(newOptions.get(Interpreter));
+                && firstOptions.get(Debug).equals(newOptions.get(Debug));
     }
 
     @Override

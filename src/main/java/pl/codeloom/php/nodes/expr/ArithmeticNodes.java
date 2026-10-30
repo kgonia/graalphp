@@ -53,187 +53,176 @@ public final class ArithmeticNodes {
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class SubNode extends BinaryNode {
         /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
         @Specialization(rewriteOn = ArithmeticException.class)
-        public static long subExact(long a, long b) {
+        protected long subExact(long a, long b) {
             return Math.subtractExact(a, b);
         }
 
         @Specialization(replaces = "subExact")
-        public static Object sub(long a, long b) {
+        protected Object sub(long a, long b) {
             return Operators.subLongs(a, b);
         }
 
         @Specialization
-        public static double sub(double a, double b) {
+        protected double sub(double a, double b) {
             return a - b;
         }
 
         @Fallback
-        public static Object sub(Object a, Object b, @Bind Node node) {
-            return Operators.sub(node, a, b);
+        protected Object sub(Object a, Object b) {
+            return Operators.sub(this, a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class MulNode extends BinaryNode {
         /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
         @Specialization(rewriteOn = ArithmeticException.class)
-        public static long mulExact(long a, long b) {
+        protected long mulExact(long a, long b) {
             return Math.multiplyExact(a, b);
         }
 
         @Specialization(replaces = "mulExact")
-        public static Object mul(long a, long b) {
+        protected Object mul(long a, long b) {
             return Operators.mulLongs(a, b);
         }
 
         @Specialization
-        public static double mul(double a, double b) {
+        protected double mul(double a, double b) {
             return a * b;
         }
 
         @Fallback
-        public static Object mul(Object a, Object b, @Bind Node node) {
-            return Operators.mul(node, a, b);
+        protected Object mul(Object a, Object b) {
+            return Operators.mul(this, a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class DivNode extends BinaryNode {
         @Specialization
-        public static Object div(long a, long b) {
+        protected Object div(long a, long b) {
             return Operators.divLongs(a, b);
         }
 
         @Specialization(guards = "isNonZero(b)")
-        public static double div(double a, double b) {
+        protected double div(double a, double b) {
             return a / b;
         }
 
-        public static boolean isNonZero(double b) {
+        protected static boolean isNonZero(double b) {
             return b != 0;
         }
 
         @Fallback
-        public static Object div(Object a, Object b, @Bind Node node) {
-            return Operators.div(node, a, b);
+        protected Object div(Object a, Object b) {
+            return Operators.div(this, a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ModNode extends BinaryNode {
         @Specialization
-        public static long mod(long a, long b) {
+        protected long mod(long a, long b) {
             return Operators.modLongs(a, b);
         }
 
         @Fallback
-        public static long mod(Object a, Object b, @Bind Node node) {
-            return Operators.mod(node, a, b);
+        protected long mod(Object a, Object b) {
+            return Operators.mod(this, a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class PowNode extends BinaryNode {
         @Specialization
-        public static Object pow(Object a, Object b, @Bind Node node) {
-            return Operators.pow(node, a, b);
+        protected Object pow(Object a, Object b) {
+            return Operators.pow(this, a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class BitAndNode extends BinaryNode {
         @Specialization
-        public static long and(long a, long b) {
+        protected long and(long a, long b) {
             return a & b;
         }
 
         @Fallback
-        public static Object and(Object a, Object b, @Bind Node node) {
-            return Operators.bitwise(node, "&", a, b);
+        protected Object and(Object a, Object b) {
+            return Operators.bitwise(this, "&", a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class BitOrNode extends BinaryNode {
         @Specialization
-        public static long or(long a, long b) {
+        protected long or(long a, long b) {
             return a | b;
         }
 
         @Fallback
-        public static Object or(Object a, Object b, @Bind Node node) {
-            return Operators.bitwise(node, "|", a, b);
+        protected Object or(Object a, Object b) {
+            return Operators.bitwise(this, "|", a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class BitXorNode extends BinaryNode {
         @Specialization
-        public static long xor(long a, long b) {
+        protected long xor(long a, long b) {
             return a ^ b;
         }
 
         @Fallback
-        public static Object xor(Object a, Object b, @Bind Node node) {
-            return Operators.bitwise(node, "^", a, b);
+        protected Object xor(Object a, Object b) {
+            return Operators.bitwise(this, "^", a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ShiftLeftNode extends BinaryNode {
         @Specialization
-        public static long shift(long a, long b) {
+        protected long shift(long a, long b) {
             return Operators.shiftLeft(a, b);
         }
 
         @Fallback
-        public static long shift(Object a, Object b, @Bind Node node) {
-            return Operators.shift(node, "<<", a, b);
+        protected long shift(Object a, Object b) {
+            return Operators.shift(this, "<<", a, b);
         }
     }
 
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ShiftRightNode extends BinaryNode {
         @Specialization
-        public static long shift(long a, long b) {
+        protected long shift(long a, long b) {
             return Operators.shiftRight(a, b);
         }
 
         @Fallback
-        public static long shift(Object a, Object b, @Bind Node node) {
-            return Operators.shift(node, ">>", a, b);
+        protected long shift(Object a, Object b) {
+            return Operators.shift(this, ">>", a, b);
         }
     }
 
     /** `.`: lazy concatenation (a rope until someone reads the bytes), with int operands formatted directly. */
-    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ConcatNode extends BinaryNode {
         @Specialization
-        public static TruffleString concat(TruffleString a, TruffleString b,
+        protected TruffleString concat(TruffleString a, TruffleString b,
                                        @Cached TruffleString.ConcatNode concat) {
             return concat.execute(a, b, Str.ENC, true);
         }
 
         @Specialization
-        public static TruffleString concat(TruffleString a, long b,
+        protected TruffleString concat(TruffleString a, long b,
                                        @Cached TruffleString.FromLongNode fromLong,
                                        @Cached TruffleString.ConcatNode concat) {
             return concat.execute(a, fromLong.execute(b, Str.ENC, false), Str.ENC, true);
         }
 
         @Specialization
-        public static TruffleString concat(long a, TruffleString b,
+        protected TruffleString concat(long a, TruffleString b,
                                        @Cached TruffleString.FromLongNode fromLong,
                                        @Cached TruffleString.ConcatNode concat) {
             return concat.execute(fromLong.execute(a, Str.ENC, false), b, Str.ENC, true);
         }
 
         @Fallback
-        public static TruffleString concat(Object a, Object b) {
+        protected TruffleString concat(Object a, Object b) {
             return Str.concat(Convert.toStr(a), Convert.toStr(b));
         }
     }
