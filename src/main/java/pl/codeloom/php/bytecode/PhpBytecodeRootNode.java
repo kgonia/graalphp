@@ -41,6 +41,7 @@ import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.expr.ArithmeticNodes;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.CompareNodes;
+import pl.codeloom.php.nodes.expr.Comparisons;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
@@ -65,10 +66,11 @@ import pl.codeloom.php.runtime.Str;
 /**
  * A PHP function body as Truffle Bytecode DSL bytecode ({@link BytecodeTranslator} builds it), beside the tree's
  * {@link FunctionRootNode}: the same calling convention ({@link PhpFunction}), so either calls the other.
- * Operators, comparisons and element reads are the tree's own nodes ({@link OperationProxy}). PHP variables are
- * bytecode locals, read and written by this class's operations through {@link LocalAccessor}s by the tree's
- * rules ({@link Variables}); they come first, so the epilogs release them by offset. Control flow is the builder's
- * (blocks, loops, branches to labels, Return).
+ * Operators, truthiness and element reads are the tree's own nodes ({@link OperationProxy}), comparisons
+ * {@link Comparisons}' (one class per operator, over the tree's rules). PHP variables are bytecode locals, read
+ * and written by this class's operations through {@link LocalAccessor}s by the tree's rules ({@link Variables});
+ * they come first, so the epilogs release them by offset. Control flow is the builder's (blocks, loops, branches
+ * to labels, Return).
  *
  * <p>Booleans are not unboxed: a short circuit's result (`&&`) reached a consumer unboxed on one path and boxed on
  * the other, which deoptimized compiled code at every change of path; Boolean values are shared instances anyway.
@@ -89,14 +91,14 @@ import pl.codeloom.php.runtime.Str;
 @OperationProxy(value = ArithmeticNodes.ShiftLeftNode.class, name = "ShiftLeft")
 @OperationProxy(value = ArithmeticNodes.ShiftRightNode.class, name = "ShiftRight")
 @OperationProxy(value = ArithmeticNodes.ConcatNode.class, name = "Concat")
-@OperationProxy(value = CompareNodes.IdenticalNode.class, name = "Identical")
-@OperationProxy(value = CompareNodes.NotIdenticalNode.class, name = "NotIdentical")
-@OperationProxy(value = CompareNodes.EqualNode.class, name = "Equal")
-@OperationProxy(value = CompareNodes.NotEqualNode.class, name = "NotEqual")
-@OperationProxy(value = CompareNodes.LessNode.class, name = "Less")
-@OperationProxy(value = CompareNodes.LessEqualNode.class, name = "LessEqual")
-@OperationProxy(value = CompareNodes.GreaterNode.class, name = "Greater")
-@OperationProxy(value = CompareNodes.GreaterEqualNode.class, name = "GreaterEqual")
+@OperationProxy(value = Comparisons.Identical.class, name = "Identical")
+@OperationProxy(value = Comparisons.NotIdentical.class, name = "NotIdentical")
+@OperationProxy(value = Comparisons.Equal.class, name = "Equal")
+@OperationProxy(value = Comparisons.NotEqual.class, name = "NotEqual")
+@OperationProxy(value = Comparisons.Less.class, name = "Less")
+@OperationProxy(value = Comparisons.LessEqual.class, name = "LessEqual")
+@OperationProxy(value = Comparisons.Greater.class, name = "Greater")
+@OperationProxy(value = Comparisons.GreaterEqual.class, name = "GreaterEqual")
 @OperationProxy(value = CompareNodes.SpaceshipNode.class, name = "Spaceship")
 @OperationProxy(value = UnaryNodes.NegateNode.class, name = "Negate")
 @OperationProxy(value = UnaryNodes.PlusNode.class, name = "Plus")
