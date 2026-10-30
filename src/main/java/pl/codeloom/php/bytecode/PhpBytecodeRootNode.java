@@ -111,8 +111,14 @@ import pl.codeloom.php.runtime.Str;
         booleanConverter = ToBooleanNode.class)
 public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRootNode, SourceLocation.Code,
         Backtrace.Callee {
-    /** Calls and back-edges a function runs uncached before it specializes (php.bytecode.uncached, default 16). */
-    static final int UNCACHED_THRESHOLD = Integer.getInteger("php.bytecode.uncached", 16);
+    /**
+     * Calls and back-edges a function runs on the uncached interpreter before it specializes (php.bytecode.uncached).
+     * The default, 0, specializes from the first call: Truffle 25.0.4 moves to the cached interpreter at a back-edge
+     * by re-storing every local, and a local not assigned yet (cleared) takes the Object kind for good, so the ints
+     * and floats it holds later stay boxed and its reads and writes generic. Upstream Truffle no longer re-stores;
+     * then a threshold spares the cached nodes of functions that run only a few times.
+     */
+    static final int UNCACHED_THRESHOLD = Integer.getInteger("php.bytecode.uncached", 0);
 
     @CompilationFinal private String name;
     @CompilationFinal private String path;
@@ -380,8 +386,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /**
      * `$x op= value` (CompoundAssignNode on a LocalVarNode): the value is evaluated first, then the variable read.
-     * Ints and floats have unboxed specializations, which compute what {@link AssignNodes.CompoundAssignNode#apply}
-     * does for them; `.=` converts the variable's content first, then the value.
+     * An int variable with an int operand and a float variable with a float operand have unboxed specializations,
+     * which compute what {@link AssignNodes.CompoundAssignNode#apply} does for them (mixed kinds go generic);
+     * `.=` converts the variable's content first, then the value.
      */
     @Operation
     @ConstantOperand(type = LocalAccessor.class)
@@ -425,7 +432,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "isFloatOperator(op)", rewriteOn = Locals.KindMismatch.class)
         public static double doubles(VirtualFrame frame, LocalAccessor variable, int op, double operand,
                                      @Bind BytecodeNode bytecode, @Bind Node node) throws Locals.KindMismatch {
-            double current = Locals.readNumber(frame, variable, bytecode);
+            double current = Locals.readDouble(frame, variable, bytecode);
             if (op == 4 && operand == 0) {
                 Operators.div(node, current, operand); // throws DivisionByZeroError
             }

@@ -20,8 +20,9 @@ import pl.codeloom.php.runtime.PhpRef;
 import java.util.function.Consumer;
 
 /**
- * The bytecode root's operations, built by hand as BytecodeTranslator emits them. Each case runs past the uncached
- * interpreter's threshold, so both tiers (and the move between them, also in the middle of a loop) are covered.
+ * The bytecode root's operations, built by hand as BytecodeTranslator emits them. The roots start on the uncached
+ * interpreter (threshold 16, which php.bytecode.uncached leaves at 0) and each case runs past it, so both tiers (and
+ * the move between them, also in the middle of a loop) are covered.
  */
 class PhpBytecodeRootNodeTest {
     private static final PhpFunction.Param VALUE = new PhpFunction.Param("p", false, false, null, (char) 0, false);
@@ -47,6 +48,7 @@ class PhpBytecodeRootNodeTest {
         PhpBytecodeRootNode root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, body).getNode(0);
         root.initialize("test", "test.php", false, null, new PhpFunction.Param[] {param}, new int[] {0}, (char) 0,
                 false, variables, null);
+        root.getBytecodeNode().setUncachedThreshold(16);
         return root.getCallTarget();
     }
 
@@ -80,6 +82,7 @@ class PhpBytecodeRootNodeTest {
                 b.endReturn();
                 b.endRoot();
             }).getNode(0);
+            root.getBytecodeNode().setUncachedThreshold(16);
             RootCallTarget target = root.getCallTarget();
             assertEquals(5L, target.call((Object) null, null, null, 2L, 3L));
             assertEquals(Long.MAX_VALUE + 1.0, target.call((Object) null, null, null, Long.MAX_VALUE, 1L));

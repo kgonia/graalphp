@@ -35,45 +35,32 @@ final class Locals {
     }
 
     /**
-     * The variable's int. A boxed one counts: the uncached interpreter stores every value boxed, and a call that
-     * moves to the cached interpreter in a loop finds them there until it writes them again.
+     * The variable's int, unboxed. Anything else is a mismatch, also an int the local keeps boxed (the uncached
+     * interpreter stores every value boxed; a local whose kind generalized to Object boxes ints as well): accepting
+     * it would leave the specialization in place, and compiled code doesn't compile the catch of
+     * UnexpectedResultException, so each such read would deoptimize. The operation goes generic instead.
      */
     static long readLong(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) throws KindMismatch {
         try {
             return variable.getLong(bytecode, frame);
         } catch (UnexpectedResultException e) {
-            if (e.getResult() instanceof Long boxed) {
-                return boxed;
-            }
             throw new KindMismatch();
         }
     }
 
-    /** The variable's float, boxed or not (see readLong). */
+    /** The variable's float, unboxed (see readLong). */
     static double readDouble(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) throws KindMismatch {
         try {
             return variable.getDouble(bytecode, frame);
         } catch (UnexpectedResultException e) {
-            if (e.getResult() instanceof Double boxed) {
-                return boxed;
-            }
             throw new KindMismatch();
         }
     }
 
-    /** A float operand's other side: the variable's float, or its int widened. */
-    static double readNumber(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) throws KindMismatch {
-        try {
-            return variable.getDouble(bytecode, frame);
-        } catch (UnexpectedResultException notDouble) {
-            if (notDouble.getResult() instanceof Double boxed) {
-                return boxed;
-            }
-            return readLong(frame, variable, bytecode);
-        }
-    }
-
-    /** A foreach's next position, kept in a hidden local as an int (boxed when the uncached tier stored it). */
+    /**
+     * A foreach's next position, kept in a hidden local as an int. Only the uncached tier finds it boxed (the cached
+     * tier's move re-stores the locals, unboxing it), and the uncached tier is never compiled.
+     */
     static int position(VirtualFrame frame, LocalAccessor position, BytecodeNode bytecode) {
         try {
             return (int) position.getLong(bytecode, frame);
