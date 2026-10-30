@@ -52,6 +52,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> SourceRoot = new OptionKey<>(".");
 
+    @Option(help = "Where a PHP file's tree comes from: export (its php-ast JSON export under AstRoot) or java (the "
+            + "file itself, parsed by the runtime's port of php-src's parser).", category = OptionCategory.USER,
+            stability = OptionStability.EXPERIMENTAL)
+    static final OptionKey<String> Parser = new OptionKey<>("export");
+
     @Option(help = "The server API: cli (php-cli) or cgi (a request from the environment and stdin, a CGI response "
             + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
@@ -269,10 +274,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));
     }
 
-    /** Contexts share translated files only when they read the same AST exports. */
+    /** Contexts share translated files only when they read the same AST exports, or parse the files alike. */
     @Override
     protected boolean areOptionsCompatible(OptionValues firstOptions, OptionValues newOptions) {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
+                && firstOptions.get(Parser).equals(newOptions.get(Parser))
                 && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
                 && firstOptions.get(Debug).equals(newOptions.get(Debug));
     }

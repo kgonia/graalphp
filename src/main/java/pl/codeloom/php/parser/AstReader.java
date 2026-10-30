@@ -124,10 +124,10 @@ public final class AstReader {
     }
 
     /** Skips the body at the current token, leaving its byte range. */
-    private AstBody body() throws IOException {
+    private ExportBody body() throws IOException {
         int start = base + (int) parser.currentTokenLocation().getByteOffset();
         parser.skipChildren();
         int end = base + (int) parser.currentLocation().getByteOffset();
-        return new AstBody(json, start, end - start);
+        return new ExportBody(json, start, end - start);
     }
 }

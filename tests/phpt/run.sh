@@ -3,6 +3,7 @@
 # extract the tests from the reference image's source tarball, run each on PHP (the oracle) and on the Truffle
 # PHP (one JVM, a fresh context per test), compare stdout. Report: target/phpt/report.txt, failures.txt.
 # Usage: tests/phpt/run.sh [--reuse-oracle]    (build first; ~15 min, the oracle about 6 of them)
+# JAVA_OPTS reaches the Truffle PHP's JVM (-Dpolyglot.php.Interpreter=bytecode).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -28,9 +29,9 @@ rm -rf "$dir/actual" "$dir/batch.log" && mkdir -p "$dir/actual"
 status=3
 while [ $status -eq 3 ]; do
     status=0
-    MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} -v "$root:/w" -w /w gate1-truffle:8.5 sh -c \
+    MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} -v "$root:/w" -w /w gate1-truffle:8.5 sh -c \
         '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
-         $JAVA_OPTS_BASE -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false -cp "target/classes:target/lib/*" \
+         $JAVA_OPTS_BASE $JAVA_OPTS -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false -cp "target/classes:target/lib/*" \
          pl.codeloom.php.launcher.BatchMain --ast-root=target/ast --list='"$dir"'/run-list.txt \
          --out='"$dir"'/actual --timeout=10' >> "$dir/batch.log" 2>&1 || status=$?
 done

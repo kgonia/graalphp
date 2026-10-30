@@ -72,6 +72,8 @@ public final class Ini {
         directives.put("post_max_size", new Directive("8M", SYSTEM | PERDIR));
         directives.put("sendmail_from", new Directive(null, ALL));
         directives.put("sendmail_path", new Directive("/usr/sbin/sendmail -t -i", SYSTEM));
+        // zend.c's: CG(short_tags), which the parser (php.Parser=java) reads
+        directives.put("short_open_tag", new Directive("1", SYSTEM | PERDIR));
         directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
@@ -100,6 +102,7 @@ public final class Ini {
     private String argSeparatorOutput;
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
+    private boolean shortOpenTag;
     /** The warning the last OnUpdate handler raised (zend_ini_parse_quantity_warn's), for ini_set() to report. */
     private String updateWarning;
 
@@ -175,6 +178,7 @@ public final class Ini {
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
+            case "short_open_tag" -> shortOpenTag = bool(value);
             case "upload_tmp_dir" -> {
                 if (value != null && value.isEmpty()) {
                     return false; // OnUpdateStringUnempty
@@ -259,6 +263,11 @@ public final class Ini {
 
     public long defaultSocketTimeout() {
         return defaultSocketTimeout;
+    }
+
+    /** short_open_tag: whether "<?" opens PHP code. */
+    public boolean shortOpenTag() {
+        return shortOpenTag;
     }
 
     /**

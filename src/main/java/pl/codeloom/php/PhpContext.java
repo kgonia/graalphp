@@ -47,6 +47,8 @@ public final class PhpContext {
     private final TruffleLanguage.Env env;
     private final Path astRoot;
     private final Path sourceRoot;
+    /** php.Parser=java: files are parsed by the runtime's parser ({@link SourceFiles}), not read from exports. */
+    private final boolean javaParser;
     private final OutputStream out;
 
     /** The declared functions by lowercase name, in declaration order, as php-src's function table. */
@@ -93,6 +95,7 @@ public final class PhpContext {
         this.env = env;
         this.astRoot = Path.of(astRoot).toAbsolutePath().normalize();
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
+        this.javaParser = parser(env.getOptions().get(PhpLanguage.Parser));
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
         Builtins.install(this, language.builtins(debug));
         internalFunctions = functions.size();
@@ -109,6 +112,13 @@ public final class PhpContext {
         if (cgi) {
             pl.codeloom.php.builtins.CgiSapi.installRequest(this, env.getEnvironment(), requestBody);
         }
+    }
+
+    private static boolean parser(String option) {
+        if (!option.equals("export") && !option.equals("java")) {
+            throw new IllegalArgumentException("php.Parser is export or java, not " + option);
+        }
+        return option.equals("java");
     }
 
     private static byte[] readRequestBody(TruffleLanguage.Env env) {
@@ -223,11 +233,15 @@ public final class PhpContext {
     /**
      * The translated top-level code of a PHP file. Translations are language-level: the first context to load a
      * file reads its AST export and translates it, and every context shares the result until the export
-     * changes (checked at each load, as opcache's timestamp validation).
+     * changes (checked at each load, as opcache's timestamp validation). With php.Parser=java the file itself is
+     * parsed, and it is the file's changes that count ({@link SourceFiles}).
      */
     @TruffleBoundary
     public FileRootNode loadFile(String path) {
         String canonical = canonicalPath(path);
+        if (javaParser) {
+            return SourceFiles.load(this, path, canonical);
+        }
         Path relative = sourceRoot.relativize(Path.of(canonical));
         Path json = astRoot.resolve(relative.toString() + ".json");
         TruffleFile file = env.getPublicTruffleFile(json.toString());
