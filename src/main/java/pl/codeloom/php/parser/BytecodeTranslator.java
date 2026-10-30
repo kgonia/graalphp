@@ -6,11 +6,14 @@ import com.oracle.truffle.api.bytecode.BytecodeLabel;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
 import com.oracle.truffle.api.bytecode.BytecodeParser;
 import com.oracle.truffle.api.bytecode.BytecodeRootNodes;
+import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.bytecode.CallInfo;
+import pl.codeloom.php.bytecode.LiteralSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.nodes.intrinsics.Intrinsics;
@@ -29,6 +32,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Translates a function's body into Bytecode DSL bytecode ({@link PhpBytecodeRootNode}), for the constructs it
@@ -73,7 +77,11 @@ public final class BytecodeTranslator {
     private Ast firstBody;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
     private final List<Object> made = new ArrayList<>();
-    private int variableCount = -1;
+    /** The variables' locals, made by the first run (later runs number them alike). */
+    private LocalAccessor[] variableLocals;
+    /** The foreach loops' state locals, as the first run met them. */
+    private final List<LocalAccessor> foreachStates = new ArrayList<>();
+    private boolean firstRun = true;
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
                                Ast body, Translator.ClassInfo owner, PhpFunction function, String display,
@@ -118,7 +126,8 @@ public final class BytecodeTranslator {
         }
         Ast returnType = declaration.node("returnType");
         root.initialize(display, path, internal, translator.functionSection(), params, parameterLocals,
-                Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableCount,
+                Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
+                translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         report("bytecode " + display);
         if (display.equals(DUMP)) {
@@ -133,7 +142,7 @@ public final class BytecodeTranslator {
         }
     }
 
-    private com.oracle.truffle.api.source.SourceSection functionSection() {
+    private SourceSection functionSection() {
         int line = declaration.line;
         return source == null || line < 1 || line > source.getLineCount() ? null : source.createSection(line);
     }
@@ -143,6 +152,7 @@ public final class BytecodeTranslator {
         Ast body = firstBody != null ? firstBody : declaration.body();
         firstBody = null;
         new Run(builder).root(body);
+        firstRun = false;
     }
 
     /** The state of one run: the builder, the locals, the loops around the code being emitted. */
@@ -187,11 +197,14 @@ public final class BytecodeTranslator {
                 }
             }
             collectVariables(body, names);
+            List<LocalAccessor> locals = new ArrayList<>();
             for (String name : names) {
-                variables.put(name, b.createLocal(name, null));
+                BytecodeLocal local = b.createLocal(name, null);
+                variables.put(name, local);
+                locals.add(LocalAccessor.constantOf(local));
             }
-            if (variableCount < 0) {
-                variableCount = names.size();
+            if (variableLocals == null) {
+                variableLocals = locals.toArray(new LocalAccessor[0]);
             }
             if (source != null) {
                 b.beginSource(source);
@@ -477,6 +490,9 @@ public final class BytecodeTranslator {
             b.beginBlock();
             BytecodeLocal state = b.createLocal();
             BytecodeLocal position = b.createLocal();
+            if (firstRun) {
+                foreachStates.add(LocalAccessor.constantOf(state));
+            }
             b.beginForeachStart(state, position);
             expression(node.get("expr"));
             b.endForeachStart();
@@ -751,20 +767,30 @@ public final class BytecodeTranslator {
             if (keyed && unkeyed) {
                 throw new Unsupported("array with keyed and unkeyed elements", node);
             }
-            if (keyed) {
-                b.beginMakeArray();
-                for (Object child : node.children()) {
-                    expression(((Ast) child).get("key"));
-                    expression(((Ast) child).get("value"));
+            List<Object> elements = node.children();
+            LiteralSite site = (LiteralSite) made(() -> new LiteralSite(elements.size()));
+            // LiteralEnd(Literal...(Literal...(LiteralStart, e1), e2)...): each element goes in as it is evaluated
+            b.beginLiteralEnd(site);
+            for (int i = 0; i < elements.size(); i++) {
+                if (keyed) {
+                    b.beginLiteralPut();
+                } else {
+                    b.beginLiteralAppend();
                 }
-                b.endMakeArray();
-            } else {
-                b.beginMakeList();
-                for (Object child : node.children()) {
-                    expression(((Ast) child).get("value"));
-                }
-                b.endMakeList();
             }
+            b.emitLiteralStart(site);
+            for (Object child : elements) {
+                Ast element = (Ast) child;
+                if (keyed) {
+                    expression(element.get("key"));
+                    expression(element.get("value"));
+                    b.endLiteralPut();
+                } else {
+                    expression(element.get("value"));
+                    b.endLiteralAppend();
+                }
+            }
+            b.endLiteralEnd();
         }
 
         // ---- calls ----
@@ -940,7 +966,7 @@ public final class BytecodeTranslator {
         }
 
         /** The object the first run made at this point of the body; made now on the first run. */
-        private Object made(java.util.function.Supplier<Object> make) {
+        private Object made(Supplier<Object> make) {
             Object object;
             if (madeIndex < made.size()) {
                 object = made.get(madeIndex);

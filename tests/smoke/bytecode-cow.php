@@ -80,6 +80,14 @@ function element($x) {
     return $x;
 }
 
+function literal($s) {
+    // each element goes into the array as it is evaluated: [$a, ...] holds $a before $a[] = 2 runs
+    $a = [$s];
+    $b = [$a, $a[] = 2];
+    $c = ['k' => $a, 'l' => $a[] = 3];
+    show('literal', [count($b[0]), $b, count($c['k']), $a]);
+}
+
 function returned() {
     $a = [1];
     $r = $a;
@@ -132,12 +140,14 @@ selfAssign();
 calls();
 element(1);
 returns();
+literal(1);
 loops();
 fromTree();
 for ($i = 0; $i < 20; $i++) {
     // enough calls for the cached interpreter and compilation
     copies();
     calls();
+    literal(1);
     loops();
 }
 echo "done\n";

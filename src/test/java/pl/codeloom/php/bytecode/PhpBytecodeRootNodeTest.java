@@ -9,7 +9,10 @@ import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
 import com.oracle.truffle.api.bytecode.BytecodeLocal;
 import com.oracle.truffle.api.bytecode.BytecodeParser;
+import com.oracle.truffle.api.bytecode.LocalAccessor;
+import com.oracle.truffle.runtime.OptimizedCallTarget;
 import org.graalvm.polyglot.Context;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -55,10 +58,13 @@ class PhpBytecodeRootNodeTest {
                                            BytecodeParser<PhpBytecodeRootNodeGen.Builder> body) {
         PhpBytecodeRootNode root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, body).getNode(0);
         root.initialize("test", "test.php", false, null, new PhpFunction.Param[] {param}, new int[] {0}, (char) 0,
-                false, variables, null);
+                false, lastVariables, new LocalAccessor[0], null);
         root.getBytecodeNode().setUncachedThreshold(uncached);
         return root.getCallTarget();
     }
+
+    /** The variables prologue made last (the parser runs inside create, so they come back this way). */
+    private static LocalAccessor[] lastVariables;
 
     private static Object call(RootCallTarget target, Object argument) {
         return target.call((Object) null, null, null, argument);
@@ -68,13 +74,30 @@ class PhpBytecodeRootNodeTest {
     private static BytecodeLocal[] prologue(PhpBytecodeRootNodeGen.Builder b, int variables) {
         b.beginRoot();
         BytecodeLocal[] locals = new BytecodeLocal[variables];
+        lastVariables = new LocalAccessor[variables];
         for (int i = 0; i < variables; i++) {
             locals[i] = b.createLocal("v" + i, null);
+            lastVariables[i] = LocalAccessor.constantOf(locals[i]);
         }
         b.beginBindParameter(locals[0], 0);
         b.emitArgument(0);
         b.endBindParameter();
         return locals;
+    }
+
+    /** `[e1, e2, ...]` as BytecodeTranslator emits it: each element appended as soon as it is evaluated. */
+    private static void list(PhpBytecodeRootNodeGen.Builder b, Runnable... elements) {
+        LiteralSite site = new LiteralSite(elements.length);
+        b.beginLiteralEnd(site);
+        for (int i = 0; i < elements.length; i++) {
+            b.beginLiteralAppend();
+        }
+        b.emitLiteralStart(site);
+        for (Runnable element : elements) {
+            element.run();
+            b.endLiteralAppend();
+        }
+        b.endLiteralEnd();
     }
 
     @Test
@@ -90,6 +113,8 @@ class PhpBytecodeRootNodeTest {
                 b.endReturn();
                 b.endRoot();
             }).getNode(0);
+            root.initialize("test", "test.php", false, null, new PhpFunction.Param[0], new int[0], (char) 0, false,
+                    new LocalAccessor[0], new LocalAccessor[0], null);
             root.getBytecodeNode().setUncachedThreshold(16);
             RootCallTarget target = root.getCallTarget();
             assertEquals(5L, target.call((Object) null, null, null, 2L, 3L));
@@ -130,10 +155,7 @@ class PhpBytecodeRootNodeTest {
                 b.endBlock();
                 b.endWhile();
                 b.beginReturn();
-                b.beginMakeList();
-                b.emitReadVar(v[1]);
-                b.emitReadVar(v[3]);
-                b.endMakeList();
+                list(b, () -> b.emitReadVar(v[1]), () -> b.emitReadVar(v[3]));
                 b.endReturn();
                 b.endRoot();
             });
@@ -161,13 +183,12 @@ class PhpBytecodeRootNodeTest {
                 b.emitLoadConstant(0L);
                 b.endWriteElement();
                 b.beginReturn();
-                b.beginMakeList();
-                b.beginReadElement();
-                b.emitReadVar(v[0]);
-                b.emitLoadConstant(0L);
-                b.endReadElement();
-                b.emitReadVar(v[1]);
-                b.endMakeList();
+                list(b, () -> {
+                    b.beginReadElement();
+                    b.emitReadVar(v[0]);
+                    b.emitLoadConstant(0L);
+                    b.endReadElement();
+                }, () -> b.emitReadVar(v[1]));
                 b.endReturn();
                 b.endRoot();
             });
@@ -250,10 +271,7 @@ class PhpBytecodeRootNodeTest {
                 b.endWhile();
                 b.endTryFinally();
                 b.beginReturn();
-                b.beginMakeList();
-                b.emitReadVar(v[0]);
-                b.emitReadVar(v[1]);
-                b.endMakeList();
+                list(b, () -> b.emitReadVar(v[0]), () -> b.emitReadVar(v[1]));
                 b.endReturn();
                 b.endRoot();
             });
@@ -268,5 +286,58 @@ class PhpBytecodeRootNodeTest {
             assertEquals("k", result.get(1L).toString());
             assertTrue(((PhpArray) result.get(0L)).size() == 2);
         });
+    }
+
+    /**
+     * `function f($p) { if ($p > 0) { $k = 1; return $k; } return 0; }`, compiled: a call that leaves $k unset
+     * (the local's kind is Long by then) returns through the epilog without deoptimizing the compiled code.
+     */
+    @Test
+    void compiledReturnLeavesAnUnsetVariableAlone() {
+        Context.Builder builder = Context.newBuilder(PhpLanguage.ID).allowExperimentalOptions(true)
+                .option("engine.BackgroundCompilation", "false");
+        try (Context context = builder.build()) {
+            context.initialize(PhpLanguage.ID);
+            context.enter();
+            try {
+                RootCallTarget target = function(PhpLanguage.get(null), VALUE, 2, 0, b -> {
+                    BytecodeLocal[] v = prologue(b, 2);
+                    b.beginIfThen();
+                    b.beginGreater();
+                    b.emitReadVar(v[0]);
+                    b.emitLoadConstant(0L);
+                    b.endGreater();
+                    b.beginBlock();
+                    b.beginWriteVar(v[1]);
+                    b.emitLoadConstant(1L);
+                    b.endWriteVar();
+                    b.beginReturn();
+                    b.emitReadVar(v[1]);
+                    b.endReturn();
+                    b.endBlock();
+                    b.endIfThen();
+                    b.beginReturn();
+                    b.emitLoadConstant(0L);
+                    b.endReturn();
+                    b.endRoot();
+                });
+                Assumptions.assumeTrue(target instanceof OptimizedCallTarget, "no optimizing runtime");
+                OptimizedCallTarget compiled = (OptimizedCallTarget) target;
+                // both branches profiled in the interpreter, and $k's kind is Long
+                for (int i = 0; i < 20; i++) {
+                    assertEquals(1L, call(target, 1L));
+                    assertEquals(0L, call(target, 0L));
+                }
+                compiled.compile(true);
+                assertTrue(compiled.isValid(), "compiled");
+                for (int i = 0; i < 3; i++) {
+                    assertEquals(0L, call(target, 0L));
+                    assertTrue(compiled.isValid(), "a call leaving $k unset kept the compiled code");
+                    assertEquals(1L, call(target, 1L));
+                }
+            } finally {
+                context.leave();
+            }
+        }
     }
 }

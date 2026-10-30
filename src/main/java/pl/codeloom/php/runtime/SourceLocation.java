@@ -61,7 +61,11 @@ public record SourceLocation(String file, int line) {
         return new SourceLocation(((Code) root).getPath(), line);
     }
 
-    /** An instruction of a function on bytecode: the innermost statement around it; for the prelude's, current(). */
+    /**
+     * An instruction of a function on bytecode: its file and the line of the innermost statement around it (0 when
+     * it is in none, as in the prologue); an instruction of internal code (the prelude) is placed where user code
+     * runs now (current()).
+     */
     @TruffleBoundary
     public static SourceLocation of(BytecodeLocation location) {
         RootNode root = (RootNode) location.getBytecodeNode().getBytecodeRootNode();

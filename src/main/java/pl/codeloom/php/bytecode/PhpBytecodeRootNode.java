@@ -131,8 +131,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal(dimensions = 1) private int[] parameterLocals;
     @CompilationFinal private char returnCoerce;
     @CompilationFinal private boolean returnNullable;
-    /** The PHP variables are the locals at offsets 0 to variableCount - 1; hidden ones follow. */
-    @CompilationFinal private int variableCount;
+    /** The PHP variables' locals (offsets 0 to their count - 1; hidden locals follow). */
+    @CompilationFinal(dimensions = 1) private LocalAccessor[] variables;
+    /** The hidden locals in which foreach loops keep what they iterate (an array they hold), cleared at the end. */
+    @CompilationFinal(dimensions = 1) private LocalAccessor[] foreachStates;
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
     @CompilationFinal private String className;
     @CompilationFinal private String scopeName;
@@ -144,7 +146,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** What the translator knows of the function, set once its bytecode is built (a reparse keeps it). */
     public void initialize(String functionName, String file, boolean internalCode, SourceSection section,
                     PhpFunction.Param[] parameters, int[] parameterOffsets, char coerce, boolean nullable,
-                    int variables, String declaringClass) {
+                    LocalAccessor[] variableLocals, LocalAccessor[] foreachLocals, String declaringClass) {
         this.name = functionName;
         this.path = file;
         this.internal = internalCode;
@@ -153,29 +155,32 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.parameterLocals = parameterOffsets;
         this.returnCoerce = coerce;
         this.returnNullable = nullable;
-        this.variableCount = variables;
+        this.variables = variableLocals;
+        this.foreachStates = foreachLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
     }
 
-    /** Prints the bytecode as it is when the function first returns (php.bytecode.dump), for debugging. */
-    @CompilationFinal private boolean dumpAtExit;
-
+    /**
+     * Prints the bytecode as it is when the process exits (php.bytecode.dump), for debugging: after the run, the
+     * instructions show what the interpreter has quickened them to.
+     */
     public void dumpAtExit() {
-        this.dumpAtExit = true;
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> System.err.println(getBytecodeNode().dump())));
     }
 
-    @TruffleBoundary
-    private void dumpOnce(BytecodeNode bytecode) {
-        dumpAtExit = false;
-        System.err.println(bytecode.dump());
-    }
-
-    /** On the way out, however the call ends: the variables give up their arrays and references. */
+    /**
+     * On the way out, however the call ends: the variables give up their arrays and references. An unset one is
+     * skipped first: compiled code reads a local by the kind it has had (getLocalValue switches on it), and a
+     * cleared local of kind Long or Object has no such value, which would deoptimize every call that leaves it
+     * unset, and recompiling wouldn't change the kind.
+     */
     @ExplodeLoop
     void releaseVariables(VirtualFrame frame, BytecodeNode bytecode) {
-        for (int i = 0; i < variableCount; i++) {
-            Variables.released(bytecode.getLocalValue(0, frame, i));
+        for (LocalAccessor variable : variables) {
+            if (!variable.isCleared(bytecode, frame)) {
+                Variables.released(variable.getObject(bytecode, frame));
+            }
         }
     }
 
@@ -189,11 +194,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         return ex;
     }
 
-    /** Any other exception leaves the function too (the epilogs see only PHP's own). */
+    /**
+     * Any other exception leaves the function too, past the epilogs and the finally handlers, which see only PHP's
+     * own: the variables are released here, and so are the arrays the foreach loops still running hold
+     * (ForeachEnd's work).
+     */
     @Override
+    @ExplodeLoop
     public Throwable interceptInternalException(Throwable t, VirtualFrame frame, BytecodeNode bytecodeNode,
                                                 int bytecodeIndex) {
         releaseVariables(frame, bytecodeNode);
+        for (LocalAccessor state : foreachStates) {
+            if (!state.isCleared(bytecodeNode, frame)
+                    && state.getObject(bytecodeNode, frame) instanceof PhpArray held) {
+                held.removeHolder();
+                state.clear(bytecodeNode, frame);
+            }
+        }
         return t;
     }
 
@@ -206,9 +223,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object doReturn(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                       @Bind BytecodeNode bytecode) {
             root.releaseVariables(frame, bytecode);
-            if (root.dumpAtExit) {
-                root.dumpOnce(bytecode);
-            }
             if (root.returnCoerce == 0) {
                 return value;
             }
@@ -579,37 +593,47 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `[v1, v2, ...]` with no keys, references or spreads: an int list starts in the int strategy. */
+    /**
+     * An array literal (ArrayLiteralNode): LiteralStart makes the array, each LiteralAppend or LiteralPut inserts
+     * an element as soon as it is evaluated (an array value gains the literal as a holder before the next element
+     * runs, which may write the variable it came from), and LiteralEnd hands the array on. `[v1, v2]` is
+     * LiteralEnd(LiteralAppend(LiteralAppend(LiteralStart, v1), v2)).
+     */
     @Operation
-    public static final class MakeList {
+    @ConstantOperand(type = LiteralSite.class)
+    public static final class LiteralStart {
         @Specialization
-        public static PhpArray list(@Variadic Object[] values) {
-            PhpArray array = allLongs(values) ? new PhpArray() : PhpArray.ofCapacity(values.length);
-            for (Object value : values) {
-                array.append(value);
-            }
-            return array;
-        }
-
-        private static boolean allLongs(Object[] values) {
-            for (Object value : values) {
-                if (!(value instanceof Long)) {
-                    return false;
-                }
-            }
-            return true;
+        public static PhpArray start(LiteralSite site) {
+            return site.newArray();
         }
     }
 
-    /** `[k1 => v1, k2 => v2, ...]` with every key given: keys and values alternate, each key before its value. */
+    /** An element without a key: appended. */
     @Operation
-    public static final class MakeArray {
+    public static final class LiteralAppend {
         @Specialization
-        public static PhpArray array(@Variadic Object[] keysAndValues) {
-            PhpArray array = PhpArray.ofCapacity(keysAndValues.length / 2);
-            for (int i = 0; i < keysAndValues.length; i += 2) {
-                array.put(ArrayKey.of(keysAndValues[i]), keysAndValues[i + 1]);
-            }
+        public static PhpArray append(PhpArray array, Object value) {
+            array.append(value);
+            return array;
+        }
+    }
+
+    /** An element with a key, evaluated before its value. */
+    @Operation
+    public static final class LiteralPut {
+        @Specialization
+        public static PhpArray put(PhpArray array, Object key, Object value) {
+            array.put(ArrayKey.of(key), value);
+            return array;
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = LiteralSite.class)
+    public static final class LiteralEnd {
+        @Specialization
+        public static PhpArray end(LiteralSite site, PhpArray array) {
+            site.built(array);
             return array;
         }
     }
