@@ -253,6 +253,7 @@ public final class Builtins {
                 {"OverflowException", "RuntimeException"}, {"RangeException", "RuntimeException"},
                 {"UnderflowException", "RuntimeException"}, {"UnexpectedValueException", "RuntimeException"},
                 {"JsonException", "Exception"},
+                {"CompileError", "Error"}, {"ParseError", "CompileError"},
                 {"TypeError", "Error"}, {"ValueError", "Error"}, {"ArithmeticError", "Error"},
                 {"DivisionByZeroError", "ArithmeticError"}, {"ArgumentCountError", "TypeError"},
                 {"UnhandledMatchError", "Error"},

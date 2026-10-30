@@ -310,11 +310,18 @@ public final class ErrorFunctions {
     /**
      * zend_exception_error: the Throwable as its __toString() gives it (stored in its "string" property) is
      * reported as an uncaught fatal error, at its file and line, without a backtrace and without ending the script
-     * where it is (the script has ended).
+     * where it is (the script has ended). A ParseError or CompileError itself (not a subclass) is reported as the
+     * error it stands for, a file that doesn't compile: E_PARSE or E_COMPILE_ERROR, its message at its file and line.
      */
     private static void exceptionError(PhpContext context, PhpObject throwable) {
         State state = context.errors();
         state.fatalBacktrace = null;
+        String lowerClass = throwable.getPhpClass().getLowerName();
+        if (lowerClass.equals("parseerror") || lowerClass.equals("compileerror")) {
+            report(context, lowerClass.equals("parseerror") ? E_PARSE : E_COMPILE_ERROR,
+                    Convert.toStr(Builtins.property(throwable, "message")), locationOf(throwable), null, false);
+            return;
+        }
         try {
             Object string = PhpRef.deref(throwable.callMethod("__tostring"));
             if (string instanceof TruffleString text) {

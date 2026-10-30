@@ -11,6 +11,7 @@ import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayDeque;
@@ -37,7 +38,7 @@ final class DebugFunctions {
         RootNode file;
         try {
             file = context.loadFile(path);
-        } catch (PhpError e) {
+        } catch (PhpThrowable e) {
             errors.append(Str.of(e.getMessage()));
             return errors;
         }
