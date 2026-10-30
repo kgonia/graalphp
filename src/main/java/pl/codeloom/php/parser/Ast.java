@@ -15,7 +15,8 @@ public final class Ast {
     private final List<Object> list;
     private final Map<String, Object> named;
 
-    Ast(String kind, int flags, int line, int endLine, List<Object> list, Map<String, Object> named) {
+    /** list: the positional children of a list kind, else null; named: the named children, else null. */
+    public Ast(String kind, int flags, int line, int endLine, List<Object> list, Map<String, Object> named) {
         this.kind = kind;
         this.flags = flags;
         this.line = line;
