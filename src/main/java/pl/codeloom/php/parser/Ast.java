@@ -42,6 +42,16 @@ public final class Ast {
         return named != null ? named.values() : List.of();
     }
 
+    /** The positional children as read, or null for a node with named children (for comparing trees). */
+    List<Object> listOrNull() {
+        return list;
+    }
+
+    /** The named children as read, in the export's order, or null for a list node. */
+    Map<String, Object> namedOrNull() {
+        return named;
+    }
+
     public Object get(String name) {
         return named != null ? named.get(name) : null;
     }
