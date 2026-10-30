@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
@@ -28,39 +29,35 @@ public final class CompareNodes {
         }
     }
 
-    /** `===`, or `!==` with negate. */
+    /** `===`; {@link #create} also makes `!==`. */
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class IdenticalNode extends CompareNode {
-        private final boolean negate;
-
-        protected IdenticalNode(boolean negate) {
-            this.negate = negate;
-        }
-
-        public static IdenticalNode create(ExprNode left, ExprNode right, boolean negate) {
-            return CompareNodesFactory.IdenticalNodeGen.create(negate, left, right);
+        public static CompareNode create(ExprNode left, ExprNode right, boolean negate) {
+            return negate ? CompareNodesFactory.NotIdenticalNodeGen.create(left, right)
+                    : CompareNodesFactory.IdenticalNodeGen.create(left, right);
         }
 
         @Specialization
-        protected boolean longs(long a, long b) {
-            return (a == b) != negate;
+        public static boolean longs(long a, long b) {
+            return a == b;
         }
 
         @Specialization
-        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
-            return equal.execute(a, b, Str.ENC) != negate;
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
+            return equal.execute(a, b, Str.ENC);
         }
 
         @Specialization
-        protected boolean booleans(boolean a, boolean b) {
-            return (a == b) != negate;
+        public static boolean booleans(boolean a, boolean b) {
+            return a == b;
         }
 
         @Fallback
-        protected boolean other(Object a, Object b) {
-            return identical(a, b) != negate;
+        public static boolean other(Object a, Object b) {
+            return identical(a, b);
         }
 
-        private static boolean identical(Object a, Object b) {
+        static boolean identical(Object a, Object b) {
             if (a instanceof Long x) {
                 return b instanceof Long y && x.longValue() == y.longValue();
             }
@@ -80,52 +77,76 @@ public final class CompareNodes {
         }
     }
 
-    /** `==`, or `!=` with negate. */
-    public abstract static class EqualNode extends CompareNode {
-        private final boolean negate;
-
-        protected EqualNode(boolean negate) {
-            this.negate = negate;
+    /** `!==`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class NotIdenticalNode extends CompareNode {
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return a != b;
         }
 
-        public static EqualNode create(ExprNode left, ExprNode right, boolean negate) {
-            return CompareNodesFactory.EqualNodeGen.create(negate, left, right);
+        @Specialization
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
+            return !equal.execute(a, b, Str.ENC);
+        }
+
+        @Specialization
+        public static boolean booleans(boolean a, boolean b) {
+            return a != b;
+        }
+
+        @Fallback
+        public static boolean other(Object a, Object b) {
+            return !IdenticalNode.identical(a, b);
+        }
+    }
+
+    /** `==`; {@link #create} also makes `!=`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class EqualNode extends CompareNode {
+        public static CompareNode create(ExprNode left, ExprNode right, boolean negate) {
+            return negate ? CompareNodesFactory.NotEqualNodeGen.create(left, right)
+                    : CompareNodesFactory.EqualNodeGen.create(left, right);
         }
 
         /** `==` on values already evaluated (switch cases): use {@link #executeEquals}, not execute. */
         public static EqualNode createEvaluated() {
-            return CompareNodesFactory.EqualNodeGen.create(false, null, null);
+            return CompareNodesFactory.EqualNodeGen.create(null, null);
         }
 
         /** The comparison of two evaluated operands. */
         public abstract boolean executeEquals(Object left, Object right);
 
         @Specialization
-        protected boolean longs(long a, long b) {
-            return (a == b) != negate;
+        public static boolean longs(long a, long b) {
+            return a == b;
         }
 
         @Specialization
-        protected boolean doubles(double a, double b) {
-            return (a == b) != negate;
+        public static boolean doubles(double a, double b) {
+            return a == b;
         }
 
         @Specialization
-        protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
-                                  @Cached TruffleString.ReadByteNode readByte) {
-            boolean result = equal.execute(a, b, Str.ENC)
-                    || mayBeNumeric(a, readByte) && mayBeNumeric(b, readByte) && Convert.looseEquals(a, b);
-            return result != negate;
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
+                                      @Cached TruffleString.ReadByteNode readByte) {
+            return equalStrings(a, b, equal, readByte);
         }
 
         @Specialization
-        protected boolean booleans(boolean a, boolean b) {
-            return (a == b) != negate;
+        public static boolean booleans(boolean a, boolean b) {
+            return a == b;
         }
 
         @Fallback
-        protected boolean other(Object a, Object b) {
-            return Convert.looseEquals(a, b) != negate;
+        public static boolean other(Object a, Object b) {
+            return Convert.looseEquals(a, b);
+        }
+
+        static boolean equalStrings(TruffleString a, TruffleString b, TruffleString.EqualNode equal,
+                                    TruffleString.ReadByteNode readByte) {
+            return equal.execute(a, b, Str.ENC)
+                    || mayBeNumeric(a, readByte) && mayBeNumeric(b, readByte) && Convert.looseEquals(a, b);
         }
 
         /** Cheap pre-check: a numeric string starts with whitespace, a sign, a digit or a dot. */
@@ -139,58 +160,140 @@ public final class CompareNodes {
         }
     }
 
-    /**
-     * `<` and `<=` (orEqual); with swapped, `>` and `>=` as `right < left`. Operands still evaluate left first.
-     */
-    public abstract static class LessNode extends CompareNode {
-        private final boolean orEqual;
-        private final boolean swapped;
-
-        protected LessNode(boolean orEqual, boolean swapped) {
-            this.orEqual = orEqual;
-            this.swapped = swapped;
-        }
-
-        public static LessNode create(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
-            return CompareNodesFactory.LessNodeGen.create(orEqual, swapped, left, right);
+    /** `!=`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class NotEqualNode extends CompareNode {
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return a != b;
         }
 
         @Specialization
-        protected boolean longs(long first, long second) {
-            long a = swapped ? second : first;
-            long b = swapped ? first : second;
-            return orEqual ? a <= b : a < b;
+        public static boolean doubles(double a, double b) {
+            return a != b;
         }
 
         @Specialization
-        protected boolean doubles(double first, double second) {
-            double a = swapped ? second : first;
-            double b = swapped ? first : second;
-            return orEqual ? a <= b : a < b;
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
+                                      @Cached TruffleString.ReadByteNode readByte) {
+            return !EqualNode.equalStrings(a, b, equal, readByte);
+        }
+
+        @Specialization
+        public static boolean booleans(boolean a, boolean b) {
+            return a != b;
         }
 
         @Fallback
-        protected boolean other(Object first, Object second) {
-            int c = Convert.compare(swapped ? second : first, swapped ? first : second);
-            return orEqual ? c <= 0 : c < 0;
+        public static boolean other(Object a, Object b) {
+            return !Convert.looseEquals(a, b);
+        }
+    }
+
+    /**
+     * `<`; {@link #create} also makes `<=` (orEqual) and, swapped, `>` and `>=`, which php-src compiles as
+     * `right < left` and `right <= left`. Operands still evaluate left first.
+     */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class LessNode extends CompareNode {
+        public static CompareNode create(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
+            if (swapped) {
+                return orEqual ? CompareNodesFactory.GreaterEqualNodeGen.create(left, right)
+                        : CompareNodesFactory.GreaterNodeGen.create(left, right);
+            }
+            return orEqual ? CompareNodesFactory.LessEqualNodeGen.create(left, right)
+                    : CompareNodesFactory.LessNodeGen.create(left, right);
+        }
+
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return a < b;
+        }
+
+        @Specialization
+        public static boolean doubles(double a, double b) {
+            return a < b;
+        }
+
+        @Fallback
+        public static boolean other(Object a, Object b) {
+            return Convert.compare(a, b) < 0;
+        }
+    }
+
+    /** `<=`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class LessEqualNode extends CompareNode {
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return a <= b;
+        }
+
+        @Specialization
+        public static boolean doubles(double a, double b) {
+            return a <= b;
+        }
+
+        @Fallback
+        public static boolean other(Object a, Object b) {
+            return Convert.compare(a, b) <= 0;
+        }
+    }
+
+    /** `>`: `right < left`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class GreaterNode extends CompareNode {
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return b < a;
+        }
+
+        @Specialization
+        public static boolean doubles(double a, double b) {
+            return b < a;
+        }
+
+        @Fallback
+        public static boolean other(Object a, Object b) {
+            return Convert.compare(b, a) < 0;
+        }
+    }
+
+    /** `>=`: `right <= left`. */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class GreaterEqualNode extends CompareNode {
+        @Specialization
+        public static boolean longs(long a, long b) {
+            return b <= a;
+        }
+
+        @Specialization
+        public static boolean doubles(double a, double b) {
+            return b <= a;
+        }
+
+        @Fallback
+        public static boolean other(Object a, Object b) {
+            return Convert.compare(b, a) <= 0;
         }
     }
 
     /** `<=>`. */
     @NodeChild("left")
     @NodeChild("right")
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class SpaceshipNode extends ExprNode {
         public static SpaceshipNode create(ExprNode left, ExprNode right) {
             return CompareNodesFactory.SpaceshipNodeGen.create(left, right);
         }
 
         @Specialization
-        protected long longs(long a, long b) {
+        public static long longs(long a, long b) {
             return Long.compare(a, b);
         }
 
         @Fallback
-        protected long other(Object a, Object b) {
+        public static long other(Object a, Object b) {
             return Convert.compare(a, b);
         }
     }
