@@ -34,15 +34,11 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.PhpTypes;
-import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
-import pl.codeloom.php.nodes.expr.ArithmeticNodes;
 import pl.codeloom.php.nodes.expr.AssignNodes;
-import pl.codeloom.php.nodes.expr.CompareNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
-import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
@@ -66,11 +62,11 @@ import pl.codeloom.php.runtime.Str;
 /**
  * A PHP function body as Truffle Bytecode DSL bytecode ({@link BytecodeTranslator} builds it), beside the tree's
  * {@link FunctionRootNode}: the same calling convention ({@link PhpFunction}), so either calls the other.
- * Operators, truthiness and element reads are the tree's own nodes ({@link OperationProxy}), comparisons
- * {@link Comparisons}' (one class per operator, over the tree's rules). PHP variables are bytecode locals, read
- * and written by this class's operations through {@link LocalAccessor}s by the tree's rules ({@link Variables});
- * they come first, so the epilogs release them by offset. Control flow is the builder's (blocks, loops, branches
- * to labels, Return).
+ * Operators, truthiness and element reads are the tree's own nodes ({@link OperationProxy}, through
+ * {@link Proxies}), comparisons {@link Comparisons}' (one class per operator, over the tree's rules). PHP variables
+ * are bytecode locals, read and written by this class's operations through {@link LocalAccessor}s by the tree's
+ * rules ({@link Variables}); they come first, so the epilogs release them by offset. Control flow is the builder's
+ * (blocks, loops, branches to labels, Return).
  *
  * <p>Booleans are not unboxed: a short circuit's result (`&&`) reached a consumer unboxed on one path and boxed on
  * the other, which deoptimized compiled code at every change of path; Boolean values are shared instances anyway.
@@ -79,18 +75,18 @@ import pl.codeloom.php.runtime.Str;
         enableBlockScoping = false, boxingEliminationTypes = {long.class, double.class},
         defaultUncachedThreshold = "UNCACHED_THRESHOLD")
 @TypeSystemReference(PhpTypes.class)
-@OperationProxy(value = ArithmeticNodes.AddNode.class, name = "Add")
-@OperationProxy(value = ArithmeticNodes.SubNode.class, name = "Sub")
-@OperationProxy(value = ArithmeticNodes.MulNode.class, name = "Mul")
-@OperationProxy(value = ArithmeticNodes.DivNode.class, name = "Div")
-@OperationProxy(value = ArithmeticNodes.ModNode.class, name = "Mod")
-@OperationProxy(value = ArithmeticNodes.PowNode.class, name = "Pow")
-@OperationProxy(value = ArithmeticNodes.BitAndNode.class, name = "BitAnd")
-@OperationProxy(value = ArithmeticNodes.BitOrNode.class, name = "BitOr")
-@OperationProxy(value = ArithmeticNodes.BitXorNode.class, name = "BitXor")
-@OperationProxy(value = ArithmeticNodes.ShiftLeftNode.class, name = "ShiftLeft")
-@OperationProxy(value = ArithmeticNodes.ShiftRightNode.class, name = "ShiftRight")
-@OperationProxy(value = ArithmeticNodes.ConcatNode.class, name = "Concat")
+@OperationProxy(value = Proxies.Add.class, name = "Add")
+@OperationProxy(value = Proxies.Sub.class, name = "Sub")
+@OperationProxy(value = Proxies.Mul.class, name = "Mul")
+@OperationProxy(value = Proxies.Div.class, name = "Div")
+@OperationProxy(value = Proxies.Mod.class, name = "Mod")
+@OperationProxy(value = Proxies.Pow.class, name = "Pow")
+@OperationProxy(value = Proxies.BitAnd.class, name = "BitAnd")
+@OperationProxy(value = Proxies.BitOr.class, name = "BitOr")
+@OperationProxy(value = Proxies.BitXor.class, name = "BitXor")
+@OperationProxy(value = Proxies.ShiftLeft.class, name = "ShiftLeft")
+@OperationProxy(value = Proxies.ShiftRight.class, name = "ShiftRight")
+@OperationProxy(value = Proxies.Concat.class, name = "Concat")
 @OperationProxy(value = Comparisons.Identical.class, name = "Identical")
 @OperationProxy(value = Comparisons.NotIdentical.class, name = "NotIdentical")
 @OperationProxy(value = Comparisons.Equal.class, name = "Equal")
@@ -99,18 +95,18 @@ import pl.codeloom.php.runtime.Str;
 @OperationProxy(value = Comparisons.LessEqual.class, name = "LessEqual")
 @OperationProxy(value = Comparisons.Greater.class, name = "Greater")
 @OperationProxy(value = Comparisons.GreaterEqual.class, name = "GreaterEqual")
-@OperationProxy(value = CompareNodes.SpaceshipNode.class, name = "Spaceship")
-@OperationProxy(value = UnaryNodes.NegateNode.class, name = "Negate")
-@OperationProxy(value = UnaryNodes.PlusNode.class, name = "Plus")
-@OperationProxy(value = UnaryNodes.BitNotNode.class, name = "BitNot")
-@OperationProxy(value = ToBooleanNode.class, name = "ToBool")
-@OperationProxy(value = ElementNodes.ElementReadNode.class, name = "ReadElement")
+@OperationProxy(value = Proxies.Spaceship.class, name = "Spaceship")
+@OperationProxy(value = Proxies.Negate.class, name = "Negate")
+@OperationProxy(value = Proxies.Plus.class, name = "Plus")
+@OperationProxy(value = Proxies.BitNot.class, name = "BitNot")
+@OperationProxy(value = Proxies.ToBool.class, name = "ToBool")
+@OperationProxy(value = Proxies.ReadElement.class, name = "ReadElement")
 @ShortCircuitOperation(name = "And", operator = ShortCircuitOperation.Operator.AND_RETURN_CONVERTED,
-        booleanConverter = ToBooleanNode.class)
+        booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Or", operator = ShortCircuitOperation.Operator.OR_RETURN_CONVERTED,
-        booleanConverter = ToBooleanNode.class)
+        booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Elvis", operator = ShortCircuitOperation.Operator.OR_RETURN_VALUE,
-        booleanConverter = ToBooleanNode.class)
+        booleanConverter = Proxies.ToBool.class)
 public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRootNode, SourceLocation.Code,
         Backtrace.Callee {
     /**
@@ -644,8 +640,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = CallInfo.class)
     public static final class ResolveFunction {
-        /** With one context, the function found first stays (functions can't be redeclared). */
-        @Specialization(assumptions = "singleContext()")
+        /**
+         * With one context, the function found first stays (functions can't be redeclared). The uncached
+         * interpreter has no cache to keep it in: it looks the function up each time (perContext).
+         */
+        @Specialization(assumptions = "singleContext()", excludeForUncached = true)
         public static PhpFunction single(CallInfo call, @Cached("call.find(context())") PhpFunction function) {
             return function;
         }
