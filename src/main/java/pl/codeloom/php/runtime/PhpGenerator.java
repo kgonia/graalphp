@@ -21,7 +21,8 @@ public final class PhpGenerator {
     private Object key = PhpNull.NULL;
     private Object value = PhpNull.NULL;
     private Object sent = PhpNull.NULL;
-    private Object returned = PhpNull.NULL;
+    /** What the body returned; null while it hasn't (also when it ended by throwing). */
+    private Object returned;
     private RuntimeException pendingThrow;
     private long largestIntKey = -1;
     /** Whether it went past the first yield (rewind() then fails). */
@@ -101,11 +102,21 @@ public final class PhpGenerator {
         }
     }
 
+    /** Runs to the first yield first, as zend_generator_ensure_initialized. */
     public Object getReturn() {
-        if (status != Status.DONE) {
+        start();
+        if (returned == null) {
             throw new PhpError("Exception", "Cannot get return value of a generator that hasn't returned");
         }
         return returned;
+    }
+
+    /** `yield from` this generator: php-src delegates only to one that hasn't finished (ZEND_YIELD_FROM). */
+    public void checkDelegable() {
+        if (status == Status.DONE) {
+            throw new PhpError("Generator passed to yield from was aborted without proper return and is unable to "
+                    + "continue");
+        }
     }
 
     /** throw(): raises the exception at the current yield (after running to the first one). */

@@ -12,6 +12,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 
 /**
  * try / catch / finally. Runtime errors (PhpError) are offered to catch clauses as PHP Error objects, so
@@ -37,7 +38,9 @@ public final class TryNode extends StmtNode {
     /**
      * finally runs when the try (or a catch) completes, throws, or leaves by return, break, continue or goto, as
      * in php-src; not while exit() or a cancelled context unwinds (the polyglot exit and cancel exceptions are
-     * neither PHP exceptions nor control flow), where php-src runs no finally either.
+     * neither PHP exceptions nor control flow), where php-src runs no finally either. An exception the finally block
+     * throws while another one unwinds takes that one as its previous; a return, break, continue or goto out of the
+     * finally block drops it.
      */
     @Override
     public void execute(VirtualFrame frame) {
@@ -48,7 +51,14 @@ public final class TryNode extends StmtNode {
         try {
             tryCatch(frame);
         } catch (ControlFlowException | PhpThrowable leaving) {
-            finallyBody.execute(frame);
+            try {
+                finallyBody.execute(frame);
+            } catch (PhpThrowable thrown) {
+                if (leaving instanceof PhpThrowable pending) {
+                    setPrevious(PhpContext.get(this), thrown, pending);
+                }
+                throw thrown;
+            }
             throw leaving;
         }
         finallyBody.execute(frame);
@@ -76,6 +86,37 @@ public final class TryNode extends StmtNode {
             }
         }
         throw original;
+    }
+
+    /**
+     * zend_exception_set_previous: pending goes at the end of thrown's getPrevious() chain, unless thrown is already
+     * in pending's chain or pending in thrown's (a cycle).
+     */
+    @TruffleBoundary
+    static void setPrevious(PhpContext context, PhpThrowable thrown, PhpThrowable pending) {
+        PhpObject exception = thrown.toThrowable(context);
+        PhpObject previous = pending.toThrowable(context);
+        if (exception == previous) {
+            return;
+        }
+        PhpObject current = exception;
+        do {
+            for (Object ancestor = previousOf(previous); ancestor instanceof PhpObject object;
+                 ancestor = previousOf(object)) {
+                if (object == current) {
+                    return;
+                }
+            }
+            if (!(previousOf(current) instanceof PhpObject next)) {
+                current.setProperty("previous", previous);
+                return;
+            }
+            current = next;
+        } while (current != previous);
+    }
+
+    private static Object previousOf(PhpObject exception) {
+        return PhpRef.deref(exception.getProperty("previous"));
     }
 
     @TruffleBoundary

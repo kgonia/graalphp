@@ -476,7 +476,8 @@ public final class Translator {
             bodies[i] = statements(handler.node("stmts"));
         }
         StmtNode finallyBody = node.get("finally") == null ? null : statements(node.node("finally"));
-        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"));
+        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"),
+                hiddenSlot("leaving"));
     }
 
     private StmtNode ifChain(Ast node, int index) {
@@ -688,18 +689,18 @@ public final class Translator {
         for (int i = 0; i < captures.length; i++) {
             captureSlots[i] = bodyScope.slot(captures[i]);
         }
-        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(node.get("stmts"));
+        Ast stmts = node.body();
+        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
         if (generator) {
             body.generatorSlot = bodyScope.slot("\0generator");
         }
         body.returnsRef = target.returnsRef() && !generator;
         StmtNode statements;
         if (node.is("AST_ARROW_FUNC")) {
-            Ast stmts = node.node("stmts");
             Ast returned = stmts.is("AST_RETURN") ? stmts : null;
             statements = returned != null ? body.statement(returned) : body.returnStatement(stmts);
         } else {
-            statements = body.statements(node.node("stmts"));
+            statements = body.statements(stmts);
         }
         if (owner != null && name.equalsIgnoreCase("__construct")) {
             List<StmtNode> promoted = new ArrayList<>();
@@ -738,11 +739,13 @@ public final class Translator {
     private ExprNode closure(Ast node) {
         boolean arrow = node.is("AST_ARROW_FUNC");
         PhpFunction.Param[] params = params(node.node("params"));
+        // read for the captures and $this here, and again when the closure is first called
+        Ast stmts = node.body();
         List<String> captureNames = new ArrayList<>();
         List<Boolean> captureRefs = new ArrayList<>();
         if (arrow) {
             Set<String> used = new LinkedHashSet<>();
-            collectVariables(node.get("stmts"), used);
+            collectVariables(stmts, used);
             for (PhpFunction.Param param : params) {
                 used.remove(param.name());
             }
@@ -778,7 +781,7 @@ public final class Translator {
                 (node.flags & MODIFIER_STATIC) != 0, true, false,
                 () -> translateBody(node, owner, self[0], name, params, names, byRef, declaredNames));
         Set<String> bodyVariables = new HashSet<>();
-        collectVariables(node.get("stmts"), bodyVariables);
+        collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
         return new ClosureNode(self[0], captureNodes, byRef, (node.flags & MODIFIER_STATIC) != 0, scopeRef);
@@ -805,7 +808,8 @@ public final class Translator {
         }
         for (String key : new String[]{"expr", "var", "left", "right", "cond", "true", "false", "args", "dim",
                 "stmts", "class", "method", "prop", "key", "value", "name", "default"}) {
-            collectVariables(ast.get(key), names);
+            // a nested arrow function's body is unread (AstBody) until asked for
+            collectVariables(key.equals("stmts") ? ast.body() : ast.get(key), names);
         }
     }
 

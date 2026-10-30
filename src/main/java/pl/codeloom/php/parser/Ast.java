@@ -42,8 +42,30 @@ public final class Ast {
         return named != null ? named.values() : List.of();
     }
 
+    /** The positional children as read, or null for a node with named children (for comparing trees). */
+    List<Object> listOrNull() {
+        return list;
+    }
+
+    /** The named children as read, in the export's order, or null for a list node. */
+    Map<String, Object> namedOrNull() {
+        return named;
+    }
+
     public Object get(String name) {
         return named != null ? named.get(name) : null;
+    }
+
+    /**
+     * The "stmts" child as a tree: a function's, method's or closure's body, read from the export each time it is
+     * asked for ({@link AstBody}), so a caller reads it once and lets it go; any other node's statements as they are.
+     */
+    public Ast body() {
+        Object stmts = get("stmts");
+        if (stmts instanceof AstBody unread) {
+            return unread.read();
+        }
+        return stmts instanceof Ast ast ? ast : null;
     }
 
     public Ast node(String name) {

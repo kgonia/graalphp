@@ -12,8 +12,12 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-/** Reads the JSON that tools/ast-export.php writes into {@link Ast} trees. */
+/**
+ * Reads the JSON that tools/ast-export.php writes into {@link Ast} trees. A function's body is left unread, as an
+ * {@link AstBody} over the export's bytes, until it is needed.
+ */
 public final class AstReader {
     private static final JsonFactory JSON = JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder()
@@ -22,17 +26,34 @@ public final class AstReader {
                     .build())
             .build();
 
-    private AstReader() {
+    /** The kinds whose "stmts" child is a function body, translated on the function's first call. */
+    private static final Set<String> FUNCTIONS = Set.of("AST_FUNC_DECL", "AST_METHOD", "AST_CLOSURE", "AST_ARROW_FUNC");
+
+    private final JsonParser parser;
+    private final byte[] json;
+    /** Where the bytes being read start in json: the parser's offsets count from there. */
+    private final int base;
+
+    private AstReader(JsonParser parser, byte[] json, int base) {
+        this.parser = parser;
+        this.json = json;
+        this.base = base;
     }
 
     public static Ast read(InputStream in) throws IOException {
-        try (JsonParser parser = JSON.createParser(in)) {
+        byte[] json = in.readAllBytes();
+        return (Ast) read(json, 0, json.length);
+    }
+
+    /** The value in json[offset, offset + length): a tree, or a leaf value. */
+    static Object read(byte[] json, int offset, int length) throws IOException {
+        try (JsonParser parser = JSON.createParser(json, offset, length)) {
             parser.nextToken();
-            return (Ast) value(parser);
+            return new AstReader(parser, json, offset).value();
         }
     }
 
-    private static Object value(JsonParser parser) throws IOException {
+    private Object value() throws IOException {
         JsonToken token = parser.currentToken();
         switch (token) {
             case VALUE_NULL:
@@ -46,13 +67,13 @@ public final class AstReader {
             case VALUE_FALSE:
                 return Boolean.FALSE;
             case START_OBJECT:
-                return object(parser);
+                return object();
             default:
                 throw new IOException("unexpected JSON token " + token);
         }
     }
 
-    private static Object object(JsonParser parser) throws IOException {
+    private Object object() throws IOException {
         String kind = null;
         int flags = 0;
         int line = 0;
@@ -72,14 +93,17 @@ public final class AstReader {
                     if (parser.currentToken() == JsonToken.START_ARRAY) {
                         list = new ArrayList<>();
                         while (parser.nextToken() != JsonToken.END_ARRAY) {
-                            list.add(value(parser));
+                            list.add(value());
                         }
                     } else {
+                        // the exporter writes a node's kind before its children
+                        boolean function = FUNCTIONS.contains(kind);
                         named = new LinkedHashMap<>();
                         while (parser.nextToken() == JsonToken.FIELD_NAME) {
                             String name = parser.currentName();
                             parser.nextToken();
-                            named.put(name, value(parser));
+                            named.put(name, function && name.equals("stmts")
+                                    && parser.currentToken() == JsonToken.START_OBJECT ? body() : value());
                         }
                     }
                 }
@@ -97,5 +121,13 @@ public final class AstReader {
             return scalar;
         }
         return new Ast(kind, flags, line, endLine, list, named);
+    }
+
+    /** Skips the body at the current token, leaving its byte range. */
+    private AstBody body() throws IOException {
+        int start = base + (int) parser.currentTokenLocation().getByteOffset();
+        parser.skipChildren();
+        int end = base + (int) parser.currentLocation().getByteOffset();
+        return new AstBody(json, start, end - start);
     }
 }
