@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes;
 
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
+import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.Node;
@@ -14,6 +15,7 @@ import pl.codeloom.php.runtime.Str;
  * are formatted by a cached node; floats, booleans, null and objects (__toString) take the runtime conversion.
  */
 @ReportPolymorphism
+@GenerateUncached
 public abstract class ToStrNode extends Node {
     public abstract TruffleString execute(Object value);
 

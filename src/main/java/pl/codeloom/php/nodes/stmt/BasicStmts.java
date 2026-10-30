@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -76,9 +77,13 @@ public final class BasicStmts {
 
         @Override
         public void execute(VirtualFrame frame) {
-            Object result = value.execute(frame);
-            TruffleString text = result instanceof TruffleString s ? s : Convert.toStr(result);
-            PhpContext.get(this).write(text);
+            echo(this, value.execute(frame));
+        }
+
+        /** Writes a value as a string to the output of site's context. */
+        public static void echo(Node site, Object value) {
+            TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(value);
+            PhpContext.get(site).write(text);
         }
     }
 
