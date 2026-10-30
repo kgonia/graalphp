@@ -476,7 +476,8 @@ public final class Translator {
             bodies[i] = statements(handler.node("stmts"));
         }
         StmtNode finallyBody = node.get("finally") == null ? null : statements(node.node("finally"));
-        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"));
+        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"),
+                hiddenSlot("leaving"));
     }
 
     private StmtNode ifChain(Ast node, int index) {

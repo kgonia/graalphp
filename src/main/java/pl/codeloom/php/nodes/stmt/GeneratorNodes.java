@@ -26,6 +26,7 @@ import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.SourceLocation;
 
 /**
@@ -167,6 +168,9 @@ public final class GeneratorNodes {
                 inner = source.execute(frame);
                 if (inner instanceof PhpArray array) {
                     frame.setLong(positionSlot, array.firstPosition());
+                } else if (inner instanceof PhpObject object && object.getInternal() instanceof PhpGenerator delegate) {
+                    // not rewound: the delegation goes on from where the generator is
+                    delegate.checkDelegable();
                 } else if (inner instanceof PhpObject object) {
                     inner = iterator(object);
                     ((PhpObject) inner).callMethod(this, "rewind");
@@ -518,8 +522,11 @@ public final class GeneratorNodes {
     }
 
     /**
-     * try/catch/finally: the slot is 1 inside the try block and 2 + i inside catch i. A yield unwinding through
-     * doesn't run the finally block; leaving the statement any other way does.
+     * try/catch/finally: the slot is 1 inside the try block, 2 + i inside catch i and 2 + the catch count inside
+     * the finally block, whose second slot then holds how the try or catch was left (null when it completed), to
+     * carry on with once the finally block completes. A yield unwinding through doesn't run the finally block;
+     * leaving the statement any other way does, as {@link pl.codeloom.php.nodes.stmt.TryNode} (exit() and a
+     * cancelled context run none).
      */
     public static final class TryNode extends StmtNode {
         @Child private StmtNode body;
@@ -528,45 +535,85 @@ public final class GeneratorNodes {
         @Children private final StmtNode[] catchBodies;
         @Child private StmtNode finallyBody;
         private final int slot;
+        private final int leavingSlot;
+        private final int inFinally;
 
         public TryNode(StmtNode body, String[][] catchTypes, LValueNode[] catchTargets, StmtNode[] catchBodies,
-                       StmtNode finallyBody, int slot) {
+                       StmtNode finallyBody, int slot, int leavingSlot) {
             this.body = body;
             this.catchTypes = catchTypes;
             this.catchTargets = catchTargets;
             this.catchBodies = catchBodies;
             this.finallyBody = finallyBody;
             this.slot = slot;
+            this.leavingSlot = leavingSlot;
+            this.inFinally = 2 + catchBodies.length;
         }
 
         @Override
         public void execute(VirtualFrame frame) {
-            boolean yielded = false;
-            try {
-                long state = state(frame, slot);
-                if (state >= 2) {
-                    resumeCatch(frame, (int) state - 2);
+            RuntimeException leaving = null;
+            long state = state(frame, slot);
+            if (state == inFinally) {
+                leaving = (RuntimeException) frame.getObject(leavingSlot);
+            } else {
+                try {
+                    tryCatch(frame, state);
+                } catch (Yield y) {
+                    throw y;
+                } catch (ControlFlowException | PhpThrowable e) {
+                    leaving = e;
+                }
+                if (finallyBody == null) {
+                    frame.setLong(slot, 0);
+                    if (leaving != null) {
+                        throw leaving;
+                    }
                     return;
                 }
-                frame.setLong(slot, 1);
-                try {
-                    body.execute(frame);
-                } catch (PhpException e) {
-                    handle(frame, e, e.getThrowable());
-                } catch (PhpError e) {
-                    handle(frame, e, e.toThrowable(PhpContext.get(this)));
-                }
-            } catch (Yield y) {
-                yielded = true;
-                throw y;
-            } finally {
-                if (!yielded) {
-                    frame.setLong(slot, 0);
-                    if (finallyBody != null) {
-                        finallyBody.execute(frame);
-                    }
-                }
+                frame.setLong(slot, inFinally);
+                frame.setObject(leavingSlot, leaving);
             }
+            try {
+                finallyBody.execute(frame);
+            } catch (Yield y) {
+                throw y;
+            } catch (ControlFlowException e) {
+                leave(frame);
+                throw e;
+            } catch (PhpThrowable thrown) {
+                leave(frame);
+                if (leaving instanceof PhpThrowable pending) {
+                    pl.codeloom.php.nodes.stmt.TryNode.setPrevious(PhpContext.get(this), thrown, pending);
+                }
+                throw thrown;
+            }
+            leave(frame);
+            if (leaving != null) {
+                throw leaving;
+            }
+        }
+
+        private void tryCatch(VirtualFrame frame, long state) {
+            if (state >= 2) {
+                resumeCatch(frame, (int) state - 2);
+                frame.setLong(slot, 0);
+                return;
+            }
+            frame.setLong(slot, 1);
+            try {
+                body.execute(frame);
+            } catch (PhpException e) {
+                handle(frame, e, e.getThrowable());
+            } catch (PhpError e) {
+                handle(frame, e, e.toThrowable(PhpContext.get(this)));
+            }
+            frame.setLong(slot, 0);
+        }
+
+        private void leave(VirtualFrame frame) {
+            frame.setLong(slot, 0);
+            frame.setObject(leavingSlot, null);
         }
 
         @ExplodeLoop
