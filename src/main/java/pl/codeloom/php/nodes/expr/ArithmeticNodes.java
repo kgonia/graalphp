@@ -1,9 +1,12 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.bytecode.OperationProxy;
+import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
@@ -21,31 +24,32 @@ public final class ArithmeticNodes {
     public abstract static class BinaryNode extends ExprNode {
     }
 
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class AddNode extends BinaryNode {
         /** The common case, unboxed; the first overflow (PHP: the result becomes a float) deoptimizes. */
         @Specialization(rewriteOn = ArithmeticException.class)
-        protected long addExact(long a, long b) {
+        public static long addExact(long a, long b) {
             return Math.addExact(a, b);
         }
 
         @Specialization(replaces = "addExact")
-        protected Object add(long a, long b) {
+        public static Object add(long a, long b) {
             return Operators.addLongs(a, b);
         }
 
         @Specialization
-        protected double add(double a, double b) {
+        public static double add(double a, double b) {
             return a + b;
         }
 
         @Specialization
-        protected PhpArray add(PhpArray a, PhpArray b) {
+        public static PhpArray add(PhpArray a, PhpArray b) {
             return Operators.union(a, b);
         }
 
         @Fallback
-        protected Object add(Object a, Object b) {
-            return Operators.add(this, a, b);
+        public static Object add(Object a, Object b, @Bind Node node) {
+            return Operators.add(node, a, b);
         }
     }
 
