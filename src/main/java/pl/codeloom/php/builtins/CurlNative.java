@@ -6,13 +6,11 @@ import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import pl.codeloom.php.ffi.NativeLibrary;
+import pl.codeloom.php.ffi.Upcall;
 
 /**
  * libcurl, bound by FFM as ext/curl links it (D13): the easy, multi and share interfaces, mime, slists, and the
@@ -29,7 +27,7 @@ final class CurlNative {
      */
     static boolean available() {
         try {
-            return Library.GLOBAL_INIT_RESULT == 0;
+            return GlobalInit.RESULT == 0;
         } catch (LinkageError | RuntimeException e) {
             if (System.getProperty("php.curl") != null) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -114,12 +112,15 @@ final class CurlNative {
     static final AddressLayout PTR = ValueLayout.ADDRESS;
     static final ValueLayout.OfInt INT = ValueLayout.JAVA_INT;
     /** C long: 64 bits on Linux, 32 on Windows. */
-    static final ValueLayout LONG = (ValueLayout) Linker.nativeLinker().canonicalLayouts().get("long");
+    static final ValueLayout LONG = NativeLibrary.C_LONG;
 
-    /** The library and its functions, loaded on first use. */
+    /**
+     * The library's functions, through the project's one binding mechanism ({@link NativeLibrary}: bound when this
+     * class initializes on the JVM, constants built into a native image, which opens the library at the first call).
+     */
     static final class Library {
-        private static final Linker LINKER = Linker.nativeLinker();
-        private static final SymbolLookup LOOKUP = SymbolLookup.libraryLookup(libraryPath(), Arena.global());
+        private static final NativeLibrary LIBCURL = NativeLibrary.named("php.curl", "libcurl.so.4",
+                "libcurl-4.dll");
         private static final Linker.Option VARIADIC_THIRD = Linker.Option.firstVariadicArg(2);
 
         static final MethodHandle GLOBAL_INIT = handle("curl_global_init", INT, LONG);
@@ -166,41 +167,33 @@ final class CurlNative {
         static final MethodHandle SHARE_SETOPT_LONG = variadic("curl_share_setopt", INT, PTR, INT, LONG);
         static final MethodHandle SHARE_STRERROR = handle("curl_share_strerror", PTR, INT);
 
-        /** curl_global_init(CURL_GLOBAL_DEFAULT), as PHP_MINIT(curl); libcurl's init is thread-safe since 7.84. */
-        static final int GLOBAL_INIT_RESULT = globalInit();
-
-        private static String libraryPath() {
-            String configured = System.getProperty("php.curl");
-            if (configured != null) {
-                return configured;
-            }
-            if (System.getProperty("os.name").startsWith("Windows")) {
-                Path git = Path.of("C:/Program Files/Git/mingw64/bin/libcurl-4.dll");
-                return Files.exists(git) ? git.toString() : "libcurl-4.dll";
-            }
-            return "libcurl.so.4";
-        }
-
-        private static MemorySegment find(String name) {
-            return LOOKUP.find(name).orElseThrow(() -> new IllegalStateException("libcurl symbol missing: " + name));
-        }
-
         private static MethodHandle handle(String name, MemoryLayout result, MemoryLayout... arguments) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.of(result, arguments));
+            return LIBCURL.downcall(name, FunctionDescriptor.of(result, arguments));
         }
 
         private static MethodHandle voidHandle(String name, MemoryLayout... arguments) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.ofVoid(arguments));
+            return LIBCURL.downcall(name, FunctionDescriptor.ofVoid(arguments));
         }
 
         /** A variadic function (curl_easy_setopt, curl_easy_getinfo...) called with one argument after the two. */
         private static MethodHandle variadic(String name, MemoryLayout result, MemoryLayout... arguments) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.of(result, arguments), VARIADIC_THIRD);
+            return LIBCURL.downcall(name, FunctionDescriptor.of(result, arguments), VARIADIC_THIRD);
+        }
+    }
+
+    /**
+     * curl_global_init(CURL_GLOBAL_DEFAULT), as PHP_MINIT(curl), on first use; libcurl's init is thread-safe since
+     * 7.84. Native state: initialized at run time in a native image (NativeCallsFeature).
+     */
+    static final class GlobalInit {
+        static final int RESULT = globalInit();
+
+        private GlobalInit() {
         }
 
         private static int globalInit() {
             try {
-                return (int) GLOBAL_INIT.invoke(cLong(3)); // CURL_GLOBAL_DEFAULT
+                return (int) Library.GLOBAL_INIT.invoke(cLong(3)); // CURL_GLOBAL_DEFAULT
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
@@ -209,38 +202,54 @@ final class CurlNative {
 
     // ---- the callbacks: upcall stubs, made once, whose userdata is a handle's id (see CurlFunctions) ----
 
-    static final class Callbacks {
-        private static final Linker LINKER = Linker.nativeLinker();
+    /** The callbacks as direct upcalls into CurlFunctions.Upcalls: declared with the downcalls (build time). */
+    static final class Upcalls {
         private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
         /** size_t (char *, size_t, size_t, void *): curl_write, curl_write_header, curl_read and read_cb. */
         private static final FunctionDescriptor DATA = FunctionDescriptor.of(SIZE_T, PTR, SIZE_T, SIZE_T, PTR);
 
-        static final MemorySegment WRITE = stub("write", DATA);
-        static final MemorySegment WRITE_HEADER = stub("writeHeader", DATA);
-        static final MemorySegment READ = stub("read", DATA);
-        static final MemorySegment PROGRESS = stub("progress", FunctionDescriptor.of(INT, PTR,
+        static final Upcall WRITE = upcall("write", DATA);
+        static final Upcall WRITE_HEADER = upcall("writeHeader", DATA);
+        static final Upcall READ = upcall("read", DATA);
+        static final Upcall PROGRESS = upcall("progress", FunctionDescriptor.of(INT, PTR,
                 ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE));
-        static final MemorySegment XFERINFO = stub("xferinfo", FunctionDescriptor.of(INT, PTR, OFF_T, OFF_T, OFF_T,
+        static final Upcall XFERINFO = upcall("xferinfo", FunctionDescriptor.of(INT, PTR, OFF_T, OFF_T, OFF_T,
                 OFF_T));
-        static final MemorySegment FNMATCH = stub("fnmatch", FunctionDescriptor.of(INT, PTR, PTR, PTR));
-        static final MemorySegment DEBUG = stub("debug", FunctionDescriptor.of(INT, PTR, INT, PTR, SIZE_T, PTR));
-        static final MemorySegment PREREQ = stub("prereq", FunctionDescriptor.of(INT, PTR, PTR, PTR, INT, INT));
-        static final MemorySegment SSH_HOSTKEY = stub("sshHostkey", FunctionDescriptor.of(INT, PTR, INT, PTR,
-                SIZE_T));
-        static final MemorySegment MIME_READ = stub("mimeRead", DATA);
-        static final MemorySegment MIME_SEEK = stub("mimeSeek", FunctionDescriptor.of(INT, PTR, OFF_T, INT));
-        static final MemorySegment MIME_FREE = stub("mimeFree", FunctionDescriptor.ofVoid(PTR));
-        static final MemorySegment PUSH = stub("serverPush", FunctionDescriptor.of(INT, PTR, PTR, SIZE_T, PTR, PTR));
+        static final Upcall FNMATCH = upcall("fnmatch", FunctionDescriptor.of(INT, PTR, PTR, PTR));
+        static final Upcall DEBUG = upcall("debug", FunctionDescriptor.of(INT, PTR, INT, PTR, SIZE_T, PTR));
+        static final Upcall PREREQ = upcall("prereq", FunctionDescriptor.of(INT, PTR, PTR, PTR, INT, INT));
+        static final Upcall SSH_HOSTKEY = upcall("sshHostkey", FunctionDescriptor.of(INT, PTR, INT, PTR, SIZE_T));
+        static final Upcall MIME_READ = upcall("mimeRead", DATA);
+        static final Upcall MIME_SEEK = upcall("mimeSeek", FunctionDescriptor.of(INT, PTR, OFF_T, INT));
+        static final Upcall MIME_FREE = upcall("mimeFree", FunctionDescriptor.ofVoid(PTR));
+        static final Upcall PUSH = upcall("serverPush", FunctionDescriptor.of(INT, PTR, PTR, SIZE_T, PTR, PTR));
 
-        private static MemorySegment stub(String method, FunctionDescriptor descriptor) {
-            try {
-                MethodType type = descriptor.toMethodType();
-                MethodHandle target = LOOKUP.findStatic(CurlFunctions.Upcalls.class, method, type);
-                return LINKER.upcallStub(target, descriptor, Arena.global());
-            } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException(e);
-            }
+        private Upcalls() {
+        }
+
+        private static Upcall upcall(String method, FunctionDescriptor descriptor) {
+            return Upcall.of(LOOKUP, CurlFunctions.Upcalls.class, method, descriptor);
+        }
+    }
+
+    /** The callbacks' stubs, made once: native memory, so run time in a native image (NativeCallsFeature). */
+    static final class Callbacks {
+        static final MemorySegment WRITE = Upcalls.WRITE.stub();
+        static final MemorySegment WRITE_HEADER = Upcalls.WRITE_HEADER.stub();
+        static final MemorySegment READ = Upcalls.READ.stub();
+        static final MemorySegment PROGRESS = Upcalls.PROGRESS.stub();
+        static final MemorySegment XFERINFO = Upcalls.XFERINFO.stub();
+        static final MemorySegment FNMATCH = Upcalls.FNMATCH.stub();
+        static final MemorySegment DEBUG = Upcalls.DEBUG.stub();
+        static final MemorySegment PREREQ = Upcalls.PREREQ.stub();
+        static final MemorySegment SSH_HOSTKEY = Upcalls.SSH_HOSTKEY.stub();
+        static final MemorySegment MIME_READ = Upcalls.MIME_READ.stub();
+        static final MemorySegment MIME_SEEK = Upcalls.MIME_SEEK.stub();
+        static final MemorySegment MIME_FREE = Upcalls.MIME_FREE.stub();
+        static final MemorySegment PUSH = Upcalls.PUSH.stub();
+
+        private Callbacks() {
         }
     }
 
