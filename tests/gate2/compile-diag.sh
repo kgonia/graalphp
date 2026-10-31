@@ -95,6 +95,7 @@ case ${1:-} in
     python -I tests/gate2/compile_report.py "$out" ;;
   report) shift; python -I tests/gate2/compile_report.py "$out" "$@" ;;
   build-native)
+    [ -f bench/native/build.sh ] || { echo "no native-image build on this branch (bench/native)"; exit 2; }
     # NI_CLASSES builds another class directory, NI_NAME names the binary, NI_OPTS adds options (e.g. -J-Xmx8g)
     NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=${NI_NAME:-wp-http-diag} \
       NI_OPTS="-H:+IncludeNodeSourcePositions ${NI_OPTS:-}" bash bench/native/build.sh ;;
