@@ -16,6 +16,7 @@
 | [tla-cow.md](tla-cow.md) | TLA+ model of copy-on-write arrays and PHP references against php-src, with its findings |
 | [tla-curl.md](tla-curl.md) | TLA+ model of the curl handles' lifecycle (Cleaner, multi, share, threads), with its findings |
 | [tla-engine.md](tla-engine.md) | Per-request state in the shared engine: inventory, TLA+ model, findings |
+| [native-calls.md](native-calls.md) | Native calls (PCRE2, libcurl, libc) through one FFM helper, on the JVM and in a native image: the contract for adding a binding, and why it is fast on both |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
