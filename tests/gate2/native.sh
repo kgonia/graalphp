@@ -83,9 +83,7 @@ volume() {
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    for f in wp-http wp-http-main wp-http-s2 wp-http-diag; do
-      [ ! -f /w/target/native/$f ] || cp /w/target/native/$f /srv/target/native/
-    done
+    for f in /w/target/native/wp-http*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
     for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     # the Gate 1 kernels, served (tests/gate2/kernels.php): the compile diagnosis runs them on the HTTP launcher
@@ -103,7 +101,7 @@ check() {
 
 # the server of a variant: container $P-VARIANT on CPUSET, port 8080 inside, PORT on the host
 start() {
-  local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=gate1-truffle:8.5-graal25.4 cmd opts= env=()
+  local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
   case $variant in
     *-java|*-main) opts="-Dpolyglot.php.Parser=java" ;;
     # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image

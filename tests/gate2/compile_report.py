@@ -58,8 +58,12 @@ class Run:
         self.deopt = []         # (id, name, reason)
         self.warnings = []      # (target, message, frames)
         self.transfers = []     # frames
+        self.deopts = []        # native image: (target, reason, frames), from the server's output
         self.stats = collections.OrderedDict()
         self.parse(path)
+        server = os.path.join(os.path.dirname(path), 'server.log')
+        if os.path.isfile(server):
+            self.parse_deopts(server)
 
     def parse(self, path):
         with open(path, encoding='utf-8', errors='replace') as f:
@@ -113,6 +117,30 @@ class Run:
                 continue
             if line.startswith('[engine] Truffle runtime statistics'):
                 i = self.statistics(lines, i + 1)
+                continue
+            i += 1
+
+    def parse_deopts(self, path):
+        """A native image's TraceTransferToInterpreter: every deoptimization, with its reason and stack trace."""
+        with open(path, encoding='utf-8', errors='replace') as f:
+            lines = f.read().splitlines()
+        i = 0
+        while i < len(lines):
+            if lines[i].startswith('[Deoptimization initiated'):
+                target, reason, frames = '', '', []
+                i += 1
+                while i < len(lines) and not lines[i].startswith('['):
+                    line = lines[i].strip()
+                    if line.startswith('name:'):
+                        target = re.sub(r' \(SubstrateCompilation-\d+\)$', '', line[5:].strip())
+                    elif line.startswith('reason:'):
+                        reason = line[7:].strip()
+                    else:
+                        m = FRAME.match(lines[i])
+                        if m:
+                            frames.append((m.group(1), m.group(2)))
+                    i += 1
+                self.deopts.append((target, reason, frames))
                 continue
             i += 1
 
@@ -231,6 +259,15 @@ def report(run, top):
     tgroups = collections.Counter(ours(fr, skip=('pl.codeloom.php.runtime.PhpContext.',)) for fr in run.transfers)
     for where, count in tgroups.most_common(top):
         print(f'{count:5}  at {where}')
+    if run.deopts:
+        print(f'\n-- deoptimizations (native image, {len(run.deopts)}), by reason and our source location')
+        dgroups = collections.defaultdict(list)
+        for target, reason, frames in run.deopts:
+            dgroups[(re.sub(r'\s+', ' ', reason), ours(frames))].append(target)
+        for (reason, where), targets in sorted(dgroups.items(), key=lambda kv: -len(kv[1]))[:top * 2]:
+            common = collections.Counter(targets).most_common(2)
+            names = ', '.join(f'{short(t, 40)} ({c})' for t, c in common)
+            print(f'{len(targets):5}  {short(reason, 50):50} at {where}\n         in {names}')
     print()
 
 
