@@ -64,7 +64,12 @@ final class TRegexReplay {
         /** {@code execBoolean} only: a preg_match whose caller doesn't ask for $matches. */
         BOOLEAN,
         /** {@code execBoolean}, then {@code exec} on a hit: groups only for the calls that match. */
-        TWO_STEP
+        TWO_STEP,
+        /**
+         * {@code exec} of the pattern with its groups made non-capturing, group 0 read: preg_replace without group
+         * references, preg_split without PREG_SPLIT_DELIM_CAPTURE. Only group 0 is compared.
+         */
+        GROUP0
     }
 
     private record Pattern(int options, boolean jit, byte[] source) {
@@ -502,7 +507,7 @@ final class TRegexReplay {
             long found = 0;
             try {
                 for (int i = 0; i < full.length; i++) {
-                    if (guards[i] == null && mode != Mode.FULL.ordinal()) {
+                    if (guards[i] == null && (mode == Mode.BOOLEAN.ordinal() || mode == Mode.TWO_STEP.ordinal())) {
                         boolean hit = booleans.asBoolean(booleans.execute(bool[i], subjects[i], starts[i]));
                         if (!hit) {
                             continue;
@@ -569,6 +574,9 @@ final class TRegexReplay {
                     + (extraOptions.isEmpty() ? "" : "," + extraOptions);
             Rewrite rewrite = rewrites.get(m.pattern());
             String tregexSource = rewrite == null ? source : rewrite.source();
+            if (mode == Mode.GROUP0) {
+                tregexSource = withoutCaptures(tregexSource, (p.options() & EXTENDED) != 0);
+            }
             // named groups: PCRE takes (?<name> and (?P<name>, Python only the second, Java only the first
             String pattern = flavor.equals("Python") ? tregexSource.replaceAll("\\(\\?<([A-Za-z_])", "(?P<$1")
                     : tregexSource.replaceAll("\\(\\?P<", "(?<");
@@ -588,6 +596,48 @@ final class TRegexReplay {
         }
         compiled.put(key, result);
         return result;
+    }
+
+    /**
+     * The pattern with every capturing group, named or not, made non-capturing. Escapes, character classes and (in
+     * extended mode) comments are skipped. Without backreferences or conditionals (which TRegex refuses here
+     * anyway) the groups don't change what group 0 matches.
+     */
+    private static String withoutCaptures(String pattern, boolean extended) {
+        StringBuilder out = new StringBuilder(pattern.length() + 16);
+        boolean inClass = false;
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\' && i + 1 < pattern.length()) {
+                out.append(c).append(pattern.charAt(++i));
+            } else if (inClass) {
+                out.append(c);
+                inClass = c != ']';
+            } else if (c == '[') {
+                out.append(c);
+                inClass = true;
+                if (i + 1 < pattern.length() && pattern.charAt(i + 1) == '^') {
+                    out.append(pattern.charAt(++i));
+                }
+                if (i + 1 < pattern.length() && pattern.charAt(i + 1) == ']') {
+                    out.append(pattern.charAt(++i));
+                }
+            } else if (c == '#' && extended) {
+                int end = pattern.indexOf('\n', i);
+                end = end < 0 ? pattern.length() : end;
+                out.append(pattern, i, end);
+                i = end - 1;
+            } else if (c == '(' && !pattern.startsWith("(?", i)) {
+                out.append("(?:");
+            } else if (c == '(' && (pattern.startsWith("(?P<", i) || pattern.startsWith("(?<", i))
+                    && !pattern.startsWith("(?<=", i) && !pattern.startsWith("(?<!", i)) {
+                out.append("(?:");
+                i = pattern.indexOf('>', i);
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     private void preparePcre() {
@@ -621,7 +671,7 @@ final class TRegexReplay {
         if (mode == Mode.BOOLEAN) {
             return new long[] {0, 0};
         }
-        int groups = groupCounts.get(m.pattern());
+        int groups = mode == Mode.GROUP0 ? 1 : groupCounts.get(m.pattern());
         MemorySegment ovector = ovectors.get(m.pattern());
         long[] bounds = new long[2 * groups];
         for (int i = 0; i < 2 * groups; i++) {
@@ -637,7 +687,7 @@ final class TRegexReplay {
     private long[] tregexMatch(Compiled regex, Match m) {
         TruffleString subject = stringSubjects.get(m.subject());
         try {
-            if (regex.guard() == null && mode != Mode.FULL) {
+            if (regex.guard() == null && (mode == Mode.BOOLEAN || mode == Mode.TWO_STEP)) {
                 boolean hit = interop.asBoolean(interop.execute(regex.execBoolean(), subject, m.start()));
                 if (mode == Mode.BOOLEAN || !hit) {
                     return hit ? new long[] {0, 0} : new long[] {-1, -1};
@@ -659,7 +709,7 @@ final class TRegexReplay {
             if (mode == Mode.BOOLEAN) {
                 return new long[] {0, 0};
             }
-            int groups = groupCounts.get(m.pattern());
+            int groups = mode == Mode.GROUP0 ? 1 : groupCounts.get(m.pattern());
             long[] bounds = new long[2 * groups];
             for (int i = 0; i < groups; i++) {
                 bounds[2 * i] = interop.asInt(interop.invokeMember(result, "getStart", i));
