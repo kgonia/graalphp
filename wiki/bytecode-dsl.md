@@ -376,11 +376,34 @@ Bytecode speed against the tree, compilation off (the gate's measure):
 | + comparisons quickened, statement forms (`b9d4e85`, committed) | **1.03×** | **1.14×** |
 | + builtin locals, ceiling (`combo2`, experiment only) | 1.12× | **1.34×** |
 | native image, the head, no tail calls | 0.82× | 0.83× |
-| native image, the head, tail-call handlers | **1.32×** | **1.34×** |
+| native image, the head (`4747eae`), tail-call handlers | **1.32×** | **1.34×** |
+| native image at `4cb8cef` (both fixes, tail-call handlers): against the native tree | **1.44×** | **1.37×** |
+| the same, against the **JVM** tree at `4cb8cef` | 0.90× | **1.25×** |
 
 - **On the JVM**, 1.3× needs the builtin locals for real. That means a pass over each function before emitting: variables that are never references (no `&`, no by-reference argument or parameter, no capture), always assigned before they're read (definite assignment), and only ever assigned scalars. Those get `LoadLocal`/`StoreLocal`; the rest keep the operations. The ceiling bounds what it can give (1.34× in one JVM, 1.12× per kernel), so it is 1.3× with no margin. Cost: medium, a translator pass and its tests.
 - **On native image**, one attribute (`enableTailCallHandlers = true`) gives 1.32× per kernel without the fixes. They gave 1.12× per kernel on the JVM, so native with both is likely past 1.4×; not measured. But the native interpreters are slower than the Graal-hosted ones in absolute terms (tree 0.62×, bytecode 0.54× without tail calls), and native regex is 12× slower than the JVM's on Gate 1 (downcall handles made at run time, gate-1.md), so WordPress on native needs that fixed first.
 - **What no combination changes:** compiled peak is the tree's within ±5% (0.98–1.07×), and cold code costs the bytecode more than the tree on both hosts. If the gate's question is WordPress's cold-code cost, the answer is native image, not the bytecode interpreter.
+
+### Native image at the head (`4cb8cef`)
+One native image of the head (both fixes, tail-call handlers, StackValue), both interpreters, against the same commit on the JVM, all four in the same interleaved rounds (CPUs 14-21, 5 rounds; cold code 10). The reference is the JVM tree: speed above 1 is faster than it; cold code and the first iteration are times. Checksums equal PHP's on K0 and Gate 1 with both interpreters. Another job loaded the box during this run (absolute times about 1.4× the earlier runs', for every variant alike); the ratios come from the same rounds.
+
+| | native tree | **native bytecode** | JVM bytecode |
+|---|---|---|---|
+| K0 per kernel, compilation off (15 its) | 0.62× | **0.90×** (spectralnorm 1.38×, fannkuch 1.18×; floatloop 0.57×, nbody 0.63×) | 1.03× |
+| K0 in one process, compilation off (15 rounds) | 0.93× | **1.25×** (fib 2.20×, binarytrees 1.91×, spectralnorm 1.85×; nbody 0.70×) | 1.17× |
+| K0 per kernel, compilation on (120 its) | 1.24× | **1.24×** (fib 8.6×, the JVM's compiled fib being slow; without fib about 1.0×) | 1.01× |
+| K0 in one process, compilation on (100 rounds) | 1.09× | **1.07×** | 1.03× |
+| first iteration, K0 per kernel, compilation on | 102–631 ms | **79–431 ms** | 545–1173 ms |
+| JVM tree's first iteration, same | 134–734 ms | | |
+| cold code, first pass (bench/cold), time | 137 ms, 0.30× the JVM tree's (427) | **147 ms, 0.35×** | 1176 ms, 2.73× |
+| cold code, new functions on a warm engine | 0.73× | **0.61×** | 1.14× |
+| peak memory, K0 compilation on | 111–293 MB | **121–295 MB** | 258–1314 MB (JVM tree 209–1276) |
+| peak memory, cold code | 163 MB | **139 MB** | 364 MB (JVM tree 450) |
+
+- **Inside the native image** the bytecode is 1.44× the tree per kernel and 1.37× in one process with compilation off (1.32× and 1.34× at `4747eae`, before the two fixes), and level with it compiled.
+- **Against the JVM tree**, native bytecode is faster in one process (1.25×) and slower per kernel (0.90×): the native interpreters lose the host JIT's per-program specialization along with its warmup. On cold code it is the fastest of the four (2.9× the JVM tree's speed on a first pass), with a third of the memory.
+- **The build:** with tail-call handlers 2 min 24 s and 88.8 MiB (93,129,024 bytes), without 2 min 51 s and 88.4 MiB (92,670,272); the builder peaks at 5.7 GiB either way.
+- Native image still has to fix regex before WordPress runs on it (gate-1.md: 12× slower than the JVM on Gate 1), and runtime compilation's memory isn't capped by `-Xmx`.
 
 ### The DSL features of 25.x, one at a time
 Against 25.4's defaults on the bytecode interpreter, per kernel (5 rounds; compilation off 15 iterations, on 120), geomean speed (IQR of the extreme kernel):
