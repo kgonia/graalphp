@@ -441,3 +441,87 @@ python bench/gate1/speed.py target/f-off 2 tree=2 bytecode=3      # speed tables
 # native: bench/native/build.sh (NI_CLASSES and NI_NAME for a variant), then ab.sh variants native/NAME
 ```
 
+
+## What S2 could gain on WordPress (2026-10-31)
+The question is whether S2 is worth writing: if the next fallback categories moved to bytecode, how much of a WordPress visit could bytecode speed up at most? The workload is Gate 2's site (WordPress 7.2-beta1, its own MariaDB, `php.Parser=java`). `tests/gate2/native.sh` and `visits.py` run it on branch `wp-native` (#6 with this branch merged).
+
+**What S2 would move.** `-Dphp.bytecode.report=all` lists every construct that keeps a function on the tree, not only the first (`BytecodeTranslator.collect`).
+- It translates the function again and again, each time leaving out the innermost expression or statement the last construct failed in, and translating that node's parts alone in its place.
+- Of the functions Gate 2's 21 pages call, 439 run on bytecode with S1. 2,918 stay on the tree, with a median of 6 constructs each: 19 fail at the declaration (parameters, a reference return) and 4 are generators.
+- `tests/bytecode/s2_reasons.py` gives the cumulative steps. A function moves at the step after which none of its constructs is left:
+
+| S2 step (cumulative) | functions it moves | on bytecode after it | share of the 3,357 called |
+|---|---|---|---|
+| S1 today | | 439 | 13.1% |
+| (a) property access, with `$this` | 227 | 666 | 19.8% |
+| (b) + method and static calls | 270 | 936 | 27.9% |
+| (c) + `isset` / `empty` | 169 | 1,105 | 32.9% |
+| (d) + `global` | 104 | 1,209 | 36.0% |
+| (e) + the built-ins the tree compiles in place | 343 | 1,552 | 46.2% |
+| (f) + casts and constants | 296 | 1,848 | 55.0% |
+
+What still blocks the other 1,509. A function counts under each of its blockers; the second number counts the functions with that blocker alone.
+
+| blocker | functions | the only one |
+|---|---|---|
+| array element writes, `unset`, `??=` | 490 | 231 |
+| `new`, `instanceof`, `clone` | 435 | 202 |
+| string interpolation | 387 | 178 |
+| operators not yet covered | 257 | 94 |
+| superglobals, variable variables | 161 | 44 |
+| array literals mixing keyed and unkeyed elements, spreads | 124 | 55 |
+| `switch` / `match` | 90 | 18 |
+| `static` variables | 69 | 30 |
+| `include` | 60 | 19 |
+| callables, `call_user_func` | 56 | 16 |
+| closures | 55 | 12 |
+| argument unpacking, named arguments, places by reference | 54 | 2 |
+| references | 40 | 6 |
+| `compact`, `extract`, `func_get_args` | 36 | 7 |
+| `try` / `throw` | 36 | 9 |
+| parameter defaults | 19 | 19 |
+| `goto`, `::class`, generators, the rest | 40 | 7 |
+
+**Where a visit's time goes.** I ran Truffle's CPU sampler (1 ms period, tiers shown) on the S1 tree with our parser, natively and on the JVM, over one cold visit and over 1 + 100 visits. The warm profile is the second run minus a cold-visit run. `HttpMain -Dphp.http.closeAfter=n` closes the engine after the visits, which is when the sampler writes; `tests/bytecode/s2_profile.py` splits the samples.
+- A PHP function's self time is its own nodes, with what they run inline: array and string operations, in-place built-ins, `include` and its parsing, the first call's translation. Built-ins are roots of their own.
+
+| share of the sampled time | native, cold visit | native, warm (100 visits) | JVM, cold visit | JVM, warm |
+|---|---|---|---|---|
+| PHP functions, interpreted | 46.0% | 8.8% | 42.7% | 8.8% |
+| PHP functions, compiled | 7.1% | 53.4% | 7.3% | 54.0% |
+| built-ins | 32.4% | 33.2% | 40.5% | 31.6% |
+| files' top-level code and other roots (all on the tree) | 14.6% | 4.6% | 9.5% | 5.6% |
+| samples | 2,093 | 61,126 | 3,376 | 47,046 |
+
+**The bound.** Bytecode changes only the interpreter's own overhead, so what it can speed up is the interpreted self time of PHP functions on bytecode. Compiled time stays as it is (s ≈ 1, peak being equal). Amdahl, 1 / ((1 − f) + f / s):
+- s = 1.44 natively: native bytecode against the native tree, K0 per kernel, compilation off (1.37× in one process).
+- s = 1.03 on the JVM: JVM bytecode against the JVM tree, same measure (1.17× in one process).
+
+| on bytecode | native cold: f, bound | native warm | JVM cold (s 1.03; 1.17) | JVM warm (s 1.03) |
+|---|---|---|---|---|
+| S1 today | 0.5%, 1.002× | 0.3%, 1.001× | 0.6%, 1.000× | 0.2%, 1.000× |
+| + (a) | 2.8%, 1.009× | 1.0%, 1.003× | 3.1%, 1.001× | 0.7%, 1.000× |
+| + (b) | 3.1%, 1.010× | 1.2%, 1.004× | 3.5%, 1.001× | 0.9%, 1.000× |
+| + (c) | 5.4%, 1.017× | 1.6%, 1.005× | 5.1%, 1.001× | 1.2%, 1.000× |
+| + (d) | 6.3%, 1.019× | 1.9%, 1.006× | 6.1%, 1.002× | 1.4%, 1.000× |
+| + (e) | 14.8%, 1.047× | 3.1%, 1.010× | 12.6%, 1.004× | 2.4%, 1.001× |
+| + (f) | **20.6%, 1.067×** | **3.9%, 1.012×** | **19.3%, 1.006×; 1.029×** | **3.2%, 1.001×** |
+| every interpreted root, top-level code included (ceiling) | 60.6%, 1.227× | 12.3%, 1.039× | 52.2%, 1.015×; 1.082× | 12.8%, 1.004× |
+
+- **The answer:** all of (a)–(f) would put 55% of WordPress's called functions on bytecode. But they speed a native cold visit up by 6.7% at most (about 0.17 s of 2.4–2.8), and a warm visit by 1.2% at most. On the JVM, at its own s, the bound is under 1% cold and 0.1% warm.
+- Even all interpreted code on bytecode, top-level code included, stays under 1.23× for a native cold visit and 1.04× for a warm one.
+- After (f), what remains is mostly blocked by array writes, `new` and string interpolation: about another S2's worth of constructs.
+- **Caveats:**
+  - s comes from K0's constructs (arithmetic loops, calls, arrays), not WordPress's.
+  - The interpreted self time includes the runtime's inline work and the first call's parse and translation, which bytecode doesn't speed up. So the bounds are upper bounds even for that s.
+  - The sampler missed 8% of its samples natively and 25% on the JVM (safepoint delays).
+  - Each profile is one run, on a box other sessions were loading.
+- **Reproduce:**
+  ```
+  CLASSES=target/classes-s2 JAVA_OPTS=-Dphp.bytecode.report=all tests/gate2/native.sh start jvm-bc 14-21 8092
+  tests/gate2/native.sh pages jvm-bc 8092                          # its server.log: the report
+  python tests/bytecode/s2_reasons.py server.log --json reasons.json
+  # profiles: -Dpolyglot.cpusampler=true -Dpolyglot.cpusampler.Output=histogram -Dpolyglot.cpusampler.ShowTiers=true
+  #   -Dpolyglot.cpusampler.Period=1 -Dphp.http.closeAfter=<6 x visits>, one cold visit, then 1 + 100 visits
+  python tests/bytecode/s2_profile.py reasons.json 1.44 native-warm.histogram native-cold.histogram
+  ```
