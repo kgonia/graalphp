@@ -1,10 +1,10 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
@@ -24,6 +24,26 @@ import pl.codeloom.php.runtime.PhpRef;
 public final class LocalVarNode extends LValueNode {
     private final int slot;
     private final String name;
+    /**
+     * What this site has met, one bit per case (the SEEN_ constants). Partial evaluation uses no host profiles, so
+     * an unprofiled write compiled every case: a long, a double and an Object store, each with a reference's
+     * write and the old value's release, at every assignment of a value of unknown type (one of the largest
+     * parts of big compiled functions). A case not yet met is a deoptimization in compiled code.
+     */
+    @CompilationFinal private int seen;
+    private static final int SEEN_LONG = 1;
+    private static final int SEEN_DOUBLE = 1 << 1;
+    private static final int SEEN_OBJECT = 1 << 2;
+    /** The variable was a reference when written. */
+    private static final int SEEN_REF = 1 << 3;
+    /** A write here stored an array (it gains a holder). */
+    private static final int SEEN_NEW_ARRAY = 1 << 4;
+    /** A write here replaced an array (it loses a holder). */
+    private static final int SEEN_OLD_ARRAY = 1 << 5;
+    /** arrayForWrite met a shared array, a reference, a value that becomes an array. */
+    private static final int SEEN_SHARED = 1 << 6;
+    private static final int SEEN_REF_ARRAY = 1 << 7;
+    private static final int SEEN_CREATED = 1 << 8;
 
     public LocalVarNode(int slot, String name) {
         this.slot = slot;
@@ -101,15 +121,26 @@ public final class LocalVarNode extends LValueNode {
         return frame.isObject(slot) ? frame.getObject(slot) : null;
     }
 
+    /** Notes that this site met a case; in compiled code that hadn't seen it, deoptimizes first. */
+    private void met(int bit) {
+        if ((seen & bit) == 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seen |= bit;
+        }
+    }
+
     // ---- writes ----
 
     @Override
     public void write(VirtualFrame frame, Object value) {
         if (value instanceof Long l) {
+            met(SEEN_LONG);
             writeLong(frame, l);
         } else if (value instanceof Double d) {
+            met(SEEN_DOUBLE);
             writeDouble(frame, d);
         } else {
+            met(SEEN_OBJECT);
             writeObject(frame, value);
         }
     }
@@ -118,39 +149,47 @@ public final class LocalVarNode extends LValueNode {
     public void writeLong(VirtualFrame frame, long value) {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
+            met(SEEN_REF);
             ref.set(value);
             return;
         }
         FrameSlots.setLong(frame, slot, value);
-        if (old instanceof PhpArray array) {
-            array.removeHolder();
-        }
+        releaseArray(old);
     }
 
     @Override
     public void writeDouble(VirtualFrame frame, double value) {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
+            met(SEEN_REF);
             ref.set(value);
             return;
         }
         FrameSlots.setDouble(frame, slot, value);
-        if (old instanceof PhpArray array) {
-            array.removeHolder();
-        }
+        releaseArray(old);
     }
 
     private void writeObject(VirtualFrame frame, Object value) {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
+            met(SEEN_REF);
             ref.set(value);
             return;
         }
         if (value instanceof PhpArray array) {
+            met(SEEN_NEW_ARRAY);
             array.addHolder();
         }
         FrameSlots.setObject(frame, slot, value);
-        if (old instanceof PhpArray array && old != value) {
+        if (old != value) {
+            releaseArray(old);
+        }
+    }
+
+    /** The old value of a variable that isn't a reference: an array loses this variable as a holder. */
+    private void releaseArray(Object old) {
+        if (old instanceof PhpArray array) {
+            met(SEEN_OLD_ARRAY);
             array.removeHolder();
         }
     }
@@ -189,21 +228,19 @@ public final class LocalVarNode extends LValueNode {
         Object value = raw(frame, slot);
         if (value instanceof PhpArray array) {
             if (array.isShared()) {
-                sharedArray.enter();
-                PhpArray copy = array.copy();
-                copy.addHolder();
-                array.removeHolder();
+                met(SEEN_SHARED);
+                PhpArray copy = separated(array);
                 FrameSlots.setObject(frame, slot, copy);
                 return copy;
             }
             return array;
         }
         if (value instanceof PhpRef ref) {
-            refArray.enter();
+            met(SEEN_REF_ARRAY);
             return Places.refArrayForWrite(ref);
         }
         if (value == null || value == PhpNull.NULL || value == Boolean.FALSE) {
-            createdArray.enter();
+            met(SEEN_CREATED);
             PhpArray created = new PhpArray();
             created.addHolder();
             FrameSlots.setObject(frame, slot, created);
@@ -215,14 +252,21 @@ public final class LocalVarNode extends LValueNode {
         throw scalarAsArray();
     }
 
+    // The arrayForWrite cases are profiled too (SEEN_SHARED, SEEN_REF_ARRAY, SEEN_CREATED). An element write such
+    // as `$q[$i] = $v` usually only ever finds an unshared array; compiled code keeps the other cases (separation,
+    // references, auto-creation) out until they happen, instead of inlining all of them at every write site.
+
     /**
-     * The arrayForWrite cases this site has met. An element write such as `$q[$i] = $v` usually only ever finds
-     * an unshared array; compiled code keeps the other cases (separation, references, auto-creation) out until
-     * they happen, instead of inlining all of them at every write site.
+     * A shared array the variable writes into: its own copy, which it holds instead. Out of line, as
+     * PhpRef.separate: the copy is as long as the array, the holder updates large.
      */
-    private final BranchProfile sharedArray = BranchProfile.create();
-    private final BranchProfile refArray = BranchProfile.create();
-    private final BranchProfile createdArray = BranchProfile.create();
+    @TruffleBoundary
+    private static PhpArray separated(PhpArray shared) {
+        PhpArray copy = shared.copy();
+        copy.addHolder();
+        shared.removeHolder();
+        return copy;
+    }
 
     @TruffleBoundary
     private static PhpError scalarAsArray() {
