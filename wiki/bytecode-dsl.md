@@ -381,7 +381,7 @@ Bytecode speed against the tree, compilation off (the gate's measure):
 | the same, against the **JVM** tree at `4cb8cef` | 0.90× | **1.25×** |
 
 - **On the JVM**, 1.3× needs the builtin locals for real. That means a pass over each function before emitting: variables that are never references (no `&`, no by-reference argument or parameter, no capture), always assigned before they're read (definite assignment), and only ever assigned scalars. Those get `LoadLocal`/`StoreLocal`; the rest keep the operations. The ceiling bounds what it can give (1.34× in one JVM, 1.12× per kernel), so it is 1.3× with no margin. Cost: medium, a translator pass and its tests.
-- **On native image**, one attribute (`enableTailCallHandlers = true`) gives 1.32× per kernel without the fixes. They gave 1.12× per kernel on the JVM, so native with both is likely past 1.4×; not measured. But the native interpreters are slower than the Graal-hosted ones in absolute terms (tree 0.62×, bytecode 0.54× without tail calls), and native regex is 12× slower than the JVM's on Gate 1 (downcall handles made at run time, gate-1.md), so WordPress on native needs that fixed first.
+- **On native image**, one attribute (`enableTailCallHandlers = true`) gives 1.32× per kernel without the fixes. They gave 1.12× per kernel on the JVM, so native with both is likely past 1.4×; not measured. But the native interpreters are slower than the Graal-hosted ones in absolute terms (tree 0.62×, bytecode 0.54× without tail calls), and native regex was 12× slower than the JVM's on Gate 1 (downcall handles made at run time, gate-1.md). PR #6 fixes that: native calls go through one helper whose handles are constants of the image, and native Gate 1 gets 8.4× faster. Native is still at 0.59× the JVM at steady state.
 - **What no combination changes:** compiled peak is the tree's within ±5% (0.98–1.07×), and cold code costs the bytecode more than the tree on both hosts. If the gate's question is WordPress's cold-code cost, the answer is native image, not the bytecode interpreter.
 
 ### Native image at the head (`4cb8cef`)
@@ -403,7 +403,7 @@ One native image of the head (both fixes, tail-call handlers, StackValue), both 
 - **Inside the native image** the bytecode is 1.44× the tree per kernel and 1.37× in one process with compilation off (1.32× and 1.34× at `4747eae`, before the two fixes), and level with it compiled.
 - **Against the JVM tree**, native bytecode is faster in one process (1.25×) and slower per kernel (0.90×): the native interpreters lose the host JIT's per-program specialization along with its warmup. On cold code it is the fastest of the four (2.9× the JVM tree's speed on a first pass), with a third of the memory.
 - **The build:** with tail-call handlers 2 min 24 s and 88.8 MiB (93,129,024 bytes), without 2 min 51 s and 88.4 MiB (92,670,272); the builder peaks at 5.7 GiB either way.
-- Native image still has to fix regex before WordPress runs on it (gate-1.md: 12× slower than the JVM on Gate 1), and runtime compilation's memory isn't capped by `-Xmx`.
+- Native regex was 12× slower than the JVM on Gate 1; PR #6 fixes it (native Gate 1 8.4× faster, still 0.59× the JVM at steady state). Runtime compilation's memory still isn't capped by `-Xmx`.
 
 ### The DSL features of 25.x, one at a time
 Against 25.4's defaults on the bytecode interpreter, per kernel (5 rounds; compilation off 15 iterations, on 120), geomean speed (IQR of the extreme kernel):
