@@ -4,10 +4,11 @@ variant, its first iteration, its first ten iterations and its peak memory.
 Usage: python speed.py <dir> <reference index> <name>=<index>...
        e.g. python speed.py target/s1-off 1 main=0 tree=1 bytecode=2
 
-The runs are <dir>/<kernel>/<variant index>-<round>.txt. A run's steady state is the median of its last quarter of
-iterations; a cell is the median over rounds (interquartile range over rounds in parentheses). Speed is the
-reference's steady state divided by the variant's, per round, median and IQR over rounds: above 1 is faster. The
-last row is the geometric mean of the speeds. Peak memory is the run's cgroup memory.peak in MB.
+The runs are <dir>/<kernel>/<variant index>-<round>.txt (ab-each.sh), or <dir>/<variant index>-<round>.txt with
+every kernel in each run (ab.sh, e.g. with bench/k0/mixed.php). A run's steady state is the median of its last
+quarter of iterations; a cell is the median over rounds (interquartile range over rounds in parentheses). Speed is
+the reference's steady state divided by the variant's, per round, median and IQR over rounds: above 1 is faster.
+The last row is the geometric mean of the speeds. Peak memory is the run's cgroup memory.peak in MB.
 """
 import glob
 import math
@@ -16,11 +17,11 @@ import statistics
 import sys
 
 
-def load(path):
+def load(path, kernel):
     times, memory = [], None
     for line in open(path, encoding="utf-8", errors="replace"):
         parts = line.split()
-        if len(parts) >= 4 and parts[1].isdigit():
+        if len(parts) >= 4 and parts[1].isdigit() and (kernel is None or parts[0] == kernel):
             times.append(int(parts[2]) / 1e6)
         elif len(parts) == 2 and parts[0] == "peak_memory":
             memory = int(parts[1]) / 2**20
@@ -28,9 +29,24 @@ def load(path):
 
 
 def runs(directory, kernel, index):
-    files = glob.glob(os.path.join(directory, kernel, f"{index}-*.txt"))
+    per_kernel = os.path.isdir(os.path.join(directory, kernel))
+    files = glob.glob(os.path.join(directory, kernel, f"{index}-*.txt") if per_kernel
+                      else os.path.join(directory, f"{index}-*.txt"))
     files.sort(key=lambda f: int(f.rsplit("-", 1)[1][:-4]))
-    return [r for r in (load(f) for f in files) if r[0]]
+    return [r for r in (load(f, None if per_kernel else kernel) for f in files) if r[0]]
+
+
+def kernels(directory):
+    names = [k for k in os.listdir(directory) if os.path.isdir(os.path.join(directory, k))]
+    if names:
+        return sorted(names)
+    found = set()
+    for f in glob.glob(os.path.join(directory, "*-*.txt")):
+        for line in open(f, encoding="utf-8", errors="replace"):
+            parts = line.split()
+            if len(parts) >= 4 and parts[1].isdigit():
+                found.add(parts[0])
+    return sorted(found)
 
 
 def steady(times):
@@ -61,7 +77,7 @@ print("| kernel | " + " | ".join(f"{n} ms" for n, _ in variants) + " | "
       + f" | first iteration ms ({names}) | first 10 ms ({names}) | peak MB ({names}) |")
 print("|---" * (2 + len(variants) + len(others) + 2) + "|")
 logs = {n: [] for n, _ in others}
-for kernel in sorted(os.listdir(directory)):
+for kernel in kernels(directory):
     data = {i: runs(directory, kernel, i) for _, i in variants}
     cells = [cell([steady(t) for t, _ in data[i]], ms) for _, i in variants]
     for n, i in others:
