@@ -67,18 +67,24 @@ public final class PhpRef {
     public PhpArray arrayForWrite() {
         Object current = value;
         if (current instanceof PhpArray array) {
-            if (array.isShared()) {
-                PhpArray copy = array.copy();
-                if (!released) {
-                    copy.addHolder();
-                    array.removeHolder();
-                }
-                value = copy;
-                return copy;
-            }
-            return array;
+            return array.isShared() ? separate(array) : array;
         }
         return null;
+    }
+
+    /**
+     * Out of line: the copy costs as much as the array is long, and inlined, its holder updates were a large part
+     * of compiled functions that write through a reference (`$q = &$this->query_vars; $q['x'] = ...`).
+     */
+    @TruffleBoundary
+    private PhpArray separate(PhpArray array) {
+        PhpArray copy = array.copy();
+        if (!released) {
+            copy.addHolder();
+            array.removeHolder();
+        }
+        value = copy;
+        return copy;
     }
 
     /** A variable is now bound to this reference, or an array element made it. */
