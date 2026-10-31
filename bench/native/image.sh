@@ -5,7 +5,8 @@
 # themselves: pl.codeloom.php.ffi.NativeCallsFeature (enabled by the classes' META-INF/native-image) initializes the
 # binding classes at build time, their native state at run time, and registers each declared downcall and direct
 # upcall, so the agent's configuration must not carry foreign calls (wiki/native-calls.md). Extra options come in
-# NI_OPTS; NI_CLASSES builds other classes (default target/classes).
+# NI_OPTS; NI_CLASSES builds other classes (default target/classes); NI_MAIN another launcher (default PhpMain, e.g.
+# pl.codeloom.php.launcher.HttpMain for the HTTP server).
 set -e
 cd /w
 config=target/native/config
@@ -21,4 +22,4 @@ $GRAALVM_HOME/bin/native-image -J-Xmx14g \
   --enable-native-access=ALL-UNNAMED -H:ConfigurationFileDirectories=$config \
   --initialize-at-build-time=$BT --initialize-at-run-time=$RT \
   $NI_OPTS \
-  -o target/native/${NI_NAME:-php} pl.codeloom.php.launcher.PhpMain
+  -o target/native/${NI_NAME:-php} ${NI_MAIN:-pl.codeloom.php.launcher.PhpMain}
