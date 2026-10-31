@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * An HTTP server running PHP scripts as php-fpm would: each request in a new context on one shared engine (the
@@ -63,6 +65,8 @@ public final class HttpMain {
     private final String serverName;
     /** Each request's php.ini settings, as php.Ini options. */
     private final Map<String, String> ini;
+    /** The PHP requests begun so far (for php.http.closeAfter, with requests that come one at a time). */
+    private final AtomicInteger scripts = new AtomicInteger();
 
     private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName,
                      Map<String, String> ini) {
@@ -123,11 +127,28 @@ public final class HttpMain {
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
+        // -Dphp.http.closeAfter=n, for profiling: after n PHP requests the server stops and closes the engine, so
+        // that its tools write their output (the CPU sampler's, the compilation statistics, at the engine's close).
+        // -Dphp.http.closeFile=path does the same after the first request that finds the file there, for a driver
+        // that doesn't know the count in advance (tests/gate2/compile-diag.sh).
+        int closeAfter = Integer.getInteger("php.http.closeAfter", 0);
+        String closeFileName = System.getProperty("php.http.closeFile");
+        Path closeFile = closeFileName == null ? null : Path.of(closeFileName);
+        AtomicBoolean closing = new AtomicBoolean();
         http.createContext("/", exchange -> {
             try (exchange) {
                 server.handle(exchange);
             } catch (RuntimeException | IOException e) {
                 System.err.println("request failed: " + e);
+            }
+            boolean close = (closeAfter > 0 && server.scripts.get() >= closeAfter)
+                    || (closeFile != null && Files.exists(closeFile));
+            if (close && closing.compareAndSet(false, true)) {
+                new Thread(() -> {
+                    http.stop(0);
+                    engine.close();
+                    System.exit(0);
+                }).start();
             }
         });
         http.start();
@@ -174,6 +195,7 @@ public final class HttpMain {
 
     /** Runs a script as a CGI request and sends its CGI response. */
     private void runScript(HttpExchange exchange, Path script, String scriptName) throws IOException {
+        scripts.incrementAndGet();
         byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
         if (body.length > MAX_BODY) {
             respond(exchange, 413, "text/plain", "Request body too large".getBytes(StandardCharsets.UTF_8));
