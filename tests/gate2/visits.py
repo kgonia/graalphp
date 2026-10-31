@@ -15,6 +15,7 @@ Usage: python visits.py URL ID_FILE VISITS PAUSE_SECONDS OUT.json
 import http.cookiejar
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -105,6 +106,15 @@ def visit(base):
 def main():
     base, id_file, visits, pause, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
     print("polling", flush=True)
+    # a connect to an address no container has yet waits for ARP (up to seconds): poll the port with a short timeout
+    # first, so the server's start is timed to the poll's few milliseconds
+    address = urllib.parse.urlsplit(base)
+    while True:
+        try:
+            socket.create_connection((address.hostname, address.port), timeout=0.02).close()
+            break
+        except OSError:
+            time.sleep(0.005)
     while True:
         try:
             if fetch(urllib.request.build_opener(), base + "/wp-includes/css/dashicons.css")[0] == 200:
