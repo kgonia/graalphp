@@ -141,6 +141,15 @@ No match differs in any capture group.
 
 A PCRE flavor for TRegex (its flavors are pluggable) is not the goal: it would add the constructs TRegex's engine lacks (conditionals, recursion, variable-width lookbehind), not speed.
 
+**Update (2026-10-31, gate-1.md):** GraalVM 25.4 changes nothing.
+- Most of TRegex's losses were its DFA size cap. `MaxDFASize=32000` takes the tag alternations from 10–14× to about 1×, and `wp_kses_split` from 16× to 2.2×.
+- The scope gains:
+  - `MaxDFASize`;
+  - `execBoolean` for `preg_match` without `$matches`;
+  - equal rewrites in the translator, later.
+- On the JVM the per-pattern choice gains little from this: about 19% → 21% of the kernels' regex time.
+- In a native image, TRegex is the faster engine for every pattern it takes.
+
 ## D13: curl through libcurl by FFM; sockets and stream transports on the JDK (2026-10-26)
 **Decision:** WordPress's outgoing HTTP (update checks, plugin and theme installs, the cron and Site Health loopbacks) gets two transports, both as php-src has them:
 1. **`curl_*` is a port of ext/curl over libcurl, bound by FFM**, as PCRE2 is (D7). The callbacks (`CURLOPT_WRITEFUNCTION`, `HEADERFUNCTION`, `READFUNCTION`, `PROGRESSFUNCTION`) are FFM upcalls.
