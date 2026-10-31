@@ -217,8 +217,10 @@ measure_run() { # variant visits pause name
   local variant=$1 visits=$2 pause=$3 name=$4 runs=$out/runs driver
   mkdir -p $runs && rm -f $runs/$name.id $runs/$name.json
   # the benchmark cores are shared: wait until no other container is pinned to them and no other memory-lock
-  # reservation claims them, and note a container that came during the run
-  while [ -n "$(others_on_bench)$(others_reserving_bench)" ]; do sleep 30; done
+  # reservation claims them, and note a container that came during the run. Pinning holds only inside the VM, whose
+  # CPUs share the host's: wait for a quiet host too, and log its load during the run.
+  while [ -n "$(others_on_bench)$(others_reserving_bench)" ] || ! host_quiet; do sleep 30; done
+  rm -f $runs/$name.host
   reset_db
   MSYS_NO_PATHCONV=1 docker run --rm --name wpn-driver --cpuset-cpus 0-5 --network wpn-net --pid=host --cgroupns=host \
     -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$runs:/runs" python:3.13-slim \
@@ -230,6 +232,7 @@ measure_run() { # variant visits pause name
   docker inspect -f '{{.Id}} {{.State.Pid}}' wpn-$variant > $runs/$name.id
   while kill -0 $driver 2> /dev/null; do
     others_on_bench >> $runs/$name.others
+    host_cpu >> $runs/$name.host
     sleep 10
   done
   wait $driver || true
@@ -237,7 +240,30 @@ measure_run() { # variant visits pause name
   stop "$variant"
   local shared=
   [ ! -s $runs/$name.others ] || shared=" (shared with: $(sort -u $runs/$name.others | tr '\n' ' '))"
-  echo "$name: $(tail -1 $runs/$name.log)$shared"
+  echo "$name: $(tail -1 $runs/$name.log)$shared; host CPU median $(host_median $runs/$name.host)%," \
+    "max $(sort -n $runs/$name.host | tail -1)%"
+}
+
+# the median of a run's host CPU samples
+host_median() {
+  sort -n "$1" | awk '{a[NR] = $1} END {print NR ? a[int((NR + 1) / 2)] : 100}'
+}
+
+# the host's CPU load now, in percent (all its CPUs; the measured server's 8 count for about a third)
+host_cpu() {
+  powershell -NoProfile -Command \
+    "[math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average)" \
+    2> /dev/null | tr -d '\r'
+}
+
+# whether the host stayed under HOST_QUIET percent (default 30) over three samples 10 s apart
+host_quiet() {
+  local load
+  for _ in 1 2 3; do
+    load=$(host_cpu)
+    [ "${load:-100}" -lt "${HOST_QUIET:-30}" ] || return 1
+    sleep 10
+  done
 }
 
 # containers other than this script's pinned to any of CPUs 14-21
@@ -257,14 +283,29 @@ others_reserving_bench() {
     | grep -v 'claude-wordpress-wpn' || true
 }
 
+# Rounds of every variant, the order reversed every other round. A round in which a run's median host load passed
+# HOST_LOADED percent (default 55: the server's own third and about as much again) is run again, up to twice; the
+# loaded round's files move to runs/loaded/.
 measure() { # rounds visits pause variants...
-  local rounds=$1 visits=$2 pause=$3 r i order
+  local rounds=$1 visits=$2 pause=$3 r i order attempt loaded v
   shift 3
   local variants=("$@") n=$#
   for r in $(seq "$rounds"); do
     if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
-    for i in $order; do
-      measure_run "${variants[$i]}" "$visits" "$pause" "${variants[$i]}-$r"
+    for attempt in 1 2 3; do
+      for i in $order; do
+        measure_run "${variants[$i]}" "$visits" "$pause" "${variants[$i]}-$r"
+      done
+      loaded=
+      for v in "${variants[@]}"; do
+        [ "$(host_median $out/runs/$v-$r.host)" -le "${HOST_LOADED:-55}" ] || loaded+=" $v"
+      done
+      [ -n "$loaded" ] && [ $attempt -lt 3 ] || break
+      echo "round $r again: the host was loaded during$loaded"
+      mkdir -p $out/runs/loaded
+      for v in "${variants[@]}"; do
+        for f in $out/runs/$v-$r.*; do mv "$f" "$out/runs/loaded/$(basename "$f").$attempt"; done
+      done
     done
   done
 }
