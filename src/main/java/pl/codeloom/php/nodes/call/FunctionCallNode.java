@@ -72,26 +72,33 @@ public final class FunctionCallNode extends CallNode {
         }
 
         protected PhpFunction find() {
-            PhpContext context = PhpContext.get(this);
-            PhpFunction function = context.functionAt(id);
-            if (function == null && fallbackId >= 0) {
-                function = context.functionAt(fallbackId);
-            }
-            if (function == null) {
-                CompilerDirectives.transferToInterpreter();
-                throw undefined();
-            }
-            return function;
-        }
-
-        @TruffleBoundary
-        private PhpError undefined() {
-            return new PhpError("Call to undefined function " + displayName + "()");
+            return FunctionCallNode.find(PhpContext.get(this), displayName, id, fallbackId);
         }
 
         protected Assumption singleContext() {
             return PhpLanguage.get(this).singleContext();
         }
+    }
+
+    /**
+     * The function a call by name calls in context: by the name's id, else (an unqualified name in a namespace)
+     * the global function's; an error if neither is declared.
+     */
+    public static PhpFunction find(PhpContext context, String displayName, int id, int fallbackId) {
+        PhpFunction function = context.functionAt(id);
+        if (function == null && fallbackId >= 0) {
+            function = context.functionAt(fallbackId);
+        }
+        if (function == null) {
+            CompilerDirectives.transferToInterpreter();
+            throw undefined(displayName);
+        }
+        return function;
+    }
+
+    @TruffleBoundary
+    private static PhpError undefined(String displayName) {
+        return new PhpError("Call to undefined function " + displayName + "()");
     }
 
     /** Calls a function: directly while the site sees one function (nearly always), else indirectly. */
