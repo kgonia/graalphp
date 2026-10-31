@@ -45,7 +45,15 @@ import java.util.function.Supplier;
  * constant array) is made by the first run and taken by later ones in the same order.
  */
 public final class BytecodeTranslator {
-    private static final boolean REPORT = Boolean.getBoolean("php.bytecode.report");
+    private static final String REPORT_MODE = System.getProperty("php.bytecode.report", "false");
+    /**
+     * -Dphp.bytecode.report=all also lists every construct that keeps a function on the tree, not only the first
+     * (see {@link #collect}). A native image reads these properties at build time.
+     */
+    private static final boolean REPORT_ALL = REPORT_MODE.equals("all");
+    private static final boolean REPORT = REPORT_ALL || REPORT_MODE.equals("true");
+    /** How many translations {@link #collect} tries for one function before it gives up. */
+    private static final int COLLECT_LIMIT = 500;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
 
@@ -81,6 +89,10 @@ public final class BytecodeTranslator {
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
     private boolean firstRun = true;
+    /** report=all ({@link #collect}): the nodes this translation leaves out, by {@link Run#key}; else null. */
+    private Set<String> skip;
+    /** report=all: the last run, whose dispatch stack says where a construct failed. */
+    private Run lastRun;
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
                                Ast body, Translator.ClassInfo owner, PhpFunction function, String display,
@@ -116,6 +128,10 @@ public final class BytecodeTranslator {
             nodes = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, parser);
         } catch (Unsupported unsupported) {
             report("tree     " + display + ": " + unsupported.getMessage());
+            if (REPORT_ALL) {
+                report("all      " + display + ": " + String.join(" | ", collect(language, path, source, internal,
+                        declaration, owner, function, display, params, captures, captureByRef, names)));
+            }
             return null;
         }
         PhpBytecodeRootNode root = nodes.getNode(0);
@@ -135,6 +151,47 @@ public final class BytecodeTranslator {
         return root.getCallTarget();
     }
 
+    /**
+     * Every construct that keeps a function on the tree, for report=all. The function is translated again and
+     * again. Each time it leaves out the node the last construct failed in (the innermost expression or statement
+     * being translated) and translates that node's parts alone in its place, until a translation gets through. The
+     * bytecode made on the way is thrown away: the function stays on the tree either way. A failure outside every
+     * statement (its parameters, a reference return) ends the search, marked "(function)".
+     */
+    private static List<String> collect(PhpLanguage language, String path, Source source, boolean internal,
+                                        Ast declaration, Translator.ClassInfo owner, PhpFunction function,
+                                        String display, PhpFunction.Param[] params, String[] captures,
+                                        boolean[] captureByRef, Names names) {
+        Set<String> skip = new java.util.HashSet<>();
+        Set<String> reasons = new LinkedHashSet<>();
+        for (int attempt = 0; attempt < COLLECT_LIMIT; attempt++) {
+            BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration,
+                    null, owner, function, display, params, captures, captureByRef, names);
+            translator.skip = skip;
+            try {
+                PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse);
+                return new ArrayList<>(reasons);
+            } catch (Unsupported unsupported) {
+                String at = translator.lastRun == null ? null : translator.lastRun.dispatched.peekLast();
+                if (at == null || !skip.add(at)) {
+                    reasons.add(unsupported.getMessage() + " (function)");
+                    return new ArrayList<>(reasons);
+                }
+                reasons.add(unsupported.getMessage());
+            }
+        }
+        reasons.add("(more)");
+        return new ArrayList<>(reasons);
+    }
+
+    /** That a generator stays on the tree (its caller doesn't translate generators), for the report. */
+    static void reportGenerator(String display) {
+        report("tree     " + display + ": generator");
+        if (REPORT_ALL) {
+            report("all      " + display + ": generator");
+        }
+    }
+
     private static void report(String line) {
         if (REPORT) {
             System.err.println("php.bytecode " + line);
@@ -150,7 +207,8 @@ public final class BytecodeTranslator {
     private void parse(PhpBytecodeRootNodeGen.Builder builder) {
         Ast body = firstBody != null ? firstBody : declaration.body();
         firstBody = null;
-        new Run(builder).root(body);
+        lastRun = new Run(builder);
+        lastRun.root(body);
         firstRun = false;
     }
 
@@ -162,6 +220,10 @@ public final class BytecodeTranslator {
         private final List<Loop> loops = new ArrayList<>();
         /** The next object of made to take, or to make. */
         private int madeIndex;
+        /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
+        private final java.util.ArrayDeque<String> dispatched = new java.util.ArrayDeque<>();
+        /** report=all: how many nodes of a kind on a line this run has met, for {@link #key}. */
+        private final Map<String, Integer> met = new HashMap<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -301,6 +363,13 @@ public final class BytecodeTranslator {
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
                     if (statement.is("AST_LABEL")) {
+                        if (skip != null) {
+                            String key = key(statement);
+                            if (skip.contains(key)) {
+                                continue;
+                            }
+                            dispatched.addLast(key);
+                        }
                         throw new Unsupported("goto label", statement);
                     }
                     statement(statement);
@@ -315,9 +384,75 @@ public final class BytecodeTranslator {
                 statements(node);
                 return;
             }
+            String key = null;
+            if (skip != null) {
+                key = key(node);
+                if (skip.contains(key)) {
+                    explore(node, false);
+                    return;
+                }
+                dispatched.addLast(key);
+            }
             beginLine(node.line);
             statementBody(node);
             endLine(node.line);
+            if (key != null) {
+                dispatched.removeLast();
+            }
+        }
+
+        // ---- report=all: leaving a node out ----
+
+        /** A node's place in a run: its kind, line, and how many such nodes the run met before it there. */
+        private String key(Ast node) {
+            String place = node.kind + ":" + node.line;
+            return place + ":" + met.merge(place, 1, Integer::sum);
+        }
+
+        /** A node left out: its parts translated alone in its place, then a null if it was a value. */
+        private void explore(Ast node, boolean value) {
+            b.beginBlock();
+            exploreParts(node);
+            if (value) {
+                b.emitLoadConstant(PhpNull.NULL);
+            }
+            b.endBlock();
+        }
+
+        private void exploreParts(Ast node) {
+            for (Object part : node.children()) {
+                explorePart(part, false);
+            }
+            Map<String, Object> named = node.namedOrNull();
+            if (named != null) {
+                for (Map.Entry<String, Object> part : named.entrySet()) {
+                    explorePart(part.getValue(), part.getKey().equals("stmts"));
+                }
+            }
+        }
+
+        /** A part: statements as statements, the lists and pieces of a construct by their parts, others as values. */
+        private void explorePart(Object part, boolean statementList) {
+            if (!(part instanceof Ast ast)) {
+                return;
+            }
+            switch (ast.kind) {
+                // names and types, and bodies of their own (another function's locals)
+                case "AST_NAME", "AST_NAME_LIST", "AST_PARAM_LIST", "AST_CLOSURE_USES", "AST_TYPE", "AST_NULLABLE_TYPE",
+                     "AST_TYPE_UNION", "AST_TYPE_INTERSECTION", "AST_ATTRIBUTE_LIST", "AST_CLOSURE", "AST_ARROW_FUNC",
+                     "AST_CLASS", "AST_FUNC_DECL" -> {
+                }
+                case "AST_ARG_LIST", "AST_EXPR_LIST", "AST_ARRAY_ELEM", "AST_UNPACK", "AST_NAMED_ARG", "AST_IF_ELEM",
+                     "AST_SWITCH_LIST", "AST_SWITCH_CASE", "AST_CATCH_LIST", "AST_CATCH", "AST_MATCH_ARM_LIST",
+                     "AST_MATCH_ARM", "AST_STATIC_VAR", "AST_PROP_ELEM", "AST_CONST_ELEM" -> exploreParts(ast);
+                default -> {
+                    if (statementList || ast.is("AST_STMT_LIST")) {
+                        statements(ast);
+                    } else {
+                        expression(ast);
+                    }
+                }
+            }
         }
 
         private void statementBody(Ast node) {
@@ -565,6 +700,21 @@ public final class BytecodeTranslator {
         }
 
         void expression(Object value) {
+            if (skip == null || !(value instanceof Ast node)) {
+                expressionBody(value);
+                return;
+            }
+            String key = key(node);
+            if (skip.contains(key)) {
+                explore(node, true);
+                return;
+            }
+            dispatched.addLast(key);
+            expressionBody(value);
+            dispatched.removeLast();
+        }
+
+        private void expressionBody(Object value) {
             if (constantShaped(value)) {
                 constant(value, value instanceof Ast ast ? ast : null);
                 return;

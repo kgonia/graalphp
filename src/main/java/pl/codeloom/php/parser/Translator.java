@@ -692,6 +692,8 @@ public final class Translator {
             if (bytecode != null) {
                 return bytecode;
             }
+        } else if (language.bytecode()) {
+            BytecodeTranslator.reportGenerator(display);
         }
         Scope bodyScope = new Scope();
         Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,
