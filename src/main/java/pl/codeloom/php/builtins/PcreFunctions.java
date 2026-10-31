@@ -299,7 +299,7 @@ public final class PcreFunctions {
         @Override
         public void close() {
             if (ownsMatchData) {
-                Native.free(Native.MATCH_DATA_FREE, matchData);
+                Native.free(Native.Symbols.MATCH_DATA_FREE, matchData);
             } else {
                 regex.matchDataInUse = false;
             }
@@ -320,15 +320,15 @@ public final class PcreFunctions {
     /** Frees this context's native memory: match blocks, the match context, patterns not shared. */
     void close() {
         for (Regex regex : regexes.values()) {
-            Native.free(Native.MATCH_DATA_FREE, regex.matchData);
+            Native.free(Native.Symbols.MATCH_DATA_FREE, regex.matchData);
             if (!regex.compiled.shared()) {
-                Native.free(Native.CODE_FREE, regex.code);
+                Native.free(Native.Symbols.CODE_FREE, regex.code);
             }
         }
         regexes.clear();
         if (matchContext != null) {
-            Native.free(Native.MATCH_CONTEXT_FREE, matchContext);
-            Native.free(Native.JIT_STACK_FREE, jitStack);
+            Native.free(Native.Symbols.MATCH_CONTEXT_FREE, matchContext);
+            Native.free(Native.Symbols.JIT_STACK_FREE, jitStack);
             matchContext = null;
         }
     }
@@ -406,7 +406,7 @@ public final class PcreFunctions {
             if (compiled.shared()) {
                 Compiled raced = patterns.compiled.putIfAbsent(regexString, compiled);
                 if (raced != null) {
-                    Native.free(Native.CODE_FREE, compiled.code());
+                    Native.free(Native.Symbols.CODE_FREE, compiled.code());
                     compiled = raced;
                 }
             }
@@ -1005,78 +1005,100 @@ public final class PcreFunctions {
 
     // ---- the PCRE2 library ----
 
-    /** Downcalls into libpcre2-8. Set the library with -Dphp.pcre2=<path>; the default is the platform's name. */
+    /**
+     * Downcalls into libpcre2-8. Set the library with -Dphp.pcre2=<path>; the default is the platform's name.
+     *
+     * <p>The handles take the function's address as their first argument and are made when this class initializes,
+     * which a native image does at build time. There they are constants, so a call is a direct call of the
+     * downcall's stub. A handle made at run time isn't, and every call takes the generic method-handle path: about
+     * 2.7 us a call against 18 ns. The addresses ({@link Symbols}) are looked up at run time, since a native image
+     * keeps neither native memory nor the build's function addresses in its heap. On the JVM the JIT folds both.
+     */
     private static final class Native {
         private static final Linker LINKER = Linker.nativeLinker();
-        private static final SymbolLookup LIBRARY = SymbolLookup.libraryLookup(libraryPath(), Arena.global());
-        private static final MethodHandle COMPILE = handle("pcre2_compile_8", ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        private static final MethodHandle JIT_COMPILE = handle("pcre2_jit_compile_8", ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
-        private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        private static final MethodHandle COMPILE = handle(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_COMPILE = handle(ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.JAVA_INT);
+        private static final MethodHandle MATCH_DATA = handle(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
         /*
          * The match downcalls are ordinary ones on subjects copied to native memory (SubjectCache). Critical
          * downcalls were measured slower on WordPress (wiki/gate-1.md): on native subjects wpautop and wptexturize
          * lost ~40% (the critical stub skips vzeroupper, so PCRE2's SSE code runs with dirty upper vector halves);
          * on the Java arrays themselves preg_split and preg_match_all lost 2-3x (the GC pins the array per call).
+         * pcre2_match and pcre2_jit_match have the same signature, so they share the handle.
          */
-        private static final FunctionDescriptor MATCH_SIGNATURE = FunctionDescriptor.of(ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
-                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"), MATCH_SIGNATURE);
-        /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
-        private static final MethodHandle JIT_MATCH = LINKER.downcallHandle(find("pcre2_jit_match_8"),
-                MATCH_SIGNATURE);
-        private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS);
-        private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
-        private static final MethodHandle ERROR_MESSAGE = handle("pcre2_get_error_message_8", ValueLayout.JAVA_INT,
-                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG);
-        private static final MethodHandle MATCH_CONTEXT = handle("pcre2_match_context_create_8", ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS);
-        private static final MethodHandle SET_MATCH_LIMIT = handle("pcre2_set_match_limit_8", ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
-        private static final MethodHandle SET_DEPTH_LIMIT = handle("pcre2_set_depth_limit_8", ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
-        private static final MethodHandle JIT_STACK = handle("pcre2_jit_stack_create_8", ValueLayout.ADDRESS,
-                ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS);
-        private static final MethodHandle JIT_STACK_ASSIGN = LINKER.downcallHandle(find("pcre2_jit_stack_assign_8"),
+        private static final MethodHandle MATCH = handle(ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        private static final MethodHandle OVECTOR = handle(ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        private static final MethodHandle PATTERN_INFO = handle(ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
+        private static final MethodHandle ERROR_MESSAGE = handle(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG);
+        private static final MethodHandle MATCH_CONTEXT = handle(ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        /** pcre2_set_match_limit and pcre2_set_depth_limit. */
+        private static final MethodHandle SET_LIMIT = handle(ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.JAVA_INT);
+        private static final MethodHandle JIT_STACK = handle(ValueLayout.ADDRESS, ValueLayout.JAVA_LONG,
+                ValueLayout.JAVA_LONG, ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_STACK_ASSIGN = LINKER.downcallHandle(
                 FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-        static final MethodHandle CODE_FREE = freeHandle("pcre2_code_free_8");
-        static final MethodHandle MATCH_DATA_FREE = freeHandle("pcre2_match_data_free_8");
-        static final MethodHandle MATCH_CONTEXT_FREE = freeHandle("pcre2_match_context_free_8");
-        static final MethodHandle JIT_STACK_FREE = freeHandle("pcre2_jit_stack_free_8");
+        /** The pcre2_*_free functions. */
+        private static final MethodHandle FREE = LINKER.downcallHandle(FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
 
-        private static String libraryPath() {
-            String configured = System.getProperty("php.pcre2");
-            if (configured != null) {
-                return configured;
+        /** The functions' addresses, looked up when first used: at run time in a native image. */
+        static final class Symbols {
+            private static final SymbolLookup LIBRARY = SymbolLookup.libraryLookup(libraryPath(), Arena.global());
+            static final MemorySegment COMPILE = find("pcre2_compile_8");
+            static final MemorySegment JIT_COMPILE = find("pcre2_jit_compile_8");
+            static final MemorySegment MATCH_DATA = find("pcre2_match_data_create_from_pattern_8");
+            static final MemorySegment MATCH = find("pcre2_match_8");
+            /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
+            static final MemorySegment JIT_MATCH = find("pcre2_jit_match_8");
+            static final MemorySegment OVECTOR = find("pcre2_get_ovector_pointer_8");
+            static final MemorySegment PATTERN_INFO = find("pcre2_pattern_info_8");
+            static final MemorySegment ERROR_MESSAGE = find("pcre2_get_error_message_8");
+            static final MemorySegment MATCH_CONTEXT = find("pcre2_match_context_create_8");
+            static final MemorySegment SET_MATCH_LIMIT = find("pcre2_set_match_limit_8");
+            static final MemorySegment SET_DEPTH_LIMIT = find("pcre2_set_depth_limit_8");
+            static final MemorySegment JIT_STACK = find("pcre2_jit_stack_create_8");
+            static final MemorySegment JIT_STACK_ASSIGN = find("pcre2_jit_stack_assign_8");
+            static final MemorySegment CODE_FREE = find("pcre2_code_free_8");
+            static final MemorySegment MATCH_DATA_FREE = find("pcre2_match_data_free_8");
+            static final MemorySegment MATCH_CONTEXT_FREE = find("pcre2_match_context_free_8");
+            static final MemorySegment JIT_STACK_FREE = find("pcre2_jit_stack_free_8");
+
+            private Symbols() {
             }
-            if (System.getProperty("os.name").startsWith("Windows")) {
-                Path git = Path.of("C:/Program Files/Git/mingw64/bin/libpcre2-8-0.dll");
-                return Files.exists(git) ? git.toString() : "libpcre2-8-0.dll";
+
+            private static String libraryPath() {
+                String configured = System.getProperty("php.pcre2");
+                if (configured != null) {
+                    return configured;
+                }
+                if (System.getProperty("os.name").startsWith("Windows")) {
+                    Path git = Path.of("C:/Program Files/Git/mingw64/bin/libpcre2-8-0.dll");
+                    return Files.exists(git) ? git.toString() : "libpcre2-8-0.dll";
+                }
+                return "libpcre2-8.so.0";
             }
-            return "libpcre2-8.so.0";
+
+            private static MemorySegment find(String name) {
+                return LIBRARY.find(name).orElseThrow(() -> new IllegalStateException("PCRE2 symbol missing: " + name));
+            }
         }
 
-        private static MemorySegment find(String name) {
-            return LIBRARY.find(name).orElseThrow(() -> new IllegalStateException("PCRE2 symbol missing: " + name));
+        private static MethodHandle handle(ValueLayout result, ValueLayout... arguments) {
+            return LINKER.downcallHandle(FunctionDescriptor.of(result, arguments));
         }
 
-        private static MethodHandle handle(String name, ValueLayout result, ValueLayout... arguments) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.of(result, arguments));
-        }
-
-        private static MethodHandle freeHandle(String name) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
-        }
-
-        static void free(MethodHandle free, MemorySegment pointer) {
+        /** Calls one of the pcre2_*_free functions (Symbols.CODE_FREE, ...). */
+        static void free(MemorySegment function, MemorySegment pointer) {
             try {
-                free.invokeExact(pointer);
+                FREE.invokeExact(function, pointer);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
@@ -1085,7 +1107,8 @@ public final class PcreFunctions {
         /** php-src's 32K..192K JIT stack; one per context, as only one thread matches with it at a time. */
         static MemorySegment jitStack() {
             try {
-                return (MemorySegment) JIT_STACK.invokeExact(32L * 1024, 192L * 1024, MemorySegment.NULL);
+                return (MemorySegment) JIT_STACK.invokeExact(Symbols.JIT_STACK, 32L * 1024, 192L * 1024,
+                        MemorySegment.NULL);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
@@ -1094,10 +1117,11 @@ public final class PcreFunctions {
         /** A match context with pcre.backtrack_limit and pcre.recursion_limit's defaults, matching on stack. */
         static MemorySegment matchContext(MemorySegment stack) {
             try {
-                MemorySegment context = (MemorySegment) MATCH_CONTEXT.invokeExact(MemorySegment.NULL);
-                int ignored = (int) SET_MATCH_LIMIT.invokeExact(context, 1_000_000);
-                ignored = (int) SET_DEPTH_LIMIT.invokeExact(context, 100_000);
-                JIT_STACK_ASSIGN.invokeExact(context, MemorySegment.NULL, stack);
+                MemorySegment context = (MemorySegment) MATCH_CONTEXT.invokeExact(Symbols.MATCH_CONTEXT,
+                        MemorySegment.NULL);
+                int ignored = (int) SET_LIMIT.invokeExact(Symbols.SET_MATCH_LIMIT, context, 1_000_000);
+                ignored = (int) SET_LIMIT.invokeExact(Symbols.SET_DEPTH_LIMIT, context, 100_000);
+                JIT_STACK_ASSIGN.invokeExact(Symbols.JIT_STACK_ASSIGN, context, MemorySegment.NULL, stack);
                 return context;
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
@@ -1110,12 +1134,12 @@ public final class PcreFunctions {
                 MemorySegment.copy(pattern, 0, source, ValueLayout.JAVA_BYTE, 0, pattern.length);
                 MemorySegment errorCode = arena.allocate(ValueLayout.JAVA_INT);
                 MemorySegment errorOffset = arena.allocate(ValueLayout.JAVA_LONG);
-                MemorySegment code = (MemorySegment) COMPILE.invokeExact(source, (long) pattern.length, options,
-                        errorCode, errorOffset, MemorySegment.NULL);
+                MemorySegment code = (MemorySegment) COMPILE.invokeExact(Symbols.COMPILE, source,
+                        (long) pattern.length, options, errorCode, errorOffset, MemorySegment.NULL);
                 if (code.equals(MemorySegment.NULL)) {
                     MemorySegment message = arena.allocate(256);
-                    int ignored = (int) ERROR_MESSAGE.invokeExact(errorCode.get(ValueLayout.JAVA_INT, 0), message,
-                            256L);
+                    int ignored = (int) ERROR_MESSAGE.invokeExact(Symbols.ERROR_MESSAGE,
+                            errorCode.get(ValueLayout.JAVA_INT, 0), message, 256L);
                     throw new BadPattern("Compilation failed: " + message.getString(0) + " at offset "
                             + errorOffset.get(ValueLayout.JAVA_LONG, 0));
                 }
@@ -1130,7 +1154,7 @@ public final class PcreFunctions {
         /** JIT-compiles the pattern; false (with a warning) when JIT isn't available, so matching is interpreted. */
         static boolean jitCompile(MemorySegment code) {
             try {
-                int rc = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
+                int rc = (int) JIT_COMPILE.invokeExact(Symbols.JIT_COMPILE, code, JIT_COMPLETE);
                 if (rc != 0) {
                     System.err.println("warning: pcre2_jit_compile failed (" + rc + "), matching interpreted");
                 }
@@ -1143,7 +1167,7 @@ public final class PcreFunctions {
         static int info(MemorySegment code, int what) {
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment where = arena.allocate(ValueLayout.JAVA_INT);
-                int rc = (int) PATTERN_INFO.invokeExact(code, what, where);
+                int rc = (int) PATTERN_INFO.invokeExact(Symbols.PATTERN_INFO, code, what, where);
                 if (rc != 0) {
                     throw new IllegalStateException("pcre2_pattern_info " + what + " failed: " + rc);
                 }
@@ -1163,7 +1187,7 @@ public final class PcreFunctions {
             int entrySize = info(code, INFO_NAMEENTRYSIZE);
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment where = arena.allocate(ValueLayout.ADDRESS);
-                int ignored = (int) PATTERN_INFO.invokeExact(code, INFO_NAMETABLE, where);
+                int ignored = (int) PATTERN_INFO.invokeExact(Symbols.PATTERN_INFO, code, INFO_NAMETABLE, where);
                 MemorySegment table = where.get(ValueLayout.ADDRESS, 0).reinterpret((long) count * entrySize);
                 for (int i = 0; i < count; i++) {
                     long base = (long) i * entrySize;
@@ -1179,7 +1203,7 @@ public final class PcreFunctions {
 
         static MemorySegment createMatchData(MemorySegment code) {
             try {
-                return (MemorySegment) MATCH_DATA.invokeExact(code, MemorySegment.NULL);
+                return (MemorySegment) MATCH_DATA.invokeExact(Symbols.MATCH_DATA, code, MemorySegment.NULL);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
@@ -1187,7 +1211,7 @@ public final class PcreFunctions {
 
         static MemorySegment ovector(MemorySegment matchData, int groups) {
             try {
-                MemorySegment pointer = (MemorySegment) OVECTOR.invokeExact(matchData);
+                MemorySegment pointer = (MemorySegment) OVECTOR.invokeExact(Symbols.OVECTOR, matchData);
                 return pointer.reinterpret(16L * groups);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
@@ -1202,10 +1226,11 @@ public final class PcreFunctions {
                          int options, MemorySegment matchData, MemorySegment matchContext) {
             try {
                 if (jit && options == NO_UTF_CHECK) {
-                    return (int) JIT_MATCH.invokeExact(code, subject, length, start, options, matchData,
+                    return (int) MATCH.invokeExact(Symbols.JIT_MATCH, code, subject, length, start, options, matchData,
                             matchContext);
                 }
-                return (int) MATCH.invokeExact(code, subject, length, start, options, matchData, matchContext);
+                return (int) MATCH.invokeExact(Symbols.MATCH, code, subject, length, start, options, matchData,
+                        matchContext);
             } catch (Throwable t) {
                 throw new IllegalStateException(t);
             }
