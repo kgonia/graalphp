@@ -12,7 +12,9 @@ MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${JAVA_OPTS:+-e JAVA_OP
   "${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4}" sh bench/native/agent.sh > target/native-agent.log 2>&1
 start=$(date +%s)
 MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${NI_OPTS:+-e NI_OPTS="$NI_OPTS"} ${NI_NAME:+-e NI_NAME="$NI_NAME"} \
-  -v "$root:/w" -w /w "${NATIVE_IMAGE:-gate1-truffle-native:8.5-graal25.4}" sh bench/native/image.sh > target/native-build.log 2>&1
+  ${NI_MAIN:+-e NI_MAIN="$NI_MAIN"} ${NI_CLASSES:+-e NI_CLASSES="$NI_CLASSES"} -v "$root:/w" -w /w \
+  "${NATIVE_IMAGE:-gate1-truffle-native:8.5-graal25.4}" sh bench/native/image.sh > target/native-build.log 2>&1
 echo "native-image: $(( $(date +%s) - start )) s, $(du -m "target/native/${NI_NAME:-php}" | cut -f1) MB"
 grep -E "Peak RSS|Finished generating|Error|error:" target/native-build.log | cut -c1-300 | tail -5
-bash bench/native/check.sh "target/native/${NI_NAME:-php}"
+# check.php runs on PhpMain; another launcher (NI_MAIN) is checked its own way (tests/gate2/native.sh check)
+[ -n "${NI_MAIN:-}" ] || bash bench/native/check.sh "target/native/${NI_NAME:-php}"

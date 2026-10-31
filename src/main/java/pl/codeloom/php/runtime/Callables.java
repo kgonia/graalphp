@@ -193,7 +193,9 @@ public final class Callables {
             String scope = root instanceof pl.codeloom.php.nodes.call.FunctionRootNode function
                     ? function.getScopeName()
                     : root instanceof pl.codeloom.php.nodes.stmt.GeneratorNodes.BodyRootNode body
-                    ? body.getScopeName() : null;
+                    ? body.getScopeName()
+                    : root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
+                    ? bytecode.getScopeName() : null;
             return new Caller(frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY).getArguments(), scope);
         });
     }
