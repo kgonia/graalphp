@@ -35,6 +35,13 @@
             <version>${graalvm.version}</version>
             <scope>runtime</scope>
         </dependency>
+        <!-- experiment: TRegex against PCRE2 (exp/tregex) -->
+        <dependency>
+            <groupId>org.graalvm.regex</groupId>
+            <artifactId>regex</artifactId>
+            <version>${graalvm.version}</version>
+            <scope>runtime</scope>
+        </dependency>
         <!-- CPU sampler (polyglot.cpusampler) for finding where PHP time goes -->
         <dependency>
             <groupId>org.graalvm.tools</groupId>

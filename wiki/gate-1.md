@@ -447,3 +447,136 @@ Truffle PHP built as a native standalone with Oracle GraalVM 25 (`native-image`,
 - **Memory is no lower:** hooks over 400 iterations peaked at 881 MB native, and at 1040 MB with `-Xmx256m`, against 695 MB for the JVM at `-Xmx256m`. The limit doesn't cover runtime compilation's memory.
 
 Native image is shelved. It would be worth reopening for startup time (per-request processes), not for throughput or footprint.
+
+## TRegex on GraalVM 25.4: why the slow patterns are slow, and what fixes them (2026-10-31)
+
+Branch `tregex-25.4` (off `graalvm-bump`), with the `exp/tregex` harness cherry-picked and extended (`369e0dc`, `a8fc531`): TRegex options, a call mode (`full`, `boolean`, `two_step`, `group0`), a pattern filter, and rewrites. Every TRegex result is still compared with PCRE2's on every group of every recorded call; no match differs. `bench/gate1/tregex-ab.sh` runs interleaved rounds. A run waits until 14–21 have been free of other benchmarks for two minutes, and is repeated if one starts during it. The recording (`compare.sh`'s, 30 iterations), re-recorded on 25.4, is byte-identical to the one of 2026-10-27 and has the same matches per kernel as `3ede04a`.
+
+Timed results: CPUs 14–21, 150 passes, 3 rounds, Python flavor. TRegex/PCRE2 is measured inside one JVM, so it is the number to compare; PCRE2's own ns moved up to 2× between quiet and loaded windows. Exploratory runs (logs, traces, single rounds) were on 6–13 and are marked as such.
+
+### 25.4 against 25.0.4: no change
+
+The same source, built against each version's jars (`bench/gate1/results/tregex-25.4-version.txt`). TRegex/PCRE2, median of 3 rounds:
+
+| Pattern | 25.0.4 | 25.4 |
+|---|---:|---:|
+| kses 46, `wp_kses_split` | 16.9× | 17.0× |
+| blocks 44, `WP_Block_Parser` | 21.2× | 21.6× |
+| wpautop 21, 18: `(</?(?:table\|…)` | 11.8×, 12.0× | 10.2×, 10.2× |
+| wpautop 14, 17: `<p>\s*(</?(?:table\|…)` | 15.6×, 16.7× | 13.2×, 14.1× |
+| wpautop 20: `(?<!<br />)\s*\n` | 15.5× | 16.0× |
+| wpautop 19: backreference | 17.3× | 17.9× |
+| classes and literals (kses 45, 47, 48, slugs 4) | 0.21–0.39× | 0.22–0.34× |
+
+- **Per kernel, TRegex alone** over all covered patterns: kses 5.4× and 5.2×, wpautop 8.9× and 6.8×, blocks 21× and 20×.
+- **The adaptive choice** is the same: kses 0.58 and 0.53, slugs 0.30 and 0.31, escape 0.57 and 0.58, the rest about 1.0.
+- **Peak memory:** 1639 MB and 2019 MB.
+- **Execution paths:** the strategy logs show the same path for every slow pattern on both versions.
+
+TRegex's CHANGELOG for 25.1–25.4 lists only Unicode 17 (25.1.3). Between the `graal-25.0.4` and `graal-25.4.4.1.1` tags, 131 files of `regex/` changed. The performance commits:
+- capture-group tracking micro-optimizations (`fb77482615`);
+- smaller NFA executors, with the backtracker's group bounds encoded (`7c44bcf961`);
+- `ByteIndexOfStringSetNode` for literal word lists (`f941f54268`);
+- resource limits (`aab95acdc8`).
+
+None of them touches the choice of execution path or the DFA size limits.
+
+### Why, per slow pattern
+
+The path comes from TRegex's own logs: `-Dpolyglot.log.regex.MatchingStrategy.level=FINE`, plus `BailoutMessages`, `SwitchToEager` and `AutomatonSizes`. The code is graal at `graal-25.4.4.1.1` (`95ce149`), under `regex/src/com.oracle.truffle.regex/src/com/oracle/truffle/regex/`. A regex starts on the NFA simulation and compiles a lazy DFA after 10 calls (`tregex/TRegexOptions.java:68`).
+
+- **The tag-name alternations of wpautop (14, 17, 18, 21) and `wp_kses_split` (46): the DFA is too big, so they stay on the NFA simulation for good.**
+  - The log says `too many transitions`. The cap is 1300 DFA transitions (`TRegexOptions.java:166`, option `MaxDFASize` at `RegexOptions.java:272-275`), checked in `tregex/dfa/DFAGenerator.java:174` and `tregex/nodes/dfa/TRegexDFAExecutorNode.java:239-240`.
+  - On wpautop it is the *backward* DFA, the one that finds the match start: 2026–2031 transitions over 119–123 states. The forward DFA has 698–1462. For kses 46 it is the forward DFA (1733).
+  - One executor over the cap fails the whole lazy DFA, and the regex stays on `TRegexNFAExecutorNode` (`tregex/nodes/TRegexExecNode.java:207-213`).
+  - **Fixable:** `MaxDFASize=32000`.
+- **`wp_kses_split` after that fix: capture groups.**
+  - With the DFA it is still 2.2×. Its eager DFA (one pass that tracks the groups) is refused as `Too much additional capture group tracking overhead` (`tregex/TRegexCompiler.java:94-97`). The cost cap is 3000 (`TRegexOptions.java:172`) and is not an option. So each match takes the forward, backward and group-tracking passes.
+  - `execBoolean` alone is 0.44×.
+  - **Inherent** when preg needs the groups, as `preg_replace_callback` does here.
+- **The backtracking executor: blocks 44 (negative lookahead, possessive), wpautop 20 (negative lookbehind), wpautop 19 (backreference), wptexturize 28 (negative lookahead).**
+  - The DFA refuses backreferences, negative lookaround, non-literal lookbehind and atomic groups (`tregex/parser/ast/RegexAST.java:724-737`).
+  - The backtracker *is* partially evaluated into the pattern. With at most 200 states and transitions (`TRegexOptions.java:233`) it runs a `MERGE_EXPLODE` loop (`tregex/nodes/nfa/TRegexBacktrackingNFAExecutorNode.java:300, 465-478`). For blocks 44 that is a 4.1 s Tier-2 compilation into 288 KB of code (`TraceCompilation`, exploratory).
+  - Turning it off (`MaxBackTrackerCompileSize=0`: the same loop behind a boundary) made blocks 44 23.7× instead of 15.3× (exploratory). Partial evaluation is worth 1.5×; the rest is the algorithm.
+  - Every choice point copies the whole frame: the index, two ints per group, the Python flavor's last group and the quantifier counters (`TRegexBacktrackingNFAExecutorLocals.java:204-206, 350-357`; `TRegexBacktrackingNFAExecutorNode.java:782`).
+  - Per call (Python `re` over the recording), blocks 44 skips 33 bytes and matches 44 on average. That is about 15 ns per byte, against PCRE2's 0.7. wpautop 20 skips 45 bytes to a one-byte match and tries every start position: about 15 ns per byte, against PCRE2's 0.9.
+  - **Inherent** to the backtracker's design: PCRE2's JIT saves only the slots that change, and it auto-possessifies loops. Two of the four are fixable by rewriting (below).
+- **Lazy quantifiers are not the cause.**
+  - wpautop 8, `(<hr\s*?/?>)`, is 8.2×, and its greedy equal 8.4×. Its 61 calls find nothing in 917 bytes each. TRegex's DFA scans at about 1.4 ns per byte, PCRE2's JIT at 0.17.
+  - wpautop 13 and 24 are the same kind (1.6×, 2.2×).
+  - They are small (under 40 µs of an iteration), and the per-pattern choice leaves them on PCRE2.
+- **The Java flavor instead of Python** measures the same within noise (exploratory: the tag alternations 1.5–2.2× with `MaxDFASize`, kses 46 2.8×). It refuses blocks 44 (possessive quantifiers) and needs `{` escaped.
+- **Compilation thresholds:** `GenerateDFAImmediately` and `AlwaysEager` don't change the steady state (exploratory). `AlwaysEager` makes several small patterns 5–30× slower.
+
+### What fixes it, measured
+
+TRegex/PCRE2 per pattern (`bench/gate1/results/tregex-25.4-fixes.txt`):
+
+| Pattern | default | `MaxDFASize=32000` | + rewrites | `execBoolean` |
+|---|---:|---:|---:|---:|
+| kses 46 | 15.9× | 2.15× | 2.03× | 0.44× |
+| wpautop 21, 18 | 10.5×, 10.2× | 0.85×, 1.27× | 0.84×, 1.26× | 0.70×, 0.59× |
+| wpautop 14, 17 | 13.3×, 14.1× | 1.04×, 1.47× | 1.04×, 1.41× | 0.61×, 0.54× |
+| blocks 44 | 21.7× | 22.2× | **8.3×** | 21.3× |
+| wpautop 20 | 16.1× | 16.1× | **1.02×** | 16.0× |
+| wpautop 8 | 8.2× | 8.3× | 8.4× | 8.1× |
+| TRegex alone: kses / wpautop / blocks | 4.97 / 7.35 / 21.7 | 0.73 / 3.00 / 22.5 | 0.76 / 1.39 / 8.4 | 0.33 / 2.66 / 22.0 |
+| adaptive choice: kses / wpautop (of PCRE2 time) | 0.69 / 0.97 | 0.69 / 0.97 | 0.68 / 0.93 | 0.47 / 0.78 |
+| peak memory | 1718 MB | 2037 MB | 1394 MB | 1767 MB |
+
+The rewrites (`bench/gate1/tregex-rewrites.txt`) are equal patterns; the file gives each one's argument:
+- **blocks 44:** `[^}]+` → `[^}]++` inside `(?:…)*+`. An atomic loop with nothing after it in the group keeps its first, greedy path, so nothing ever backtracks into `[^}]+`. The rewrite saves a frame copy per byte of the block attributes.
+- **wpautop 20:** `(?<!<br />)\s*\n` → `\s*\n` as a DFA, plus a guard. A match that `<br />` precedes is dropped, and the search goes on one byte further. `\s*\n` can't match empty, so the first match accepted is the original's.
+- **wpautop 8:** `\s*?` → `\s*` (no `\s` can start `/?>`). Equal, and no faster.
+
+In the rewrites column, small patterns that weren't rewritten (wpautop 22, 25) measure 3–5×. That is the shared timing loop, which now carries the guard's branch.
+
+The other call modes:
+- **`two_step`** (`execBoolean`, then `exec` on a hit) is slower than `exec` alone: these patterns hit on 97–100% of the calls (exploratory).
+- **`group0`** (the groups made non-capturing, as for `preg_replace` without group references and for `preg_split`) is mixed (`bench/gate1/results/tregex-25.4-group0.txt`, against `MaxDFASize` with groups):
+  - `wp_kses_split` 1.90× → 1.40×;
+  - blocks 44 19.7× → 10.6×: without its six groups the backtracker's frames are smaller, which supports the frame-copy cause above;
+  - but wpautop 21 0.83× → 1.82× and 14 1.06× → 1.36×. Without a capture group TRegex can't switch to the eager DFA (`TRegexExecNode.java:232-234`), so the backward DFA has to find the start.
+
+### Native image
+
+The native launcher `target/native/php-tregex` (`bench/native/build.sh` at `369e0dc`, Oracle GraalVM 25.4: 92 MB, built in 2 min 55 s, peak RSS 5.9 GB). Two interleaved rounds of 50 passes against the JVM build (native replays are slow because PCRE2 through FFM is). The table gives TRegex's time over **PCRE2's time on the JVM**, per pattern and per kernel (all covered patterns), from `bench/gate1/results/tregex-25.4-native.txt`:
+
+| | TRegex JVM | TRegex native | native, `MaxDFASize=32000` | PCRE2 native |
+|---|---:|---:|---:|---:|
+| kses 46 | 11.9× | 5.1× | **0.94×** | |
+| wpautop 21, 18, 14, 17 | 10.4–13.9× | 4.3–6.5× | **0.95–1.18×** | |
+| blocks 44 | 16.4× | 18.3× | 15.9× | |
+| wpautop 20 | 15.9× | 13.8× | 14.1× | |
+| classes and literals (kses 45–53, slugs 4) | 0.21–0.60× | 0.31–0.96× | 0.28–0.85× | |
+| kses, all covered | 4.62× | 2.22× | **0.65×** | about 90× |
+| wpautop | 7.22× | 4.31× | 2.77× | about 47× |
+| blocks | 16.4× | 18.3× | 15.9× | about 50× |
+| slugs | 0.37× | 0.34× | **0.33×** | about 110× |
+| escape | 0.64× | 0.72× | **0.56×** | about 28× |
+| wptexturize (34% of its PCRE2 time covered) | 1.06× | 1.04× | 1.01× | about 90× |
+| peak memory | 1506 MB | 517 MB | 525 MB | |
+
+- **TRegex runs at about its JVM speed in a native image**, since its code is partially evaluated at run time there too. The small DFA patterns are up to 2× slower (kses 45: 0.21× → 0.41×), and the NFA-simulated ones faster (kses 46: 11.9× → 5.1×). PCRE2 through FFM is 28–110× slower in this image than on the JVM.
+- **With `MaxDFASize`, native TRegex is at or below PCRE2-on-the-JVM speed** on kses and slugs and escape, about 1× on the tag alternations, and still behind on the backtracked patterns.
+- An exploratory single round with the rewrites (6–13) put blocks 44 at 5.7× and wpautop 20 at 0.63×, for wpautop 1.21× and blocks 5.7× per kernel.
+
+So **TRegex is a native-image route of its own** for every pattern it takes. What it can't take (11 patterns: conditionals, variable-width lookbehind, recursion, `\g`; two thirds of wptexturize's regex time) still needs PCRE2, whose FFM path in native image is the `native-regex` branch's work.
+
+### D12, updated
+
+- **On the JVM, the fixes help TRegex alone much more than they help the per-pattern choice.** The fixed patterns come close to PCRE2 (0.85–2.2×), but only wpautop 21 beats it.
+  - The adaptive choice stays at kses 0.68–0.69, slugs 0.30, escape 0.57; wpautop goes from 0.97 to 0.93.
+  - Of the kernels' 5.6 ms of PCRE2 time per iteration, the choice saves about 1.06 ms (19%) as it is, and about 1.16 ms (21%) with `MaxDFASize` and the rewrites.
+  - **More patterns can move to TRegex only where preg needs no groups.** With `execBoolean`, the adaptive choice would be wpautop 0.78 and kses 0.47 (about 0.95 ms more), but the kernels' wpautop and kses calls need their groups (replacement templates, callbacks). It applies to `preg_match` without `$matches`, which the recording doesn't single out.
+- **D12 stands, with three additions to the product version's scope:**
+  - compile TRegex regexes with `MaxDFASize=32000`, the maximum (`Short.MAX_VALUE`). Peak memory was 2037 MB against 1718 MB in that A/B, but the default measured 2019 MB in the version A/B: with no heap limit, the spread between A/Bs is as large as the difference;
+  - `execBoolean` for `preg_match` without `$matches`;
+  - the translator's equal rewrites as a later, optional step: blocks' possessive class, and a negative literal lookbehind at the start as a guard.
+- **For native image, TRegex is the better engine for every pattern it takes,** until the FFM path is fixed: kses' covered regex time 0.65× of PCRE2-on-the-JVM speed, against about 90× through native PCRE2.
+- **Worth reporting upstream** (not filed):
+  1. The lazy DFA is all or nothing at 1300 transitions. A backward DFA over the cap (wpautop's reversed tag alternation, 2026 transitions, while the forward one fits) leaves the regex on the NFA simulation for good, 10–14× slower than with the DFA. A per-executor fallback, or a higher default for byte encodings, would fix it.
+  2. Without a capture group a regex can't use the eager DFA (`TRegexExecNode.java:232-234`): making wpautop 21's groups non-capturing made it 2.2× slower.
+  3. The backtracker copies the whole frame at every choice point and doesn't auto-possessify; `[^}]+` → `[^}]++` alone was 2.6× on blocks 44. Its merge-exploded code for a 29-state NFA is 288 KB and takes 4.1 s to compile.
+  4. A negative *literal* lookbehind forces the backtracker, although it can be checked like the positive literal ones: as a guard, wpautop 20 went from 16× to 1.0×.
+  5. The eager capture-group cost cap (`TRegexMaxEagerCGDFACost`) is not an option.
