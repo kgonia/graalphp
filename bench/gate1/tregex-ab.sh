@@ -7,7 +7,8 @@
 #   e.g. bench/gate1/tregex-ab.sh 3 150 'g2504=g2504;;;;' 'g254=g254;;;;'
 # Before each run, and every 10 s during it, the cores are checked for other benchmarks (containers whose cpuset
 # overlaps CPUSET): a run starts after the cores were free for QUIET seconds (default 120), and a run another
-# benchmark overlaps is stopped and repeated.
+# benchmark overlaps is stopped and repeated. Any wpn-* container (the WordPress-native measurements) counts as busy
+# wherever it is pinned.
 # CPUSET overrides the cores (default 14-21); AB_OUT the runs' directory (default target/tregex-ab, emptied first).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -23,8 +24,8 @@ cpus() { # expands a cpuset like 1-3,7 into one cpu per line
 mine=$(cpus "$CPUSET")
 busy() { # prints the other containers pinned to our cores
   for c in $(docker ps -q); do
-    read -r name set < <(docker inspect -f '{{.Name}} {{.HostConfig.CpusetCpus}}' "$c")
-    case $name in /tregex-ab-*) continue ;; esac
+    read -r name set < <(docker inspect -f '{{.Name}} {{.HostConfig.CpusetCpus}}' "$c" 2> /dev/null) || continue
+    case $name in /tregex-ab-*) continue ;; /wpn-*) echo "$name($set)"; continue ;; esac  # wpn-*: WordPress-native runs
     [ -n "$set" ] && [ -n "$(comm -12 <(cpus "$set" | sort) <(echo "$mine" | sort))" ] && echo "$name($set)"
   done
   return 0

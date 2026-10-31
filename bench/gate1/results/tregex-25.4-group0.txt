@@ -1,0 +1,162 @@
+round 1 dfa: 111 lines, peak_memory 1663000576
+round 1 group0: 113 lines, peak_memory 1178271744
+round 2 group0: 108 lines, peak_memory 1542623232
+round 2 dfa: 110 lines, peak_memory 1851838464
+round 3 dfa: 112 lines, peak_memory 1926049792
+round 3 group0: 111 lines, peak_memory 1963835392
+rounds: dfa 3, group0 3
+
+per kernel, TRegex / PCRE2 time over the covered matches (median of rounds)
+kernel              dfa     group0
+escape             0.67       0.70
+slugs              0.34       0.35
+wpautop            3.04       3.54
+wptexturize        1.31       2.43
+blocks            26.02      15.78
+kses               1.07       0.91
+
+adaptive choice and per-pattern oracle: regex time over PCRE2 alone, with the patterns on TRegex (median of rounds)
+kernel          pcre ns                            dfa                         group0
+escape            62842 adapt  0.59 ( 4) oracle  0.57 ( 4) adapt  0.59 ( 4) oracle  0.55 ( 4)
+slugs            301864 adapt  0.31 ( 1) oracle  0.28 ( 1) adapt  0.29 ( 1) oracle  0.29 ( 1)
+wpautop         2328470 adapt  0.97 ( 3) oracle  0.94 ( 4) adapt  0.94 ( 2) oracle  0.90 ( 3)
+wptexturize      788515 adapt  0.98 ( 2) oracle  0.99 ( 3) adapt  0.96 ( 1) oracle  1.00 ( 2)
+blocks           589855 adapt  1.00 ( 0) oracle  1.00 ( 0) adapt  0.99 ( 0) oracle  1.07 ( 0)
+kses            3965815 adapt  0.67 (16) oracle  0.66 (19) adapt  0.62 (16) oracle  0.66 (19)
+
+per pattern: PCRE2 ns of one kernel iteration (first variant), TRegex / PCRE2 per variant (median)
+kernel       id  calls hit%   pcre ns       dfa    group0  features  pattern
+kses         46  18642   68   1238231      1.90      1.40  -         /
+kses         45   6567    0    486730      0.20      0.23  -         /[\x00-\x08\x0B\x0C\x0E-\x1F]/
+blocks       44   5910   99    434283     19.66     10.60  ahead,possessive /<!--\s+(?P<closer>\/)?wp:(?P<namespace>[a-z][a-z0-9_-]*\/)?
+kses         48  12729    0    454671      0.23      0.24  -         /^(?:</[^a-zA-Z][^>]*>|<![a-z][^>]*>)$/
+kses         47  12729    0    456346      0.30      0.34  -         /\\"/
+slugs         4  11760    0    433797      0.33      0.34  -         /[\x80-\xff]/
+kses         51   6878  100    289244      0.63      0.46  -         /^<\s*(/\s*)?([a-zA-Z0-9-]+)([^>]*)>?$/
+kses          1   5913    0    309969      0.46      0.36  -         /&amp;#(0*[1-9][0-9]{0,6});/
+wpautop      18   1876   97    184123      1.28      1.17  -         /(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|t
+wpautop      21   4032   98    213282      0.83      1.82  -         /(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|t
+kses          2   5913    0    256307      0.47      0.37  -         /&amp;#[Xx](0*[1-9A-Fa-f][0-9A-Fa-f]{0,5});/
+kses          3   5916    0    235157      0.34      0.36  -         /&amp;([A-Za-z]{2,8}[0-9]{0,2});/
+wpautop      20   4091   99    199184     19.83     15.62  behind    /(?<!<br />)\s*\n/
+wpautop      14   1962   97    192892      1.06      1.36  -         /<p>\s*(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|t
+kses         49   5851    0    207251      0.37      0.43  -         /--+/
+wptexturize  28   8706    0    166335      1.53      1.07  ahead,i   /&(?!#(?:\d+|x[a-f0-9]+);|[a-z1-4]{1,8};)/
+kses         50   5851    0    202464      0.21      0.21  -         /-$/
+wpautop      10   4121   99    105713      1.08      0.98  -         /
+wpautop       7   3081   98    141390      1.40      1.39  -         /(</(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th
+wpautop       6   3116   98    160891      1.11      1.08  -         /(<(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|
+wpautop      11   4119   99    116958      1.07      0.95  -         /\n\s*\n/
+wpautop      17   1929   97     99515      1.39      1.56  -         /<p>\s*(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|t
+kses         52   3538    5    121941      0.26      0.24  -         /\s*/\s*$/
+kses         53   3538    0    103236      0.28      0.28  -         /[<>]/
+wpautop      13     61    0     75427      1.54      1.60  -         /<p>([^<]+)</(div|address|form)>/
+wpautop      12     75   19     44722      1.01      1.18  -         /<p>\s*</p>/
+wpautop      23     63    3     36196      0.03      0.15  -         /
+wpautop      15    224   73     33082      2.63      1.35  -         /<p>(<li.+?)</p>/
+wptexturize  29   1828    0     36227      0.57      0.57  behind    /(?<=\d)x\d/
+wpautop      24     81   94     40120      2.26      5.89  -         /\s*(<figcaption[^>]*>)/
+wpautop      16     62    2     24611      1.05      1.44  i         /<p><blockquote((?:[^>"']|"[^"]*"|'[^']*')*)>/
+escape        0   1238    7     22563      0.60      0.61  -         /[&<>"']/
+kses         54    654    0     24354      0.33      0.25  -         /\\+0+/
+kses         57    551    0     25406      0.37      0.31  -         /[\\(&=}]|/\*/
+wpautop       8     61    0     15262      8.07      7.53  -         /(<hr\s*?/?>)/
+escape        3     99   11     17665      0.66      0.67  -         /&amp;([A-Za-z]{2,8}[0-9]{0,2});/
+kses         55    551    0     14389      0.24      0.23  -         /^--[a-zA-Z0-9-_]+$/
+wpautop      22    119   49     14245      0.99      1.72  -         /<br />(\s*</?(?:p|li|div|dl|dd|dt|th|pre|td|ul|ol)[^>]*>)/
+escape        2     88    0     12733      0.68      0.68  -         /&amp;#[Xx](0*[1-9A-Fa-f][0-9A-Fa-f]{0,5});/
+escape        1     88    0     12038      0.64      0.64  -         /&amp;#(0*[1-9][0-9]{0,6});/
+wpautop       5     62    2      7057      0.65      1.04  -         /<br\s*/?>\s*<br\s*/?>/
+wptexturize  26     65    5      8013      0.74      0.74  possessive /\[/?([^<>&/\[\]\x00-\x20=]++)/
+wpautop      19     61    0      7639     17.59         -  backref   /<(script|style|svg|math).*?<\/\1>/
+wpautop      25     81   94      5622      1.06      2.71  -         /</figcaption>\s*/
+kses         59    110    1      3131      0.35      0.32  i         /:|&#0*58;|&#x0*3a;|&colon;/
+kses         58    110    0      3728      0.23      0.24  ahead,i   /(&#0*58(?![;0-9])|&#x0*3a(?![;a-f0-9]))/
+kses         60     64  100      3358      0.51      0.60  -         /^data-[a-z0-9_-]+$/
+wptexturize  32     22   45       728      1.05      3.54  ahead     /"(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+kses         61      8   50       574      1.67      1.31  -         /url\([^)]+\)/
+wptexturize  33     14   14       470      1.19      5.30  behind    /(?<=\d)"/
+wptexturize  42      4    0       164      1.41      2.13  behind    /(?<!xn)--/
+kses         63      4    0       134      0.69      0.75  -         /(?:repeating-)?(?:linear|radial|conic)-gradient\((?:[^()]|\
+wptexturize  40      4    0        89      0.63      1.11  -         /---/
+wptexturize  36      2    0        83      2.39      6.52  ahead     /'(?=\d\d(?:\Z|(?![%\d]|[.,]\d)))/
+wptexturize  34      2    0        80      1.13      4.01  ahead     /'(\d\d)'(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;
+wptexturize  35      2    0        78      1.14      4.19  ahead     /'(\d\d)"(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;
+kses         65      1    0        50      2.10      2.16  -         /&#([0-9]+);/
+kses         67      1    0        48      2.02      2.08  -         /\s/
+kses         64      1    0        49      1.80      1.33  -         //\?/
+kses         66      1    0        49      1.53      1.52  -         /&#[Xx]([0-9A-Fa-f]+);/
+kses          0      1    0        28      0.81      0.81  -         /[&<>"']/
+
+per pattern: TRegex ns of each variant over the first variant's PCRE2 ns (medians; for a native-image variant against PCRE2 on the JVM)
+kernel       id   pcre ns       dfa    group0
+kses         46   1238231      1.90      1.40
+kses         45    486730      0.22      0.31
+blocks       44    434283     19.82     15.00
+kses         48    454671      0.22      0.25
+kses         47    456346      0.30      0.30
+slugs         4    433797      0.33      0.34
+kses         51    289244      0.63      0.48
+kses          1    309969      0.48      0.29
+wpautop      18    184123      1.27      2.32
+wpautop      21    213282      0.83      2.69
+kses          2    256307      0.47      0.32
+kses          3    235157      0.41      0.35
+wpautop      20    199184     19.93     24.31
+wpautop      14    192892      0.99      1.66
+kses         49    207251      0.37      0.36
+wptexturize  28    166335      1.56      2.00
+kses         50    202464      0.21      0.27
+wpautop      10    105713      1.08      1.78
+wpautop       7    141390      1.17      1.96
+wpautop       6    160891      1.11      1.27
+wpautop      11    116958      1.06      1.55
+wpautop      17     99515      1.39      2.23
+kses         52    121941      0.27      0.26
+kses         53    103236      0.28      0.29
+wpautop      13     75427      1.69      1.73
+wpautop      12     44722      1.01      1.31
+wpautop      23     36196      0.03      0.21
+wpautop      15     33082      2.74      2.07
+wptexturize  29     36227      0.58      0.82
+wpautop      24     40120      2.24      5.55
+wpautop      16     24611      1.04      2.42
+escape        0     22563      0.60      1.11
+kses         54     24354      0.32      0.20
+kses         57     25406      0.41      0.22
+wpautop       8     15262      6.48     10.31
+escape        3     17665      0.72      0.50
+kses         55     14389      0.23      0.29
+wpautop      22     14245      0.87      1.30
+escape        2     12733      0.70      0.67
+escape        1     12038      0.64      1.26
+wpautop       5      7057      0.66      1.79
+wptexturize  26      8013      0.74      1.10
+wpautop      19      7639     17.38         -
+wpautop      25      5622      1.06      5.36
+kses         59      3131      0.35      0.29
+kses         58      3728      0.32      0.18
+kses         60      3358      0.50      0.31
+wptexturize  32       728      1.05      3.39
+kses         61       574      1.67      0.97
+wptexturize  33       470      1.17      3.91
+wptexturize  42       164      1.34      2.29
+kses         63       134      0.90      0.58
+wptexturize  40        89      0.63      2.12
+wptexturize  36        83      2.37      6.94
+wptexturize  34        80      1.16      4.06
+wptexturize  35        78      1.13      4.19
+kses         65        50      2.10      2.14
+kses         67        48      1.06      1.08
+kses         64        49      1.80      0.73
+kses         66        49      1.51      0.84
+kses          0        28      0.79      0.79
+kernel            pcre ns       dfa    group0
+kses        all   4436845      0.78      0.62
+blocks      all    434283     19.82     15.00
+slugs       all    433797      0.33      0.34
+wpautop     all   1717931      3.45       nan
+wptexturize all    212267      1.36      1.78
+escape      all     64999      0.66      0.89
+
+peak memory (MB, median of rounds): dfa 1766, group0 1471
