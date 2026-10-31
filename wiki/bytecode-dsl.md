@@ -40,7 +40,7 @@ As Gate 1 and Gate 2: interleaved A/B rounds (tree, bytecode, tree, …) of the 
 
 ## S1 results (2026-10-30, branch `bytecode-s1`)
 
-**Verdict: the stop rule applies.** With compilation off, the bytecode interpreter runs K0 at **0.72× the tree's speed** (geometric mean over the ten kernels, same build, the option the only difference; 0.69× against main's tree). The rule asks for at least 1.3×. The bytecode interpreter is faster only on binarytrees (1.24×) and 1.7–2.2× slower on the arithmetic loops (intloop, floatloop, sieve, bubblesort). It doesn't reach the tree's compiled peak either (0.91×), and in a fresh JVM its first iteration costs 0.4–0.8 s more on every kernel. By the gate's own rule the rest of the port wouldn't pay for itself. Stopping is the owner's decision.
+**Verdict: the stop rule applies.** With compilation off, the bytecode interpreter runs K0 at **0.72× the tree's speed** (geometric mean over the ten kernels, same build, the option the only difference; 0.69× against main's tree). The rule asks for at least 1.3×. The bytecode interpreter is faster only on binarytrees (1.24×) and 1.7–2.2× slower on the arithmetic loops (intloop, floatloop, sieve, bubblesort). It doesn't reach the tree's compiled peak either (0.91×), and in a fresh JVM its first iteration costs 0.4–0.8 s more on every kernel. By the gate's own rule the rest of the port wouldn't pay for itself. Stopping is the owner's decision. **Update 2026-10-31:** most of the gap was the DSL version and the measurement. On GraalVM 25.4, with two fixes and the kernels in one JVM, the bytecode runs at 1.14× the tree, and cold code still costs it more; see "Why S1 is slower" below.
 
 ### What runs on bytecode
 `-Dpolyglot.php.Interpreter=bytecode` (default `tree`) sends each function the new `BytecodeTranslator` covers to a `PhpBytecodeRootNode`. The rest stay on the tree, and the two call each other freely. `-Dphp.bytecode.report=true` lists every function's interpreter, with the reason for each fallback. Only functions are translated: a script's top-level code stays on the tree.
@@ -87,7 +87,7 @@ The ten kernel closures run on bytecode too: 25 of K0's 26 functions. Gate 1's k
 Where the time goes (JFR, compilation off, on bytecode):
 - **intloop:** 56% of the samples are frame stores, the operand stack's pushes (`setLong`) and the clearing of popped slots. The tree passes those values as Java return values. Another 27% is the dispatch loop.
 - **mandelbrot:** reading variables takes 23%, writing them 11%, and the loop 24%. Each variable access is an operation of our own: a cached node and a `LocalAccessor`, where the builder's `LoadLocal` would be a plain frame read.
-- **The host compiler matters:** with C2 compiling the interpreter (`-XX:-UseJVMCICompiler`), intloop on bytecode is 4.6× the tree's time (677 against 146 ms), against 2× with Graal, the default. Native image (host inlining) isn't measured; it is shelved (gate-1.md).
+- **The host compiler matters:** with C2 compiling the interpreter (`-XX:-UseJVMCICompiler`), intloop on bytecode is 4.6× the tree's time (677 against 146 ms), against 2× with Graal, the default. Native image (host inlining) wasn't measured then; it is now ("Why S1 is slower", H8).
 
 ### Peak and warmup, compilation on
 100 iterations per run, 8 rounds, the same columns:
@@ -328,4 +328,93 @@ CPUSET=6-13 PHP_CLASSES=target/classes-s1 JAVA_OPTS=-Dpolyglot.php.Interpreter=t
 CPUSET=6-13 PHP_CLASSES=target/classes-s1 JAVA_OPTS=$BC tests/phpt/run.sh --reuse-oracle
 JAVA_OPTS="$BC -Dphp.bytecode.report=true" bench/gate1/truffle.sh bench/k0/run.php all 3   # against bench/gate1/php.sh php bench/k0/run.php all 3
 ```
-The tables are from `f0cacf9`. The comparison fix after it changes only the tree's classes; the bytecode's comparisons are the same specializations under new class names.
+The tables are from `f0cacf9`. The comparison fix after it changes only the tree's classes; the bytecode's comparisons are the same specializations under new class names. Re-measured at `866a98b` (the review fixes, still 25.0.4) in the runs of the next section: 0.73× with compilation off (15 iterations, 5 rounds) and 1.06× with it on (120 iterations, 5 rounds).
+
+## Why S1 is slower (2026-10-31, GraalVM 25.4.4.1.1)
+
+The owner asked why, before deciding. Each hypothesis below got an experiment of its own: one variable changed (a JVM option, a DSL attribute, or a patch), the rest held, interleaved runs on CPUs 14-21, effect as a speed ratio per round (median, IQR over rounds). The measurements run on GraalVM 25.4.4.1.1 (`graalvm-bump`, merged into this branch), whose DSL changed the generated interpreter a lot (below).
+
+**Short answer.** Three things made S1's 0.72× (per kernel, compilation off, GraalVM 25.0.4), and one thing didn't change.
+1. **The DSL version.** GraalVM 25.4's DSL generates a faster interpreter: the same S1 runs **1.26×** faster on it, and against the tree it goes from 0.73× to 0.92× (H1).
+2. **The measurement.** Each kernel in its own JVM lets the host compiler specialize the tree's `execute` methods for one program. With the ten kernels in one JVM, as an application runs, the bytecode is **0.99–1.16×** the tree (H2).
+3. **Our operations.** Comparisons took boxed operands, and statements pushed values only to pop them; fixed, together **1.12×** per kernel and 1.17× in one JVM (H4, H5). Variables go through our own `LocalAccessor` operations; doing their reads and scalar stores with the builtins is worth up to 1.09–1.12× more (H6, a ceiling).
+4. **What stays: cold code.** First executions cost the bytecode **2.8×** the tree's time on the JVM and 1.11× on native image (H9, H10). The bytecode interpreter doesn't cut WordPress's cold-code cost. Native image does, for either interpreter: its cold pass is 2.8× faster than the JVM tree's.
+
+1.3× is in reach two ways (next section): in one JVM with exact builtin locals (1.34× measured as a ceiling), or on native image with tail-call handlers (1.32× measured, before the fixes).
+
+### What the documentation and the literature say
+- **The DSL promises no speedup.** Neither the [user guide](https://github.com/oracle/graal/blob/master/truffle/docs/bytecode_dsl/UserGuide.md) nor the [optimization guide](https://github.com/oracle/graal/blob/master/truffle/docs/bytecode_dsl/Optimization.md) gives a number against AST interpreters. The user guide offers quickening and boxing elimination "to improve interpreted (non-compiled) performance", and the uncached interpreter to "reduce the footprint of your language and improve start-up times".
+- **Superinstructions and tracing aren't there.** The optimization guide: "Superinstructions are not yet supported", "Tracing is not yet supported". Tracing would infer quickenings and superinstructions from runs. Until then, quickenings beyond the DSL's automatic ones are manual (`@ForceQuickening`), and every PHP operation stays an instruction of its own.
+- **Builtin locals are the preferred access.** The user guide calls `LoadLocal`/`StoreLocal` "the preferred way to access locals because they are efficient"; accessors are for operations the builtins can't express. The "extra indirection" it mentions is the `BytecodeNode` helpers' (`getLocalValue` and the like: "the built-in operations and accessors are preferred"), not the accessors'. S1 reads and writes every PHP variable through a `LocalAccessor` in an operation of its own, because a PHP variable holds references, releases arrays and counts holders.
+- **Larose, Kaleba, Burchell and Marr, "AST vs. Bytecode: Interpreters in the Age of Meta-Compilation" (OOPSLA 2023)** built TruffleSOM both ways. Interpreter only, on native image, the AST interpreter ran at 3.07× Java's time and the bytecode one at 4.96×. Peak performance was on par. The AST took 2.89× the bytecode's memory unexecuted, and 1.21× once executed. So the literature's expectation for a Truffle language is the result S1 got per kernel: the bytecode interpreter isn't faster, and saves memory.
+
+### Hypotheses, experiments, effects
+Speed is the reference's time ÷ the variant's per round (median, IQR over rounds); above 1 the variant is faster. "Per kernel" means each K0 kernel in its own JVMs (ab-each.sh, the S1 tables' setup); "one JVM" means the ten kernels interleaved in one process (bench/k0/mixed.php), as an application's code shares a JVM. Compilation off unless said.
+
+| # | hypothesis | experiment | effect (IQR) | fixable, cost |
+|---|---|---|---|---|
+| H1 | **GraalVM 25.0.4's DSL generated a slow interpreter** | the same S1 on 25.0.4 and 25.4.4.1.1 (`graalvm-bump`), interleaved, per kernel | the bytecode is **1.26×** faster on 25.4 (spectralnorm 1.93×, bubblesort 1.37×, intloop 1.28×, fib 1.27×; nbody 1.03×), the tree 0.98×. Bytecode against the tree: **0.73× → 0.92×** (the S1 table's 0.72×, reproduced, then 0.92–0.96× in three 25.4 runs). The new code: handlers are methods (213, a threaded switch between them), specialization state lives in the bytecode (64 singleton nodes, where 25.0.4 had 9), primitive constants are inline, and popped primitive slots are cleared only in compiled code (H7) | done: the bump (PR #5) |
+| H2 | **The per-kernel JVMs flatter the tree** (the host compiler specializes the AST interpreter's `execute` methods for one program) | the same builds, the kernels interleaved in one JVM | bytecode against the tree: 0.96× per kernel → **0.99–1.16× in one JVM** (two runs). The tree loses up to 3.5× (fib 28 → 98–102 ms, intloop 52 → 87–92, spectralnorm 328 → 524–531); the bytecode up to 1.5× (intloop 73 → 121–148). Control: on native image, which has no host JIT, per kernel and one process agree (native tree fib 70.9 against 70.8 ms, bytecode 0.82× against 0.83×) | not a fix: the measurement. An application is the one-JVM case |
+| H3 | **More instructions than the tree has nodes** | `engine.BytecodeHistogram`, compilation off, one iteration | no: intloop runs 24 instructions per iteration, the tree ~22–24 node executions. What differs is their kind (H4–H6) | – |
+| H4 | **Comparisons take boxed operands** (E1: `Less$Longs$Doubles` takes Objects, so `$i < $n` reads `$i` and `$n` boxed) | `@ForceQuickening` on the comparisons' int and float specializations (`cmpq`) | **1.07×** per kernel (fannkuch 1.28×, floatloop 1.20×, intloop 1.14×; binarytrees and nbody 0.94×) | **done**, 15 annotations (`9c8f17b`) |
+| H5 | **Expression statements push a value only to pop it** (pops are 8–16% of the instructions) | void statement operations: `WriteVarStatement`, `CompoundVarStatement`, `IncDecVarStatement` (`stmt`) | without `@ForceQuickening` 0.98× (intloop 0.87×, sieve 0.88×): the DSL didn't quicken the void operations. With it, H4 and H5 together (`cs2`) are **1.12×** the head per kernel (fannkuch 1.31×, floatloop 1.28×, intloop 1.21×; nbody 0.97×) and **1.17×** in one JVM. H5's own share is what's left over H4's 1.07× | **done** (`b9d4e85`), ~90 lines |
+| H6 | **Variables go through our own operations and `LocalAccessor`s** where the guide prefers `LoadLocal`/`StoreLocal` | ceiling (experiment only, wrong for unset reads and arrays' holders): reads of variables that can't be references are `LoadLocal`, scalar assignments `StoreLocal` (`locals`) | **1.09×** per kernel (fannkuch 1.25×, mandelbrot 1.20×, floatloop 1.17×). On top of H4 and H5 (`combo2`): 1.22× the head per kernel, and in one JVM **1.34× the tree** (the head 0.99×, cs2 1.14×) | partly: exact for variables that are never references, always assigned before read and only ever scalar. Needs a per-function pass (definite assignment, scalar-only variables) in the translator; medium |
+| H7 | **The operand stack's stores and clears** (E4) | the generated code, 25.0.4 against 25.4 | 25.4 clears popped primitive slots only in compiled code: 140 clears in the cached interpreter became 83, plus 266 compiled-only. The rest clear Object slots (for the GC). Nothing left to configure | part of H1 |
+| H8 | **The interpreter depends on the host compiler** (E2) | C2 instead of Graal compiling the interpreter (`-XX:-UseJVMCICompiler`) | bytecode **0.47×** of itself with Graal; tree 0.87×. With C2 the bytecode is 0.53× the tree | yes: keep Graal as the host compiler. **Native image** (the same commit `4747eae` built ahead of time, so no host JIT): with compilation off the native interpreters are slower than the Graal-hosted ones (tree 0.62×, bytecode 0.54×); the bytecode is 0.82× the native tree, and **1.32× with tail-call handlers** (feature 7). With compilation on: peak 0.98–0.99× the tree, the first iteration about the tree's (fib 81 against 98 ms, mandelbrot 156 against 274; bubblesort 140 against 88), peak memory 86–330 MB against the JVM's 220–1550 |
+| H9 | **Cold code** (E5): WordPress runs most functions a few times | bench/cold: 2000 new functions called 1–20 times, compilation on, fresh JVMs, 10 rounds | bytecode time ÷ tree time on the JVM: **2.80× (2.43–3.18)** on a cold engine; **1.34× (1.20–1.45)** for new functions on a warm engine; 1.02× for the same functions again; 0.84× once warm. Peak memory 371 against 449 MB. **On native image: 1.11× (1.09–1.15)** cold, 0.96× warm, 0.78× again. The native tree's cold pass (86 ms) is 2.79× faster than the JVM tree's (239) and 8× faster than the JVM bytecode's (695) | the bytecode doesn't cut cold-code cost: it adds 11% on native and 180% on the JVM. Native image does (the JVM's own warmup goes). See H10 |
+| H10 | **The first iteration** (E6) | JFR (1 ms samples, main thread), TraceCompilation, compile events | cold code: translation 3× the tree's samples (157 against 51, the DSL builder and our translator), execution 2.4× (334 against 137). K0: translation ~0%; the interpreter runs 2× the tree's time before compilation; bytecode OSR compiles from the loop to the function's end, so the first exit deoptimizes (2–5 deopts on the loop kernels, the tree none); the host compiles the 127 KB `continueAt` in 336 ms on a compiler thread | partly: the host's warmup goes away on native image (H8); the translation cost is ours and the builder's |
+| H11 | **The uncached tier** (now that 25.4 no longer re-stores locals on the move to cached) | `php.bytecode.uncached=16` | 0.99× per kernel with compilation off and on; on cold code (H9) the bytecode takes 3.03× the tree's time on a cold engine (2.80× without) and 1.53× on a warm one (1.34×). The tier works now (25.4: no Object kind for good, no boxed loops), it just doesn't pay | no: leave it at 0 |
+| H12 | **25.4 lost a peak the bytecode had** (found on the way) | the same S1 on 25.0.4 and 25.4, compilation on, 120 iterations | fib compiled on bytecode: 0.78 ms on 25.0.4 (3.3× the tree's speed), 2.59 ms on 25.4 (the tree's 2.48). Other kernels within ±12% except mandelbrot 1.23× and spectralnorm 1.20× faster. 25.4 changed guest inlining to Graal IR call-site frequencies (GR-79418), the likely cause for a recursive call; not confirmed | open: inlining trace of fib on both versions |
+
+### What could reach 1.3×
+Bytecode speed against the tree, compilation off (the gate's measure):
+
+| combination | per kernel (a JVM each) | one JVM (kernels interleaved) |
+|---|---|---|
+| S1 on 25.0.4 (the S1 table) | 0.72–0.73× | – |
+| the head on 25.4 (`4747eae`) | 0.92–0.96× | 0.99–1.16× (two runs) |
+| + comparisons quickened, statement forms (`b9d4e85`, committed) | **1.03×** | **1.14×** |
+| + builtin locals, ceiling (`combo2`, experiment only) | 1.12× | **1.34×** |
+| native image, the head, no tail calls | 0.82× | 0.83× |
+| native image, the head, tail-call handlers | **1.32×** | **1.34×** |
+
+- **On the JVM**, 1.3× needs the builtin locals for real. That means a pass over each function before emitting: variables that are never references (no `&`, no by-reference argument or parameter, no capture), always assigned before they're read (definite assignment), and only ever assigned scalars. Those get `LoadLocal`/`StoreLocal`; the rest keep the operations. The ceiling bounds what it can give (1.34× in one JVM, 1.12× per kernel), so it is 1.3× with no margin. Cost: medium, a translator pass and its tests.
+- **On native image**, one attribute (`enableTailCallHandlers = true`) gives 1.32× per kernel without the fixes. They gave 1.12× per kernel on the JVM, so native with both is likely past 1.4×; not measured. But the native interpreters are slower than the Graal-hosted ones in absolute terms (tree 0.62×, bytecode 0.54× without tail calls), and native regex is 12× slower than the JVM's on Gate 1 (downcall handles made at run time, gate-1.md), so WordPress on native needs that fixed first.
+- **What no combination changes:** compiled peak is the tree's within ±5% (0.98–1.07×), and cold code costs the bytecode more than the tree on both hosts. If the gate's question is WordPress's cold-code cost, the answer is native image, not the bytecode interpreter.
+
+### The DSL features of 25.x, one at a time
+Against 25.4's defaults on the bytecode interpreter, per kernel (5 rounds; compilation off 15 iterations, on 120), geomean speed (IQR of the extreme kernel):
+
+| # | feature | 25.4 default | interpreter | compiled | first iteration | peak memory | keep |
+|---|---|---|---|---|---|---|---|
+| 1 | threaded switch (`enableThreadedSwitch`) | on | off: **0.86×** (sieve 0.44×, intloop 0.80×, mandelbrot 0.81×) | 1.00× | equal | equal | yes (the default) |
+| 1 | specialization state in the bytecode (GR-61293) | always | part of H1's 1.26× | | | | (no switch) |
+| 1 | primitive constants inline (`inlinePrimitiveConstants`) | on | off: 0.98× (fannkuch 0.86×, spectralnorm 0.92×) | 0.99× | equal | equal | yes (the default) |
+| 2 | instruction rewriting (`enableInstructionRewriting`) | on | off: 0.99× (fannkuch 0.93×) | 1.00× | equal | equal | yes (the default) |
+| 3 | uncached tier (`php.bytecode.uncached=16`) | ours: 0 | 0.99× | 0.99× | cold code: 3.03× the tree's time (2.80× at 0) | equal | no, stays 0 (H11) |
+| 4 | `storeBytecodeIndexInFrame` and per-operation `storeBytecodeIndex` | off | on: 0.97× (intloop 0.91×, bubblesort 0.91×) | – | – | – | no: off, the cached interpreter stores no bytecode index at all (none of the frame stores are bci stores); with it on, 31 handlers store one |
+| 5 | `ClearLocal` for unset and a finished foreach (two instructions where `UnsetVar`/`ForeachEnd` was one) | builtin | 0.99× (binarytrees 0.95×, sieve 0.94×) | 0.96× (binarytrees 0.87×) | equal | equal | **no**: not committed |
+| 6 | `StackValue` for a call's callee (by-reference arguments) | builtin | 1.01× (binarytrees 1.09×); cold code equal within noise | 1.01× (cs2 against sv) | equal | equal | **yes** (`4747eae`): no hidden locals, one store and a load less per such call |
+| 7 | tail-call handlers on native image (`enableTailCallHandlers`) | off | native: **1.60×** the bytecode without (fib 2.16×, spectralnorm 1.98×, fannkuch 1.35× over the tree); 1.32× the native tree | native: 1.01× (0.99× the tree) | native: equal or faster (fib 67 against 81 ms) | +0–30 MB (fib 128 against 119) | **yes**: one attribute; on the JVM 1.00× with compilation off and 1.01× on (sieve 1.24×, fib 0.94×) |
+| 8 | `engine.BytecodeHistogram` | – | intloop 72M instructions (24 per iteration), mandelbrot 170M, fannkuch 180M, sieve 19M; cmpq+stmt: 66M, 154M, 161M, 17M | | | | the E1 tool; ForceQuickening's effect shows as `ReadVar$ReadLong` (boxed) → `$unboxed` |
+| – | the generated interpreter on the host's C2 (`-XX:-UseJVMCICompiler`) | Graal | **0.47×** | – | – | – | Graal (H8) |
+
+### Reproduce (this section)
+The builds are class directories `target/classes-X` beside one another; `bench/gate1/ab.sh` runs a variant `X@options` from its directory, with `target/lib-X` and the image named in `target/classes-X.image` when they exist (25.0.4 runs on `gate1-truffle:8.5` with its own jars).
+```
+BC=-Dpolyglot.php.Interpreter=bytecode; OFF=-Dpolyglot.engine.Compilation=false
+# s1old: 866a98b on 25.0.4 (pom and jars of then); s1new: b619d2e; sv: 4747eae; cs2: b9d4e85
+# DSL options: s1new with one @GenerateBytecode attribute flipped (enableThreadedSwitch, enableInstructionRewriting,
+# inlinePrimitiveConstants = false; storeBytecodeIndexInFrame, enableTailCallHandlers = true)
+# prototypes: s1new + a patch: locals (reads of variables that can't be references as LoadLocal, scalar assignment
+# statements as StoreLocal; experiment only), clear (UnsetVar -> ReleaseVar + ClearLocal), combo2 (cs2 + locals)
+bench/k0/ab-each.sh target/f-off 15 5 "s1old@$OFF" "s1old@$OFF $BC" "s1new@$OFF" "s1new@$OFF $BC" ...
+bench/k0/ab-each.sh target/f-on 120 5 s1old "s1old@$BC" s1new "s1new@$BC" ...
+AB_OUT=target/mixed-p-off DRIVER=bench/k0/mixed.php bench/gate1/ab.sh all 15 5 "s1new@$OFF" "sv@$OFF $BC" "cs2@$OFF $BC" "combo2@$OFF $BC" ...
+python bench/cold/generate.py && AB_OUT=target/cold-ab DRIVER=bench/cold/run.php bench/gate1/ab.sh cold 4 10 s1new "s1new@$BC" ...
+python bench/gate1/speed.py target/f-off 2 tree=2 bytecode=3      # speed tables (any reference, any variants)
+# E1: JAVA_OPTS="$BC $OFF -Dpolyglot.engine.BytecodeHistogram=true" bench/gate1/truffle.sh bench/k0/run.php intloop 1
+# E6: -XX:StartFlightRecording=...,settings=profile,jdk.ExecutionSample#period=1ms; -Dpolyglot.engine.TraceCompilation=true
+# native: bench/native/build.sh (NI_CLASSES and NI_NAME for a variant), then ab.sh variants native/NAME
+```
+
