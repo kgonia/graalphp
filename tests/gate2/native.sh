@@ -8,8 +8,9 @@
 # - The site, its ASTs, the classes, the jars and the native build are copied into a Docker volume, wpn-site, so no
 #   server reads the Windows bind mount.
 # - Variants: php (PHP 8.5.12, OPcache with the tracing JIT, php -S with 4 workers), jvm-export (the tree, the
-#   php-ast export), jvm-java (the tree, our parser), jvm-bc (bytecode, our parser), native-java, native-bc. The
-#   java-parser variants get no AST root, so a file that needed the export would fail.
+#   php-ast export), jvm-java (the tree, our parser), jvm-bc (bytecode, our parser), native-java, native-bc; and
+#   jvm-main, native-main: another build's tree on our parser (target/classes-main and target/native/wp-http-main,
+#   for comparing two builds). The java-parser variants get no AST root, so a file that needed the export would fail.
 # Run after tests/gate2/fetch.sh (or a copy of the main checkout's site), mvn compile and bench/native's build of
 # the HTTP launcher (NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http).
 # - measure: rounds of paced visits (tests/gate2/visits.py, CPUs 0-5), the server on CPUs 14-21, the variants
@@ -77,7 +78,8 @@ volume() {
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    if [ -f /w/target/native/wp-http ]; then cp /w/target/native/wp-http /srv/target/native/; fi
+    for f in wp-http wp-http-main; do [ ! -f /w/target/native/$f ] || cp /w/target/native/$f /srv/target/native/; done
+    [ ! -d /w/target/classes-main ] || cp -r /w/target/classes-main /srv/target/classes-main
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     du -sh /srv/target/*'
 }
@@ -93,7 +95,7 @@ check() {
 start() {
   local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=gate1-truffle:8.5-graal25.4 cmd opts= env=()
   case $variant in
-    *-java) opts="-Dpolyglot.php.Parser=java" ;;
+    *-java|*-main) opts="-Dpolyglot.php.Parser=java" ;;
     # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image
     # fixes the system property at build time)
     *-bc) opts="-Dpolyglot.php.Parser=java -Dpolyglot.php.Interpreter=bytecode"
@@ -103,8 +105,12 @@ start() {
     php) image=bootshare-php:8.5; env=(-e PHP_CLI_SERVER_WORKERS=4)
          cmd='cd target/gate2/wordpress && exec php -d auto_prepend_file= -S 0.0.0.0:8080' ;;
     jvm-export) cmd="$JAVA ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=target/ast" ;;
+    jvm-main) cmd="${JAVA/target\/classes:/target/classes-main:} $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS"
+              cmd+=" --ast-root=/none" ;;
     jvm-*) cmd="$JAVA $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=/none" ;;
-    native-*) cmd="exec target/native/wp-http \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
+    native-*) local binary=wp-http
+              [ "$variant" != native-main ] || binary=wp-http-main
+              cmd="exec target/native/$binary \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
     *) echo "unknown variant $variant"; exit 2 ;;
   esac

@@ -51,6 +51,7 @@ def total_time(run, k):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     window = int(next((a.split("=")[1] for a in sys.argv[1:] if a.startswith("--window=")), "50"))
     directory, reference, variants = args[0], args[1], args[2:]
