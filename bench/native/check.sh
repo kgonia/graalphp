@@ -4,4 +4,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 MSYS_NO_PATHCONV=1 CPUSET=${CPUSET:-6-13} bash bench/gate1/php.sh php tools/ast-export.php target/ast bench/native/check.php > /dev/null
-CPUSET=${CPUSET:-6-13} PHP_NATIVE=${1:-target/native/php} bash bench/gate1/truffle.sh bench/native/check.php ${2:-1000}
+CPUSET=${CPUSET:-6-13} PHP_NATIVE=${1:-target/native/php} bash bench/gate1/truffle.sh bench/native/check.php ${2:-2000}

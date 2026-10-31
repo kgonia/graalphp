@@ -1,9 +1,10 @@
 <?php
 // The native image's per-call check: one cheap call of each bound library, timed after warming up. A downcall
-// made at run time would take the generic method-handle path (about 2 us more per call) and fail the limit.
-// Usage: php check.php [limit in ns per call, default 1000]
+// made at run time would take the generic method-handle path and fail the limit: 0.1-0.5 us a call is direct,
+// 4.6 us or more generic (2026-10-31, CPUs 2-5).
+// Usage: php check.php [limit in ns per call, default 2000]
 
-$limit = (int) ($argv[1] ?? 1000);
+$limit = (int) ($argv[1] ?? 2000);
 $checks = [
     'preg_match (PCRE2)' => function ($n) {
         for ($i = 0; $i < $n; $i++) {
