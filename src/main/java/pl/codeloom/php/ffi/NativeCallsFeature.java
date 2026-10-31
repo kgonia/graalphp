@@ -14,7 +14,8 @@ import org.graalvm.nativeimage.hosted.RuntimeForeignAccess;
  */
 public final class NativeCallsFeature implements Feature {
     /** The classes that declare native functions (NativeLibrary.downcall, Upcall.of): built with the image. */
-    static final List<String> BINDINGS = List.of();
+    static final List<String> BINDINGS = List.of(
+            "pl.codeloom.php.builtins.PcreFunctions$Native");
     /** The classes that hold native state (upcall stubs, native memory, a library's initialization): run time. */
     static final List<String> NATIVE_STATE = List.of();
 
