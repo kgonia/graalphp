@@ -7,7 +7,7 @@
 set -e
 cd /w
 B=pl.codeloom.php.builtins
-RT="$B.CurlFunctions,$B.CurlFunctions\$StderrFile\$Cookie,$B.CurlNative,$B.CurlNative\$Library,$B.CurlNative\$Callbacks,$B.EncodingFunctions,$B.PcreRecorder"
+RT="$B.CurlFunctions,$B.EncodingFunctions,$B.PcreRecorder"
 BT="pl.codeloom.php,com.fasterxml.jackson.core"
 $GRAALVM_HOME/bin/native-image -J-Xmx14g \
   -cp "${NI_CLASSES:-target/classes}$(ls target/lib/*.jar | sed 's/^/:/' | tr -d '\n')" \
