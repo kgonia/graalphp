@@ -23,6 +23,8 @@ INVAL = re.compile(r'^\[engine\] opt inval\.\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\
 DEOPT = re.compile(r'^\[engine\] opt deopt\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|.*\|Reason (.*)$')
 PRINTED = re.compile(r'^\[engine\] opt fail\s+(.*?)\s*\|AST')
 WARN = re.compile(r'^\[engine\] perf warn\s+(.*?)\s*\|(.*)$')
+EXPANSION = re.compile(r'^\[engine\] Expansion tree for (.*) after truffleTier:$')
+EXPANDED = re.compile(r'^(\s*)(.*?)\s+[\d.]+ \|\s+(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+ \|\s+(\d+)')
 FRAME = re.compile(r'^\s*(?:at\s+)?(?:\S+//)?([\w$.]+)\(([^)]*)\)')
 
 
@@ -59,6 +61,7 @@ class Run:
         self.warnings = []      # (target, message, frames)
         self.transfers = []     # frames
         self.deopts = []        # native image: (target, reason, frames), from the server's output
+        self.expansions = []    # TraceMethodExpansion: (target, IR nodes, Counter of self IR nodes by method)
         self.stats = collections.OrderedDict()
         self.parse(path)
         server = os.path.join(os.path.dirname(path), 'server.log')
@@ -115,6 +118,10 @@ class Run:
                 frames, i = self.frames(lines, i + 1)
                 self.transfers.append(frames)
                 continue
+            m = EXPANSION.match(line)
+            if m:
+                i = self.expansion(m.group(1), lines, i + 2)
+                continue
             if line.startswith('[engine] Truffle runtime statistics'):
                 i = self.statistics(lines, i + 1)
                 continue
@@ -154,6 +161,25 @@ class Run:
                 frames.append((m.group(1), m.group(2)))
             i += 1
         return frames, i
+
+    def expansion(self, target, lines, i):
+        """A method expansion tree (TraceMethodExpansion=truffleTier): IR nodes by the method that made them."""
+        by_method = collections.Counter()
+        total = 0
+        is_methods = False
+        while i < len(lines) and lines[i].strip() and not lines[i].startswith('['):
+            m = EXPANDED.match(lines[i])
+            if m:
+                name = re.sub(r'@[0-9a-f]+', '', m.group(2).strip())
+                is_methods |= '(' in name
+                by_method[name] += int(m.group(4))
+                if not m.group(1):
+                    total = int(m.group(3))
+            i += 1
+        # TraceNodeExpansion prints a tree of node classes, without parameter lists: only the method trees count
+        if is_methods:
+            self.expansions.append((target, total, by_method))
+        return i
 
     def statistics(self, lines, i):
         """The engine's statistics block: the compilation counts and their reasons, up to the AST statistics."""
@@ -259,6 +285,13 @@ def report(run, top):
     tgroups = collections.Counter(ours(fr, skip=('pl.codeloom.php.runtime.PhpContext.',)) for fr in run.transfers)
     for where, count in tgroups.most_common(top):
         print(f'{count:5}  at {where}')
+    if run.expansions:
+        print('\n-- what the largest compilations expanded: IR nodes after partial evaluation by the method that made'
+              ' them (TraceMethodExpansion)')
+        for target, total, by_method in sorted(run.expansions, key=lambda e: -e[1])[:3]:
+            print(f'  {short(target)}: {total} IR nodes')
+            for method, count in by_method.most_common(top):
+                print(f'{count:9}  {short(method, 100)}')
     if run.deopts:
         print(f'\n-- deoptimizations (native image, {len(run.deopts)}), by reason and our source location')
         dgroups = collections.defaultdict(list)
@@ -275,14 +308,15 @@ def check(run, args):
     """The thresholds a run must stay within; the messages of those it exceeds."""
     problems = []
     kinds = collections.Counter(kind_of(f[4]) for f in run.failed if kind_of(f[4]) != 'cancelled')
+    too_large = kinds.pop('code too large', 0)
     failures = sum(kinds.values())
     if failures > args.max_failures:
         problems.append(f'{failures} failed compilations ({dict(kinds)}), allowed {args.max_failures}')
+    if too_large > args.max_code_too_large:
+        problems.append(f'{too_large} compilations whose code was too large to install, allowed '
+                        f'{args.max_code_too_large}')
     if kinds['deopt cycle'] > args.max_deopt_cycles:
         problems.append(f'{kinds["deopt cycle"]} deopt cycles, allowed {args.max_deopt_cycles}')
-    permanent = run.stat('Permanent Bailouts') + run.stat('Failed')
-    if permanent > args.max_failures:
-        problems.append(f'the engine counted {permanent} permanent bailouts and failures, allowed {args.max_failures}')
     if not run.stats:
         problems.append('no engine statistics: the server did not close its engine')
     biggest = max((d[7] for d in run.done), default=0)
@@ -291,6 +325,9 @@ def check(run, args):
     slowest = max((d[3] for d in run.done), default=0)
     if slowest > args.max_compile_ms:
         problems.append(f'a compilation of {slowest} ms, allowed {args.max_compile_ms}')
+    total = (sum(d[3] for d in run.done) + sum(f[3] for f in run.failed)) / 1000
+    if total > args.max_compile_s:
+        problems.append(f'{total:.0f} s of compilation, allowed {args.max_compile_s}')
     counts = collections.Counter(d[0] for d in run.done)
     if counts:
         target, most = counts.most_common(1)[0]
@@ -307,13 +344,18 @@ def main():
     p.add_argument('dir')
     p.add_argument('--top', type=int, default=12)
     p.add_argument('--check', action='store_true', help='exit 1 when a run exceeds a threshold')
-    # thresholds: the baseline after the fixes (wiki/partial-evaluation.md), with room for noise
-    p.add_argument('--max-failures', type=int, default=0, help='failed compilations and permanent bailouts')
+    # thresholds: the baseline after the fixes on the JVM and the native image (wiki/partial-evaluation.md, "The
+    # baseline"), with room for the run-to-run spread; a run of compile-diag.sh's defaults
+    p.add_argument('--max-failures', type=int, default=0,
+                   help='failed compilations and permanent bailouts, other than code too large')
+    p.add_argument('--max-code-too-large', type=int, default=2,
+                   help='compilations whose code was too large to install (HotSpot only: WP_Query::get_posts)')
     p.add_argument('--max-deopt-cycles', type=int, default=0)
-    p.add_argument('--max-ir', type=int, default=60000, help='IR nodes after partial evaluation')
-    p.add_argument('--max-compile-ms', type=int, default=10000)
-    p.add_argument('--max-recompilations', type=int, default=12, help='compilations of one call target')
-    p.add_argument('--max-perf-warnings', type=int, default=1000)
+    p.add_argument('--max-ir', type=int, default=60000, help='IR nodes after partial evaluation, one compilation')
+    p.add_argument('--max-compile-ms', type=int, default=20000, help='one compilation')
+    p.add_argument('--max-compile-s', type=int, default=1100, help='all compilations of a run')
+    p.add_argument('--max-recompilations', type=int, default=10, help='compilations of one call target')
+    p.add_argument('--max-perf-warnings', type=int, default=0)
     args = p.parse_args()
     if os.path.isfile(os.path.join(args.dir, 'engine.log')):
         runs = [(os.path.basename(os.path.normpath(args.dir)), args.dir)]

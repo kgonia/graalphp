@@ -157,6 +157,7 @@ stop() {
 # HTTP launcher serving the pages and wp-admin (tree and bytecode on our parser, the tree on the export). The foreign
 # calls the agent records are dropped, as agent.sh drops them.
 agent() {
+  [ -f bench/native/agent.sh ] || { echo "no native-image build on this branch (bench/native)"; exit 2; }
   local opts variant
   rm -rf target/native/config && mkdir -p target/native/config $out
   for opts in "" "-Dpolyglot.php.Interpreter=bytecode"; do
