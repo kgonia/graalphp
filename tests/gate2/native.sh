@@ -78,8 +78,10 @@ volume() {
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    for f in wp-http wp-http-main; do [ ! -f /w/target/native/$f ] || cp /w/target/native/$f /srv/target/native/; done
-    [ ! -d /w/target/classes-main ] || cp -r /w/target/classes-main /srv/target/classes-main
+    for f in wp-http wp-http-main wp-http-s2; do
+      [ ! -f /w/target/native/$f ] || cp /w/target/native/$f /srv/target/native/
+    done
+    for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     du -sh /srv/target/*'
 }
@@ -114,6 +116,12 @@ start() {
               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
     *) echo "unknown variant $variant"; exit 2 ;;
   esac
+  # CLASSES, NATIVE: another build's classes (under target/) or native launcher, for profiling a build of its own
+  [ -z "${CLASSES:-}" ] || cmd=${cmd/target\/classes:/$CLASSES:}
+  [ -z "${NATIVE:-}" ] || cmd=${cmd/target\/native\/wp-http /$NATIVE }
+  # OUT_DIR: a host directory the server may write to, at /out (a profiler's output)
+  local extra=()
+  [ -z "${OUT_DIR:-}" ] || extra=(-v "$root/$OUT_DIR:/out")
   # AGENT=1: the JVM under native-image-agent, merging what it reaches into target/native/config
   local agent=()
   if [ -n "${AGENT:-}" ]; then
@@ -122,7 +130,8 @@ start() {
   fi
   docker rm -f wpn-$variant > /dev/null 2>&1 || true
   MSYS_NO_PATHCONV=1 docker run -d --name wpn-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network wpn-net \
-    --ip 172.30.0.10 --add-host host.docker.internal:172.30.0.2 "${env[@]}" "${agent[@]}" -v wpn-site:/srv:ro -w /srv \
+    --ip 172.30.0.10 --add-host host.docker.internal:172.30.0.2 "${env[@]}" "${agent[@]}" "${extra[@]}" \
+    -v wpn-site:/srv:ro -w /srv \
     $image sh -c "$cmd" > /dev/null
   [ -z "${NOWAIT:-}" ] || return 0
   for _ in $(seq 300); do
@@ -219,7 +228,8 @@ measure_run() { # variant visits pause name
   # the benchmark cores are shared: wait until no other container is pinned to them and no other memory-lock
   # reservation claims them, and note a container that came during the run. Pinning holds only inside the VM, whose
   # CPUs share the host's: wait for a quiet host too, and log its load during the run.
-  while [ -n "$(others_on_bench)$(others_reserving_bench)" ] || ! host_quiet; do sleep 30; done
+  # target/wpn/hold: another job of this session's is running (its own analysis), wait for it too
+  while [ -e $out/hold ] || [ -n "$(others_on_bench)$(others_reserving_bench)" ] || ! host_quiet; do sleep 30; done
   rm -f $runs/$name.host
   reset_db
   MSYS_NO_PATHCONV=1 docker run --rm --name wpn-driver --cpuset-cpus 0-5 --network wpn-net --pid=host --cgroupns=host \
