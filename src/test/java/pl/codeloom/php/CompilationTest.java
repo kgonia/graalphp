@@ -61,7 +61,10 @@ class CompilationTest {
         check(program, log, 1);
     }
 
-    /** The kernels at the first tier only (their call trees take seconds each at the last). */
+    /**
+     * The kernels at the first tier only, without OSR (their call trees and loops take seconds each at the last
+     * tier, run synchronously), for a few iterations.
+     */
     @ParameterizedTest
     @MethodSource("kernels")
     void kernelCompilesWithoutFailure(String kernel) {
@@ -69,8 +72,9 @@ class CompilationTest {
         Assumptions.assumeTrue(Files.exists(Path.of("bench/gate1/corpus.php")),
                 "Gate 1's WordPress files and corpus are not fetched (bench/gate1/fetch.sh)");
         Map<String, String> firstTier = new HashMap<>(OPTIONS);
-        firstTier.put("engine.LastTierCompilationThreshold", "1000000000");
-        String log = run(driver, firstTier, kernel, "40");
+        firstTier.put("engine.Mode", "latency");
+        firstTier.put("engine.OSR", "false");
+        String log = run(driver, firstTier, kernel, "5");
         check(kernel, log, 5);
     }
 

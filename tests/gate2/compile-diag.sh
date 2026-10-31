@@ -21,7 +21,8 @@
 # Usage: tests/gate2/compile-diag.sh setup | run [TARGET-ENGINE...] | report [--check] | build-native | clean
 #   setup: native.sh db and volume under this prefix (rerun volume after mvn package: it copies target/classes)
 #   run: the given runs, default kernels-jvm wp-jvm kernels-native wp-native, then the report
-#   build-native: the diagnosis build (about 16 GB: take a memory-lock reservation first)
+#   build-native: the diagnosis build (about 16 GB: take a memory-lock reservation first); NATIVE_DIAG runs another
+#   one (a name under target/native/)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export WPN_NAME=${WPN_NAME:-pe} WPN_NET=${WPN_NET:-172.31.7} WPN_DB_PORT=${WPN_DB_PORT:-3318}
@@ -51,7 +52,7 @@ run_one() { # target engine
   local target=$1 engine=$2 dir=$out/$1-$2 variant opts
   case $engine in
     jvm) variant=jvm-java; unset NATIVE ;;
-    native) variant=native-java; export NATIVE=target/native/wp-http-diag
+    native) variant=native-java; export NATIVE=target/native/${NATIVE_DIAG:-wp-http-diag}
             if [ ! -f "$NATIVE" ]; then echo "$target-native: no $NATIVE (compile-diag.sh build-native), skipped"; return 0; fi ;;
     *) echo "unknown engine $engine"; exit 2 ;;
   esac
@@ -94,8 +95,9 @@ case ${1:-} in
     python -I tests/gate2/compile_report.py "$out" ;;
   report) shift; python -I tests/gate2/compile_report.py "$out" "$@" ;;
   build-native)
-    NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http-diag NI_OPTS="-H:+IncludeNodeSourcePositions" \
-      bash bench/native/build.sh ;;
+    # NI_CLASSES builds another class directory, NI_NAME names the binary, NI_OPTS adds options (e.g. -J-Xmx8g)
+    NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=${NI_NAME:-wp-http-diag} \
+      NI_OPTS="-H:+IncludeNodeSourcePositions ${NI_OPTS:-}" bash bench/native/build.sh ;;
   clean) native clean ;;
-  *) sed -n 2,26p "$0"; exit 2 ;;
+  *) sed -n 2,25p "$0"; exit 2 ;;
 esac
