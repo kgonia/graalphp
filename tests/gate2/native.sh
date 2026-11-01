@@ -42,7 +42,7 @@ JAVA+=" \$JAVA_OPTS_BASE $SERVER_OPTS -Djava.net.preferIPv6Addresses=system -Dpo
 JAVA+=" -cp 'target/classes:target/lib/*'"
 LAUNCHER=pl.codeloom.php.launcher.HttpMain
 # errors shown as php -S shows them (http.sh's)
-HTTP_ARGS="--port=8080 --threads=4 --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
+HTTP_ARGS="--port=8080 --threads=${WPN_THREADS:-4} --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
 HTTP_ARGS+=" -ddisplay_errors=1 -dhtml_errors=0"
 pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?rest_route=/wp/v2/posts"
        "/?s=hello" /nonexistent-page/ "/?fatal=exception" "/?fatal=error")
@@ -135,6 +135,8 @@ start() {
     native-*) local binary=wp-http
               [ "$variant" != native-main ] || binary=wp-http-main
               [ "$variant" != native-phases ] || binary=wp-http-phases
+              # NATIVE_BIN: another build of target/native for this variant (wp-http-phases-base, ...)
+              [ -z "${NATIVE_BIN:-}" ] || binary=$NATIVE_BIN
               cmd="exec target/native/$binary \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
     *) echo "unknown variant $variant"; exit 2 ;;
