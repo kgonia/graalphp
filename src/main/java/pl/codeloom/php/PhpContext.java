@@ -174,6 +174,7 @@ public final class PhpContext {
                 globalRef(name).set(new PhpArray());
             }
         }
+        builtinState.requestGlobals(server, (PhpArray) globalRef("_ENV").get(), response != null);
     }
 
     public static PhpContext get(Node node) {

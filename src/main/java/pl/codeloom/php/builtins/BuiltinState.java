@@ -1,5 +1,7 @@
 package pl.codeloom.php.builtins;
 
+import pl.codeloom.php.runtime.PhpArray;
+
 /**
  * The built-ins' per-context state: the ini settings, error handling's, pattern caches and preg_last_error(),
  * json_last_error(), the mbstring substitute character. A context owns one; the built-in functions themselves are language-level.
@@ -31,6 +33,8 @@ public final class BuiltinState {
             java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     /** FG(default_context): the request's default stream context, made on first use. */
     StreamContext defaultStreamContext;
+    /** The request's input as ext/filter keeps it (filter_input()). */
+    final FilterFunctions.Input filterInput = new FilterFunctions.Input();
 
     /** cgi: the SAPI, whose defaults php.ini starts from; ini: the php.Ini option's settings. */
     public BuiltinState(boolean cgi, java.util.Map<String, String> ini) {
@@ -43,6 +47,11 @@ public final class BuiltinState {
 
     public ErrorFunctions.State errors() {
         return errors;
+    }
+
+    /** $_SERVER and $_ENV as the SAPI made them, kept for filter_input(); cgi: the CGI SAPI's. */
+    public void requestGlobals(PhpArray server, PhpArray env, boolean cgi) {
+        filterInput.globals(server, env, cgi);
     }
 
     /** Closes what the context left open. */

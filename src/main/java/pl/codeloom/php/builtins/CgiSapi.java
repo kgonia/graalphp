@@ -53,6 +53,32 @@ public final class CgiSapi {
         context.globalRef("_POST").set(post);
         context.globalRef("_COOKIE").set(cookies);
         context.globalRef("_REQUEST").set(request);
+        // ext/filter's copies: one exists once a variable went through the input filter, even a variable whose
+        // name registers nothing ("=x")
+        FilterFunctions.Input input = context.builtinState().filterInput;
+        input.get = anyFiltered(environment.getOrDefault("QUERY_STRING", ""), false) ? FilterFunctions.Input.kept(get)
+                : null;
+        input.post = body.length > 0 && contentType.startsWith("application/x-www-form-urlencoded")
+                ? FilterFunctions.Input.kept(post) : null;
+        input.cookie = anyFiltered(environment.getOrDefault("HTTP_COOKIE", ""), true)
+                ? FilterFunctions.Input.kept(cookies) : null;
+    }
+
+    /**
+     * Whether php_default_treat_data passes a variable of the query string (or Cookie header) to the input filter:
+     * a token between separators that isn't empty; for a cookie, one with a name after the leading whitespace.
+     */
+    private static boolean anyFiltered(String input, boolean cookie) {
+        for (String token : input.split(cookie ? ";" : "&")) {
+            int start = 0;
+            while (cookie && start < token.length() && " \t\n\u000b\f\r".indexOf(token.charAt(start)) >= 0) {
+                start++;
+            }
+            if (start < token.length() && !(cookie && token.charAt(start) == '=')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The response's status and headers, as header(), setcookie() and http_response_code() leave them. */
