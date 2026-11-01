@@ -1,5 +1,6 @@
 package pl.codeloom.php.runtime;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.TruffleObject;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -234,7 +235,7 @@ public final class PhpArray implements TruffleObject {
             if (i < 0 || i >= size) {
                 return null;
             }
-            return elements instanceof long[] longs ? (Object) longs[(int) i] : ((Object[]) elements)[(int) i];
+            return elements instanceof long[] longs ? (Object) longs[(int) i] : objectStore(elements)[(int) i];
         }
         return null;
     }
@@ -263,7 +264,7 @@ public final class PhpArray implements TruffleObject {
      * hashes with int keys (priorities, sparse indexes). Int keys compare without calls, so the walk stays small.
      */
     public Object hashGetLong(long index) {
-        Hash hash = (Hash) store;
+        Hash hash = hashStore(store);
         Object[] keys = hash.keys;
         if (hash.buckets == null) {
             for (int slot = 0; slot < hash.used; slot++) {
@@ -404,12 +405,12 @@ public final class PhpArray implements TruffleObject {
     }
 
     public long longAt(long index) {
-        return ((long[]) store)[(int) index];
+        return longStore(store)[(int) index];
     }
 
     /** Replaces the int at an index that {@link #holdsLongAt}. */
     public void setLongAt(long index, long value) {
-        ((long[]) store)[(int) index] = value;
+        longStore(store)[(int) index] = value;
     }
 
     /** put() of an int, which stays unboxed while the array holds only ints. */
@@ -851,7 +852,7 @@ public final class PhpArray implements TruffleObject {
         if (elements instanceof Object[] packed) {
             return packed[position];
         }
-        return ((Hash) elements).values[position];
+        return hashStore(elements).values[position];
     }
 
     public Object valueAt(int position) {
@@ -860,6 +861,42 @@ public final class PhpArray implements TruffleObject {
 
     // ---- per-strategy iteration, for sites that specialize on the store (foreach); callers check it first ----
 
+    /*
+     * The store as the layout the caller has tested, through an instanceof, not a cast. A cast compiles to a guard
+     * (ClassCastException, then the element access's NullCheckException) that Graal's speculative guard movement
+     * may hoist out of a loop, with what it depends on, past the tests that made it hold (an element read's slot
+     * check, a layout test). There it failed for a value the code would never have cast, and the function was
+     * recompiled, once per such guard: WP_Theme_JSON::sanitize, for array_slice's loop inside a foreach. An
+     * instanceof is control flow, which anchors what depends on it; its else is unreachable, and
+     * transferToInterpreter (without invalidation) is no speculation to hoist.
+     */
+
+    private static long[] longStore(Object store) {
+        if (store instanceof long[] longs) {
+            return longs;
+        }
+        throw notThisLayout();
+    }
+
+    private static Object[] objectStore(Object store) {
+        if (store instanceof Object[] objects) {
+            return objects;
+        }
+        throw notThisLayout();
+    }
+
+    private static Hash hashStore(Object store) {
+        if (store instanceof Hash hash) {
+            return hash;
+        }
+        throw notThisLayout();
+    }
+
+    private static IllegalStateException notThisLayout() {
+        CompilerDirectives.transferToInterpreter();
+        return new IllegalStateException("an array accessed by a layout it doesn't have");
+    }
+
     /** Whether the array is packed with an Object[] (not the int strategy, not hashed). */
     public boolean holdsObjects() {
         return store instanceof Object[];
@@ -867,7 +904,7 @@ public final class PhpArray implements TruffleObject {
 
     /** The raw element at a position of an Object[]-packed array. */
     public Object packedAt(int position) {
-        return ((Object[]) store)[position];
+        return objectStore(store)[position];
     }
 
     /** The position after p in a packed array, or -1 at the end. */
@@ -877,17 +914,17 @@ public final class PhpArray implements TruffleObject {
 
     /** The position after p in a hashed array, or -1 at the end. */
     public int nextHashPosition(int position) {
-        return ((Hash) store).nextUsed(position + 1);
+        return hashStore(store).nextUsed(position + 1);
     }
 
     /** The key at a position of a hashed array. */
     public Object hashKeyAt(int position) {
-        return ((Hash) store).keys[position];
+        return hashStore(store).keys[position];
     }
 
     /** The raw value at a position of a hashed array. */
     public Object hashValueAt(int position) {
-        return ((Hash) store).values[position];
+        return hashStore(store).values[position];
     }
 
     /** Makes the element at a position a reference and returns it (foreach by reference). */
