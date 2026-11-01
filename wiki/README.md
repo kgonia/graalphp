@@ -16,6 +16,7 @@
 | [tla-cow.md](tla-cow.md) | TLA+ model of copy-on-write arrays and PHP references against php-src, with its findings |
 | [tla-curl.md](tla-curl.md) | TLA+ model of the curl handles' lifecycle (Cleaner, multi, share, threads), with its findings |
 | [tla-engine.md](tla-engine.md) | Per-request state in the shared engine: inventory, TLA+ model, findings |
+| [partial-evaluation.md](partial-evaluation.md) | What Truffle compiles of our interpreter: the partial-evaluation rules mapped onto our code, the diagnosis (`tests/gate2/compile-diag.sh`, `CompilationTest` in `mvn test`) and how to read it, the failures and explosions found on WordPress and their fixes |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 

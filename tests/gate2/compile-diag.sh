@@ -17,7 +17,8 @@
 #   "-Dpolyglot.engine.CompileOnly=wptexturize -Dpolyglot.compiler.TraceMethodExpansion=truffleTier", to see what
 #   one compilation expands).
 # - Output: target/compile-diag/TARGET-ENGINE/ (engine.log, server.log, rounds.txt, kernels.txt), then the report:
-#   tests/gate2/compile_report.py, which --check turns into a pass or fail.
+#   tests/gate2/compile_report.py, which --check turns into a pass or fail. DIAG_OUT writes elsewhere, PORT (default
+#   8190) serves elsewhere: with another WPN_NAME, two runs go side by side.
 # Usage: tests/gate2/compile-diag.sh setup | run [TARGET-ENGINE...] | report [--check] | build-native | clean
 #   setup: native.sh db and volume under this prefix (rerun volume after mvn package: it copies target/classes)
 #   run: the given runs, default kernels-jvm wp-jvm kernels-native wp-native, then the report
@@ -27,7 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export WPN_NAME=${WPN_NAME:-pe} WPN_NET=${WPN_NET:-172.31.7} WPN_DB_PORT=${WPN_DB_PORT:-3318}
 native() { bash tests/gate2/native.sh "$@"; }
-out=target/compile-diag
+out=${DIAG_OUT:-target/compile-diag}
 cpus=${CPUS:-6-13}
 port=${PORT:-8190}
 DIAG="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationFailureAction=Print"
@@ -100,5 +101,5 @@ case ${1:-} in
     NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=${NI_NAME:-wp-http-diag} \
       NI_OPTS="-H:+IncludeNodeSourcePositions ${NI_OPTS:-}" bash bench/native/build.sh ;;
   clean) native clean ;;
-  *) sed -n 2,25p "$0"; exit 2 ;;
+  *) sed -n 2,26p "$0"; exit 2 ;;
 esac
