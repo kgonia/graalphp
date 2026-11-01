@@ -71,6 +71,12 @@ public final class Builtins {
         public Object constant(String name) {
             return constants.get(name);
         }
+
+        /** The deprecation of a deprecated predefined constant (zend_deprecated_constant's message), or null. */
+        public String deprecation(String name) {
+            String why = DEPRECATED_CONSTANTS.get(name);
+            return why == null ? null : "Constant " + name + " is deprecated " + why;
+        }
     }
 
     /** The built-in functions; debug adds the runtime's own tools (DebugFunctions, the PCRE measurements). */
@@ -117,6 +123,11 @@ public final class Builtins {
             context.declareFunction(function);
         }
     }
+
+    /** The predefined constants #[\Deprecated] marks, with what their deprecation says after the name. */
+    private static final Map<String, String> DEPRECATED_CONSTANTS = Map.of(
+            "FILTER_SANITIZE_STRING", "since 8.1, use htmlspecialchars() instead",
+            "FILTER_SANITIZE_STRIPPED", "since 8.1, use htmlspecialchars() instead");
 
     private static Map<String, Object> constants(boolean curl) {
         Object[][] table = {

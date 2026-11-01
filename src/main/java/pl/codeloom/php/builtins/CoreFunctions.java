@@ -14,6 +14,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
@@ -92,6 +93,11 @@ final class CoreFunctions {
                     .getConstant(name.substring(separator + 2)) : context.findConstant(name);
             if (value == null) {
                 throw new PhpError("Undefined constant \"" + name + "\"");
+            }
+            String deprecation = separator > 0 ? null : context.getLanguage().builtins().deprecation(name);
+            if (deprecation != null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(deprecation),
+                        SourceLocation.current());
             }
             return value;
         });
