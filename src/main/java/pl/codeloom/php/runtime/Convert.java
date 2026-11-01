@@ -46,15 +46,24 @@ public final class Convert {
         return !(length == 0 || length == 1 && Str.byteAt(s, 0) == '0');
     }
 
+    /**
+     * An int and a float convert inline; anything else in one call. Inlined whole into every fallback that converts
+     * (a cast, a string offset, a key), the type tests and their conversions were 20 or more IR nodes a site.
+     */
     public static long toLong(Object value) {
         if (value instanceof Long l) {
             return l;
         }
-        if (value instanceof Boolean b) {
-            return b ? 1 : 0;
-        }
         if (value instanceof Double d) {
             return doubleToLong(d);
+        }
+        return otherToLong(value);
+    }
+
+    @TruffleBoundary
+    private static long otherToLong(Object value) {
+        if (value instanceof Boolean b) {
+            return b ? 1 : 0;
         }
         if (value instanceof TruffleString s) {
             return stringToLong(s);
@@ -121,6 +130,7 @@ public final class Convert {
         return 0;
     }
 
+    /** As toLong: a float and an int convert inline, anything else in one call. */
     public static double toDouble(Object value) {
         if (value instanceof Double d) {
             return d;
@@ -128,6 +138,11 @@ public final class Convert {
         if (value instanceof Long l) {
             return l;
         }
+        return otherToDouble(value);
+    }
+
+    @TruffleBoundary
+    private static double otherToDouble(Object value) {
         if (value instanceof Boolean b) {
             return b ? 1 : 0;
         }
