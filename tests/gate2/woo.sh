@@ -15,8 +15,12 @@
 #   native (target/native/wp-http), native-phases (target/native/wp-http-phases).
 # - walk VARIANT PORT: tests/gate2/woo_walk.py, the store's pages and actions; then the rows it wrote (dbrows).
 #   compare A B: the walks' responses and rows, masked.
+# - load: k6 (tests/gate2/woo-load.js, on CPUs 0-5) against one server on CPUs 14-21, warm, at concurrency levels;
+#   per run the server's CPU time and memory (woo_sample.py) and the database against the orders k6 placed
+#   (woo_check.py). Results in target/$WPN_NAME/load.
 # Usage: tests/gate2/woo.sh db | volume | setup | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
-#        | walk VARIANT PORT | compare A B | dbrows NAME | fpm-image | clean
+#        | walk VARIANT PORT | compare A B | dbrows NAME | fpm-image | load VARIANT THREADS TAG LEVELS...
+#        | k6 VARIANT IP VUS DURATION BUY NAME | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -72,8 +76,24 @@ with open(sys.argv[2], 'w', encoding='utf-8', newline='') as f: csv.writer(f).wr
     "select count(*) from wp_posts where post_type in ('product', 'product_variation')") products"
 }
 
+# SEED: the dump to start from, seed (default) or seed-load
 reset_db() {
-  docker exec -i $db mariadb -uroot -proot -P3307 < $out/seed.sql
+  docker exec -i $db mariadb -uroot -proot -P3307 < $out/${SEED:-seed}.sql
+}
+
+# The load runs' seed: the store's, its e-mails off. Without ext/dom Truffle PHP sends WooCommerce's e-mails as
+# plain text, where PHP 8.5 renders HTML and inlines its CSS with DOMDocument (Emogrifier): the same work on every
+# engine only without them. (sendmail is absent on every engine: mail() fails on each alike.)
+load_seed() {
+  SEED=seed reset_db
+  wp_cli eval 'foreach (WC()->mailer()->get_emails() as $email) {
+    update_option($email->get_option_key(), array_merge((array) get_option($email->get_option_key(), []),
+      ["enabled" => "no"]));
+  }'
+  docker exec $db mariadb-dump -uroot -proot -P3307 --skip-dump-date --databases wordpress > $out/seed-load.sql
+  local off="select count(*) from wp_options where option_name like 'woocommerce%_settings'"
+  off+=" and option_value like '%\"enabled\";s:2:\"no\"%'"
+  echo "seed-load: $(docker exec $db mariadb -uroot -proot -P3307 -N wordpress -e "$off") e-mails off"
 }
 
 # php-fpm 8.5.12 (Debian trixie, as the CLI image) with mysqli, OPcache and its tracing JIT, behind nginx
@@ -167,6 +187,73 @@ compare() {
   return $failed
 }
 
+# The CPU lock of the benchmark cores (14-21), shared by every agent on the box: a directory made atomically, a
+# note inside; another's: wait, polling once a minute
+CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
+cpu_lock() {
+  until mkdir $CPU_LOCK 2> /dev/null; do
+    echo "CPUs 14-21 are taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1); waiting"; sleep 60
+  done
+  echo "claude-wordpress-$P (wordpress-woo): woo.sh load $*, since $(date '+%F %T')" > $CPU_LOCK/note
+}
+cpu_unlock() {
+  rm -rf $CPU_LOCK
+}
+
+# One k6 run against the server at $NET.IP: VUS virtual users for DURATION, BUY of them buying; the server's
+# container sampled meanwhile (woo_sample.py: CPU seconds, RssAnon, memory.current, memory.peak), the database
+# checked after (woo_check.py). Files NAME.k6.json (summary), NAME.k6.log (orders, errors), NAME.sample.json,
+# NAME.check.json in $out/load.
+k6_run() { # variant ip vus duration buy name
+  local variant=$1 ip=$2 vus=$3 duration=$4 buy=$5 name=$6 dir=$out/load sampler csv=()
+  mkdir -p $dir && rm -f $dir/$name.* $dir/stop
+  # the warm-up's every request, for its curve
+  case $name in *-warm) csv=(--out csv=/out/$name.csv.gz) ;; esac
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-sampler --cpuset-cpus 0-5 --pid=host --cgroupns=host \
+    -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
+    python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json > $dir/$name.sampler.log 2>&1 &
+  sampler=$!
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-k6 --cpuset-cpus 0-5 --network $P-net \
+    -v "$root/tests/gate2:/scripts:ro" -v "$root/$dir:/out" -e BASE=http://$NET.$ip:8080 -e VUS=$vus \
+    -e DURATION=$duration -e BUY=$buy -e SUMMARY=/out/$name.k6.json grafana/k6:1.3.0 run -q --no-color \
+    "${csv[@]}" /scripts/woo-load.js > $dir/$name.k6.log 2>&1 || true
+  touch $dir/stop
+  wait $sampler || true
+  python -I tests/gate2/woo_check.py $db $dir/$name.k6.log 100000 > $dir/$name.check.json
+  python -I tests/gate2/woo_report.py line "$dir/$name"
+  case $name in *-warm) python -I tests/gate2/woo_report.py warm "$dir/$name" ;; esac
+}
+
+# load VARIANT THREADS TAG LEVELS...: one server's life on CPUs 14-21 (holding the CPU lock): started from the seed,
+# warmed up with WARM (default 180s) of k6 at THREADS users half buying (its own run, TAG-warm: the warm-up curve),
+# then for each mix in MIXES (default "0.2 1": the share of visitors who buy) and each concurrency level: the
+# database reset from the seed, DURATION (default 60s) of k6 (TAG-MIX-LEVEL)
+load() {
+  local variant=$1 threads=$2 tag=$3 ip mix level t0
+  shift 3
+  case $variant in php) ip=11 ;; fpm) ip=12 ;; jvm) ip=13 ;; jvm-phases) ip=14 ;; native) ip=15 ;; *) ip=16 ;; esac
+  stop $variant
+  export SEED=seed-load
+  reset_db
+  cpu_lock "$variant $threads $tag $*"
+  trap cpu_unlock EXIT
+  t0=$(date +%s%N)
+  THREADS=$threads start $variant 14-21 8096
+  echo "$tag: $variant --threads $threads up in $((($(date +%s%N) - t0) / 1000000)) ms"
+  k6_run $variant $ip $threads ${WARM:-180s} 0.5 $tag-warm
+  for mix in ${MIXES:-0.2 1}; do
+    for level in "$@"; do
+      reset_db
+      k6_run $variant $ip $level ${DURATION:-60s} $mix $tag-$mix-$level
+    done
+  done
+  docker logs $P-$variant > $out/load/$tag.server.log 2>&1
+  stop $variant
+  cpu_unlock
+  trap - EXIT
+}
+
 clean() {
   for c in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f "$c" > /dev/null; done
   docker volume rm $P-site > /dev/null 2>&1 || true
@@ -184,6 +271,9 @@ case ${1:-} in
   compare) compare "$2" "$3" ;;
   dbrows) dbrows "$2" ;;
   fpm-image) fpm_image ;;
+  load-seed) load_seed ;;
+  load) shift; load "$@" ;;
+  k6) shift; k6_run "$@" ;;
   clean) clean ;;
   *) sed -n 2,22p "$0"; exit 2 ;;
 esac

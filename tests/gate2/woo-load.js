@@ -7,7 +7,7 @@
 //
 // Env: BASE (http://172.31.77.13:8080), VUS, DURATION (e.g. 60s), BUY (share of visitors who buy, 0..1),
 // SUMMARY (where handleSummary writes its JSON). Each order is logged as "ORDER <id> <product> <qty>" for the
-// database check that follows the run.
+// database check that follows the run, each page with a PHP warning or error as "PHPERROR <url> <message>".
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
@@ -22,6 +22,15 @@ const PRODUCTS = [[12, 'hoodie-with-logo'], [13, 't-shirt'], [14, 'beanie'], [15
 const CATEGORIES = ['clothing', 'tshirts', 'hoodies', 'accessories'];
 
 const orders = new Counter('orders');
+const phpErrors = new Counter('php_errors');
+// display_errors=1, html_errors=0 on every engine: a warning or error is a line of the page
+const PHP_ERROR = /(^|\n)(PHP )?(Fatal error|Parse error|Warning|Notice|Deprecated|Uncaught [A-Za-z]+): .* on line [0-9]+/;
+const NAMES = ['home', 'shop', 'product', 'category', 'add-to-cart', 'cart', 'checkout', 'place-order', 'order-received'];
+const thresholds = {};
+// a threshold that always holds puts the request kind's own durations into the summary
+for (const name of NAMES) {
+    thresholds[`http_req_duration{name:${name}}`] = ['max>=0'];
+}
 const failedOrders = new Counter('orders_failed');
 const pages = new Counter('pages');
 const orderTime = new Trend('order_flow_duration', true);
@@ -35,14 +44,22 @@ export const options = {
             gracefulStop: '120s',
         },
     },
+    thresholds,
     summaryTrendStats: ['avg', 'min', 'med', 'p(95)', 'p(99)', 'max', 'count'],
     discardResponseBodies: false,
 };
 
-function get(path, jar, name) {
-    const response = http.get(BASE + path, { headers: HEADERS, jar, redirects: 0, tags: { name } });
+function counted(response) {
     pages.add(1);
+    if (PHP_ERROR.test(String(response.body))) {
+        phpErrors.add(1);
+        console.log(`PHPERROR ${response.request.url} ${PHP_ERROR.exec(String(response.body))[0].trim().substring(0, 300)}`);
+    }
     return response;
+}
+
+function get(path, jar, name) {
+    return counted(http.get(BASE + path, { headers: HEADERS, jar, redirects: 0, tags: { name } }));
 }
 
 function local(url) {
@@ -65,9 +82,9 @@ export default function () {
         return;
     }
     const started = Date.now();
-    const added = http.post(BASE + `/product/${product[1]}/`, { 'add-to-cart': String(product[0]), quantity: '1' },
-        { headers: HEADERS, jar, redirects: 0, tags: { name: 'add-to-cart' } });
-    pages.add(1);
+    const added = counted(http.post(BASE + `/product/${product[1]}/`,
+        { 'add-to-cart': String(product[0]), quantity: '1' },
+        { headers: HEADERS, jar, redirects: 0, tags: { name: 'add-to-cart' } }));
     check(added, { 'add-to-cart 200': (r) => r.status === 200 && r.body.includes('has been added to your cart') });
     check(get('/cart/', jar, 'cart'), { 'cart 200': (r) => r.status === 200 });
     const checkout = get('/checkout/', jar, 'checkout');
@@ -77,10 +94,9 @@ export default function () {
         address_2: '', city: 'San Francisco', state: 'CA', postcode: '94110', country: 'US' };
     const body = JSON.stringify({ billing_address: Object.assign({ email: 'ada@example.com', phone: '5551234' }, address),
         shipping_address: address, payment_method: 'cod' });
-    const placed = http.post(BASE + '/wp-json/wc/store/v1/checkout', body, { jar, redirects: 0,
+    const placed = counted(http.post(BASE + '/wp-json/wc/store/v1/checkout', body, { jar, redirects: 0,
         headers: Object.assign({ 'Content-Type': 'application/json', Nonce: nonce ? nonce[1] : '' }, HEADERS),
-        tags: { name: 'place-order' } });
-    pages.add(1);
+        tags: { name: 'place-order' } }));
     let result = null;
     try {
         result = placed.json();
