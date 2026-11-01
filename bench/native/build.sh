@@ -4,6 +4,7 @@
 # run on CPUSET (default 6-13, off the benchmark cores). Build the JVM classes first (mvn package -DskipTests).
 # TRUFFLE_IMAGE / NATIVE_IMAGE override the images (defaults: GraalVM 25.4.4.1.1). The build then has to pass
 # check.sh: a native call slower than 2 us means a downcall handle that isn't a constant (wiki/native-calls.md).
+# NI_GC=G1 builds with G1 instead of the serial GC (image.sh).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -12,7 +13,8 @@ MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${JAVA_OPTS:+-e JAVA_OP
   "${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4}" sh bench/native/agent.sh > target/native-agent.log 2>&1
 start=$(date +%s)
 MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${NI_OPTS:+-e NI_OPTS="$NI_OPTS"} ${NI_NAME:+-e NI_NAME="$NI_NAME"} \
-  ${NI_MAIN:+-e NI_MAIN="$NI_MAIN"} ${NI_CLASSES:+-e NI_CLASSES="$NI_CLASSES"} -v "$root:/w" -w /w \
+  ${NI_MAIN:+-e NI_MAIN="$NI_MAIN"} ${NI_CLASSES:+-e NI_CLASSES="$NI_CLASSES"} ${NI_GC:+-e NI_GC="$NI_GC"} \
+  -v "$root:/w" -w /w \
   "${NATIVE_IMAGE:-gate1-truffle-native:8.5-graal25.4}" sh bench/native/image.sh > target/native-build.log 2>&1
 echo "native-image: $(( $(date +%s) - start )) s, $(du -m "target/native/${NI_NAME:-php}" | cut -f1) MB"
 grep -E "Peak RSS|Finished generating|Error|error:" target/native-build.log | cut -c1-300 | tail -5
