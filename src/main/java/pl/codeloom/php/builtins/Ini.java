@@ -80,6 +80,9 @@ public final class Ini {
         directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
         // ext/curl's PHP_INI_BEGIN
         directives.put("curl.cainfo", new Directive("", SYSTEM, "curl"));
+        // ext/filter's
+        directives.put("filter.default", new Directive("unsafe_raw", SYSTEM | PERDIR, "filter"));
+        directives.put("filter.default_flags", new Directive(null, SYSTEM | PERDIR, "filter"));
         return Collections.unmodifiableMap(directives);
     }
 
@@ -103,6 +106,9 @@ public final class Ini {
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
+    /** ext/filter's IF_G(default_filter) and IF_G(default_filter_flags): what the SAPI's input passes through. */
+    private long defaultFilter;
+    private long defaultFilterFlags;
     /** The warning the last OnUpdate handler raised (zend_ini_parse_quantity_warn's), for ini_set() to report. */
     private String updateWarning;
 
@@ -179,6 +185,10 @@ public final class Ini {
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "short_open_tag" -> shortOpenTag = bool(value);
+            // UpdateDefaultFilter: a filter's name, any case; anything else is FILTER_DEFAULT
+            case "filter.default" -> defaultFilter = FilterFunctions.idOfName(value);
+            // OnUpdateFlags: atoi, FILTER_FLAG_NO_ENCODE_QUOTES when unset
+            case "filter.default_flags" -> defaultFilterFlags = value == null ? 0x80 : (int) atol(value);
             case "upload_tmp_dir" -> {
                 if (value != null && value.isEmpty()) {
                     return false; // OnUpdateStringUnempty
@@ -268,6 +278,14 @@ public final class Ini {
     /** short_open_tag: whether "<?" opens PHP code. */
     public boolean shortOpenTag() {
         return shortOpenTag;
+    }
+
+    long defaultFilter() {
+        return defaultFilter;
+    }
+
+    long defaultFilterFlags() {
+        return defaultFilterFlags;
     }
 
     /**

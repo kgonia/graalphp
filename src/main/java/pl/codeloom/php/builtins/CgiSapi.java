@@ -45,13 +45,16 @@ public final class CgiSapi {
                 }
             }
         }
-        PhpArray request = get.copy();
-        for (int p = post.firstPosition(); p >= 0; p = post.nextPosition(p)) {
-            request.put(post.keyAt(p), post.valueAt(p));
+        // with filter.default, the superglobals have the values through the default filter, ext/filter the raw ones
+        PhpArray getVariables = FilterFunctions.registeredArray(context, get, key -> true);
+        PhpArray postVariables = FilterFunctions.registeredArray(context, post, key -> true);
+        PhpArray request = getVariables.copy();
+        for (int p = postVariables.firstPosition(); p >= 0; p = postVariables.nextPosition(p)) {
+            request.put(postVariables.keyAt(p), postVariables.valueAt(p));
         }
-        context.globalRef("_GET").set(get);
-        context.globalRef("_POST").set(post);
-        context.globalRef("_COOKIE").set(cookies);
+        context.globalRef("_GET").set(getVariables);
+        context.globalRef("_POST").set(postVariables);
+        context.globalRef("_COOKIE").set(FilterFunctions.registeredArray(context, cookies, key -> true));
         context.globalRef("_REQUEST").set(request);
         // ext/filter's copies: one exists once a variable went through the input filter, even a variable whose
         // name registers nothing ("=x")

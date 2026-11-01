@@ -34,6 +34,13 @@ public final class ScriptRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         PhpContext context = PhpContext.get(this);
+        PhpThrowable startupError = context.builtinState().takeStartupError();
+        if (startupError != null) {
+            // raised while the SAPI registered the request's variables (filter.default): the script doesn't run
+            ErrorFunctions.uncaught(context, startupError);
+            context.endScript();
+            return PhpNull.NULL;
+        }
         DirectCallNode call = file;
         if (call == null) {
             CompilerDirectives.transferToInterpreterAndInvalidate();

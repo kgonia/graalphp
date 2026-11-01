@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * ext/filter: a port of php-src's filter.c (filter_var(), filter_input() and their array forms), logical_filters.c
@@ -75,7 +76,7 @@ final class FilterFunctions {
     private static final long VALIDATE_DOMAIN = 0x0115;
     private static final long VALIDATE_ALL = 0x0100;
     private static final long VALIDATE_LAST = 0x0115;
-    private static final long DEFAULT = 0x0204;
+    static final long DEFAULT = 0x0204;
     private static final long SANITIZE_STRING = 0x0201;
     private static final long SANITIZE_ENCODED = 0x0202;
     private static final long SANITIZE_SPECIAL_CHARS = 0x0203;
@@ -247,16 +248,22 @@ final class FilterFunctions {
     private static final class Call {
         final PhpContext context;
         final String function;
+        /** Where its errors are; null: where the user code is now. */
+        final SourceLocation location;
         PhpThrowable pending;
 
         Call(PhpContext context, String function) {
-            this.context = context;
-            this.function = function;
+            this(context, function, null);
         }
 
-        /** Where the user code is now: where php-src's errors are. */
+        Call(PhpContext context, String function, SourceLocation location) {
+            this.context = context;
+            this.function = function;
+            this.location = location;
+        }
+
         private SourceLocation here() {
-            return SourceLocation.current();
+            return location != null ? location : SourceLocation.current();
         }
 
         /** An error php-src raises (zend_throw_*), placed as php-src's object is: where the user code is now. */
@@ -780,6 +787,87 @@ final class FilterFunctions {
     private static Object lookup(PhpArray array, TruffleString name) {
         Object key = ArrayKey.of(name);
         return array == null || key instanceof Long ? null : array.get(key);
+    }
+
+    // ---- filter.default ----
+
+    /** Where an error raised before the script ran is (zend_get_executed_filename()'s "[no active file]"). */
+    private static final SourceLocation NO_ACTIVE_FILE = new SourceLocation("[no active file]", 0);
+
+    /** UpdateDefaultFilter's lookup: the id of the filter of that name, its case ignored, else FILTER_DEFAULT. */
+    static long idOfName(String name) {
+        String lower = name == null ? "" : Str.lower(name);
+        for (Entry entry : FILTERS) {
+            if (entry.name().equals(lower)) {
+                return entry.id();
+            }
+        }
+        return DEFAULT;
+    }
+
+    /**
+     * A superglobal of the request's input as php_sapi_filter registers it: with filter.default, each non-empty value
+     * of an input variable (those registered accepts, and their nested values) through the default filter with
+     * filter.default_flags; the raw array (which ext/filter keeps) under FILTER_UNSAFE_RAW.
+     */
+    static PhpArray registeredArray(PhpContext context, PhpArray raw, Predicate<Object> registered) {
+        BuiltinState state = context.builtinState();
+        if (context.ini().defaultFilter() == DEFAULT || state.startupFailure != 0) {
+            return raw;
+        }
+        return throughDefaultFilter(new Call(context, "(null)", NO_ACTIVE_FILE), raw, registered, false);
+    }
+
+    /**
+     * The exception a startup failure (startupFailure's filter) is: FILTER_CALLBACK and FILTER_VALIDATE_REGEXP, which
+     * have no options there, raise one for the first non-empty value, fatal at once in php-src (no code is executing
+     * yet), so the script doesn't run. No function is active: get_active_function_name() is NULL, which %s prints as
+     * "(null)".
+     */
+    static PhpError startupError(long filter) {
+        PhpError error = filter == CALLBACK ? new PhpError("TypeError", "(null)(): Option must be a valid callback")
+                : new PhpError("ValueError", "(null)(): \"regexp\" option is missing");
+        error.placeIfUnplaced(NO_ACTIVE_FILE);
+        return error;
+    }
+
+    /** parse_str()'s result (PARSE_STRING) through filter.default, the values as strings; then its exception. */
+    static void parsedString(PhpContext context, PhpArray parsed, PhpRef result) {
+        if (context.ini().defaultFilter() == DEFAULT) {
+            result.set(parsed);
+            return;
+        }
+        Call call = new Call(context, "parse_str");
+        result.set(throughDefaultFilter(call, parsed, key -> true, true));
+        call.result(null);
+    }
+
+    private static PhpArray throughDefaultFilter(Call call, PhpArray raw, Predicate<Object> registered,
+                                                 boolean strings) {
+        Ini ini = call.context.ini();
+        PhpArray copy = raw.copy();
+        for (int p = copy.firstPosition(); p >= 0; p = copy.nextPosition(p)) {
+            Object key = copy.keyAt(p);
+            Object value = copy.valueAt(p);
+            if (!registered.test(key) || value instanceof TruffleString s && Str.length(s) == 0) {
+                continue;
+            }
+            long filter = ini.defaultFilter();
+            if (value instanceof PhpArray nested) {
+                value = throughDefaultFilter(call, nested, k -> true, strings);
+            } else if (call.location == NO_ACTIVE_FILE && (filter == CALLBACK || filter == VALIDATE_REGEXP)) {
+                // the request's startup fails (startupError); nothing is filtered after
+                call.context.builtinState().startupFailure = filter;
+                return copy;
+            } else {
+                value = zvalFilter(call, value, filter, ini.defaultFilterFlags(), null);
+                if (strings) {
+                    value = Convert.toStr(value);
+                }
+            }
+            copy.put(key, value);
+        }
+        return copy;
     }
 
     // ---- logical_filters.c ----

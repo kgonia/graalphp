@@ -152,8 +152,8 @@ public final class StringFunctions {
                 Args.str(a, 2, Str.of(".")), Args.str(a, 3, Str.of(","))));
         r.fn("wordwrap", a -> wordwrap(Args.str(a, 0), Args.lng(a, 1, 75), Args.str(a, 2, Str.of("\n")),
                 Args.bool(a, 3, false)));
-        r.fn("parse_str", "01", a -> {
-            Args.ref(a, 1).set(UrlFunctions.parseQuery(Args.str(a, 0)));
+        r.fn("parse_str", "01", (context, a) -> {
+            FilterFunctions.parsedString(context, UrlFunctions.parseQuery(Args.str(a, 0)), Args.ref(a, 1));
             return PhpNull.NULL;
         });
         r.fn("parse_url", a -> UrlFunctions.parseUrl(Args.str(a, 0), Args.lng(a, 1, -1)));
