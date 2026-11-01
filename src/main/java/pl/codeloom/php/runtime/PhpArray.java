@@ -31,9 +31,13 @@ public final class PhpArray implements TruffleObject {
     /** The store of a new empty array: an array that never gets an element allocates none. */
     private static final long[] NO_LONGS = new long[0];
 
+    /**
+     * The holders, or {@link #FROZEN} once frozen (see {@link #freeze}): a frozen array is never written and its
+     * holders aren't counted. One field for both keeps the checks inlined at every holder update to one read and
+     * one compare.
+     */
     private int holders;
-    /** Never written once frozen; holders aren't counted (see {@link #freeze}). */
-    private boolean immutable;
+    private static final int FROZEN = Integer.MIN_VALUE;
     /**
      * Whether an element may be a reference: set when one is stored, so the arrays that never had one skip the
      * scan when they gain their first holder or lose their last (see {@link PhpRef}).
@@ -92,14 +96,22 @@ public final class PhpArray implements TruffleObject {
     // ---- copy-on-write ----
 
     public void addHolder() {
-        if (!immutable && holders++ == 0 && mayHoldRefs) {
-            countReferences(true);
+        int count = holders;
+        if (count >= 0) {
+            holders = count + 1;
+            if (count == 0 && mayHoldRefs) {
+                countReferences(true);
+            }
         }
     }
 
     public void removeHolder() {
-        if (!immutable && holders > 0 && --holders == 0 && mayHoldRefs) {
-            countReferences(false);
+        int count = holders;
+        if (count > 0) {
+            holders = count - 1;
+            if (count == 1 && mayHoldRefs) {
+                countReferences(false);
+            }
         }
     }
 
@@ -120,8 +132,9 @@ public final class PhpArray implements TruffleObject {
         }
     }
 
+    /** More than one holder, or frozen (FROZEN is above 1 as an unsigned number): one compare. */
     public boolean isShared() {
-        return immutable || holders > 1;
+        return Integer.compareUnsigned(holders, 1) > 0;
     }
 
     /**
@@ -130,10 +143,10 @@ public final class PhpArray implements TruffleObject {
      */
     @TruffleBoundary
     public void freeze() {
-        if (immutable) {
+        if (holders == FROZEN) {
             return;
         }
-        immutable = true;
+        holders = FROZEN;
         for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
             if (rawAt(p) instanceof PhpArray nested) {
                 nested.freeze();
