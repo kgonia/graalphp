@@ -63,6 +63,21 @@ public final class PhpRef {
         }
     }
 
+    /**
+     * set() without its holder updates, for a caller that makes them (a node's profiled write): stores the value
+     * and returns the old one. Arrays count this ref as a holder while {@link #holdsArrays}.
+     */
+    public Object exchange(Object newValue) {
+        Object old = value;
+        value = newValue;
+        return old;
+    }
+
+    /** Whether the ref counts as a holder of the array it holds (it does until all its bindings went). */
+    public boolean holdsArrays() {
+        return !released;
+    }
+
     /** The array in this ref, made exclusive (copied if shared) so it can be modified in place. */
     public PhpArray arrayForWrite() {
         Object current = value;

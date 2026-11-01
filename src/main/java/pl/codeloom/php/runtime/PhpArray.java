@@ -31,9 +31,13 @@ public final class PhpArray implements TruffleObject {
     /** The store of a new empty array: an array that never gets an element allocates none. */
     private static final long[] NO_LONGS = new long[0];
 
+    /**
+     * The holders, or {@link #FROZEN} once frozen (see {@link #freeze}): a frozen array is never written and its
+     * holders aren't counted. One field for both keeps the checks inlined at every holder update to one read and
+     * one compare.
+     */
     private int holders;
-    /** Never written once frozen; holders aren't counted (see {@link #freeze}). */
-    private boolean immutable;
+    private static final int FROZEN = Integer.MIN_VALUE;
     /**
      * Whether an element may be a reference: set when one is stored, so the arrays that never had one skip the
      * scan when they gain their first holder or lose their last (see {@link PhpRef}).
@@ -92,14 +96,22 @@ public final class PhpArray implements TruffleObject {
     // ---- copy-on-write ----
 
     public void addHolder() {
-        if (!immutable && holders++ == 0 && mayHoldRefs) {
-            countReferences(true);
+        int count = holders;
+        if (count >= 0) {
+            holders = count + 1;
+            if (count == 0 && mayHoldRefs) {
+                countReferences(true);
+            }
         }
     }
 
     public void removeHolder() {
-        if (!immutable && holders > 0 && --holders == 0 && mayHoldRefs) {
-            countReferences(false);
+        int count = holders;
+        if (count > 0) {
+            holders = count - 1;
+            if (count == 1 && mayHoldRefs) {
+                countReferences(false);
+            }
         }
     }
 
@@ -120,8 +132,9 @@ public final class PhpArray implements TruffleObject {
         }
     }
 
+    /** More than one holder, or frozen (FROZEN is above 1 as an unsigned number): one compare. */
     public boolean isShared() {
-        return immutable || holders > 1;
+        return Integer.compareUnsigned(holders, 1) > 0;
     }
 
     /**
@@ -130,10 +143,10 @@ public final class PhpArray implements TruffleObject {
      */
     @TruffleBoundary
     public void freeze() {
-        if (immutable) {
+        if (holders == FROZEN) {
             return;
         }
-        immutable = true;
+        holders = FROZEN;
         for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
             if (rawAt(p) instanceof PhpArray nested) {
                 nested.freeze();
@@ -269,9 +282,19 @@ public final class PhpArray implements TruffleObject {
         return null;
     }
 
-    /** Whether slot holds this very key instance (a cheap check of a remembered slotOf result). */
-    public boolean isKeyAt(int slot, Object key) {
-        return store instanceof Hash hash && slot >= 0 && slot < hash.used && hash.keys[slot] == key;
+    /**
+     * The value (possibly a PhpRef) at a hash slot that holds this very key instance, else null: a cheap check of a
+     * remembered slotOf result. The slots past the used ones hold no key, so the key array's bounds are the only
+     * range check (one unsigned compare in compiled code), and a live slot's value is never null.
+     */
+    public Object rawIfKeyAt(int slot, Object key) {
+        if (store instanceof Hash hash) {
+            Object[] keys = hash.keys;
+            if (slot >= 0 && slot < keys.length && keys[slot] == key) {
+                return hash.values[slot];
+            }
+        }
+        return null;
     }
 
     /**
@@ -319,6 +342,53 @@ public final class PhpArray implements TruffleObject {
                 }
                 return;
             }
+        }
+        putSlow(key, value);
+    }
+
+    /**
+     * The keys and dereferenced values in order, as key, value, key, value...: a snapshot for a built-in that calls
+     * back for each element (array_map, array_filter), which walks its argument as it was, as php-src walks the
+     * argument's own table, which the callback's writes don't change. Out of line, so the compiled loop between
+     * this and the result's {@link #ofEntries build} tests no layout.
+     */
+    @TruffleBoundary
+    public Object[] entries() {
+        Object[] entries = new Object[size * 2];
+        int i = 0;
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            entries[i++] = keyAt(p);
+            entries[i++] = valueAt(p);
+        }
+        return entries;
+    }
+
+    /**
+     * A new array of the keys of entries (as {@link #entries} gives them) with the given values, or with their own
+     * values where kept says so (values null).
+     */
+    @TruffleBoundary
+    public static PhpArray ofEntries(Object[] entries, Object[] values, boolean[] kept) {
+        PhpArray result = new PhpArray();
+        for (int i = 0; i < entries.length / 2; i++) {
+            if (values != null) {
+                result.putNew(entries[2 * i], values[i]);
+            } else if (kept[i]) {
+                result.putNew(entries[2 * i], entries[2 * i + 1]);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * put() of a key the array doesn't hold yet, for an array being built (array_map's and array_filter's result):
+     * the next index appends, any other key inserts out of line. put()'s in-place cases (a reference element, the
+     * old value's holder) don't arise, so its inline code isn't copied into every builder loop.
+     */
+    public void putNew(Object key, Object value) {
+        if (key instanceof Long index && index == size && nextIndex == size) {
+            append(value);
+            return;
         }
         putSlow(key, value);
     }

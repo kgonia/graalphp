@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
@@ -56,9 +58,42 @@ class CompilationTest {
 
     @ParameterizedTest
     @MethodSource("programs")
-    void compilesWithoutFailure(String program) {
-        String log = run(Path.of("src/test/resources/compile", program), OPTIONS);
+    void compilesWithoutFailure(String program) throws IOException {
+        Path path = Path.of("src/test/resources/compile", program);
+        String log = run(path, OPTIONS);
         check(program, log, 1);
+        checkBudgets(program, Files.readString(path), log);
+    }
+
+    private static final Pattern BUDGET = Pattern.compile("^// IR budget: (\\S+) (\\d+)$", Pattern.MULTILINE);
+    private static final Pattern DONE = Pattern.compile(
+            "^\\[engine\\] opt done\\s+engine=\\d+\\s+id=\\d+\\s+(.*?)\\s*\\|Tier.*?\\|IR\\s+(\\d+)/.*?\\|Src (\\S+)");
+
+    /**
+     * A program's budgets of compiled code, lines "// IR budget: TARGET MAX": every compilation of the call target
+     * named TARGET, or of the code at TARGET as file:line, has at most MAX IR nodes after partial evaluation. A
+     * budget holds the code per operation of a construct to what it is now: HotSpot installs at most 640 KB of
+     * code for one compilation, about 60,000 IR nodes, and WordPress's largest functions came close to it or over
+     * (wiki/partial-evaluation.md).
+     */
+    private static void checkBudgets(String name, String source, String log) {
+        Matcher budget = BUDGET.matcher(source);
+        while (budget.find()) {
+            String target = budget.group(1);
+            int max = Integer.parseInt(budget.group(2));
+            List<String> compilations = new ArrayList<>();
+            int largest = 0;
+            for (String line : log.split("\n")) {
+                Matcher done = DONE.matcher(line);
+                if (done.find() && (done.group(1).equals(target) || done.group(3).equals(target))) {
+                    compilations.add(line);
+                    largest = Math.max(largest, Integer.parseInt(done.group(2)));
+                }
+            }
+            assertTrue(!compilations.isEmpty(), name + ": " + target + " was not compiled\n" + log);
+            assertTrue(largest <= max, name + ": " + target + " compiled to " + largest + " IR nodes, its budget is "
+                    + max + ":\n" + String.join("\n", compilations));
+        }
     }
 
     /**

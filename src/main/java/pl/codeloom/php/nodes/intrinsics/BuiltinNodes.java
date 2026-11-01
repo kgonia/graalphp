@@ -13,7 +13,6 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
-import com.oracle.truffle.api.strings.TruffleStringBuilder;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.StringFunctions;
 import pl.codeloom.php.nodes.ExprNode;
@@ -30,6 +29,8 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.locks.Lock;
 
 /**
@@ -263,14 +264,19 @@ public final class BuiltinNodes {
      * the needle is a numeric string; other element types use the full loose or strict comparison.
      */
     public abstract static class InArrayNode extends BuiltinNode {
+        /**
+         * Out of line: the walk over any array layout, inlined, was about 30 IR nodes a site, and Graal's speculation
+         * on its element accessor's type checks failed for the layouts a site hadn't met (a deoptimization and a
+         * recompilation each, natively).
+         */
         @Specialization
-        protected boolean string(TruffleString needle, PhpArray haystack, boolean strict,
-                                 @Cached TruffleString.EqualNode equal) {
-            boolean numericNeedle = !strict && isNumeric(needle);
+        @TruffleBoundary
+        protected static boolean string(TruffleString needle, PhpArray haystack, boolean strict) {
+            boolean numericNeedle = !strict && Convert.numericValue(needle) != null;
             for (int p = haystack.firstPosition(); p >= 0; p = haystack.nextPosition(p)) {
                 Object value = haystack.valueAt(p);
                 if (value instanceof TruffleString element) {
-                    if (equal.execute(element, needle, Str.ENC)
+                    if (element.equalsUncached(needle, Str.ENC)
                             || numericNeedle && Convert.looseEquals(element, needle)) {
                         return true;
                     }
@@ -279,11 +285,6 @@ public final class BuiltinNodes {
                 }
             }
             return false;
-        }
-
-        @TruffleBoundary
-        private static boolean isNumeric(TruffleString s) {
-            return Convert.numericValue(s) != null;
         }
 
         @Fallback
@@ -337,10 +338,18 @@ public final class BuiltinNodes {
             } else {
                 end = n;
             }
-            // sized for the slice, except a slice of ints, which stays unboxed
-            PhpArray result = array.holdsLongs() ? new PhpArray() : PhpArray.ofCapacity((int) (end - start));
+            // sized for the slice, except a slice of ints, which stays unboxed; one loop per layout, so the loop
+            // tests no layout (Graal's speculation on such tests, hoisted out of the loop, failed natively)
+            if (array.holdsLongs()) {
+                PhpArray result = new PhpArray();
+                for (int p = (int) start; p < end; p++) {
+                    result.appendLong(array.longAt(p));
+                }
+                return result;
+            }
+            PhpArray result = PhpArray.ofCapacity((int) (end - start));
             for (int p = (int) start; p < end; p++) {
-                result.append(array.valueAt(p));
+                result.append(PhpRef.deref(array.packedAt(p)));
             }
             return result;
         }
@@ -393,34 +402,24 @@ public final class BuiltinNodes {
         }
     }
 
-    /** implode(string, array): pieces appended to a TruffleStringBuilder, ints formatted without a detour. */
+    /**
+     * implode(string, array): the pieces converted in order and joined, ints written as digits. Out of line: the
+     * loop's array walk and string appends, inlined, cost about 170 IR nodes per call site.
+     */
     public abstract static class ImplodeNode extends BuiltinNode {
         @Specialization
-        protected TruffleString join(TruffleString glue, PhpArray pieces,
-                                     @Cached TruffleStringBuilder.AppendStringNode appendString,
-                                     @Cached TruffleStringBuilder.AppendLongNumberNode appendLong,
-                                     @Cached TruffleStringBuilder.ToStringNode toString) {
-            TruffleStringBuilder out = TruffleStringBuilder.create(Str.ENC);
-            int first = pieces.firstPosition();
-            for (int p = first; p >= 0; p = pieces.nextPosition(p)) {
-                if (p != first) {
-                    appendString.execute(out, glue);
-                }
-                Object piece = pieces.valueAt(p);
-                if (piece instanceof TruffleString text) {
-                    appendString.execute(out, text);
-                } else if (piece instanceof Long number) {
-                    appendLong.execute(out, number);
-                } else {
-                    appendString.execute(out, toStr(piece));
-                }
-            }
-            return toString.execute(out);
+        protected TruffleString join(TruffleString glue, PhpArray pieces) {
+            return joinPieces(glue, pieces);
         }
 
         @TruffleBoundary
-        private static TruffleString toStr(Object value) {
-            return Convert.toStr(value);
+        private static TruffleString joinPieces(TruffleString glue, PhpArray pieces) {
+            List<Object> parts = new ArrayList<>(pieces.size());
+            for (int p = pieces.firstPosition(); p >= 0; p = pieces.nextPosition(p)) {
+                Object piece = pieces.valueAt(p);
+                parts.add(piece instanceof TruffleString || piece instanceof Long ? piece : Convert.toStr(piece));
+            }
+            return Str.join(glue, parts.toArray());
         }
 
         @Fallback
@@ -477,15 +476,14 @@ public final class BuiltinNodes {
         }
 
         @Specialization(guards = {"isNull(callback)", "mode == 0"})
-        protected PhpArray truthy(PhpArray array, Object callback, long mode) {
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object value = array.valueAt(p);
-                if (Convert.toBool(value)) {
-                    result.put(array.keyAt(p), value);
-                }
+        @TruffleBoundary
+        protected static PhpArray truthy(PhpArray array, Object callback, long mode) {
+            Object[] entries = array.entries();
+            boolean[] kept = new boolean[entries.length / 2];
+            for (int i = 0; i < kept.length; i++) {
+                kept[i] = Convert.toBool(entries[2 * i + 1]);
             }
-            return result;
+            return PhpArray.ofEntries(entries, null, kept);
         }
 
         static final Callables.Parameter CALLBACK = new Callables.Parameter("array_filter", 2, true);
@@ -497,14 +495,12 @@ public final class BuiltinNodes {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
             keepArguments(frame, passed == 2 ? new Object[] {array, callback} : new Object[] {array, callback, mode});
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object value = array.valueAt(p);
-                if (Convert.toBool(dispatch.execute(callback, new Object[] {value}))) {
-                    result.put(array.keyAt(p), value);
-                }
+            Object[] entries = array.entries();
+            boolean[] kept = new boolean[entries.length / 2];
+            for (int i = 0; i < kept.length; i++) {
+                kept[i] = Convert.toBool(dispatch.execute(callback, new Object[] {entries[2 * i + 1]}));
             }
-            return result;
+            return PhpArray.ofEntries(entries, null, kept);
         }
 
         @Fallback
@@ -557,11 +553,14 @@ public final class BuiltinNodes {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
             keepArguments(frame, new Object[] {callback, array});
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));
+            // the walk over the array's layout and the result's build are each one call; the loop between them
+            // only calls back, which compiled code can inline
+            Object[] entries = array.entries();
+            Object[] mapped = new Object[entries.length / 2];
+            for (int i = 0; i < mapped.length; i++) {
+                mapped[i] = dispatch.execute(callback, new Object[] {entries[2 * i + 1]});
             }
-            return result;
+            return PhpArray.ofEntries(entries, mapped, null);
         }
 
         @Fallback

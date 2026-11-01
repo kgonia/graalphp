@@ -209,27 +209,30 @@ public final class ArithmeticNodes {
         }
     }
 
-    /** `.`: lazy concatenation (a rope until someone reads the bytes), with int operands formatted directly. */
+    /**
+     * `.`: lazy concatenation (a rope until someone reads the bytes). Two strings concatenate inline: out of line,
+     * the call and the rope it can't virtualize made string-building loops slower (Gate 1's slugs kernel, which
+     * builds `'%' . dechex($byte)` per byte, 8%), for 1.5% less code in WordPress's largest functions. An int
+     * operand's digit loop was about 85 IR nodes inline, and its array writes were Graal's bounds-check
+     * speculations that failed natively once per site and compilation: it is formatted and joined in one call.
+     * Chains of three or more operands are a ConcatChainNode.
+     */
     @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ConcatNode extends BinaryNode {
         @Specialization
         public static TruffleString concat(TruffleString a, TruffleString b,
-                                       @Cached TruffleString.ConcatNode concat) {
+                                           @Cached TruffleString.ConcatNode concat) {
             return concat.execute(a, b, Str.ENC, true);
         }
 
         @Specialization
-        public static TruffleString concat(TruffleString a, long b,
-                                       @Cached TruffleString.FromLongNode fromLong,
-                                       @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(a, fromLong.execute(b, Str.ENC, false), Str.ENC, true);
+        public static TruffleString concat(TruffleString a, long b) {
+            return Str.join(null, new Object[] {a, b});
         }
 
         @Specialization
-        public static TruffleString concat(long a, TruffleString b,
-                                       @Cached TruffleString.FromLongNode fromLong,
-                                       @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(fromLong.execute(a, Str.ENC, false), b, Str.ENC, true);
+        public static TruffleString concat(long a, TruffleString b) {
+            return Str.join(null, new Object[] {a, b});
         }
 
         @Fallback

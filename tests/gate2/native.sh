@@ -24,7 +24,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
 root=$(pwd -W 2>/dev/null || pwd)
-# WPN_DB_SOURCE: the container the seed is dumped from (default gate2-mariadb).
+# WPN_DB_SOURCE: the container the seed is dumped from (default gate2-mariadb); WPN_DB_DUMP: a dump file to seed
+# from instead (another session's seed.sql), when that container isn't running.
+# WPN_DB_CPUS (default 22-23), WPN_AUX_CPUS (default 0-5): the database's CPUs, and those of the volume's copy, so a
+# session can keep off the CPUs another session is timing on.
 # WPN_NAME, WPN_NET, WPN_DB_PORT: another prefix for the containers, network and volume, another /24 for the
 # network and another host port for the database, so a second session runs beside this one (default wpn, 172.30.0, 3308)
 P=${WPN_NAME:-wpn}
@@ -51,14 +54,13 @@ start_db() {
   docker rm -f $db > /dev/null 2>&1 || true
   docker network inspect $P-net > /dev/null 2>&1 || docker network create --subnet $NET.0/24 $P-net > /dev/null
   mkdir -p $out
-  # WPN_DB_DUMP: a dump to seed from instead (e.g. another session's seed.sql), when the source isn't running
   if [ -n "${WPN_DB_DUMP:-}" ]; then
     cp "$WPN_DB_DUMP" $out/wordpress.sql
   else
     docker exec ${WPN_DB_SOURCE:-gate2-mariadb} mariadb-dump -uroot -proot --single-transaction --skip-dump-date \
       --databases wordpress > $out/wordpress.sql
   fi
-  docker run -d --name $db --cpuset-cpus 22-23 --network $P-net --ip $NET.2 -p ${WPN_DB_PORT:-3308}:3307 \
+  docker run -d --name $db --cpuset-cpus ${WPN_DB_CPUS:-22-23} --network $P-net --ip $NET.2 -p ${WPN_DB_PORT:-3308}:3307 \
     -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=wordpress -e MARIADB_USER=wp -e MARIADB_PASSWORD=wp mariadb:11.4 \
     --port=3307 > /dev/null
   for _ in $(seq 60); do
@@ -83,10 +85,10 @@ volume() {
   cp tests/gate2/wp-config.php target/gate2/wordpress/wp-config.php
   mkdir -p target/gate2/wordpress/wp-content/mu-plugins
   cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
-  MSYS_NO_PATHCONV=1 CPUSET=0-5 bash bench/gate1/php.sh php tools/ast-export.php target/ast \
+  MSYS_NO_PATHCONV=1 CPUSET=${WPN_AUX_CPUS:-0-5} bash bench/gate1/php.sh php tools/ast-export.php target/ast \
     target/gate2/wordpress/wp-config.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php > /dev/null
   docker volume create $P-site > /dev/null
-  MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 0-5 -v $P-site:/srv -v "$root:/w:ro" alpine:3 sh -c '
+  MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus ${WPN_AUX_CPUS:-0-5} -v $P-site:/srv -v "$root:/w:ro" alpine:3 sh -c '
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib

@@ -1,12 +1,13 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
+import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.vars.FrameSlots;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
@@ -23,7 +24,6 @@ import java.util.Map;
  */
 public final class IncludeNode extends ExprNode {
     @Child private ExprNode path;
-    @Child private IndirectCallNode call = IndirectCallNode.create();
     private final boolean once;
     /** include, require, include_once or require_once, as traces name the call. */
     private final String kind;
@@ -49,18 +49,49 @@ public final class IncludeNode extends ExprNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        PhpContext context = PhpContext.get(this);
-        String canonical = context.canonicalPath(Str.java(Convert.toStr(path.execute(frame))));
-        if (!context.markIncluded(canonical) && once) {
+        CallTarget file = resolve(path.execute(frame));
+        if (file == null) {
             return Boolean.TRUE;
         }
-        FileRootNode root = context.loadFile(canonical);
-        Object[] own = frame.getArguments();
+        return run(file, frame.getArguments(), slots == null ? null : callScope(frame));
+    }
+
+    /**
+     * The included file's call target, or null when an _once include finds the file included already. One call
+     * for the path's conversion, its resolution and the file's loading, which run once per include: inlined as
+     * five calls, they made top-level code with hundreds of includes (wp-settings.php) too large to install.
+     */
+    @TruffleBoundary
+    private CallTarget resolve(Object pathValue) {
+        PhpContext context = PhpContext.get(this);
+        String canonical = context.canonicalPath(Str.java(Convert.toStr(pathValue)));
+        if (!context.markIncluded(canonical) && once) {
+            return null;
+        }
+        return context.loadFile(canonical).getCallTarget();
+    }
+
+    /**
+     * Runs the included file, out of line too: an include runs once per request, and an inlined indirect call (its
+     * arguments, its exception handling) was most of what was left of an include's compiled code. This node is the
+     * call's location, as an inlined call node's parent would be, so traces list the include. What the file throws
+     * (an exit(), an error) leaves the including code compiled. own: the including code's arguments; callScope:
+     * a function's variables (null at the top, where the file gets the scope the including code has).
+     */
+    @TruffleBoundary(transferToInterpreterOnException = false)
+    private Object run(CallTarget file, Object[] own, IncludeScope callScope) {
         Object[] arguments = new Object[PhpFunction.ARG_FIRST];
         arguments[PhpFunction.ARG_THIS] = own[PhpFunction.ARG_THIS];
         arguments[PhpFunction.ARG_STATIC] = own[PhpFunction.ARG_STATIC];
-        arguments[IncludeScope.ARG] = slots == null ? IncludeScope.of(frame) : callScope(frame);
-        return call.call(root.getCallTarget(), arguments);
+        arguments[IncludeScope.ARG] = callScope != null ? callScope
+                : own[IncludeScope.ARG] instanceof IncludeScope scope ? scope : null;
+        EncapsulatingNodeReference encapsulating = EncapsulatingNodeReference.getCurrent();
+        Node previous = encapsulating.set(this);
+        try {
+            return file.call(arguments);
+        } finally {
+            encapsulating.set(previous);
+        }
     }
 
     private IncludeScope callScope(VirtualFrame frame) {

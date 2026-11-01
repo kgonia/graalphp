@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.GenerateUncached;
@@ -93,20 +94,33 @@ public final class ElementNodes {
             return remembers;
         }
 
-        /** The dereferenced element under a normalized key, or null when absent. */
+        /**
+         * The dereferenced element under a normalized key, PhpNull.NULL when absent. Only the remembered slot's
+         * check is inline; a miss (another slot, an absent key, a packed array) is one call, which remembers the
+         * slot.
+         */
         public Object lookup(PhpArray array, Object key) {
             if (!(key instanceof TruffleString)) {
-                return array.get(key);
+                Object element = array.get(key);
+                return element == null ? PhpNull.NULL : element;
             }
-            int slot = remembers ? slotGuess : -1;
-            if (!array.isKeyAt(slot, key)) {
-                slot = array.slotOf(key);
-                if (slot < 0) {
-                    return null;
+            if (remembers) {
+                Object raw = array.rawIfKeyAt(slotGuess, key);
+                if (raw != null) {
+                    return PhpRef.deref(raw);
                 }
-                if (remembers) {
-                    slotGuess = slot;
-                }
+            }
+            return find(array, key);
+        }
+
+        @TruffleBoundary
+        private Object find(PhpArray array, Object key) {
+            int slot = array.slotOf(key);
+            if (slot < 0) {
+                return PhpNull.NULL;
+            }
+            if (remembers) {
+                slotGuess = slot;
             }
             return PhpRef.deref(array.hashValueAt(slot));
         }
@@ -144,8 +158,7 @@ public final class ElementNodes {
         @Specialization
         public static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
                                          @Cached SlotCacheNode slots) {
-            Object element = slots.lookup(array, toKey.execute(key));
-            return element == null ? PhpNull.NULL : element;
+            return slots.lookup(array, toKey.execute(key));
         }
 
         @Specialization

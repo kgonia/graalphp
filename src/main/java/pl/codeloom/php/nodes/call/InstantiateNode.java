@@ -1,6 +1,8 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
@@ -43,7 +45,7 @@ public abstract class InstantiateNode extends Node {
                                   @Cached(value = "cachedClass.declaredFlags()", dimensions = 1) int[] flags,
                                   @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
                                   @Cached("cachedClass.isThrowable()") boolean throwable) {
-        return initialize(cachedClass, names, defaults, flags, puts, throwable);
+        return initialize(cachedClass, names, defaults, flags, puts, throwable, null);
     }
 
     @Specialization(guards = {"phpClass.getKey() == cachedKey", "phpClass.isInstantiable()"}, limit = "1")
@@ -52,8 +54,9 @@ public abstract class InstantiateNode extends Node {
                                 @Cached(value = "phpClass.declaredNames()", dimensions = 1) String[] names,
                                 @Cached(value = "phpClass.declaredFlags()", dimensions = 1) int[] flags,
                                 @Cached("createPuts(names.length)") DynamicObjectLibrary[] puts,
-                                @Cached("phpClass.isThrowable()") boolean throwable) {
-        return initialize(phpClass, names, phpClass.defaults(), flags, puts, throwable);
+                                @Cached("phpClass.isThrowable()") boolean throwable,
+                                @Cached("new(phpClass.defaults())") DefaultKinds kinds) {
+        return initialize(phpClass, names, phpClass.defaults(), flags, puts, throwable, kinds);
     }
 
     @Specialization(replaces = {"sameClass", "sameKey"})
@@ -75,18 +78,23 @@ public abstract class InstantiateNode extends Node {
         return Backtrace.forThrowable();
     }
 
+    /**
+     * kinds: what the defaults were in the contexts met so far (null where the defaults are constants): compiled
+     * code then stores each as that kind, without testing for the others.
+     */
     @ExplodeLoop
     private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, int[] flags,
-                                 DynamicObjectLibrary[] puts, boolean throwable) {
+                                 DynamicObjectLibrary[] puts, boolean throwable, DefaultKinds kinds) {
         PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
-            if (value instanceof PhpArray array) {
+            byte kind = kinds == null ? DefaultKinds.GENERIC : kinds.kind(i, value);
+            if ((kind == DefaultKinds.ARRAY || kind == DefaultKinds.GENERIC) && value instanceof PhpArray array) {
                 array.addHolder();
             }
             if (flags[i] != 0) {
                 puts[i].putWithFlags(object, names[i], value, flags[i]);
-            } else if (value instanceof Long l) {
+            } else if ((kind == DefaultKinds.LONG || kind == DefaultKinds.GENERIC) && value instanceof Long l) {
                 puts[i].putLong(object, names[i], l);
             } else {
                 puts[i].put(object, names[i], value);
@@ -96,6 +104,42 @@ public abstract class InstantiateNode extends Node {
             PhpClass.initThrowable(object, location(), trace());
         }
         return object;
+    }
+
+    /**
+     * The kind of each property default (an int, an array, anything else) as the contexts met so far had it: a
+     * context's defaults are its own values of the same declarations, nearly always of the same kinds. A default
+     * of another kind deoptimizes once and the property's kind becomes generic.
+     */
+    static final class DefaultKinds {
+        private static final byte LONG = 1;
+        private static final byte ARRAY = 2;
+        private static final byte OTHER = 3;
+        private static final byte GENERIC = 0;
+
+        @CompilationFinal(dimensions = 1) private final byte[] kinds;
+
+        DefaultKinds(Object[] defaults) {
+            kinds = new byte[defaults.length];
+            for (int i = 0; i < defaults.length; i++) {
+                kinds[i] = kindOf(defaults[i]);
+            }
+        }
+
+        private static byte kindOf(Object value) {
+            return value instanceof Long ? LONG : value instanceof PhpArray ? ARRAY : OTHER;
+        }
+
+        /** The kind recorded for default i, which value is of (else it is GENERIC from now on). */
+        byte kind(int i, Object value) {
+            byte kind = kinds[i];
+            if (kind == GENERIC || kindOf(value) == kind) {
+                return kind;
+            }
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            kinds[i] = GENERIC;
+            return GENERIC;
+        }
     }
 
     protected Assumption singleContext() {

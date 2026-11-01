@@ -56,6 +56,7 @@ def kind_of(reason):
 class Run:
     def __init__(self, name, path):
         self.name = name
+        self.dir = os.path.dirname(path)
         self.done = []          # (id, name, tier, ms, pe_ms, graal_ms, ast, ir_pe, ir_after, code)
         self.failed = []        # (id, name, tier, ms, reason, frames)
         self.inval = []         # (id, name, reason)
@@ -210,6 +211,48 @@ def short(name, width=60):
     return name if len(name) <= width else name[:width - 3] + '...'
 
 
+def settling(run, last=10):
+    """A wp run's last rounds (rounds.txt): (rounds, first compilations of a target at a tier, recompilations, the
+    recompiled targets), or None for a run without rounds. Late first compilations are code that reached its call
+    count only then, which is no instability; a late recompilation is."""
+    path = os.path.join(run.dir, 'rounds.txt')
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding='utf-8') as f:
+        ends = [int(m.group(1)) for m in (re.search(r'(\d+) in all', line) for line in f) if m]
+    seen = collections.Counter()
+    rows = []
+    start = 0
+    for end in ends:
+        first = again = 0
+        names = collections.Counter()
+        for d in run.done[start:end]:
+            if seen[(d[0], d[2])]:
+                again += 1
+                names[f'{d[1]} (tier {d[2]})'] += 1
+            else:
+                first += 1
+            seen[(d[0], d[2])] += 1
+        rows.append((first, again, names))
+        start = end
+    tail = rows[-last:]
+    again = collections.Counter()
+    for r in tail:
+        again.update(r[2])
+    return len(rows), sum(r[0] for r in tail), sum(r[1] for r in tail), again
+
+
+def print_settling(run, last=10):
+    settled = settling(run, last)
+    if settled is None:
+        return
+    rounds, first, again, names = settled
+    print(f'\n-- the last {min(last, rounds)} rounds of {rounds}: {first} first compilations of a target at a tier, '
+          f'{again} recompilations')
+    for name, count in names.most_common(6):
+        print(f'{count:5}  {short(name, 80)}')
+
+
 def report(run, top):
     print(f'=== {run.name}')
     done_ids = collections.Counter(d[0] for d in run.done)
@@ -273,6 +316,7 @@ def report(run, top):
         print('  none')
     reasons = collections.Counter(r for _, _, r in run.inval)
     print('  invalidation reasons: ' + (', '.join(f'{c}x {short(r, 60)}' for r, c in reasons.most_common(8)) or 'none'))
+    print_settling(run)
 
     print(f'\n-- performance warnings ({len(run.warnings)}), by our source location')
     wgroups = collections.defaultdict(list)
@@ -306,14 +350,14 @@ def report(run, top):
     print()
 
 
-# The baseline after the fixes, with room. On the JVM HotSpot refuses code over 640 KB: WP_Query::get_posts and a
-# file's top level stay interpreted. The native image installs them: get_posts is the largest (92,357 IR nodes) and
-# slowest (34 s at the last tier) compilation, and Graal's speculations on implicit exceptions recompile it.
+# The baseline after round 2's fixes, with room. Every compilation installs on both engines: WP_Query::get_posts is
+# the largest (about 61,000 IR nodes after PE, 586 KB of code on HotSpot, whose limit is 640 KB) and the slowest
+# (25 s at the last tier). In a wp run's last 10 rounds nothing compiled a second time.
 LIMITS = {
-    'jvm': {'failures': 0, 'code-too-large': 2, 'deopt-cycles': 0, 'ir': 60000, 'compile-ms': 20000,
-            'compile-s': 1100, 'recompilations': 10, 'perf-warnings': 0},
-    'native': {'failures': 0, 'code-too-large': 0, 'deopt-cycles': 0, 'ir': 100000, 'compile-ms': 40000,
-               'compile-s': 1700, 'recompilations': 14, 'perf-warnings': 0},
+    'jvm': {'failures': 0, 'code-too-large': 0, 'deopt-cycles': 0, 'ir': 65000, 'compile-ms': 30000,
+            'compile-s': 950, 'recompilations': 10, 'perf-warnings': 0, 'late-recompilations': 2},
+    'native': {'failures': 0, 'code-too-large': 0, 'deopt-cycles': 0, 'ir': 65000, 'compile-ms': 30000,
+               'compile-s': 950, 'recompilations': 10, 'perf-warnings': 0, 'late-recompilations': 2},
 }
 
 
@@ -359,6 +403,10 @@ def check(run, args):
             problems.append(f'{name} compiled {most} times, allowed {args.max_recompilations}')
     if len(run.warnings) > args.max_perf_warnings:
         problems.append(f'{len(run.warnings)} performance warnings, allowed {args.max_perf_warnings}')
+    settled = settling(run)
+    if settled is not None and settled[2] > args.max_late_recompilations:
+        problems.append(f'{settled[2]} recompilations in the last rounds ({", ".join(settled[3])}), allowed '
+                        f'{args.max_late_recompilations}')
     return problems
 
 
@@ -376,7 +424,8 @@ def main():
                        ('compile-ms', 'milliseconds, one compilation'),
                        ('compile-s', 'seconds of compilation, a whole run'),
                        ('recompilations', 'compilations of one call target'),
-                       ('perf-warnings', 'performance warnings')):
+                       ('perf-warnings', 'performance warnings'),
+                       ('late-recompilations', 'recompilations in a wp run\'s last 10 rounds')):
         p.add_argument('--max-' + name, type=int, help=f'{what} (default: {LIMITS["jvm"][name]} on the JVM, '
                                                         f'{LIMITS["native"][name]} native)')
     args = p.parse_args()

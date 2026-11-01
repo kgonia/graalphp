@@ -47,8 +47,12 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     @CompilationFinal(dimensions = 1) private final int[] captureSlots;
     @CompilationFinal(dimensions = 1) private final boolean[] captureByRef;
     private final int localCount;
-    /** The locals that have held an array or a reference at the function's end (releaseLocals). */
-    @CompilationFinal(dimensions = 1) private final boolean[] releasedSlots;
+    /**
+     * What each local has held at the function's end so far (releaseLocals): RELEASED_ARRAY, RELEASED_REF, or both.
+     */
+    @CompilationFinal(dimensions = 1) private final byte[] releasedSlots;
+    private static final byte RELEASED_ARRAY = 1;
+    private static final byte RELEASED_REF = 2;
     private final char returnCoerce;
     private final boolean returnNullable;
     @Child private StmtNode body;
@@ -79,7 +83,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         this.captureSlots = captureSlots;
         this.captureByRef = captureByRef;
         this.localCount = frame.getNumberOfSlots();
-        this.releasedSlots = new boolean[localCount];
+        this.releasedSlots = new byte[localCount];
         this.returnCoerce = returnCoerce;
         this.returnNullable = returnNullable;
         this.body = body;
@@ -258,27 +262,31 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     }
 
     /**
-     * The end of the call: an array a local holds loses it as a holder, a reference is unbound. Only the slots that
-     * have held one at a function's end so far are released in compiled code; at another a deoptimization adds
-     * it. Inlined for every local, the release was one of the largest parts of big compiled functions.
+     * The end of the call: an array a local holds loses it as a holder, a reference is unbound. Compiled code
+     * releases only what each slot has held at a function's end so far, an array, a reference or both; anything
+     * else deoptimizes once and is added. Inlined for every local, the release was one of the largest parts of big
+     * compiled functions.
      */
     @ExplodeLoop
     private void releaseLocals(VirtualFrame frame) {
         for (int slot = 0; slot < localCount; slot++) {
             if (frame.isObject(slot)) {
                 Object value = frame.getObject(slot);
-                if (value instanceof PhpArray || value instanceof PhpRef) {
-                    if (!releasedSlots[slot]) {
-                        CompilerDirectives.transferToInterpreterAndInvalidate();
-                        releasedSlots[slot] = true;
-                    }
-                    if (value instanceof PhpArray array) {
-                        array.removeHolder();
-                    } else {
-                        ((PhpRef) value).unbind();
-                    }
+                if (value instanceof PhpArray array) {
+                    released(slot, RELEASED_ARRAY);
+                    array.removeHolder();
+                } else if (value instanceof PhpRef ref) {
+                    released(slot, RELEASED_REF);
+                    ref.unbind();
                 }
             }
+        }
+    }
+
+    private void released(int slot, byte kind) {
+        if ((releasedSlots[slot] & kind) == 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            releasedSlots[slot] |= kind;
         }
     }
 
