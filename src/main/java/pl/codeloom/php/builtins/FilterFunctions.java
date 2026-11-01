@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.stmt.TryNode;
+import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
@@ -24,6 +25,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * ext/filter: a port of php-src's filter.c (filter_var(), filter_input() and their array forms), logical_filters.c
@@ -74,7 +76,7 @@ final class FilterFunctions {
     private static final long VALIDATE_DOMAIN = 0x0115;
     private static final long VALIDATE_ALL = 0x0100;
     private static final long VALIDATE_LAST = 0x0115;
-    private static final long DEFAULT = 0x0204;
+    static final long DEFAULT = 0x0204;
     private static final long SANITIZE_STRING = 0x0201;
     private static final long SANITIZE_ENCODED = 0x0202;
     private static final long SANITIZE_SPECIAL_CHARS = 0x0203;
@@ -87,6 +89,13 @@ final class FilterFunctions {
     private static final long SANITIZE_ALL = 0x0200;
     private static final long SANITIZE_LAST = 0x020b;
     private static final long CALLBACK = 0x0400;
+
+    // the INPUT_* sources: main/php_variables.h's PARSE_*
+    private static final long INPUT_POST = 0;
+    private static final long INPUT_GET = 1;
+    private static final long INPUT_COOKIE = 2;
+    private static final long INPUT_ENV = 4;
+    private static final long INPUT_SERVER = 5;
 
     // the keys of the options arrays
     private static final TruffleString KEY_DEFAULT = Str.of("default");
@@ -105,7 +114,8 @@ final class FilterFunctions {
 
     static void constants(Map<String, Object> constants) {
         Object[][] table = {
-                {"FILTER_FLAG_NONE", 0L},
+                {"INPUT_POST", INPUT_POST}, {"INPUT_GET", INPUT_GET}, {"INPUT_COOKIE", INPUT_COOKIE},
+                {"INPUT_ENV", INPUT_ENV}, {"INPUT_SERVER", INPUT_SERVER}, {"FILTER_FLAG_NONE", 0L},
                 {"FILTER_REQUIRE_SCALAR", REQUIRE_SCALAR}, {"FILTER_REQUIRE_ARRAY", REQUIRE_ARRAY},
                 {"FILTER_FORCE_ARRAY", FORCE_ARRAY}, {"FILTER_NULL_ON_FAILURE", NULL_ON_FAILURE},
                 {"FILTER_THROW_ON_FAILURE", THROW_ON_FAILURE}, {"FILTER_VALIDATE_INT", VALIDATE_INT},
@@ -143,7 +153,10 @@ final class FilterFunctions {
     }
 
     static void register(Registry r) {
+        r.fn("filter_has_var", FilterFunctions::filterHasVar);
+        r.fn("filter_input", FilterFunctions::filterInput);
         r.fn("filter_var", FilterFunctions::filterVar);
+        r.fn("filter_input_array", FilterFunctions::filterInputArray);
         r.fn("filter_var_array", FilterFunctions::filterVarArray);
         r.fn("filter_list", a -> {
             Args.arity(a, "filter_list", 0, 0);
@@ -235,16 +248,22 @@ final class FilterFunctions {
     private static final class Call {
         final PhpContext context;
         final String function;
+        /** Where its errors are; null: where the user code is now. */
+        final SourceLocation location;
         PhpThrowable pending;
 
         Call(PhpContext context, String function) {
-            this.context = context;
-            this.function = function;
+            this(context, function, null);
         }
 
-        /** Where the user code is now: where php-src's errors are. */
+        Call(PhpContext context, String function, SourceLocation location) {
+            this.context = context;
+            this.function = function;
+            this.location = location;
+        }
+
         private SourceLocation here() {
-            return SourceLocation.current();
+            return location != null ? location : SourceLocation.current();
         }
 
         /** An error php-src raises (zend_throw_*), placed as php-src's object is: where the user code is now. */
@@ -598,6 +617,257 @@ final class FilterFunctions {
             result.put(key, copy);
         }
         return result;
+    }
+
+    // ---- the request's input ----
+
+    /**
+     * What filter_input() and filter_has_var() read: the variables as the SAPI registered them at the start of the
+     * request (the copies php-src's input filter keeps, IF_G(get_array)...), whatever the script does to the
+     * superglobals later. An array no variable came in for is null (php-src leaves it undefined), as INPUT_GET is
+     * under the CLI.
+     */
+    static final class Input {
+        PhpArray get;
+        PhpArray post;
+        PhpArray cookie;
+        /** $_SERVER as the SAPI made it: INPUT_SERVER is the part of it that went through the input filter. */
+        private PhpArray server;
+        private boolean cgi;
+        private PhpArray serverInput;
+        /** PG(http_globals)[TRACK_VARS_ENV]: $_ENV as made. */
+        private PhpArray env;
+
+        /** Holds a superglobal's array as php-src's copy does: the superglobal is copied before it is written. */
+        static PhpArray kept(PhpArray array) {
+            array.addHolder();
+            return array;
+        }
+
+        void globals(PhpArray server, PhpArray env, boolean cgi) {
+            this.server = kept(server);
+            this.env = kept(env);
+            this.cgi = cgi;
+        }
+
+        /**
+         * The CLI passes PHP_SELF, SCRIPT_NAME, SCRIPT_FILENAME, PATH_TRANSLATED and DOCUMENT_ROOT through the input
+         * filter (sapi_cli_register_variables), not the environment; under the CGI SAPI the request's variables
+         * pass through it, as php-fpm's FastCGI parameters do, but not REQUEST_TIME and REQUEST_TIME_FLOAT.
+         */
+        PhpArray server() {
+            if (serverInput == null && server != null) {
+                PhpArray input = new PhpArray();
+                if (cgi) {
+                    for (int p = server.firstPosition(); p >= 0; p = server.nextPosition(p)) {
+                        if (serverInput(server.keyAt(p))) {
+                            input.put(server.keyAt(p), server.valueAt(p));
+                        }
+                    }
+                } else {
+                    for (String name : CLI_SERVER_INPUT) {
+                        Object value = server.get(Str.of(name));
+                        if (value != null) {
+                            input.put(Str.of(name), value);
+                        }
+                    }
+                }
+                serverInput = input;
+            }
+            return serverInput;
+        }
+
+        /** Whether the $_SERVER element is one the SAPI passed through the input filter. */
+        boolean serverInput(Object key) {
+            String name = key instanceof TruffleString s ? Str.java(s) : "";
+            if (cgi) {
+                return !name.equals("REQUEST_TIME") && !name.equals("REQUEST_TIME_FLOAT");
+            }
+            for (String input : CLI_SERVER_INPUT) {
+                if (input.equals(name)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static final String[] CLI_SERVER_INPUT = {"PHP_SELF", "SCRIPT_NAME", "SCRIPT_FILENAME",
+                "PATH_TRANSLATED", "DOCUMENT_ROOT"};
+    }
+
+    /** php_filter_get_storage. */
+    private static PhpArray storage(PhpContext context, long type, String function, String name) {
+        Input input = context.builtinState().filterInput;
+        if (type == INPUT_GET) {
+            return input.get;
+        } else if (type == INPUT_POST) {
+            return input.post;
+        } else if (type == INPUT_COOKIE) {
+            return input.cookie;
+        } else if (type == INPUT_SERVER) {
+            return input.server();
+        } else if (type == INPUT_ENV) {
+            return input.env;
+        }
+        throw new PhpError("ValueError", function + "(): Argument #1 ($" + name + ") must be an INPUT_* constant");
+    }
+
+    @TruffleBoundary
+    private static Object filterInput(PhpContext context, Object[] a) {
+        Args.arity(a, "filter_input", 2, 4);
+        long type = Args.integer(context, a, 0, "filter_input", "type", "int");
+        TruffleString name = Args.string(context, a, 1, "filter_input", "var_name", false);
+        long filter = Args.has(a, 2) ? Args.integer(context, a, 2, "filter_input", "filter", "int") : DEFAULT;
+        long argsLong = arrayOrLong(context, a, 3, "filter_input", "options", 0);
+        PhpArray args = arrayOrNull(a, 3);
+        Call call = new Call(context, "filter_input");
+        if (!idExists(filter)) {
+            call.warn("Unknown filter with ID " + filter);
+            return Boolean.FALSE;
+        }
+        PhpArray input = storage(context, type, "filter_input", "type");
+        Object value = lookup(input, name);
+        if (value == null) {
+            long flags = argsLong;
+            if (args != null) {
+                Object option = args.get(KEY_FLAGS);
+                flags = option != null ? zvalGetLong(call, option) : 0;
+            }
+            if ((flags & NULL_ON_FAILURE) != 0 && (flags & THROW_ON_FAILURE) != 0) {
+                throw bothOnFailure("filter_input", 4);
+            }
+            if ((flags & THROW_ON_FAILURE) != 0) {
+                throw new PhpError(FAILED_EXCEPTION, concat("input value '", cBytes(name), "' not found"));
+            }
+            // FILTER_THROW_ON_FAILURE goes before the default
+            if (args != null && PhpRef.deref(args.get(KEY_OPTIONS)) instanceof PhpArray options) {
+                Object fallback = options.get(KEY_DEFAULT);
+                if (fallback != null) {
+                    return PhpRef.deref(fallback);
+                }
+            }
+            // FILTER_NULL_ON_FAILURE swaps the answers: a missing input is false then, a failed one null
+            return (flags & NULL_ON_FAILURE) != 0 ? Boolean.FALSE : PhpNull.NULL;
+        }
+        return call.result(filterCall(call, dup(PhpRef.deref(value)), filter, args, argsLong, REQUIRE_SCALAR, 4));
+    }
+
+    @TruffleBoundary
+    private static Object filterHasVar(PhpContext context, Object[] a) {
+        Args.arity(a, "filter_has_var", 2, 2);
+        long type = Args.integer(context, a, 0, "filter_has_var", "input_type", "int");
+        TruffleString name = Args.string(context, a, 1, "filter_has_var", "var_name", false);
+        PhpArray input = storage(context, type, "filter_has_var", "input_type");
+        return lookup(input, name) != null;
+    }
+
+    @TruffleBoundary
+    private static Object filterInputArray(PhpContext context, Object[] a) {
+        Args.arity(a, "filter_input_array", 1, 3);
+        long type = Args.integer(context, a, 0, "filter_input_array", "type", "int");
+        long op = arrayOrLong(context, a, 1, "filter_input_array", "options", DEFAULT);
+        PhpArray definition = arrayOrNull(a, 1);
+        boolean addEmpty = !Args.has(a, 2) || Args.bool(context, a, 2, "filter_input_array", "add_empty");
+        Call call = new Call(context, "filter_input_array");
+        if (definition == null && !idExists(op)) {
+            call.warn("Unknown filter with ID " + op);
+            return Boolean.FALSE;
+        }
+        PhpArray input = storage(context, type, "filter_input_array", "type");
+        if (input == null) {
+            return PhpNull.NULL;
+        }
+        return call.result(arrayHandler(call, input, definition, op, addEmpty));
+    }
+
+    /**
+     * The element under the name as zend_hash_find looks it up, a string key: a numeric name ("1") is never a key of
+     * a PHP array (such elements are under int keys), so it finds nothing.
+     */
+    private static Object lookup(PhpArray array, TruffleString name) {
+        Object key = ArrayKey.of(name);
+        return array == null || key instanceof Long ? null : array.get(key);
+    }
+
+    // ---- filter.default ----
+
+    /** Where an error raised before the script ran is (zend_get_executed_filename()'s "[no active file]"). */
+    private static final SourceLocation NO_ACTIVE_FILE = new SourceLocation("[no active file]", 0);
+
+    /** UpdateDefaultFilter's lookup: the id of the filter of that name, its case ignored, else FILTER_DEFAULT. */
+    static long idOfName(String name) {
+        String lower = name == null ? "" : Str.lower(name);
+        for (Entry entry : FILTERS) {
+            if (entry.name().equals(lower)) {
+                return entry.id();
+            }
+        }
+        return DEFAULT;
+    }
+
+    /**
+     * A superglobal of the request's input as php_sapi_filter registers it: with filter.default, each non-empty value
+     * of an input variable (those registered accepts, and their nested values) through the default filter with
+     * filter.default_flags; the raw array (which ext/filter keeps) under FILTER_UNSAFE_RAW.
+     */
+    static PhpArray registeredArray(PhpContext context, PhpArray raw, Predicate<Object> registered) {
+        BuiltinState state = context.builtinState();
+        if (context.ini().defaultFilter() == DEFAULT || state.startupFailure != 0) {
+            return raw;
+        }
+        return throughDefaultFilter(new Call(context, "(null)", NO_ACTIVE_FILE), raw, registered, false);
+    }
+
+    /**
+     * The exception a startup failure (startupFailure's filter) is: FILTER_CALLBACK and FILTER_VALIDATE_REGEXP, which
+     * have no options there, raise one for the first non-empty value, fatal at once in php-src (no code is executing
+     * yet), so the script doesn't run. No function is active: get_active_function_name() is NULL, which %s prints as
+     * "(null)".
+     */
+    static PhpError startupError(long filter) {
+        PhpError error = filter == CALLBACK ? new PhpError("TypeError", "(null)(): Option must be a valid callback")
+                : new PhpError("ValueError", "(null)(): \"regexp\" option is missing");
+        error.placeIfUnplaced(NO_ACTIVE_FILE);
+        return error;
+    }
+
+    /** parse_str()'s result (PARSE_STRING) through filter.default, the values as strings; then its exception. */
+    static void parsedString(PhpContext context, PhpArray parsed, PhpRef result) {
+        if (context.ini().defaultFilter() == DEFAULT) {
+            result.set(parsed);
+            return;
+        }
+        Call call = new Call(context, "parse_str");
+        result.set(throughDefaultFilter(call, parsed, key -> true, true));
+        call.result(null);
+    }
+
+    private static PhpArray throughDefaultFilter(Call call, PhpArray raw, Predicate<Object> registered,
+                                                 boolean strings) {
+        Ini ini = call.context.ini();
+        PhpArray copy = raw.copy();
+        for (int p = copy.firstPosition(); p >= 0; p = copy.nextPosition(p)) {
+            Object key = copy.keyAt(p);
+            Object value = copy.valueAt(p);
+            if (!registered.test(key) || value instanceof TruffleString s && Str.length(s) == 0) {
+                continue;
+            }
+            long filter = ini.defaultFilter();
+            if (value instanceof PhpArray nested) {
+                value = throughDefaultFilter(call, nested, k -> true, strings);
+            } else if (call.location == NO_ACTIVE_FILE && (filter == CALLBACK || filter == VALIDATE_REGEXP)) {
+                // the request's startup fails (startupError); nothing is filtered after
+                call.context.builtinState().startupFailure = filter;
+                return copy;
+            } else {
+                value = zvalFilter(call, value, filter, ini.defaultFilterFlags(), null);
+                if (strings) {
+                    value = Convert.toStr(value);
+                }
+            }
+            copy.put(key, value);
+        }
+        return copy;
     }
 
     // ---- logical_filters.c ----

@@ -1893,6 +1893,11 @@ public final class Translator {
             default:
                 break;
         }
+        String deprecation = language.builtins().deprecation(name);
+        if (deprecation != null) {
+            return new ConstantNodes.DeprecatedConstNode(resolved[0], language.constantId(resolved[0]),
+                    resolved[1] == null ? -1 : language.constantId(resolved[1]), deprecation, node.line);
+        }
         // a predefined constant folds where the name can't mean a namespace's own (`namespace N; const INI_ALL = 0;`)
         Object known = resolved[1] == null ? language.builtins().constant(name) : null;
         if (known != null) {

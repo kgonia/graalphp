@@ -111,6 +111,7 @@ public final class PhpContext {
         globalRef("argc").set((long) argv.size());
         response = cgi ? new pl.codeloom.php.builtins.CgiSapi.Response() : null;
         requestBody = cgi ? readRequestBody(env) : new byte[0];
+        builtinState.startupErrors(this, cgi);
         superglobals(argv);
         if (cgi) {
             pl.codeloom.php.builtins.CgiSapi.installRequest(this, env.getEnvironment(), requestBody);
@@ -168,12 +169,13 @@ public final class PhpContext {
             server.put(Str.of("argv"), argv);
             server.put(Str.of("argc"), (long) argv.size());
         }
-        globalRef("_SERVER").set(server);
         for (String name : SUPERGLOBALS) {
             if (!name.equals("_SERVER") && !name.equals("_SESSION")) {
                 globalRef(name).set(new PhpArray());
             }
         }
+        globalRef("_SERVER").set(builtinState.requestGlobals(this, server, (PhpArray) globalRef("_ENV").get(),
+                response != null));
     }
 
     public static PhpContext get(Node node) {
