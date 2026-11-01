@@ -1,69 +1,61 @@
 package pl.codeloom.php.nodes.expr;
 
-import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
-import com.oracle.truffle.api.strings.TruffleStringBuilder;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Str;
 
-/** `"text {$expr} more $var"`: the parts converted to strings and joined. */
+/**
+ * `"text {$expr} more $var"`: the parts converted to strings and joined. Each part is converted as soon as it is
+ * evaluated, as php-src's ROPE_ADD does (a __toString() runs before the next part), and the join is one call:
+ * inlined, a TruffleStringBuilder's appends and its result cost about 30 IR nodes per part in every compiled
+ * function.
+ */
 public final class InterpolationNode extends ExprNode {
     @Children private final ExprNode[] parts;
-    @Children private final AppendNode[] appends;
-    @Child private TruffleStringBuilder.ToStringNode toStringNode = TruffleStringBuilder.ToStringNode.create();
+    @Children private final PartNode[] strings;
 
     public InterpolationNode(ExprNode[] parts) {
         this.parts = parts;
-        this.appends = new AppendNode[parts.length];
+        this.strings = new PartNode[parts.length];
         for (int i = 0; i < parts.length; i++) {
-            appends[i] = InterpolationNodeFactory.AppendNodeGen.create();
+            strings[i] = InterpolationNodeFactory.PartNodeGen.create();
         }
     }
 
     @Override
     @ExplodeLoop
     public Object execute(VirtualFrame frame) {
-        TruffleStringBuilder builder = TruffleStringBuilder.create(Str.ENC);
+        Object[] values = new Object[parts.length];
         for (int i = 0; i < parts.length; i++) {
-            appends[i].execute(builder, parts[i].execute(frame));
+            values[i] = strings[i].execute(parts[i].execute(frame));
         }
-        return toStringNode.execute(builder);
+        return Str.join(null, values);
     }
 
-    /** Appends one part, specialized on its type: an int is written as digits without a string in between. */
-    abstract static class AppendNode extends Node {
-        abstract void execute(TruffleStringBuilder builder, Object value);
+    /** A part as it is joined: a string or an int as it is (the join writes its digits), anything else converted. */
+    abstract static class PartNode extends Node {
+        abstract Object execute(Object value);
 
         @Specialization
-        protected static void string(TruffleStringBuilder builder, TruffleString value,
-                                     @Cached TruffleStringBuilder.AppendStringNode append) {
-            append.execute(builder, value);
+        protected static TruffleString string(TruffleString value) {
+            return value;
         }
 
         @Specialization
-        protected static void number(TruffleStringBuilder builder, long value,
-                                     @Cached TruffleStringBuilder.AppendLongNumberNode append) {
-            append.execute(builder, value);
+        protected static long number(long value) {
+            return value;
         }
 
-        /** Floats, booleans, null, objects (__toString): the runtime conversion. */
-        @Specialization(guards = {"!isString(value)", "!isLong(value)"})
-        protected static void other(TruffleStringBuilder builder, Object value,
-                                    @Cached TruffleStringBuilder.AppendStringNode append) {
-            append.execute(builder, Convert.toStr(value));
-        }
-
-        protected static boolean isString(Object value) {
-            return value instanceof TruffleString;
-        }
-
-        protected static boolean isLong(Object value) {
-            return value instanceof Long;
+        /** Floats, booleans, null, arrays, objects (__toString): the runtime conversion. */
+        @Fallback
+        protected static TruffleString other(Object value) {
+            return Convert.toStr(value);
         }
     }
 }
