@@ -164,7 +164,7 @@ public final class PhpArray implements TruffleObject {
     /** A shallow copy with no holders; nested arrays gain one holder each (the copy now also holds them). */
     @TruffleBoundary
     public PhpArray copy() {
-        PhpArray copy = new PhpArray(1);
+        PhpArray copy = new PhpArray();
         copy.size = size;
         copy.nextIndex = nextIndex;
         copy.pointer = pointer;
