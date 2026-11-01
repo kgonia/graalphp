@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
@@ -46,6 +47,8 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     @CompilationFinal(dimensions = 1) private final int[] captureSlots;
     @CompilationFinal(dimensions = 1) private final boolean[] captureByRef;
     private final int localCount;
+    /** The locals that have held an array or a reference at the function's end (releaseLocals). */
+    @CompilationFinal(dimensions = 1) private final boolean[] releasedSlots;
     private final char returnCoerce;
     private final boolean returnNullable;
     @Child private StmtNode body;
@@ -76,6 +79,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         this.captureSlots = captureSlots;
         this.captureByRef = captureByRef;
         this.localCount = frame.getNumberOfSlots();
+        this.releasedSlots = new boolean[localCount];
         this.returnCoerce = returnCoerce;
         this.returnNullable = returnNullable;
         this.body = body;
@@ -108,6 +112,10 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             return newGenerator(PhpContext.get(this), generator);
         }
         Object result = PhpNull.NULL;
+        // the locals are released after the try, not in a finally: javac copies a finally block onto the normal
+        // and the exceptional exit, and compiled code got two copies of releaseLocals
+        RuntimeException runtimeException = null;
+        Error error = null;
         try {
             bindArguments(frame, arguments);
             body.execute(frame);
@@ -116,8 +124,17 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             }
         } catch (ControlFlow.Return ret) {
             result = ret.value;
-        } finally {
-            releaseLocals(frame);
+        } catch (RuntimeException e) {
+            runtimeException = e;
+        } catch (Error e) {
+            error = e;
+        }
+        releaseLocals(frame);
+        if (runtimeException != null) {
+            throw runtimeException;
+        }
+        if (error != null) {
+            throw error;
         }
         if (returnCoerce == 0) {
             return result;
@@ -240,15 +257,26 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         }
     }
 
+    /**
+     * The end of the call: an array a local holds loses it as a holder, a reference is unbound. Only the slots that
+     * have held one at a function's end so far are released in compiled code; at another a deoptimization adds
+     * it. Inlined for every local, the release was one of the largest parts of big compiled functions.
+     */
     @ExplodeLoop
     private void releaseLocals(VirtualFrame frame) {
         for (int slot = 0; slot < localCount; slot++) {
             if (frame.isObject(slot)) {
                 Object value = frame.getObject(slot);
-                if (value instanceof PhpArray array) {
-                    array.removeHolder();
-                } else if (value instanceof PhpRef ref) {
-                    ref.unbind();
+                if (value instanceof PhpArray || value instanceof PhpRef) {
+                    if (!releasedSlots[slot]) {
+                        CompilerDirectives.transferToInterpreterAndInvalidate();
+                        releasedSlots[slot] = true;
+                    }
+                    if (value instanceof PhpArray array) {
+                        array.removeHolder();
+                    } else {
+                        ((PhpRef) value).unbind();
+                    }
                 }
             }
         }

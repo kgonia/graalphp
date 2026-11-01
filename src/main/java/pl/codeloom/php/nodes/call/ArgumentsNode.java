@@ -97,8 +97,11 @@ public final class ArgumentsNode extends Node {
 
     /**
      * With unpacked arguments a parameter's position is known only as the values come: an argument or an unpacked
-     * element that lands on a by-reference parameter is passed by reference (ZEND_SEND_UNPACK).
+     * element that lands on a by-reference parameter is passed by reference (ZEND_SEND_UNPACK). The loop over the
+     * arguments is exploded as build's: each argument node is a constant, and the frame never leaves the
+     * compilation (an unexploded loop's virtual execute calls let it escape, and the compilation bails out).
      */
+    @ExplodeLoop
     private Object[] buildWithSpread(VirtualFrame frame, PhpFunction callee, Object thisObject, PhpClass staticClass,
                                      Object closure) {
         List<Object> list = new ArrayList<>();
@@ -135,6 +138,7 @@ public final class ArgumentsNode extends Node {
         return arguments;
     }
 
+    @ExplodeLoop
     private Object[] valuesWithSpread(VirtualFrame frame) {
         List<Object> values = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {

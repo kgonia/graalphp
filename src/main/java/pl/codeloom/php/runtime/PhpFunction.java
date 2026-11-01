@@ -130,16 +130,26 @@ public final class PhpFunction {
         this.builtin = builtin;
     }
 
+    /**
+     * The call target, made on first call. Compiled code deoptimizes for that only where this function is a
+     * constant of the compilation (a call site's cached callee), so that it reads the target as a constant from
+     * then on. Reached through generic dispatch (call_user_func_array, a hook's callbacks) it isn't one, and a
+     * deoptimization there for every function not yet called was DeoptCyclePatterns.md's dispatch-node cycle:
+     * WP_Hook::apply_filters deoptimized and was compiled again for each new callback it met.
+     */
     public RootCallTarget getCallTarget() {
         RootCallTarget target = callTarget;
         if (target == null) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
+            if (CompilerDirectives.isPartialEvaluationConstant(this)) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+            }
             target = createCallTarget();
         }
         return target;
     }
 
     /** Once, also when contexts on several threads call the function first at the same time. */
+    @TruffleBoundary
     private synchronized RootCallTarget createCallTarget() {
         if (callTarget == null) {
             if (isAbstract) {

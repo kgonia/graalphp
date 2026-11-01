@@ -8,8 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
 cpus=${CPUSET:-6-13}
-MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} -v "$root:/w" -w /w \
-  "${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4}" sh bench/native/agent.sh > target/native-agent.log 2>&1
+# SKIP_AGENT=1 builds from the metadata already in target/native/config (e.g. tests/gate2/native.sh agent's)
+[ -n "${SKIP_AGENT:-}" ] || MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} \
+  -v "$root:/w" -w /w "${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4}" sh bench/native/agent.sh > target/native-agent.log 2>&1
 start=$(date +%s)
 MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus "$cpus" ${NI_OPTS:+-e NI_OPTS="$NI_OPTS"} ${NI_NAME:+-e NI_NAME="$NI_NAME"} \
   ${NI_MAIN:+-e NI_MAIN="$NI_MAIN"} ${NI_CLASSES:+-e NI_CLASSES="$NI_CLASSES"} -v "$root:/w" -w /w \

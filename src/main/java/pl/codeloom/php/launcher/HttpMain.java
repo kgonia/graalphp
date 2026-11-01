@@ -128,8 +128,12 @@ public final class HttpMain {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
         // -Dphp.http.closeAfter=n, for profiling: after n PHP requests the server stops and closes the engine, so
-        // that its tools write their output (the CPU sampler's, at the engine's close)
+        // that its tools write their output (the CPU sampler's, the compilation statistics, at the engine's close).
+        // -Dphp.http.closeFile=path does the same after the first request that finds the file there, for a driver
+        // that doesn't know the count in advance (tests/gate2/compile-diag.sh).
         int closeAfter = Integer.getInteger("php.http.closeAfter", 0);
+        String closeFileName = System.getProperty("php.http.closeFile");
+        Path closeFile = closeFileName == null ? null : Path.of(closeFileName);
         AtomicBoolean closing = new AtomicBoolean();
         http.createContext("/", exchange -> {
             try (exchange) {
@@ -137,7 +141,9 @@ public final class HttpMain {
             } catch (RuntimeException | IOException e) {
                 System.err.println("request failed: " + e);
             }
-            if (closeAfter > 0 && server.scripts.get() >= closeAfter && closing.compareAndSet(false, true)) {
+            boolean close = (closeAfter > 0 && server.scripts.get() >= closeAfter)
+                    || (closeFile != null && Files.exists(closeFile));
+            if (close && closing.compareAndSet(false, true)) {
                 new Thread(() -> {
                     http.stop(0);
                     engine.close();

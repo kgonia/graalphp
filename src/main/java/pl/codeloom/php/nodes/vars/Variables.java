@@ -54,6 +54,7 @@ public final class Variables {
     }
 
     /** A shared array the variable writes into: its own copy, which it holds instead. */
+    @TruffleBoundary // out of line, as PhpRef.separate: the copy is as long as the array, the holder updates large
     public static PhpArray separated(PhpArray shared) {
         PhpArray copy = shared.copy();
         copy.addHolder();

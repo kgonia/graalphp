@@ -33,6 +33,8 @@ public final class DimNode extends LValueNode {
     private final Object constantKey;
     /** Until a write here meets an ArrayAccess object, compiled code leaves that path out. */
     private final BranchProfile objectWrite = BranchProfile.create();
+    /** Until isset() or `??` here meets a string or an object, compiled code leaves those paths out. */
+    private final BranchProfile notArray = BranchProfile.create();
 
     /** key and constantKey are both null for `$a[]`. */
     public DimNode(ExprNode container, ExprNode key, Object constantKey) {
@@ -204,8 +206,16 @@ public final class DimNode extends LValueNode {
         if (value instanceof PhpArray array) {
             return read.execute(array, rawKey(frame)) != PhpNull.NULL;
         }
+        if (value == null || value == PhpNull.NULL) {
+            return false;
+        }
+        notArray.enter();
+        return isSetIn(value, rawKey(frame));
+    }
+
+    /** isset() of an element of a string (an offset in range) or an ArrayAccess object (offsetExists()). */
+    private boolean isSetIn(Object value, Object offsetValue) {
         if (value instanceof TruffleString string) {
-            Object offsetValue = rawKey(frame);
             if (offsetValue instanceof TruffleString s && Convert.numericValue(s) == null) {
                 return false;
             }
@@ -214,11 +224,16 @@ public final class DimNode extends LValueNode {
             return offset < 0 ? -offset <= length : offset < length;
         }
         if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return Convert.toBool(object.callMethod(this, "offsetexists", rawKey(frame)));
+            return Convert.toBool(object.callMethod(this, "offsetexists", offsetValue));
         }
         return false;
     }
 
+    /**
+     * The container and the key are evaluated once, as php-src's FETCH_DIM_IS does: isSet and execute each
+     * evaluated them again, so a nested `$a[x][y][z] ?? d` compiled 2^depth copies of the lookups below it, and
+     * an ArrayAccess container's offsetGet() or a key's side effects ran more than once.
+     */
     @Override
     public Object readIfSet(VirtualFrame frame) {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
@@ -229,7 +244,9 @@ public final class DimNode extends LValueNode {
         if (value == null || value == PhpNull.NULL) {
             return null;
         }
-        return isSet(frame) ? execute(frame) : null;
+        notArray.enter();
+        Object offset = rawKey(frame);
+        return isSetIn(value, offset) ? read.execute(value, offset) : null;
     }
 
     @Override

@@ -22,8 +22,13 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
 root=$(pwd -W 2>/dev/null || pwd)
-out=target/wpn
-db=wpn-mariadb
+# WPN_DB_SOURCE: the container the seed is dumped from (default gate2-mariadb).
+# WPN_NAME, WPN_NET, WPN_DB_PORT: another prefix for the containers, network and volume, another /24 for the
+# network and another host port for the database, so a second session runs beside this one (default wpn, 172.30.0, 3308)
+P=${WPN_NAME:-wpn}
+NET=${WPN_NET:-172.30.0}
+out=target/$P
+db=$P-mariadb
 # browse.sh's JVM options; the native server gets the same heap limit
 SERVER_OPTS="-Xmx1g -XX:TrimNativeHeapInterval=5000 -XX:G1PeriodicGCInterval=10000 -XX:MinHeapFreeRatio=10"
 SERVER_OPTS+=" -XX:MaxHeapFreeRatio=30 -XX:ReservedCodeCacheSize=512m"
@@ -42,11 +47,11 @@ admin=(/wp-admin/ /wp-admin/edit.php /wp-admin/post-new.php /wp-admin/options-ge
 # MariaDB 11.4 on CPUs 22-23, port 3307 inside (wp-config.php's), 3308 on the host
 start_db() {
   docker rm -f $db > /dev/null 2>&1 || true
-  docker network inspect wpn-net > /dev/null 2>&1 || docker network create --subnet 172.30.0.0/24 wpn-net > /dev/null
+  docker network inspect $P-net > /dev/null 2>&1 || docker network create --subnet $NET.0/24 $P-net > /dev/null
   mkdir -p $out
-  docker exec gate2-mariadb mariadb-dump -uroot -proot --single-transaction --skip-dump-date --databases wordpress \
+  docker exec ${WPN_DB_SOURCE:-gate2-mariadb} mariadb-dump -uroot -proot --single-transaction --skip-dump-date --databases wordpress \
     > $out/wordpress.sql
-  docker run -d --name $db --cpuset-cpus 22-23 --network wpn-net --ip 172.30.0.2 -p 3308:3307 \
+  docker run -d --name $db --cpuset-cpus 22-23 --network $P-net --ip $NET.2 -p ${WPN_DB_PORT:-3308}:3307 \
     -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=wordpress -e MARIADB_USER=wp -e MARIADB_PASSWORD=wp mariadb:11.4 \
     --port=3307 > /dev/null
   for _ in $(seq 60); do
@@ -73,16 +78,17 @@ volume() {
   cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
   MSYS_NO_PATHCONV=1 CPUSET=0-5 bash bench/gate1/php.sh php tools/ast-export.php target/ast \
     target/gate2/wordpress/wp-config.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php > /dev/null
-  docker volume create wpn-site > /dev/null
-  MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 0-5 -v wpn-site:/srv -v "$root:/w:ro" alpine:3 sh -c '
+  docker volume create $P-site > /dev/null
+  MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 0-5 -v $P-site:/srv -v "$root:/w:ro" alpine:3 sh -c '
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    for f in wp-http wp-http-main wp-http-s2; do
-      [ ! -f /w/target/native/$f ] || cp /w/target/native/$f /srv/target/native/
-    done
+    for f in /w/target/native/wp-http*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
     for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
+    # the Gate 1 kernels, served (tests/gate2/kernels.php): the compile diagnosis runs them on the HTTP launcher
+    rm -rf /srv/bench && mkdir -p /srv/bench && cp -r /w/bench/gate1 /srv/bench/gate1
+    cp /w/tests/gate2/kernels.php /srv/target/gate2/wordpress/gate1-kernels.php
     du -sh /srv/target/*'
 }
 
@@ -93,9 +99,9 @@ check() {
   stop native-java
 }
 
-# the server of a variant: container wpn-VARIANT on CPUSET, port 8080 inside, PORT on the host
+# the server of a variant: container $P-VARIANT on CPUSET, port 8080 inside, PORT on the host
 start() {
-  local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=gate1-truffle:8.5-graal25.4 cmd opts= env=()
+  local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
   case $variant in
     *-java|*-main) opts="-Dpolyglot.php.Parser=java" ;;
     # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image
@@ -128,29 +134,30 @@ start() {
     agent=(-v "$root/target/native/config:/agent")
     cmd=${cmd/$LAUNCHER/-agentlib:native-image-agent=config-merge-dir=/agent $LAUNCHER}
   fi
-  docker rm -f wpn-$variant > /dev/null 2>&1 || true
-  MSYS_NO_PATHCONV=1 docker run -d --name wpn-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network wpn-net \
-    --ip 172.30.0.10 --add-host host.docker.internal:172.30.0.2 "${env[@]}" "${agent[@]}" "${extra[@]}" \
-    -v wpn-site:/srv:ro -w /srv \
+  docker rm -f $P-$variant > /dev/null 2>&1 || true
+  MSYS_NO_PATHCONV=1 docker run -d --name $P-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network $P-net \
+    --ip $NET.10 --add-host host.docker.internal:$NET.2 "${env[@]}" "${agent[@]}" "${extra[@]}" \
+    -v $P-site:/srv:ro -w /srv \
     $image sh -c "$cmd" > /dev/null
   [ -z "${NOWAIT:-}" ] || return 0
   for _ in $(seq 300); do
     curl -s -o /dev/null "http://127.0.0.1:$port/wp-includes/css/dashicons.css" && return 0
     sleep 0.2
   done
-  echo "wpn-$variant did not start"; docker logs wpn-$variant 2>&1 | tail -20; return 1
+  echo "$P-$variant did not start"; docker logs $P-$variant 2>&1 | tail -20; return 1
 }
 
 stop() {
   # a JVM under the agent writes its configuration as it exits
-  docker stop -t 60 wpn-$1 > /dev/null 2>&1 || true
-  docker rm -f wpn-$1 > /dev/null 2>&1 || true
+  docker stop -t 60 $P-$1 > /dev/null 2>&1 || true
+  docker rm -f $P-$1 > /dev/null 2>&1 || true
 }
 
 # the native build's metadata: bench/native/agent.sh (the kernels and smoke tests, on both interpreters), then the
 # HTTP launcher serving the pages and wp-admin (tree and bytecode on our parser, the tree on the export). The foreign
 # calls the agent records are dropped, as agent.sh drops them.
 agent() {
+  [ -f bench/native/agent.sh ] || { echo "no native-image build on this branch (bench/native)"; exit 2; }
   local opts variant
   rm -rf target/native/config && mkdir -p target/native/config $out
   for opts in "" "-Dpolyglot.php.Interpreter=bytecode"; do
@@ -200,7 +207,7 @@ pages() {
   for page in "${admin[@]}"; do
     fetch "$dir" "admin$(echo "$page" | tr -c 'A-Za-z0-9\n' '_')" "$page" "${jar[@]}"
   done
-  docker logs wpn-$variant > "$dir/server.log" 2>&1
+  docker logs $P-$variant > "$dir/server.log" 2>&1
   echo "$variant: $(ls "$dir"/*.html | wc -l) pages, $(grep -c . "$dir/server.log" || true) server log lines"
 }
 
@@ -232,21 +239,21 @@ measure_run() { # variant visits pause name
   while [ -e $out/hold ] || [ -n "$(others_on_bench)$(others_reserving_bench)" ] || ! host_quiet; do sleep 30; done
   rm -f $runs/$name.host
   reset_db
-  MSYS_NO_PATHCONV=1 docker run --rm --name wpn-driver --cpuset-cpus 0-5 --network wpn-net --pid=host --cgroupns=host \
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-driver --cpuset-cpus 0-5 --network $P-net --pid=host --cgroupns=host \
     -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$runs:/runs" python:3.13-slim \
-    python -u /t/visits.py http://172.30.0.10:8080 /runs/$name.id "$visits" "$pause" /runs/$name.json \
+    python -u /t/visits.py http://$NET.10:8080 /runs/$name.id "$visits" "$pause" /runs/$name.json \
     > $runs/$name.log 2>&1 &
   driver=$!
   for _ in $(seq 100); do grep -q polling $runs/$name.log 2> /dev/null && break; sleep 0.1; done
-  NOWAIT=1 start "$variant" 14-21 8096
-  docker inspect -f '{{.Id}} {{.State.Pid}}' wpn-$variant > $runs/$name.id
+  NOWAIT=1 start "$variant" 14-21 ${WPN_MEASURE_PORT:-8096}
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $runs/$name.id
   while kill -0 $driver 2> /dev/null; do
     others_on_bench >> $runs/$name.others
     host_cpu >> $runs/$name.host
     sleep 10
   done
   wait $driver || true
-  docker logs wpn-$variant > $runs/$name.server.log 2>&1
+  docker logs $P-$variant > $runs/$name.server.log 2>&1
   stop "$variant"
   local shared=
   [ ! -s $runs/$name.others ] || shared=" (shared with: $(sort -u $runs/$name.others | tr '\n' ' '))"
@@ -279,7 +286,7 @@ host_quiet() {
 # containers other than this script's pinned to any of CPUs 14-21
 others_on_bench() {
   local c cpus part
-  for c in $(docker ps --format '{{.Names}}' | grep -v '^wpn-'); do
+  for c in $(docker ps --format '{{.Names}}' | grep -v "^$P-"); do
     cpus=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$c" 2> /dev/null || true)
     for part in ${cpus//,/ }; do
       if [ "${part#*-}" -ge 14 ] && [ "${part%-*}" -le 21 ]; then echo "$c:$cpus"; break; fi
@@ -287,10 +294,13 @@ others_on_bench() {
   done
 }
 
-# memory-lock reservations of other agents whose note names CPUs 14-21 (a timed job of theirs between containers)
+# memory-lock reservations of other agents whose note names CPUs 14-21 (a timed job of theirs between containers).
+# CPU_LOCK_HELD=1: this session holds the CPU lock (/c/Users/krzgo/Projects/.cpu-14-21.lock), which keeps the
+# others' timed jobs off 14-21, so their notes don't count (they would wait for this run, and it for them).
 others_reserving_bench() {
+  [ -z "${CPU_LOCK_HELD:-}" ] || return 0
   python 'C:\Users\krzgo\Projects\memory-lock\memlock.py' status 2> /dev/null | grep '14-21' \
-    | grep -v 'claude-wordpress-wpn' || true
+    | grep -v "claude-wordpress-$P" || true
 }
 
 # Rounds of every variant, the order reversed every other round. A round in which a run's median host load passed
@@ -321,9 +331,9 @@ measure() { # rounds visits pause variants...
 }
 
 clean() {
-  for c in $(docker ps -a --format '{{.Names}}' | grep '^wpn-'); do docker rm -f "$c" > /dev/null; done
-  docker volume rm wpn-site > /dev/null 2>&1 || true
-  docker network rm wpn-net > /dev/null 2>&1 || true
+  for c in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f "$c" > /dev/null; done
+  docker volume rm $P-site > /dev/null 2>&1 || true
+  docker network rm $P-net > /dev/null 2>&1 || true
 }
 
 case ${1:-} in
