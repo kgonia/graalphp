@@ -84,6 +84,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -346,6 +347,9 @@ public final class Translator {
             case "AST_STATIC":
                 return staticStatement(node);
             case "AST_UNSET":
+                if (isGlobalsElement(node.get("var")) && node.node("var").get("dim") == null) {
+                    throw compileError(node.line, "Cannot use [] for unsetting");
+                }
                 return new BasicStmts.UnsetNode(place(node.get("var")));
             case "AST_THROW":
                 return new BasicStmts.ThrowNode(expression(node.get("expr")));
@@ -453,8 +457,7 @@ public final class Translator {
         if (!returnsRef) {
             return new BasicStmts.ReturnNode(expr == null ? null : expression(expr));
         }
-        if (expr instanceof Ast ast && isPlace(ast) && !isThis(ast)
-                && !(ast.is("AST_VAR") && "GLOBALS".equals(ast.get("name")))) {
+        if (expr instanceof Ast ast && isPlace(ast) && !isThis(ast) && !isGlobals(ast)) {
             return new BasicStmts.ReturnRefNode(place(ast));
         }
         return new BasicStmts.ReturnRefValueNode(expr == null ? null : expression(expr), !isThis(expr));
@@ -527,13 +530,12 @@ public final class Translator {
         if (byRef) {
             value = value.node("var");
         }
+        // zend_compile_foreach: the value's target, the key's, then the body
+        ListAssignNode list = value.is("AST_ARRAY") ? listTarget(value) : null;
+        LValueNode target = list == null ? place(value) : null;
         LValueNode key = node.get("key") == null ? null : place(node.get("key"));
         StmtNode body = statements(node.node("stmts"));
-        if (value.is("AST_ARRAY")) {
-            return new ForeachNode(subject, key, null, listTarget(value), body, false, hiddenSlot("array"),
-                    hiddenSlot("position"), lexicalClass());
-        }
-        return new ForeachNode(subject, key, place(value), null, body, byRef, hiddenSlot("array"),
+        return new ForeachNode(subject, key, target, list, body, byRef && list == null, hiddenSlot("array"),
                 hiddenSlot("position"), lexicalClass());
     }
 
@@ -1086,7 +1088,7 @@ public final class Translator {
                 if (isThis(node)) {
                     return new ThisNode();
                 }
-                if (node.is("AST_VAR") && "GLOBALS".equals(node.get("name"))) {
+                if (isGlobals(node)) {
                     // $GLOBALS read as a whole: a value, not a place
                     return new GlobalsArrayNode();
                 }
@@ -1105,11 +1107,16 @@ public final class Translator {
                 return interpolation(node);
             case "AST_ASSIGN":
                 return assignment(node);
-            case "AST_ASSIGN_REF":
+            case "AST_ASSIGN_REF": {
+                LValueNode target = place(node.get("var"));
                 if (isCall(node.get("expr"))) {
-                    return new AssignNodes.CallRefAssignNode(place(node.get("var")), expression(node.get("expr")));
+                    return new AssignNodes.CallRefAssignNode(target, expression(node.get("expr")));
                 }
-                return new AssignNodes.RefAssignNode(place(node.get("var")), place(node.get("expr")));
+                if (isGlobals(node.get("expr"))) {
+                    throw compileError(node.line, "Cannot acquire reference to $GLOBALS");
+                }
+                return new AssignNodes.RefAssignNode(target, place(node.get("expr")));
+            }
             case "AST_ASSIGN_OP":
                 return compoundAssignment(node);
             case "AST_BINARY_OP":
@@ -1117,26 +1124,34 @@ public final class Translator {
             case "AST_UNARY_OP":
                 return unary(node);
             case "AST_PRE_INC":
-                return AssignNodes.IncDecNode.create(place(node.get("var")), true, true);
             case "AST_PRE_DEC":
-                return AssignNodes.IncDecNode.create(place(node.get("var")), false, true);
             case "AST_POST_INC":
-                return AssignNodes.IncDecNode.create(place(node.get("var")), true, false);
-            case "AST_POST_DEC":
-                return AssignNodes.IncDecNode.create(place(node.get("var")), false, false);
+            case "AST_POST_DEC": {
+                boolean increment = node.is("AST_PRE_INC") || node.is("AST_POST_INC");
+                boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
+                return readWritten(node.get("var"), target -> AssignNodes.IncDecNode.create(target, increment,
+                        prefix));
+            }
             case "AST_CONDITIONAL":
                 return new LogicNodes.TernaryNode(expression(node.get("cond")),
                         node.get("true") == null ? null : expression(node.get("true")), expression(node.get("false")));
             case "AST_ISSET":
-                if (isThis(node.get("var"))) {
-                    return new ThisNode.IsSetNode();
+            case "AST_EMPTY": {
+                Object tested = node.get(node.is("AST_ISSET") ? "var" : "expr");
+                // zend_compile_isset_or_empty: $GLOBALS is set and not empty; $GLOBALS[] is refused
+                if (isGlobals(tested)) {
+                    return new ConstNode(node.is("AST_ISSET"));
                 }
-                return new TestNodes.IssetNode(new LValueNode[]{place(node.get("var"))});
-            case "AST_EMPTY":
-                if (isThis(node.get("expr"))) {
-                    return new LogicNodes.NotNode(new ThisNode.IsSetNode());
+                if (isGlobalsElement(tested) && ((Ast) tested).get("dim") == null) {
+                    throw compileError(node.line, "Cannot use [] for reading");
                 }
-                return new TestNodes.EmptyNode(expression(node.get("expr")));
+                if (node.is("AST_ISSET")) {
+                    return isThis(tested) ? new ThisNode.IsSetNode()
+                            : new TestNodes.IssetNode(new LValueNode[]{place(tested)});
+                }
+                return isThis(tested) ? new LogicNodes.NotNode(new ThisNode.IsSetNode())
+                        : new TestNodes.EmptyNode(expression(tested));
+            }
             case "AST_CAST":
                 return UnaryNodes.CastNode.create(expression(node.get("expr")), node.flags);
             case "AST_INSTANCEOF": {
@@ -1369,25 +1384,23 @@ public final class Translator {
                     throw unsupported(node, "assignment to $this");
                 }
                 if (name.equals("GLOBALS")) {
-                    throw new PhpError("$GLOBALS can only be modified using the $GLOBALS[$name] = $value syntax");
+                    // zend_ensure_writable_variable
+                    throw compileError(node.line,
+                            "$GLOBALS can only be modified using the $GLOBALS[$name] = $value syntax");
                 }
                 return (LValueNode) variable(name);
             }
             case "AST_DIM": {
                 Object dim = node.get("dim");
-                if (node.node("expr").is("AST_VAR") && "GLOBALS".equals(node.node("expr").get("name"))
-                        && dim != null) {
+                if (isGlobals(node.get("expr"))) {
+                    // zend_delayed_compile_dim: the global variable the key names
+                    if (dim == null) {
+                        throw compileError(node.line, "Cannot append to $GLOBALS");
+                    }
                     return new GlobalsDimNode(expression(dim));
                 }
-                ExprNode container = node.node("expr").is("AST_VAR") && "this".equals(node.node("expr").get("name"))
-                        ? new ThisNode() : placeOrExpression(node.get("expr"));
-                if (dim == null) {
-                    return new DimNode(container, null, null);
-                }
-                ExprNode key = expression(dim);
-                Object constant = key.constantValue();
-                Object normalized = constant == null || constant instanceof PhpArray ? null : ArrayKey.of(constant);
-                return new DimNode(container, key, normalized);
+                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : placeOrExpression(node.get("expr"));
+                return element(container, dim == null ? null : expression(dim));
             }
             case "AST_PROP":
             case "AST_NULLSAFE_PROP": {
@@ -1407,6 +1420,26 @@ public final class Translator {
             default:
                 throw unsupported(node, "assignment target");
         }
+    }
+
+    /** An element of an array (key null for `[]`), its key normalized once when it is a constant. */
+    private static DimNode element(ExprNode container, ExprNode key) {
+        if (key == null) {
+            return new DimNode(container, null, null);
+        }
+        Object constant = key.constantValue();
+        Object normalized = constant == null || constant instanceof PhpArray ? null : ArrayKey.of(constant);
+        return new DimNode(container, key, normalized);
+    }
+
+    /** `$GLOBALS` itself (is_globals_fetch). */
+    private static boolean isGlobals(Object value) {
+        return value instanceof Ast node && node.is("AST_VAR") && "GLOBALS".equals(node.get("name"));
+    }
+
+    /** `$GLOBALS[...]` (is_global_var_fetch): a global variable, named by the key. */
+    private static boolean isGlobalsElement(Object value) {
+        return value instanceof Ast node && node.is("AST_DIM") && isGlobals(node.get("expr"));
     }
 
     /** $this, a place, or any other expression (as a container of a dimension or property). */
@@ -1445,6 +1478,18 @@ public final class Translator {
         return scope == null ? new FileVarNode(name) : new LocalVarNode(scope.slot(name), name);
     }
 
+    /** zend_propagate_list_refs: whether an element of the list, or of a list in it, is taken by reference. */
+    private static boolean listHasRefs(Ast list) {
+        boolean refs = false;
+        for (Object child : list.children()) {
+            if (child instanceof Ast element) {
+                refs |= element.node("value") != null && element.node("value").is("AST_ARRAY")
+                        ? listHasRefs(element.node("value")) : (element.flags & ARRAY_ELEM_REF) != 0;
+            }
+        }
+        return refs;
+    }
+
     private ListAssignNode listTarget(Ast list) {
         int count = list.size();
         ExprNode[] keys = new ExprNode[count];
@@ -1473,29 +1518,66 @@ public final class Translator {
     private ExprNode assignment(Ast node) {
         Ast target = node.node("var");
         if (target.is("AST_ARRAY")) {
+            // zend_compile_assign: a list with references takes them from a variable or a call only
+            if (listHasRefs(target) && !(node.get("expr") instanceof Ast value
+                    && (isPlace(value) || value.is("AST_NULLSAFE_PROP") || isCall(value)))) {
+                throw compileError(node.line, "Cannot assign reference to non referenceable value");
+            }
             return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
         }
         return AssignNodes.AssignNode.create(place(target), expression(node.get("expr")));
     }
 
     private ExprNode compoundAssignment(Ast node) {
-        LValueNode target = place(node.get("var"));
-        if (target.isPure()) {
-            return AssignNodes.CompoundAssignNode.create(target, expression(node.get("expr")), node.flags);
-        }
-        // `$a[f()] op= v` reads and writes the element: evaluate the key once, into a hidden variable
-        Ast dim = node.node("var");
-        if (dim.is("AST_DIM") && dim.get("dim") != null) {
-            String temp = "\0key" + hiddenCounter++;
-            LValueNode tempWrite = (LValueNode) variable(temp);
-            ExprNode keyInit = AssignNodes.AssignNode.create(tempWrite, expression(dim.get("dim")));
-            LValueNode element = new DimNode(placeOrExpression(dim.get("expr")), variable(temp), null);
-            if (element.isPure()) {
-                return new AssignNodes.SequenceNode(keyInit,
-                        AssignNodes.CompoundAssignNode.create(element, expression(node.get("expr")), node.flags));
+        return readWritten(node.get("var"), target -> {
+            if (!target.isPure()) {
+                throw unsupported(node, "compound assignment to a place with side effects");
             }
+            return AssignNodes.CompoundAssignNode.create(target, expression(node.get("expr")), node.flags);
+        });
+    }
+
+    /**
+     * An operation that reads a place and writes it (`op=`, `??=`, `++`): it evaluates the place twice, so every
+     * array key on the way to it that has side effects (`$a[f()][g()]`, `$GLOBALS[f()]`) is evaluated once before,
+     * in order, into a hidden variable, as php-src evaluates the keys once (zend_delayed_compile_dim).
+     */
+    private ExprNode readWritten(Object var, Function<LValueNode, ExprNode> operation) {
+        List<ExprNode> keys = new ArrayList<>();
+        LValueNode target = keysEvaluatedOnce(var, keys);
+        ExprNode result = operation.apply(target);
+        for (int i = keys.size() - 1; i >= 0; i--) {
+            result = new AssignNodes.SequenceNode(keys.get(i), result);
         }
-        throw unsupported(node, "compound assignment to a place with side effects");
+        return result;
+    }
+
+    /** The place, with its keys that have side effects moved into hidden variables (their assignments to keys). */
+    private LValueNode keysEvaluatedOnce(Object value, List<ExprNode> keys) {
+        if (!(value instanceof Ast node) || !node.is("AST_DIM") || node.get("dim") == null) {
+            return place(value);
+        }
+        Object containerAst = node.get("expr");
+        boolean globals = isGlobals(containerAst);
+        ExprNode container = null;
+        if (!globals) {
+            container = isThis(containerAst) ? new ThisNode()
+                    : containerAst instanceof Ast inner && inner.is("AST_DIM") ? keysEvaluatedOnce(inner, keys)
+                    : placeOrExpression(containerAst);
+        }
+        ExprNode key = expression(node.get("dim"));
+        if (!isPureKey(key)) {
+            String temp = "\0key" + hiddenCounter++;
+            keys.add(AssignNodes.AssignNode.create((LValueNode) variable(temp), key));
+            key = variable(temp);
+        }
+        return globals ? new GlobalsDimNode(key) : element(container, key);
+    }
+
+    /** A key that evaluating again gives the same and does nothing else: a constant or a variable. */
+    private static boolean isPureKey(ExprNode key) {
+        return key.constantValue() != null || key instanceof LocalVarNode || key instanceof FileVarNode
+                || key instanceof GlobalVarNode;
     }
 
     // ---- operators ----
@@ -1766,7 +1848,7 @@ public final class Translator {
             } else if (arg instanceof Ast ast && ast.is("AST_CALLABLE_CONVERT")) {
                 throw unsupported(ast, "first-class callable syntax");
             } else if (arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
-                    || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name"))) {
+                    || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")) && !isGlobals(ast)) {
                 args[i] = place(arg);
             } else {
                 args[i] = expression(arg);
