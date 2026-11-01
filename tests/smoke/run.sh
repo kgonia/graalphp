@@ -26,6 +26,10 @@ for n in "${names[@]}"; do
   else
     cp "target/smoke/$n.actual" "target/smoke/$n.traced"
   fi
+  # tests/smoke/NAME.filter, a sed script, drops from each output what can't be the same on both sides
+  if [ -f "tests/smoke/$n.filter" ]; then
+    for out in expected actual shared traced; do sed -i -f "tests/smoke/$n.filter" "target/smoke/$n.$out"; done
+  fi
   if ! diff -q "target/smoke/$n.expected" "target/smoke/$n.actual" > /dev/null; then
     echo "FAIL $n (diff target/smoke/$n.expected target/smoke/$n.actual)"
     failed=1

@@ -19,13 +19,17 @@ public final class NativeCallsFeature implements Feature {
             "pl.codeloom.php.builtins.CurlNative$Library",
             "pl.codeloom.php.builtins.CurlNative$Upcalls",
             "pl.codeloom.php.builtins.CurlFunctions$StderrFile$Libc",
-            "pl.codeloom.php.builtins.ExecFunctions$Libc");
+            "pl.codeloom.php.builtins.ExecFunctions$Libc",
+            "pl.codeloom.php.builtins.Syslog$Libc");
     /** The classes that hold native state (upcall stubs, native memory, a library's initialization): run time. */
     static final List<String> NATIVE_STATE = List.of(
             "pl.codeloom.php.builtins.CurlNative$GlobalInit",
             "pl.codeloom.php.builtins.CurlNative$Callbacks",
             "pl.codeloom.php.builtins.CurlFunctions$StderrFile$Cookie",
-            "pl.codeloom.php.builtins.ExecFunctions$CommandLimit");
+            "pl.codeloom.php.builtins.ExecFunctions$AddChdir",
+            "pl.codeloom.php.builtins.ExecFunctions$CommandLimit",
+            "pl.codeloom.php.builtins.Syslog$Available",
+            "pl.codeloom.php.builtins.Syslog$Idents");
 
     @Override
     public void duringSetup(DuringSetupAccess access) {

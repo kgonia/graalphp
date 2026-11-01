@@ -19,6 +19,8 @@ public final class BuiltinState {
     /** ext/curl's handles and the exception a callback left pending. */
     final CurlFunctions.State curl = new CurlFunctions.State();
     final WeakReferences.State weakReferences = new WeakReferences.State();
+    /** PG(have_called_openlog): php_syslog opens the log once a request. */
+    boolean calledOpenlog;
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;
