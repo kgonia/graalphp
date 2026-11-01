@@ -5,6 +5,7 @@ import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.Phases;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -59,6 +60,7 @@ final class Prelude {
 
     static FileRootNode translate(PhpLanguage language, String file) {
         Ast ast;
+        int outer = Phases.enter(Phases.PARSE);
         try (InputStream in = Prelude.class.getResourceAsStream(RESOURCES + file + ".json")) {
             if (in == null) {
                 throw new PhpError("prelude file " + file + " has no AST export");
@@ -66,7 +68,14 @@ final class Prelude {
             ast = AstReader.read(in);
         } catch (IOException e) {
             throw new PhpError("reading prelude file " + file + " failed: " + e.getMessage());
+        } finally {
+            Phases.exit(outer);
         }
-        return new Translator(language, path(file), null, true).translateFile(ast);
+        outer = Phases.enter(Phases.FILE_TRANSLATE);
+        try {
+            return new Translator(language, path(file), null, true).translateFile(ast);
+        } finally {
+            Phases.exit(outer);
+        }
     }
 }

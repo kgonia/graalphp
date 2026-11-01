@@ -11,4 +11,7 @@ package pl.codeloom.php.parser;
 public abstract class AstBody {
     /** The body as a fresh tree; its own nested bodies are again unread. */
     protected abstract Ast read();
+
+    /** The body's size where it is kept: characters of the source text, or bytes of the export. */
+    protected abstract int size();
 }

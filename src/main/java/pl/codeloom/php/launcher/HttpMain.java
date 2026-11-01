@@ -1,5 +1,6 @@
 package pl.codeloom.php.launcher;
 
+import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.Str;
 
 import com.sun.net.httpserver.Headers;
@@ -152,6 +153,9 @@ public final class HttpMain {
             }
         });
         http.start();
+        if (Phases.ENABLED) {
+            RequestPhases.printStart();
+        }
         System.err.println("listening on " + host + ":" + port + " (" + threads + " threads), docroot "
                 + server.docroot);
     }
@@ -202,6 +206,8 @@ public final class HttpMain {
             return;
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        // -Dphp.phases=true: the request's phases, printed once it is answered
+        RequestPhases phases = Phases.ENABLED ? new RequestPhases() : null;
         try (Context context = Context.newBuilder("php")
                 .engine(engine)
                 // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
@@ -218,7 +224,16 @@ public final class HttpMain {
                 .option("php.SourceRoot", sourceRoot)
                 .arguments("php", new String[] {script.toString()})
                 .build()) {
-            context.eval(Source.newBuilder("php", script.toFile()).build());
+            if (phases != null) {
+                phases.contextReady();
+            }
+            try {
+                context.eval(Source.newBuilder("php", script.toFile()).build());
+            } finally {
+                if (phases != null) {
+                    phases.evaluated();
+                }
+            }
         } catch (PolyglotException e) {
             if (!e.isExit()) {
                 // the runtime reports PHP's errors itself (to stderr with log_errors); this failed outside them
@@ -228,7 +243,10 @@ public final class HttpMain {
                 }
             }
         }
-        sendCgiResponse(exchange, out.toByteArray());
+        int status = sendCgiResponse(exchange, out.toByteArray());
+        if (phases != null) {
+            phases.print(exchange.getRequestMethod(), exchange.getRequestURI().toString(), status);
+        }
     }
 
     private Map<String, String> cgiEnvironment(HttpExchange exchange, Path script, String scriptName, int length) {
@@ -267,8 +285,8 @@ public final class HttpMain {
         return env;
     }
 
-    /** A CGI response: a header block (Status and headers) up to an empty line, then the body. */
-    private static void sendCgiResponse(HttpExchange exchange, byte[] output) throws IOException {
+    /** A CGI response: a header block (Status and headers) up to an empty line, then the body; its status. */
+    private static int sendCgiResponse(HttpExchange exchange, byte[] output) throws IOException {
         int status = 200;
         int bodyStart = 0;
         Headers headers = exchange.getResponseHeaders();
@@ -298,6 +316,7 @@ public final class HttpMain {
                 stream.write(body);
             }
         }
+        return status;
     }
 
     private static int headerEnd(byte[] output) {
