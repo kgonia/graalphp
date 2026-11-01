@@ -179,23 +179,21 @@ public final class Str {
     /**
      * The parts joined, glue (or nothing, when null) between them: each part a TruffleString or a Long, which is
      * written as its digits. One exact array and one copy per part, out of line: inlined at every interpolation and
-     * implode(), a TruffleStringBuilder's appends were a large part of big compiled PHP functions.
+     * implode(), a TruffleStringBuilder's appends were a large part of big compiled PHP functions. The parts are
+     * copied straight into the result, so the join allocates only the result (no array of the parts' bytes, no
+     * string per int).
      */
     @TruffleBoundary
     public static TruffleString join(TruffleString glue, Object[] parts) {
         if (parts.length == 1 && parts[0] instanceof TruffleString only) {
             return only;
         }
-        InternalByteArray[] pieces = new InternalByteArray[parts.length];
-        InternalByteArray glueBytes = glue == null ? null : glue.getInternalByteArrayUncached(ENC);
+        int glueLength = glue == null ? 0 : glue.byteLength(ENC);
         long total = 0;
         for (int i = 0; i < parts.length; i++) {
-            TruffleString part = parts[i] instanceof Long number ? TruffleString.fromLongUncached(number, ENC, false)
-                    : (TruffleString) parts[i];
-            pieces[i] = part.getInternalByteArrayUncached(ENC);
-            total += pieces[i].getLength();
-            if (glueBytes != null && i > 0) {
-                total += glueBytes.getLength();
+            total += parts[i] instanceof Long number ? digits(number) : ((TruffleString) parts[i]).byteLength(ENC);
+            if (i > 0) {
+                total += glueLength;
             }
         }
         if (total > Integer.MAX_VALUE - 8) {
@@ -203,15 +201,50 @@ public final class Str {
         }
         byte[] out = new byte[(int) total];
         int at = 0;
-        for (int i = 0; i < pieces.length; i++) {
-            if (glueBytes != null && i > 0) {
-                System.arraycopy(glueBytes.getArray(), glueBytes.getOffset(), out, at, glueBytes.getLength());
-                at += glueBytes.getLength();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0 && glueLength > 0) {
+                glue.copyToByteArrayUncached(0, out, at, glueLength, ENC);
+                at += glueLength;
             }
-            System.arraycopy(pieces[i].getArray(), pieces[i].getOffset(), out, at, pieces[i].getLength());
-            at += pieces[i].getLength();
+            if (parts[i] instanceof Long number) {
+                at = writeDigits(number, out, at);
+            } else {
+                TruffleString part = (TruffleString) parts[i];
+                int length = part.byteLength(ENC);
+                part.copyToByteArrayUncached(0, out, at, length, ENC);
+                at += length;
+            }
         }
         return TruffleString.fromByteArrayUncached(out, ENC, false);
+    }
+
+    /** The length of an int's decimal digits, with its sign. */
+    private static int digits(long number) {
+        if (number == Long.MIN_VALUE) {
+            return 20;
+        }
+        long n = Math.abs(number);
+        int length = number < 0 ? 2 : 1;
+        while (n >= 10) {
+            n /= 10;
+            length++;
+        }
+        return length;
+    }
+
+    /** Writes an int's decimal digits at at, as digits() counts them; the index after them. */
+    private static int writeDigits(long number, byte[] out, int at) {
+        int end = at + digits(number);
+        long n = number;
+        int i = end;
+        do {
+            out[--i] = (byte) ('0' + Math.abs(n % 10));
+            n /= 10;
+        } while (n != 0);
+        if (number < 0) {
+            out[at] = '-';
+        }
+        return end;
     }
 
     @TruffleBoundary
