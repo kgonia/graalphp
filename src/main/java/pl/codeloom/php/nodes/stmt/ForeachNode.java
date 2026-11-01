@@ -225,13 +225,21 @@ public final class ForeachNode extends StmtNode {
                 Str.of("foreach() argument must be of type array|object, " + type + " given"), SourceLocation.of(site));
     }
 
+    /** The loop holds the array; it lets go once on each exit (a finally is copied onto both by javac). */
     private void iterate(VirtualFrame frame, PhpArray array) {
         array.addHolder();
         try {
             runArray(frame, array);
-        } finally {
-            array.removeHolder();
+        } catch (Throwable t) {
+            letGo(array);
+            throw t;
         }
+        array.removeHolder();
+    }
+
+    @TruffleBoundary
+    private static void letGo(PhpArray array) {
+        array.removeHolder();
     }
 
     private void executeByRef(VirtualFrame frame) {
