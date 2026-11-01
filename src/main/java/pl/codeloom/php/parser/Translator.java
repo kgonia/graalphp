@@ -30,6 +30,7 @@ import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.CompareNodes;
 import pl.codeloom.php.nodes.expr.ConstNode;
 import pl.codeloom.php.nodes.expr.ConstantNodes;
+import pl.codeloom.php.nodes.expr.ConcatChainNode;
 import pl.codeloom.php.nodes.expr.IncludeNode;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.LogicNodes;
@@ -74,6 +75,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -1403,13 +1405,30 @@ public final class Translator {
         }
     }
 
-    /** Concatenation of two literals folds to a literal (common in long split strings). */
+    /**
+     * Concatenation of two literals folds to a literal (common in long split strings); a chain of three or more
+     * operands is one ConcatChainNode. concatParts keeps each concatenation's operands, so the next `.` extends it.
+     */
     private ExprNode foldConcat(ExprNode left, ExprNode right) {
         if (left.constantValue() instanceof TruffleString a && right.constantValue() instanceof TruffleString b) {
             return new ConstNode(language.intern(Str.concat(a, b)));
         }
-        return ArithmeticNodesFactory.ConcatNodeGen.create(left, right);
+        List<ExprNode> leftParts = concatParts.get(left);
+        List<ExprNode> parts = new ArrayList<>();
+        if (leftParts != null) {
+            parts.addAll(leftParts);
+        } else {
+            parts.add(left);
+        }
+        parts.add(right);
+        ExprNode concat = parts.size() == 2 ? ArithmeticNodesFactory.ConcatNodeGen.create(left, right)
+                : new ConcatChainNode(parts.toArray(new ExprNode[0]));
+        concatParts.put(concat, parts);
+        return concat;
     }
+
+    /** The operands of the concatenations made so far (foldConcat), by node identity. */
+    private final Map<ExprNode, List<ExprNode>> concatParts = new IdentityHashMap<>();
 
     private ExprNode unary(Ast node) {
         ExprNode operand = expression(node.get("expr"));
