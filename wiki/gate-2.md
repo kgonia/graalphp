@@ -482,3 +482,146 @@ php-src 8.5.12's grammar and scanner through Bison 3.8.2 and re2c 4.6 ([D14](dec
 - php-src `.phpt` (`--reuse-oracle`, CPUs 6-13): 3255 of 7341 strict (44.3%), against 3112 (42.4%) on the export at the same commit. 145 cases newly pass, all of them files without an export: their compile errors (`Multiple access type modifiers are not allowed`, ...) now come out as PHP's, the error logs equal. 78 more such files now run and fail further on. Two cases fail only on the parser, and both print a random number (`random_int`, `rand`).
 - Gate 1 (`bench/gate1/run.php all 20`, CPUs 2-5): the checksums of all 140 kernel iterations are PHP's, on the export and on the parser alike. The container's peak memory was 786 MB on the parser against 1034 MB on the export (one run each).
 - A file that doesn't parse throws PHP's ParseError or CompileError at the include; the script itself is reported as PHP reports it (`Parse error: ... on line N`, status 255). The parse's deprecations come once per translation, as PHP with opcache, which the reference runs with, gives them.
+
+## WordPress on native image with our own parser, 2026-10-31
+Branch `wp-native` is #6 (`native-calls`) with `bytecode-s1` merged, so one build has three things: the native-call helper, our parser (D14) and the bytecode interpreter. `tests/gate2/native.sh` runs it. `tests/gate2/visits.py` drives the visits by plain HTTP; there is no browser and no video pipeline.
+
+**Setup:**
+- **The HTTP launcher as a native image:** `NI_MAIN=pl.codeloom.php.launcher.HttpMain` gives a 92.8 MB binary, built in 2 min 33 s with a builder peak RSS of 5.95 GiB.
+  - Its metadata comes from the kernels and smoke tests on both interpreters, plus the JVM server serving the pages below under the agent (`native.sh agent`).
+  - That makes 78 reflection entries and 34 resources, against 27 and 28 from the kernels alone. Among the additions are the MariaDB connector's codecs, the CLDR time-zone names and the HTTP URL handler.
+  - The per-call check passes through the native server: `preg_match` 81 ns, `curl_escape` 198 ns.
+- **Main's tree, for comparison:** `jvm-main` and `native-main` are `native-calls` without S1, plus `HttpMain`'s fix (below). The native one is 86.4 MB, built in 3 min 10 s.
+  - S1 refactored the tree, and with compilation off its first measurement had that tree 0–17% slower than main's.
+  - So `jvm-main` is today's baseline, and the S1-tree variants (`jvm-java`, `native-java`) are set against it.
+- **A database of its own:** MariaDB 11.4 (`wpn-mariadb`, CPUs 22-23), seeded from a dump of Gate 2's `wordpress` database and reset before every server.
+  - The dump's admin carried 1,921 session tokens from the browser visits: 600 KB that WordPress unserializes on every logged-in request. The copy starts with none.
+  - Every server container maps `host.docker.internal` to this database, so `wp-config.php` is unchanged and PHP, the JVM and native reach it the same way.
+- **No bind mount:** the site, its ASTs, the classes, the jars and the native builds sit in a Docker volume.
+
+**Two things the setup found:**
+- **No server had run our parser.** `HttpMain` built its engine without experimental options, so `-Dpolyglot.php.Parser=java` was refused, and `php.Interpreter=bytecode` with it. Fixed (`0e1b22a`).
+- **`browse.sh`'s Truffle PHP reached MariaDB through the Windows host, PHP over the Docker bridge.**
+  - `HttpMain` gives a request only its CGI variables, as php-fpm does with `clear_env`, so `getenv('GATE2_DB_HOST')` was false.
+  - `wp-config.php` then fell back to `host.docker.internal:3307`: Docker Desktop's port forwarding to `gate2-mariadb`.
+  - `php -S` passes its environment, so PHP took the bridge.
+  - Gate 2's earlier GraalVM-against-PHP page waits (the video's, `memory.sh`'s) carry this route difference, of unmeasured size. The CPU per visit doesn't.
+
+**Correctness.** `native.sh pages` fetches 21 pages per variant from a freshly reset database, and `native.sh compare` checks them against PHP 8.5.12's: status, `Location` and body.
+- The pages: the home page, a post, a page, a category, the RSS feed, the login form, the REST index and `/wp/v2/posts`, a search, a missing page, two fatal errors, the login itself, and seven wp-admin pages (dashboard, posts, new post, general options, users, plugins, profile).
+- The bodies are masked as `http.sh` masks them (`tests/gate2/mask.sh`): nonces, generated passwords, the seconds fields, timestamps and dates, `ver=` and the C library's error texts.
+- One more mask: the clock's time in the format previews of the general options page. The variants are fetched minutes apart, not side by side.
+
+| variant | parser | identical to PHP 8.5 |
+|---|---|---|
+| JVM, tree (S1's) | export | 19 / 21 |
+| JVM, tree (S1's) | ours | 19 / 21 |
+| JVM, bytecode | ours | 19 / 21 |
+| JVM, tree (main's) | ours | 19 / 21 |
+| native, tree (S1's) | ours | 19 / 21 |
+| native, bytecode | ours | 19 / 21 |
+| native, tree (main's) | ours | 19 / 21 |
+
+- The two that differ, the post and the page, lack only the `oEmbed (XML)` link, as since Gate 2's first pages: there is no `SimpleXMLElement`.
+- So our parser changes no page, and neither does native image nor the bytecode interpreter.
+- The native servers' logs are line for line the JVM's: no missing reflection, resource or foreign registration. The java-parser servers ran without an AST root, so no file came from the export.
+
+**The bytecode interpreter on WordPress** (`-Dphp.bytecode.report=true` on the JVM; a native image fixes that property at build time, and the translator is the same):
+- Of the 3,353 functions the pages call (generators aside), 439 run on bytecode (13.1%) and 2,914 stay on the tree.
+- The first construct that keeps a function on the tree:
+
+| construct | functions |
+|---|---|
+| property access | 545 (18.7%) |
+| method and static calls | 491 (16.8%) |
+| `isset` / `empty` | 488 (16.7%) |
+| `global` | 403 (13.8%) |
+| a built-in the tree compiles in place (`is_array`, `is_string`, `in_array`, `trim`, ...) | 380 (13.0%) |
+| casts | 117 (4.0%) |
+| constants | 89 (3.1%) |
+| the rest (`new`, `static`, `instanceof`, binary operators, ...) | 401 (13.8%) |
+
+The bytecode interpreter covers few of WordPress's functions yet. What porting more of it could gain is in [bytecode-dsl.md](bytecode-dsl.md), "What S2 could gain on WordPress": at most 6.7% of a native cold visit, and 1.2% of a warm one.
+
+**The measurement** (`tests/gate2/native.sh measure 3 200 1`, 14:14–16:20):
+- **Variants:** seven, all on our parser except `jvm-export`.
+- **Rounds:** three, the variants interleaved, the order reversed every other round. Every run is on a server just started and a database just reset.
+- **The visit:** `visits.py` loads the six pages of Gate 2's browser visit by plain HTTP: the home page, a post, the login form, logging in, the dashboard and the posts list. Every visit uses a cookie jar of its own, so every visit logs in. It skips static files.
+- **Placement:** the server runs on CPUs 14-21, the client on 0-5, the database on 22-23.
+- **What one run is:**
+  - a cold visit right after the first response;
+  - then 200 visits, each after a 1 s pause;
+  - CPU is the server's cgroup `usage_usec`, from the end of the visit before, so the pause is included.
+- **What's reported:** a cell is the median of the three rounds, with their range.
+  - "Warm" means the median over visits 151–200.
+  - Memory is the server processes' RssAnon, and the cgroup's `memory.peak` so far.
+- **Load on the box:** no visit failed, and no other container was pinned to 14-21.
+  - Pinning holds only inside the Docker VM, whose CPUs share the host's. Earlier runs, made while other sessions loaded the host to 91–100%, read up to 1.7× slower; they were thrown away.
+  - These runs started only on a quiet host. Its median CPU during them was 2–35%, the server's own share included.
+
+| variant | start → first response | start → cold home page | cold visit: wait, CPU | warm: wait per visit | warm: CPU-s per visit | RssAnon: start, cold, warm | memory.peak: cold, warm |
+|---|---|---|---|---|---|---|---|
+| **JVM, main's tree** (`jvm-main`, the baseline) | 0.76 s | 2.65 s | 3.04 s (2.93–3.14), 16.2 | 0.440 s (0.435–0.440) | 1.73 | 113, 854, 1122 MB | 911, 2455 MB |
+| JVM, S1's tree (`jvm-java`) | 0.75 s | 2.64 s | 2.96 s (2.95–3.49), 16.0 | 0.442 s (0.428–0.443) | 1.76 | 112, 856, 1304 MB | 953, 2565 MB |
+| JVM, S1's tree, the php-ast export (`jvm-export`) | 0.77 s | 2.43 s | 2.79 s (2.72–2.93), 15.0 | 0.496 s (0.443–0.499) | 1.90 | 111, 909, 990 MB | 989, 2718 MB |
+| **native, main's tree** (`native-main`) | 0.51 s | 1.28 s | **1.63 s** (1.63–1.64), 5.1 | **0.608 s** (0.606–0.612) | 3.60 | 2, 364, 808 MB | 430, 1762 MB |
+| native, S1's tree (`native-java`) | 0.50 s | 1.31 s | 1.68 s (1.65–1.76), 5.2 | 0.613 s (0.604–0.613) | 3.60 | 2, 362, 869 MB | 440, 1781 MB |
+| **native, bytecode** (`native-bc`: tail-call handlers, S1's fixes) | 0.50 s | 1.35 s | 1.70 s (1.68–1.75), 5.3 | 0.623 s (0.612–0.630) | 4.19 | 2, 368, 812 MB | 422, 1735 MB |
+| **PHP 8.5.12** (OPcache, tracing JIT, `php -S`, 4 workers), for scale | 0.53 s | 1.11 s | 0.81 s (0.80–0.85), 0.8 | 0.262 s (0.262–0.263) | 0.24 | 31, 40, 55 MB | 90, 107 MB |
+
+- **"Start → first response"** includes about 0.5 s of Docker's container start, which PHP's 0.53 s shows.
+  - Timed inside the container, from the command to the first static file: native 6–15 ms, PHP 24–31 ms, the JVM 245–248 ms (three starts each).
+  - In the first round's first five runs the client still polled with a long connect timeout, so it could wait for ARP on an address no container had yet. jvm-java's 0.93 s is one of those runs.
+- **Against `jvm-main`, today's baseline:**
+
+| | cold visit | warm visit |
+|---|---|---|
+| native, main's tree | **1.87× faster** | **0.72×** (1.38× slower) |
+| native, S1's tree | 1.81× | 0.72× |
+| native, bytecode | 1.79× | 0.71× |
+| JVM, S1's tree | 1.03× | 1.00× |
+| JVM, the export | 1.09× | 0.89× (the range reaches 0.99×) |
+| PHP 8.5 | 3.75× | 1.68× |
+
+- **Bytecode buys nothing on WordPress.** Native bytecode is 0.99× the native S1 tree on the cold visit and 0.98× on a warm one; against main's tree, 0.96× and 0.98×. It also spends 16% more CPU per warm visit: 4.19 against 3.60 CPU-s.
+  - It covers 13% of the functions called, and the S2 analysis bounds what more coverage could give.
+- **The S1 tree costs nothing on WordPress either.** Against main's tree it is 1.03× cold and 1.00× warm on the JVM, and 0.97× cold and 0.99× warm natively.
+  - K0 with compilation off had it 0–17% slower. On WordPress a third of a cold visit's time is in built-ins, and the interpreted PHP code is spread over thousands of functions (see the S2 analysis).
+- **Our parser against the export, on the JVM:**
+  - It is 6% slower on the cold visit (2.96 against 2.79 s): the parser itself runs cold.
+  - It is equal to 11% faster warm (0.442 against 0.496 s; the export's three rounds read 0.44–0.50).
+  - Warm RssAnon is 1304 against 990 MB, but the range is wide (the export's runs: 859–1276).
+- **Native image: less memory, fast to start and on cold code, slower warm.**
+  - It serves the cold visit 1.9× faster than the JVM with a third of the CPU (5 against 16 CPU-s).
+  - Warm it is 0.72× the JVM. Gate 1's kernels run at 0.59× natively.
+  - Its RssAnon is 808 against 1122 MB, and its peak 1.76 against 2.46 GB: both 0.72×.
+  - But it spends 2.1× the JVM's CPU per warm visit (3.6 against 1.7 CPU-s). On the JVM, CPU falls from 3.3 to 1.1–1.6 CPU-s around visit 100, as its compilation settles; natively it stays at 3.6–4.6 through all 200 visits.
+
+**The curve.** The median wait per visit; visit 1 is the cold one:
+
+| visits | jvm-main | jvm-java | jvm-export | native-main | native-java | native-bc | php |
+|---|---|---|---|---|---|---|---|
+| 1 | 3.043 | 2.962 | 2.793 | 1.626 | 1.684 | 1.698 | 0.814 |
+| 2 | 0.827 | 0.896 | 0.827 | 0.873 | 0.874 | 0.881 | 0.294 |
+| 3 | 0.708 | 0.735 | 0.712 | 0.646 | 0.656 | 0.649 | 0.277 |
+| 4–5 | 0.641 | 0.645 | 0.652 | 0.634 | 0.645 | 0.648 | 0.277 |
+| 6–10 | 0.589 | 0.604 | 0.594 | 0.604 | 0.605 | 0.608 | 0.267 |
+| 11–20 | 0.545 | 0.554 | 0.548 | 0.583 | 0.587 | 0.583 | 0.263 |
+| 21–30 | 0.511 | 0.512 | 0.511 | 0.574 | 0.601 | 0.579 | 0.265 |
+| 31–50 | 0.486 | 0.497 | 0.514 | 0.582 | 0.581 | 0.577 | 0.267 |
+| 51–75 | 0.469 | 0.475 | 0.507 | 0.590 | 0.598 | 0.597 | 0.264 |
+| 76–100 | 0.459 | 0.460 | 0.492 | 0.616 | 0.622 | 0.612 | 0.263 |
+| 101–150 | 0.432–0.443 | 0.435–0.458 | 0.451–0.461 | 0.619–0.621 | 0.619–0.620 | 0.617–0.621 | 0.261–0.262 |
+| 151–200 | 0.439 | 0.442 | 0.494 | 0.608 | 0.612 | 0.623 | 0.262 |
+
+- **Where native and the JVM cross:**
+  - Per visit, the JVM is as fast as native by visits 6–10, and faster from then on.
+  - In total time from the server's start (pauses left out), the JVM catches up after 37 visits (native-main; native-java 33, native-bc 38).
+  - Native never catches PHP, which is 2.3× faster warm. Per page, warm: home 89 against 24 ms, dashboard 87 against 24, login 204 against 158 (most of that is password hashing).
+- **What still blocks native for WordPress:**
+  - PHP code runs at 0.72× the JVM warm, and the native CPU per visit doesn't fall the way the JVM's does.
+  - Runtime compilation's memory isn't capped by `-Xmx`: the peak is 1.76 GB at `-Xmx1g`.
+  - curl handles are freed only when the GC runs (native-calls.md).
+  - Native smoke still differs on `stdstreams`.
+  - Natively, the bytecode report and other `-D` properties read into static finals are fixed at build time.
+  - Missing reflection, resources and foreign registrations: none on these pages.
