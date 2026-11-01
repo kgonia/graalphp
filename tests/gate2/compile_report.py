@@ -18,7 +18,7 @@ import sys
 OURS = 'pl.codeloom.php.'
 DONE = re.compile(r'^\[engine\] opt done\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|Tier (\d)\|Time\s+(\d+)\(\s*(\d+)\+(\d+)\s*\)ms'
                   r'\|AST\s+(\d+)\|Inlined\s+(\d+)Y\s+(\d+)N\|IR\s+(\d+)/\s*(\d+)\|CodeSize\s+(\d+)')
-FAILED = re.compile(r'^\[engine\] opt failed\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|Tier (\d)\|Time\s+(\d+)\(.*?\|Reason: (.*?)\|UTC')
+FAILED = re.compile(r'^\[engine\] opt failed\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|Tier (\d)\|Time\s+(\d+)\(.*?\|Reason: (.*?)(?:\|UTC|$)')
 INVAL = re.compile(r'^\[engine\] opt inval\.\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|.*\|Reason (.*)$')
 DEOPT = re.compile(r'^\[engine\] opt deopt\s+engine=\d+\s+id=(\d+)\s+(.*?)\s*\|.*\|Reason (.*)$')
 PRINTED = re.compile(r'^\[engine\] opt fail\s+(.*?)\s*\|AST')
@@ -40,7 +40,9 @@ def kind_of(reason):
     r = reason.lower()
     if 'deopt taken too many times' in r or 'deopt cycle' in r:
         return 'deopt cycle'
-    if 'graph too big' in r or 'maximumgraalgraphsize' in r or 'too many nodes' in r or 'exceeded' in r:
+    if 'compilation exceeded' in r and 'seconds' in r:
+        return 'timeout'
+    if 'graph too big' in r or 'maximumgraalgraphsize' in r or 'too many nodes' in r:
         return 'graph too big'
     if 'should not be materialized' in r or 'must not let virtual object escape' in r:
         return 'frame escapes'
@@ -304,8 +306,29 @@ def report(run, top):
     print()
 
 
+# The baseline after the fixes, with room. On the JVM HotSpot refuses code over 640 KB: WP_Query::get_posts and a
+# file's top level stay interpreted. The native image installs them: get_posts is the largest (92,357 IR nodes) and
+# slowest (34 s at the last tier) compilation, and Graal's speculations on implicit exceptions recompile it.
+LIMITS = {
+    'jvm': {'failures': 0, 'code-too-large': 2, 'deopt-cycles': 0, 'ir': 60000, 'compile-ms': 20000,
+            'compile-s': 1100, 'recompilations': 10, 'perf-warnings': 0},
+    'native': {'failures': 0, 'code-too-large': 0, 'deopt-cycles': 0, 'ir': 100000, 'compile-ms': 40000,
+               'compile-s': 1700, 'recompilations': 14, 'perf-warnings': 0},
+}
+
+
+class Limits:
+    """The thresholds for one run: the options given, else the engine's defaults."""
+    def __init__(self, args, name):
+        engine = 'native' if name.endswith('native') else 'jvm'
+        for key, default in LIMITS[engine].items():
+            given = getattr(args, 'max_' + key.replace('-', '_'))
+            setattr(self, 'max_' + key.replace('-', '_'), default if given is None else given)
+
+
 def check(run, args):
     """The thresholds a run must stay within; the messages of those it exceeds."""
+    args = Limits(args, run.name)
     problems = []
     kinds = collections.Counter(kind_of(f[4]) for f in run.failed if kind_of(f[4]) != 'cancelled')
     too_large = kinds.pop('code too large', 0)
@@ -344,18 +367,18 @@ def main():
     p.add_argument('dir')
     p.add_argument('--top', type=int, default=12)
     p.add_argument('--check', action='store_true', help='exit 1 when a run exceeds a threshold')
-    # thresholds: the baseline after the fixes on the JVM and the native image (wiki/partial-evaluation.md, "The
-    # baseline"), with room for the run-to-run spread; a run of compile-diag.sh's defaults
-    p.add_argument('--max-failures', type=int, default=0,
-                   help='failed compilations and permanent bailouts, other than code too large')
-    p.add_argument('--max-code-too-large', type=int, default=2,
-                   help='compilations whose code was too large to install (HotSpot only: WP_Query::get_posts)')
-    p.add_argument('--max-deopt-cycles', type=int, default=0)
-    p.add_argument('--max-ir', type=int, default=60000, help='IR nodes after partial evaluation, one compilation')
-    p.add_argument('--max-compile-ms', type=int, default=20000, help='one compilation')
-    p.add_argument('--max-compile-s', type=int, default=1100, help='all compilations of a run')
-    p.add_argument('--max-recompilations', type=int, default=10, help='compilations of one call target')
-    p.add_argument('--max-perf-warnings', type=int, default=0)
+    # thresholds: the baseline after the fixes (wiki/partial-evaluation.md, "The baseline"), with room for the
+    # run-to-run spread, for a run of compile-diag.sh's defaults; a run named *-native gets the native image's
+    for name, what in (('failures', 'failed compilations and permanent bailouts, other than code too large'),
+                       ('code-too-large', 'compilations whose code was too large to install (HotSpot only)'),
+                       ('deopt-cycles', 'deopt cycles'),
+                       ('ir', 'IR nodes after partial evaluation, one compilation'),
+                       ('compile-ms', 'milliseconds, one compilation'),
+                       ('compile-s', 'seconds of compilation, a whole run'),
+                       ('recompilations', 'compilations of one call target'),
+                       ('perf-warnings', 'performance warnings')):
+        p.add_argument('--max-' + name, type=int, help=f'{what} (default: {LIMITS["jvm"][name]} on the JVM, '
+                                                        f'{LIMITS["native"][name]} native)')
     args = p.parse_args()
     if os.path.isfile(os.path.join(args.dir, 'engine.log')):
         runs = [(os.path.basename(os.path.normpath(args.dir)), args.dir)]
