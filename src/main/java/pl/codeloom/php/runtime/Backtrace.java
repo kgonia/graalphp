@@ -120,6 +120,33 @@ public final class Backtrace {
         return build(levels, options, limit);
     }
 
+    /**
+     * Where the running function was called from, if user code called it (zend_missing_arg_error's
+     * EX(prev_execute_data) with ZEND_USER_CODE); null when a built-in did, also one compiled in place (array_map's
+     * callback), or the prelude.
+     */
+    @TruffleBoundary
+    public static SourceLocation userCaller() {
+        List<Level> levels = new ArrayList<>();
+        Truffle.getRuntime().iterateFrames(frame -> {
+            levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
+                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
+                    SourceLocation.callingInstruction(frame)));
+            return levels.size() < 4 ? null : levels;
+        });
+        int caller = isFrameless(levels, 1) ? 2 : 1;
+        if (caller >= levels.size()) {
+            return null;
+        }
+        Level from = levels.get(caller);
+        CallSite site = from.site();
+        if ((from.call() == null && from.instruction() == null) || (site != null && site.inlineBuiltin(from.call())
+                != null) || !SourceLocation.isUserCode(from.root())) {
+            return null;
+        }
+        return SourceLocation.ofCall(from.root(), from.call(), from.instruction());
+    }
+
     /** The trace a Throwable made now records (zend_default_exception_new's). */
     @TruffleBoundary
     public static PhpArray forThrowable() {

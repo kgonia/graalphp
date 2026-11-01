@@ -219,17 +219,29 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         return tooFewArguments(name, params, given);
     }
 
-    /** php-src's ArgumentCountError for a call of the function name that passed given arguments. */
+    /**
+     * zend_missing_arg_error for a call of the function name that passed given arguments: where user code made
+     * the call, and "exactly" when every parameter is required. The required ones are those up to the last
+     * parameter without a default (required_num_args), the variadic one isn't counted (num_args).
+     */
     @TruffleBoundary
     public static PhpError tooFewArguments(String name, PhpFunction.Param[] params, int given) {
         int required = 0;
-        for (PhpFunction.Param param : params) {
-            if (param.defaultValue() == null && !param.variadic()) {
-                required++;
+        int count = 0;
+        for (int i = 0; i < params.length; i++) {
+            if (params[i].variadic()) {
+                continue;
+            }
+            count++;
+            if (params[i].defaultValue() == null) {
+                required = i + 1;
             }
         }
+        SourceLocation caller = pl.codeloom.php.runtime.Backtrace.userCaller();
+        String where = caller == null ? "" : " in " + caller.file() + " on line " + caller.line();
         return new PhpError("ArgumentCountError", "Too few arguments to function " + name + "(), " + given
-                + " passed and at least " + required + " expected");
+                + " passed" + where + " and " + (required == count ? "exactly" : "at least") + " " + required
+                + " expected");
     }
 
     /** Not a boundary: inlined into the caller, the array can be escape-analyzed away (apply_filters' ...$args). */
