@@ -6,6 +6,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PHP strings are byte strings, held as {@link TruffleString}s in the BYTES encoding. These helpers are for code
@@ -139,7 +140,39 @@ public final class Str {
      */
     @TruffleBoundary
     public static String key(TruffleString name) {
-        return new String(readBytes(name), StandardCharsets.ISO_8859_1).intern();
+        String key = KEYS.get(name);
+        if (key == null) {
+            key = new String(readBytes(name), StandardCharsets.ISO_8859_1).intern();
+            remember(KEYS, name, key);
+        }
+        return key;
+    }
+
+    /**
+     * Names met at run time, by their PHP string: property keys ({@link #key}) and names decoded for lookups
+     * ({@link #name}). The same few thousand names come back on every request (a hook's callback, a dynamic
+     * property, an (object) cast's keys), so each is converted once per process, not once per use. Bounded: past
+     * {@link #NAMES_MAX} entries a name is converted each time again.
+     */
+    private static final ConcurrentHashMap<TruffleString, String> KEYS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<TruffleString, String> NAMES = new ConcurrentHashMap<>();
+    private static final int NAMES_MAX = 1 << 16;
+
+    private static void remember(ConcurrentHashMap<TruffleString, String> names, TruffleString name, String value) {
+        if (names.size() < NAMES_MAX) {
+            names.putIfAbsent(name, value);
+        }
+    }
+
+    /** {@link #java} for a name that is looked up (a function, class or method name): converted once. */
+    @TruffleBoundary
+    public static String name(TruffleString s) {
+        String name = NAMES.get(s);
+        if (name == null) {
+            name = java(s);
+            remember(NAMES, s, name);
+        }
+        return name;
     }
 
     /** The key of a property name written in the source, which the parser gives as text (UTF-8 decoded). */
