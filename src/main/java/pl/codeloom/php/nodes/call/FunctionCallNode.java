@@ -46,7 +46,13 @@ public final class FunctionCallNode extends CallNode {
         return dispatch.execute(frame, lookup.execute(), args);
     }
 
-    /** Finds the function in the calling context; with one context, once (functions can't be redeclared). */
+    /**
+     * Finds the function in the calling context; with one context, once (functions can't be redeclared). With
+     * several, a built-in found by a name with no namespace fallback is kept too: every context declares the
+     * language's built-ins (the same PhpFunction objects) before it runs any code, and none can be redeclared, so
+     * it is the function this name finds in any context. A per-context lookup costs about 300 bytes of machine
+     * code at each call site.
+     */
     abstract static class Lookup extends Node {
         private final String displayName;
         private final int id;
@@ -66,13 +72,22 @@ public final class FunctionCallNode extends CallNode {
             return function;
         }
 
-        @Specialization(replaces = "single")
+        @Specialization(guards = "builtin != null", replaces = "single")
+        protected PhpFunction builtin(@Cached("builtinOrNull()") PhpFunction builtin) {
+            return builtin;
+        }
+
+        @Specialization(replaces = {"single", "builtin"})
         protected PhpFunction perContext() {
             return find();
         }
 
         protected PhpFunction find() {
             return FunctionCallNode.find(PhpContext.get(this), displayName, id, fallbackId);
+        }
+
+        protected PhpFunction builtinOrNull() {
+            return FunctionCallNode.builtinOrNull(PhpContext.get(this), displayName, id, fallbackId);
         }
 
         protected Assumption singleContext() {
@@ -94,6 +109,18 @@ public final class FunctionCallNode extends CallNode {
             throw undefined(displayName);
         }
         return function;
+    }
+
+    /**
+     * The built-in a call by name calls in every context, or null: a user function, or a name in a namespace,
+     * whose function a context may yet declare (see Lookup).
+     */
+    public static PhpFunction builtinOrNull(PhpContext context, String displayName, int id, int fallbackId) {
+        if (fallbackId >= 0) {
+            return null;
+        }
+        PhpFunction function = find(context, displayName, id, fallbackId);
+        return function.getBuiltin() != null ? function : null;
     }
 
     @TruffleBoundary
