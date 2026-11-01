@@ -2,12 +2,25 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
+import pl.codeloom.php.ffi.NativeLibrary;
+
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
 
 /**
  * bcrypt as php-src's crypt_blowfish.c (Solar Designer's) computes it: the $2a$, $2b$, $2x$ and $2y$ variants, with
  * $2x$'s sign-extension bug and $2a$'s safety measure against the collisions that bug causes. Keys and settings are
  * C strings there: each ends at its first NUL byte.
+ *
+ * <p>EXPERIMENT, not for merge (wiki/gate-2.md, "bcrypt"): -Dphp.bcrypt.impl picks the implementation measured.
+ * old is the port as it is on wp-native; new keeps BF_ctx (P, then S) in one array with the block in locals and
+ * BF_ENCRYPT's rounds unrolled; guard adds a length check before the rekeying loop; inline also writes the rounds
+ * out in that loop; ffm calls php-src's crypt_blowfish.c, built by bench/truffle/build-bcrypt.sh
+ * (-Dphp.bcrypt=libphpbcrypt.so).
  */
 final class Bcrypt {
     private Bcrypt() {
@@ -240,20 +253,66 @@ final class Bcrypt {
         if (count < 16 || salt == null) {
             return null;
         }
-        Cipher cipher = new Cipher();
-        int[] expanded = new int[N + 2];
-        setKey(key, expanded, cipher.p, FLAGS_BY_SUBTYPE[subtype - 'a']);
-        cipher.expensiveKeySchedule(expanded, salt, count);
-
+        String impl = System.getProperty("php.bcrypt.impl", "old");
+        if (impl.equals("ffm")) {
+            return Native.crypt(key, setting);
+        }
         int[] output = new int[6];
-        for (int i = 0; i < 6; i += 2) {
-            cipher.l = MAGIC[i];
-            cipher.r = MAGIC[i + 1];
-            for (int round = 0; round < 64; round++) {
-                cipher.encrypt();
+        if (impl.equals("old")) {
+            Cipher cipher = new Cipher();
+            int[] expanded = new int[N + 2];
+            setKey(key, expanded, cipher.p, FLAGS_BY_SUBTYPE[subtype - 'a']);
+            cipher.expensiveKeySchedule(expanded, salt, count);
+            for (int i = 0; i < 6; i += 2) {
+                cipher.l = MAGIC[i];
+                cipher.r = MAGIC[i + 1];
+                for (int round = 0; round < 64; round++) {
+                    cipher.encrypt();
+                }
+                output[i] = cipher.l;
+                output[i + 1] = cipher.r;
             }
-            output[i] = cipher.l;
-            output[i + 1] = cipher.r;
+        } else {
+            int[] ctx = new int[CTX];
+            System.arraycopy(INIT_S, 0, ctx, S0, 4 * 256);
+            int[] expanded = new int[N + 2];
+            setKey(key, expanded, ctx, FLAGS_BY_SUBTYPE[subtype - 'a']);
+            boolean inline = impl.equals("inline");
+            boolean guard = impl.equals("guard");
+            int l = 0;
+            int r = 0;
+            for (int i = 0; i < CTX; i += 2) {
+                l ^= salt[i & 2];
+                r ^= salt[(i & 2) + 1];
+                long block = encrypt(ctx, l, r);
+                l = (int) (block >>> 32);
+                r = (int) block;
+                ctx[i] = l;
+                ctx[i + 1] = r;
+            }
+            for (long round = 0; round < count; round++) {
+                for (int i = 0; i < N + 2; i++) {
+                    ctx[i] ^= expanded[i];
+                }
+                if (inline) { rekeyInline(ctx); } else if (guard) { rekeyGuard(ctx); } else { rekey(ctx); }
+                for (int i = 0; i < N; i++) {
+                    ctx[i] ^= salt[i & 3];
+                }
+                ctx[N] ^= salt[0];
+                ctx[N + 1] ^= salt[1];
+                if (inline) { rekeyInline(ctx); } else if (guard) { rekeyGuard(ctx); } else { rekey(ctx); }
+            }
+            for (int i = 0; i < 6; i += 2) {
+                l = MAGIC[i];
+                r = MAGIC[i + 1];
+                for (int n = 0; n < 64; n++) {
+                    long block = encrypt(ctx, l, r);
+                    l = (int) (block >>> 32);
+                    r = (int) block;
+                }
+                output[i] = l;
+                output[i + 1] = r;
+            }
         }
 
         byte[] hash = new byte[7 + 22 + 31];
@@ -379,6 +438,126 @@ final class Bcrypt {
         sign <<= 9;
         sign &= ~diff & safety;
         initial[0] ^= sign;
+    }
+
+    /** BF_ctx as one array: the P-box (18 words), then the four S-boxes (256 words each). */
+    private static final int S0 = N + 2;
+    private static final int S1 = S0 + 256;
+    private static final int S2 = S1 + 256;
+    private static final int S3 = S2 + 256;
+    private static final int CTX = S3 + 256;
+
+    private static int f(int[] ctx, int x) {
+        return ((ctx[S0 + (x >>> 24)] + ctx[S1 + ((x >>> 16) & 0xff)]) ^ ctx[S2 + ((x >>> 8) & 0xff)])
+                + ctx[S3 + (x & 0xff)];
+    }
+
+    /** BF_ENCRYPT: the block (l, r) encrypted, as l in the high and r in the low half. */
+    private static long encrypt(int[] ctx, int l, int r) {
+        l ^= ctx[0];
+        r ^= f(ctx, l) ^ ctx[1];
+        l ^= f(ctx, r) ^ ctx[2];
+        r ^= f(ctx, l) ^ ctx[3];
+        l ^= f(ctx, r) ^ ctx[4];
+        r ^= f(ctx, l) ^ ctx[5];
+        l ^= f(ctx, r) ^ ctx[6];
+        r ^= f(ctx, l) ^ ctx[7];
+        l ^= f(ctx, r) ^ ctx[8];
+        r ^= f(ctx, l) ^ ctx[9];
+        l ^= f(ctx, r) ^ ctx[10];
+        r ^= f(ctx, l) ^ ctx[11];
+        l ^= f(ctx, r) ^ ctx[12];
+        r ^= f(ctx, l) ^ ctx[13];
+        l ^= f(ctx, r) ^ ctx[14];
+        r ^= f(ctx, l) ^ ctx[15];
+        l ^= f(ctx, r) ^ ctx[16];
+        return ((long) (r ^ ctx[N + 1]) << 32) | (l & 0xffffffffL);
+    }
+
+    /** BF_body: every P and S word replaced by a chain of encryptions starting from a zero block. */
+    private static void rekey(int[] ctx) {
+        int l = 0;
+        int r = 0;
+        for (int i = 0; i < CTX; i += 2) {
+            long block = encrypt(ctx, l, r);
+            l = (int) (block >>> 32);
+            r = (int) block;
+            ctx[i] = l;
+            ctx[i + 1] = r;
+        }
+    }
+
+    private static void rekeyGuard(int[] ctx) {
+        if (ctx.length != CTX) {
+            throw new IllegalArgumentException();
+        }
+        int l = 0;
+        int r = 0;
+        for (int i = 0; i < CTX; i += 2) {
+            long block = encrypt(ctx, l, r);
+            l = (int) (block >>> 32);
+            r = (int) block;
+            ctx[i] = l;
+            ctx[i + 1] = r;
+        }
+    }
+
+    private static void rekeyInline(int[] ctx) {
+        if (ctx.length != CTX) {
+            throw new IllegalArgumentException();
+        }
+        int l = 0;
+        int r = 0;
+        for (int i = 0; i < CTX; i += 2) {
+            l ^= ctx[0];
+            r ^= f(ctx, l) ^ ctx[1];
+            l ^= f(ctx, r) ^ ctx[2];
+            r ^= f(ctx, l) ^ ctx[3];
+            l ^= f(ctx, r) ^ ctx[4];
+            r ^= f(ctx, l) ^ ctx[5];
+            l ^= f(ctx, r) ^ ctx[6];
+            r ^= f(ctx, l) ^ ctx[7];
+            l ^= f(ctx, r) ^ ctx[8];
+            r ^= f(ctx, l) ^ ctx[9];
+            l ^= f(ctx, r) ^ ctx[10];
+            r ^= f(ctx, l) ^ ctx[11];
+            l ^= f(ctx, r) ^ ctx[12];
+            r ^= f(ctx, l) ^ ctx[13];
+            l ^= f(ctx, r) ^ ctx[14];
+            r ^= f(ctx, l) ^ ctx[15];
+            l ^= f(ctx, r) ^ ctx[16];
+            int t = r ^ ctx[N + 1];
+            r = l;
+            l = t;
+            ctx[i] = l;
+            ctx[i + 1] = r;
+        }
+    }
+
+    /** php-src's crypt_blowfish.c as a shared library (-Dphp.bcrypt=<path>). */
+    private static final class Native {
+        private static final NativeLibrary LIBRARY = NativeLibrary.named("php.bcrypt", "libphpbcrypt.so",
+                "libphpbcrypt.dll");
+        private static final MethodHandle CRYPT = LIBRARY.downcall("php_crypt_blowfish_rn",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+        static byte[] crypt(byte[] key, byte[] setting) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment k = arena.allocate(key.length + 1);
+                MemorySegment.copy(key, 0, k, ValueLayout.JAVA_BYTE, 0, key.length);
+                MemorySegment s = arena.allocate(setting.length + 1);
+                MemorySegment.copy(setting, 0, s, ValueLayout.JAVA_BYTE, 0, setting.length);
+                MemorySegment out = arena.allocate(124);
+                MemorySegment result = (MemorySegment) CRYPT.invokeExact(k, s, out, 124);
+                if (result.address() == 0) {
+                    return null;
+                }
+                return out.reinterpret(124).getString(0, StandardCharsets.ISO_8859_1).getBytes(StandardCharsets.ISO_8859_1);
+            } catch (Throwable e) {
+                throw new IllegalStateException(e);
+            }
+        }
     }
 
     /** The Blowfish state and the block being encrypted. */

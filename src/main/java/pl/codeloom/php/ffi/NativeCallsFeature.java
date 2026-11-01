@@ -16,6 +16,7 @@ public final class NativeCallsFeature implements Feature {
     /** The classes that declare native functions (NativeLibrary.downcall, Upcall.of): built with the image. */
     static final List<String> BINDINGS = List.of(
             "pl.codeloom.php.builtins.PcreFunctions$Native",
+            "pl.codeloom.php.builtins.Bcrypt$Native",
             "pl.codeloom.php.builtins.CurlNative$Library",
             "pl.codeloom.php.builtins.CurlNative$Upcalls",
             "pl.codeloom.php.builtins.CurlFunctions$StderrFile$Libc");
