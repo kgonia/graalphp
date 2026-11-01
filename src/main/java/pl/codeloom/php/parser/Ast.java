@@ -1,5 +1,7 @@
 package pl.codeloom.php.parser;
 
+import pl.codeloom.php.runtime.Phases;
+
 import java.util.List;
 import java.util.Map;
 
@@ -64,7 +66,13 @@ public final class Ast {
     public Ast body() {
         Object stmts = get("stmts");
         if (stmts instanceof AstBody unread) {
-            return unread.read();
+            int outer = Phases.enter(Phases.BODY);
+            try {
+                Phases.bodyRead(unread.size());
+                return unread.read();
+            } finally {
+                Phases.exit(outer);
+            }
         }
         return stmts instanceof Ast ast ? ast : null;
     }

@@ -14,6 +14,7 @@ public final class NativeClock {
 
     private static long nanos;
     private static long overhead;
+    private static long compileNanos;
 
     private NativeClock() {
     }
@@ -22,6 +23,16 @@ public final class NativeClock {
     public static void add(long elapsed, long clockCost) {
         nanos += elapsed;
         overhead += clockCost;
+    }
+
+    /** One pattern compiled (pcre2_compile and its JIT compilation): its elapsed time. */
+    public static void addCompile(long elapsed) {
+        compileNanos += elapsed;
+    }
+
+    /** Nanoseconds compiling patterns so far, apart from {@link #nanos}; 0 when disabled. */
+    public static long compileNanos() {
+        return compileNanos;
     }
 
     /** Native nanoseconds so far, net of the clock's own cost; 0 when disabled. */

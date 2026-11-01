@@ -68,6 +68,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -80,6 +81,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Translates php-src's AST (as exported by php-ast, version 120) into Truffle nodes. One translator handles one
@@ -626,10 +628,14 @@ public final class Translator {
         boolean isStatic = (flags & MODIFIER_STATIC) != 0;
         boolean isPublic = (flags & 7) == 0 || (flags & MODIFIER_PUBLIC) != 0;
         boolean isAbstract = (flags & MODIFIER_ABSTRACT) != 0 || node.get("stmts") == null;
+        int kind = owner == null ? Phases.FUNCTION : Phases.METHOD;
+        if (!isAbstract) {
+            Phases.declared(kind);
+        }
         PhpFunction[] self = new PhpFunction[1];
         self[0] = new PhpFunction(name, params, (flags & FUNC_RETURNS_REF) != 0, isStatic, isPublic, isAbstract,
-                () -> translateBody(node, owner, self[0], name, params, new String[0], new boolean[0],
-                        declaredNames));
+                () -> timedBody(kind, () -> translateBody(node, owner, self[0], name, params, new String[0],
+                        new boolean[0], declaredNames)));
         self[0].setDeclaredAt(declaredAt(node));
         return self[0];
     }
@@ -679,6 +685,17 @@ public final class Translator {
                 return 'b';
             default:
                 return 0;
+        }
+    }
+
+    /** A body's translation, counted and timed as one of the kind's (Phases). */
+    private static RootCallTarget timedBody(int kind, Supplier<RootCallTarget> translate) {
+        Phases.translated(kind);
+        int outer = Phases.enter(Phases.TRANSLATE);
+        try {
+            return translate.get();
+        } finally {
+            Phases.exit(outer);
         }
     }
 
@@ -798,9 +815,11 @@ public final class Translator {
         ClassInfo owner = classInfo;
         Names declaredNames = this.names;
         PhpFunction[] self = new PhpFunction[1];
+        Phases.declared(Phases.CLOSURE);
         self[0] = new PhpFunction(name, params, (node.flags & FUNC_RETURNS_REF) != 0,
                 (node.flags & MODIFIER_STATIC) != 0, true, false,
-                () -> translateBody(node, owner, self[0], name, params, names, byRef, declaredNames));
+                () -> timedBody(Phases.CLOSURE, () -> translateBody(node, owner, self[0], name, params, names, byRef,
+                        declaredNames)));
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
