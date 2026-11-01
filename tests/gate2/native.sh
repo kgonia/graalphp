@@ -294,8 +294,11 @@ others_on_bench() {
   done
 }
 
-# memory-lock reservations of other agents whose note names CPUs 14-21 (a timed job of theirs between containers)
+# memory-lock reservations of other agents whose note names CPUs 14-21 (a timed job of theirs between containers).
+# CPU_LOCK_HELD=1: this session holds the CPU lock (/c/Users/krzgo/Projects/.cpu-14-21.lock), which keeps the
+# others' timed jobs off 14-21, so their notes don't count (they would wait for this run, and it for them).
 others_reserving_bench() {
+  [ -z "${CPU_LOCK_HELD:-}" ] || return 0
   python 'C:\Users\krzgo\Projects\memory-lock\memlock.py' status 2> /dev/null | grep '14-21' \
     | grep -v "claude-wordpress-$P" || true
 }

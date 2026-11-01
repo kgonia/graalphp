@@ -21,6 +21,16 @@
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
+## Checks before merging a change to the interpreter
+| Check | Command | Passes when |
+|---|---|---|
+| unit tests, with the compilation check | `mvn test` | all pass; `CompilationTest` fails on any failed compilation or performance warning |
+| smoke | `tests/smoke/run.sh` | every test's output equals PHP 8.5's |
+| php-src `.phpt` | `tests/phpt/run.sh` | no test that passed fails |
+| Gate 1 | `bench/gate1/compare.sh` (or `run.php all N`) | every kernel's checksum equals PHP's |
+| WordPress pages | `tests/gate2/native.sh pages` and `compare` against `php` | 19/21 equal (the two others: the oEmbed link) |
+| compilation diagnosis | `tests/gate2/compile-diag.sh run`, then `compile_report.py target/compile-diag --check` | every run within its thresholds ([partial-evaluation.md](partial-evaluation.md)) |
+
 ## Status
 
 | Gate | State |
