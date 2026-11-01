@@ -1,5 +1,5 @@
 <?php
-// query-builder.php's method three times over (120 query variables, 4,000 AST nodes and more): a function as large
+// query-builder.php's method three times over (120 query variables, 7,920 AST nodes): a function as large
 // as those whose compiled code nears HotSpot's install limit (640 KB), WP_Query::get_posts and wp-settings.php's top
 // level. In such a function a string-key read outside any loop is a call, without the inline check of its slot
 // (ElementNodes.SlotCacheNode, nodes.LargeCode), so its budget is per read about half of query-builder.php's.

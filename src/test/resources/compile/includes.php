@@ -3,8 +3,8 @@
 // built as ABSPATH . WPINC . '/name.php'): its compiled code was over HotSpot's install limit (640 KB). The file
 // with the includes runs 60 times, so its top-level code compiles; it has a budget of IR nodes (CompilationTest).
 // CompilationTest's engine may hold more than one context, as the HTTP server's does, so each constant is read
-// from the running context (about 25 IR nodes a read; with one context, a constant is a compile-time constant).
-// IR budget: settings.php:1 18000
+// from the running context (about 19 IR nodes a read; with one context, a constant is a compile-time constant).
+// IR budget: settings.php:1 12500
 define('BASE', __DIR__ . '/includes');
 define('PARTS', '/parts');
 $count = 0;
