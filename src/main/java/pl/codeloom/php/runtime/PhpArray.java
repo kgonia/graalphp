@@ -346,6 +346,53 @@ public final class PhpArray implements TruffleObject {
         putSlow(key, value);
     }
 
+    /**
+     * The keys and dereferenced values in order, as key, value, key, value...: a snapshot for a built-in that calls
+     * back for each element (array_map, array_filter), which walks its argument as it was, as php-src walks the
+     * argument's own table, which the callback's writes don't change. Out of line, so the compiled loop between
+     * this and the result's {@link #ofEntries build} tests no layout.
+     */
+    @TruffleBoundary
+    public Object[] entries() {
+        Object[] entries = new Object[size * 2];
+        int i = 0;
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            entries[i++] = keyAt(p);
+            entries[i++] = valueAt(p);
+        }
+        return entries;
+    }
+
+    /**
+     * A new array of the keys of entries (as {@link #entries} gives them) with the given values, or with their own
+     * values where kept says so (values null).
+     */
+    @TruffleBoundary
+    public static PhpArray ofEntries(Object[] entries, Object[] values, boolean[] kept) {
+        PhpArray result = new PhpArray();
+        for (int i = 0; i < entries.length / 2; i++) {
+            if (values != null) {
+                result.putNew(entries[2 * i], values[i]);
+            } else if (kept[i]) {
+                result.putNew(entries[2 * i], entries[2 * i + 1]);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * put() of a key the array doesn't hold yet, for an array being built (array_map's and array_filter's result):
+     * the next index appends, any other key inserts out of line. put()'s in-place cases (a reference element, the
+     * old value's holder) don't arise, so its inline code isn't copied into every builder loop.
+     */
+    public void putNew(Object key, Object value) {
+        if (key instanceof Long index && index == size && nextIndex == size) {
+            append(value);
+            return;
+        }
+        putSlow(key, value);
+    }
+
     /** Whether the array is packed with only ints, stored unboxed (the int strategy). */
     public boolean holdsLongs() {
         return store instanceof long[];
