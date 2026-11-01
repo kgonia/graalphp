@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.Frame;
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
@@ -44,6 +45,8 @@ public final class LocalVarNode extends LValueNode {
     private static final int SEEN_CREATED = 1 << 8;
     /** The writes through the reference the variable is (SEEN_REF). */
     private final RefWrites refWrites = RefWrites.create();
+    /** A read here met a tag other than the slot kind's (see execute). */
+    @CompilationFinal private boolean anyTag;
 
     public LocalVarNode(int slot, String name) {
         this.slot = slot;
@@ -60,8 +63,37 @@ public final class LocalVarNode extends LValueNode {
 
     // ---- reads ----
 
+    /**
+     * Reads by the slot's kind, a compile-time constant (FrameSlots): every write stores the kind's tag, so the
+     * slot holds that or nothing, and compiled code tests for that tag only. Testing every tag compiled a long's
+     * and a float's read and boxing at each read of a variable whose tag isn't known where it is read (one set on
+     * some paths only). A value an activation stored before the slot's kind generalized makes this site read
+     * every tag from then on (one deoptimization).
+     */
     @Override
     public Object execute(VirtualFrame frame) {
+        if (!anyTag) {
+            FrameSlotKind kind = frame.getFrameDescriptor().getSlotKind(slot);
+            byte tag = frame.getTag(slot);
+            if (tag == FrameSlotKind.Illegal.tag) {
+                return PhpNull.NULL;
+            }
+            if (kind == FrameSlotKind.Object && tag == FrameSlotKind.Object.tag) {
+                return Variables.value(frame.getObject(slot));
+            }
+            if (kind == FrameSlotKind.Long && tag == FrameSlotKind.Long.tag) {
+                return frame.getLong(slot);
+            }
+            if (kind == FrameSlotKind.Double && tag == FrameSlotKind.Double.tag) {
+                return frame.getDouble(slot);
+            }
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            anyTag = true;
+        }
+        return executeAnyTag(frame);
+    }
+
+    private Object executeAnyTag(VirtualFrame frame) {
         if (frame.isLong(slot)) {
             return frame.getLong(slot);
         }
@@ -268,8 +300,35 @@ public final class LocalVarNode extends LValueNode {
         return value != null && value != PhpNull.NULL;
     }
 
+    /** As execute, by the slot's kind; null (Java) when unset or null. */
     @Override
     public Object readIfSet(VirtualFrame frame) {
+        if (!anyTag) {
+            FrameSlotKind kind = frame.getFrameDescriptor().getSlotKind(slot);
+            byte tag = frame.getTag(slot);
+            if (tag == FrameSlotKind.Illegal.tag) {
+                return null;
+            }
+            if (kind == FrameSlotKind.Object && tag == FrameSlotKind.Object.tag) {
+                Object value = frame.getObject(slot);
+                if (value instanceof PhpRef ref) {
+                    value = ref.get();
+                }
+                return value == PhpNull.NULL ? null : value;
+            }
+            if (kind == FrameSlotKind.Long && tag == FrameSlotKind.Long.tag) {
+                return frame.getLong(slot);
+            }
+            if (kind == FrameSlotKind.Double && tag == FrameSlotKind.Double.tag) {
+                return frame.getDouble(slot);
+            }
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            anyTag = true;
+        }
+        return readIfSetAnyTag(frame);
+    }
+
+    private Object readIfSetAnyTag(VirtualFrame frame) {
         if (frame.isLong(slot)) {
             return frame.getLong(slot);
         }
