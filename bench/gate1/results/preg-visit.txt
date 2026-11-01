@@ -1,0 +1,100 @@
+# The preg_* built-ins' inclusive time per WordPress visit (bench/gate1/preg_visit.py), 2026-11-01
+# visit-phases (5d373fb) + bench/gate1/results/preg-clock.patch; tests/gate2/native.sh measure 3 110 1 jvm-java jvm-preg native-java native-preg
+# (WPN_NAME=tx-vp, CPU_LOCK_HELD=1, HOST_QUIET=101 HOST_LOADED=100: the host was loaded by other sessions, 76-97% median)
+
+jvm-java-1: ready 1.41 s, cold visit 9.75 s (50.7 CPU-s), warm median 1.351 s, 0 failed visits; host CPU median 85%, max 100%
+jvm-preg-1: ready 1.42 s, cold visit 12.88 s (69.6 CPU-s), warm median 1.354 s, 0 failed visits; host CPU median 83%, max 97%
+native-java-1: ready 0.63 s, cold visit 5.87 s (18.2 CPU-s), warm median 1.819 s, 0 failed visits; host CPU median 93%, max 100%
+native-preg-1: ready 0.58 s, cold visit 5.18 s (16.0 CPU-s), warm median 1.677 s, 0 failed visits; host CPU median 85%, max 97%
+native-preg-2: ready 0.57 s, cold visit 5.57 s (17.8 CPU-s), warm median 1.880 s, 0 failed visits; host CPU median 93%, max 100%
+native-java-2: ready 0.57 s, cold visit 5.19 s (16.1 CPU-s), warm median 1.742 s, 0 failed visits; host CPU median 87%, max 97%
+jvm-preg-2: ready 1.34 s, cold visit 9.59 s (51.3 CPU-s), warm median 1.361 s, 0 failed visits; host CPU median 83%, max 96%
+jvm-java-2: ready 1.32 s, cold visit 10.00 s (53.7 CPU-s), warm median 1.617 s, 0 failed visits; host CPU median 97%, max 100%
+jvm-java-3: ready 2.07 s, cold visit 11.95 s (62.3 CPU-s), warm median 1.445 s, 0 failed visits; host CPU median 94%, max 100%
+jvm-preg-3: ready 1.26 s, cold visit 11.75 s (62.9 CPU-s), warm median 1.349 s, 0 failed visits; host CPU median 90%, max 99%
+native-java-3: ready 0.54 s, cold visit 4.31 s (13.9 CPU-s), warm median 1.594 s, 0 failed visits; host CPU median 81%, max 99%
+native-preg-3: ready 0.53 s, cold visit 4.67 s (15.0 CPU-s), warm median 1.550 s, 0 failed visits; host CPU median 82%, max 93%
+
+## jvm-java: 3 rounds, 111 visits; memory.peak at the end 1680 (1642-1690) MB
+
+| s per visit | cold | warm (last 20) |
+|---|---|---|
+| wait (client) | 10.0010 (9.7499-11.9487) | 1.3154 (1.3077-1.5003) |
+| requests' wall | - | - |
+
+## jvm-preg: 3 rounds, 111 visits; memory.peak at the end 1610 (1599-1678) MB
+
+| s per visit | cold | warm (last 20) |
+|---|---|---|
+| wait (client) | 11.7501 (9.5919-12.8797) | 1.2817 (1.1234-1.3020) |
+| requests' wall | 11.7141 (9.5696-12.8563) | 1.2722 (1.1058-1.2933) |
+| preg_* inclusive, raw | 0.3470 (0.3352-0.4302) | 0.0350 (0.0280-0.0351) |
+| preg_* inclusive, net of the clock | 0.3448 (0.3332-0.4282) | 0.0337 (0.0267-0.0337) |
+|   the clock's measured cost | 0.0020 (0.0020-0.0022) | 0.0013 (0.0012-0.0014) |
+| callbacks' PHP code (not in the line above) | 0.0023 (0.0020-0.0046) | 0.0003 (0.0002-0.0003) |
+| preg_* calls | 33202 (33202-33202) | 29683 (29683-29683) |
+| callbacks | 151 (151-151) | 151 (151-151) |
+| preg net / wait, % | 3.32 (2.93-3.47) | 2.59 (2.38-2.63) |
+
+Per function, warm (median of the last 20 visits, median over rounds):
+
+| function | ms per visit | calls per visit | ns per call |
+|---|---|---|---|
+| preg_match | 11.51 | 11184 | 1029 |
+| preg_match_all | 2.63 | 1105 | 2383 |
+| preg_quote | 0.28 | 772 | 365 |
+| preg_replace | 15.24 | 13887 | 1098 |
+| preg_replace_callback | 1.69 | 2192 | 772 |
+| preg_split | 2.34 | 543 | 4312 |
+
+## native-java: 3 rounds, 111 visits; memory.peak at the end 1121 (1028-1144) MB
+
+| s per visit | cold | warm (last 20) |
+|---|---|---|
+| wait (client) | 5.1855 (4.3094-5.8660) | 1.8226 (1.6448-1.8870) |
+| requests' wall | - | - |
+
+## native-preg: 3 rounds, 111 visits; memory.peak at the end 1175 (995-1215) MB
+
+| s per visit | cold | warm (last 20) |
+|---|---|---|
+| wait (client) | 5.1845 (4.6667-5.5666) | 1.6845 (1.4819-1.7238) |
+| requests' wall | 5.1742 (4.5265-5.5575) | 1.6764 (1.4715-1.7149) |
+| preg_* inclusive, raw | 0.0765 (0.0740-0.0861) | 0.0414 (0.0371-0.0535) |
+| preg_* inclusive, net of the clock | 0.0747 (0.0720-0.0839) | 0.0399 (0.0358-0.0518) |
+|   the clock's measured cost | 0.0020 (0.0018-0.0022) | 0.0014 (0.0014-0.0016) |
+| callbacks' PHP code (not in the line above) | 0.0007 (0.0007-0.0013) | 0.0003 (0.0003-0.0003) |
+| preg_* calls | 33202 (33202-33202) | 29683 (29683-29683) |
+| callbacks | 151 (151-151) | 151 (151-151) |
+| preg net / wait, % | 1.51 (1.44-1.54) | 2.42 (2.37-3.00) |
+
+Per function, warm (median of the last 20 visits, median over rounds):
+
+| function | ms per visit | calls per visit | ns per call |
+|---|---|---|---|
+| preg_match | 13.57 | 11184 | 1214 |
+| preg_match_all | 2.63 | 1105 | 2378 |
+| preg_quote | 0.30 | 772 | 383 |
+| preg_replace | 19.33 | 13887 | 1392 |
+| preg_replace_callback | 1.89 | 2192 | 863 |
+| preg_split | 2.66 | 543 | 4903 |
+
+# one more JVM run with -Dphp.nativeclock=true too (the PCRE2 native calls inside the preg time)
+jvm-preg-1: ready 1.12 s, cold visit 9.87 s (52.7 CPU-s), warm median 1.303 s, 0 failed visits; host CPU median 76%, max 99%
+## jvm-preg: 1 rounds, 111 visits; memory.peak at the end 1675 MB
+
+| s per visit | cold | warm (last 20) |
+|---|---|---|
+| wait (client) | 9.8690 | 1.2150 |
+| requests' wall | 9.8420 | 1.2068 |
+| preg_* inclusive, raw | 0.2964 | 0.0375 |
+| preg_* inclusive, net of the clock | 0.2944 | 0.0361 |
+|   the clock's measured cost | 0.0020 | 0.0013 |
+| callbacks' PHP code (not in the line above) | 0.0021 | 0.0002 |
+| preg_* calls | 33202 | 29683 |
+| callbacks | 151 | 151 |
+| preg net / wait, % | 2.98 | 2.97 |
+
+Per function, warm (median of the last 20 visits, median over rounds):
+
+warm (last 20): PCRE2 native calls 0.0103 s per visit, 28% of the preg time (0.0361 s), 0.88% of the requests' wall
