@@ -1057,7 +1057,7 @@ public final class BytecodeTranslator {
             String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
             String lower = Str.lower(name);
             switch (lower) {
-                case "func_get_args", "func_num_args", "call_user_func", "call_user_func_array", "get_class",
+                case "func_get_args", "func_num_args", "func_get_arg", "call_user_func", "call_user_func_array", "get_class",
                      "get_called_class", "compact", "extract", "get_object_vars", "get_defined_vars" ->
                         throw new Unsupported(lower + "()", node);
                 default -> {

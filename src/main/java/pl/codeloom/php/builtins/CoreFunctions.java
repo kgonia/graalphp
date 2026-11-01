@@ -95,6 +95,15 @@ final class CoreFunctions {
             }
             return value;
         });
+        // compiled in place where a call names them; called by a name resolved at run time they refuse, as
+        // zend_forbid_dynamic_call does
+        for (String frameFunction : new String[] {"func_get_arg", "func_get_args", "func_num_args"}) {
+            int arity = frameFunction.equals("func_get_arg") ? 1 : 0;
+            r.fn(frameFunction, a -> {
+                Args.arity(a, frameFunction, arity, arity);
+                throw new PhpError("Error", "Cannot call " + frameFunction + "() dynamically");
+            });
+        }
         r.fn("function_exists", (context, a) -> context.findFunction(lowerName(Args.str(a, 0))) != null);
         r.fn("get_defined_functions", (context, a) -> {
             List<List<PhpFunction>> declared = context.declaredFunctions();

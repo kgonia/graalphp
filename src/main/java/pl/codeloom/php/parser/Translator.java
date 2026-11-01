@@ -19,6 +19,7 @@ import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.ClosureNode;
 import pl.codeloom.php.nodes.call.DynamicMethodCallNode;
+import pl.codeloom.php.nodes.call.FrameArgNode;
 import pl.codeloom.php.nodes.call.FrameArgsNode;
 import pl.codeloom.php.nodes.call.FunctionCallNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
@@ -2070,6 +2071,23 @@ public final class Translator {
                 return new FrameArgsNode(false);
             case "func_num_args":
                 return new FrameArgsNode(true);
+            case "func_get_arg": {
+                ExprNode[] positionArgs = expressionList(args);
+                if (positionArgs.length != 1) {
+                    break;
+                }
+                int[] paramSlots = null;
+                if (scope != null && function != null) {
+                    List<Integer> slots = new ArrayList<>();
+                    for (PhpFunction.Param param : function.getParams()) {
+                        if (!param.variadic()) {
+                            slots.add(scope.slot(param.name()));
+                        }
+                    }
+                    paramSlots = slots.stream().mapToInt(Integer::intValue).toArray();
+                }
+                return new FrameArgNode(positionArgs[0], paramSlots);
+            }
             // a name resolved at compile time is compiled into the call itself (zend_compile_func_cuf), whose
             // result is the callee's; the built-in function, called by a name resolved at run time, returns a value
             case "call_user_func": {
