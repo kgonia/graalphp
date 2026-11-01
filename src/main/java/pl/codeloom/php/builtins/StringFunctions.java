@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -147,6 +148,22 @@ public final class StringFunctions {
         r.fn("ord", a -> {
             TruffleString s = Args.str(a, 0);
             return Str.length(s) == 0 ? 0L : (long) Str.byteAt(s, 0);
+        });
+        // the C locale's conventions: php-src sets only LC_CTYPE from the environment at startup, and setlocale()
+        // isn't there to change LC_NUMERIC or LC_MONETARY (CHAR_MAX, 127, for the unspecified numbers)
+        r.fn("localeconv", a -> {
+            PhpArray conventions = new PhpArray();
+            for (String key : new String[] {"decimal_point", "thousands_sep", "int_curr_symbol", "currency_symbol",
+                "mon_decimal_point", "mon_thousands_sep", "positive_sign", "negative_sign"}) {
+                conventions.put(ArrayKey.of(Str.of(key)), Str.of(key.equals("decimal_point") ? "." : ""));
+            }
+            for (String key : new String[] {"int_frac_digits", "frac_digits", "p_cs_precedes", "p_sep_by_space",
+                "n_cs_precedes", "n_sep_by_space", "p_sign_posn", "n_sign_posn"}) {
+                conventions.put(ArrayKey.of(Str.of(key)), 127L);
+            }
+            conventions.put(ArrayKey.of(Str.of("grouping")), new PhpArray());
+            conventions.put(ArrayKey.of(Str.of("mon_grouping")), new PhpArray());
+            return conventions;
         });
         r.fn("number_format", a -> numberFormat(Convert.toDouble(Args.get(a, 0)), Args.lng(a, 1, 0),
                 Args.str(a, 2, Str.of(".")), Args.str(a, 3, Str.of(","))));
