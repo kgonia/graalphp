@@ -22,6 +22,13 @@ HOST = "localhost"
 MASKS = [
     (r'(nonce|_wpnonce|"nonce"|Nonce)([^0-9a-f]{1,12})[0-9a-f]{10}', r'\1\2NONCE'),
     (r'(\x22|\x27)[0-9a-f]{10}(\x22|\x27)', r'\1NONCE\2'),
+    (r'(%22|%5C%22)[0-9a-f]{10}(%22|%5C%22)', r'\1NONCE\2'),
+    (r'\A[0-9a-f]{10}\Z', 'NONCE'),
+    (r'"Nonce-Timestamp":[0-9]+', '"Nonce-Timestamp":TIME'),
+    # related products are shuffled (wc_get_related_products)
+    (r'"related_ids":\[[0-9,]*\]', '"related_ids":[IDS]'),
+    # uniqid() in element ids (quantity_6ae7c2321636e)
+    (r'\b([a-z_]+_)[0-9a-f]{13}\b', r'\1UNIQID'),
     (r'data-pw="[^"]*"', 'data-pw="PW"'),
     (r'wc_order_[A-Za-z0-9]{13}', 'wc_order_KEY'),
     (r'\bt_[0-9a-f]{30}\b', 't_SESSION'),

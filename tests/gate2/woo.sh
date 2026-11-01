@@ -78,7 +78,7 @@ reset_db() {
 
 # php-fpm 8.5.12 (Debian trixie, as the CLI image) with mysqli, OPcache and its tracing JIT, behind nginx
 fpm_image() {
-  docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm.Dockerfile tests/gate2
+  docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm/Dockerfile tests/gate2/woo-fpm
 }
 
 start() {
