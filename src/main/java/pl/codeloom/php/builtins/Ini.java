@@ -63,6 +63,10 @@ public final class Ini {
         directives.put("ignore_repeated_source", new Directive("0", ALL));
         directives.put("log_errors", new Directive("0", ALL));
         directives.put("mail.add_x_header", new Directive("0", SYSTEM | PERDIR));
+        directives.put("mail.cr_lf_mode", new Directive("crlf", SYSTEM | PERDIR));
+        directives.put("mail.force_extra_parameters", new Directive(null, SYSTEM | PERDIR));
+        directives.put("mail.log", new Directive(null, SYSTEM | PERDIR));
+        directives.put("mail.mixed_lf_and_crlf", new Directive("0", SYSTEM | PERDIR));
         directives.put("max_execution_time", new Directive("30", ALL));
         directives.put("max_file_uploads", new Directive("20", SYSTEM | PERDIR));
         directives.put("max_input_time", new Directive("-1", SYSTEM | PERDIR));
@@ -74,6 +78,9 @@ public final class Ini {
         directives.put("sendmail_path", new Directive("/usr/sbin/sendmail -t -i", SYSTEM));
         // zend.c's: CG(short_tags), which the parser (php.Parser=java) reads
         directives.put("short_open_tag", new Directive("1", SYSTEM | PERDIR));
+        directives.put("syslog.facility", new Directive("LOG_USER", SYSTEM));
+        directives.put("syslog.filter", new Directive("no-ctrl", ALL));
+        directives.put("syslog.ident", new Directive("php", SYSTEM));
         directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
@@ -106,6 +113,15 @@ public final class Ini {
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
+    /** PG(mail_x_header), PG(mail_mixed_lf_and_crlf), PG(mail_cr_lf_mode) and PG(mail_log) (null when empty). */
+    private boolean mailAddXHeader;
+    private boolean mailMixedLfAndCrlf;
+    private String mailCrLfMode;
+    private String mailLog;
+    /** PG(syslog_facility), PG(syslog_filter) (Syslog.FILTER_*) and PG(syslog_ident). */
+    private int syslogFacility;
+    private int syslogFilter;
+    private String syslogIdent;
     /** ext/filter's IF_G(default_filter) and IF_G(default_filter_flags): what the SAPI's input passes through. */
     private long defaultFilter;
     private long defaultFilterFlags;
@@ -189,6 +205,40 @@ public final class Ini {
             case "filter.default" -> defaultFilter = FilterFunctions.idOfName(value);
             // OnUpdateFlags: atoi, FILTER_FLAG_NO_ENCODE_QUOTES when unset
             case "filter.default_flags" -> defaultFilterFlags = value == null ? 0x80 : (int) atol(value);
+            case "mail.add_x_header" -> mailAddXHeader = bool(value);
+            case "mail.mixed_lf_and_crlf" -> mailMixedLfAndCrlf = bool(value);
+            case "mail.cr_lf_mode" -> {
+                // OnUpdateMailCrLfMode: empty passes the check (php_mail has no line separator for it)
+                if (value != null && !value.isEmpty() && !value.equals("crlf") && !value.equals("lf")
+                        && !value.equals("mixed") && !value.equals("os")) {
+                    updateWarning = "Invalid value \"" + value + "\" for mail.cr_lf_mode. Must be one of: \"crlf\", "
+                            + "\"lf\", \"mixed\", \"os\"";
+                    return false;
+                }
+                mailCrLfMode = value;
+            }
+            // OnUpdateMailLog: an empty path is no log
+            case "mail.log" -> mailLog = value == null || value.isEmpty() ? null : value;
+            case "mail.force_extra_parameters" -> {
+                if (value != null && value.indexOf('\0') >= 0) {
+                    return false; // OnChangeMailForceExtra
+                }
+            }
+            case "syslog.facility" -> {
+                int facility = Syslog.facility(value);
+                if (facility < 0) {
+                    return false; // OnSetFacility
+                }
+                syslogFacility = facility;
+            }
+            case "syslog.filter" -> {
+                int filter = Syslog.filter(value);
+                if (filter < 0) {
+                    return false; // OnSetLogFilter
+                }
+                syslogFilter = filter;
+            }
+            case "syslog.ident" -> syslogIdent = value;
             case "upload_tmp_dir" -> {
                 if (value != null && value.isEmpty()) {
                     return false; // OnUpdateStringUnempty
@@ -207,8 +257,9 @@ public final class Ini {
                 exceptionStringParamMaxLen = (int) length;
             }
             default -> {
-                // stored only: nothing in the runtime reads it (memory_limit, max_execution_time and the upload
-                // and mail directives aren't enforced), but scripts read and set it
+                // stored only, or read where it is used (sendmail_path): nothing in the runtime parses it
+                // (memory_limit, max_execution_time and the upload directives aren't enforced), but scripts read
+                // and set it
             }
         }
         return true;
@@ -278,6 +329,34 @@ public final class Ini {
     /** short_open_tag: whether "<?" opens PHP code. */
     public boolean shortOpenTag() {
         return shortOpenTag;
+    }
+
+    boolean mailAddXHeader() {
+        return mailAddXHeader;
+    }
+
+    boolean mailMixedLfAndCrlf() {
+        return mailMixedLfAndCrlf;
+    }
+
+    String mailCrLfMode() {
+        return mailCrLfMode;
+    }
+
+    String mailLog() {
+        return mailLog;
+    }
+
+    int syslogFacility() {
+        return syslogFacility;
+    }
+
+    int syslogFilter() {
+        return syslogFilter;
+    }
+
+    String syslogIdent() {
+        return syslogIdent;
     }
 
     long defaultFilter() {

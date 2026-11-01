@@ -1,0 +1,4 @@
+# the shell's message for the missing /usr/sbin/sendmail: dash's (PHP's image, Truffle PHP on Linux) and that of Git
+# for Windows' sh; its text differs, and the outputs place stderr differently (docker's streams, --contexts=3's runs)
+/^sh: 1: \/usr\/sbin\/sendmail: not found$/d
+/^\/usr\/bin\/sh: line 1: \/usr\/sbin\/sendmail: No such file or directory$/d

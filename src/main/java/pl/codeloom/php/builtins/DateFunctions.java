@@ -290,6 +290,11 @@ final class DateFunctions {
         }
     }
 
+    /** php_format_date(format, timestamp, localtime = 1): the moment in the context's default timezone. */
+    static TruffleString formatLocal(PhpContext context, String format, long timestamp) {
+        return format(Str.of(format), timestamp, 0, contextZone(context), true);
+    }
+
     /** The context's default timezone (date(), mktime()), an identifier. */
     private static PhpZone contextZone(PhpContext context) {
         ZoneId zone = context.timezone();
