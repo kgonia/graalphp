@@ -10,11 +10,12 @@ Bytecode changes only the interpreter's own overhead, so the share it could spee
 PHP functions on bytecode: S1's today, then each S2 step's. The bound is Amdahl's: 1 / ((1 - f) + f / s), with s
 the bytecode interpreter's speed against the tree's, and compiled time unchanged (peak is equal).
 
-Usage: python s2_profile.py REASONS.json S PROFILE.json [MINUS.json]
+Usage: python s2_profile.py REASONS.json S PROFILE [MINUS]   (JSON or histogram output)
        (MINUS: a profile to subtract, e.g. the cold visit's from a cold-plus-warm run's, for the warm visits)
 """
 import collections
 import json
+import re
 import sys
 
 STEPS = ["now", "a", "b", "c", "d", "e", "f"]
@@ -23,8 +24,38 @@ NAMES = {"now": "on bytecode with S1", "a": "+ (a) property access", "b": "+ (b)
          "f": "+ (f) casts and constants"}
 
 
+def histogram_roots(path):
+    """roots() of the sampler's histogram output (Output=histogram, ShowTiers=true): per context and thread a
+    table of roots with their self time (ms, at a 1 ms period one sample each) and its split per tier."""
+    totals = collections.defaultdict(lambda: [0.0, 0.0, 0.0])
+    tiers = []
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if "||" not in line:
+            continue
+        parts = line.rstrip().split("||")
+        if parts[0].strip() == "Name":
+            tiers = [int(t.strip()[1:]) for t in parts[2].split("|")[1:]]
+            continue
+        if len(parts) < 4:
+            continue
+        self_part = parts[2].split("|")
+        match = re.match(r"\s*(\d+)ms", self_part[0])
+        if not match:
+            continue
+        ms = int(match.group(1))
+        location = parts[3].strip()
+        source = "<builtin>" if location.startswith("<builtin>") else location.split("~")[0]
+        entry = totals[(parts[0].strip(), source)]
+        for tier, percent in zip(tiers, self_part[1:]):
+            entry[min(tier, 2)] += ms * float(percent.strip().rstrip("%")) / 100
+    return totals
+
+
 def roots(path):
     """Per (root name, source name): self samples per tier [interpreted, tier 1, tier 2]."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        if f.read(1) != "{":
+            return histogram_roots(path)
     data = json.load(open(path))
     totals = collections.defaultdict(lambda: [0, 0, 0])
 
@@ -63,7 +94,7 @@ def main():
     other = {key: t for key, t in php.items() if key not in known}
     interpreted = sum(t[0] for t in known.values())
     compiled = sum(t[1] + t[2] for t in known.values())
-    print(f"{total} samples: PHP functions interpreted {interpreted / total:.1%}, compiled {compiled / total:.1%}; "
+    print(f"{total:.0f} samples: PHP functions interpreted {interpreted / total:.1%}, compiled {compiled / total:.1%}; "
           f"built-ins {builtins / total:.1%}; other roots (files' top-level code, generators' bodies, class "
           f"templates) {sum(sum(t) for t in other.values()) / total:.1%}, of which interpreted "
           f"{sum(t[0] for t in other.values()) / total:.1%}")
@@ -79,10 +110,10 @@ def main():
     for (name, source), t in sorted(known.items(), key=lambda kv: -kv[1][0])[:15]:
         info = reasons["tree"].get(name)
         where = step_of.get(name) or "blocked: " + ", ".join(info["blockers"][:3])
-        print(f"  {t[0]:6d} interpreted, {t[1] + t[2]:6d} compiled  {name}  [{where}]")
+        print(f"  {t[0]:6.0f} interpreted, {t[1] + t[2]:6.0f} compiled  {name}  [{where}]")
     print("Top other roots:")
     for (name, source), t in sorted(other.items(), key=lambda kv: -sum(kv[1]))[:5]:
-        print(f"  {sum(t):6d} ({t[0]} interpreted)  {name}  {source}")
+        print(f"  {sum(t):6.0f} ({t[0]:.0f} interpreted)  {name}  {source}")
 
 
 if __name__ == "__main__":
