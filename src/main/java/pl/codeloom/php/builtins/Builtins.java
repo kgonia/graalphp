@@ -90,6 +90,7 @@ public final class Builtins {
         PasswordFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
+        ReflectionFunctions.register(registry);
         // ext/curl is loaded when libcurl is (as an extension php was built without isn't)
         boolean curl = CurlNative.available();
         CurlFunctions.Methods curlMethods = null;

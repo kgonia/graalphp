@@ -109,8 +109,48 @@ public final class ClassTemplate {
         return name;
     }
 
+    /** The class's ZEND_ACC_* flags as declared (final, abstract, readonly), its doc comment and last line. */
+    private int flags;
+    private String docComment;
+    private int endLine;
+
+    public void setDeclaration(int flags, String docComment, int endLine) {
+        this.flags = flags;
+        this.docComment = docComment;
+        this.endLine = endLine;
+    }
+
+    public int getFlags() {
+        return flags;
+    }
+
+    public String getDocComment() {
+        return docComment;
+    }
+
+    public int getEndLine() {
+        return endLine;
+    }
+
+    public String getParentName() {
+        return parentName;
+    }
+
+    /** The interfaces the declaration names, resolved. */
+    public List<String> getInterfaceNames() {
+        return interfaces;
+    }
+
     public List<Member> getMembers() {
         return members;
+    }
+
+    /**
+     * The members as declared: a class's, or a trait's translated for the trait itself (a trait has its own
+     * function table in php-src too).
+     */
+    public List<Member> ownMembers() {
+        return traitBody == null ? members : traitMembers.computeIfAbsent(this, t -> t.traitBody.members(name, null));
     }
 
     /** Why the translator couldn't handle a member, or null. */
@@ -130,14 +170,15 @@ public final class ClassTemplate {
         if (unsupported != null) {
             throw new PhpError(unsupported);
         }
+        List<Member> declared = ownMembers();
         Set<String> own = new HashSet<>();
-        for (Member member : members) {
+        for (Member member : declared) {
             if (member instanceof Method method) {
                 own.add(Str.lower(method.function().getName()));
             }
             add(phpClass, member);
         }
-        for (Member member : members) {
+        for (Member member : declared) {
             if (member instanceof TraitUse use) {
                 useTraits(context, phpClass, use, own);
             }

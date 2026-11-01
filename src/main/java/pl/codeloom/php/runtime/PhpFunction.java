@@ -24,10 +24,19 @@ public final class PhpFunction {
     /**
      * A parameter. defaultValue is null for required parameters, else a value or a {@link PhpClass.Thunk}.
      * coerce is the scalar type the argument is converted to in coercive typing mode ('s', 'i', 'f', 'b'), or 0.
+     * type is the declared type as zend_type_to_string writes it ("?Foo", "int|string|null"), or null.
      */
     public record Param(String name, boolean byRef, boolean variadic, Object defaultValue, char coerce,
-                        boolean nullable) {
+                        boolean nullable, String type) {
     }
+
+    /** php-src's ZEND_ACC_* modifier bits, as ReflectionMethod::getModifiers() gives them. */
+    public static final int ACC_PUBLIC = 1;
+    public static final int ACC_PROTECTED = 2;
+    public static final int ACC_PRIVATE = 4;
+    public static final int ACC_STATIC = 16;
+    public static final int ACC_FINAL = 32;
+    public static final int ACC_ABSTRACT = 64;
 
     private final String name;
     @CompilationFinal(dimensions = 1) private final Param[] params;
@@ -105,6 +114,43 @@ public final class PhpFunction {
 
     public SourceLocation getDeclaredAt() {
         return declaredAt;
+    }
+
+    /** A method's ZEND_ACC_* modifiers (public, protected, private, static, final, abstract); 0 for a function. */
+    private int modifiers;
+    /** The declared return type as zend_type_to_string writes it, or null. */
+    private String returnType;
+    /** The doc comment before the declaration, or null; and the declaration's last line. */
+    private String docComment;
+    private int endLine;
+
+    /** What Reflection reports of a user function's declaration. */
+    public void setDeclaration(int modifiers, String returnType, String docComment, int endLine) {
+        this.modifiers = modifiers;
+        this.returnType = returnType;
+        this.docComment = docComment;
+        this.endLine = endLine;
+    }
+
+    public int getModifiers() {
+        return modifiers;
+    }
+
+    public String getReturnType() {
+        return returnType;
+    }
+
+    public String getDocComment() {
+        return docComment;
+    }
+
+    public int getEndLine() {
+        return endLine;
+    }
+
+    /** The declaring class's name ("C" of "C::m"), or null for a function and a shared built-in method. */
+    public String getClassName() {
+        return className;
     }
 
     /** A closure whose body uses $this (ZEND_ACC_USES_THIS): Closure::bind can't unbind its $this. */

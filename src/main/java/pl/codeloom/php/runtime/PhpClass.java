@@ -58,7 +58,7 @@ public final class PhpClass {
     private final boolean isInterface;
     private final boolean isAbstract;
     private final Set<String> ancestors = new HashSet<>();
-    private final Map<String, PhpFunction> methods = new HashMap<>();
+    private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
@@ -213,6 +213,26 @@ public final class PhpClass {
     @TruffleBoundary
     public PhpFunction findMethod(String lowerMethodName) {
         return methods.get(lowerMethodName);
+    }
+
+    /** The methods by lowercase name (own, imported and inherited), for Reflection; read only. */
+    public Map<String, PhpFunction> methods() {
+        return java.util.Collections.unmodifiableMap(methods);
+    }
+
+    /** The interfaces the class implements directly (an interface: those it extends), in declaration order. */
+    public List<PhpClass> directInterfaces() {
+        return java.util.Collections.unmodifiableList(interfaces);
+    }
+
+    /** The traits whose members the class imported, nested ones included, in import order. */
+    public List<PhpClass> traits() {
+        return java.util.Collections.unmodifiableList(traits);
+    }
+
+    /** The class constants by name, in declaration order, unevaluated initializers included; read only. */
+    public java.util.Set<String> constantNames() {
+        return java.util.Collections.unmodifiableSet(constants.keySet());
     }
 
     public PhpFunction getConstructor() {
