@@ -1,5 +1,6 @@
 package pl.codeloom.php;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
@@ -514,6 +515,20 @@ public final class PhpContext {
     public Object constantAt(int id) {
         Object[] slots = constantSlots;
         return id < slots.length ? slots[id] : null;
+    }
+
+    /**
+     * constantAt for a read that is an error when the constant isn't defined. The slots grow when a constant is
+     * defined, so an id past them is such an error: compiled code leaves that case to the interpreter, rather
+     * than merging a null into the value it tests next.
+     */
+    public Object requiredConstantAt(int id) {
+        Object[] slots = constantSlots;
+        if (id >= slots.length) {
+            CompilerDirectives.transferToInterpreter();
+            return null;
+        }
+        return slots[id];
     }
 
     // ---- global variables ----
