@@ -14,7 +14,18 @@ import pl.codeloom.php.runtime.SourceLocation;
  * A file's top-level code, run in the global scope. include returns the file's `return` value, or 1.
  * Unconditional function and class declarations are hoisted into the prologue by the translator.
  */
-public final class FileRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
+public final class FileRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee, LargeCode {
+
+    /** Whether this root is {@link LargeCode large}: 0 not counted yet, 1 no, 2 yes. */
+    private byte large;
+
+    @Override
+    public boolean isLarge() {
+        if (large == 0) {
+            large = LargeCode.countLarge(this) ? (byte) 2 : (byte) 1;
+        }
+        return large == 2;
+    }
     private final String path;
     private final boolean internal;
     @Child private StmtNode prologue;

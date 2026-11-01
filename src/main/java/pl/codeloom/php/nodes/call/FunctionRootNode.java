@@ -15,6 +15,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ControlFlow;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.LargeCode;
 import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.nodes.vars.FrameSlots;
 import pl.codeloom.php.runtime.Backtrace;
@@ -37,7 +38,18 @@ import java.util.function.IntFunction;
  * runs the body, and on exit releases the arrays its locals held, so copy-on-write sees exact holder counts for
  * locals.
  */
-public final class FunctionRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee {
+public final class FunctionRootNode extends RootNode implements SourceLocation.Code, Backtrace.Callee, LargeCode {
+
+    /** Whether this root is {@link LargeCode large}: 0 not counted yet, 1 no, 2 yes. */
+    private byte large;
+
+    @Override
+    public boolean isLarge() {
+        if (large == 0) {
+            large = LargeCode.countLarge(this) ? (byte) 2 : (byte) 1;
+        }
+        return large == 2;
+    }
     private final String name;
     private final String path;
     private final boolean internal;
