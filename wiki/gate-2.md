@@ -625,3 +625,115 @@ The bytecode interpreter covers few of WordPress's functions yet. What porting m
   - Native smoke still differs on `stdstreams`.
   - Natively, the bytecode report and other `-D` properties read into static finals are fixed at build time.
   - Missing reflection, resources and foreign registrations: none on these pages.
+
+## bcrypt: what a login costs, and what it explains of the gap, 2026-11-01
+An outside reviewer reported: "Slower password hashing: GraalPHP's Java/AOT bcrypt takes 351 ms, versus PHP's native C
+implementation at 246 ms. Every visit logs in; this explains approximately 26% of the HTTP-time gap."
+
+**In short:** the reviewer's 351 against 246 ms is the login request, not bcrypt. Ours is 347 against 232 ms. bcrypt
+itself is 1.00–1.06× PHP's C on native and on the JVM. It runs only on the login request, so it explains at most a
+sixth of that request's gap, about 3% of a visit that logs in, and none of an ordinary page view.
+
+**What WordPress hashes** (the trunk the harness installs, `d86e207`, `wp-includes/pluggable.php`):
+- `wp_hash_password` stores `'$wp' . password_hash(base64_encode(hash_hmac('sha384', trim($password), 'wp-sha384',
+  true)), PASSWORD_BCRYPT, $options)`. The options come from the `wp_hash_password_options` filter, empty by default,
+  so the cost is PHP's default: 12 since PHP 8.4. The installed admin's hash is `$wp$2y$12$...`. The key is 64 bytes
+  of base64, under bcrypt's 72.
+- `wp_check_password` runs `password_verify` on the same key against the hash after `$wp`. It is called from
+  `wp_authenticate_username_password` and `wp_authenticate_email_password`, the login form's POST, and for
+  application passwords. Then `wp_password_needs_rehash` finds cost 12 and asks for nothing.
+- **A logged-in page doesn't hash a password.** `wp_validate_auth_cookie` checks the cookie with
+  `wp_hash(...)` (an HMAC) and `hash_hmac('sha256', ...)`: no bcrypt. So a login runs one cost-12 `password_verify`,
+  and an ordinary page view, anonymous or with a cookie, runs none.
+
+**bcrypt alone** (`bench/bcrypt/ab.sh`: PHP 8.5.12, the JVM and native, interleaved on CPUs 14-21, the order reversed
+every other round). A cell is the median of the rounds' steady state (the last quarter of each run's calls), in ms.
+- Two A/Bs of five rounds each, an hour apart. The host was busy (other sessions), so a single round's ratio ranges
+  over 0.7–1.4. A ratio below is the median of the rounds' own ratios.
+- `crypt12` is `crypt()` at cost 12 with a fixed salt; `verify` is `password_verify` of WordPress's key against a
+  cost-12 hash.
+
+| | `crypt12`, A/B 1 | `verify`, A/B 1 | `crypt12`, A/B 2 | against PHP | memory.peak |
+|---|---|---|---|---|---|
+| PHP 8.5.12 | 341 | 369 | 274 | 1 | 11 MB |
+| JVM (steady) | 369 | 389 | – | 0.99, 1.06 | 165 MB |
+| native, the port as it is | 357 | 348 | 286 | 1.06, 1.00; 1.06 | 34 MB |
+| native, php-src's C through FFM | 296 | 295 | 257 | 0.96, 0.88; 0.94 | 34 MB |
+
+- **On the JVM the first call is already fast:** 396 ms, 1.07× the steady state's 369 ms.
+- **The reviewer's 1.43× doesn't reproduce here:** native bcrypt is 1.06× PHP's at most.
+
+**What it does to a visit.** `native.sh measure 3 150 1` (2026-11-01 03:09-05:13; the same runs compare the GCs on
+branch `native-g1`, wiki/native-gc.md there): 3 interleaved rounds of a cold visit and 150 paced ones, the servers on
+CPUs 14-21. "native" is `wp-native`'s build; "bcrypt by FFM" is the experiment's build (below) with
+`-Dphp.bcrypt.impl=ffm`. Each page's median time over the last 50 visits, in ms:
+
+| page | PHP 8.5 | native | native, bcrypt by FFM | gap (native − PHP) |
+|---|---|---|---|---|
+| home (anonymous) | 32.6 | 131.2 | 140.5 | 98.6 |
+| post (anonymous) | 34.5 | 144.1 | 154.6 | 109.6 |
+| login form (anonymous) | 10.5 | 51.6 | 54.8 | 41.1 |
+| **login** (the POST: one cost-12 `password_verify`) | **231.9** | **346.6** | 339.3 | 114.7 |
+| dashboard (cookie) | 34.4 | 128.0 | 138.4 | 93.6 |
+| posts list (cookie) | 36.0 | 139.2 | 146.3 | 103.2 |
+| the visit, warm (wait) | 380 | 955 | 981 | 575 |
+
+The reviewer's claim, split:
+- **(a) The login request:** 346.6 against 231.9 ms, a gap of 115 ms, 20% of a visit's gap (the reviewer's "~26%").
+  - Only bcrypt's own excess belongs to bcrypt: 0–6% of a 270–370 ms hash (above), so 0–20 ms. That is at most a
+    sixth of the login request's gap, and about 3% of the visit's.
+  - Measured directly, with php-src's C behind `password_verify` the login request took 339.3 ms: 7 ms less, within
+    the rounds' noise.
+  - The rest of that gap is the WordPress code around the hash. The login request boots WordPress, authenticates
+    and sets the cookies, and native runs that code 4-5 times slower than PHP, as on the other pages (3.7-4.9x).
+- **(b) An ordinary visit:** anonymous pages are 41–110 ms slower on native, and pages with a cookie 94–103 ms slower.
+  bcrypt's share is 0: those requests never call it.
+- **(c) So the "~26%" is the login request's share of a benchmark that logs in on every visit.** bcrypt explains
+  about 3% of that benchmark's gap at most, and none of the gap on page views without a login. A faster bcrypt
+  would shorten only logins: it isn't a WordPress speed-up in general.
+
+**Making it as fast as C** (native image; the JVM is already there):
+
+| option | bcrypt on native, against the port | parity | cost |
+|---|---|---|---|
+| (a) Java reshaped as C has it: BF_ctx in one array, the block in locals, the 16 rounds unrolled, with or without a length check for the bounds checks | 0.97 and 0.94 (A/B 1), 1.06 (A/B 2): no reliable gain; login +17 ms (noise) | the same port | more code |
+| (b) native-image flags: `-O3`, `-march=native`, PGO (Gate 1 and bcrypt profiles) | `-O3` 1.08, `-march=native` 0.99, PGO 1.04 (on the reshape: 0.99, 1.07, 0.89): noise | the same port | flags for every build; PGO two builds and a profiling run |
+| (c) php-src's `crypt_blowfish.c` as a shared library, through `pl.codeloom.php.ffi` | 0.89 (A/B 1), 1.02 (A/B 2); PHP's speed by construction: 0.88–0.96 against PHP | php-src's own code, with its self-test | the library built and shipped (as PCRE2: a script, the image, the native image's run time; a DLL on Windows), a binding |
+
+- **Kept: the port as it is.** No option is measurably faster than it on this box, except (c) by its 0–6%. That would
+  be 0–20 ms off a login, and nothing off other pages.
+- **For the owner:** (c) makes bcrypt exactly PHP's, code and speed, at the price of a native library to build and
+  ship. The measured experiment (all five variants behind `-Dphp.bcrypt.impl`, and `bench/truffle/build-bcrypt.sh`)
+  is on branch `bcrypt-experiment`.
+- **(b) beyond bcrypt:** Gate 1 on the same images (`bench/gate1/ab.sh all 200 5`, our parser, 5 interleaved rounds).
+  Time against the `-O2` image, the median of the per-round ratios:
+
+| kernel | hooks | escape | slugs | wpautop | wptexturize | blocks | kses | geomean | memory.peak |
+|---|---|---|---|---|---|---|---|---|---|
+| `-O3` | 1.08 | 0.84 | 0.93 | 1.08 | 0.89 | 1.06 | 0.89 | 0.96 | 1.03 |
+| `-march=native` | 1.02 | 1.15 | 0.78 | 0.99 | 1.03 | 1.32 | 0.89 | 1.01 | 1.00 |
+| PGO | 0.88 | 0.54 | 0.70 | 0.96 | 0.82 | 0.95 | 0.73 | **0.78** | 0.96 |
+
+  - `-O3` is mixed and `-march=native` is nothing.
+  - PGO is 1.28× faster on Gate 1. But its profile came from these same kernels (30 iterations) and bcrypt, so the
+    measurement is in-sample.
+  - Whether a profile of WordPress traffic speeds WordPress up as much is open. It is a separate decision from
+    bcrypt, for the owner.
+  - The builds: `-O2` 88 MB in 5 min 24 s; `-O3` 121 MB in 8 min 12 s (builder peak RSS 7.46 GiB); `-march=native`
+    88 MB in 6 min 12 s; PGO 62 MB in 5 min 17 s, after an instrumented build (188 MB, 6 min 20 s) and the profiling
+    runs.
+
+**Parity** (unchanged code, so this guards the port):
+- `tests/smoke/bcrypt-parity.php` is new: 696 lines of `crypt()` and `password_verify` results on generated inputs,
+  covering:
+  - all four variants at costs 4–10, and WordPress's key at 12;
+  - keys of 0–256 bytes (72 and 73 included): ASCII, 8-bit, with NUL bytes, and 0xff-heavy (`$2x$`'s sign bug and
+    `$2a$`'s safety measure);
+  - every last salt character;
+  - a setting broken at each position with nine bytes, cut short at each length, and followed by more.
+- Its output equals PHP 8.5.12's:
+  - for the port on the JVM, in one context, in three, and instrumented (`tests/smoke/run.sh`), and on native;
+  - for the experiment's variants on the JVM, and for FFM on native.
+- `tests/smoke/password.php` passes for every variant on the JVM and on native. `mvn test`: 22 tests, none failing.
+- WordPress: every native variant's login answers 302 to `/wp-admin/`, as PHP does. The wp-admin pages behind it
+  match PHP's, and 19 of the 21 pages are identical, as before.
