@@ -476,15 +476,14 @@ public final class BuiltinNodes {
         }
 
         @Specialization(guards = {"isNull(callback)", "mode == 0"})
-        protected PhpArray truthy(PhpArray array, Object callback, long mode) {
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object value = array.valueAt(p);
-                if (Convert.toBool(value)) {
-                    result.put(array.keyAt(p), value);
-                }
+        @TruffleBoundary
+        protected static PhpArray truthy(PhpArray array, Object callback, long mode) {
+            Object[] entries = array.entries();
+            boolean[] kept = new boolean[entries.length / 2];
+            for (int i = 0; i < kept.length; i++) {
+                kept[i] = Convert.toBool(entries[2 * i + 1]);
             }
-            return result;
+            return PhpArray.ofEntries(entries, null, kept);
         }
 
         static final Callables.Parameter CALLBACK = new Callables.Parameter("array_filter", 2, true);
@@ -496,14 +495,12 @@ public final class BuiltinNodes {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
             keepArguments(frame, passed == 2 ? new Object[] {array, callback} : new Object[] {array, callback, mode});
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object value = array.valueAt(p);
-                if (Convert.toBool(dispatch.execute(callback, new Object[] {value}))) {
-                    result.put(array.keyAt(p), value);
-                }
+            Object[] entries = array.entries();
+            boolean[] kept = new boolean[entries.length / 2];
+            for (int i = 0; i < kept.length; i++) {
+                kept[i] = Convert.toBool(dispatch.execute(callback, new Object[] {entries[2 * i + 1]}));
             }
-            return result;
+            return PhpArray.ofEntries(entries, null, kept);
         }
 
         @Fallback
@@ -556,11 +553,14 @@ public final class BuiltinNodes {
                 Callables.check(PhpContext.get(this), callback, CALLBACK);
             }
             keepArguments(frame, new Object[] {callback, array});
-            PhpArray result = new PhpArray();
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                result.put(array.keyAt(p), dispatch.execute(callback, new Object[] {array.valueAt(p)}));
+            // the walk over the array's layout and the result's build are each one call; the loop between them
+            // only calls back, which compiled code can inline
+            Object[] entries = array.entries();
+            Object[] mapped = new Object[entries.length / 2];
+            for (int i = 0; i < mapped.length; i++) {
+                mapped[i] = dispatch.execute(callback, new Object[] {entries[2 * i + 1]});
             }
-            return result;
+            return PhpArray.ofEntries(entries, mapped, null);
         }
 
         @Fallback
