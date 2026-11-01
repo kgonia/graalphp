@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Bind;
+import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -209,16 +210,19 @@ public final class ArithmeticNodes {
     }
 
     /**
-     * `.`: lazy concatenation (a rope until someone reads the bytes), one call per operator. Inlined, TruffleString's
-     * concatenation (its code ranges, the short result's copy, the rope) was 30 to 75 IR nodes per operator, and
-     * an int operand's digit loop about 85: top-level code that builds hundreds of include paths (ABSPATH . WPINC
-     * . '/x.php') was too large to install. An int operand is formatted and joined in the same call.
+     * `.`: lazy concatenation (a rope until someone reads the bytes). Two strings concatenate inline: out of line,
+     * the call and the rope it can't virtualize made string-building loops slower (Gate 1's slugs kernel, which
+     * builds `'%' . dechex($byte)` per byte, 8%), for 1.5% less code in WordPress's largest functions. An int
+     * operand's digit loop was about 85 IR nodes inline, and its array writes were Graal's bounds-check
+     * speculations that failed natively once per site and compilation: it is formatted and joined in one call.
+     * Chains of three or more operands are a ConcatChainNode.
      */
     @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ConcatNode extends BinaryNode {
         @Specialization
-        public static TruffleString concat(TruffleString a, TruffleString b) {
-            return Str.concat(a, b);
+        public static TruffleString concat(TruffleString a, TruffleString b,
+                                           @Cached TruffleString.ConcatNode concat) {
+            return concat.execute(a, b, Str.ENC, true);
         }
 
         @Specialization
