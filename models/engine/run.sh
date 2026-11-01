@@ -6,7 +6,7 @@
 # TLC_HEAP its heap (2g).
 set -euo pipefail
 cd "$(dirname "$0")"
-java="${GRAALVM_HOME:-$HOME/.jdks/graalvm-jdk-25.0.4+7.1}/bin/java"
+java="${GRAALVM_HOME:-$HOME/.jdks/graalvm-25.4.4.1.1+1.1}/bin/java"
 jar="${TLA2TOOLS:-$HOME/tools/tla2tools.jar}"
 meta="${TMPDIR:-/tmp}/tlc-shared-engine"
 configs=("$@")

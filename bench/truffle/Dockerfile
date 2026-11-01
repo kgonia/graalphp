@@ -1,7 +1,8 @@
 # Truffle PHP on Linux, in the reference PHP image (same Debian and CPU), calling the same PCRE2 code PHP uses:
 # its bundled pcre2lib, built here as a shared library (build-pcre2.sh). Build:
-#   docker build -t gate1-truffle:8.5 bench/truffle    (needs graalvm-linux.tar.gz here:
-#   https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_linux-x64_bin.tar.gz)
+#   docker build -t gate1-truffle:8.5-graal25.4 bench/truffle    (needs graalvm-linux.tar.gz here: Oracle GraalVM 25.4.4.1.1,
+#   https://gds.oracle.com/download/graal/25i4/archive/graalvm-jdk-25i4-25.0.4.1.1_linux-x64_bin.tar.gz).
+#   gate1-truffle:8.5 is the same image with Oracle GraalVM 25.0.4.
 ARG PHP=8.5
 FROM gate1-php:${PHP}
 COPY graalvm-linux.tar.gz build-pcre2.sh /tmp/

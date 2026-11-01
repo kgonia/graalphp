@@ -27,7 +27,7 @@ start() {
   MSYS_NO_PATHCONV=1 bash bench/gate1/php.sh php tools/ast-export.php target/ast target/gate2/wordpress/wp-config.php \
     target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php target/gate2/wordpress/sockets-probe.php
   MSYS_NO_PATHCONV=1 docker run -d --name gate2-truffle-http -p 8080:8080 ${CPUSET:+--cpuset-cpus "$CPUSET"} \
-    -v "$root:/w" -w /w gate1-truffle:8.5 sh -c '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED \
+    -v "$root:/w" -w /w ${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} sh -c '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED \
     --sun-misc-unsafe-memory-access=allow $JAVA_OPTS_BASE -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false \
     -cp "target/classes:target/lib/*" pl.codeloom.php.launcher.HttpMain --port=8080 --threads=4 \
     --docroot=target/gate2/wordpress --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0 -ddisplay_errors=1 -dhtml_errors=0' > /dev/null

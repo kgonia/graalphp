@@ -29,7 +29,7 @@ rm -rf "$dir/actual" "$dir/batch.log" && mkdir -p "$dir/actual"
 status=3
 while [ $status -eq 3 ]; do
     status=0
-    MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} -v "$root:/w" -w /w gate1-truffle:8.5 sh -c \
+    MSYS_NO_PATHCONV=1 docker run --rm ${CPUSET:+--cpuset-cpus "$CPUSET"} ${JAVA_OPTS:+-e JAVA_OPTS="$JAVA_OPTS"} -v "$root:/w" -w /w ${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} sh -c \
         '$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow \
          $JAVA_OPTS_BASE $JAVA_OPTS -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false -cp "target/classes:target/lib/*" \
          pl.codeloom.php.launcher.BatchMain --ast-root=target/ast --list='"$dir"'/run-list.txt \
