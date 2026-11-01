@@ -495,30 +495,16 @@ final class CurlFunctions {
     // ---- parameter parsing (zend_parse_parameters' rules for the types ext/curl takes) ----
 
     private static void arity(Object[] a, String function, int min, int max) {
-        int count = Args.count(a);
-        if (count >= min && count <= max) {
-            return;
-        }
-        String bound = min == max ? "exactly" : count < min ? "at least" : "at most";
-        int expected = count < min ? min : max;
-        throw new PhpError("ArgumentCountError", function + "() expects " + bound + " " + expected + " argument"
-                + (expected == 1 ? "" : "s") + ", " + count + " given");
+        Args.arity(a, function, min, max);
     }
 
     /** zend_zval_value_name: what a type error says was given. */
     static String valueName(Object value) {
-        if (value instanceof Boolean b) {
-            return b ? "true" : "false";
-        }
-        if (value instanceof PhpResource) {
-            return "resource";
-        }
-        return Convert.debugType(value);
+        return Args.valueName(value);
     }
 
     private static PhpError typeError(String function, int position, String name, String type, Object value) {
-        return new PhpError("TypeError", function + "(): Argument #" + position + " ($" + name + ") must be of type "
-                + type + ", " + valueName(value) + " given");
+        return Args.typeError(function, position, name, type, value);
     }
 
     private static PhpObject handleOf(Object[] a, int index, String function, String name, String className) {
@@ -614,24 +600,7 @@ final class CurlFunctions {
     /** Z_PARAM_STR(_OR_NULL) in coercive mode; null for a null the type allows. */
     private static TruffleString stringArg(PhpContext context, Object[] a, int index, String function, String name,
                                            boolean nullable) {
-        Object value = Args.get(a, index, PhpNull.NULL);
-        if (value instanceof TruffleString s) {
-            return s;
-        }
-        if (value == PhpNull.NULL) {
-            if (nullable) {
-                return null;
-            }
-            deprecateNull(context, function, index, name, "string");
-            return Str.EMPTY;
-        }
-        if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
-            return Convert.toStr(value);
-        }
-        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
-            return object.toPhpString();
-        }
-        throw typeError(function, index + 1, name, nullable ? "?string" : "string", value);
+        return Args.string(context, a, index, function, name, nullable);
     }
 
     /** Z_PARAM_PATH_STR: a string without NUL bytes. */
@@ -653,8 +622,7 @@ final class CurlFunctions {
     }
 
     private static void deprecateNull(PhpContext context, String function, int index, String name, String type) {
-        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(function + "(): Passing null to parameter #"
-                + (index + 1) + " ($" + name + ") of type " + type + " is deprecated"), SourceLocation.current());
+        Args.deprecateNull(context, function, index, name, type);
     }
 
     private static boolean hasNul(byte[] bytes) {
