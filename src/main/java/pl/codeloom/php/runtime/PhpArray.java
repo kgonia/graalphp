@@ -269,9 +269,19 @@ public final class PhpArray implements TruffleObject {
         return null;
     }
 
-    /** Whether slot holds this very key instance (a cheap check of a remembered slotOf result). */
-    public boolean isKeyAt(int slot, Object key) {
-        return store instanceof Hash hash && slot >= 0 && slot < hash.used && hash.keys[slot] == key;
+    /**
+     * The value (possibly a PhpRef) at a hash slot that holds this very key instance, else null: a cheap check of a
+     * remembered slotOf result. The slots past the used ones hold no key, so the key array's bounds are the only
+     * range check (one unsigned compare in compiled code), and a live slot's value is never null.
+     */
+    public Object rawIfKeyAt(int slot, Object key) {
+        if (store instanceof Hash hash) {
+            Object[] keys = hash.keys;
+            if (slot >= 0 && slot < keys.length && keys[slot] == key) {
+                return hash.values[slot];
+            }
+        }
+        return null;
     }
 
     /**
