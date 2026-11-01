@@ -18,6 +18,7 @@
 | [tla-engine.md](tla-engine.md) | Per-request state in the shared engine: inventory, TLA+ model, findings |
 | [native-calls.md](native-calls.md) | Native calls (PCRE2, libcurl, libc) through one FFM helper, on the JVM and in a native image: the contract for adding a binding, and why it is fast on both |
 | [partial-evaluation.md](partial-evaluation.md) | What Truffle compiles of our interpreter: the partial-evaluation rules mapped onto our code, the diagnosis (`tests/gate2/compile-diag.sh`, `CompilationTest` in `mvn test`) and how to read it, the failures and explosions found on WordPress and their fixes |
+| [visit-phases.md](visit-phases.md) | Where a WordPress visit's time goes (include, parse, body reads, translation, native calls, compilation, GC, execution; cold, early and warm, JVM and native, PHP with and without OPcache), and what parsing ahead, a pre-pass or a parse-free start could gain at most |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
