@@ -27,8 +27,9 @@ public abstract class SubclassTestNode extends Node {
     protected static boolean name(PhpClass phpClass, String lowerName,
                                   @Cached("phpClass.getKey()") ClassKey cachedKey,
                                   @Cached("lowerName") String cachedName,
-                                  @Cached("phpClass.isSubclassOf(lowerName)") boolean result) {
-        return result;
+                                  @Cached("phpClass.isDeclaredSubclassOf(lowerName)") boolean result) {
+        // a class alias belongs to a context, not to the key
+        return result || phpClass.isAliasedSubclassOf(lowerName);
     }
 
     @Specialization(guards = {"phpClass.getKey() == cachedKey", "target.getKey() == cachedTargetKey"},
@@ -36,7 +37,7 @@ public abstract class SubclassTestNode extends Node {
     protected static boolean phpClass(PhpClass phpClass, PhpClass target,
                                       @Cached("phpClass.getKey()") ClassKey cachedKey,
                                       @Cached("target.getKey()") ClassKey cachedTargetKey,
-                                      @Cached("phpClass.isSubclassOf(target.getLowerName())") boolean result) {
+                                      @Cached("phpClass.isDeclaredSubclassOf(target.getLowerName())") boolean result) {
         return result;
     }
 

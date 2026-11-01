@@ -58,6 +58,8 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
     private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
+    /** The keys of {@link #classes} that class_alias() made (php-src's IS_ALIAS_PTR entries), to their class. */
+    private final Map<String, PhpClass> classAliases = new HashMap<>();
     /** How many of the first functions and classes declared are the built-ins (the prelude's come later). */
     private final int internalFunctions;
     private final int internalClasses;
@@ -381,21 +383,24 @@ public final class PhpContext {
      * order. Anonymous classes are listed once declared, where php-src binds them at compile time.
      */
     @TruffleBoundary
-    public List<PhpClass> declaredClasses() {
+    public List<Map.Entry<String, PhpClass>> declaredClasses() {
         for (String file : language.preludeFiles()) {
             if (preludeLoaded.add(file)) {
                 language.preludeRoot(file).getCallTarget().call(new Object[PhpFunction.ARG_FIRST]);
             }
         }
-        List<PhpClass> internal = new java.util.ArrayList<>();
-        List<PhpClass> user = new java.util.ArrayList<>();
+        List<Map.Entry<String, PhpClass>> internal = new java.util.ArrayList<>();
+        List<Map.Entry<String, PhpClass>> user = new java.util.ArrayList<>();
         int index = 0;
-        for (PhpClass phpClass : classes.values()) {
-            boolean builtin = index++ < internalClasses || language.preludeFile(phpClass.getLowerName()) != null;
+        for (Map.Entry<String, PhpClass> entry : classes.entrySet()) {
+            PhpClass phpClass = entry.getValue();
+            // an alias is listed by its key, in lower case (get_declared_class_impl)
+            String name = classAliases.containsKey(entry.getKey()) ? entry.getKey() : phpClass.getName();
+            boolean builtin = index++ < internalClasses || language.preludeFile(entry.getKey()) != null;
             if (!builtin) {
-                user.add(phpClass);
+                user.add(Map.entry(name, phpClass));
             } else if (!isRuntimeHelper(phpClass.getName())) {
-                internal.add(phpClass);
+                internal.add(Map.entry(name, phpClass));
             }
         }
         internal.addAll(user);
@@ -478,11 +483,31 @@ public final class PhpContext {
         if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
+        phpClass.setContextAliases(classAliases);
         int id = language.classId(phpClass.getLowerName());
         if (id >= classSlots.length) {
             classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
         }
         classSlots[id] = phpClass;
+    }
+
+    /**
+     * class_alias(): the class under another name too (zend_register_class_alias_ex); false if the name is taken.
+     * The alias is the class itself, so get_class() and ::class keep the class's own name.
+     */
+    @TruffleBoundary
+    public boolean declareAlias(String lowerAlias, PhpClass phpClass) {
+        if (findClass(lowerAlias) != null) {
+            return false;
+        }
+        classes.put(lowerAlias, phpClass);
+        classAliases.put(lowerAlias, phpClass);
+        int id = language.classId(lowerAlias);
+        if (id >= classSlots.length) {
+            classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
+        }
+        classSlots[id] = phpClass;
+        return true;
     }
 
     /** The class declared under a name id (PhpLanguage.classId), or null. */

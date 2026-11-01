@@ -70,6 +70,12 @@ public final class PhpClass {
     private final List<PhpClass> traits = new ArrayList<>();
     /** The language-level identity inline caches key on; made on first use, once the class is complete. */
     private ClassKey key;
+    /**
+     * The class aliases of the context that declared this class (class_alias(): lowercase alias to its class),
+     * or null; a name test also matches an alias of an ancestor. Kept apart from {@link #ancestors}, which the
+     * class's key fixes for every context.
+     */
+    private Map<String, PhpClass> contextAliases;
     /** The property defaults, evaluated once (declaredDefaults order). */
     private Object[] defaults;
 
@@ -138,10 +144,36 @@ public final class PhpClass {
         this.handlers = handlers;
     }
 
-    /** instanceof: this class, a parent, or an implemented interface (lowercase name). */
+    /**
+     * instanceof: this class, a parent, or an implemented interface (lowercase name), under its own name or a
+     * class alias of this context.
+     */
     @TruffleBoundary
     public boolean isSubclassOf(String lowerClassName) {
+        return ancestors.contains(lowerClassName) || isAliasedSubclassOf(lowerClassName);
+    }
+
+    /** {@link #isSubclassOf} by the classes' own names only: what the class's key fixes, in every context. */
+    @TruffleBoundary
+    public boolean isDeclaredSubclassOf(String lowerClassName) {
         return ancestors.contains(lowerClassName);
+    }
+
+    /** Whether the name is a class alias, in this class's context, of this class or an ancestor. */
+    public boolean isAliasedSubclassOf(String lowerClassName) {
+        Map<String, PhpClass> aliases = contextAliases;
+        return aliases != null && !aliases.isEmpty() && aliasedAncestor(aliases, lowerClassName);
+    }
+
+    @TruffleBoundary
+    private boolean aliasedAncestor(Map<String, PhpClass> aliases, String lowerClassName) {
+        PhpClass target = aliases.get(lowerClassName);
+        return target != null && ancestors.contains(target.lowerName);
+    }
+
+    /** Set when the class is declared in a context: that context's class aliases. */
+    public void setContextAliases(Map<String, PhpClass> aliases) {
+        this.contextAliases = aliases;
     }
 
     public void addInterface(PhpClass iface) {

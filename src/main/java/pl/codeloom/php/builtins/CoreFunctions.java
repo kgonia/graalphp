@@ -110,6 +110,7 @@ final class CoreFunctions {
         r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.INTERFACE,
                 Args.bool(a, 1, true)));
         r.fn("trait_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.TRAIT, Args.bool(a, 1, true)));
+        r.fn("class_alias", (context, a) -> classAlias(context, Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, true)));
         r.fn("spl_autoload_register", (context, a) -> {
             Object callable = Args.get(a, 0, PhpNull.NULL);
             if (callable == PhpNull.NULL) {
@@ -361,6 +362,50 @@ final class CoreFunctions {
         return Str.lower(text.startsWith("\\") ? text.substring(1) : text);
     }
 
+    /** The names zend_assert_valid_class_name refuses (reserved_class_names), unqualified, in lower case. */
+    private static final java.util.Set<String> RESERVED_CLASS_NAMES = java.util.Set.of("bool", "false", "float",
+            "int", "null", "parent", "self", "static", "string", "true", "void", "never", "iterable", "object", "mixed",
+            "array", "callable");
+
+    /**
+     * class_alias(): the class (autoloaded unless told not to) under one more name. A name in use warns as
+     * zend_class_redeclaration_error_ex does, naming the aliased class's declaration; a reserved one is a compile
+     * error.
+     */
+    @TruffleBoundary
+    private static boolean classAlias(PhpContext context, TruffleString className, TruffleString aliasName,
+                                      boolean autoload) {
+        String name = Str.java(className);
+        PhpClass phpClass = autoload ? context.findClassAutoloading(name) : context.findClass(lowerName(className));
+        if (phpClass == null) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Class \"" + name + "\" not found"),
+                    pl.codeloom.php.runtime.SourceLocation.current());
+            return false;
+        }
+        String alias = Str.java(aliasName);
+        String lowerAlias = lowerName(aliasName);
+        if (RESERVED_CLASS_NAMES.contains(lowerAlias.substring(lowerAlias.lastIndexOf('\\') + 1))) {
+            throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Cannot use \"" + lowerAlias
+                    + "\" as a class alias as it is reserved"), pl.codeloom.php.runtime.SourceLocation.current(), 0);
+        }
+        if (lowerAlias.equals("_")) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED,
+                    Str.of("Using \"_\" as a class alias is deprecated since 8.4"),
+                    pl.codeloom.php.runtime.SourceLocation.current());
+        }
+        if (context.declareAlias(lowerAlias, phpClass)) {
+            return true;
+        }
+        Kind kind = kindOf(phpClass);
+        String type = kind == Kind.TRAIT ? "trait" : kind == Kind.INTERFACE ? "interface" : "class";
+        pl.codeloom.php.runtime.SourceLocation declared = phpClass.getDeclaration()
+                instanceof pl.codeloom.php.runtime.ClassTemplate template ? template.getDeclaredAt() : null;
+        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Cannot redeclare " + type + " " + alias
+                + (declared == null ? "" : " (previously declared in " + declared.file() + ":" + declared.line() + ")")),
+                pl.codeloom.php.runtime.SourceLocation.current());
+        return false;
+    }
+
     /** class_exists_impl: the class, interface or trait under the name, which only the asked kind satisfies. */
     private static boolean classExists(PhpContext context, TruffleString name, Kind kind, boolean autoload) {
         PhpClass phpClass = autoload ? context.findClassAutoloading(Str.java(name)) : context.findClass(lowerName(name));
@@ -389,9 +434,9 @@ final class CoreFunctions {
     @TruffleBoundary
     private static PhpArray classNames(PhpContext context, Kind kind) {
         PhpArray names = new PhpArray();
-        for (PhpClass phpClass : context.declaredClasses()) {
-            if (kindOf(phpClass) == kind) {
-                names.append(Str.of(phpClass.getName()));
+        for (java.util.Map.Entry<String, PhpClass> entry : context.declaredClasses()) {
+            if (kindOf(entry.getValue()) == kind) {
+                names.append(Str.of(entry.getKey()));
             }
         }
         return names;
