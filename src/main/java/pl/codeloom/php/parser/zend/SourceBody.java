@@ -39,6 +39,11 @@ final class SourceBody extends AstBody {
     }
 
     @Override
+    protected int size() {
+        return charTo - charFrom;
+    }
+
+    @Override
     public String toString() {
         return "SourceBody[" + charFrom + ".." + charTo + " line " + line + "]";
     }

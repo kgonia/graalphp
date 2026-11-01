@@ -19,6 +19,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -53,6 +54,28 @@ final class SourceFiles {
     /** The translated top-level code of the file at canonical (path as the script named it). */
     @TruffleBoundary
     static FileRootNode load(PhpContext context, String path, String canonical) {
+        // the lookup and a translation it makes; the parse's diagnostics, which may run PHP's error handler, after
+        AtomicReference<List<CompilerGlobals.Diagnostic>> parsed = new AtomicReference<>();
+        FileRootNode root;
+        int outer = Phases.enter(Phases.INCLUDE);
+        try {
+            root = lookUp(context, path, canonical, parsed);
+        } finally {
+            Phases.exit(outer);
+        }
+        List<CompilerGlobals.Diagnostic> diagnostics = parsed.get();
+        if (diagnostics != null) {
+            for (CompilerGlobals.Diagnostic diagnostic : diagnostics) {
+                ErrorFunctions.raise(context, diagnostic.type(), Str.of(diagnostic.message()),
+                        new SourceLocation(canonical, diagnostic.line()));
+            }
+        }
+        return root;
+    }
+
+    /** The file's translation: the cached one for its version, else a new one, whose diagnostics go to parsed. */
+    private static FileRootNode lookUp(PhpContext context, String path, String canonical,
+                                       AtomicReference<List<CompilerGlobals.Diagnostic>> parsed) {
         TruffleFile file = context.getEnv().getPublicTruffleFile(canonical);
         long modified;
         long size;
@@ -65,11 +88,8 @@ final class SourceFiles {
         boolean shortTags = context.ini().shortOpenTag();
         // the parse's inputs: the file's version, and short_open_tag
         long version = modified * 2 + (shortTags ? 1 : 0);
-        // the diagnostics of the parse, if this load made it
-        AtomicReference<List<CompilerGlobals.Diagnostic>> parsed = new AtomicReference<>();
-        FileRootNode root;
         try {
-            root = context.getLanguage().file(canonical, version, size,
+            return context.getLanguage().file(canonical, version, size,
                     () -> translate(context.getLanguage(), path, canonical, file, shortTags, parsed));
         } catch (ZendCompileError error) {
             if (SourceLocation.current().equals(SourceLocation.UNKNOWN)) {
@@ -78,14 +98,6 @@ final class SourceFiles {
             }
             throw thrown(context, canonical, error, true);
         }
-        List<CompilerGlobals.Diagnostic> diagnostics = parsed.get();
-        if (diagnostics != null) {
-            for (CompilerGlobals.Diagnostic diagnostic : diagnostics) {
-                ErrorFunctions.raise(context, diagnostic.type(), Str.of(diagnostic.message()),
-                        new SourceLocation(canonical, diagnostic.line()));
-            }
-        }
-        return root;
     }
 
     private static FileRootNode translate(PhpLanguage language, String path, String canonical, TruffleFile file,
@@ -94,16 +106,31 @@ final class SourceFiles {
         byte[] script;
         Source source;
         ScriptText text;
+        int outer = Phases.enter(Phases.READ);
         try {
             script = file.readAllBytes();
             text = ScriptText.decode(script);
             source = Source.newBuilder(PhpLanguage.ID, file).content(text.text()).build();
         } catch (IOException | SecurityException e) {
             throw cannotOpen(path, e);
+        } finally {
+            Phases.exit(outer);
         }
-        ZendParser.Result parsed = ZendParser.parse(script, text, shortTags);
+        Phases.fileRead(script.length);
+        ZendParser.Result parsed;
+        outer = Phases.enter(Phases.PARSE);
+        try {
+            parsed = ZendParser.parse(script, text, shortTags);
+        } finally {
+            Phases.exit(outer);
+        }
         diagnostics.set(parsed.diagnostics());
-        return new Translator(language, canonical, source, false).translateFile(parsed.ast());
+        outer = Phases.enter(Phases.FILE_TRANSLATE);
+        try {
+            return new Translator(language, canonical, source, false).translateFile(parsed.ast());
+        } finally {
+            Phases.exit(outer);
+        }
     }
 
     private static PhpError cannotOpen(String path, Exception e) {

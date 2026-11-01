@@ -442,6 +442,9 @@ Truffle PHP built as a native standalone with Oracle GraalVM 25 (`native-image`,
 
 - **The build found three real bugs against the Truffle idiom:** `PhpError`'s and `PhpException`'s message building, and `new HashMap` in `IncludeNode`, sat on paths that compilation of PHP code reaches. They are now behind `@TruffleBoundary`. On the JVM this changed nothing measurable (6 rounds: 0.94–1.02 per kernel, memory 0.99).
 - **Regex is 25–160× slower:** `preg_match` 3.8 µs against 0.15 µs, `preg_replace` 95 µs against 0.6 µs. A downcall handle created at run time isn't a constant in native image, so every PCRE2 call takes the generic method-handle path. Handles made at build time are refused (`linkToNative`). A fast path would need `@CFunction` for the native build, or Truffle NFI.
+  - **Fixed 2026-10-31, without either** ([native-calls.md](native-calls.md)). A handle made at build time was refused for the address it carried. An address-less handle (`Linker.downcallHandle(descriptor)`), folded with a lookup of the address at the first call, carries none, so the image builds it as a constant. All native calls (PCRE2, libcurl, libc) now go through one helper, `pl.codeloom.php.ffi`.
+  - `preg_match` now takes 0.13 µs a call against 4.7 µs. Gate 1 on native is 8.4× faster (kses 518 → 41.5 ms, wpautop 179 → 7.3).
+  - Native is still at 0.59× the JVM at steady state, PHP code included: hooks, which has no regex, is 0.60×. Its first iterations are 2–3× faster than the JVM's.
 - **Other built-ins are as fast as on the JVM or faster** (`strtolower` 121 against 175 ns, arrays 618 against 739 ns).
 - **PHP code is slower** (hooks: 11–12 ms against 9 ms).
 - **Memory is no lower:** hooks over 400 iterations peaked at 881 MB native, and at 1040 MB with `-Xmx256m`, against 695 MB for the JVM at `-Xmx256m`. The limit doesn't cover runtime compilation's memory.

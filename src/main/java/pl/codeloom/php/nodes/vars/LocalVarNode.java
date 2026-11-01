@@ -2,13 +2,11 @@ package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
-import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
-import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -71,11 +69,7 @@ public final class LocalVarNode extends LValueNode {
         if (!frame.isObject(slot)) {
             return PhpNull.NULL;
         }
-        Object value = frame.getObject(slot);
-        if (value instanceof PhpRef ref) {
-            return ref.get();
-        }
-        return value == null ? PhpNull.NULL : value;
+        return Variables.value(frame.getObject(slot));
     }
 
     @Override
@@ -202,23 +196,14 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpRef ref) {
             return ref;
         }
-        PhpRef ref = new PhpRef(value == null ? PhpNull.NULL : value);
-        if (value instanceof PhpArray array) {
-            array.removeHolder();
-        }
-        ref.bind();
+        PhpRef ref = Variables.newRef(value);
         FrameSlots.setObject(frame, slot, ref);
         return ref;
     }
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        Object old = storedObject(frame);
-        if (old instanceof PhpArray array) {
-            array.removeHolder();
-        } else if (old instanceof PhpRef previous) {
-            previous.unbind();
-        }
+        Variables.released(storedObject(frame));
         ref.bind();
         FrameSlots.setObject(frame, slot, ref);
     }
@@ -229,7 +214,7 @@ public final class LocalVarNode extends LValueNode {
         if (value instanceof PhpArray array) {
             if (array.isShared()) {
                 met(SEEN_SHARED);
-                PhpArray copy = separated(array);
+                PhpArray copy = Variables.separated(array);
                 FrameSlots.setObject(frame, slot, copy);
                 return copy;
             }
@@ -239,48 +224,25 @@ public final class LocalVarNode extends LValueNode {
             met(SEEN_REF_ARRAY);
             return Places.refArrayForWrite(ref);
         }
-        if (value == null || value == PhpNull.NULL || value == Boolean.FALSE) {
+        if (Variables.becomesArray(value)) {
             met(SEEN_CREATED);
-            PhpArray created = new PhpArray();
-            created.addHolder();
+            PhpArray created = Variables.created();
             FrameSlots.setObject(frame, slot, created);
             return created;
         }
         if (value instanceof PhpObject) {
             return null;
         }
-        throw scalarAsArray();
+        throw Variables.scalarAsArray();
     }
 
     // The arrayForWrite cases are profiled too (SEEN_SHARED, SEEN_REF_ARRAY, SEEN_CREATED). An element write such
     // as `$q[$i] = $v` usually only ever finds an unshared array; compiled code keeps the other cases (separation,
     // references, auto-creation) out until they happen, instead of inlining all of them at every write site.
 
-    /**
-     * A shared array the variable writes into: its own copy, which it holds instead. Out of line, as
-     * PhpRef.separate: the copy is as long as the array, the holder updates large.
-     */
-    @TruffleBoundary
-    private static PhpArray separated(PhpArray shared) {
-        PhpArray copy = shared.copy();
-        copy.addHolder();
-        shared.removeHolder();
-        return copy;
-    }
-
-    @TruffleBoundary
-    private static PhpError scalarAsArray() {
-        return new PhpError("Cannot use a scalar value as an array");
-    }
-
     @Override
     public void unset(VirtualFrame frame) {
-        Object old = storedObject(frame);
-        if (old instanceof PhpArray array) {
-            array.removeHolder();
-        } else if (old instanceof PhpRef ref) {
-            ref.unbind();
-        }
+        Variables.released(storedObject(frame));
         frame.clear(slot);
     }
 

@@ -29,6 +29,11 @@ final class ExportBody extends AstBody {
     }
 
     @Override
+    protected int size() {
+        return length;
+    }
+
+    @Override
     public String toString() {
         return "ExportBody[" + offset + "+" + length + "]";
     }

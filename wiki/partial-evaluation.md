@@ -6,11 +6,6 @@ the graph explode, fails to compile, or deoptimizes again and again. An outside 
 failures and exploding compilations" on our code. This page is how we see them ourselves, what they were, and
 what fixed them.
 
-On `main` (GraalVM 25.0.4) the same tooling and fixes apply, and only the JVM runs: there is no native-image build
-here (`bench/native`, branch `wp-native`), so `compile-diag.sh` skips the native runs. The numbers below were
-measured on `wp-native` (GraalVM 25.4.4.1.1); on `main` the fixes keep `mvn test`, smoke, Gate 1's checksums and the
-WordPress pages as they were, and CompilationTest found `ForeachNode`'s list iterator here too.
-
 Sources: [PartialEvaluation.md](https://github.com/oracle/graal/blob/master/truffle/docs/PartialEvaluation.md),
 [Optimizing.md](https://github.com/oracle/graal/blob/master/truffle/docs/Optimizing.md),
 [DeoptCyclePatterns.md](https://github.com/oracle/graal/blob/master/truffle/docs/DeoptCyclePatterns.md) (GraalVM
