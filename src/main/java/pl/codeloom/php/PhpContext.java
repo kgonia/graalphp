@@ -24,6 +24,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.Str;
 
@@ -242,6 +243,15 @@ public final class PhpContext {
         if (javaParser) {
             return SourceFiles.load(this, path, canonical);
         }
+        int outer = Phases.enter(Phases.INCLUDE);
+        try {
+            return loadExport(path, canonical);
+        } finally {
+            Phases.exit(outer);
+        }
+    }
+
+    private FileRootNode loadExport(String path, String canonical) {
         Path relative = sourceRoot.relativize(Path.of(canonical));
         Path json = astRoot.resolve(relative.toString() + ".json");
         TruffleFile file = env.getPublicTruffleFile(json.toString());
@@ -258,12 +268,20 @@ public final class PhpContext {
 
     private FileRootNode translate(String path, String canonical, TruffleFile file, Path json) {
         Ast ast;
+        int outer = Phases.enter(Phases.PARSE);
         try (InputStream in = file.newInputStream()) {
             ast = AstReader.read(in);
         } catch (IOException e) {
             throw noExport(path, json);
+        } finally {
+            Phases.exit(outer);
         }
-        return new Translator(language, canonical, phpSource(canonical), false).translateFile(ast);
+        outer = Phases.enter(Phases.FILE_TRANSLATE);
+        try {
+            return new Translator(language, canonical, phpSource(canonical), false).translateFile(ast);
+        } finally {
+            Phases.exit(outer);
+        }
     }
 
     private static PhpError noExport(String path, Path json) {

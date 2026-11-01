@@ -464,10 +464,15 @@ public final class PcreFunctions {
         }
         byte[] pattern = new byte[patternEnd - patternStart];
         System.arraycopy(regex, patternStart, pattern, 0, pattern.length);
+        long t0 = NativeClock.ENABLED ? System.nanoTime() : 0;
         MemorySegment code = Native.compile(pattern, options);
         int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
-        return new Compiled(code, Native.jitCompile(code), (options & UTF) != 0, groups, Native.names(code, groups),
-                pattern, options, shared);
+        boolean jit = Native.jitCompile(code);
+        if (NativeClock.ENABLED) {
+            NativeClock.addCompile(System.nanoTime() - t0);
+        }
+        return new Compiled(code, jit, (options & UTF) != 0, groups, Native.names(code, groups), pattern, options,
+                shared);
     }
 
     private static boolean isSpace(byte b) {

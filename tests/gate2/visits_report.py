@@ -23,7 +23,8 @@ WINDOWS = [(1, 1), (2, 2), (3, 3), (4, 5), (6, 10), (11, 20), (21, 30), (31, 50)
 
 
 def runs_of(directory, variant):
-    files = sorted(glob.glob(os.path.join(directory, f"{variant}-*.json")))
+    # the round is a number: "php" is not "php-nojit"
+    files = sorted(glob.glob(os.path.join(directory, f"{variant}-[0-9]*.json")))
     return [json.load(open(f)) for f in files]
 
 

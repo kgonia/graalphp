@@ -6,6 +6,7 @@
 package pl.codeloom.php.parser.zend;
 
 import pl.codeloom.php.parser.Ast;
+import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageParser;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageScanner;
 
@@ -84,7 +85,11 @@ public final class ZendParser {
         ZendScannerBase scanner = new ZendLanguageScanner(CG, script);
         ZendAst ast = parse(CG, scanner, new ZendLexer(CG, scanner));
         Bodies bodies = text == null ? null : new Bodies(text, script, 0, scanner.brace_ends, shortTags);
-        return new Result((Ast) PhpAst.convert(ast, 0, bodies), List.copyOf(CG.diagnostics));
+        Result result = new Result((Ast) PhpAst.convert(ast, 0, bodies), List.copyOf(CG.diagnostics));
+        if (bodies != null) {
+            Phases.bodiesLeft(bodies.leftChars);
+        }
+        return result;
     }
 
     /** Leaves each function body whose braces the parse saw as a SourceBody over the script's text. */
@@ -95,6 +100,8 @@ public final class ZendParser {
         private final int charBase;
         private final Map<Integer, Integer> braceEnds;
         private final boolean shortTags;
+        /** The characters of the bodies left so far (Phases). */
+        long leftChars;
 
         Bodies(ScriptText text, byte[] bytes, int charBase, Map<Integer, Integer> braceEnds, boolean shortTags) {
             this.text = text;
@@ -115,6 +122,7 @@ public final class ZendParser {
             }
             int from = charBase + offsets.charOffset(list.braceOffset);
             int to = charBase + offsets.charOffset(close + 1);
+            leftChars += to - from;
             return new SourceBody(text, from, to, list.braceLine, list.braceDocComment, firstDeclId, decl.kind,
                     shortTags);
         }
