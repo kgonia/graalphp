@@ -290,6 +290,55 @@ final class CoreFunctions {
             }
             return Str.of(String.format("%.8f %d", (micros % 1_000_000) / 1e6, micros / 1_000_000));
         });
+        // ext/standard/basic_functions.c: the request's thread sleeps (php_sleep, usleep, nanosleep)
+        r.fn("sleep", a -> {
+            long seconds = Args.lng(a, 0, 0);
+            if (seconds < 0) {
+                throw new PhpError("ValueError", "sleep(): Argument #1 ($seconds) must be greater than or equal to 0");
+            }
+            sleepNanos(seconds * 1_000_000_000L);
+            return 0L;
+        });
+        r.fn("usleep", a -> {
+            long micros = Args.lng(a, 0, 0);
+            if (micros < 0) {
+                throw new PhpError("ValueError",
+                        "usleep(): Argument #1 ($microseconds) must be greater than or equal to 0");
+            }
+            sleepNanos(micros * 1000L);
+            return PhpNull.NULL;
+        });
+        r.fn("time_nanosleep", a -> {
+            long seconds = Args.lng(a, 0, 0);
+            long nanos = Args.lng(a, 1, 0);
+            if (seconds < 0) {
+                throw new PhpError("ValueError",
+                        "time_nanosleep(): Argument #1 ($seconds) must be greater than or equal to 0");
+            }
+            if (nanos < 0) {
+                throw new PhpError("ValueError",
+                        "time_nanosleep(): Argument #2 ($nanoseconds) must be greater than or equal to 0");
+            }
+            if (nanos > 999_999_999L) {
+                // nanosleep's EINVAL
+                throw new PhpError("ValueError",
+                        "Nanoseconds was not in the range 0 to 999 999 999 or seconds was negative");
+            }
+            sleepNanos(seconds * 1_000_000_000L + nanos);
+            return true;
+        });
+        r.fn("time_sleep_until", (context, a) -> {
+            double until = Convert.toDouble(Args.get(a, 0));
+            double now = System.currentTimeMillis() / 1e3;
+            if (until < now) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("time_sleep_until(): Argument #1"
+                        + " ($timestamp) must be greater than or equal to the current time"),
+                        pl.codeloom.php.runtime.SourceLocation.current());
+                return false;
+            }
+            sleepNanos((long) ((until - now) * 1e9));
+            return true;
+        });
 
         // ---- math ----
         r.fn("abs", a -> {
@@ -345,6 +394,16 @@ final class CoreFunctions {
         r.fn("md5", a -> EncodingFunctions.digest("MD5", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
         r.fn("sha1", a -> EncodingFunctions.digest("SHA-1", Str.readBytes(Args.str(a, 0)), Args.bool(a, 1, false)));
 
+    }
+
+    /** The thread sleeps; an interrupt (the server stopping) ends the sleep early, as a signal does in PHP. */
+    @TruffleBoundary
+    private static void sleepNanos(long nanos) {
+        try {
+            Thread.sleep(nanos / 1_000_000L, (int) (nanos % 1_000_000L));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @TruffleBoundary
