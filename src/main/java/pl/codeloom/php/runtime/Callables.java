@@ -63,7 +63,7 @@ public final class Callables {
             String text = Str.java(name);
             int separator = text.indexOf("::");
             if (separator > 0) {
-                return method(namedClass(context, text.substring(0, separator), direct), null,
+                return method(namedClass(context, text.substring(0, separator), direct, true), null,
                         text.substring(separator + 2), direct);
             }
             PhpFunction function = context.findFunction(Str.lower(stripNamespace(text)));
@@ -79,7 +79,7 @@ public final class Callables {
                 return method(object.getPhpClass(), object, Str.java(methodName), direct);
             }
             if (first instanceof TruffleString className) {
-                return method(namedClass(context, Str.java(className), direct), null, Str.java(methodName), direct);
+                return method(namedClass(context, Str.java(className), direct, true), null, Str.java(methodName), direct);
             }
             return null;
         }
@@ -149,10 +149,14 @@ public final class Callables {
      * The class a callable names: "self", "parent" and "static" (deprecated in callables since PHP 8.2, still
      * honoured) are the calling code's declaring class, its parent, and the called class.
      */
-    private static PhpClass namedClass(PhpContext context, String name, boolean direct) {
+    /**
+     * The class a callable names. It is autoloaded, in a call (zend_init_dynamic_call_*) and a callable parameter
+     * (zend_is_callable_check_class) alike; not again for the error message once the lookup failed.
+     */
+    private static PhpClass namedClass(PhpContext context, String name, boolean direct, boolean autoload) {
         String lower = Str.lower(stripNamespace(name));
         if (direct) {
-            return context.findClass(lower);
+            return autoload ? context.findClassAutoloading(stripNamespace(name)) : context.findClass(lower);
         }
         switch (lower) {
             case "self", "parent": {
@@ -167,7 +171,7 @@ public final class Callables {
                         ? called : null;
             }
             default:
-                return context.findClass(lower);
+                return autoload ? context.findClassAutoloading(stripNamespace(name)) : context.findClass(lower);
         }
     }
 
@@ -286,7 +290,7 @@ public final class Callables {
     }
 
     private static String methodReason(PhpContext context, String className, String methodName) {
-        PhpClass phpClass = namedClass(context, className, false);
+        PhpClass phpClass = namedClass(context, className, false, false);
         if (phpClass == null) {
             return "class \"" + className + "\" not found";
         }
@@ -332,7 +336,7 @@ public final class Callables {
     }
 
     private static String methodError(PhpContext context, String className, String methodName) {
-        PhpClass phpClass = namedClass(context, className, true);
+        PhpClass phpClass = namedClass(context, className, true, false);
         if (phpClass == null) {
             return "Class \"" + className + "\" not found";
         }
