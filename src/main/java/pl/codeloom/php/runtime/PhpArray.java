@@ -174,8 +174,8 @@ public final class PhpArray implements TruffleObject {
         } else {
             Hash hash = ((Hash) store).copy();
             for (int i = 0; i < hash.used; i++) {
-                if (hash.keys[i] != null) {
-                    copyElement(hash.values, i);
+                if (hash.key(i) != null) {
+                    copyElement(hash.entries, 2 * i + 1);
                 }
             }
             copy.store = hash;
@@ -265,19 +265,19 @@ public final class PhpArray implements TruffleObject {
      */
     public Object hashGetLong(long index) {
         Hash hash = hashStore(store);
-        Object[] keys = hash.keys;
+        Object[] entries = hash.entries;
         if (hash.buckets == null) {
             for (int slot = 0; slot < hash.used; slot++) {
-                if (keys[slot] instanceof Long key && key == index) {
-                    return hash.values[slot];
+                if (entries[2 * slot] instanceof Long key && key == index) {
+                    return entries[2 * slot + 1];
                 }
             }
             return null;
         }
         for (int slot = hash.buckets[Long.hashCode(index) & (hash.buckets.length - 1)]; slot >= 0;
              slot = hash.chain[slot]) {
-            if (keys[slot] instanceof Long key && key == index) {
-                return hash.values[slot];
+            if (entries[2 * slot] instanceof Long key && key == index) {
+                return entries[2 * slot + 1];
             }
         }
         return null;
@@ -285,14 +285,16 @@ public final class PhpArray implements TruffleObject {
 
     /**
      * The value (possibly a PhpRef) at a hash slot that holds this very key instance, else null: a cheap check of a
-     * remembered slotOf result. The slots past the used ones hold no key, so the key array's bounds are the only
-     * range check (one unsigned compare in compiled code), and a live slot's value is never null.
+     * remembered slotOf result. The slots past the used ones hold no key, so the entries' bounds are the only
+     * range check, which covers the key and the value, and a live slot's value is never null.
      */
     public Object rawIfKeyAt(int slot, Object key) {
         if (store instanceof Hash hash) {
-            Object[] keys = hash.keys;
-            if (slot >= 0 && slot < keys.length && keys[slot] == key) {
-                return hash.values[slot];
+            Object[] entries = hash.entries;
+            int at = 2 * slot;
+            // one unsigned compare: the slot not remembered yet (-1) gives -1, past any length
+            if (Integer.compareUnsigned(at + 1, entries.length) < 0 && entries[at] == key) {
+                return entries[at + 1];
             }
         }
         return null;
@@ -305,7 +307,7 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     private static Object hashGet(Hash hash, Object key) {
         int slot = hash.find(key, hash(key));
-        return slot < 0 ? null : hash.values[slot];
+        return slot < 0 ? null : hash.value(slot);
     }
 
     // ---- writes (callers have made this array exclusive) ----
@@ -461,8 +463,8 @@ public final class PhpArray implements TruffleObject {
         int h = hash(key);
         int slot = hash.find(key, h);
         if (slot >= 0) {
-            countOut(hash.values[slot], null);
-            hash.values[slot] = ref;
+            countOut(hash.value(slot), null);
+            hash.setValue(slot, ref);
         } else {
             insert(hash, key, h, ref);
         }
@@ -541,13 +543,13 @@ public final class PhpArray implements TruffleObject {
         int h = hash(key);
         int slot = hash.find(key, h);
         if (slot >= 0) {
-            Object old = hash.values[slot];
+            Object old = hash.value(slot);
             if (old instanceof PhpRef ref) {
                 ref.set(value);
                 return;
             }
             countIn(value);
-            hash.values[slot] = value;
+            hash.setValue(slot, value);
             countOut(old, value);
         } else {
             countIn(value);
@@ -580,9 +582,8 @@ public final class PhpArray implements TruffleObject {
         if (slot < 0) {
             return;
         }
-        countOut(hash.values[slot], null);
-        hash.keys[slot] = null;
-        hash.values[slot] = null;
+        countOut(hash.value(slot), null);
+        hash.clear(slot);
         size--;
         if (pointer == slot) {
             pointer = nextPosition(slot);
@@ -801,7 +802,7 @@ public final class PhpArray implements TruffleObject {
             return size - 1;
         }
         for (int i = hash.used - 1; i >= 0; i--) {
-            if (hash.keys[i] != null) {
+            if (hash.key(i) != null) {
                 return i;
             }
         }
@@ -814,7 +815,7 @@ public final class PhpArray implements TruffleObject {
             return position - 1;
         }
         for (int i = position - 1; i >= 0; i--) {
-            if (hash.keys[i] != null) {
+            if (hash.key(i) != null) {
                 return i;
             }
         }
@@ -835,13 +836,13 @@ public final class PhpArray implements TruffleObject {
             return false;
         }
         if (store instanceof Hash hash) {
-            return position < hash.used && hash.keys[position] != null;
+            return position < hash.used && hash.key(position) != null;
         }
         return position < size;
     }
 
     public Object keyAt(int position) {
-        return store instanceof Hash hash ? hash.keys[position] : (Object) (long) position;
+        return store instanceof Hash hash ? hash.key(position) : (Object) (long) position;
     }
 
     public Object rawAt(int position) {
@@ -852,7 +853,7 @@ public final class PhpArray implements TruffleObject {
         if (elements instanceof Object[] packed) {
             return packed[position];
         }
-        return hashStore(elements).values[position];
+        return hashStore(elements).value(position);
     }
 
     public Object valueAt(int position) {
@@ -919,12 +920,12 @@ public final class PhpArray implements TruffleObject {
 
     /** The key at a position of a hashed array. */
     public Object hashKeyAt(int position) {
-        return hashStore(store).keys[position];
+        return hashStore(store).key(position);
     }
 
     /** The raw value at a position of a hashed array. */
     public Object hashValueAt(int position) {
-        return hashStore(store).values[position];
+        return hashStore(store).value(position);
     }
 
     /** Makes the element at a position a reference and returns it (foreach by reference). */
@@ -948,7 +949,7 @@ public final class PhpArray implements TruffleObject {
         if (store instanceof Object[] packed) {
             packed[position] = ref;
         } else {
-            ((Hash) store).values[position] = ref;
+            ((Hash) store).setValue(position, ref);
         }
         return ref;
     }
@@ -1009,7 +1010,7 @@ public final class PhpArray implements TruffleObject {
 
     private void insert(Hash hash, Object key, int h, Object value) {
         Hash target = hash;
-        if (target.used == target.keys.length) {
+        if (target.used == target.capacity()) {
             target = grow(target);
         }
         target.add(key, h, value);
@@ -1021,20 +1022,20 @@ public final class PhpArray implements TruffleObject {
 
     /** Doubles capacity, or just compacts when many slots are deleted; keeps order and fixes the pointer. */
     private Hash grow(Hash old) {
-        Hash grown = new Hash(size * 2 >= old.keys.length ? old.keys.length * 2 : old.keys.length);
+        Hash grown = new Hash(size * 2 >= old.capacity() ? old.capacity() * 2 : old.capacity());
         int oldPointer = pointer;
         pointer = -1;
         for (int i = 0; i < old.used; i++) {
-            if (old.keys[i] != null) {
+            if (old.key(i) != null) {
                 if (i == oldPointer) {
                     pointer = grown.used;
                 }
-                grown.add(old.keys[i], old.hashes[i], old.values[i]);
+                grown.add(old.key(i), old.hashes[i], old.value(i));
             }
         }
         store = grown;
         if (iterations != 0) {
-            RefIteration.rehashed(this, old.keys, old.used);
+            RefIteration.rehashed(this, old.keyArray(), old.used);
         }
         return grown;
     }
@@ -1064,9 +1065,13 @@ public final class PhpArray implements TruffleObject {
      * arrays are small records, which then also copy as three arrays instead of five.
      */
     private static final class Hash {
-        final Object[] keys;
+        /**
+         * Slot i's key at 2i and its value at 2i + 1: one array, so a lookup that checks a slot's key reads its
+         * value under the same bounds test and with no other load (a remembered slot's check, at every string-key
+         * read).
+         */
+        final Object[] entries;
         final int[] hashes;
-        final Object[] values;
         /** Bucket heads and chains, or null while the store is small. */
         final int[] buckets;
         final int[] chain;
@@ -1074,9 +1079,8 @@ public final class PhpArray implements TruffleObject {
         int used;
 
         Hash(int capacity) {
-            keys = new Object[capacity];
+            entries = new Object[2 * capacity];
             hashes = new int[capacity];
-            values = new Object[capacity];
             if (capacity > MIN_CAPACITY) {
                 buckets = new int[capacity];
                 Arrays.fill(buckets, -1);
@@ -1088,9 +1092,8 @@ public final class PhpArray implements TruffleObject {
         }
 
         private Hash(Hash original) {
-            keys = original.keys.clone();
+            entries = original.entries.clone();
             hashes = original.hashes.clone();
-            values = original.values.clone();
             buckets = original.buckets == null ? null : original.buckets.clone();
             chain = original.chain == null ? null : original.chain.clone();
             used = original.used;
@@ -1100,12 +1103,43 @@ public final class PhpArray implements TruffleObject {
             return new Hash(this);
         }
 
+        int capacity() {
+            return hashes.length;
+        }
+
+        Object key(int slot) {
+            return entries[2 * slot];
+        }
+
+        Object value(int slot) {
+            return entries[2 * slot + 1];
+        }
+
+        void setValue(int slot, Object value) {
+            entries[2 * slot + 1] = value;
+        }
+
+        /** Empties a slot (a removal): its key and its value. */
+        void clear(int slot) {
+            entries[2 * slot] = null;
+            entries[2 * slot + 1] = null;
+        }
+
+        /** The keys of the slots used, as RefIteration.rehashed reads them. */
+        Object[] keyArray() {
+            Object[] keys = new Object[used];
+            for (int i = 0; i < used; i++) {
+                keys[i] = key(i);
+            }
+            return keys;
+        }
+
         /** Appends a slot; the caller has checked there is room. */
         void add(Object key, int h, Object value) {
             int slot = used++;
-            keys[slot] = key;
+            entries[2 * slot] = key;
+            entries[2 * slot + 1] = value;
             hashes[slot] = h;
-            values[slot] = value;
             if (buckets != null) {
                 int bucket = h & (buckets.length - 1);
                 chain[slot] = buckets[bucket];
@@ -1116,14 +1150,14 @@ public final class PhpArray implements TruffleObject {
         int find(Object key, int h) {
             if (buckets == null) {
                 for (int slot = 0; slot < used; slot++) {
-                    if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                    if (hashes[slot] == h && keyEquals(key(slot), key)) {
                         return slot;
                     }
                 }
                 return -1;
             }
             for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
-                if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                if (hashes[slot] == h && keyEquals(key(slot), key)) {
                     return slot;
                 }
             }
@@ -1138,7 +1172,7 @@ public final class PhpArray implements TruffleObject {
             int bucket = h & (buckets.length - 1);
             int previous = -1;
             for (int slot = buckets[bucket]; slot >= 0; slot = chain[slot]) {
-                if (hashes[slot] == h && keyEquals(keys[slot], key)) {
+                if (hashes[slot] == h && keyEquals(key(slot), key)) {
                     if (previous < 0) {
                         buckets[bucket] = chain[slot];
                     } else {
@@ -1153,7 +1187,7 @@ public final class PhpArray implements TruffleObject {
 
         int nextUsed(int from) {
             for (int i = from; i < used; i++) {
-                if (keys[i] != null) {
+                if (entries[2 * i] != null) {
                     return i;
                 }
             }
