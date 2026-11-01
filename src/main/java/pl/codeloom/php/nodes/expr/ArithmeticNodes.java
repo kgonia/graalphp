@@ -2,7 +2,6 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Bind;
-import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -209,27 +208,27 @@ public final class ArithmeticNodes {
         }
     }
 
-    /** `.`: lazy concatenation (a rope until someone reads the bytes), with int operands formatted directly. */
+    /**
+     * `.`: lazy concatenation (a rope until someone reads the bytes), one call per operator. Inlined, TruffleString's
+     * concatenation (its code ranges, the short result's copy, the rope) was 30 to 75 IR nodes per operator, and
+     * an int operand's digit loop about 85: top-level code that builds hundreds of include paths (ABSPATH . WPINC
+     * . '/x.php') was too large to install. An int operand is formatted and joined in the same call.
+     */
     @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ConcatNode extends BinaryNode {
         @Specialization
-        public static TruffleString concat(TruffleString a, TruffleString b,
-                                       @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(a, b, Str.ENC, true);
+        public static TruffleString concat(TruffleString a, TruffleString b) {
+            return Str.concat(a, b);
         }
 
         @Specialization
-        public static TruffleString concat(TruffleString a, long b,
-                                       @Cached TruffleString.FromLongNode fromLong,
-                                       @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(a, fromLong.execute(b, Str.ENC, false), Str.ENC, true);
+        public static TruffleString concat(TruffleString a, long b) {
+            return Str.join(null, new Object[] {a, b});
         }
 
         @Specialization
-        public static TruffleString concat(long a, TruffleString b,
-                                       @Cached TruffleString.FromLongNode fromLong,
-                                       @Cached TruffleString.ConcatNode concat) {
-            return concat.execute(fromLong.execute(a, Str.ENC, false), b, Str.ENC, true);
+        public static TruffleString concat(long a, TruffleString b) {
+            return Str.join(null, new Object[] {a, b});
         }
 
         @Fallback
