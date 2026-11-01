@@ -7,10 +7,12 @@
 #   CGI variables, as php-fpm does, so browse.sh's GATE2_DB_HOST never reached Truffle PHP.)
 # - The site, its ASTs, the classes, the jars and the native build are copied into a Docker volume, wpn-site, so no
 #   server reads the Windows bind mount.
-# - Variants: php (PHP 8.5.12, OPcache with the tracing JIT, php -S with 4 workers), jvm-export (the tree, the
-#   php-ast export), jvm-java (the tree, our parser), jvm-bc (bytecode, our parser), native-java, native-bc; and
-#   jvm-main, native-main: another build's tree on our parser (target/classes-main and target/native/wp-http-main,
-#   for comparing two builds). The java-parser variants get no AST root, so a file that needed the export would fail.
+# - Variants: php (PHP 8.5.12, OPcache with the tracing JIT, php -S with 4 workers; php-nojit without the JIT,
+#   php-noopc without OPcache), jvm-export (the tree, the php-ast export), jvm-java (the tree, our parser), jvm-bc
+#   (bytecode, our parser), native-java, native-bc; jvm-main, native-main: another build's tree on our parser
+#   (target/classes-main and target/native/wp-http-main, for comparing two builds); jvm-phases, native-phases:
+#   jvm-java and native-java with the phase counters (target/native/wp-http-phases, built with -Dphp.phases=true
+#   -Dphp.nativeclock=true). The java-parser variants get no AST root, so a file that needed the export would fail.
 # Run after tests/gate2/fetch.sh (or a copy of the main checkout's site), mvn compile and bench/native's build of
 # the HTTP launcher (NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http).
 # - measure: rounds of paced visits (tests/gate2/visits.py, CPUs 0-5), the server on CPUs 14-21, the variants
@@ -49,8 +51,13 @@ start_db() {
   docker rm -f $db > /dev/null 2>&1 || true
   docker network inspect $P-net > /dev/null 2>&1 || docker network create --subnet $NET.0/24 $P-net > /dev/null
   mkdir -p $out
-  docker exec ${WPN_DB_SOURCE:-gate2-mariadb} mariadb-dump -uroot -proot --single-transaction --skip-dump-date --databases wordpress \
-    > $out/wordpress.sql
+  # WPN_DB_DUMP: a dump to seed from instead (e.g. another session's seed.sql), when the source isn't running
+  if [ -n "${WPN_DB_DUMP:-}" ]; then
+    cp "$WPN_DB_DUMP" $out/wordpress.sql
+  else
+    docker exec ${WPN_DB_SOURCE:-gate2-mariadb} mariadb-dump -uroot -proot --single-transaction --skip-dump-date \
+      --databases wordpress > $out/wordpress.sql
+  fi
   docker run -d --name $db --cpuset-cpus 22-23 --network $P-net --ip $NET.2 -p ${WPN_DB_PORT:-3308}:3307 \
     -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=wordpress -e MARIADB_USER=wp -e MARIADB_PASSWORD=wp mariadb:11.4 \
     --port=3307 > /dev/null
@@ -104,20 +111,28 @@ start() {
   local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
   case $variant in
     *-java|*-main) opts="-Dpolyglot.php.Parser=java" ;;
+    # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
+    # (target/native/wp-http-phases: the flags are static finals, fixed at build time)
+    *-phases) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.nativeclock=true" ;;
     # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image
     # fixes the system property at build time)
     *-bc) opts="-Dpolyglot.php.Parser=java -Dpolyglot.php.Interpreter=bytecode"
           [ -z "${BYTECODE_REPORT:-}" ] || opts+=" -Dphp.bytecode.report=true" ;;
   esac
   case $variant in
-    php) image=bootshare-php:8.5; env=(-e PHP_CLI_SERVER_WORKERS=4)
-         cmd='cd target/gate2/wordpress && exec php -d auto_prepend_file= -S 0.0.0.0:8080' ;;
+    # php-nojit: OPcache without its JIT; php-noopc: no OPcache (each request compiles every file it includes)
+    php|php-nojit|php-noopc) image=bootshare-php:8.5; env=(-e PHP_CLI_SERVER_WORKERS=4)
+         local ini=
+         [ $variant != php-nojit ] || ini="-d opcache.jit=disable"
+         [ $variant != php-noopc ] || ini="-d opcache.enable=0 -d opcache.enable_cli=0"
+         cmd="cd target/gate2/wordpress && exec php -d auto_prepend_file= $ini -S 0.0.0.0:8080" ;;
     jvm-export) cmd="$JAVA ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=target/ast" ;;
     jvm-main) cmd="${JAVA/target\/classes:/target/classes-main:} $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS"
               cmd+=" --ast-root=/none" ;;
     jvm-*) cmd="$JAVA $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=/none" ;;
     native-*) local binary=wp-http
               [ "$variant" != native-main ] || binary=wp-http-main
+              [ "$variant" != native-phases ] || binary=wp-http-phases
               cmd="exec target/native/$binary \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
     *) echo "unknown variant $variant"; exit 2 ;;
