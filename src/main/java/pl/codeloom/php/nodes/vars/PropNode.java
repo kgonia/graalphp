@@ -50,6 +50,18 @@ public final class PropNode extends LValueNode {
      * once the context is closed nor be the only class the shortcut serves.
      */
     @CompilationFinal private ClassKey accessibleKey;
+    /**
+     * What writes here have met, one bit per case (the SEEN_ constants), as LocalVarNode's: compiled code leaves
+     * out a reference's write, __set() and the holder updates until a write meets them. Unprofiled, every property
+     * assignment compiled all of them (about 27 IR nodes a site).
+     */
+    @CompilationFinal private int seen;
+    private static final int SEEN_REF = 1;
+    private static final int SEEN_MISSING = 1 << 1;
+    private static final int SEEN_NEW_ARRAY = 1 << 2;
+    private static final int SEEN_OLD_ARRAY = 1 << 3;
+    /** The writes through a property that is a reference (SEEN_REF). */
+    private final RefWrites refWrites = RefWrites.create();
 
     /** constantName is an interned property name, or null with nameExpr computing it. */
     public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
@@ -60,6 +72,14 @@ public final class PropNode extends LValueNode {
         this.lexicalClass = lexicalClass;
         this.scopeInFrame = scopeInFrame;
         this.thisInMethod = object instanceof ThisNode && !scopeInFrame;
+    }
+
+    /** Notes that a write here met a case; in compiled code that hadn't seen it, deoptimizes first. */
+    private void met(int bit) {
+        if ((seen & bit) == 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seen |= bit;
+        }
     }
 
     private String name(VirtualFrame frame) {
@@ -211,14 +231,19 @@ public final class PropNode extends LValueNode {
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
-            ref.set(value);
+            met(SEEN_REF);
+            refWrites.setScalar(ref, value);
             return;
         }
-        if (old == null && phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
-            return;
+        if (old == null) {
+            met(SEEN_MISSING);
+            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+                return;
+            }
         }
         objects.putLong(phpObject, name, value);
         if (old instanceof PhpArray array) {
+            met(SEEN_OLD_ARRAY);
             array.removeHolder();
         }
     }
@@ -233,21 +258,27 @@ public final class PropNode extends LValueNode {
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
-            ref.set(value);
+            met(SEEN_REF);
+            refWrites.set(ref, value);
             return;
         }
-        if (old == null && phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
-            return;
+        if (old == null) {
+            met(SEEN_MISSING);
+            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+                return;
+            }
         }
         if (value instanceof Long l) {
             objects.putLong(phpObject, name, l);
         } else {
             if (value instanceof PhpArray array) {
+                met(SEEN_NEW_ARRAY);
                 array.addHolder();
             }
             objects.put(phpObject, name, value);
         }
         if (old instanceof PhpArray array && old != value) {
+            met(SEEN_OLD_ARRAY);
             array.removeHolder();
         }
     }
