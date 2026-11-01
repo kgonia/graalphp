@@ -148,7 +148,19 @@ A PCRE flavor for TRegex (its flavors are pluggable) is not the goal: it would a
   - `execBoolean` for `preg_match` without `$matches`;
   - equal rewrites in the translator, later.
 - On the JVM the per-pattern choice gains little from this: about 19% → 21% of the kernels' regex time.
-- In a native image, TRegex is the faster engine for every pattern it takes.
+- In a native image, TRegex is the faster engine for every pattern it takes. (Outdated: see 2026-11-01.)
+
+**Update (2026-11-01, gate-1.md, "Native image after #6" and "The regex share of a WordPress visit"):** don't build the product version now.
+- **Natively, after #6, TRegex no longer wins everywhere.** PCRE2 in the native image is 1.3–2× its JVM time (28–110× before #6). TRegex wins where it wins on the JVM: classes, literals and short anchored patterns at 0.20–0.60×, some DFA lookarounds. It also wins on wpautop's tag alternations: 0.6–1.0×, and 21 and 14 only with `MaxDFASize`. It still loses on `wp_kses_split` (1.24×) and the backtracked patterns (6.5–19×).
+- **The per-pattern choice saves 31% of the kernels' regex time natively, and 18% on the JVM.** `MaxDFASize` and the rewrites hardly change that: the bulk is kses' and slugs' classes and literals with TRegex's defaults.
+- **But regex is small on a visit.** The `preg_*` built-ins, inclusive, are 2.6% of a warm JVM visit and 2.4% of a native one. Of that, the PCRE2 call is 28% (JVM), and our Java side (conversions, caches, `$matches`) is 72%.
+- **What the choice could save on a warm visit:**
+  - expected: about 0.15% (JVM) and 0.3% (native), under 1 ms and about 2 ms;
+  - at most 0.5% and 0.75%, if it saved its share of the whole `preg_*` time;
+  - 2.5–2.7% if preg were free.
+- **Against the scope** (a parser for the subset, the shadowing, parity on every group, `MaxDFASize`'s memory), that is not worth building for WordPress pages.
+- **Reopen it if** a workload's `preg_*` share is an order of magnitude larger: content saves through kses, or feeds through wptexturize. Measure first with `-Dphp.pregclock=true` (`bench/gate1/results/preg-clock.patch`).
+- **The bigger regex item is our Java side of `preg_*`:** 72% of the preg time, against 28% for the native calls a TRegex choice would replace. Even that is 1.9% of a visit at most.
 
 ## D13: curl through libcurl by FFM; sockets and stream transports on the JDK (2026-10-26)
 **Decision:** WordPress's outgoing HTTP (update checks, plugin and theme installs, the cron and Site Health loopbacks) gets two transports, both as php-src has them:
