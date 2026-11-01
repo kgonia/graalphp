@@ -146,12 +146,12 @@ public final class Operators {
 
     /** zend_binop_error: "Unsupported operand types: string + int". */
     private static PhpError binopError(String operator, Object a, Object b) {
-        return new PhpError("TypeError", "Unsupported operand types: " + operandType(a) + " " + operator + " "
-                + operandType(b));
+        return new PhpError("TypeError", "Unsupported operand types: " + zvalTypeName(a) + " " + operator + " "
+                + zvalTypeName(b));
     }
 
     /** zend_zval_type_name: an object by its class's name (zend_zval_value_name also names true and false). */
-    private static String operandType(Object value) {
+    public static String zvalTypeName(Object value) {
         if (value instanceof PhpObject object) {
             return object.getPhpClass().getName();
         }
@@ -360,7 +360,7 @@ public final class Operators {
             return Str.of(result);
         }
         throw new PhpError("TypeError", "Cannot perform bitwise not on "
-                + (value instanceof Boolean b ? b.toString() : operandType(value)));
+                + (value instanceof Boolean b ? b.toString() : zvalTypeName(value)));
     }
 
     /**
@@ -404,7 +404,7 @@ public final class Operators {
             return value;
         }
         throw new PhpError("TypeError", (increment ? "Cannot increment " : "Cannot decrement ")
-                + operandType(value));
+                + zvalTypeName(value));
     }
 
     /**

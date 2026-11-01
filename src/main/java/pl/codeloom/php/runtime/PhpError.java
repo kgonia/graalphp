@@ -65,6 +65,15 @@ public final class PhpError extends PhpThrowable {
         return code;
     }
 
+    /**
+     * Places the error at a location of its own, for an error php-src raises at an opline whose line isn't its
+     * statement's (UnhandledMatchError); where it surfaces then doesn't change it.
+     */
+    public PhpError locatedAt(SourceLocation location) {
+        statement = location;
+        return this;
+    }
+
     /** Records the statement of user code the error surfaced in, unless an inner one already did. */
     @TruffleBoundary
     public void surfacedAt(Node statement) {
