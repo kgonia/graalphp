@@ -37,12 +37,16 @@ HTTP_ARGS="--port=8080 --docroot=target/gate2/wordpress --server-name=0.0.0.0 --
 HTTP_ARGS+=" -ddisplay_errors=1 -dhtml_errors=0"
 WP=target/gate2/wordpress
 
-wp_cli() { # wp-cli on PHP 8.5 against the store's database, the site writable
+# wp-cli on PHP 8.5 against the store's database, the site writable. The image's php.ini prepends bootshare's
+# /srv/prepend.php, which wp-cli's own PHP subprocesses (rewrite flush) would miss: an empty one stands in. wp-cli's
+# deprecations on PHP 8.5 and the Action Scheduler's progress are left out of the output.
+wp_cli() {
+  : > $out/empty.php
   MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus ${WPN_AUX_CPUS:-6-13} --network $P-net \
     --add-host host.docker.internal:$NET.2 -v $P-site:/srv -v "${WP_CLI:?a directory with wp-cli.phar}:/cli:ro" \
-    -v "$root/tests/gate2:/t:ro" -v "$root/$out:/out:ro" -w /srv/$WP bootshare-php:8.5 \
-    sh -c 'php -d auto_prepend_file= -d memory_limit=1G -d error_reporting=24575 /cli/wp-cli.phar --allow-root "$@"' \
-    wp "$@"
+    -v "$root/$out/empty.php:/srv/prepend.php:ro" -v "$root/tests/gate2:/t:ro" -v "$root/$out:/out:ro" \
+    -w /srv/$WP bootshare-php:8.5 sh -c 'php -d memory_limit=1G /cli/wp-cli.phar --allow-root "$@"' wp "$@" 2>&1 \
+    | grep -v -e '^Deprecated: ' -e '^Started processing action' -e '^Completed processing action' || true
 }
 
 setup() {
@@ -57,7 +61,8 @@ with open(sys.argv[2], 'w', encoding='utf-8', newline='') as f: csv.writer(f).wr
   wp_cli plugin activate woocommerce
   wp_cli rewrite structure '/%postname%/'
   wp_cli rewrite flush
-  wp_cli eval-file /t/woo-setup.php /out/sample_products.csv
+  # as the shop manager: the importer creates categories and tags only for a user who may manage them
+  wp_cli --user=admin eval-file /t/woo-setup.php /out/sample_products.csv
   wp_cli wc hpos enable
   # what the install scheduled, run now, so that no run starts with a backlog
   wp_cli action-scheduler run --batch-size=100 --batches=20

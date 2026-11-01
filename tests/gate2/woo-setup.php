@@ -75,3 +75,9 @@ foreach (wc_get_products(['limit' => -1, 'type' => 'variable']) as $variable) {
     }
 }
 WP_CLI::log("stock managed on $stock products");
+
+// a page with the classic checkout form (the checkout page itself is the block one), for the classic checkout
+if (!get_page_by_path('classic-checkout')) {
+    wp_insert_post(['post_type' => 'page', 'post_status' => 'publish', 'post_name' => 'classic-checkout',
+        'post_title' => 'Classic checkout', 'post_content' => '<!-- wp:shortcode -->[woocommerce_checkout]<!-- /wp:shortcode -->']);
+}
