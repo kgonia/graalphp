@@ -74,6 +74,13 @@ public final class PhpArray implements TruffleObject {
         return new PhpArray(capacity);
     }
 
+    /** An empty array with room for capacity ints, unboxed (the int strategy) until another value comes. */
+    public static PhpArray ofLongCapacity(int capacity) {
+        PhpArray array = new PhpArray();
+        array.store = new long[Math.max(capacity, 1)];
+        return array;
+    }
+
     /** A packed list of the given values; holders of nested arrays are counted. */
     public static PhpArray list(Object... items) {
         PhpArray array = new PhpArray(items.length);

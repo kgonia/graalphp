@@ -673,6 +673,17 @@ public final class Convert {
         return x < y ? -1 : x > y ? 1 : x == y ? 0 : 1;
     }
 
+    /** zend_zval_value_name: what a type error says was given (true and false by value, an object by its class). */
+    public static String valueName(Object value) {
+        if (value instanceof Boolean b) {
+            return b ? "true" : "false";
+        }
+        if (value instanceof PhpResource) {
+            return "resource";
+        }
+        return debugType(value);
+    }
+
     /** PHP type name as get_debug_type() and error messages report it: int, float, null, a class name... */
     public static String debugType(Object value) {
         if (value instanceof PhpObject object) {

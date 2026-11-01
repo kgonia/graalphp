@@ -507,13 +507,7 @@ final class CurlFunctions {
 
     /** zend_zval_value_name: what a type error says was given. */
     static String valueName(Object value) {
-        if (value instanceof Boolean b) {
-            return b ? "true" : "false";
-        }
-        if (value instanceof PhpResource) {
-            return "resource";
-        }
-        return Convert.debugType(value);
+        return Convert.valueName(value);
     }
 
     private static PhpError typeError(String function, int position, String name, String type, Object value) {
