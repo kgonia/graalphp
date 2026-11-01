@@ -8,6 +8,7 @@ import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.IOException;
@@ -562,16 +563,34 @@ public final class StringFunctions {
 
     // ---- trimming and case ----
 
-    /** A trim character set: "a..z" ranges allowed, as php_charmask. */
-    static boolean[] charMask(byte[] chars) {
+    /**
+     * A character set as php_charmask: "a..z" ranges allowed; a malformed range warns as from the function and
+     * adds none of its dots.
+     */
+    static boolean[] charMask(byte[] chars, String function) {
         boolean[] mask = new boolean[256];
-        for (int i = 0; i < chars.length; i++) {
+        int length = chars.length;
+        for (int i = 0; i < length; i++) {
             int c = chars[i] & 0xFF;
-            if (i + 3 < chars.length && chars[i + 1] == '.' && chars[i + 2] == '.' && (chars[i + 3] & 0xFF) >= c) {
+            if (i + 3 < length && chars[i + 1] == '.' && chars[i + 2] == '.' && (chars[i + 3] & 0xFF) >= c) {
                 for (int x = c; x <= (chars[i + 3] & 0xFF); x++) {
                     mask[x] = true;
                 }
                 i += 3;
+            } else if (i + 1 < length && chars[i] == '.' && chars[i + 1] == '.') {
+                String problem;
+                if (i == 0) {
+                    problem = ", no character to the left of '..'";
+                } else if (i + 2 >= length) {
+                    problem = ", no character to the right of '..'";
+                } else if ((chars[i - 1] & 0xFF) > (chars[i + 2] & 0xFF)) {
+                    problem = ", '..'-range needs to be incrementing";
+                } else {
+                    problem = "";
+                }
+                PhpContext context = PhpContext.get(null);
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING,
+                        Str.of(function + "(): Invalid '..'-range" + problem), SourceLocation.current());
             } else {
                 mask[c] = true;
             }
@@ -579,22 +598,30 @@ public final class StringFunctions {
         return mask;
     }
 
-    private static final boolean[] DEFAULT_TRIM = charMask(new byte[]{' ', '\t', '\n', '\r', 0, 0x0B});
+    private static final boolean[] DEFAULT_TRIM = charMask(new byte[]{' ', '\t', '\n', '\r', 0, 0x0B}, "trim");
 
-    /** mode bit 1 trims the left, bit 2 the right. */
+    /** Character lists up to this long without a '.' (so without a range) are searched instead of masked. */
+    private static final int SHORT_TRIM_LIST = 8;
+
+    /**
+     * mode bit 1 trims the left, bit 2 the right. A short list without ranges ("/", "/\\", ", ") is searched
+     * per byte, as php_charmask's mask would answer it, without making a mask per call.
+     */
     @TruffleBoundary
     private static TruffleString trim(TruffleString s, Object chars, int mode) {
-        boolean[] mask = chars == null ? DEFAULT_TRIM : charMask(Str.readBytes(Convert.toStr(chars)));
+        byte[] list = chars == null ? null : Str.readBytes(Convert.toStr(chars));
+        boolean[] mask = list == null ? DEFAULT_TRIM : isShortList(list) ? null
+                : charMask(list, mode == 3 ? "trim" : mode == 1 ? "ltrim" : "rtrim");
         int n = Str.length(s);
         int start = 0;
         int end = n;
         if ((mode & 1) != 0) {
-            while (start < end && mask[Str.byteAt(s, start)]) {
+            while (start < end && trims(mask, list, Str.byteAt(s, start))) {
                 start++;
             }
         }
         if ((mode & 2) != 0) {
-            while (end > start && mask[Str.byteAt(s, end - 1)]) {
+            while (end > start && trims(mask, list, Str.byteAt(s, end - 1))) {
                 end--;
             }
         }
@@ -602,6 +629,31 @@ public final class StringFunctions {
             return s;
         }
         return s.substringByteIndexUncached(start, end - start, Str.ENC, true);
+    }
+
+    private static boolean isShortList(byte[] list) {
+        if (list.length > SHORT_TRIM_LIST) {
+            return false;
+        }
+        for (byte b : list) {
+            if (b == '.') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether trim removes the byte c: by the mask, or else by searching the short list. */
+    private static boolean trims(boolean[] mask, byte[] list, int c) {
+        if (mask != null) {
+            return mask[c];
+        }
+        for (byte b : list) {
+            if ((b & 0xFF) == c) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static byte lowerByte(byte b) {
@@ -666,7 +718,10 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString ucwords(TruffleString s, TruffleString delimiters) {
-        boolean[] mask = charMask(Str.readBytes(delimiters));
+        if (Str.length(s) == 0) {
+            return s;
+        }
+        boolean[] mask = charMask(Str.readBytes(delimiters), "ucwords");
         byte[] b = Str.bytes(s);
         boolean start = true;
         for (int i = 0; i < b.length; i++) {
@@ -917,7 +972,10 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString addcslashes(TruffleString s, TruffleString chars) {
-        boolean[] mask = charMask(Str.readBytes(chars));
+        if (Str.length(s) == 0 || Str.length(chars) == 0) {
+            return s;
+        }
+        boolean[] mask = charMask(Str.readBytes(chars), "addcslashes");
         byte[] b = Str.readBytes(s);
         ByteBuilder out = new ByteBuilder(b.length + 8);
         for (byte c : b) {
