@@ -2109,8 +2109,12 @@ public final class Translator {
                 if (extractArgs.length == 0) {
                     break;
                 }
+                if (scope != null && scope.includeScopeSlot < 0) {
+                    scope.includeScopeSlot = hiddenSlot("includeScope");
+                }
                 return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
-                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots);
+                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots,
+                        scope == null ? -1 : scope.includeScopeSlot, lexicalClass());
             }
             case "get_object_vars": {
                 ExprNode[] objectArgs = expressionList(args);
