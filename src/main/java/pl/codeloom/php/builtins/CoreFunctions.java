@@ -106,8 +106,10 @@ final class CoreFunctions {
         r.fn("get_declared_classes", (context, a) -> classNames(context, Kind.CLASS));
         r.fn("get_declared_interfaces", (context, a) -> classNames(context, Kind.INTERFACE));
         r.fn("get_declared_traits", (context, a) -> classNames(context, Kind.TRAIT));
-        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false, Args.bool(a, 1, true)));
-        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true, Args.bool(a, 1, true)));
+        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.CLASS, Args.bool(a, 1, true)));
+        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.INTERFACE,
+                Args.bool(a, 1, true)));
+        r.fn("trait_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.TRAIT, Args.bool(a, 1, true)));
         r.fn("spl_autoload_register", (context, a) -> {
             Object callable = Args.get(a, 0, PhpNull.NULL);
             if (callable == PhpNull.NULL) {
@@ -359,10 +361,16 @@ final class CoreFunctions {
         return Str.lower(text.startsWith("\\") ? text.substring(1) : text);
     }
 
-    private static boolean classExists(PhpContext context, TruffleString name, boolean wantInterface,
-                                       boolean autoload) {
+    /** class_exists_impl: the class, interface or trait under the name, which only the asked kind satisfies. */
+    private static boolean classExists(PhpContext context, TruffleString name, Kind kind, boolean autoload) {
         PhpClass phpClass = autoload ? context.findClassAutoloading(Str.java(name)) : context.findClass(lowerName(name));
-        return phpClass != null && phpClass.isInterface() == wantInterface;
+        return phpClass != null && kindOf(phpClass) == kind;
+    }
+
+    private static Kind kindOf(PhpClass phpClass) {
+        boolean trait = phpClass.getDeclaration() instanceof pl.codeloom.php.runtime.ClassTemplate template
+                && template.isTrait();
+        return trait ? Kind.TRAIT : phpClass.isInterface() ? Kind.INTERFACE : Kind.CLASS;
     }
 
     /** get_defined_functions()' lists: names in lowercase, as php-src keys its function table. */
@@ -382,10 +390,7 @@ final class CoreFunctions {
     private static PhpArray classNames(PhpContext context, Kind kind) {
         PhpArray names = new PhpArray();
         for (PhpClass phpClass : context.declaredClasses()) {
-            boolean trait = phpClass.getDeclaration() instanceof pl.codeloom.php.runtime.ClassTemplate template
-                    && template.isTrait();
-            Kind of = trait ? Kind.TRAIT : phpClass.isInterface() ? Kind.INTERFACE : Kind.CLASS;
-            if (of == kind) {
+            if (kindOf(phpClass) == kind) {
                 names.append(Str.of(phpClass.getName()));
             }
         }
