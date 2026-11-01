@@ -53,12 +53,14 @@ public final class Builtins {
         private final List<PhpFunction> throwableMethods;
         private final List<PhpFunction> generatorMethods;
         private final List<PhpFunction> closureMethods;
+        private final List<PhpFunction> weakReferenceMethods;
         /** CURLFile's and CURLStringFile's methods; null when libcurl isn't there (no curl extension). */
         private final CurlFunctions.Methods curlMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
                       List<PhpFunction> generatorMethods, List<PhpFunction> closureMethods,
-                      CurlFunctions.Methods curlMethods) {
+                      List<PhpFunction> weakReferenceMethods, CurlFunctions.Methods curlMethods) {
+            this.weakReferenceMethods = weakReferenceMethods;
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
@@ -105,7 +107,8 @@ public final class Builtins {
             PcreFunctions.registerDebug(registry);
         }
         return new Table(constants(curl), List.copyOf(registry.functions()), throwableMethods(registry),
-                generatorMethods(registry), ClosureMethods.methods(registry), curlMethods);
+                generatorMethods(registry), ClosureMethods.methods(registry), WeakReferences.methods(registry),
+                curlMethods);
     }
 
     public static void install(PhpContext context, Table table) {
@@ -239,6 +242,7 @@ public final class Builtins {
             closure.addMethod(method);
         }
         context.declareClass(closure);
+        WeakReferences.declare(context, table.weakReferenceMethods);
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
         if (table.curlMethods != null) {

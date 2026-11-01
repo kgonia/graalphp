@@ -12,6 +12,7 @@ public final class BuiltinState {
     final MbFunctions.State mb = new MbFunctions.State();
     /** ext/curl's handles and the exception a callback left pending. */
     final CurlFunctions.State curl = new CurlFunctions.State();
+    final WeakReferences.State weakReferences = new WeakReferences.State();
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;
