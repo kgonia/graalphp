@@ -15,6 +15,7 @@ import pl.codeloom.php.runtime.PhpRef;
 public final class GlobalVarNode extends LValueNode {
     private final String name;
     @Child private GlobalRefNode lookup;
+    private final RefWrites writes = RefWrites.create();
 
     public GlobalVarNode(String name) {
         this.name = name;
@@ -39,7 +40,7 @@ public final class GlobalVarNode extends LValueNode {
 
     @Override
     public void write(VirtualFrame frame, Object value) {
-        ref().set(value);
+        writes.set(ref(), value);
     }
 
     @Override

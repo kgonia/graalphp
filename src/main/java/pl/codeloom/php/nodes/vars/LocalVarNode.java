@@ -42,6 +42,8 @@ public final class LocalVarNode extends LValueNode {
     private static final int SEEN_SHARED = 1 << 6;
     private static final int SEEN_REF_ARRAY = 1 << 7;
     private static final int SEEN_CREATED = 1 << 8;
+    /** The writes through the reference the variable is (SEEN_REF). */
+    private final RefWrites refWrites = RefWrites.create();
 
     public LocalVarNode(int slot, String name) {
         this.slot = slot;
@@ -144,7 +146,7 @@ public final class LocalVarNode extends LValueNode {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
-            ref.set(value);
+            refWrites.setScalar(ref, value);
             return;
         }
         FrameSlots.setLong(frame, slot, value);
@@ -156,7 +158,7 @@ public final class LocalVarNode extends LValueNode {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
-            ref.set(value);
+            refWrites.setScalar(ref, value);
             return;
         }
         FrameSlots.setDouble(frame, slot, value);
@@ -167,7 +169,7 @@ public final class LocalVarNode extends LValueNode {
         Object old = storedObject(frame);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
-            ref.set(value);
+            refWrites.set(ref, value);
             return;
         }
         if (value instanceof PhpArray array) {
