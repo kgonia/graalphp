@@ -479,6 +479,7 @@ public final class PhpContext {
         if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
+        phpClass.makeKey(language);
         int id = language.classId(phpClass.getLowerName());
         if (id >= classSlots.length) {
             classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
