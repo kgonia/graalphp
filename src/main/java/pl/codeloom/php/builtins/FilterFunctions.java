@@ -75,6 +75,15 @@ final class FilterFunctions {
     private static final long VALIDATE_ALL = 0x0100;
     private static final long VALIDATE_LAST = 0x0115;
     private static final long DEFAULT = 0x0204;
+    private static final long SANITIZE_STRING = 0x0201;
+    private static final long SANITIZE_ENCODED = 0x0202;
+    private static final long SANITIZE_SPECIAL_CHARS = 0x0203;
+    private static final long SANITIZE_EMAIL = 0x0205;
+    private static final long SANITIZE_URL = 0x0206;
+    private static final long SANITIZE_NUMBER_INT = 0x0207;
+    private static final long SANITIZE_NUMBER_FLOAT = 0x0208;
+    private static final long SANITIZE_FULL_SPECIAL_CHARS = 0x020a;
+    private static final long SANITIZE_ADD_SLASHES = 0x020b;
     private static final long SANITIZE_ALL = 0x0200;
     private static final long SANITIZE_LAST = 0x020b;
     private static final long CALLBACK = 0x0400;
@@ -105,7 +114,14 @@ final class FilterFunctions {
                 {"FILTER_VALIDATE_DOMAIN", VALIDATE_DOMAIN}, {"FILTER_VALIDATE_URL", VALIDATE_URL},
                 {"FILTER_VALIDATE_EMAIL", VALIDATE_EMAIL}, {"FILTER_VALIDATE_IP", VALIDATE_IP},
                 {"FILTER_VALIDATE_MAC", VALIDATE_MAC}, {"FILTER_DEFAULT", DEFAULT}, {"FILTER_UNSAFE_RAW", DEFAULT},
-                {"FILTER_CALLBACK", CALLBACK},
+                {"FILTER_SANITIZE_STRING", SANITIZE_STRING}, {"FILTER_SANITIZE_STRIPPED", SANITIZE_STRING},
+                {"FILTER_SANITIZE_ENCODED", SANITIZE_ENCODED},
+                {"FILTER_SANITIZE_SPECIAL_CHARS", SANITIZE_SPECIAL_CHARS},
+                {"FILTER_SANITIZE_FULL_SPECIAL_CHARS", SANITIZE_FULL_SPECIAL_CHARS},
+                {"FILTER_SANITIZE_EMAIL", SANITIZE_EMAIL}, {"FILTER_SANITIZE_URL", SANITIZE_URL},
+                {"FILTER_SANITIZE_NUMBER_INT", SANITIZE_NUMBER_INT},
+                {"FILTER_SANITIZE_NUMBER_FLOAT", SANITIZE_NUMBER_FLOAT},
+                {"FILTER_SANITIZE_ADD_SLASHES", SANITIZE_ADD_SLASHES}, {"FILTER_CALLBACK", CALLBACK},
                 {"FILTER_FLAG_ALLOW_OCTAL", FLAG_ALLOW_OCTAL}, {"FILTER_FLAG_ALLOW_HEX", FLAG_ALLOW_HEX},
                 {"FILTER_FLAG_STRIP_LOW", FLAG_STRIP_LOW}, {"FILTER_FLAG_STRIP_HIGH", FLAG_STRIP_HIGH},
                 {"FILTER_FLAG_STRIP_BACKTICK", FLAG_STRIP_BACKTICK}, {"FILTER_FLAG_ENCODE_LOW", FLAG_ENCODE_LOW},
@@ -173,7 +189,20 @@ final class FilterFunctions {
             new Entry("validate_email", VALIDATE_EMAIL, FilterFunctions::validateEmail),
             new Entry("validate_ip", VALIDATE_IP, FilterFunctions::validateIp),
             new Entry("validate_mac", VALIDATE_MAC, FilterFunctions::validateMac),
+            new Entry("string", SANITIZE_STRING, FilterFunctions::sanitizeString),
+            new Entry("stripped", SANITIZE_STRING, FilterFunctions::sanitizeString),
+            new Entry("encoded", SANITIZE_ENCODED, FilterFunctions::sanitizeEncoded),
+            new Entry("special_chars", SANITIZE_SPECIAL_CHARS, FilterFunctions::sanitizeSpecialChars),
+            new Entry("full_special_chars", SANITIZE_FULL_SPECIAL_CHARS, FilterFunctions::sanitizeFullSpecialChars),
             new Entry("unsafe_raw", DEFAULT, FilterFunctions::unsafeRaw),
+            new Entry("email", SANITIZE_EMAIL,
+                    (call, value, flags, options) -> keepOnly(value, FilterFunctions.EMAIL_CHARS)),
+            new Entry("url", SANITIZE_URL, (call, value, flags, options) -> keepOnly(value, FilterFunctions.URL_CHARS)),
+            new Entry("number_int", SANITIZE_NUMBER_INT,
+                    (call, value, flags, options) -> keepOnly(value, FilterFunctions.INT_CHARS)),
+            new Entry("number_float", SANITIZE_NUMBER_FLOAT, FilterFunctions::sanitizeNumberFloat),
+            new Entry("add_slashes", SANITIZE_ADD_SLASHES,
+                    (call, value, flags, options) -> StringFunctions.addslashes(value)),
             new Entry("callback", CALLBACK, FilterFunctions::callback),
     };
 
@@ -1422,6 +1451,91 @@ final class FilterFunctions {
             return PhpNull.NULL;
         }
         return value;
+    }
+
+    /** RFC 822's section 6. */
+    private static final boolean[] EMAIL_CHARS = charSet(ALPHA_DIGITS + "!#$%&'*+-=?^_`{|}~@.[]");
+    private static final boolean[] INT_CHARS = charSet("+-0123456789");
+    private static final boolean[] URL_UNENCODED = charSet(ALPHA_DIGITS + "-._");
+    private static final byte[] HEX_DIGITS = "0123456789ABCDEF".getBytes(StandardCharsets.ISO_8859_1);
+
+    /** FILTER_SANITIZE_STRING (php_filter_string): quotes encoded, the tags stripped. */
+    private static Object sanitizeString(Call call, TruffleString value, long flags, Object options) {
+        byte[] s = strip(Str.readBytes(value), flags);
+        boolean[] encode = new boolean[256];
+        if ((flags & FLAG_NO_ENCODE_QUOTES) == 0) {
+            encode['\''] = true;
+            encode['"'] = true;
+        }
+        encodeFlags(encode, flags);
+        // the tags stripped, as php_strip_tags_ex with tag spaces allowed does, and NUL bytes with them
+        TruffleString stripped = StripTags.strip(encodeHtml(s, encode), PhpNull.NULL, true);
+        if (Str.length(stripped) == 0) {
+            return (flags & FLAG_EMPTY_STRING_NULL) != 0 ? PhpNull.NULL : Str.EMPTY;
+        }
+        return stripped;
+    }
+
+    /** FILTER_SANITIZE_ENCODED (php_filter_encoded): URL-encoded, all but letters, digits and "-._". */
+    private static Object sanitizeEncoded(Call call, TruffleString value, long flags, Object options) {
+        byte[] s = strip(Str.readBytes(value), flags);
+        ByteBuilder out = new ByteBuilder(s.length * 3);
+        for (byte b : s) {
+            int c = b & 0xFF;
+            if (URL_UNENCODED[c]) {
+                out.write(b);
+            } else {
+                out.write('%');
+                out.write(HEX_DIGITS[c >> 4]);
+                out.write(HEX_DIGITS[c & 15]);
+            }
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /** FILTER_SANITIZE_SPECIAL_CHARS (php_filter_special_chars): '"<>& and the bytes below 32 encoded. */
+    private static Object sanitizeSpecialChars(Call call, TruffleString value, long flags, Object options) {
+        byte[] s = strip(Str.readBytes(value), flags);
+        boolean[] encode = new boolean[256];
+        encode['\''] = true;
+        encode['"'] = true;
+        encode['<'] = true;
+        encode['>'] = true;
+        encode['&'] = true;
+        // NUL and the other low bytes FILTER_FLAG_STRIP_LOW left
+        Arrays.fill(encode, 0, 32, true);
+        if ((flags & FLAG_ENCODE_HIGH) != 0) {
+            Arrays.fill(encode, 127, 256, true);
+        }
+        return encodeHtml(s, encode);
+    }
+
+    /**
+     * FILTER_SANITIZE_FULL_SPECIAL_CHARS (php_filter_full_special_chars): htmlentities() in default_charset, with
+     * the quotes unless FILTER_FLAG_NO_ENCODE_QUOTES, existing entities left as they are.
+     */
+    private static Object sanitizeFullSpecialChars(Call call, TruffleString value, long flags, Object options) {
+        long quotes = (flags & FLAG_NO_ENCODE_QUOTES) == 0 ? ENT_QUOTES : ENT_NOQUOTES;
+        return Html.escape(value, true, quotes, null, false);
+    }
+
+    private static final long ENT_QUOTES = 3;
+    private static final long ENT_NOQUOTES = 0;
+
+    /** FILTER_SANITIZE_NUMBER_FLOAT: digits, signs, and '.', ',' and "eE" as the flags allow. */
+    private static Object sanitizeNumberFloat(Call call, TruffleString value, long flags, Object options) {
+        boolean[] set = INT_CHARS.clone();
+        if ((flags & FLAG_ALLOW_FRACTION) != 0) {
+            set['.'] = true;
+        }
+        if ((flags & FLAG_ALLOW_THOUSAND) != 0) {
+            set[','] = true;
+        }
+        if ((flags & FLAG_ALLOW_SCIENTIFIC) != 0) {
+            set['e'] = true;
+            set['E'] = true;
+        }
+        return keepOnly(value, set);
     }
 
     // ---- callback_filter.c ----
