@@ -43,7 +43,7 @@ def median(values):
 
 def main():
     out, labels = sys.argv[1], sys.argv[2:]
-    runs = {label: [parse(p) for p in sorted(glob.glob(os.path.join(out, label + '-*.txt')))] for label in labels}
+    runs = {label: [parse(p) for p in sorted(glob.glob(os.path.join(out, label + '-[0-9]*.txt')))] for label in labels}
     print('rounds: ' + ', '.join('%s %d' % (label, len(runs[label])) for label in labels))
 
     print('\nper kernel, TRegex / PCRE2 time over the covered matches (median of rounds)')
@@ -107,6 +107,30 @@ def main():
                         if key[0] == k)
             cells.append('%9.2f' % (total / ns))
         print('%-11s %3s %9.0f ' % (k, 'all', ns) + ' '.join(cells))
+
+    print('\nPCRE2 per kernel: each variant\'s PCRE2 ns over the first variant\'s (medians), and what the'
+          ' per-pattern choice saves in ns of one iteration (PCRE2 alone minus the adaptive choice, and minus the'
+          ' oracle)')
+    kernels = list(dict.fromkeys(k for label in labels for run in runs[label] for k in run[2]))
+    print('%-12s ' % 'kernel' + ' '.join('%28s' % label for label in labels))
+    for k in kernels:
+        cells = []
+        base = median([run[2][k][0] for run in runs[first] if k in run[2]])
+        for label in labels:
+            rows = [run[2][k] for run in runs[label] if k in run[2]]
+            cells.append('%6.2fx %9.0f %9.0f' % (median([r[0] for r in rows]) / base,
+                                                 median([r[0] - r[1] for r in rows]),
+                                                 median([r[0] - r[2] for r in rows])))
+        print('%-12s ' % k + ' '.join('%28s' % c for c in cells))
+    print('\nPCRE2 per pattern: each variant\'s PCRE2 ns over the first variant\'s (medians)')
+    print('%-11s %3s %9s ' % ('kernel', 'id', 'pcre ns') + ' '.join('%9s' % label for label in labels))
+    for key in keys:
+        ns = median([run[1][key][0] for run in runs[first] if key in run[1]])
+        cells = []
+        for label in labels:
+            values = [run[1][key][0] for run in runs[label] if key in run[1]]
+            cells.append('%9.2f' % (median(values) / ns) if values and ns else '%9s' % '-')
+        print('%-11s %3d %9.0f ' % (key[0], key[1], ns) + ' '.join(cells))
 
     print('\npeak memory (MB, median of rounds): ' + ', '.join(
         '%s %.0f' % (label, median([run[3] / 2 ** 20 for run in runs[label] if run[3]])) for label in labels))
