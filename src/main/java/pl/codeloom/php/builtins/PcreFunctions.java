@@ -384,8 +384,13 @@ public final class PcreFunctions {
     }
 
     /** The compiled pattern, or null (preg_last_error() PREG_INTERNAL_ERROR) for one that doesn't compile. */
-    @TruffleBoundary
     private Regex compile(TruffleString regexString) {
+        return compile(regexString, null);
+    }
+
+    /** compile; for a pattern that doesn't compile, warning[0] gets the message of php-src's warning. */
+    @TruffleBoundary
+    private Regex compile(TruffleString regexString, String[] warning) {
         Regex cached = regexes.get(regexString);
         if (cached != null) {
             return cached;
@@ -396,8 +401,11 @@ public final class PcreFunctions {
             try {
                 compiled = compileNew(regexString, patterns.compiled.size() < Patterns.LIMIT);
             } catch (BadPattern e) {
-                // php-src warns (this runtime raises no warnings) and the preg_* call fails
+                // php-src warns (preg_* here doesn't) and the call fails
                 lastError = 1;
+                if (warning != null) {
+                    warning[0] = e.getMessage();
+                }
                 return null;
             }
             if (compiled.shared()) {
@@ -547,6 +555,25 @@ public final class PcreFunctions {
             result.append(value);
         }
         return result;
+    }
+
+    // ---- ext/filter's matches ----
+
+    /**
+     * FILTER_VALIDATE_REGEXP's and FILTER_VALIDATE_EMAIL's match (pcre_get_compiled_regex, then pcre2_match from
+     * the start with no options, so a /u pattern checks the subject's UTF-8): 1 on a match, 0 on none or a match
+     * error (which, unlike preg_*'s, leaves preg_last_error() alone), -1 when the pattern doesn't compile, with the
+     * message of php-src's warning in warning[0].
+     */
+    @TruffleBoundary
+    int filterMatch(TruffleString regexString, TruffleString subject, String[] warning) {
+        Regex regex = compile(regexString, warning);
+        if (regex == null) {
+            return -1;
+        }
+        try (Matcher m = new Matcher(this, regex, Str.readBytes(subject))) {
+            return m.match(0, 0) >= 0 ? 1 : 0;
+        }
     }
 
     // ---- preg_match / preg_match_all ----

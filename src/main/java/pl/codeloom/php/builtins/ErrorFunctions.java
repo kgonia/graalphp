@@ -125,6 +125,20 @@ public final class ErrorFunctions {
     }
 
     /**
+     * zend_error while an exception is pending (a built-in going on after one): the user error handler, when set for
+     * the level, isn't run (zend_call_function returns at once) and the error goes unreported; otherwise as raise.
+     */
+    @TruffleBoundary
+    public static void raiseWithPendingException(PhpContext context, int type, TruffleString message,
+                                                 SourceLocation at) {
+        State state = context.errors();
+        if (state.errorHandler == PhpNull.NULL || (state.errorHandlerLevels & type) == 0
+                || (type & NOT_USER_HANDLED) != 0) {
+            raise(context, type, message, at);
+        }
+    }
+
+    /**
      * zend_error_noreturn for a fatal error no user handler takes (E_ERROR, E_COMPILE_ERROR): reported, and the
      * script ends with the bailout the caller throws. The backtrace leaves out the innermost skip frames.
      */

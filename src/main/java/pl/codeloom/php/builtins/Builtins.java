@@ -90,6 +90,7 @@ public final class Builtins {
         PasswordFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
+        FilterFunctions.register(registry);
         // ext/curl is loaded when libcurl is (as an extension php was built without isn't)
         boolean curl = CurlNative.available();
         CurlFunctions.Methods curlMethods = null;
@@ -208,6 +209,7 @@ public final class Builtins {
             CurlFunctions.constants(constants);
         }
         SocketFunctions.constants(constants);
+        FilterFunctions.constants(constants);
         return Collections.unmodifiableMap(constants);
     }
 
@@ -259,6 +261,8 @@ public final class Builtins {
                 {"TypeError", "Error"}, {"ValueError", "Error"}, {"ArithmeticError", "Error"},
                 {"DivisionByZeroError", "ArithmeticError"}, {"ArgumentCountError", "TypeError"},
                 {"UnhandledMatchError", "Error"},
+                {"Filter\\FilterException", "Exception"},
+                {"Filter\\FilterFailedException", "Filter\\FilterException"},
         };
         for (String[] pair : hierarchy) {
             PhpClass phpClass = new PhpClass(pair[0], context.getClass(pair[1]), false, false,

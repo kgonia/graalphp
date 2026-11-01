@@ -135,4 +135,68 @@ public final class Args {
         ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(function + "(): Passing null to parameter #"
                 + (index + 1) + " ($" + name + ") of type " + type + " is deprecated"), SourceLocation.current());
     }
+
+    /**
+     * Z_PARAM_LONG in coercive mode (zend_parse_arg_long_weak), for a parameter of the given type ("int", or
+     * "array|int" for Z_PARAM_ARRAY_HT_OR_LONG's other branch): what the TypeError and the null deprecation name.
+     */
+    public static long integer(PhpContext context, Object[] a, int index, String function, String name,
+                               String type) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Long l) {
+            return l;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, type);
+            return 0;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1 : 0;
+        }
+        if (value instanceof Double d) {
+            return floatToInteger(context, d, null, function, index, name, type);
+        }
+        if (value instanceof TruffleString s) {
+            Object number = Convert.numericValue(s);
+            if (number instanceof Long l) {
+                return l;
+            }
+            if (number instanceof Double d) {
+                return floatToInteger(context, d, s, function, index, name, type);
+            }
+        }
+        throw typeError(function, index + 1, name, type, value);
+    }
+
+    /** A float (or float-string) argument to an int parameter: in range, else a TypeError; a fraction deprecated. */
+    private static long floatToInteger(PhpContext context, double d, TruffleString string, String function,
+                                       int index, String name, String type) {
+        if (!(d >= -9.223372036854775808E18 && d < 9.223372036854775807E18)) {
+            throw typeError(function, index + 1, name, type, string != null ? string : d);
+        }
+        long l = (long) d;
+        if (l != d) {
+            String message = string != null
+                    ? "Implicit conversion from float-string \"" + Str.java(string) + "\" to int loses precision"
+                    : "Implicit conversion from float " + Convert.doubleToRepr(d) + " to int loses precision";
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(message), SourceLocation.current());
+        }
+        return l;
+    }
+
+    /** Z_PARAM_BOOL in coercive mode (zend_parse_arg_bool_weak). */
+    public static boolean bool(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "bool");
+            return false;
+        }
+        if (value instanceof Long || value instanceof Double || value instanceof TruffleString) {
+            return Convert.toBool(value);
+        }
+        throw typeError(function, index + 1, name, "bool", value);
+    }
 }
