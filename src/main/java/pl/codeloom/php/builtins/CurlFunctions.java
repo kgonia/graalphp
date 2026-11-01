@@ -3,6 +3,8 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.ffi.NativeLibrary;
+import pl.codeloom.php.ffi.Upcall;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
@@ -24,11 +26,9 @@ import static pl.codeloom.php.builtins.CurlNative.CURLE_OK;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.StructLayout;
-import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -45,7 +45,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -2862,54 +2861,55 @@ final class CurlFunctions {
             }
         }
 
-        /** glibc's fopencookie, setvbuf and fclose, bound when the C library has them. */
+        /**
+         * glibc's fopencookie, setvbuf and fclose, and the cookie's write as a direct upcall: declared with the image
+         * (NativeCallsFeature). The C library's lookup (Linker.defaultLookup) doesn't exist in a -H:+StaticExecutable
+         * image.
+         */
+        private static final class Libc {
+            static final StructLayout IO = MemoryLayout.structLayout(CurlNative.PTR.withName("read"),
+                    CurlNative.PTR.withName("write"), CurlNative.PTR.withName("seek"),
+                    CurlNative.PTR.withName("close"));
+            static final MethodHandle FOPENCOOKIE = NativeLibrary.LIBC.downcall("fopencookie",
+                    FunctionDescriptor.of(CurlNative.PTR, CurlNative.PTR, CurlNative.PTR, IO));
+            static final MethodHandle SETVBUF = NativeLibrary.LIBC.downcall("setvbuf", FunctionDescriptor.of(
+                    CurlNative.INT, CurlNative.PTR, CurlNative.PTR, CurlNative.INT, CurlNative.SIZE_T));
+            static final MethodHandle FCLOSE = NativeLibrary.LIBC.downcall("fclose",
+                    FunctionDescriptor.of(CurlNative.INT, CurlNative.PTR));
+            static final Upcall COOKIE_WRITE = Upcall.of(MethodHandles.lookup(), StderrFile.class, "cookieWrite",
+                    FunctionDescriptor.of(ValueLayout.JAVA_LONG, CurlNative.PTR, CurlNative.PTR, CurlNative.SIZE_T));
+
+            private Libc() {
+            }
+        }
+
+        /** Whether the C library has fopencookie, and its functions struct: native state, run time. */
         private static final class Cookie {
             static final boolean AVAILABLE;
-            private static MethodHandle fopencookie;
-            private static MethodHandle setvbuf;
-            private static MethodHandle fclose;
-            private static MemorySegment functions;
+            private static final MemorySegment FUNCTIONS;
 
             static {
-                boolean available = false;
+                MemorySegment functions = null;
                 try {
-                    Linker linker = Linker.nativeLinker();
-                    SymbolLookup libc = linker.defaultLookup();
-                    Optional<MemorySegment> open = libc.find("fopencookie");
-                    if (open.isPresent()) {
-                        StructLayout io = MemoryLayout.structLayout(
-                                CurlNative.PTR.withName("read"), CurlNative.PTR.withName("write"),
-                                CurlNative.PTR.withName("seek"), CurlNative.PTR.withName("close"));
-                        fopencookie = linker.downcallHandle(open.get(), FunctionDescriptor.of(
-                                CurlNative.PTR, CurlNative.PTR, CurlNative.PTR, io));
-                        setvbuf = linker.downcallHandle(libc.find("setvbuf").orElseThrow(),
-                                FunctionDescriptor.of(CurlNative.INT, CurlNative.PTR, CurlNative.PTR,
-                                        CurlNative.INT, CurlNative.SIZE_T));
-                        fclose = linker.downcallHandle(libc.find("fclose").orElseThrow(),
-                                FunctionDescriptor.of(CurlNative.INT, CurlNative.PTR));
-                        FunctionDescriptor writeType = FunctionDescriptor.of(
-                                ValueLayout.JAVA_LONG, CurlNative.PTR, CurlNative.PTR, CurlNative.SIZE_T);
-                        MemorySegment write = linker.upcallStub(MethodHandles.lookup().findStatic(
-                                StderrFile.class, "cookieWrite", writeType.toMethodType()), writeType, Arena.global());
-                        functions = Arena.global().allocate(io);
-                        functions.set(CurlNative.PTR, 8, write);
-                        available = true;
+                    if (NativeLibrary.LIBC.has("fopencookie")) {
+                        functions = Arena.global().allocate(Libc.IO);
+                        functions.set(CurlNative.PTR, 8, Libc.COOKIE_WRITE.stub());
                     }
                 } catch (Throwable t) {
-                    available = false;
+                    functions = null;
                 }
-                AVAILABLE = available;
+                FUNCTIONS = functions;
+                AVAILABLE = functions != null;
             }
 
             static MemorySegment open(long id) {
                 try (Arena arena = Arena.ofConfined()) {
-                    MemorySegment fp = (MemorySegment) fopencookie.invokeExact(MemorySegment.ofAddress(id),
-                            CurlNative.cString(arena, "w".getBytes(StandardCharsets.US_ASCII)),
-                            functions);
+                    MemorySegment fp = (MemorySegment) Libc.FOPENCOOKIE.invokeExact(MemorySegment.ofAddress(id),
+                            CurlNative.cString(arena, "w".getBytes(StandardCharsets.US_ASCII)), FUNCTIONS);
                     if (fp.equals(MemorySegment.NULL)) {
                         return null;
                     }
-                    int ignored = (int) setvbuf.invokeExact(fp, MemorySegment.NULL, 2, 0L); // _IONBF
+                    int ignored = (int) Libc.SETVBUF.invokeExact(fp, MemorySegment.NULL, 2, 0L); // _IONBF
                     return fp;
                 } catch (Throwable t) {
                     throw CurlNative.failure(t);
@@ -2918,7 +2918,7 @@ final class CurlFunctions {
 
             static void close(MemorySegment fp) {
                 try {
-                    int ignored = (int) fclose.invokeExact(fp);
+                    int ignored = (int) Libc.FCLOSE.invokeExact(fp);
                 } catch (Throwable t) {
                     throw CurlNative.failure(t);
                 }

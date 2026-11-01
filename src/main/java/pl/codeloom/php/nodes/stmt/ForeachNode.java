@@ -213,11 +213,16 @@ public final class ForeachNode extends StmtNode {
     }
 
     /** FE_RESET's and FE_FETCH_RW's warning for a subject that is neither an array nor an object. */
-    @TruffleBoundary
     private void notIterable(Object value) {
+        notIterable(this, value);
+    }
+
+    /** notIterable for a loop at site. */
+    @TruffleBoundary
+    public static void notIterable(Node site, Object value) {
         String type = value instanceof Boolean b ? (b ? "true" : "false") : Convert.debugType(value);
-        ErrorFunctions.raise(PhpContext.get(this), ErrorFunctions.E_WARNING,
-                Str.of("foreach() argument must be of type array|object, " + type + " given"), SourceLocation.of(this));
+        ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING,
+                Str.of("foreach() argument must be of type array|object, " + type + " given"), SourceLocation.of(site));
     }
 
     private void iterate(VirtualFrame frame, PhpArray array) {
@@ -319,12 +324,17 @@ public final class ForeachNode extends StmtNode {
     }
 
     /** An iteration step: the Iterator's method, or the Generator's own operation for it. */
-    @TruffleBoundary
     private Object step(PhpObject object, String method) {
+        return step(this, object, method);
+    }
+
+    /** An iteration step made from site, which traces show as the call's location. */
+    @TruffleBoundary
+    public static Object step(Node site, PhpObject object, String method) {
         if (!(object.getInternal() instanceof PhpGenerator generator)) {
-            return object.callMethod(this, method);
+            return object.callMethod(site, method);
         }
-        return Backtrace.callFrom(this, () -> generatorStep(generator, method));
+        return Backtrace.callFrom(site, () -> generatorStep(generator, method));
     }
 
     private static Object generatorStep(PhpGenerator generator, String method) {
@@ -344,11 +354,16 @@ public final class ForeachNode extends StmtNode {
     }
 
     /** Follows getIterator() to the Iterator (a loop, not recursion: partial evaluation would inline it forever). */
-    @TruffleBoundary
     private PhpObject unwrapAggregates(PhpObject subject) {
+        return unwrapAggregates(this, subject);
+    }
+
+    /** unwrapAggregates for a loop at site. */
+    @TruffleBoundary
+    public static PhpObject unwrapAggregates(Node site, PhpObject subject) {
         PhpObject object = subject;
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            if (!(object.callMethod(this, "getiterator") instanceof PhpObject inner)) {
+            if (!(object.callMethod(site, "getiterator") instanceof PhpObject inner)) {
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

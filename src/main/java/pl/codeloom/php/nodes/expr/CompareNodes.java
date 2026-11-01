@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
@@ -14,6 +15,11 @@ import pl.codeloom.php.runtime.Str;
  * Comparison operators, specialized on operand types: a site compiles the type pairs it has met. Everything else
  * goes through php-src's zend_compare rules in {@link Convert}. An int meets a float as a float (the implicit
  * cast), which is PHP 8's rule for `==` and `<`, but not for `===`, which has no float specialization.
+ *
+ * <p>The tree keeps one class for `===`/`!==`, one for `==`/`!=` and one for the four orderings, told apart by a
+ * field: the host compiler then sees few node classes where conditions execute, and the tree's interpreter stays
+ * as fast. The bytecode interpreter proxies {@link Comparisons}, one class per operator (a proxied node has no
+ * fields), which call the rules here.
  */
 public final class CompareNodes {
     private CompareNodes() {
@@ -60,7 +66,8 @@ public final class CompareNodes {
             return identical(a, b) != negate;
         }
 
-        private static boolean identical(Object a, Object b) {
+        /** `===` on any two values (the fallback both interpreters' nodes take). */
+        public static boolean identical(Object a, Object b) {
             if (a instanceof Long x) {
                 return b instanceof Long y && x.longValue() == y.longValue();
             }
@@ -113,9 +120,7 @@ public final class CompareNodes {
         @Specialization
         protected boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
                                   @Cached TruffleString.ReadByteNode readByte) {
-            boolean result = equal.execute(a, b, Str.ENC)
-                    || mayBeNumeric(a, readByte) && mayBeNumeric(b, readByte) && Convert.looseEquals(a, b);
-            return result != negate;
+            return equalStrings(a, b, equal, readByte) != negate;
         }
 
         @Specialization
@@ -126,6 +131,13 @@ public final class CompareNodes {
         @Fallback
         protected boolean other(Object a, Object b) {
             return Convert.looseEquals(a, b) != negate;
+        }
+
+        /** `==` on two strings: the same bytes, or both numeric and equal as numbers. */
+        public static boolean equalStrings(TruffleString a, TruffleString b, TruffleString.EqualNode equal,
+                                           TruffleString.ReadByteNode readByte) {
+            return equal.execute(a, b, Str.ENC)
+                    || mayBeNumeric(a, readByte) && mayBeNumeric(b, readByte) && Convert.looseEquals(a, b);
         }
 
         /** Cheap pre-check: a numeric string starts with whitespace, a sign, a digit or a dot. */
@@ -179,18 +191,19 @@ public final class CompareNodes {
     /** `<=>`. */
     @NodeChild("left")
     @NodeChild("right")
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class SpaceshipNode extends ExprNode {
         public static SpaceshipNode create(ExprNode left, ExprNode right) {
             return CompareNodesFactory.SpaceshipNodeGen.create(left, right);
         }
 
         @Specialization
-        protected long longs(long a, long b) {
+        public static long longs(long a, long b) {
             return Long.compare(a, b);
         }
 
         @Fallback
-        protected long other(Object a, Object b) {
+        public static long other(Object a, Object b) {
             return Convert.compare(a, b);
         }
     }
