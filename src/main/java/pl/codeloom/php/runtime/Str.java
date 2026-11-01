@@ -176,6 +176,44 @@ public final class Str {
         return a.concatUncached(b, ENC, true);
     }
 
+    /**
+     * The parts joined, glue (or nothing, when null) between them: each part a TruffleString or a Long, which is
+     * written as its digits. One exact array and one copy per part, out of line: inlined at every interpolation and
+     * implode(), a TruffleStringBuilder's appends were a large part of big compiled PHP functions.
+     */
+    @TruffleBoundary
+    public static TruffleString join(TruffleString glue, Object[] parts) {
+        if (parts.length == 1 && parts[0] instanceof TruffleString only) {
+            return only;
+        }
+        InternalByteArray[] pieces = new InternalByteArray[parts.length];
+        InternalByteArray glueBytes = glue == null ? null : glue.getInternalByteArrayUncached(ENC);
+        long total = 0;
+        for (int i = 0; i < parts.length; i++) {
+            TruffleString part = parts[i] instanceof Long number ? TruffleString.fromLongUncached(number, ENC, false)
+                    : (TruffleString) parts[i];
+            pieces[i] = part.getInternalByteArrayUncached(ENC);
+            total += pieces[i].getLength();
+            if (glueBytes != null && i > 0) {
+                total += glueBytes.getLength();
+            }
+        }
+        if (total > Integer.MAX_VALUE - 8) {
+            throw new OutOfMemoryError("string too long");
+        }
+        byte[] out = new byte[(int) total];
+        int at = 0;
+        for (int i = 0; i < pieces.length; i++) {
+            if (glueBytes != null && i > 0) {
+                System.arraycopy(glueBytes.getArray(), glueBytes.getOffset(), out, at, glueBytes.getLength());
+                at += glueBytes.getLength();
+            }
+            System.arraycopy(pieces[i].getArray(), pieces[i].getOffset(), out, at, pieces[i].getLength());
+            at += pieces[i].getLength();
+        }
+        return TruffleString.fromByteArrayUncached(out, ENC, false);
+    }
+
     @TruffleBoundary
     public static boolean equal(TruffleString a, TruffleString b) {
         return a.equalsUncached(b, ENC);
