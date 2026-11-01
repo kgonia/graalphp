@@ -798,7 +798,7 @@ public final class BytecodeTranslator {
             Ast armList = node.node("stmts");
             List<Ast> arms = new ArrayList<>();
             Ast defaultArm = null;
-            boolean constantKeys = true;
+            List<Object> folded = new ArrayList<>();
             for (int i = 0; armList != null && i < armList.size(); i++) {
                 Ast arm = (Ast) armList.child(i);
                 if (arm.get("cond") == null) {
@@ -807,15 +807,11 @@ public final class BytecodeTranslator {
                 }
                 arms.add(arm);
                 for (Object condition : arm.node("cond").children()) {
-                    if (constantKeys && constantShaped(condition)) {
-                        Object key = constantValue(condition);
-                        constantKeys = key instanceof Long || key instanceof TruffleString;
-                    } else {
-                        constantKeys = false;
-                    }
+                    folded.add(constantShaped(condition) ? constantValue(condition)
+                            : constants.foldedArithmetic(condition));
                 }
             }
-            int errorLine = defaultArm == null ? Translator.matchErrorLine(node, constantKeys) : 0;
+            int errorLine = defaultArm == null ? Translator.matchErrorLine(node, folded) : 0;
             b.beginBlock();
             BytecodeLocal subject = b.createLocal();
             b.beginStoreLocal(subject);

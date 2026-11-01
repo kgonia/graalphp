@@ -1258,9 +1258,8 @@ public final class Translator {
         }
         List<ExprNode> conditions = new ArrayList<>();
         List<Integer> armOf = new ArrayList<>();
+        List<Object> constants = new ArrayList<>();
         int defaultArm = -1;
-        // can_match_use_jumptable: every condition an int or string constant
-        boolean constantKeys = true;
         for (int i = 0; i < armCount; i++) {
             Ast arm = (Ast) armList.child(i);
             if (arm.get("cond") == null) {
@@ -1270,7 +1269,7 @@ public final class Translator {
             for (Object condition : arm.node("cond").children()) {
                 ExprNode translated = expression(condition);
                 Object constant = translated.constantValue();
-                constantKeys &= constant instanceof Long || constant instanceof TruffleString;
+                constants.add(constant != null ? constant : foldedArithmetic(condition));
                 conditions.add(translated);
                 armOf.add(i);
             }
@@ -1281,7 +1280,45 @@ public final class Translator {
         }
         return new MatchNode(subject, conditions.toArray(new ExprNode[0]),
                 armOf.stream().mapToInt(Integer::intValue).toArray(), bodies, defaultArm,
-                defaultArm < 0 ? matchErrorLine(node, constantKeys) : 0);
+                defaultArm < 0 ? matchErrorLine(node, constants) : 0);
+    }
+
+    /**
+     * The int or float zend_eval_const_expr folds an arithmetic expression of constants to (zend_try_ct_eval_binary_op),
+     * which the tree computes when it runs; null if it isn't one, or the operation would raise an error, which
+     * php-src leaves to run time.
+     */
+    Object foldedArithmetic(Object value) {
+        if (!(value instanceof Ast node) || !node.is("AST_BINARY_OP")) {
+            return null;
+        }
+        switch (node.flags) {
+            case 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12:
+                break;
+            default:
+                return null;
+        }
+        Object left = foldedOperand(node.get("left"));
+        Object right = left == null ? null : foldedOperand(node.get("right"));
+        if (!(left instanceof Long || left instanceof Double) || !(right instanceof Long || right instanceof Double)) {
+            return null;
+        }
+        try {
+            return AssignNodes.CompoundAssignNode.apply(null, node.flags, left, right);
+        } catch (PhpError | ArithmeticException error) {
+            return null;
+        }
+    }
+
+    private Object foldedOperand(Object value) {
+        if (!(value instanceof Ast node)) {
+            return value instanceof Long || value instanceof Double ? value : null;
+        }
+        return switch (node.kind) {
+            case "AST_CONST", "AST_UNARY_OP", "AST_MAGIC_CONST" -> expression(node).constantValue();
+            case "AST_BINARY_OP" -> foldedArithmetic(node);
+            default -> null;
+        };
     }
 
     /** A match's second default arm, which zend_compile_match refuses; null if it has at most one. */
@@ -1302,26 +1339,37 @@ public final class Translator {
 
     /**
      * The line of a match's ZEND_MATCH_ERROR (a match without a default arm): CG(zend_lineno) when it is emitted,
-     * after the last expression compiled before it, which is the subject when the match uses a jump table (two or
-     * more conditions, all of them int or string constants: constantKeys), else the last condition.
+     * after the last expression compiled before it. constants has each condition's value when it is a constant
+     * expression, else null, in order. can_match_use_jumptable folds the conditions (zend_eval_const_expr) until
+     * one isn't an int or string constant: a folded one is a new zval at the line of the moment, the subject's.
+     * With a jump table (two or more conditions, all int or string constants) the subject is the last expression
+     * compiled; else the last condition.
      */
-    static int matchErrorLine(Ast match, boolean constantKeys) {
+    static int matchErrorLine(Ast match, List<Object> constants) {
+        int subjectLine = lastLine(match.get("cond"), match.line);
         Ast armList = match.node("stmts");
         Object lastCondition = null;
         int lastArmLine = match.line;
-        int count = 0;
+        boolean lastFolded = false;
+        boolean scanning = true;
+        int index = 0;
         for (int i = 0; armList != null && i < armList.size(); i++) {
             Ast arm = (Ast) armList.child(i);
-            if (arm.get("cond") != null) {
-                for (Object condition : arm.node("cond").children()) {
-                    lastCondition = condition;
-                    lastArmLine = arm.line;
-                    count++;
-                }
+            if (arm.get("cond") == null) {
+                continue;
+            }
+            for (Object condition : arm.node("cond").children()) {
+                Object constant = constants.get(index++);
+                lastCondition = condition;
+                lastArmLine = arm.line;
+                lastFolded = scanning && condition instanceof Ast && constant != null;
+                scanning &= constant instanceof Long || constant instanceof TruffleString;
             }
         }
-        return lastCondition == null || constantKeys && count >= 2 ? lastLine(match.get("cond"), match.line)
-                : lastLine(lastCondition, lastArmLine);
+        if (lastCondition == null || scanning && index >= 2 || lastFolded) {
+            return subjectLine;
+        }
+        return lastLine(lastCondition, lastArmLine);
     }
 
     /**

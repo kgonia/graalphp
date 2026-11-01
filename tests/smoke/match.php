@@ -122,6 +122,32 @@ foreach ([5, "x", 1.5, null, [], new Foo] as $value) {
         echo $e->getMessage(), " line ", $e->getLine(), "\n";
     }
 }
+// a condition folded at compile time (true, a constant expression) is at the subject's line
+try {
+    $r = match ($x < 0) {
+        true => "negative",
+    };
+} catch (UnhandledMatchError $e) {
+    echo "line ", $e->getLine(), "\n";
+}
+try {
+    $r = match ($x) {
+        1 + 2 => "three",
+        "a" . "b",
+            PHP_INT_SIZE * 100 => "folded",
+    };
+} catch (UnhandledMatchError $e) {
+    echo "line ", $e->getLine(), "\n";
+}
+try {
+    $r = match ($x) {
+        strlen("abc") => "three",
+        1 + 2
+            => "not folded after a condition that isn't constant",
+    };
+} catch (UnhandledMatchError $e) {
+    echo "line ", $e->getLine(), "\n";
+}
 // the ini settings the message follows
 ini_set('zend.exception_string_param_max_len', 3);
 try { match ("abcdef") { 1 => 1 }; } catch (UnhandledMatchError $e) { echo $e->getMessage(), "\n"; }
