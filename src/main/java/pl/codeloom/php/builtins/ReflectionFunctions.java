@@ -33,6 +33,9 @@ final class ReflectionFunctions {
     }
 
     static void register(Registry r) {
+        r.fn("class_implements", (context, a) -> splClasses(context, a, "class_implements", 'i'));
+        r.fn("class_parents", (context, a) -> splClasses(context, a, "class_parents", 'p'));
+        r.fn("class_uses", (context, a) -> splClasses(context, a, "class_uses", 't'));
         r.fn("truffle\\reflection_class", (context, a) -> {
             PhpClass phpClass = phpClass(context, Args.get(a, 0), Args.bool(a, 1, true));
             return phpClass == null ? Boolean.FALSE : classInfo(context, phpClass);
@@ -58,6 +61,47 @@ final class ReflectionFunctions {
                     SourceLocation.current());
             return PhpNull.NULL;
         });
+    }
+
+    /**
+     * class_implements(), class_parents() and class_uses() (ext/spl): the interfaces as ce->interfaces lists them,
+     * the parents nearest first, or the traits the class itself uses; each keyed by its name.
+     */
+    @TruffleBoundary
+    private static Object splClasses(PhpContext context, Object[] a, String function, char kind) {
+        Object value = Args.get(a, 0, PhpNull.NULL);
+        if (!(value instanceof PhpObject) && !(value instanceof PhpClosure) && !(value instanceof TruffleString)) {
+            throw Args.typeError(function, 1, "object_or_class", "object|string", value);
+        }
+        boolean autoload = Args.bool(a, 1, true);
+        PhpClass phpClass = phpClass(context, value, autoload);
+        if (phpClass == null) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(): Class "
+                    + Str.java((TruffleString) value) + " does not exist" + (autoload ? " and could not be loaded" : "")),
+                    SourceLocation.current());
+            return Boolean.FALSE;
+        }
+        PhpArray result = new PhpArray();
+        if (kind == 'i') {
+            for (PhpClass iface : interfaces(phpClass)) {
+                result.put(ArrayKey.of(Str.of(iface.getName())), Str.of(iface.getName()));
+            }
+        } else if (kind == 'p') {
+            for (PhpClass parent = phpClass.getParent(); parent != null; parent = parent.getParent()) {
+                result.put(ArrayKey.of(Str.of(parent.getName())), Str.of(parent.getName()));
+            }
+        } else if (template(phpClass) != null) {
+            for (ClassTemplate.Member member : template(phpClass).ownMembers()) {
+                if (member instanceof ClassTemplate.TraitUse use) {
+                    for (String trait : use.traits()) {
+                        PhpClass traitClass = context.findClass(Str.lower(trait));
+                        String name = traitClass == null ? trait : traitClass.getName();
+                        result.put(ArrayKey.of(Str.of(name)), Str.of(name));
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     /** The class an argument names (a name, autoloaded if asked, or an object's class), or null. */
