@@ -1,7 +1,9 @@
 package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
 
 /**
@@ -21,6 +23,11 @@ public final class PhpError extends PhpThrowable {
     private final transient PhpArray trace;
     /** The innermost statement the error left, recorded on the way out: the object's file and line. */
     private transient Node origin;
+    /**
+     * The statement of a function on bytecode the error left, when it left one before origin's: where it surfaced.
+     * Only the first instruction in a statement counts (one in a prologue, binding parameters, doesn't).
+     */
+    private transient SourceLocation statement;
     /** The Throwable object, once a catch or the uncaught-error handler asked for it. */
     private transient PhpObject throwable;
 
@@ -66,13 +73,34 @@ public final class PhpError extends PhpThrowable {
         }
     }
 
+    /**
+     * surfacedAt for a function on bytecode: the instruction at bytecodeIndex, if it is in a statement. Telling
+     * builds the function's sources (once: they are kept), which the error's location needs anyway; frames further
+     * out are then skipped.
+     */
+    @TruffleBoundary
+    public void surfacedAt(BytecodeNode bytecode, int bytecodeIndex) {
+        if (origin == null && statement == null
+                && SourceLocation.isUserCode((RootNode) bytecode.getBytecodeRootNode())) {
+            statement = SourceLocation.ofStatement(bytecode.getBytecodeLocation(bytecodeIndex));
+        }
+    }
+
+    /** Where the error surfaced: the innermost statement it left, as surfacedAt recorded it. */
+    private SourceLocation location() {
+        if (statement != null) {
+            return statement;
+        }
+        return origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin);
+    }
+
     /** The object a catch block sees, made once: of the error's class, where the error surfaced. */
     @Override
     @TruffleBoundary
     public PhpObject toThrowable(PhpContext context) {
         if (throwable == null) {
             PhpObject object = context.getClass(phpClass)
-                    .instantiate(origin == null ? SourceLocation.UNKNOWN : SourceLocation.of(origin), trace);
+                    .instantiate(location(), trace);
             object.setProperty("message", Str.of(phpMessage));
             if (code != 0) {
                 object.setProperty("code", code);

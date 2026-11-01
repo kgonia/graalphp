@@ -1,5 +1,8 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.bytecode.OperationProxy;
+import com.oracle.truffle.api.dsl.Bind;
+import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
@@ -30,6 +33,7 @@ public final class ElementNodes {
      * sites with ~2000 hook names) made its function split per caller, 63% of a WordPress server's split decisions,
      * for copies that fold one key in functions run once per request.
      */
+    @GenerateUncached
     public abstract static class ArrayKeyNode extends Node {
         public abstract Object execute(Object key);
 
@@ -66,10 +70,27 @@ public final class ElementNodes {
      * equality) grew the graphs of PHP functions enough to stop their calls being inlined.
      */
     public static final class SlotCacheNode extends Node {
+        /** For the uncached bytecode interpreter: shared, so it remembers nothing. */
+        private static final SlotCacheNode UNCACHED = new SlotCacheNode(false);
+
+        private final boolean remembers;
         private int slotGuess = -1;
 
+        private SlotCacheNode(boolean remembers) {
+            this.remembers = remembers;
+        }
+
         public static SlotCacheNode create() {
-            return new SlotCacheNode();
+            return new SlotCacheNode(true);
+        }
+
+        public static SlotCacheNode getUncached() {
+            return UNCACHED;
+        }
+
+        @Override
+        public boolean isAdoptable() {
+            return remembers;
         }
 
         /** The dereferenced element under a normalized key, or null when absent. */
@@ -77,13 +98,15 @@ public final class ElementNodes {
             if (!(key instanceof TruffleString)) {
                 return array.get(key);
             }
-            int slot = slotGuess;
+            int slot = remembers ? slotGuess : -1;
             if (!array.isKeyAt(slot, key)) {
                 slot = array.slotOf(key);
                 if (slot < 0) {
                     return null;
                 }
-                slotGuess = slot;
+                if (remembers) {
+                    slotGuess = slot;
+                }
             }
             return PhpRef.deref(array.hashValueAt(slot));
         }
@@ -94,37 +117,39 @@ public final class ElementNodes {
      * PhpNull.NULL when there is none. The key comes as written: arrays normalize it, the others take it as is.
      */
     @ReportPolymorphism
+    @GenerateUncached
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ElementReadNode extends Node {
         public abstract Object execute(Object container, Object key);
 
         public abstract long executeLong(Object container, Object key) throws UnexpectedResultException;
 
         @Specialization(guards = "array.holdsLongAt(index)")
-        protected static long longElement(PhpArray array, long index) {
+        public static long longElement(PhpArray array, long index) {
             return array.longAt(index);
         }
 
         @Specialization(guards = "array.isPacked()")
-        protected static Object intKey(PhpArray array, long index) {
+        public static Object intKey(PhpArray array, long index) {
             Object element = array.get(index);
             return element == null ? PhpNull.NULL : element;
         }
 
         @Specialization(guards = "!array.isPacked()")
-        protected static Object hashIntKey(PhpArray array, long index) {
+        public static Object hashIntKey(PhpArray array, long index) {
             Object element = PhpRef.deref(array.hashGetLong(index));
             return element == null ? PhpNull.NULL : element;
         }
 
         @Specialization
-        protected static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
+        public static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
                                          @Cached SlotCacheNode slots) {
             Object element = slots.lookup(array, toKey.execute(key));
             return element == null ? PhpNull.NULL : element;
         }
 
         @Specialization
-        protected static TruffleString stringOffset(TruffleString string, Object key,
+        public static TruffleString stringOffset(TruffleString string, Object key,
                                                     @Cached TruffleString.ReadByteNode readByte) {
             long offset = Convert.toLong(key);
             int length = string.byteLength(Str.ENC);
@@ -138,18 +163,19 @@ public final class ElementNodes {
         }
 
         @Specialization(guards = "object.isArrayAccess()")
-        protected Object arrayAccess(PhpObject object, Object key) {
-            return PhpRef.deref(object.callMethod(this, "offsetget", key));
+        public static Object arrayAccess(PhpObject object, Object key, @Bind Node node) {
+            return PhpRef.deref(object.callMethod(node, "offsetget", key));
         }
 
         @Fallback
-        protected static Object other(Object container, Object key) {
+        public static Object other(Object container, Object key) {
             return PhpNull.NULL;
         }
     }
 
     /** `$array[key] = value` into an array the caller has made writable; the key comes as written. */
     @ReportPolymorphism
+    @GenerateUncached
     public abstract static class ElementWriteNode extends Node {
         public abstract void execute(PhpArray array, Object key, Object value);
 
