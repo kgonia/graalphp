@@ -15,8 +15,16 @@ final class StripTags {
     private StripTags() {
     }
 
-    @TruffleBoundary
     static TruffleString strip(TruffleString text, Object allowed) {
+        return strip(text, allowed, false);
+    }
+
+    /**
+     * php_strip_tags_ex; allowTagSpaces (FILTER_SANITIZE_STRING's) also takes a '<' followed by whitespace for the
+     * start of a tag, where strip_tags() keeps it as text.
+     */
+    @TruffleBoundary
+    static TruffleString strip(TruffleString text, Object allowed, boolean allowTagSpaces) {
         byte[] buf = Str.readBytes(text);
         String allow = allowedTags(allowed);
         ByteBuilder out = new ByteBuilder(buf.length);
@@ -39,7 +47,7 @@ final class StripTags {
                         if (inQuote != 0) {
                             break;
                         }
-                        if (p + 1 < end && isSpace(buf[p + 1])) {
+                        if (p + 1 < end && isSpace(buf[p + 1]) && !allowTagSpaces) {
                             out.write(c);
                             break;
                         }
@@ -68,7 +76,7 @@ final class StripTags {
                         if (inQuote != 0) {
                             break;
                         }
-                        if (p + 1 < end && isSpace(buf[p + 1])) {
+                        if (p + 1 < end && isSpace(buf[p + 1]) && !allowTagSpaces) {
                             if (tag != null) {
                                 tag.write(c);
                             }
