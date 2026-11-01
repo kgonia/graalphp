@@ -5,7 +5,8 @@ and .server.log). See wiki/visit-phases.md.
 A visit is the requests from one GET / (the home page, visits.py's first page) to the next. Per visit:
 - on the requests' thread (the critical path, wall time added up over the visit's requests): the includes'
   lookups, reading files, parsing them, reading bodies left unparsed, translating, native calls (PCRE2 matches;
-  compiling patterns apart), GC pauses, the contexts' setup and close, and the rest: execution;
+  compiling patterns apart), the contexts' setup and close, and the rest: execution. GC pauses come apart, as a
+  line of their own: a pause stops the thread in whatever phase it is in, so it is inside those times;
 - the requests' thread CPU;
 - off the thread, CPU from the end of the visit before (the pause included) to the end of this one, or from the
   server's start for the first visit: Truffle's compiler threads, the JVM's own JIT (HotSpot's compiler threads,
@@ -83,8 +84,8 @@ def visits_of(log):
         s["native_compile"] = sum(r["native_compile_ns"] for r in v) / 1e9
         s["gc_pause"] = sum(r["gc_ms"] for r in v) / 1e3
         s["context"] = sum(r["context_ns"] + r["close_ns"] for r in v) / 1e9
-        s["execution"] = wall - sum(s[p] for p in PHASES) - s["native"] - s["native_compile"] - s["gc_pause"] \
-            - s["context"]
+        # a GC pause stops the thread in whichever phase it is: it is inside the phases' times, not beside them
+        s["execution"] = wall - sum(s[p] for p in PHASES) - s["native"] - s["native_compile"] - s["context"]
         for kind in ("functions", "methods", "closures"):
             s["declared_" + kind] = sum(r["declared_" + kind] for r in v)
             s["translated_" + kind] = sum(r["translated_" + kind] for r in v)
@@ -122,7 +123,7 @@ def main():
     directory, variants = args[0], args[1:]
     for variant in variants:
         runs = []
-        for path in sorted(glob.glob(os.path.join(directory, f"{variant}-*.json"))):
+        for path in sorted(glob.glob(os.path.join(directory, f"{variant}-[0-9]*.json"))):
             log = path[:-5] + ".server.log"
             client = json.load(open(path))
             server = visits_of(log) if os.path.exists(log) else []
@@ -144,8 +145,9 @@ def main():
             rows += [("requests' wall", sv("wall")), ("  include lookups", sv("include")),
                      ("  file read", sv("read")), ("  file parse", sv("parse")), ("  body read", sv("body")),
                      ("  file translate", sv("file_translate")), ("  body translate", sv("translate")), ("  native (PCRE2 match)", sv("native")),
-                     ("  native (pattern compile)", sv("native_compile")), ("  GC pauses", sv("gc_pause")),
+                     ("  native (pattern compile)", sv("native_compile")),
                      ("  context setup and close", sv("context")), ("  execution (the rest)", sv("execution")),
+                     ("GC pauses, inside the lines above", sv("gc_pause")),
                      ("requests' CPU", sv("cpu"))]
             if "off_truffle" in runs[0]["server"][0]:
                 rows += [("off-thread: Truffle compilation", sv("off_truffle")),
