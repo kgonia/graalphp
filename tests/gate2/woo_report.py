@@ -4,6 +4,8 @@ line NAME: one run in a line (k6's summary NAME.k6.json, the sample NAME.sample.
 warm NAME: the warm-up's curve from its every request (NAME.csv.gz): per 10 s the pages, orders and median
   duration, and the warm-up time: the end of the first 10 s from which every later 10 s had at least 90% of the
   pages of the last minute's median.
+phases LOG FIRST LAST: a *-phases server's CPU by thread group and its requests' phases, over its log's request
+  lines FIRST..LAST.
 table DIR OUT: every run of DIR (TAG-MIX-LEVEL, TAG = ENGINE-rROUND) as a Markdown table, the median of the rounds
   per engine, mix and level, its spread (min-max) for orders/s and p99; written to OUT (and its JSON next to it).
 """
@@ -80,6 +82,28 @@ def warm(name):
           f"{' '.join(str(b['pages']) for b in curve)})")
 
 
+def phases(log, first, last):
+    """Where a run's CPU went on a *-phases server: its requests' lines FIRST..LAST of the server log's
+    "phases {...}" lines (RequestPhases): the process's CPU by thread group between the two (phases_report.py's
+    groups), and on the requests' threads the phases' wall times added up, GC pauses apart."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import phases_report
+    records = list(phases_report.lines(log, "phases"))[int(first):int(last)]
+    if len(records) < 2:
+        return
+    a, b = phases_report.groups(records[0]), phases_report.groups(records[-1])
+    cpu = {k: (b[k] - a[k]) / 1000 for k in a}
+    window = records[1:]
+    wall = sum(r["wall_ns"] for r in window) / 1e9
+    split = {p: sum(r[p + "_ns"] for r in window) / 1e9 for p in phases_report.PHASES}
+    for key in ("native_ns", "native_compile_ns", "context_ns", "close_ns"):
+        split[key[:-3]] = sum(r[key] for r in window) / 1e9
+    split["gc_pause"] = sum(r["gc_ms"] for r in window) / 1e3
+    result = {"requests": len(window), "cpu_s": cpu, "request_wall_s": wall,
+              "request_cpu_s": sum(r["cpu_ns"] for r in window) / 1e9, "request_split_s": split}
+    print(json.dumps(result))
+
+
 def table(directory, out):
     runs = {}
     for f in sorted(os.listdir(directory)):
@@ -122,4 +146,5 @@ def table(directory, out):
 
 if __name__ == "__main__":
     {"line": lambda: line(sys.argv[2]), "warm": lambda: warm(sys.argv[2]),
-     "table": lambda: table(sys.argv[2], sys.argv[3])}[sys.argv[1]]()
+     "table": lambda: table(sys.argv[2], sys.argv[3]),
+     "phases": lambda: phases(sys.argv[2], sys.argv[3], sys.argv[4])}[sys.argv[1]]()

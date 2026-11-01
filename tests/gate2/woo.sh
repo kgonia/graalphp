@@ -210,6 +210,8 @@ k6_run() { # variant ip vus duration buy name
   # the warm-up's every request, for its curve
   case $name in *-warm) csv=(--out csv=/out/$name.csv.gz) ;; esac
   docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  # a *-phases server's request lines before the run
+  local first=$(docker logs $P-$variant 2>&1 | grep -c '^phases {' || true)
   MSYS_NO_PATHCONV=1 docker run --rm --name $P-sampler --cpuset-cpus 0-5 --pid=host --cgroupns=host \
     -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
     python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json > $dir/$name.sampler.log 2>&1 &
@@ -219,6 +221,11 @@ k6_run() { # variant ip vus duration buy name
     -e DURATION=$duration -e BUY=$buy -e SUMMARY=/out/$name.k6.json grafana/k6:1.3.0 run -q --no-color \
     "${csv[@]}" /scripts/woo-load.js > $dir/$name.k6.log 2>&1 || true
   touch $dir/stop
+  case $variant in *-phases)
+    docker logs $P-$variant > $dir/$name.server.log 2>&1
+    python -I tests/gate2/woo_report.py phases $dir/$name.server.log $first \
+      "$(grep -c '^phases {' $dir/$name.server.log)" > $dir/$name.phases.json ;;
+  esac
   wait $sampler || true
   python -I tests/gate2/woo_check.py $db $dir/$name.k6.log 100000 > $dir/$name.check.json
   python -I tests/gate2/woo_report.py line "$dir/$name"
