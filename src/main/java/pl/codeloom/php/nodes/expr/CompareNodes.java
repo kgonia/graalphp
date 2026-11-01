@@ -46,6 +46,14 @@ public final class CompareNodes {
             return CompareNodesFactory.IdenticalNodeGen.create(negate, left, right);
         }
 
+        /** `===` on values already evaluated (match arms): use {@link #executeIdentical}, not execute. */
+        public static IdenticalNode createEvaluated() {
+            return CompareNodesFactory.IdenticalNodeGen.create(false, null, null);
+        }
+
+        /** The comparison of two evaluated operands. */
+        public abstract boolean executeIdentical(Object left, Object right);
+
         @Specialization
         protected boolean longs(long a, long b) {
             return (a == b) != negate;

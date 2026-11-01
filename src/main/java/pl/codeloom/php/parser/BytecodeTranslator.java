@@ -778,9 +778,78 @@ public final class BytecodeTranslator {
                 case "AST_CALL":
                     call(node, false);
                     break;
+                case "AST_MATCH":
+                    match(node);
+                    break;
                 default:
                     throw new Unsupported("expression", node);
             }
+        }
+
+        /**
+         * match (MatchNode): the subject in a local, then the arms in order, each a branch on its conditions compared
+         * to the subject (`===`, until one is identical); after the last, the default arm or UnhandledMatchError.
+         */
+        private void match(Ast node) {
+            if (Translator.secondDefaultArm(node) != null) {
+                // a compile error, which the tree's translation raises
+                throw new Unsupported("match with two default arms", node);
+            }
+            Ast armList = node.node("stmts");
+            List<Ast> arms = new ArrayList<>();
+            Ast defaultArm = null;
+            List<Object> folded = new ArrayList<>();
+            for (int i = 0; armList != null && i < armList.size(); i++) {
+                Ast arm = (Ast) armList.child(i);
+                if (arm.get("cond") == null) {
+                    defaultArm = arm;
+                    continue;
+                }
+                arms.add(arm);
+                for (Object condition : arm.node("cond").children()) {
+                    folded.add(constantShaped(condition) ? constantValue(condition)
+                            : constants.foldedArithmetic(condition));
+                }
+            }
+            int errorLine = defaultArm == null ? Translator.matchErrorLine(node, folded) : 0;
+            b.beginBlock();
+            BytecodeLocal subject = b.createLocal();
+            b.beginStoreLocal(subject);
+            expression(node.get("cond"));
+            b.endStoreLocal();
+            matchArms(arms, 0, subject, defaultArm, errorLine);
+            b.endBlock();
+        }
+
+        private void matchArms(List<Ast> arms, int index, BytecodeLocal subject, Ast defaultArm, int errorLine) {
+            if (index == arms.size()) {
+                if (defaultArm != null) {
+                    expression(defaultArm.get("expr"));
+                } else {
+                    b.beginMatchError(errorLine);
+                    b.emitLoadLocal(subject);
+                    b.endMatchError();
+                }
+                return;
+            }
+            Ast arm = arms.get(index);
+            List<Object> conditions = arm.node("cond").children();
+            b.beginConditional();
+            if (conditions.size() > 1) {
+                b.beginOr();
+            }
+            for (Object condition : conditions) {
+                b.beginIdentical();
+                b.emitLoadLocal(subject);
+                expression(condition);
+                b.endIdentical();
+            }
+            if (conditions.size() > 1) {
+                b.endOr();
+            }
+            expression(arm.get("expr"));
+            matchArms(arms, index + 1, subject, defaultArm, errorLine);
+            b.endConditional();
         }
 
         /** An array key: a literal one normalized once, as DimNode's constant key. */

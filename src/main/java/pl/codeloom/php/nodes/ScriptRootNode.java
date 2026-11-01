@@ -33,12 +33,18 @@ public final class ScriptRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
+        PhpContext context = PhpContext.get(this);
         DirectCallNode call = file;
         if (call == null) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
-            call = fileCall();
+            try {
+                call = fileCall();
+            } catch (PhpBailout ended) {
+                // a compile error in the script (zend_compile's E_COMPILE_ERROR), reported where it was raised
+                context.endScript();
+                return PhpNull.NULL;
+            }
         }
-        PhpContext context = PhpContext.get(this);
         Object result = PhpNull.NULL;
         try {
             result = call.call(new Object[PhpFunction.ARG_FIRST]);

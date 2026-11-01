@@ -11,7 +11,11 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-/** `$GLOBALS[$name]`: the global variable named by the key (the only $GLOBALS form supported). */
+/**
+ * `$GLOBALS[$name]`: the global variable named by the key, in every context php-src compiles it in (ZEND_FETCH_*
+ * with ZEND_FETCH_GLOBAL): read, written, read and written (`op=`, `??=`, `++`), as a container, by reference,
+ * isset() and unset(). `$GLOBALS` itself is a read-only copy ({@link GlobalsArrayNode}).
+ */
 public final class GlobalsDimNode extends LValueNode {
     @Child private ExprNode key;
 
@@ -67,6 +71,7 @@ public final class GlobalsDimNode extends LValueNode {
 
     @Override
     public boolean isPure() {
-        return false;
+        return key.constantValue() != null || key instanceof LocalVarNode || key instanceof FileVarNode
+                || key instanceof GlobalVarNode;
     }
 }

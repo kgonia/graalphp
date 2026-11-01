@@ -18,8 +18,9 @@ import java.util.Arrays;
 import java.util.Base64;
 
 /**
- * password_hash() and its family (php-src's ext/standard/password.c) and crypt() (crypt.c). The algorithms are
- * those of a PHP built without argon2: bcrypt ("2y") only.
+ * password_hash() and its family (php-src's ext/standard/password.c) and crypt() (crypt.c). The password_hash()
+ * algorithms are those of a PHP built without argon2: bcrypt ("2y") only; crypt() and password_verify() know every
+ * crypt scheme php-src's own implementations do: standard and extended DES, MD5, bcrypt, SHA-256 and SHA-512.
  */
 final class PasswordFunctions {
     private PasswordFunctions() {
@@ -30,12 +31,20 @@ final class PasswordFunctions {
 
     static void register(Registry r) {
         r.fn("password_hash", PasswordFunctions::hash);
-        r.fn("password_verify", a -> verify(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
+        r.fn("password_verify", (PhpContext context, Object[] a) -> {
+            Args.arity(a, "password_verify", 2, 2);
+            return verify(Str.bytes(Args.string(context, a, 0, "password_verify", "password", false)),
+                    Str.bytes(Args.string(context, a, 1, "password_verify", "hash", false)));
+        });
         r.fn("password_needs_rehash", a -> needsRehash(Str.bytes(Args.str(a, 0)), algorithm(a, "password_needs_rehash"),
                 options(a, "password_needs_rehash")));
         r.fn("password_get_info", a -> info(Str.bytes(Args.str(a, 0))));
         r.fn("password_algos", a -> PhpArray.ofStrings("2y"));
-        r.fn("crypt", a -> crypt(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
+        r.fn("crypt", (PhpContext context, Object[] a) -> {
+            Args.arity(a, "crypt", 2, 2);
+            return crypt(Str.bytes(Args.string(context, a, 0, "crypt", "string", false)),
+                    Str.bytes(Args.string(context, a, 1, "crypt", "salt", false)));
+        });
     }
 
     /** php_password_algo_find_zval: true for bcrypt, false for an algorithm this build doesn't have. */
@@ -166,33 +175,54 @@ final class PasswordFunctions {
         return info;
     }
 
+    /** PHP_MAX_SALT_LEN, CRYPT_SALT_LENGTH. */
+    static final long MAX_SALT_LEN = 123;
+
     /** crypt(): the salt is at most PHP_MAX_SALT_LEN (123) bytes; a failure is "*0", or "*1" for a "*0" salt. */
     @TruffleBoundary
     private static TruffleString crypt(byte[] string, byte[] salt) {
-        byte[] result = phpCrypt(string, Arrays.copyOf(salt, Math.min(salt.length, 123)));
+        byte[] result = phpCrypt(string, Arrays.copyOf(salt, (int) Math.min(salt.length, MAX_SALT_LEN)));
         if (result == null) {
             return Str.of(salt.length >= 2 && salt[0] == '*' && salt[1] == '0' ? "*1" : "*0");
         }
         return Str.of(result);
     }
 
-    /** php_crypt: the password and the salt are C strings (up to their first NUL); null where it fails. */
+    /**
+     * php_crypt (built with PHP_USE_PHP_CRYPT_R, as php-src's own builds are): the password and the salt are C
+     * strings (up to their first NUL); null where it fails.
+     */
     private static byte[] phpCrypt(byte[] password, byte[] salt) {
         byte[] key = cString(password);
         byte[] setting = cString(salt);
-        int c0 = setting.length > 0 ? setting[0] : 0;
-        int c1 = setting.length > 1 ? setting[1] : 0;
+        int c0 = at(setting, 0);
+        int c1 = at(setting, 1);
+        int c2 = at(setting, 2);
         if (c0 == '*' && (c1 == '0' || c1 == '1')) {
             return null;
         }
-        if (c0 == '$' && c1 == '2' && setting.length > 3 && setting[3] == '$') {
+        if (c0 == '$' && c1 == '1' && c2 == '$') {
+            return CryptMd5.crypt(key, setting);
+        }
+        if (c0 == '$' && c1 == '6' && c2 == '$') {
+            return CryptSha.sha512(key, setting);
+        }
+        if (c0 == '$' && c1 == '5' && c2 == '$') {
+            return CryptSha.sha256(key, setting);
+        }
+        if (c0 == '$' && c1 == '2' && c2 != 0 && at(setting, 3) == '$') {
             return Bcrypt.crypt(key, setting);
         }
-        if (c0 == '$' && (c1 == '1' || c1 == '5' || c1 == '6') && setting.length > 2 && setting[2] == '$'
-                || c0 == '_' || isSaltCharacter(c0) && isSaltCharacter(c1)) {
-            throw new PhpError("crypt() with an MD5, SHA-256, SHA-512 or DES salt is not supported");
+        if (c0 == '_' || isSaltCharacter(c0) && isSaltCharacter(c1)) {
+            // the DES fallback
+            return CryptDes.crypt(key, setting);
         }
-        return null;
+        return null; // an unknown hash type
+    }
+
+    /** A byte of a C string: 0 at and past its end. */
+    private static int at(byte[] s, int i) {
+        return i < s.length ? s[i] & 0xff : 0;
     }
 
     /** IS_VALID_SALT_CHARACTER: the DES salt alphabet. */
