@@ -156,6 +156,34 @@ that made them):
   iterations on both engines, WordPress 19/21 pages equal to PHP on the JVM and natively (the two differ only in
   the oEmbed link, as before), php-src `.phpt` 3,119 of 7,341 strict (42.5%) against 3,110 before: none that passed fails, and six `bug75420` cases (`isset` on `ArrayAccess`) pass now.
 
+**What it does to a visit** (`tests/gate2/native.sh measure 3 200 1 jvm-main jvm-java native-main native-java`,
+2026-11-01 01:44–03:05, `CPU_LOCK_HELD=1`):
+- `*-main` is before (the tooling commit's classes, `wp-http-main`), `*-java` after (all the fixes, `wp-http`); both
+  our parser and the tree interpreter, production builds (no node source positions).
+- Three rounds, the variants interleaved, the order reversed every other round; the server on CPUs 14-21, the client
+  on 0-5, the database on 22-23; each run on a server just started and a database just reset.
+- The host was busy with other sessions (median CPU 26–49% during the runs), so every wait is slower than in
+  gate-2.md's runs; the comparison is between interleaved runs. A cell is the median of three rounds (their range).
+
+| | cold visit: wait, CPU-s | warm wait per visit | warm CPU-s per visit | RssAnon warm | memory.peak warm |
+|---|---|---|---|---|---|
+| JVM, before | 5.51 s (5.39–6.19), 30.1 | 0.677 s (0.655–0.679) | 2.99 | 1331 MB | 2588 MB (2512–2649) |
+| **JVM, after** | 5.64 s (5.36–5.70), 30.2 | **0.636 s** (0.631–0.687) | **1.78** | 1067 MB | **1701 MB** (1650–1728) |
+| native, before | 2.93 s (2.55–2.96), 9.1 | 1.008 s (0.989–1.067) | 6.12 | 717 MB | 1966 MB (1619–1969) |
+| **native, after** | **2.66 s** (2.66–2.96), 8.3 | **0.857 s** (0.849–0.869) | **2.50** | 524 MB | **1094 MB** (1044–1112) |
+
+- **CPU per warm visit is the large change:** 0.60× on the JVM (2.99 → 1.78 CPU-s) and 0.41× natively (6.12 →
+  2.50). That CPU is mostly compilation: less code to compile, no failed attempts, no deopt cycle.
+  - On the JVM it falls to 2.1 CPU-s from visit 101 on, against 5.0 before.
+  - Natively it falls to 2.2 CPU-s at visits 151–200, against 6.3 before, which never fell (gate-2.md's "natively it
+    stays at 3.6–4.6"). This is the native image's biggest open problem there, halved.
+- **Memory:** `memory.peak` 0.66× on the JVM (2588 → 1701 MB) and 0.56× natively (1966 → 1094 MB). Runtime
+  compilation's memory isn't capped by `-Xmx` (gate-2.md): smaller graphs, smaller peaks.
+- **Wait per warm visit:** 0.94× on the JVM, 0.85× natively. Every page is faster natively (home 138 → 114 ms,
+  dashboard 135 → 118 ms) and on the JVM (home 81 → 76 ms).
+- **Cold visit:** native 0.91× (2.93 → 2.66 s); the JVM's is level (5.51 → 5.64 s, the ranges overlap).
+- **The kernels'** compilations didn't change (above), so Gate 1's steady state wasn't measured again.
+
 ## What is left open
 - **`WP_Query::get_posts` is too large for HotSpot** (92,357 IR nodes, about 900 KB of code; HotSpot installs at
   most 640 KB, `JVMCINMethodSizeLimit`). It stays interpreted on the JVM after one 9 s attempt. Natively it compiles,
