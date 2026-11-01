@@ -963,15 +963,20 @@ public final class PhpArray implements TruffleObject {
         if (store instanceof Hash hash) {
             return hash;
         }
-        if (store instanceof long[]) {
-            boxLongs();
-        }
-        Object[] old = (Object[]) store;
         int count = size;
         Hash hash = new Hash(Integer.highestOneBit(Math.max(MIN_CAPACITY, count * 2) - 1) << 1);
-        for (int i = 0; i < count; i++) {
-            long key = i;
-            hash.add(key, hash(key), old[i]);
+        if (store instanceof long[] longs) {
+            // the ints go into the hash's slots boxed once, without an Object[] in between (none when empty)
+            for (int i = 0; i < count; i++) {
+                long key = i;
+                hash.add(key, hash(key), longs[i]);
+            }
+        } else {
+            Object[] old = (Object[]) store;
+            for (int i = 0; i < count; i++) {
+                long key = i;
+                hash.add(key, hash(key), old[i]);
+            }
         }
         store = hash;
         return hash;
