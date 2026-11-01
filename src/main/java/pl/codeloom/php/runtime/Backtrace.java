@@ -28,6 +28,11 @@ public final class Backtrace {
     /** debug_backtrace()'s options. */
     public static final int PROVIDE_OBJECT = 1;
     public static final int IGNORE_ARGS = 2;
+    /**
+     * Set by the trace's builder for a level when the level inside it was called from user code: php-src's
+     * include_filename, the included file an include's entry names as its argument.
+     */
+    private static final int INCLUDED_FILE_KNOWN = 1 << 30;
     /** ini precision's default, which a float argument is shown with. */
     private static final int PRECISION = 14;
 
@@ -121,8 +126,11 @@ public final class Backtrace {
         return here(exceptionOptions(), 0, 0);
     }
 
-    private static PhpArray build(List<Level> levels, int options, int limit) {
+    private static PhpArray build(List<Level> levels, int requested, int limit) {
+        int options = requested & (PROVIDE_OBJECT | IGNORE_ARGS);
         PhpArray trace = new PhpArray();
+        // zend_fetch_debug_backtrace's filename at the previous entry: whether it was called from user code
+        boolean calledFromFile = false;
         for (int i = 0; i < levels.size() && (limit <= 0 || trace.size() < limit); i++) {
             if (!(levels.get(i).root() instanceof Callee callee) || isFrameless(levels, i)) {
                 continue;
@@ -136,12 +144,15 @@ public final class Backtrace {
             CallSite site = from == null ? null : from.site();
             String inline = site == null ? null : site.inlineBuiltin(call);
             PhpArray entry = new PhpArray();
-            if (from != null && (call != null || from.instruction() != null) && inline == null
-                    && SourceLocation.isUserCode(from.root())) {
+            boolean fromFile = from != null && (call != null || from.instruction() != null) && inline == null
+                    && SourceLocation.isUserCode(from.root());
+            if (fromFile) {
                 locate(entry, SourceLocation.ofCall(from.root(), call, from.instruction()));
             }
-            if (callee.describe(levels.get(i).frame(), entry, options, site)) {
+            if (callee.describe(levels.get(i).frame(), entry, calledFromFile ? options | INCLUDED_FILE_KNOWN
+                    : options, site)) {
                 trace.append(entry);
+                calledFromFile = fromFile;
             }
             if (inline != null) {
                 Frame frame = levels.get(caller).frame();
@@ -149,6 +160,7 @@ public final class Backtrace {
                 locate(builtin, SourceLocation.of((Node) site));
                 describeCall(builtin, inline, null, null, options, arguments(site.inlineArguments(frame)));
                 trace.append(builtin);
+                calledFromFile = true;
             }
         }
         return trace;
@@ -219,9 +231,13 @@ public final class Backtrace {
         }
     }
 
-    /** An include's entry: the included file as its argument (unless IGNORE_ARGS), then include, require... */
+    /**
+     * An include's entry: the included file as its argument, then include, require... As php-src names the file
+     * only when it knows it from the entry before (include_filename: a call made in the file comes first), the
+     * innermost include, which the code at the file's top level is in, has no argument; IGNORE_ARGS doesn't apply.
+     */
     public static void describeInclude(PhpArray entry, String kind, String path, int options) {
-        if ((options & IGNORE_ARGS) == 0) {
+        if ((options & INCLUDED_FILE_KNOWN) != 0) {
             entry.put(ARGS, PhpArray.list(Str.of(path)));
         }
         entry.put(FUNCTION, Str.of(kind));
@@ -291,6 +307,30 @@ public final class Backtrace {
 
     /** _build_trace_args: a scalar as smart_str_append_scalar shows it, a string truncated; then ", ". */
     private static void appendArgument(ByteBuilder out, Object value, int maxLength) {
+        if (appendZval(out, value, maxLength)) {
+            out.writeAscii(", ");
+            return;
+        }
+        if (value instanceof PhpArray) {
+            out.writeAscii("Array");
+        } else if (value instanceof PhpClosure) {
+            out.writeAscii("Object(Closure)");
+        } else if (value instanceof PhpObject object) {
+            out.writeAscii("Object(");
+            out.write(Str.of(object.getPhpClass().getName()));
+            out.write(')');
+        } else if (value instanceof PhpResource resource) {
+            out.writeAscii("Resource id #");
+            out.writeLong(resource.getId());
+        }
+        out.writeAscii(", ");
+    }
+
+    /**
+     * smart_str_append_zval: a scalar as smart_str_append_scalar shows it (a string quoted, escaped and cut to
+     * maxLength bytes); false, appending nothing, for an array, object or resource (this runtime has no enums).
+     */
+    public static boolean appendZval(ByteBuilder out, Object value, int maxLength) {
         if (value == PhpNull.NULL || value == null) {
             out.writeAscii("NULL");
         } else if (value instanceof Boolean b) {
@@ -311,19 +351,10 @@ public final class Backtrace {
                 out.writeAscii("...");
             }
             out.write('\'');
-        } else if (value instanceof PhpArray) {
-            out.writeAscii("Array");
-        } else if (value instanceof PhpClosure) {
-            out.writeAscii("Object(Closure)");
-        } else if (value instanceof PhpObject object) {
-            out.writeAscii("Object(");
-            out.write(Str.of(object.getPhpClass().getName()));
-            out.write(')');
-        } else if (value instanceof PhpResource resource) {
-            out.writeAscii("Resource id #");
-            out.writeLong(resource.getId());
+        } else {
+            return false;
         }
-        out.writeAscii(", ");
+        return true;
     }
 
     /** smart_str_append_escaped: control bytes, backslash and bytes above 126 as C escapes. */

@@ -40,6 +40,7 @@ import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
+import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
@@ -875,6 +876,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 CallNode.notice(node, CallNode.PASSED_VALUE);
             }
             return result;
+        }
+    }
+
+    /** A match whose subject no arm took, without a default arm (MatchNode): UnhandledMatchError at errorLine. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "errorLine")
+    public static final class MatchError {
+        @Specialization
+        public static Object fail(int errorLine, Object subject, @Bind Node node) {
+            throw MatchNode.unhandled(node, subject, errorLine);
         }
     }
 
