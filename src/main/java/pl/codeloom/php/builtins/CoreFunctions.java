@@ -122,19 +122,18 @@ final class CoreFunctions {
         });
         r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Args.get(a, 0)));
         r.fn("spl_autoload_functions", (context, a) -> PhpArray.list(context.autoloaders().toArray()));
-        r.fn("method_exists", (context, a) -> {
-            Object target = Args.get(a, 0);
-            PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : context.findClass(lowerName(Convert.toStr(target)));
-            return phpClass != null && phpClass.findMethod(Str.lower(Str.java(Args.str(a, 1)))) != null;
-        });
+        r.fn("method_exists", (context, a) -> methodExists(context, Args.get(a, 0), Args.str(a, 1)));
         r.fn("property_exists", (context, a) -> {
             Object target = Args.get(a, 0);
             String name = Str.key(Args.str(a, 1));
             if (target instanceof PhpObject o) {
                 return o.getProperty(name) != null || hasDeclared(o.getPhpClass(), name);
             }
-            PhpClass phpClass = context.findClass(lowerName(Convert.toStr(target)));
+            if (!(target instanceof TruffleString className)) {
+                throw Args.typeError("property_exists", 1, "object_or_class", "object|string", target);
+            }
+            // a class name is autoloaded (zend_lookup_class); a parent's private property isn't the class's
+            PhpClass phpClass = context.findClassAutoloading(Str.java(className));
             return phpClass != null && hasDeclared(phpClass, name);
         });
         r.fn("get_class", a -> {
@@ -149,22 +148,22 @@ final class CoreFunctions {
         });
         r.fn("get_parent_class", (context, a) -> {
             Object target = Args.get(a, 0);
+            // Z_PARAM_OBJ_OR_CLASS_NAME: a class name is autoloaded, and must name a class
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : target == null ? null : context.findClass(lowerName(Convert.toStr(target)));
+                    : target instanceof TruffleString name ? context.findClassAutoloading(Str.java(name)) : null;
+            if (phpClass == null && target != null && !(target instanceof PhpClosure)) {
+                throw new PhpError("TypeError", "get_parent_class(): Argument #1 ($object_or_class) must be an object "
+                        + "or a valid class name, " + Args.valueName(target) + " given");
+            }
             return phpClass == null || phpClass.getParent() == null ? Boolean.FALSE
                     : Str.of(phpClass.getParent().getName());
         });
         r.fn("get_object_vars", a -> objectVars(Args.get(a, 0)));
         r.fn("spl_object_id", a -> (long) objectId(Args.get(a, 0)));
         r.fn("spl_object_hash", a -> Str.of(String.format("%032x", objectId(Args.get(a, 0)))));
-        r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false)));
-        r.fn("is_subclass_of", (context, a) -> {
-            Object target = Args.get(a, 0);
-            String parent = lowerName(Args.str(a, 1));
-            PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : context.findClass(lowerName(Convert.toStr(target)));
-            return phpClass != null && !phpClass.getLowerName().equals(parent) && phpClass.isSubclassOf(parent);
-        });
+        r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false), false));
+        r.fn("is_subclass_of", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, true),
+                true));
 
         // ---- output ----
         r.fn("ob_start", (context, a) -> {
@@ -446,7 +445,8 @@ final class CoreFunctions {
     private static boolean hasDeclared(PhpClass phpClass, String name) {
         for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
             if (decl.name().equals(name)) {
-                return true;
+                return decl.visibility() != PhpClass.PropertyDecl.PRIVATE || decl.declaringClass() == null
+                        || decl.declaringClass().equals(phpClass.getLowerName());
             }
         }
         return phpClass.getStaticProperty(name) != null;
@@ -468,16 +468,61 @@ final class CoreFunctions {
         return System.identityHashCode(value);
     }
 
-    private static boolean isA(PhpContext context, Object value, TruffleString className, boolean allowString) {
-        String lower = lowerName(className);
-        if (value instanceof PhpObject object) {
-            return object.getPhpClass().isSubclassOf(lower);
-        }
+    /**
+     * is_a_impl: is_a() and is_subclass_of(). A class name given as the value (allow_string) is autoloaded, the
+     * class tested against isn't; is_subclass_of() is false for the class itself.
+     */
+    private static boolean isA(PhpContext context, Object value, TruffleString className, boolean allowString,
+                               boolean onlySubclass) {
+        PhpClass instance;
         if (allowString && value instanceof TruffleString name) {
-            PhpClass phpClass = context.findClass(lowerName(name));
-            return phpClass != null && phpClass.isSubclassOf(lower);
+            instance = context.findClassAutoloading(Str.java(name));
+            if (instance == null) {
+                return false;
+            }
+        } else if (value instanceof PhpObject object) {
+            instance = object.getPhpClass();
+        } else if (value instanceof PhpClosure) {
+            instance = context.findClass("closure");
+        } else {
+            return false;
         }
-        return false;
+        if (!onlySubclass && instance.getName().equals(Str.java(className))) {
+            return true;
+        }
+        PhpClass target = context.findClass(lowerName(className));
+        if (target == null || onlySubclass && target == instance) {
+            return false;
+        }
+        return instance.isSubclassOf(target.getLowerName());
+    }
+
+    /**
+     * method_exists(): a class name is autoloaded (zend_lookup_class); a parent's private method isn't the named
+     * class's, while an object has every method it has; Closure has __invoke.
+     */
+    @TruffleBoundary
+    private static boolean methodExists(PhpContext context, Object target, TruffleString methodName) {
+        PhpClass phpClass;
+        if (target instanceof PhpObject object) {
+            phpClass = object.getPhpClass();
+        } else if (target instanceof PhpClosure) {
+            phpClass = context.findClass("closure");
+        } else if (target instanceof TruffleString name) {
+            phpClass = context.findClassAutoloading(Str.java(name));
+            if (phpClass == null) {
+                return false;
+            }
+        } else {
+            throw Args.typeError("method_exists", 1, "object_or_class", "object|string", target);
+        }
+        String lower = Str.lower(Str.java(methodName));
+        PhpFunction method = phpClass.findMethod(lower);
+        if (method != null) {
+            return !(target instanceof TruffleString) || (method.getModifiers() & PhpFunction.ACC_PRIVATE) == 0
+                    || phpClass.getName().equals(method.getClassName());
+        }
+        return phpClass.getLowerName().equals("closure") && lower.equals("__invoke");
     }
 
     @TruffleBoundary
