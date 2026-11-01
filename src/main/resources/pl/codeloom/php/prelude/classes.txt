@@ -4,6 +4,16 @@ truffledatetime	date.php
 datetimeimmutable	date.php
 datetime	date.php
 dateinterval	date.php
+dateperiod	date.php
+dateexception	date.php
+dateinvalidtimezoneexception	date.php
+dateinvalidoperationexception	date.php
+datemalformedstringexception	date.php
+datemalformedintervalstringexception	date.php
+datemalformedperiodstringexception	date.php
+dateerror	date.php
+dateobjecterror	date.php
+daterangeerror	date.php
 mysqli_sql_exception	mysqli.php
 trufflereflection	reflection.php
 reflector	reflection.php

@@ -313,3 +313,139 @@ class DateInterval
         return $interval;
     }
 }
+
+/**
+ * The dates from a start, an interval apart, up to an end or for a number of recurrences (ext/date's
+ * date_period_it_*): each date is a new DateTime or DateTimeImmutable, as the start is one; the start, end and
+ * current properties and getters are of the start's own class.
+ */
+class DatePeriod implements IteratorAggregate
+{
+    const EXCLUDE_START_DATE = 1;
+    const INCLUDE_END_DATE = 2;
+
+    public $start = null;
+    public $current = null;
+    public $end = null;
+    public $interval = null;
+    public $recurrences = 1;
+    public $include_start_date = true;
+    public $include_end_date = false;
+
+    public function __construct($start, $interval = null, $end = null, $options = 0)
+    {
+        if (!($start instanceof DateTimeInterface) || !($interval instanceof DateInterval)
+            || !($end instanceof DateTimeInterface || is_int($end))) {
+            throw new TypeError('DatePeriod::__construct() accepts (DateTimeInterface, DateInterval, int [, int]), '
+                . 'or (DateTimeInterface, DateInterval, DateTime [, int]), or (string [, int]) as arguments');
+        }
+        $recurrences = is_int($end) ? $end : 0;
+        if (!is_int($end)) {
+            $this->end = self::made(get_class($start), $end);
+        } elseif ($recurrences < 1 || $recurrences > 2147483639) {
+            throw new DateMalformedPeriodStringException('DatePeriod::__construct(): Recurrence count must be greater '
+                . 'or equal to 1 and lower than 2147483640');
+        }
+        $this->start = self::made(get_class($start), $start);
+        $this->interval = clone $interval;
+        $this->include_start_date = !($options & self::EXCLUDE_START_DATE);
+        $this->include_end_date = (bool) ($options & self::INCLUDE_END_DATE);
+        $this->recurrences = $recurrences + (int) $this->include_start_date + (int) $this->include_end_date;
+    }
+
+    /** create_date_period_datetime: an object of the class, made without its constructor, at the date's time. */
+    private static function made(string $class, DateTimeInterface $date): DateTimeInterface
+    {
+        $made = \Truffle\reflection_new($class);
+        $made = $made->setTimezone($date->getTimezone())->setTimestamp($date->getTimestamp());
+        if ($date->getMicrosecond() !== 0) {
+            $made = $made->setTime((int) $made->format('G'), (int) $made->format('i'), (int) $made->format('s'),
+                $date->getMicrosecond());
+        }
+        return $made;
+    }
+
+    public function getIterator(): Iterator
+    {
+        $current = DateTimeImmutable::createFromInterface($this->start)->setTime((int) $this->start->format('G'),
+            (int) $this->start->format('i'), (int) $this->start->format('s'), $this->start->getMicrosecond());
+        if (!$this->include_start_date) {
+            $current = $current->add($this->interval);
+        }
+        for ($index = 0; $this->hasMore($current, $index); $index++) {
+            $this->current = self::made(get_class($this->start), $current);
+            yield $index => self::made($this->start instanceof DateTimeImmutable ? DateTimeImmutable::class
+                : DateTime::class, $current);
+            $current = $current->add($this->interval);
+        }
+    }
+
+    private function hasMore(DateTimeInterface $current, int $index): bool
+    {
+        if ($this->end === null) {
+            return $index < $this->recurrences;
+        }
+        if ($current->getTimestamp() === $this->end->getTimestamp()) {
+            return $this->include_end_date ? $current->getMicrosecond() <= $this->end->getMicrosecond()
+                : $current->getMicrosecond() < $this->end->getMicrosecond();
+        }
+        return $current->getTimestamp() < $this->end->getTimestamp();
+    }
+
+    public function getStartDate(): DateTimeInterface
+    {
+        return self::made(get_class($this->start), $this->start);
+    }
+
+    public function getEndDate(): ?DateTimeInterface
+    {
+        return $this->end === null ? null : self::made(get_class($this->start), $this->end);
+    }
+
+    public function getDateInterval(): DateInterval
+    {
+        return clone $this->interval;
+    }
+
+    public function getRecurrences(): ?int
+    {
+        return $this->end === null ? $this->recurrences - (int) $this->include_start_date
+            - (int) $this->include_end_date : null;
+    }
+}
+
+class DateException extends Exception
+{
+}
+
+class DateInvalidTimeZoneException extends DateException
+{
+}
+
+class DateInvalidOperationException extends DateException
+{
+}
+
+class DateMalformedStringException extends DateException
+{
+}
+
+class DateMalformedIntervalStringException extends DateException
+{
+}
+
+class DateMalformedPeriodStringException extends DateException
+{
+}
+
+class DateError extends Error
+{
+}
+
+class DateObjectError extends DateError
+{
+}
+
+class DateRangeError extends DateError
+{
+}
