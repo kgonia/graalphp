@@ -47,12 +47,28 @@ public final class CallableCallNode extends CallNode {
         return dispatch.execute(target, values);
     }
 
-    /** The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. */
+    /**
+     * The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. One
+     * loop per layout, each bounded by the count: Graal's speculation on a loop over any layout (its type tests and
+     * the index, hoisted out of the loop) failed natively for the layouts and sizes a site hadn't met.
+     */
     private static Object[] toValues(PhpArray list) {
-        Object[] values = new Object[list.size()];
-        int i = 0;
-        for (int p = list.firstPosition(); p >= 0; p = list.nextPosition(p)) {
-            values[i++] = list.rawAt(p);
+        int count = list.size();
+        Object[] values = new Object[count];
+        if (list.holdsObjects()) {
+            for (int i = 0; i < count; i++) {
+                values[i] = list.packedAt(i);
+            }
+        } else if (list.holdsLongs()) {
+            for (int i = 0; i < count; i++) {
+                values[i] = list.longAt(i);
+            }
+        } else {
+            int p = list.firstPosition();
+            for (int i = 0; i < count; i++) {
+                values[i] = list.hashValueAt(p);
+                p = list.nextHashPosition(p);
+            }
         }
         return values;
     }

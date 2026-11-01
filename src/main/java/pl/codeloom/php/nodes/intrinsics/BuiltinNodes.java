@@ -264,14 +264,19 @@ public final class BuiltinNodes {
      * the needle is a numeric string; other element types use the full loose or strict comparison.
      */
     public abstract static class InArrayNode extends BuiltinNode {
+        /**
+         * Out of line: the walk over any array layout, inlined, was about 30 IR nodes a site, and Graal's speculation
+         * on its element accessor's type checks failed for the layouts a site hadn't met (a deoptimization and a
+         * recompilation each, natively).
+         */
         @Specialization
-        protected boolean string(TruffleString needle, PhpArray haystack, boolean strict,
-                                 @Cached TruffleString.EqualNode equal) {
-            boolean numericNeedle = !strict && isNumeric(needle);
+        @TruffleBoundary
+        protected static boolean string(TruffleString needle, PhpArray haystack, boolean strict) {
+            boolean numericNeedle = !strict && Convert.numericValue(needle) != null;
             for (int p = haystack.firstPosition(); p >= 0; p = haystack.nextPosition(p)) {
                 Object value = haystack.valueAt(p);
                 if (value instanceof TruffleString element) {
-                    if (equal.execute(element, needle, Str.ENC)
+                    if (element.equalsUncached(needle, Str.ENC)
                             || numericNeedle && Convert.looseEquals(element, needle)) {
                         return true;
                     }
@@ -280,11 +285,6 @@ public final class BuiltinNodes {
                 }
             }
             return false;
-        }
-
-        @TruffleBoundary
-        private static boolean isNumeric(TruffleString s) {
-            return Convert.numericValue(s) != null;
         }
 
         @Fallback
@@ -338,10 +338,18 @@ public final class BuiltinNodes {
             } else {
                 end = n;
             }
-            // sized for the slice, except a slice of ints, which stays unboxed
-            PhpArray result = array.holdsLongs() ? new PhpArray() : PhpArray.ofCapacity((int) (end - start));
+            // sized for the slice, except a slice of ints, which stays unboxed; one loop per layout, so the loop
+            // tests no layout (Graal's speculation on such tests, hoisted out of the loop, failed natively)
+            if (array.holdsLongs()) {
+                PhpArray result = new PhpArray();
+                for (int p = (int) start; p < end; p++) {
+                    result.appendLong(array.longAt(p));
+                }
+                return result;
+            }
+            PhpArray result = PhpArray.ofCapacity((int) (end - start));
             for (int p = (int) start; p < end; p++) {
-                result.append(array.valueAt(p));
+                result.append(PhpRef.deref(array.packedAt(p)));
             }
             return result;
         }
