@@ -30,9 +30,9 @@ import java.util.function.Consumer;
  * the move between them, also in the middle of a loop) are covered.
  */
 class PhpBytecodeRootNodeTest {
-    private static final PhpFunction.Param VALUE = new PhpFunction.Param("p", false, false, null, (char) 0, false);
-    private static final PhpFunction.Param BY_REF = new PhpFunction.Param("p", true, false, null, (char) 0, false);
-    private static final PhpFunction.Param INT = new PhpFunction.Param("p", false, false, null, 'i', false);
+    private static final PhpFunction.Param VALUE = new PhpFunction.Param("p", false, false, null, (char) 0, false, null);
+    private static final PhpFunction.Param BY_REF = new PhpFunction.Param("p", true, false, null, (char) 0, false, null);
+    private static final PhpFunction.Param INT = new PhpFunction.Param("p", false, false, null, 'i', false, null);
 
     /** Runs test in an entered context of the language. */
     private static void inContext(Consumer<PhpLanguage> test) {
