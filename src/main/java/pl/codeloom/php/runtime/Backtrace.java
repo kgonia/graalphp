@@ -307,6 +307,30 @@ public final class Backtrace {
 
     /** _build_trace_args: a scalar as smart_str_append_scalar shows it, a string truncated; then ", ". */
     private static void appendArgument(ByteBuilder out, Object value, int maxLength) {
+        if (appendZval(out, value, maxLength)) {
+            out.writeAscii(", ");
+            return;
+        }
+        if (value instanceof PhpArray) {
+            out.writeAscii("Array");
+        } else if (value instanceof PhpClosure) {
+            out.writeAscii("Object(Closure)");
+        } else if (value instanceof PhpObject object) {
+            out.writeAscii("Object(");
+            out.write(Str.of(object.getPhpClass().getName()));
+            out.write(')');
+        } else if (value instanceof PhpResource resource) {
+            out.writeAscii("Resource id #");
+            out.writeLong(resource.getId());
+        }
+        out.writeAscii(", ");
+    }
+
+    /**
+     * smart_str_append_zval: a scalar as smart_str_append_scalar shows it (a string quoted, escaped and cut to
+     * maxLength bytes); false, appending nothing, for an array, object or resource (this runtime has no enums).
+     */
+    public static boolean appendZval(ByteBuilder out, Object value, int maxLength) {
         if (value == PhpNull.NULL || value == null) {
             out.writeAscii("NULL");
         } else if (value instanceof Boolean b) {
@@ -327,19 +351,10 @@ public final class Backtrace {
                 out.writeAscii("...");
             }
             out.write('\'');
-        } else if (value instanceof PhpArray) {
-            out.writeAscii("Array");
-        } else if (value instanceof PhpClosure) {
-            out.writeAscii("Object(Closure)");
-        } else if (value instanceof PhpObject object) {
-            out.writeAscii("Object(");
-            out.write(Str.of(object.getPhpClass().getName()));
-            out.write(')');
-        } else if (value instanceof PhpResource resource) {
-            out.writeAscii("Resource id #");
-            out.writeLong(resource.getId());
+        } else {
+            return false;
         }
-        out.writeAscii(", ");
+        return true;
     }
 
     /** smart_str_append_escaped: control bytes, backslash and bytes above 126 as C escapes. */

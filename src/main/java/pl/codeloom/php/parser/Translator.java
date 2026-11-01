@@ -8,6 +8,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -34,6 +35,7 @@ import pl.codeloom.php.nodes.expr.ConcatChainNode;
 import pl.codeloom.php.nodes.expr.IncludeNode;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.LogicNodes;
+import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.expr.ThrowExprNode;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
@@ -64,6 +66,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -185,6 +188,16 @@ public final class Translator {
 
     private PhpError unsupported(Ast node, String what) {
         return new PhpError("Unsupported " + what + " (" + node.kind + " at " + path + ":" + node.line + ")");
+    }
+
+    /**
+     * A compile error zend_compile raises (zend_error_noreturn(E_COMPILE_ERROR, ...)) at a line of the code being
+     * translated: reported, and the bailout returned ends the script. A file's top level is translated before it
+     * runs, as php-src compiles it; a function's body when it is first called.
+     */
+    private PhpBailout compileError(int line, String message) {
+        return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
+                new SourceLocation(path, line), 0);
     }
 
     // ---- files ----
@@ -1209,9 +1222,112 @@ public final class Translator {
                         new PrintNode(expression(node.get("expr"))), new ConstNode(1L));
             case "AST_THROW":
                 return new ThrowExprNode(new BasicStmts.ThrowNode(expression(node.get("expr"))));
+            case "AST_MATCH":
+                return match(node);
             default:
                 throw unsupported(node, "expression");
         }
+    }
+
+    /**
+     * zend_compile_match: the subject, then (after the check that there is at most one default arm) every arm's
+     * conditions in order, then the bodies.
+     */
+    private ExprNode match(Ast node) {
+        ExprNode subject = expression(node.get("cond"));
+        Ast armList = node.node("stmts");
+        int armCount = armList == null ? 0 : armList.size();
+        Ast secondDefault = secondDefaultArm(node);
+        if (secondDefault != null) {
+            throw compileError(secondDefault.line, "Match expressions may only contain one default arm");
+        }
+        List<ExprNode> conditions = new ArrayList<>();
+        List<Integer> armOf = new ArrayList<>();
+        int defaultArm = -1;
+        // can_match_use_jumptable: every condition an int or string constant
+        boolean constantKeys = true;
+        for (int i = 0; i < armCount; i++) {
+            Ast arm = (Ast) armList.child(i);
+            if (arm.get("cond") == null) {
+                defaultArm = i;
+                continue;
+            }
+            for (Object condition : arm.node("cond").children()) {
+                ExprNode translated = expression(condition);
+                Object constant = translated.constantValue();
+                constantKeys &= constant instanceof Long || constant instanceof TruffleString;
+                conditions.add(translated);
+                armOf.add(i);
+            }
+        }
+        ExprNode[] bodies = new ExprNode[armCount];
+        for (int i = 0; i < armCount; i++) {
+            bodies[i] = expression(((Ast) armList.child(i)).get("expr"));
+        }
+        return new MatchNode(subject, conditions.toArray(new ExprNode[0]),
+                armOf.stream().mapToInt(Integer::intValue).toArray(), bodies, defaultArm,
+                defaultArm < 0 ? matchErrorLine(node, constantKeys) : 0);
+    }
+
+    /** A match's second default arm, which zend_compile_match refuses; null if it has at most one. */
+    static Ast secondDefaultArm(Ast match) {
+        Ast armList = match.node("stmts");
+        boolean seen = false;
+        for (int i = 0; armList != null && i < armList.size(); i++) {
+            Ast arm = (Ast) armList.child(i);
+            if (arm.get("cond") == null) {
+                if (seen) {
+                    return arm;
+                }
+                seen = true;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The line of a match's ZEND_MATCH_ERROR (a match without a default arm): CG(zend_lineno) when it is emitted,
+     * after the last expression compiled before it, which is the subject when the match uses a jump table (two or
+     * more conditions, all of them int or string constants: constantKeys), else the last condition.
+     */
+    static int matchErrorLine(Ast match, boolean constantKeys) {
+        Ast armList = match.node("stmts");
+        Object lastCondition = null;
+        int lastArmLine = match.line;
+        int count = 0;
+        for (int i = 0; armList != null && i < armList.size(); i++) {
+            Ast arm = (Ast) armList.child(i);
+            if (arm.get("cond") != null) {
+                for (Object condition : arm.node("cond").children()) {
+                    lastCondition = condition;
+                    lastArmLine = arm.line;
+                    count++;
+                }
+            }
+        }
+        return lastCondition == null || constantKeys && count >= 2 ? lastLine(match.get("cond"), match.line)
+                : lastLine(lastCondition, lastArmLine);
+    }
+
+    /**
+     * The line CG(zend_lineno) is at once an expression is compiled: that of the last expression compiled in it
+     * (zend_compile_expr sets it to each one's line), a closure's last line; a literal has the line around it.
+     */
+    private static int lastLine(Object value, int around) {
+        if (!(value instanceof Ast node)) {
+            return around;
+        }
+        if (node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC")) {
+            return node.endLine > 0 ? node.endLine : node.line;
+        }
+        int line = node.line > 0 ? node.line : around;
+        for (Object part : node.namedValues()) {
+            line = lastLine(part, line);
+        }
+        for (Object part : node.children()) {
+            line = lastLine(part, line);
+        }
+        return line;
     }
 
     /** print: echoes and evaluates to 1. */
