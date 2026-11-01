@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.profiles.BranchProfile;
@@ -34,6 +35,8 @@ public final class DimNode extends LValueNode {
     private final BranchProfile objectWrite = BranchProfile.create();
     /** Until isset() or `??` here meets a string or an object, compiled code leaves those paths out. */
     private final BranchProfile notArray = BranchProfile.create();
+    /** Until a write here stores an array, compiled code leaves out holding it (writeHeld). */
+    private final BranchProfile arrayWrite = BranchProfile.create();
 
     /** key and constantKey are both null for `$a[]`. */
     public DimNode(ExprNode container, ExprNode key, Object constantKey) {
@@ -82,26 +85,44 @@ public final class DimNode extends LValueNode {
         return read.executeLong(value, rawKey(frame));
     }
 
+    /**
+     * An array value is held while the container is made writable, so `$a[k] = $a` copies $a first. Let go once on
+     * each exit, not in a finally (which javac copies onto both), and out of line when the store throws.
+     */
     @Override
     public void write(VirtualFrame frame, Object value) {
-        // Hold the value while the container is made writable, so `$a[k] = $a` copies $a first.
-        PhpArray held = value instanceof PhpArray array ? array : null;
-        if (held != null) {
+        PhpArray held = null;
+        if (value instanceof PhpArray array) {
+            arrayWrite.enter();
+            held = array;
             held.addHolder();
         }
         try {
-            PhpArray array = place().arrayForWrite(frame);
-            if (array == null) {
-                writeObject(frame, value);
-            } else if (isAppend()) {
-                array.append(value);
-            } else {
-                writeElement.execute(array, rawKey(frame), value);
-            }
-        } finally {
+            store(frame, value);
+        } catch (Throwable t) {
             if (held != null) {
-                held.removeHolder();
+                letGo(held);
             }
+            throw t;
+        }
+        if (held != null) {
+            held.removeHolder();
+        }
+    }
+
+    @TruffleBoundary
+    private static void letGo(PhpArray held) {
+        held.removeHolder();
+    }
+
+    private void store(VirtualFrame frame, Object value) {
+        PhpArray array = place().arrayForWrite(frame);
+        if (array == null) {
+            writeObject(frame, value);
+        } else if (isAppend()) {
+            array.append(value);
+        } else {
+            writeElement.execute(array, rawKey(frame), value);
         }
     }
 
