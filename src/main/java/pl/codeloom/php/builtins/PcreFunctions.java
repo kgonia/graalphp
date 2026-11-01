@@ -3,6 +3,7 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.ffi.NativeLibrary;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
@@ -14,13 +15,9 @@ import pl.codeloom.php.runtime.Str;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -1005,13 +1002,19 @@ public final class PcreFunctions {
 
     // ---- the PCRE2 library ----
 
-    /** Downcalls into libpcre2-8. Set the library with -Dphp.pcre2=<path>; the default is the platform's name. */
+    /**
+     * Downcalls into libpcre2-8, through the project's one binding mechanism ({@link NativeLibrary}: bound handles
+     * on the JVM, constants in a native image). Set the library with -Dphp.pcre2=<path>; the default is the
+     * platform's name.
+     */
     private static final class Native {
-        private static final Linker LINKER = Linker.nativeLinker();
-        private static final SymbolLookup LIBRARY = SymbolLookup.libraryLookup(libraryPath(), Arena.global());
+        private static final NativeLibrary PCRE2 = NativeLibrary.named("php.pcre2", "libpcre2-8.so.0",
+                "libpcre2-8-0.dll");
+        /** PCRE2_SIZE. */
+        private static final ValueLayout SIZE = NativeLibrary.SIZE_T;
         private static final MethodHandle COMPILE = handle("pcre2_compile_8", ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+                ValueLayout.ADDRESS, SIZE, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
         private static final MethodHandle JIT_COMPILE = handle("pcre2_jit_compile_8", ValueLayout.JAVA_INT,
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
         private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
@@ -1023,18 +1026,17 @@ public final class PcreFunctions {
          * on the Java arrays themselves preg_split and preg_match_all lost 2-3x (the GC pins the array per call).
          */
         private static final FunctionDescriptor MATCH_SIGNATURE = FunctionDescriptor.of(ValueLayout.JAVA_INT,
-                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
-                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
-        private static final MethodHandle MATCH = LINKER.downcallHandle(find("pcre2_match_8"), MATCH_SIGNATURE);
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS, SIZE, SIZE, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle MATCH = PCRE2.downcall("pcre2_match_8", MATCH_SIGNATURE);
         /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
-        private static final MethodHandle JIT_MATCH = LINKER.downcallHandle(find("pcre2_jit_match_8"),
-                MATCH_SIGNATURE);
+        private static final MethodHandle JIT_MATCH = PCRE2.downcall("pcre2_jit_match_8", MATCH_SIGNATURE);
         private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
         private static final MethodHandle ERROR_MESSAGE = handle("pcre2_get_error_message_8", ValueLayout.JAVA_INT,
-                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG);
+                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, SIZE);
         private static final MethodHandle MATCH_CONTEXT = handle("pcre2_match_context_create_8", ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS);
         private static final MethodHandle SET_MATCH_LIMIT = handle("pcre2_set_match_limit_8", ValueLayout.JAVA_INT,
@@ -1042,36 +1044,20 @@ public final class PcreFunctions {
         private static final MethodHandle SET_DEPTH_LIMIT = handle("pcre2_set_depth_limit_8", ValueLayout.JAVA_INT,
                 ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
         private static final MethodHandle JIT_STACK = handle("pcre2_jit_stack_create_8", ValueLayout.ADDRESS,
-                ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS);
-        private static final MethodHandle JIT_STACK_ASSIGN = LINKER.downcallHandle(find("pcre2_jit_stack_assign_8"),
+                SIZE, SIZE, ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_STACK_ASSIGN = PCRE2.downcall("pcre2_jit_stack_assign_8",
                 FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         static final MethodHandle CODE_FREE = freeHandle("pcre2_code_free_8");
         static final MethodHandle MATCH_DATA_FREE = freeHandle("pcre2_match_data_free_8");
         static final MethodHandle MATCH_CONTEXT_FREE = freeHandle("pcre2_match_context_free_8");
         static final MethodHandle JIT_STACK_FREE = freeHandle("pcre2_jit_stack_free_8");
 
-        private static String libraryPath() {
-            String configured = System.getProperty("php.pcre2");
-            if (configured != null) {
-                return configured;
-            }
-            if (System.getProperty("os.name").startsWith("Windows")) {
-                Path git = Path.of("C:/Program Files/Git/mingw64/bin/libpcre2-8-0.dll");
-                return Files.exists(git) ? git.toString() : "libpcre2-8-0.dll";
-            }
-            return "libpcre2-8.so.0";
-        }
-
-        private static MemorySegment find(String name) {
-            return LIBRARY.find(name).orElseThrow(() -> new IllegalStateException("PCRE2 symbol missing: " + name));
-        }
-
         private static MethodHandle handle(String name, ValueLayout result, ValueLayout... arguments) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.of(result, arguments));
+            return PCRE2.downcall(name, FunctionDescriptor.of(result, arguments));
         }
 
         private static MethodHandle freeHandle(String name) {
-            return LINKER.downcallHandle(find(name), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+            return PCRE2.downcall(name, FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
         }
 
         static void free(MethodHandle free, MemorySegment pointer) {
