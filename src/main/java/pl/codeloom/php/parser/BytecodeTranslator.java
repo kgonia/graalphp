@@ -523,6 +523,8 @@ public final class BytecodeTranslator {
                 case "AST_UNSET":
                     if (node.node("var").is("AST_PROP")) {
                         unsetProp(node.node("var"));
+                    } else if (node.node("var").is("AST_DIM")) {
+                        nestedUnset(node.node("var"));
                     } else {
                         b.emitUnsetVar(variable(node.node("var"), "unset of"));
                     }
@@ -968,6 +970,10 @@ public final class BytecodeTranslator {
                         coalesceAssignment(node);
                         break;
                     }
+                    if (node.node("var").is("AST_DIM")) {
+                        nestedCompound(node.node("var"), node.get("expr"), node.flags);
+                        break;
+                    }
                     if (node.node("var").is("AST_PROP")) {
                         Ast target = node.node("var");
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
@@ -986,6 +992,10 @@ public final class BytecodeTranslator {
                 case "AST_POST_DEC": {
                     boolean increment = node.is("AST_PRE_INC") || node.is("AST_POST_INC");
                     boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
+                    if (node.node("var").is("AST_DIM")) {
+                        nestedIncDec(node.node("var"), increment, prefix);
+                        break;
+                    }
                     if (node.node("var").is("AST_PROP")) {
                         Ast target = node.node("var");
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
@@ -1221,7 +1231,7 @@ public final class BytecodeTranslator {
                 writeProp(target, node.get("expr"));
                 return;
             }
-            if (target.is("AST_DIM") && target.node("expr").is("AST_PROP")) {
+            if (target.is("AST_DIM") && target.node("expr").is("AST_PROP") && plainKey(target.get("dim"))) {
                 writePropElement(target, node.get("expr"));
                 return;
             }
@@ -1231,18 +1241,26 @@ public final class BytecodeTranslator {
                 b.endWriteVar();
                 return;
             }
-            if (target.is("AST_DIM") && target.node("expr").is("AST_VAR")) {
+            if (target.is("AST_DIM") && target.node("expr").is("AST_VAR") && !isThis(target.node("expr"))) {
                 BytecodeLocal container = variable(target.node("expr"), "element of");
                 if (target.get("dim") == null) {
                     b.beginAppendElement(container);
                     expression(node.get("expr"));
                     b.endAppendElement();
-                } else {
-                    b.beginWriteElement(container);
-                    expression(node.get("expr"));
-                    key(target.get("dim"));
-                    b.endWriteElement();
+                    return;
                 }
+                // a computed key first, then the value (php-src's delayed fetch)
+                b.beginBlock();
+                Object dim = onceKey(target.get("dim"));
+                b.beginWriteElement(container);
+                expression(node.get("expr"));
+                key(dim);
+                b.endWriteElement();
+                b.endBlock();
+                return;
+            }
+            if (target.is("AST_DIM")) {
+                nestedWrite(target, node.get("expr"));
                 return;
             }
             throw new Unsupported("assignment target", target);
@@ -1609,9 +1627,6 @@ public final class BytecodeTranslator {
                 b.endAppendPropElement();
                 return;
             }
-            if (!constantShaped(dim) && !(dim instanceof Ast key && key.is("AST_VAR"))) {
-                throw new Unsupported("element of a property by a computed key", target);
-            }
             b.beginWritePropElement(site);
             expression(value);
             expression(property.get("expr"));
@@ -1772,19 +1787,17 @@ public final class BytecodeTranslator {
                 b.endCoalesce();
                 return;
             }
-            if (target.is("AST_DIM") && target.node("expr").is("AST_VAR") && target.get("dim") != null) {
-                BytecodeLocal container = variable(target.node("expr"), "??= to an element of");
+            if (target.is("AST_DIM")) {
+                ElementPlace place = elementPlace(target, "??= to");
+                if (place.appends()) {
+                    // php-src's compile error "Cannot use [] for reading"
+                    throw new Unsupported("??= to []", target);
+                }
                 b.beginBlock();
-                Object dim = onceKey(target.get("dim"));
+                List<Object> keys = placeKeys(place, true);
                 b.beginCoalesce();
-                b.beginElementIfSet();
-                b.emitReadVar(container);
-                key(dim);
-                b.endElementIfSet();
-                b.beginWriteElement(container);
-                expression(value);
-                key(dim);
-                b.endWriteElement();
+                emitReadIfSet(place, keys);
+                emitWrite(place, keys, value, false);
                 b.endCoalesce();
                 b.endBlock();
                 return;
@@ -1797,8 +1810,7 @@ public final class BytecodeTranslator {
          * or a variable as it is, anything else evaluated now into a hidden local, which stands for it.
          */
         private Object onceKey(Object dim) {
-            if (constantShaped(dim) || (dim instanceof Ast ast && ast.is("AST_VAR") && !isThis(ast)
-                    && ast.get("name") instanceof String)) {
+            if (plainKey(dim)) {
                 return dim;
             }
             BytecodeLocal temp = b.createLocal();
@@ -1809,6 +1821,179 @@ public final class BytecodeTranslator {
                     dim instanceof Ast ast ? ast.endLine : 0, null, null);
             nullsafeObjects.put(stand, temp);
             return stand;
+        }
+
+        // ---- nested elements ----
+
+        /**
+         * A place `base[k1]...[kn]` written, read and written, or unset: its base, a variable or a property (of a
+         * variable or a property chain, by a constant name), and its keys from the base down, null for an `[]`.
+         */
+        private record ElementPlace(BytecodeLocal variable, Ast property, PropSite site, List<Object> dims) {
+            boolean appends() {
+                return dims.get(dims.size() - 1) == null;
+            }
+        }
+
+        private ElementPlace elementPlace(Ast target, String what) {
+            List<Object> dims = new ArrayList<>();
+            Ast base = target;
+            while (base.is("AST_DIM")) {
+                dims.add(0, base.get("dim"));
+                base = base.node("expr");
+            }
+            for (int i = 0; i < dims.size() - 1; i++) {
+                if (dims.get(i) == null && !what.equals("assignment to")) {
+                    throw new Unsupported("[] for reading", target);
+                }
+            }
+            if (base.is("AST_VAR") && !isThis(base)) {
+                return new ElementPlace(variable(base, what + " an element of"), null, null, dims);
+            }
+            if (base.is("AST_PROP")) {
+                return new ElementPlace(null, base, writtenPropSite(base), dims);
+            }
+            throw new Unsupported(what + " an element of an expression", target);
+        }
+
+        /**
+         * The keys of an element place, in order: a constant or a variable as it is (read when the write runs, as
+         * php-src reads a CV), any other key evaluated now into a hidden local (php-src evaluates a dim before the
+         * value assigned, zend_delayed_compile_dim); an `[]` on the way as ElementChain's APPEND.
+         */
+        private List<Object> placeKeys(ElementPlace place, boolean withLast) {
+            List<Object> keys = new ArrayList<>();
+            int count = withLast ? place.dims().size() : place.dims().size() - 1;
+            for (int i = 0; i < count; i++) {
+                Object dim = place.dims().get(i);
+                keys.add(dim == null ? null : onceKey(dim));
+            }
+            return keys;
+        }
+
+        private void emitKeys(List<Object> keys) {
+            for (Object dim : keys) {
+                if (dim == null) {
+                    b.emitLoadConstant(PhpBytecodeRootNode.APPEND);
+                } else {
+                    key(dim);
+                }
+            }
+        }
+
+        /**
+         * `base[k1]...[kn] = value` and `base[k1]...[] = value` (DimNode.write down a chain): the keys that aren't
+         * constants or variables, then the value, then the containers made writable (ElementChain).
+         */
+        private void nestedWrite(Ast target, Object value) {
+            ElementPlace place = elementPlace(target, "assignment to");
+            boolean append = place.appends();
+            b.beginBlock();
+            emitWrite(place, placeKeys(place, !append), value, append);
+            b.endBlock();
+        }
+
+        /** The write of a nested element once its keys are evaluated: the value, a property's object, the keys. */
+        private void emitWrite(ElementPlace place, List<Object> keys, Object value, boolean append) {
+            if (place.variable() != null) {
+                b.beginWriteNested(place.variable(), append);
+                expression(value);
+                emitKeys(keys);
+                b.endWriteNested();
+            } else {
+                b.beginWritePropNested(place.site(), append);
+                expression(value);
+                expression(place.property().get("expr"));
+                emitKeys(keys);
+                b.endWritePropNested();
+            }
+        }
+
+        /**
+         * A nested element read as isset() reads it, once its keys are evaluated: ElementIfSet down from the
+         * variable's value or the property read as readIfSet reads it.
+         */
+        private void emitReadIfSet(ElementPlace place, List<Object> keys) {
+            for (int i = 0; i < keys.size(); i++) {
+                b.beginElementIfSet();
+            }
+            if (place.variable() != null) {
+                b.emitReadVar(place.variable());
+            } else {
+                b.beginReadPropIfSet(place.site());
+                readIfSet(place.property().get("expr"));
+                b.endReadPropIfSet();
+            }
+            for (Object dim : keys) {
+                key(dim);
+                b.endElementIfSet();
+            }
+        }
+
+        /** `base[k1]...[kn] op= value` (CompoundAssignNode on a DimNode): the keys, the value, then the element. */
+        private void nestedCompound(Ast target, Object value, int op) {
+            ElementPlace place = elementPlace(target, "compound assignment to");
+            if (place.appends()) {
+                throw new Unsupported("[] for reading", target);
+            }
+            b.beginBlock();
+            List<Object> keys = placeKeys(place, true);
+            if (place.variable() != null) {
+                b.beginCompoundNested(place.variable(), op);
+                expression(value);
+                emitKeys(keys);
+                b.endCompoundNested();
+            } else {
+                b.beginCompoundPropNested(place.site(), op);
+                expression(value);
+                expression(place.property().get("expr"));
+                emitKeys(keys);
+                b.endCompoundPropNested();
+            }
+            b.endBlock();
+        }
+
+        /** `++base[k1]...[kn]`, `base[k]--`... (IncDecNode on a DimNode). */
+        private void nestedIncDec(Ast target, boolean increment, boolean prefix) {
+            ElementPlace place = elementPlace(target, "increment of");
+            if (place.appends()) {
+                throw new Unsupported("[] for reading", target);
+            }
+            b.beginBlock();
+            List<Object> keys = placeKeys(place, true);
+            if (place.variable() != null) {
+                b.beginIncDecNested(place.variable(), increment, prefix);
+                emitKeys(keys);
+                b.endIncDecNested();
+            } else {
+                b.beginIncDecPropNested(place.site(), increment, prefix);
+                expression(place.property().get("expr"));
+                emitKeys(keys);
+                b.endIncDecPropNested();
+            }
+            b.endBlock();
+        }
+
+        /** `unset(base[k1]...[kn])` (DimNode.unset). */
+        private void nestedUnset(Ast target) {
+            ElementPlace place = elementPlace(target, "unset of");
+            if (place.appends()) {
+                // php-src's compile error "Cannot use [] for unsetting"
+                throw new Unsupported("unset of []", target);
+            }
+            b.beginBlock();
+            List<Object> keys = placeKeys(place, true);
+            if (place.variable() != null) {
+                b.beginUnsetNested(place.variable());
+                emitKeys(keys);
+                b.endUnsetNested();
+            } else {
+                b.beginUnsetPropNested(place.site());
+                expression(place.property().get("expr"));
+                emitKeys(keys);
+                b.endUnsetPropNested();
+            }
+            b.endBlock();
         }
 
         // ---- calls ----
@@ -2174,6 +2359,12 @@ public final class BytecodeTranslator {
                 throw new Unsupported(what + " $" + name, node);
             }
             return local;
+        }
+
+        /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */
+        private boolean plainKey(Object dim) {
+            return dim == null || constantShaped(dim)
+                    || (dim instanceof Ast ast && ast.is("AST_VAR") && !isThis(ast) && ast.get("name") instanceof String);
         }
 
         /** Whether the tree translates an expression to a constant: literals and what folds from them. */

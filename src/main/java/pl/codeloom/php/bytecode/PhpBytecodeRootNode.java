@@ -69,6 +69,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassKey;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -771,6 +772,249 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static boolean other(Object container, Object key, @Bind Node node) {
             return container != PhpNull.NULL && DimNode.isSetIn(node, container, key);
         }
+    }
+
+    // ---- nested elements (DimNode chains, ElementChain) ----
+
+    /**
+     * `$x[k1]...[kn] = value`, `$x[k1]...[] = value` (append): the value is held while the containers are made
+     * writable from the variable down (Locals.arrayForWrite, then ElementChain.forWrite), so storing $x into
+     * itself copies it first; then the element is written, or offsetSet() of an ArrayAccess object on the way.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class WriteNested {
+        @Specialization
+        public static Object write(VirtualFrame frame, LocalAccessor variable, boolean append, Object value,
+                                   @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
+                                   @Cached ElementNodes.ArrayKeyNode toKey,
+                                   @Cached ElementNodes.ElementReadNode read,
+                                   @Cached ElementNodes.ElementWriteNode write,
+                                   @Cached InlinedBranchProfile sharedArray,
+                                   @Cached InlinedBranchProfile refArray,
+                                   @Cached InlinedBranchProfile createdArray) {
+            PhpArray held = value instanceof PhpArray array ? array : null;
+            if (held != null) {
+                held.addHolder();
+            }
+            try {
+                Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+                int levels = append ? keys.length : keys.length - 1;
+                Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+                ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write);
+            } finally {
+                if (held != null) {
+                    held.removeHolder();
+                }
+            }
+            return value;
+        }
+    }
+
+    /** `$obj->name[k1]...[kn] = value` (and append): as WriteNested, from the property (PropNode.arrayForWrite). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class WritePropNested {
+        @Specialization
+        public static Object write(VirtualFrame frame, PropSite site, boolean append, Object value, Object object,
+                                   @Variadic Object[] keys,
+                                   @Cached(value = "site.create()", uncached = "site.uncached()",
+                                           neverDefault = true) PropNode access,
+                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                   @Cached ElementNodes.ElementReadNode read,
+                                   @Cached ElementNodes.ElementWriteNode write) {
+            PhpArray held = value instanceof PhpArray array ? array : null;
+            if (held != null) {
+                held.addHolder();
+            }
+            try {
+                Object base = propertyForWrite(frame, access, object, site.name);
+                int levels = append ? keys.length : keys.length - 1;
+                Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+                ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write);
+            } finally {
+                if (held != null) {
+                    held.removeHolder();
+                }
+            }
+            return value;
+        }
+    }
+
+    /**
+     * `$x[k1]...[kn] op= value` (CompoundAssignNode on a DimNode): the value first, then the containers made
+     * writable, the element read (offsetGet() of an ArrayAccess object), combined as CompoundAssignNode.apply
+     * does (`.=` converting the element first), and written.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class, name = "op")
+    public static final class CompoundNested {
+        @Specialization
+        public static Object compound(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
+                                      @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
+                                      @Cached ElementNodes.ArrayKeyNode toKey,
+                                      @Cached ElementNodes.ElementReadNode read,
+                                      @Cached ElementNodes.ElementWriteNode write,
+                                      @Cached InlinedBranchProfile sharedArray,
+                                      @Cached InlinedBranchProfile refArray,
+                                      @Cached InlinedBranchProfile createdArray) {
+            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            int last = keys.length - 1;
+            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object result = compounded(node, op, read.execute(container, keys[last]), operand);
+            ElementChain.write(node, container, keys[last], result, write);
+            return result;
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class, name = "op")
+    public static final class CompoundPropNested {
+        @Specialization
+        public static Object compound(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
+                                      @Variadic Object[] keys,
+                                      @Cached(value = "site.create()", uncached = "site.uncached()",
+                                              neverDefault = true) PropNode access,
+                                      @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                      @Cached ElementNodes.ElementReadNode read,
+                                      @Cached ElementNodes.ElementWriteNode write) {
+            Object base = propertyForWrite(frame, access, object, site.name);
+            int last = keys.length - 1;
+            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object result = compounded(node, op, read.execute(container, keys[last]), operand);
+            ElementChain.write(node, container, keys[last], result, write);
+            return result;
+        }
+    }
+
+    /** `++$x[k1]...[kn]`, `$x[k]--`... (IncDecNode on a DimNode): the element read, stepped and written. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = boolean.class, name = "increment")
+    @ConstantOperand(type = boolean.class, name = "prefix")
+    public static final class IncDecNested {
+        @Specialization
+        public static Object step(VirtualFrame frame, LocalAccessor variable, boolean increment, boolean prefix,
+                                  @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read,
+                                  @Cached ElementNodes.ElementWriteNode write,
+                                  @Cached InlinedBranchProfile sharedArray,
+                                  @Cached InlinedBranchProfile refArray,
+                                  @Cached InlinedBranchProfile createdArray) {
+            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            int last = keys.length - 1;
+            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object old = read.execute(container, keys[last]);
+            Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            ElementChain.write(node, container, keys[last], updated, write);
+            return prefix ? updated : old;
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "increment")
+    @ConstantOperand(type = boolean.class, name = "prefix")
+    public static final class IncDecPropNested {
+        @Specialization
+        public static Object step(VirtualFrame frame, PropSite site, boolean increment, boolean prefix, Object object,
+                                  @Variadic Object[] keys,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access,
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read,
+                                  @Cached ElementNodes.ElementWriteNode write) {
+            Object base = propertyForWrite(frame, access, object, site.name);
+            int last = keys.length - 1;
+            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object old = read.execute(container, keys[last]);
+            Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            ElementChain.write(node, container, keys[last], updated, write);
+            return prefix ? updated : old;
+        }
+    }
+
+    /**
+     * `unset($x[k1]...[kn])` (DimNode.unset): the containers are read down to the last; when it is an array that
+     * has the element, the chain is made writable from the variable and the element removed; an ArrayAccess
+     * object's offsetUnset(); nothing for anything else.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class UnsetNested {
+        @Specialization
+        public static void unset(VirtualFrame frame, LocalAccessor variable, @Variadic Object[] keys,
+                                 @Bind BytecodeNode bytecode, @Bind Node node,
+                                 @Cached ElementNodes.ArrayKeyNode toKey,
+                                 @Cached ElementNodes.ElementReadNode read,
+                                 @Cached InlinedBranchProfile sharedArray,
+                                 @Cached InlinedBranchProfile refArray,
+                                 @Cached InlinedBranchProfile createdArray) {
+            Object container = ElementChain.read(Variables.value(Locals.stored(frame, variable, bytecode)), keys,
+                    read);
+            Object key = ElementChain.removed(node, container, keys, toKey);
+            if (key != null) {
+                Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray,
+                        createdArray);
+                ElementChain.remove(node, base, keys, key, toKey, read);
+            }
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class UnsetPropNested {
+        @Specialization
+        public static void unset(VirtualFrame frame, PropSite site, Object object, @Variadic Object[] keys,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access,
+                                 @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                 @Cached ElementNodes.ElementReadNode read) {
+            Object container = ElementChain.read(access.readOn(frame, object, site.name), keys, read);
+            Object key = ElementChain.removed(node, container, keys, toKey);
+            if (key != null) {
+                ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey,
+                        read);
+            }
+        }
+    }
+
+    /**
+     * An element's value combined with a compound assignment's operand (CompoundAssignNode): `.=` converts the
+     * element first, then the operand.
+     */
+    private static Object compounded(Node node, int op, Object current, Object operand) {
+        if (op == AssignNodes.CompoundAssignNode.CONCAT) {
+            return concatenated(current, operand);
+        }
+        return AssignNodes.CompoundAssignNode.apply(node, op, current, operand);
+    }
+
+    private static TruffleString concatenated(Object current, Object operand) {
+        TruffleString left = Convert.toStr(current);
+        return Str.concat(left, Convert.toStr(operand));
+    }
+
+    /** The key of an `[]` on the way to a nested element (`$a[][k] = v`), as the translator emits it. */
+    public static final Object APPEND = ElementChain.APPEND;
+
+    /** A variable as the base of an element chain written: its writable array, else the object it holds. */
+    private static Object variableForWrite(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode,
+                                           Node node, InlinedBranchProfile sharedArray,
+                                           InlinedBranchProfile refArray, InlinedBranchProfile createdArray) {
+        PhpArray array = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+        return array != null ? array : Variables.value(Locals.stored(frame, variable, bytecode));
+    }
+
+    /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
+    private static Object propertyForWrite(VirtualFrame frame, PropNode access, Object object, String name) {
+        PhpArray array = access.arrayForWriteOn(frame, object, name);
+        return array != null ? array : access.readOn(frame, object, name);
     }
 
     // ---- $this and properties (ThisNode, PropNode) ----

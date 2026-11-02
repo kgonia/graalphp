@@ -13,6 +13,7 @@ import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -156,7 +157,7 @@ public final class DimNode extends LValueNode {
             return;
         }
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Cannot use object of type " + target + " as array");
+        throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(target) + " as array");
     }
 
     @Override
