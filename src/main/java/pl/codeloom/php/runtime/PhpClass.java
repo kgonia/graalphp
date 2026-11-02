@@ -164,11 +164,15 @@ public final class PhpClass {
     /** Whether the name is a class alias, in this class's context, of this class or an ancestor. */
     public boolean isAliasedSubclassOf(String lowerClassName) {
         Map<String, PhpClass> aliases = contextAliases;
-        return aliases != null && !aliases.isEmpty() && aliasedAncestor(aliases, lowerClassName);
+        return aliases != null && aliasedAncestor(aliases, lowerClassName);
     }
 
+    /** A HashMap's methods stay out of compiled code (native image's runtime compilation refuses them). */
     @TruffleBoundary
     private boolean aliasedAncestor(Map<String, PhpClass> aliases, String lowerClassName) {
+        if (aliases.isEmpty()) {
+            return false;
+        }
         PhpClass target = aliases.get(lowerClassName);
         return target != null && ancestors.contains(target.lowerName);
     }
