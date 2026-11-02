@@ -231,7 +231,10 @@ public final class BytecodeTranslator {
         private final List<Loop> loops = new ArrayList<>();
         /** In a finally block, how many of loops are outside it: break and continue may not leave it. */
         private int loopsOutsideFinally;
-        /** The objects of `?->`s being short-circuited, by the node standing for each in the rest of its chain. */
+        /**
+         * Values evaluated once into a local, by the node standing for each where it is used: the objects of `?->`s
+         * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
+         */
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
@@ -888,6 +891,9 @@ public final class BytecodeTranslator {
                 case "AST_ISSET":
                     isset(node.get("var"));
                     break;
+                case "AST_EMPTY":
+                    empty(node.get("expr"));
+                    break;
                 case "AST_DIM":
                     if (node.get("dim") == null) {
                         throw new Unsupported("[] for reading", node);
@@ -902,7 +908,8 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_ASSIGN_OP":
                     if (node.flags == 260) {
-                        throw new Unsupported("??=", node);
+                        coalesceAssignment(node);
+                        break;
                     }
                     if (node.node("var").is("AST_PROP")) {
                         Ast target = node.node("var");
@@ -1200,7 +1207,15 @@ public final class BytecodeTranslator {
                     b.endOr();
                     return;
                 }
-                case 15, 260 -> throw new Unsupported("binary operator " + node.flags, node);
+                case 260 -> {
+                    // ?? (CoalesceNode): a place on the left read as isset() reads it
+                    b.beginCoalesce();
+                    readIfSet(node.get("left"));
+                    expression(node.get("right"));
+                    b.endCoalesce();
+                    return;
+                }
+                case 15 -> throw new Unsupported("binary operator " + node.flags, node);
                 default -> {
                 }
             }
@@ -1570,12 +1585,30 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * isset($this), isset($obj->name) (TestNodes.IssetNode with one place): the object as the tree's readIfSet
-         * reads it, a property of it through __isset; a computed name only from a variable.
+         * isset() of one place (TestNodes.IssetNode; php-ast makes `isset($a, $b)` an &&): $this, a variable, an
+         * element or a property, the place's container read as readIfSet reads it (a property's through __isset);
+         * a property's computed name only from a variable.
          */
         private void isset(Object tested) {
             if (isThis(tested)) {
                 b.emitIssetThis();
+                return;
+            }
+            if (tested instanceof Ast target && target.is("AST_VAR")) {
+                b.beginIsSetValue();
+                b.emitReadVar(variable(target, "isset of"));
+                b.endIsSetValue();
+                return;
+            }
+            if (tested instanceof Ast target && target.is("AST_DIM")) {
+                if (target.get("dim") == null) {
+                    // php-src's compile error "Cannot use [] for reading"
+                    throw new Unsupported("isset of []", target);
+                }
+                b.beginIssetElement();
+                readIfSet(target.get("expr"));
+                key(target.get("dim"));
+                b.endIssetElement();
                 return;
             }
             if (!(tested instanceof Ast target) || !target.is("AST_PROP")) {
@@ -1584,7 +1617,7 @@ public final class BytecodeTranslator {
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginIssetProp(propSite(target, name));
-                issetObject(target.get("expr"));
+                readIfSet(target.get("expr"));
                 b.endIssetProp();
                 return;
             }
@@ -1592,26 +1625,133 @@ public final class BytecodeTranslator {
                 throw new Unsupported("isset of a property by a computed name", target);
             }
             b.beginIssetPropNamed(propSite(target, null));
-            issetObject(target.get("expr"));
+            readIfSet(target.get("expr"));
             propName(prop);
             b.endIssetPropNamed();
         }
 
-        /** The object of a property isset() tests: a property of one read as readIfSet; a variable or a value. */
-        private void issetObject(Object object) {
-            if (object instanceof Ast ast) {
-                if (ast.is("AST_PROP") && ast.get("prop") instanceof String name) {
-                    b.beginReadPropIfSet(propSite(ast, name));
-                    issetObject(ast.get("expr"));
-                    b.endReadPropIfSet();
-                    return;
-                }
-                if (ast.is("AST_PROP") || ast.is("AST_NULLSAFE_PROP") || ast.is("AST_DIM")
-                        || ast.is("AST_STATIC_PROP")) {
-                    throw new Unsupported("isset of a property of", ast);
+        /**
+         * empty(x) (TestNodes.EmptyNode): a place read as isset() reads it (null when unset), any other value as it
+         * is, then its falsiness; empty($this) is !isset($this).
+         */
+        private void empty(Object tested) {
+            b.beginNot();
+            if (isThis(tested)) {
+                b.emitIssetThis();
+            } else {
+                b.beginToBool();
+                readIfSet(tested);
+                b.endToBool();
+            }
+            b.endNot();
+        }
+
+        /**
+         * A place as isset(), empty() and `??` read it (LValueNode.readIfSet), null when it isn't set: a variable's
+         * value, an element of its container read so (DimNode.readIfSet), a property through __isset then __get
+         * (PropNode.readIfSet); anything else (a call, $this) is evaluated as a value.
+         */
+        private void readIfSet(Object place) {
+            if (place instanceof Ast ast && !isThis(ast)) {
+                switch (ast.kind) {
+                    case "AST_DIM" -> {
+                        if (ast.get("dim") == null) {
+                            // php-src's compile error "Cannot use [] for reading"
+                            throw new Unsupported("[] for reading", ast);
+                        }
+                        b.beginElementIfSet();
+                        readIfSet(ast.get("expr"));
+                        key(ast.get("dim"));
+                        b.endElementIfSet();
+                        return;
+                    }
+                    case "AST_PROP" -> {
+                        if (!(ast.get("prop") instanceof String name)) {
+                            throw new Unsupported("isset of a property by a computed name", ast);
+                        }
+                        b.beginReadPropIfSet(propSite(ast, name));
+                        readIfSet(ast.get("expr"));
+                        b.endReadPropIfSet();
+                        return;
+                    }
+                    case "AST_NULLSAFE_PROP", "AST_STATIC_PROP" -> throw new Unsupported("isset of", ast);
+                    default -> {
+                    }
                 }
             }
-            expression(object);
+            expression(place);
+        }
+
+        /**
+         * `place ??= value` (CoalesceAssignNode): the place read as isset() reads it; unless it is set, the value
+         * is evaluated and assigned. An element's key that isn't a constant or a variable is evaluated once, before
+         * (as php-src's delayed fetch); a property's object must be a variable or a property chain.
+         */
+        private void coalesceAssignment(Ast node) {
+            Ast target = node.node("var");
+            Object value = node.get("expr");
+            if (target.is("AST_VAR")) {
+                BytecodeLocal variable = variable(target, "??= to");
+                b.beginCoalesce();
+                b.emitReadVar(variable);
+                b.beginWriteVar(variable);
+                expression(value);
+                b.endWriteVar();
+                b.endCoalesce();
+                return;
+            }
+            if (target.is("AST_PROP")) {
+                if (!delayedObject(target.get("expr")) || !(target.get("prop") instanceof String name)) {
+                    throw new Unsupported("??= to a property of an expression or by a computed name", target);
+                }
+                b.beginCoalesce();
+                b.beginReadPropIfSet(propSite(target, name));
+                readIfSet(target.get("expr"));
+                b.endReadPropIfSet();
+                b.beginWriteProp(propSite(target, name));
+                expression(value);
+                expression(target.get("expr"));
+                b.endWriteProp();
+                b.endCoalesce();
+                return;
+            }
+            if (target.is("AST_DIM") && target.node("expr").is("AST_VAR") && target.get("dim") != null) {
+                BytecodeLocal container = variable(target.node("expr"), "??= to an element of");
+                b.beginBlock();
+                Object dim = onceKey(target.get("dim"));
+                b.beginCoalesce();
+                b.beginElementIfSet();
+                b.emitReadVar(container);
+                key(dim);
+                b.endElementIfSet();
+                b.beginWriteElement(container);
+                expression(value);
+                key(dim);
+                b.endWriteElement();
+                b.endCoalesce();
+                b.endBlock();
+                return;
+            }
+            throw new Unsupported("??= target", target);
+        }
+
+        /**
+         * A key a place evaluates more than once, or after the assigned value (php-src's delayed fetch): a constant
+         * or a variable as it is, anything else evaluated now into a hidden local, which stands for it.
+         */
+        private Object onceKey(Object dim) {
+            if (constantShaped(dim) || (dim instanceof Ast ast && ast.is("AST_VAR") && !isThis(ast)
+                    && ast.get("name") instanceof String)) {
+                return dim;
+            }
+            BytecodeLocal temp = b.createLocal();
+            b.beginStoreLocal(temp);
+            expression(dim);
+            b.endStoreLocal();
+            Ast stand = new Ast("BYTECODE_OBJECT", 0, dim instanceof Ast ast ? ast.line : 0,
+                    dim instanceof Ast ast ? ast.endLine : 0, null, null);
+            nullsafeObjects.put(stand, temp);
+            return stand;
         }
 
         // ---- calls ----

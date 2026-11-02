@@ -138,6 +138,8 @@ import pl.codeloom.php.runtime.Str;
         booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Elvis", operator = ShortCircuitOperation.Operator.OR_RETURN_VALUE,
         booleanConverter = Proxies.ToBool.class)
+@ShortCircuitOperation(name = "Coalesce", operator = ShortCircuitOperation.Operator.OR_RETURN_VALUE,
+        booleanConverter = PhpBytecodeRootNode.IsSetValue.class)
 public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRootNode, SourceLocation.Code,
         Backtrace.Callee {
     /**
@@ -718,6 +720,56 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
             }
             return value;
+        }
+    }
+
+    // ---- isset(), empty() and ?? (IssetNode, EmptyNode, CoalesceNode) ----
+
+    /**
+     * Whether a value read as isset() reads places is set: null stands for unset too. `a ?? b` is a short circuit
+     * on it (CoalesceNode), `isset($x)` it on the variable's value.
+     */
+    @Operation
+    public static final class IsSetValue {
+        @Specialization
+        public static boolean isSet(Object value) {
+            return value != PhpNull.NULL;
+        }
+    }
+
+    /**
+     * `$container[key]` as isset(), empty() and `??` read it (DimNode.readIfSet, FETCH_DIM_IS): the element, null
+     * when missing; a string's offset in range; an ArrayAccess object's offsetGet() once offsetExists() said yes;
+     * null for anything else.
+     */
+    @Operation
+    public static final class ElementIfSet {
+        @Specialization
+        public static Object array(PhpArray container, Object key, @Shared @Cached ElementNodes.ElementReadNode read) {
+            return read.execute(container, key);
+        }
+
+        @Fallback
+        public static Object other(Object container, Object key, @Shared @Cached ElementNodes.ElementReadNode read,
+                                   @Bind Node node) {
+            if (container == PhpNull.NULL || !DimNode.isSetIn(node, container, key)) {
+                return PhpNull.NULL;
+            }
+            return read.execute(container, key);
+        }
+    }
+
+    /** `isset($container[key])` (DimNode.isSet): as ElementIfSet, but an ArrayAccess object's offsetExists() alone. */
+    @Operation
+    public static final class IssetElement {
+        @Specialization
+        public static boolean array(PhpArray container, Object key, @Cached ElementNodes.ElementReadNode read) {
+            return read.execute(container, key) != PhpNull.NULL;
+        }
+
+        @Fallback
+        public static boolean other(Object container, Object key, @Bind Node node) {
+            return container != PhpNull.NULL && DimNode.isSetIn(node, container, key);
         }
     }
 
