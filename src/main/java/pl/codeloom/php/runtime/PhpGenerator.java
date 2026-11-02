@@ -159,15 +159,6 @@ public final class PhpGenerator {
                 largestIntKey = k;
             }
         }
-        if (byReference) {
-            // the yielded reference is held by the generator (its value zval) until the next yield; a closed one keeps it
-            if (value instanceof PhpRef previous && open) {
-                previous.unbind();
-            }
-            if (yieldedValue instanceof PhpRef ref) {
-                ref.bind();
-            }
-        }
         value = yieldedValue;
         sendTarget = true;
         resumeValue = PhpNull.NULL;
