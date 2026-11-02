@@ -230,7 +230,7 @@ k6_run() { # variant ip vus duration buy name
   local variant=$1 ip=$2 vus=$3 duration=$4 buy=$5 name=$6 dir=$out/load sampler csv=()
   mkdir -p $dir && rm -f $dir/$name.* $dir/stop
   # the warm-up's every request, for its curve
-  case $name in *-warm) csv=(--out csv=/out/$name.csv.gz) ;; esac
+  case $name in *-warm|*-steady) csv=(--out csv=/out/$name.csv.gz) ;; esac
   docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
   docker inspect -f '{{.Id}} {{.State.Pid}}' $db > $dir/$name.db.id
   # InnoDB's row lock counters before and after the run
@@ -262,6 +262,39 @@ k6_run() { # variant ip vus duration buy name
   python -I tests/gate2/woo_check.py $db $dir/$name.k6.log 100000 > $dir/$name.check.json
   python -I tests/gate2/woo_report.py line "$dir/$name"
   case $name in *-warm) python -I tests/gate2/woo_report.py warm "$dir/$name" ;; esac
+}
+
+# memrun VARIANT THREADS TAG VUS DURATION: where a server's memory goes under a long steady load. One server's life
+# on CPUs 14-21 (the CPU lock held) from the load seed: DURATION of k6 at VUS users, half of them buying (TAG-steady,
+# its every request in TAG-steady.csv.gz), and every SNAP seconds (default 60) a snapshot of its memory without a
+# full GC (memsnap.sh NOGC=1; for the JVM variants start the server with JAVA_OPTS=-XX:NativeMemoryTracking=summary)
+# in $out/mem/TAG/; at the end one after a full GC. php-fpm gets no snapshots: woo_sample.py's samples (every
+# worker's RssAnon, the cgroup's shmem: OPcache) cover it.
+memrun() {
+  local variant=$1 threads=$2 tag=$3 vus=$4 duration=$5 ip snaps dir=$out/mem/$3 native=
+  case $variant in php) ip=11 ;; fpm) ip=12 ;; jvm) ip=13 ;; jvm-phases) ip=14 ;; native) ip=15 ;; *) ip=16 ;; esac
+  case $variant in native*) native=1 ;; esac
+  rm -rf "$dir" && mkdir -p "$dir"
+  stop $variant
+  SEED=seed-load reset_db
+  cpu_lock "memrun $variant $threads $tag $vus $duration"
+  trap cpu_unlock EXIT
+  THREADS=$threads start $variant 14-21 8096
+  if [ "$variant" != fpm ]; then
+    ( while [ ! -e "$dir/stop" ]; do
+        sleep ${SNAP:-60}
+        [ -e "$dir/stop" ] || NOGC=1 NATIVE=$native bash tests/gate2/memsnap.sh $P-$variant > "$dir/$(date +%s).txt" 2>&1 || true
+      done ) &
+    snaps=$!
+  fi
+  k6_run $variant $ip $vus $duration 0.5 $tag-steady
+  touch "$dir/stop"
+  [ -z "${snaps:-}" ] || wait $snaps || true
+  [ "$variant" = fpm ] || NATIVE=$native bash tests/gate2/memsnap.sh $P-$variant > "$dir/final.txt" 2>&1 || true
+  docker logs $P-$variant > "$dir/server.log" 2>&1
+  stop $variant
+  cpu_unlock
+  trap - EXIT
 }
 
 # bench ROUNDS LEVELS...: the load runs of every configuration in CONFIGS (VARIANT:THREADS, default "jvm:8 jvm:16
@@ -334,6 +367,7 @@ case ${1:-} in
   load-seed) load_seed ;;
   load) shift; load "$@" ;;
   bench) shift; bench "$@" ;;
+  memrun) shift; memrun "$@" ;;
   k6) shift; k6_run "$@" ;;
   clean) clean ;;
   *) sed -n 2,22p "$0"; exit 2 ;;

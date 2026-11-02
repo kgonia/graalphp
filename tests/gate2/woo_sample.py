@@ -2,7 +2,7 @@
 cores with the host's process table (--pid=host) and cgroups (-v /sys/fs/cgroup:/hostcg:ro), as visits.py's.
 
 Samples every half second until STOP_FILE exists, then writes OUT: the CPU seconds the server's container used
-between start and stop, the most RssAnon (all its processes), cgroup anon and memory.current seen, the cgroup's
+between start and stop, the most RssAnon (all its processes), cgroup anon, shmem (php-fpm's OPcache) and memory.current seen, the cgroup's
 memory.peak (over the container's life: the warm-up's included), and the samples.
 
 DB_ID_FILE (optional): the database's container, whose CPU seconds over the run go to OUT too ("db_cpu_s").
@@ -37,8 +37,9 @@ def memory(cgroup):
                     rss_anon += int(line.split()[1])
         except OSError:
             pass
-    anon = next(int(line.split()[1]) for line in open(cgroup + "/memory.stat") if line.startswith("anon "))
-    return {"rss_anon": rss_anon / 1024, "anon": anon / 2**20,
+    stat = {line.split()[0]: int(line.split()[1]) for line in open(cgroup + "/memory.stat")}
+    anon = stat["anon"]
+    return {"rss_anon": rss_anon / 1024, "anon": anon / 2**20, "shmem": stat.get("shmem", 0) / 2**20,
             "current": int(open(cgroup + "/memory.current").read()) / 2**20}
 
 
@@ -62,7 +63,7 @@ def main():
               "peak": int(open(cgroup + "/memory.peak").read()) / 2**20}
     if db:
         result["db_cpu_s"] = cpu(db) - db_start
-    for key in ("rss_anon", "anon", "current"):
+    for key in ("rss_anon", "anon", "current", "shmem"):
         result["max_" + key] = max((s[key] for s in samples), default=0)
     result["samples"] = samples
     with open(out, "w") as f:
