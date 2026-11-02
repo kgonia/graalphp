@@ -22,6 +22,7 @@ import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Phases;
@@ -33,6 +34,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -603,6 +605,7 @@ public final class PhpContext {
     @TruffleBoundary
     public void exit(int status) {
         runShutdownFunctions();
+        guarded(this::destroyGenerators);
         endRequest();
         env.getContext().closeExited(null, status);
     }
@@ -614,6 +617,7 @@ public final class PhpContext {
     @TruffleBoundary
     public void endScript() {
         runShutdownFunctions();
+        guarded(this::destroyGenerators);
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
         guarded(this::endRequest);
         int status = errors().exitStatus();
@@ -634,6 +638,40 @@ public final class PhpContext {
         } catch (PhpBailout ended) {
             // reported where it was raised
         }
+    }
+
+    /**
+     * The generators with finally blocks made in this request, in the order they were made, for the request's end.
+     * Pruned of closed ones as it grows.
+     */
+    private final List<PhpGenerator> generatorsWithFinally = new ArrayList<>();
+    private int generatorsPruneAt = 64;
+
+    /** A generator whose body has finally blocks: destroyed at the request's end if it is still suspended. */
+    @TruffleBoundary
+    public void generatorWithFinally(PhpGenerator generator) {
+        if (generatorsWithFinally.size() >= generatorsPruneAt) {
+            generatorsWithFinally.removeIf(PhpGenerator::isClosed);
+            generatorsPruneAt = Math.max(64, generatorsWithFinally.size() * 2);
+        }
+        generatorsWithFinally.add(generator);
+    }
+
+    /**
+     * zend_objects_store_call_destructors for generators: at the end of a request that ends cleanly (no fatal
+     * error, which php-src's unclean shutdown skips destructors after), each generator still suspended runs its
+     * finally blocks, in the order the generators were made. php-src destroys a generator as soon as nothing
+     * references it, which needs object reference counts (issue 005): here every one lives until the end.
+     */
+    private void destroyGenerators() {
+        if (errors().exitStatus() != 0) {
+            generatorsWithFinally.clear();
+            return;
+        }
+        for (int i = 0; i < generatorsWithFinally.size(); i++) {
+            generatorsWithFinally.get(i).destroy();
+        }
+        generatorsWithFinally.clear();
     }
 
     /** The error state: the handlers, the last error, the exit status. */

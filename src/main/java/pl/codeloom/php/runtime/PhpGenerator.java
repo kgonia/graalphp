@@ -2,41 +2,143 @@ package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.bytecode.ContinuationRootNode;
+import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.PhpContext;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * A generator's state, the internal of a Generator object: the frame of the suspended function call, the body to
- * resume, and what the last yield produced. Resuming calls the body on the same frame; the body's resumable nodes
- * skip what already ran (GeneratorNodes), and a yield stops it again by unwinding to the body's root.
+ * A generator's state, the internal of a Generator object, as php-src's zend_generator (zend_generators.c): the
+ * suspended call of the generator function, what the last yield produced, and the delegation of `yield from`.
+ *
+ * <p>A body on bytecode (PhpBytecodeRootNode) is suspended at a continuation: a yield stops it with the bytecode
+ * index and the operand stack kept, as php-src keeps the generator's execute_data, and resuming continues after the
+ * yield, with the sent value as the yield's result. A body on the tree (GeneratorNodes) is resumed by running it
+ * again on its frame, its statements skipping what already ran.
+ *
+ * <p>`yield from` an array or a Traversable that isn't a Generator keeps it here ({@link #values}): resuming takes
+ * its next element without running the body, which goes on after the `yield from` once none is left. `yield from`
+ * a Generator links this one to it ({@link #parent}, php-src's node.parent): the generator that runs when this one
+ * resumes is the end of that chain ({@link #currentGenerator}), and its yields are this one's. When it returns, the
+ * `yield from` delegating to it gets its return value, and the delegating generator goes on. A Generator may be
+ * delegated to by several (php-src's multi-child nodes).
  */
 public final class PhpGenerator {
-    /** What the body's root returns when it stopped at a yield rather than returned. */
+    /** What a body returns when it stopped at a yield rather than returned. */
     public static final Object SUSPENDED = new Object();
+    /** What a body on bytecode returns when it stopped at a `yield from`. */
+    public static final Object DELEGATED = new Object();
+    /** The resume value that makes the yield throw the pending exception (throw()'s, or a delegate's). */
+    private static final Object THROW = new Object();
+    /** The resume value that makes the yield throw {@link Destroyed}: the generator is destroyed while suspended. */
+    private static final Object DESTROY = new Object();
 
-    private enum Status { NEW, SUSPENDED, RUNNING, DONE }
+    /**
+     * Thrown at the yield of a generator destroyed while suspended (zend_generator_dtor_storage): the finally blocks
+     * around the yield run as it leaves them, no catch block takes it, and {@link #destroy} catches it.
+     */
+    public static final class Destroyed extends AbstractTruffleException {
+        private static final long serialVersionUID = 1L;
 
-    private final MaterializedFrame frame;
-    private final CallTarget body;
-    private Status status = Status.NEW;
-    private Object key = PhpNull.NULL;
-    private Object value = PhpNull.NULL;
-    private Object sent = PhpNull.NULL;
-    /** What the body returned; null while it hasn't (also when it ended by throwing). */
-    private Object returned;
-    private RuntimeException pendingThrow;
-    private long largestIntKey = -1;
-    /** Whether it went past the first yield (rewind() then fails). */
-    private boolean advanced;
-
-    public PhpGenerator(MaterializedFrame frame, CallTarget body) {
-        this.frame = frame;
-        this.body = body;
+        Destroyed() {
+            super("generator destroyed");
+        }
     }
 
-    // ---- the yield side ----
+    // ---- the body: on bytecode, or on the tree ----
+    /** On bytecode: the continuation the body is suspended at, and the frame it runs on. */
+    private ContinuationRootNode continuation;
+    /** On bytecode: the continuation before the body's first statement. */
+    private final ContinuationRootNode start;
+    private final MaterializedFrame frame;
+    /** On the tree: the body, run again on frame at each resume. */
+    private final CallTarget treeBody;
+    /** `function &gen()`: its yields give references. */
+    private final boolean byReference;
+    /** Whether the body has a finally block (php-src's ZEND_ACC_HAS_FINALLY_BLOCK): destroying it runs them. */
+    private final boolean hasFinally;
 
-    /** `yield value` (key null: the next integer key) or `yield key => value`. */
+    // ---- the state ----
+    /** Whether the body can still run (php-src's execute_data): false once it returned, threw or was destroyed. */
+    private boolean open = true;
+    private boolean running;
+    /** The last yield's key and value; null (php-src's UNDEF) before the first and after the end. */
+    private Object key;
+    private Object value;
+    /** What the body returned; null while it hasn't (also when it ended by throwing). */
+    private Object returned;
+    private long largestIntKey = -1;
+    /** Whether the yield it stopped at takes a sent value (php-src's send_target): not a `yield from`. */
+    private boolean sendTarget;
+    /** The value the next resume gives the body: send()'s, a delegate's return value, or null. */
+    private Object resumeValue = PhpNull.NULL;
+    /** The exception the next resume throws where the body stopped (throw()'s, a delegate's); or null. */
+    private RuntimeException pendingThrow;
+    /** Not past the first yield yet: rewind() is allowed (AT_FIRST_YIELD). */
+    private boolean atFirstYield;
+    /** Stopped at a `yield from` a Generator: the next resume doesn't advance it if it has started (DO_INIT). */
+    private boolean doInit;
+    /** Being destroyed (FORCED_CLOSE): a yield is an error. */
+    private boolean forcedClose;
+
+    // ---- yield from ----
+    /** `yield from` an array (at valuesPosition) or an Iterator: php-src's values; else null. */
+    private Object values;
+    private int valuesPosition;
+    private boolean iteratorStarted;
+    /** The Generator this one delegates to (php-src's node.parent); else null. */
+    private PhpGenerator parent;
+    /** The generators delegating to this one. */
+    private List<PhpGenerator> children;
+
+    /** A generator whose body is on bytecode, suspended at start (before its first statement). */
+    public PhpGenerator(ContinuationRootNode start, MaterializedFrame frame, boolean byReference,
+                        boolean hasFinally) {
+        this.continuation = start;
+        this.start = start;
+        this.frame = frame;
+        this.treeBody = null;
+        this.byReference = byReference;
+        this.hasFinally = hasFinally;
+    }
+
+    /** A generator whose body is on the tree. */
+    public PhpGenerator(MaterializedFrame frame, CallTarget body) {
+        this.continuation = null;
+        this.start = null;
+        this.frame = frame;
+        this.treeBody = body;
+        this.byReference = false;
+        this.hasFinally = false;
+    }
+
+    /** The Generator object over a new generator. */
+    @TruffleBoundary
+    public PhpObject newObject(PhpContext context) {
+        PhpObject object = context.getClass("Generator").instantiate();
+        object.setInternal(this);
+        if (hasFinally) {
+            context.generatorWithFinally(this);
+        }
+        return object;
+    }
+
+    /** Whether the generator has ended (it can't be resumed any more). */
+    public boolean isClosed() {
+        return !open;
+    }
+
+    // ---- the body's side ----
+
+    /** ZEND_YIELD: `yield value` (key null: the next integer key) or `yield key => value`. */
     public void yielded(Object yieldedKey, Object yieldedValue) {
+        if (forcedClose) {
+            throw closedYield();
+        }
         if (yieldedKey == null) {
             key = ++largestIntKey;
         } else {
@@ -46,123 +148,441 @@ public final class PhpGenerator {
             }
         }
         value = yieldedValue;
+        sendTarget = true;
+        resumeValue = PhpNull.NULL;
     }
 
-    /** The value send() passed in (null for next()), as the yield expression's result. */
+    @TruffleBoundary
+    private static PhpError closedYield() {
+        return new PhpError("Cannot yield from finally in a force-closed generator");
+    }
+
+    /** The continuation the body on bytecode stopped at (a yield's own). */
+    public void suspendAt(ContinuationRootNode at) {
+        this.continuation = at;
+    }
+
+    /**
+     * What a yield of a body on bytecode gives once resumed: the sent value; or it throws, the pending exception
+     * (throw()), or {@link Destroyed} for a generator being destroyed.
+     */
+    public Object resumed(Object resume) {
+        if (resume == THROW) {
+            RuntimeException thrown = pendingThrow;
+            pendingThrow = null;
+            throw thrown;
+        }
+        if (resume == DESTROY) {
+            throw destroyed();
+        }
+        return resume;
+    }
+
+    @TruffleBoundary
+    private static Destroyed destroyed() {
+        return new Destroyed();
+    }
+
+    /** The value send() passed in (null for next()), for the tree's yield. */
     public Object takeSent() {
-        Object result = sent;
-        sent = PhpNull.NULL;
+        Object result = resumeValue;
+        resumeValue = PhpNull.NULL;
         return result;
     }
 
-    /** The exception throw() passed in, to be thrown at the yield; or null. */
+    /** The exception throw() passed in, to be thrown at the tree's yield; or null. */
     public RuntimeException takeThrow() {
         RuntimeException result = pendingThrow;
         pendingThrow = null;
         return result;
     }
 
+    /** The tree's `yield from` this generator: php-src delegates only to one that hasn't finished. */
+    public void checkDelegable() {
+        if (!open) {
+            throw new PhpError("Generator passed to yield from was aborted without proper return and is unable to "
+                    + "continue");
+        }
+    }
+
+    /**
+     * ZEND_YIELD_FROM: starts delegating to source, an array, a Traversable or a Generator. The body then stops
+     * (the resume loop takes the elements); its `yield from` gets null, or the return value of the Generator
+     * delegated to, as its resume value. A Generator that already returned gives its return value at once.
+     */
+    @TruffleBoundary
+    public void yieldFrom(Node site, Object source) {
+        if (forcedClose) {
+            throw new PhpError("Cannot use \"yield from\" in a force-closed generator");
+        }
+        Object subject = PhpRef.deref(source);
+        sendTarget = false;
+        resumeValue = PhpNull.NULL;
+        if (subject instanceof PhpArray array) {
+            array.addHolder();
+            values = array;
+            valuesPosition = array.firstPosition();
+        } else if (subject instanceof PhpObject inner && inner.getInternal() instanceof PhpGenerator delegate) {
+            if (!delegate.open) {
+                throw new PhpError("Generator passed to yield from was aborted without proper return and is unable "
+                        + "to continue");
+            }
+            if (delegate.returned != null) {
+                resumeValue = delegate.returned;
+                return;
+            }
+            if (delegate.currentGenerator() == this) {
+                throw new PhpError("Impossible to yield from the Generator being currently run");
+            }
+            parent = delegate;
+            if (delegate.children == null) {
+                delegate.children = new ArrayList<>(1);
+            }
+            delegate.children.add(this);
+            doInit = true;
+        } else if (subject instanceof PhpObject traversable && traversable.getPhpClass().isSubclassOf("traversable")) {
+            PhpObject iterator = iterator(site, traversable);
+            iterator.callMethod(site, "rewind");
+            values = iterator;
+            iteratorStarted = false;
+        } else {
+            throw new PhpError("Can use \"yield from\" only with arrays and Traversables");
+        }
+    }
+
+    /** zend_user_it_get_new_iterator: getIterator() until an Iterator. */
+    private static PhpObject iterator(Node site, PhpObject traversable) {
+        PhpObject current = traversable;
+        while (current.getPhpClass().isSubclassOf("iteratoraggregate")) {
+            Object next = current.callMethod(site, "getiterator");
+            if (!(next instanceof PhpObject object) || !object.getPhpClass().isSubclassOf("traversable")) {
+                throw new PhpError("Exception", "Objects returned by " + current.getPhpClass().getName()
+                        + "::getIterator() must be traversable or implement interface Iterator");
+            }
+            current = object;
+        }
+        return current;
+    }
+
+    /**
+     * zend_generator_get_next_delegated_value: the next element of the array or Iterator, or false at its end (an
+     * exception from the Iterator ends it too, and is thrown where the body stopped).
+     */
+    private boolean nextDelegatedValue() {
+        if (values instanceof PhpArray array) {
+            int position = valuesPosition;
+            if (position < 0) {
+                endValues();
+                return false;
+            }
+            value = PhpRef.deref(array.valueAt(position));
+            key = array.keyAt(position);
+            valuesPosition = array.nextPosition(position);
+            return true;
+        }
+        PhpObject iterator = (PhpObject) values;
+        try {
+            if (iteratorStarted) {
+                iterator.callMethod("next");
+            }
+            iteratorStarted = true;
+            if (!Convert.toBool(iterator.callMethod("valid"))) {
+                endValues();
+                return false;
+            }
+            value = PhpRef.deref(iterator.callMethod("current"));
+            key = PhpRef.deref(iterator.callMethod("key"));
+            return true;
+        } catch (PhpThrowable e) {
+            endValues();
+            pendingThrow = e;
+            return false;
+        }
+    }
+
+    private void endValues() {
+        if (values instanceof PhpArray array) {
+            array.removeHolder();
+        }
+        values = null;
+    }
+
+    // ---- the delegation chain ----
+
+    /**
+     * zend_generator_get_current: the generator that runs when this one resumes, the end of its `yield from`
+     * chain. If that one has finished, the `yield from` delegating to it gets its return value (or, if it ended
+     * without one, a ClosedGeneratorException) and the delegating generator is current again; with exception
+     * pending (one is on its way out), only the links change.
+     */
+    private PhpGenerator currentGenerator() {
+        return currentGenerator(false);
+    }
+
+    private PhpGenerator currentGenerator(boolean exceptionPending) {
+        if (parent == null) {
+            return this;
+        }
+        PhpGenerator root = parent;
+        while (root.parent != null) {
+            root = root.parent;
+        }
+        if (root.open) {
+            return root;
+        }
+        return updateCurrent(root, exceptionPending);
+    }
+
+    /** zend_generator_update_current: the end of the chain, oldRoot, has finished. */
+    private PhpGenerator updateCurrent(PhpGenerator oldRoot, boolean exceptionPending) {
+        // get_new_root: from the finished end towards this one, past the finished generators
+        PhpGenerator newRoot = below(oldRoot);
+        while (!newRoot.open && newRoot != this) {
+            newRoot = below(newRoot);
+        }
+        PhpGenerator newRootParent = newRoot.parent;
+        newRootParent.children.remove(newRoot);
+        newRoot.parent = null;
+        if (!exceptionPending) {
+            if (newRootParent.returned == null) {
+                newRoot.pendingThrow = new PhpError("ClosedGeneratorException",
+                        "Generator yielded from aborted, no return value available");
+                if (!oldRoot.running) {
+                    resume();
+                    return currentGenerator();
+                }
+            } else {
+                newRoot.value = newRootParent.value;
+                newRoot.resumeValue = newRootParent.returned;
+            }
+        }
+        return newRoot;
+    }
+
+    /** The generator on the chain from this one that delegates to g. */
+    private PhpGenerator below(PhpGenerator g) {
+        PhpGenerator below = this;
+        while (below.parent != g) {
+            below = below.parent;
+        }
+        return below;
+    }
+
+    // ---- running the body ----
+
+    /** zend_generator_ensure_initialized: runs to the first yield if it hasn't started. */
+    private void ensureInitialized() {
+        if (value == null && open && parent == null) {
+            resume();
+            atFirstYield = true;
+        }
+    }
+
+    /** zend_generator_resume: runs the current generator until it yields, and on through finished delegations. */
+    @TruffleBoundary
+    private void resume() {
+        PhpGenerator generator = currentGenerator();
+        if (!generator.open) {
+            return;
+        }
+        PhpGenerator delegator = this;
+        while (true) {
+            if (generator.running) {
+                throw new PhpError("Cannot resume an already running generator");
+            }
+            if (delegator.doInit) {
+                delegator.doInit = false;
+                if (generator.value != null) {
+                    // an already started delegate isn't advanced on the first resumption
+                    return;
+                }
+            }
+            atFirstYield = false;
+            generator.running = true;
+            Object result;
+            try {
+                if (generator.values != null && generator.nextDelegatedValue()) {
+                    generator.running = false;
+                    return;
+                }
+                result = generator.runBody();
+            } catch (RuntimeException e) {
+                generator.running = false;
+                generator.close();
+                if (generator == this) {
+                    throw e;
+                }
+                // thrown again at the `yield from` of the generator delegating to it
+                generator = currentGenerator(true);
+                generator.pendingThrow = e;
+                delegator = this;
+                continue;
+            }
+            generator.running = false;
+            if (result == DELEGATED) {
+                delegator = generator;
+                generator = currentGenerator();
+                continue;
+            }
+            if (result != SUSPENDED) {
+                generator.returned = result;
+                generator.close();
+                if (generator != this) {
+                    delegator = this;
+                    generator = currentGenerator();
+                    continue;
+                }
+            }
+            return;
+        }
+    }
+
+    /** Runs the body from where it stopped, with the resume value, or the pending exception. */
+    private Object runBody() {
+        if (treeBody != null) {
+            // the tree's yields take the sent value and the exception themselves
+            return treeBody.call(frame);
+        }
+        Object resume;
+        if (pendingThrow != null) {
+            resume = THROW;
+        } else {
+            resume = resumeValue;
+            resumeValue = PhpNull.NULL;
+        }
+        return continuation.getCallTarget().call(frame, resume);
+    }
+
+    /** zend_generator_close: no current element any more, nothing to resume. */
+    private void close() {
+        open = false;
+        key = null;
+        value = null;
+        if (values != null) {
+            endValues();
+        }
+    }
+
     // ---- the Generator methods ----
 
     public Object current() {
-        start();
-        return status == Status.DONE ? PhpNull.NULL : value;
+        ensureInitialized();
+        PhpGenerator root = currentGenerator();
+        return open && root.value != null ? PhpRef.deref(root.value) : PhpNull.NULL;
+    }
+
+    /** The current value as yielded: a reference from a generator that yields by reference (foreach by reference). */
+    public Object currentRef() {
+        ensureInitialized();
+        PhpGenerator root = currentGenerator();
+        return open && root.value != null ? root.value : PhpNull.NULL;
     }
 
     public Object key() {
-        start();
-        return status == Status.DONE ? PhpNull.NULL : key;
+        ensureInitialized();
+        PhpGenerator root = currentGenerator();
+        return open && root.key != null ? PhpRef.deref(root.key) : PhpNull.NULL;
     }
 
     public void next() {
-        if (status == Status.NEW) {
-            start();
-        }
-        advanced = true;
+        ensureInitialized();
         resume();
     }
 
     public Object send(Object sentValue) {
-        start();
-        sent = sentValue;
-        advanced = true;
+        ensureInitialized();
+        if (!open) {
+            return PhpNull.NULL;
+        }
+        PhpGenerator root = currentGenerator();
+        if (root.sendTarget && !root.running) {
+            root.resumeValue = sentValue;
+        }
         resume();
-        return status == Status.DONE ? PhpNull.NULL : value;
+        root = currentGenerator();
+        return open && root.value != null ? PhpRef.deref(root.value) : PhpNull.NULL;
     }
 
     public boolean valid() {
-        start();
-        return status != Status.DONE;
+        ensureInitialized();
+        currentGenerator();
+        return open;
     }
 
     public void rewind() {
-        start();
-        if (advanced) {
+        ensureInitialized();
+        if (!atFirstYield) {
             throw new PhpError("Exception", "Cannot rewind a generator that was already run");
         }
     }
 
-    /** Runs to the first yield first, as zend_generator_ensure_initialized. */
+    /** zend_generator_get_iterator: foreach over the generator, before it rewinds. */
+    public void startIteration(boolean byRef) {
+        if (!open) {
+            throw new PhpError("Exception", "Cannot traverse an already closed generator");
+        }
+        if (byRef && !byReference) {
+            throw new PhpError("Exception", "You can only iterate a generator by-reference if it declared that it "
+                    + "yields by-reference");
+        }
+    }
+
     public Object getReturn() {
-        start();
+        ensureInitialized();
         if (returned == null) {
             throw new PhpError("Exception", "Cannot get return value of a generator that hasn't returned");
         }
         return returned;
     }
 
-    /** `yield from` this generator: php-src delegates only to one that hasn't finished (ZEND_YIELD_FROM). */
-    public void checkDelegable() {
-        if (status == Status.DONE) {
-            throw new PhpError("Generator passed to yield from was aborted without proper return and is unable to "
-                    + "continue");
-        }
-    }
-
-    /** throw(): raises the exception at the current yield (after running to the first one). */
+    /** throw(): raises the exception where the current generator stopped (after running to the first yield). */
     public Object throwInto(RuntimeException exception) {
-        start();
-        if (status == Status.DONE) {
+        ensureInitialized();
+        if (!open) {
             throw exception;
         }
-        pendingThrow = exception;
-        advanced = true;
-        resume();
-        return status == Status.DONE ? PhpNull.NULL : value;
-    }
-
-    private void start() {
-        if (status == Status.NEW) {
-            resume();
-        }
-    }
-
-    @TruffleBoundary
-    private void resume() {
-        if (status == Status.DONE) {
-            return;
-        }
-        if (status == Status.RUNNING) {
+        PhpGenerator root = currentGenerator();
+        if (root.running) {
             throw new PhpError("Cannot resume an already running generator");
         }
-        status = Status.RUNNING;
-        try {
-            Object result = body.call(frame);
-            if (result == SUSPENDED) {
-                status = Status.SUSPENDED;
-            } else {
-                finish();
-                returned = result;
-            }
-        } catch (RuntimeException e) {
-            finish();
-            throw e;
+        root.pendingThrow = exception;
+        if (root.values != null) {
+            // an array or Iterator delegated to is left: the exception is thrown at the `yield from`
+            root.endValues();
         }
+        resume();
+        root = currentGenerator();
+        return open && root.value != null ? PhpRef.deref(root.value) : PhpNull.NULL;
     }
 
-    private void finish() {
-        status = Status.DONE;
-        key = PhpNull.NULL;
-        value = PhpNull.NULL;
+    /**
+     * zend_generator_dtor_storage: a generator destroyed while suspended in a try block runs the finally blocks
+     * around where it stopped, as if it returned there, then closes; a yield in them is an error. Any other just
+     * closes.
+     */
+    @TruffleBoundary
+    public void destroy() {
+        if (values != null) {
+            endValues();
+        }
+        if (parent != null) {
+            parent.children.remove(this);
+            parent = null;
+        }
+        if (!open || running || !hasFinally || continuation == start) {
+            close();
+            return;
+        }
+        forcedClose = true;
+        pendingThrow = null;
+        running = true;
+        try {
+            continuation.getCallTarget().call(frame, DESTROY);
+        } catch (Destroyed done) {
+            // the finally blocks ran
+        } finally {
+            running = false;
+            close();
+        }
     }
 }

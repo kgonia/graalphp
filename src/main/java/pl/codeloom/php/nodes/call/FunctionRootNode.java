@@ -118,7 +118,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             bindArguments(frame, arguments);
             PhpGenerator generator = new PhpGenerator(frame.materialize(), generatorBody);
             frame.setObject(generatorSlot, generator);
-            return newGenerator(PhpContext.get(this), generator);
+            return generator.newObject(PhpContext.get(this));
         }
         Object result = PhpNull.NULL;
         // the locals are released after the try, not in a finally: javac copies a finally block onto the normal
@@ -211,13 +211,6 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             }
             FrameSlots.set(frame, slot, value);
         }
-    }
-
-    @TruffleBoundary
-    private static PhpObject newGenerator(PhpContext context, PhpGenerator generator) {
-        PhpObject object = context.getClass("Generator").instantiate();
-        object.setInternal(generator);
-        return object;
     }
 
     private PhpError tooFewArguments(int given) {

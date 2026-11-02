@@ -359,6 +359,8 @@ public final class ForeachNode extends StmtNode {
             case "current" -> generator.current();
             case "key" -> generator.key();
             case "rewind" -> {
+                // foreach's start: zend_generator_get_iterator, then its rewind
+                generator.startIteration(false);
                 generator.rewind();
                 yield PhpNull.NULL;
             }
