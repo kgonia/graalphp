@@ -267,21 +267,31 @@ libgraal's `PrintGC`; the merged build unless "before"; rounds interleaved, the 
 
 TBD-MEMTABLE
 
-- **On the merged build there is no multi-GB burst.** libgraal's share of RssAnon (memsplit's "untracked") peaks at
-  0.85-1.0 GB, and one isolate's heap after a collection at 560 MB, while the classmap, the thunk and `states.php`
-  compile (minutes 6-11 of `m-base-r1`; it falls to ~75 MB after them). #21's 5.8 GB was on `866e156`: TBD-BEFORE.
-- **A 2 GB cap is never reached** (an isolate's largest heap 813-826 MB): the same runs as the baseline.
+- **The burst is the run-once giants compiling at the same time.** In the baselines of rounds 1 and 2 (a busy box)
+  libgraal's share of RssAnon (memsplit's "untracked") peaked at 0.85-1.0 GB and one isolate's heap after a
+  collection at 560 MB, while the classmap, the thunk and `states.php` compiled one after another (minutes 6-11 of
+  `m-base-r1`; ~75 MB after them). In round 3 (the box 36% busy) the classmap (223 s) and the thunk (75 s) compiled at
+  the same time on two threads in minutes 6-7: two isolates of 1.4-1.7 GB each after a collection, libgraal **3.6 GB**,
+  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. That is #21's 5.8 GB. TBD-BEFORE
+- **A 2 GB cap was not reached** in rounds 1-2 (an isolate's largest heap 813-826 MB); round 3's baseline shows an
+  isolate can reach 1.7 GB, so at 2 GB it would be close.
 - **A 1 GB cap is reached once per run, by the classmap**, which then fails with the `OutOfMemoryError` above
-  after 117 s instead of timing out after 100 s; nothing else changes (the same 3 failures, the same compile time).
-  libgraal's share stays at 0.9-1.0 GB, as without a cap.
+  after 117 s instead of timing out after 100 s; nothing else changes (the same 3 failures, the same compile time),
+  and libgraal's share stayed at 0.9-1.0 GB (both rounds on a busier box). PrintGC reported up to 1,252 MB after a collection
+  at the 1 GB cap (and 263 MB at 256 MB), so the cap is not a hard bound on what an isolate holds.
 - **A 256 MB cap** (`cap256m-long`, the diagnosis stack, 15 minutes) fails all three giants early (11, 36 and 22 s
   instead of 100, 80 and 39 s: 91 s of failed compilation instead of 216 s) but also one ordinary tier-2
   compilation (`WP_Widget::_register`), and its isolates collect more (338 s of pauses in 15 minutes); TBD-CAP256.
-- **One compiler thread** (`engine.CompilerThreads=1`): 3,678-3,938 compilations instead of 9,245-11,444, a third
-  of the compiler's CPU (420-428 s against 1,106-1,168), none of the giants (their thresholds are never reached), and
-  RssAnon 1.6-2.0 GB against 2.7-3.3 GB. Its throughput was not lower in any round: TBD-CT1.
-- **The box's load moves throughput more than any of these options**: 9.3-14.6 pages/s across runs, with the box
-  38-62% busy (`hostload.py`); compare within a round.
+- **One compiler thread** (`engine.CompilerThreads=1`): 3,678-3,953 compilations instead of 9,333-11,549, 38% of
+  the compiler's CPU (420-462 s against 1,112-1,213), and the giants only at the end (in round 3 an isolate reached
+  1.4 GB in minute 12, libgraal 1.3 GB; in rounds 1-2 never); RssAnon 1.6-3.0 GB against 2.8-5.1 GB. **Its
+  throughput was not lower in any of the three rounds:** 10.9 / 12.6 / 15.4 pages/s against the baseline's 10.5 /
+  9.8 / 15.3 (orders/s 0.83 / 0.97 / 1.19 against 0.81 / 0.74 / 1.17), p99 3.6 / 3.0 / 2.5 s against 4.1 / 4.2 /
+  2.4 s, CPU-s per page 0.71 / 0.61 / 0.50 against 0.73 / 0.78 / 0.51. #21's single-run "no loss" holds. The
+  requests' threads take 73-75% of the server's CPU instead of 60-63%: the cores the compiler leaves go to them,
+  and what the other threads compiled late (the long tail, section 2) wasn't paying back within 12 minutes.
+- **The box's load moves throughput more than any of these options**: 9.3-15.4 pages/s across runs, with the box
+  36-62% busy (`hostload.py`); compare within a round.
 
 ## 4. #19 and #20 on WooCommerce
 
