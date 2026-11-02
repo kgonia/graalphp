@@ -165,6 +165,17 @@ dbrows() {
 walk() {
   local variant=$1 port=$2
   python -I tests/gate2/woo_walk.py "http://127.0.0.1:$port" "$out/walk/$variant"
+  # WP-Cron as a visitor's spawn would run it, twice (the second runs what the first scheduled: the Action
+  # Scheduler's analytics imports, wc_order_stats and wc_customer_lookup). The pages' own spawns left the cron
+  # lock (doing_cron) set, which makes wp-cron.php return at once: cleared before each run.
+  local i
+  for i in 1 2; do
+    sleep 2
+    docker exec $db mariadb -uroot -proot -P3307 wordpress -e \
+      "delete from wp_options where option_name in ('_transient_doing_cron', '_transient_timeout_doing_cron')"
+    curl -s -H 'Host: localhost' -o "$out/walk/$variant/wp-cron-run$i.body" -w '%{http_code}\n' \
+      "http://127.0.0.1:$port/wp-cron.php" > "$out/walk/$variant/wp-cron-run$i.status"
+  done
   docker logs $P-$variant > "$out/walk/$variant/server.log" 2>&1
   dbrows "$variant"
   echo "$variant: $(grep -c . "$out/walk/$variant/server.log" || true) server log lines"
@@ -182,6 +193,12 @@ compare() {
       echo "DIFF $name: $(diff "$f" "$b/$name.body" | grep -c '^[<>]') lines differ"; failed=1
     fi
   done
+  # the PHP errors and the shell's lines (mail()'s sendmail) in the servers' logs, in order: php -S stamps them
+  local la lb
+  la=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$a/server.log" | sed -E 's/^\[[^]]*\] //' || true)
+  lb=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$b/server.log" | sed -E 's/^\[[^]]*\] //' || true)
+  if [ "$la" = "$lb" ]; then echo "same server log errors ($(printf '%s' "$la" | grep -c . || true) lines)"
+  else echo "DIFF server log errors:"; diff <(printf '%s\n' "$la") <(printf '%s\n' "$lb") | head -20 || true; failed=1; fi
   for f in $out/rows/$1/*.tsv; do
     name=$(basename "$f")
     if cmp -s "$f" "$out/rows/$2/$name"; then echo "same rows $name ($(wc -l < "$f") lines)"
