@@ -41,7 +41,9 @@ tools below. What each gave on this workload, on GraalVM 25.4 with libgraal:
 | `engine.TraceTransferToInterpreter`, `TraceAssumptions`, `-Xlog:deoptimization=debug` | transfers by our source location; HotSpot's traps of Truffle code |
 | `compiler.TracePerformanceWarnings=all` | none, as after round 2 |
 | `cpusampler` with `ShowTiers` | where the requests' time goes, by PHP function and tier (interpreter, tier 1, tier 2) |
-| `compiler.InstrumentBoundaries` | the Truffle boundaries compiled code calls, counted |
+| `compiler.InstrumentBoundaries` | **unusable on 25.4 with libgraal**: every one of 7,968 compilations failed (`ClassCastException: SnippetObjectConstant cannot be cast to HotSpotObjectConstantImpl`) |
+| `-XX:JVMCITraceLevel=1` (not in Optimizing.md) | each JVMCI runtime and libgraal isolate created and shut down, by thread (section 3) |
+| `-Djdk.graal.internal.PrintGC=true` (not in Optimizing.md) | libgraal's collections: heap sizes, pauses, causes (`tests/gate2/libgraal_gc.py`) |
 | `engine.TraceCompilationPolymorphism` | printed nothing |
 | `compiler.MethodExpansionStatistics`, `NodeExpansionStatistics` | printed nothing at the engine's close (as partial-evaluation.md found) |
 | IGV (`-Djdk.graal.Dump=Truffle:1`) | not used: the expansion trees and the Graal node histograms answered the questions without a viewer |
@@ -172,8 +174,8 @@ where the wall times sum to 2,012 s, so read the shares, not the seconds.
   interpreter: 244, the profiles learning (`IfNode` 42, `PropNode.accessible` 30, `LocalVarNode.met` 26). No
   performance warning, no deopt cycle. #21's 270 invalidations were the same kind.
 - **What keeps it going is new call targets:** 10,392 distinct targets compiled in 15 minutes, 1,764 of them more
-  than once (a tier-2 compilation after tier 1 counts). In the last minutes of `d1-trace` 100-300 first-time tier-1
-  compilations a minute still arrive, with bursts (1,626 in minute 8, 2,178 in `m-base-r1`'s minute 9).
+  than once (a tier-2 compilation after tier 1 counts). In the last minutes of `d1-trace` 40-200 first tier-1
+  compilations of functions and 90-400 of split copies still arrive every minute, with bursts (1,626 in minute 8, 2,178 in `m-base-r1`'s minute 9).
 - **The queue is overloaded the whole time.** `TraceCompilationDetails`: the queue held 300-700 tasks in every
   minute, its load 2.5-12.9 (1 is normal). With `engine.DynamicCompilationThresholds` (default on) Truffle raises
   the thresholds with the load: the median threshold of a tier-1 enqueue was 1,175-5,275 calls (default 400, ×3-13),
@@ -258,7 +260,28 @@ reported by Truffle as a failed compilation (`opt failed ... Reason: java.lang.O
 server unharmed: the same outcome as without a cap, where it timed out at 100 s. Before failing, an isolate at its
 cap collects again and again: in `cap256m` one isolate ran full collections of 0.7-1.2 s each with 156-247 MB live.
 
-TBD-MEM
+**The memruns** (`bench/pe4-diagnosis/runs.sh mem`, `runs2.sh mem-before`; `woo.sh memrun jvm 16`: 12 minutes at
+16 users, half buying, from a cold server, NMT and a snapshot a minute, every run with `TraceCompilation` and
+libgraal's `PrintGC`; the merged build unless "before"; rounds interleaved, the order reversed in round 2;
+`tests/gate2/pe4_memtable.py`):
+
+TBD-MEMTABLE
+
+- **On the merged build there is no multi-GB burst.** libgraal's share of RssAnon (memsplit's "untracked") peaks at
+  0.85-1.0 GB, and one isolate's heap after a collection at 560 MB, while the classmap, the thunk and `states.php`
+  compile (minutes 6-11 of `m-base-r1`; it falls to ~75 MB after them). #21's 5.8 GB was on `866e156`: TBD-BEFORE.
+- **A 2 GB cap is never reached** (an isolate's largest heap 813-826 MB): the same runs as the baseline.
+- **A 1 GB cap is reached once per run, by the classmap**, which then fails with the `OutOfMemoryError` above
+  after 117 s instead of timing out after 100 s; nothing else changes (the same 3 failures, the same compile time).
+  libgraal's share stays at 0.9-1.0 GB, as without a cap.
+- **A 256 MB cap** (`cap256m-long`, the diagnosis stack, 15 minutes) fails all three giants early (11, 36 and 22 s
+  instead of 100, 80 and 39 s: 91 s of failed compilation instead of 216 s) but also one ordinary tier-2
+  compilation (`WP_Widget::_register`), and its isolates collect more (338 s of pauses in 15 minutes); TBD-CAP256.
+- **One compiler thread** (`engine.CompilerThreads=1`): 3,678-3,938 compilations instead of 9,245-11,444, a third
+  of the compiler's CPU (420-428 s against 1,106-1,168), none of the giants (their thresholds are never reached), and
+  RssAnon 1.6-2.0 GB against 2.7-3.3 GB. Its throughput was not lower in any round: TBD-CT1.
+- **The box's load moves throughput more than any of these options**: 9.3-14.6 pages/s across runs, with the box
+  38-62% busy (`hostload.py`); compare within a round.
 
 ## 4. #19 and #20 on WooCommerce
 
