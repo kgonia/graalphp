@@ -74,6 +74,57 @@ public final class PhpObject extends DynamicObject {
         return result;
     }
 
+    /**
+     * The properties as php-src's property table holds them: the declared ones in declaration order (a parent's
+     * first) under their mangled keys ({@link PhpClass#mangledName}), then the dynamic ones in the order they
+     * were added; as key, raw value (a PhpRef stays one), key, raw value... An unset declared property isn't
+     * there.
+     */
+    @TruffleBoundary
+    public Object[] propertyTable() {
+        Object[] names = propertyNames();
+        Object[] table = new Object[names.length * 2];
+        int i = 0;
+        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+            Object value = getProperty(decl.name());
+            if (value != null) {
+                table[i++] = phpClass.mangledName(decl.name());
+                table[i++] = value;
+            }
+        }
+        for (Object name : names) {
+            String property = (String) name;
+            if (!phpClass.isDeclaredProperty(property)) {
+                table[i++] = property;
+                table[i++] = getProperty(property);
+            }
+        }
+        return i == table.length ? table : java.util.Arrays.copyOf(table, i);
+    }
+
+    /**
+     * (array) and get_mangled_object_vars(): the property table (see {@link #propertyTable}) as an array, its
+     * numeric keys as ints; a reference something else also holds stays one (zend_proptable_to_symtable).
+     */
+    @TruffleBoundary
+    public PhpArray toArray() {
+        Object[] table = propertyTable();
+        PhpArray array = PhpArray.ofHashCapacity(table.length / 2);
+        for (int i = 0; i < table.length; i += 2) {
+            Object key = ArrayKey.of(Str.ofKey((String) table[i]));
+            Object value = table[i + 1];
+            if (value instanceof PhpRef ref && ref.isShared()) {
+                array.putRef(key, ref);
+            } else if (((String) table[i]).startsWith("\0")) {
+                // a dynamic property's name may look like a mangled one: put() keeps the keys distinct
+                array.put(key, PhpRef.deref(value));
+            } else {
+                array.addEntry(key, PhpArray.hashOf(key), PhpRef.deref(value));
+            }
+        }
+        return array;
+    }
+
     /** The names of the properties code in the scope may access, in order. */
     @TruffleBoundary
     public List<String> visiblePropertyNames(String scope) {

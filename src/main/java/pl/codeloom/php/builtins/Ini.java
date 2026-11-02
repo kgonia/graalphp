@@ -77,15 +77,19 @@ public final class Ini {
         directives.put("post_max_size", new Directive("8M", SYSTEM | PERDIR));
         directives.put("sendmail_from", new Directive(null, ALL));
         directives.put("sendmail_path", new Directive("/usr/sbin/sendmail -t -i", SYSTEM));
+        directives.put("serialize_precision", new Directive("-1", ALL));
         // zend.c's: CG(short_tags), which the parser (php.Parser=java) reads
         directives.put("short_open_tag", new Directive("1", SYSTEM | PERDIR));
         directives.put("syslog.facility", new Directive("LOG_USER", SYSTEM));
         directives.put("syslog.filter", new Directive("no-ctrl", ALL));
         directives.put("syslog.ident", new Directive("php", SYSTEM));
         directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
+        directives.put("unserialize_callback_func", new Directive(null, ALL));
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
         directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
+        // ext/standard's var.c
+        directives.put("unserialize_max_depth", new Directive("4096", ALL, "standard"));
         // ext/curl's PHP_INI_BEGIN
         directives.put("curl.cainfo", new Directive("", SYSTEM, "curl"));
         // ext/filter's
@@ -111,6 +115,10 @@ public final class Ini {
     private boolean exceptionIgnoreArgs;
     private int exceptionStringParamMaxLen;
     private String argSeparatorOutput;
+    /** PG(serialize_precision), BG(unserialize_max_depth) and PG(unserialize_callback_func) (null when unset). */
+    private long serializePrecision;
+    private long unserializeMaxDepth;
+    private String unserializeCallbackFunc;
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
@@ -202,6 +210,16 @@ public final class Ini {
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "short_open_tag" -> shortOpenTag = bool(value);
+            case "serialize_precision" -> {
+                // OnSetSerializePrecision: -1 (the shortest round-trip digits) or more
+                long precision = value == null ? 0 : atol(value);
+                if (precision < -1) {
+                    return false;
+                }
+                serializePrecision = precision;
+            }
+            case "unserialize_max_depth" -> unserializeMaxDepth = quantity(name, value); // OnUpdateLong
+            case "unserialize_callback_func" -> unserializeCallbackFunc = value;
             // UpdateDefaultFilter: a filter's name, any case; anything else is FILTER_DEFAULT
             case "filter.default" -> defaultFilter = FilterFunctions.idOfName(value);
             // OnUpdateFlags: atoi, FILTER_FLAG_NO_ENCODE_QUOTES when unset
@@ -330,6 +348,18 @@ public final class Ini {
     /** short_open_tag: whether "<?" opens PHP code. */
     public boolean shortOpenTag() {
         return shortOpenTag;
+    }
+
+    long serializePrecision() {
+        return serializePrecision;
+    }
+
+    long unserializeMaxDepth() {
+        return unserializeMaxDepth;
+    }
+
+    String unserializeCallbackFunc() {
+        return unserializeCallbackFunc;
     }
 
     boolean mailAddXHeader() {
