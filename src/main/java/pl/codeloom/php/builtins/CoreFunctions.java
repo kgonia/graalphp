@@ -14,11 +14,13 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.CRC32;
 
 /** Types, constants, classes and objects, output, time, math and error handling. */
@@ -93,8 +95,22 @@ final class CoreFunctions {
             if (value == null) {
                 throw new PhpError("Undefined constant \"" + name + "\"");
             }
+            String deprecation = separator > 0 ? null : context.getLanguage().builtins().deprecation(name);
+            if (deprecation != null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(deprecation),
+                        SourceLocation.current());
+            }
             return value;
         });
+        // compiled in place where a call names them; called by a name resolved at run time they refuse, as
+        // zend_forbid_dynamic_call does
+        for (String frameFunction : new String[] {"func_get_arg", "func_get_args", "func_num_args"}) {
+            int arity = frameFunction.equals("func_get_arg") ? 1 : 0;
+            r.fn(frameFunction, a -> {
+                Args.arity(a, frameFunction, arity, arity);
+                throw new PhpError("Error", "Cannot call " + frameFunction + "() dynamically");
+            });
+        }
         r.fn("function_exists", (context, a) -> context.findFunction(lowerName(Args.str(a, 0))) != null);
         r.fn("get_defined_functions", (context, a) -> {
             List<List<PhpFunction>> declared = context.declaredFunctions();
@@ -106,8 +122,11 @@ final class CoreFunctions {
         r.fn("get_declared_classes", (context, a) -> classNames(context, Kind.CLASS));
         r.fn("get_declared_interfaces", (context, a) -> classNames(context, Kind.INTERFACE));
         r.fn("get_declared_traits", (context, a) -> classNames(context, Kind.TRAIT));
-        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), false, Args.bool(a, 1, true)));
-        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), true, Args.bool(a, 1, true)));
+        r.fn("class_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.CLASS, Args.bool(a, 1, true)));
+        r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.INTERFACE,
+                Args.bool(a, 1, true)));
+        r.fn("trait_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.TRAIT, Args.bool(a, 1, true)));
+        r.fn("class_alias", (context, a) -> classAlias(context, Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, true)));
         r.fn("spl_autoload_register", (context, a) -> {
             Object callable = Args.get(a, 0, PhpNull.NULL);
             if (callable == PhpNull.NULL) {
@@ -119,19 +138,18 @@ final class CoreFunctions {
         });
         r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Args.get(a, 0)));
         r.fn("spl_autoload_functions", (context, a) -> PhpArray.list(context.autoloaders().toArray()));
-        r.fn("method_exists", (context, a) -> {
-            Object target = Args.get(a, 0);
-            PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : context.findClass(lowerName(Convert.toStr(target)));
-            return phpClass != null && phpClass.findMethod(Str.lower(Str.java(Args.str(a, 1)))) != null;
-        });
+        r.fn("method_exists", (context, a) -> methodExists(context, Args.get(a, 0), Args.str(a, 1)));
         r.fn("property_exists", (context, a) -> {
             Object target = Args.get(a, 0);
             String name = Str.key(Args.str(a, 1));
             if (target instanceof PhpObject o) {
                 return o.getProperty(name) != null || hasDeclared(o.getPhpClass(), name);
             }
-            PhpClass phpClass = context.findClass(lowerName(Convert.toStr(target)));
+            if (!(target instanceof TruffleString className)) {
+                throw Args.typeError("property_exists", 1, "object_or_class", "object|string", target);
+            }
+            // a class name is autoloaded (zend_lookup_class); a parent's private property isn't the class's
+            PhpClass phpClass = context.findClassAutoloading(Str.java(className));
             return phpClass != null && hasDeclared(phpClass, name);
         });
         r.fn("get_class", a -> {
@@ -146,22 +164,33 @@ final class CoreFunctions {
         });
         r.fn("get_parent_class", (context, a) -> {
             Object target = Args.get(a, 0);
+            // Z_PARAM_OBJ_OR_CLASS_NAME: a class name is autoloaded, and must name a class
             PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : target == null ? null : context.findClass(lowerName(Convert.toStr(target)));
+                    : target instanceof TruffleString name ? context.findClassAutoloading(Str.java(name)) : null;
+            if (phpClass == null && target != null && !(target instanceof PhpClosure)) {
+                throw new PhpError("TypeError", "get_parent_class(): Argument #1 ($object_or_class) must be an object "
+                        + "or a valid class name, " + Args.valueName(target) + " given");
+            }
             return phpClass == null || phpClass.getParent() == null ? Boolean.FALSE
                     : Str.of(phpClass.getParent().getName());
         });
         r.fn("get_object_vars", a -> objectVars(Args.get(a, 0)));
+        r.fn("get_mangled_object_vars", a -> {
+            Object value = Args.get(a, 0);
+            if (value instanceof PhpObject object) {
+                return object.toArray();
+            }
+            if (value instanceof pl.codeloom.php.runtime.PhpClosure) {
+                // a Closure has no properties
+                return new PhpArray();
+            }
+            throw Args.typeError("get_mangled_object_vars", 1, "object", "object", value);
+        });
         r.fn("spl_object_id", a -> (long) objectId(Args.get(a, 0)));
         r.fn("spl_object_hash", a -> Str.of(String.format("%032x", objectId(Args.get(a, 0)))));
-        r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false)));
-        r.fn("is_subclass_of", (context, a) -> {
-            Object target = Args.get(a, 0);
-            String parent = lowerName(Args.str(a, 1));
-            PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
-                    : context.findClass(lowerName(Convert.toStr(target)));
-            return phpClass != null && !phpClass.getLowerName().equals(parent) && phpClass.isSubclassOf(parent);
-        });
+        r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false), false));
+        r.fn("is_subclass_of", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, true),
+                true));
 
         // ---- output ----
         r.fn("ob_start", (context, a) -> {
@@ -267,11 +296,60 @@ final class CoreFunctions {
         });
         r.fn("time", a -> System.currentTimeMillis() / 1000);
         r.fn("microtime", a -> {
-            long micros = System.currentTimeMillis() * 1000;
+            long micros = pl.codeloom.php.runtime.WallClock.micros();
             if (Args.bool(a, 0, false)) {
                 return micros / 1e6;
             }
-            return Str.of(String.format("%.8f %d", (micros % 1_000_000) / 1e6, micros / 1_000_000));
+            return Str.of(String.format(Locale.ROOT, "%.8f %d", (micros % 1_000_000) / 1e6, micros / 1_000_000));
+        });
+        // ext/standard/basic_functions.c: the request's thread sleeps (php_sleep, usleep, nanosleep)
+        r.fn("sleep", a -> {
+            long seconds = Args.lng(a, 0, 0);
+            if (seconds < 0) {
+                throw new PhpError("ValueError", "sleep(): Argument #1 ($seconds) must be greater than or equal to 0");
+            }
+            sleepNanos(seconds * 1_000_000_000L);
+            return 0L;
+        });
+        r.fn("usleep", a -> {
+            long micros = Args.lng(a, 0, 0);
+            if (micros < 0) {
+                throw new PhpError("ValueError",
+                        "usleep(): Argument #1 ($microseconds) must be greater than or equal to 0");
+            }
+            sleepNanos(micros * 1000L);
+            return PhpNull.NULL;
+        });
+        r.fn("time_nanosleep", a -> {
+            long seconds = Args.lng(a, 0, 0);
+            long nanos = Args.lng(a, 1, 0);
+            if (seconds < 0) {
+                throw new PhpError("ValueError",
+                        "time_nanosleep(): Argument #1 ($seconds) must be greater than or equal to 0");
+            }
+            if (nanos < 0) {
+                throw new PhpError("ValueError",
+                        "time_nanosleep(): Argument #2 ($nanoseconds) must be greater than or equal to 0");
+            }
+            if (nanos > 999_999_999L) {
+                // nanosleep's EINVAL
+                throw new PhpError("ValueError",
+                        "Nanoseconds was not in the range 0 to 999 999 999 or seconds was negative");
+            }
+            sleepNanos(seconds * 1_000_000_000L + nanos);
+            return true;
+        });
+        r.fn("time_sleep_until", (context, a) -> {
+            double until = Convert.toDouble(Args.get(a, 0));
+            double now = pl.codeloom.php.runtime.WallClock.micros() / 1e6;
+            if (until < now) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("time_sleep_until(): Argument #1"
+                        + " ($timestamp) must be greater than or equal to the current time"),
+                        pl.codeloom.php.runtime.SourceLocation.current());
+                return false;
+            }
+            sleepNanos((long) ((until - now) * 1e9));
+            return true;
         });
 
         // ---- math ----
@@ -330,6 +408,16 @@ final class CoreFunctions {
 
     }
 
+    /** The thread sleeps; an interrupt (the server stopping) ends the sleep early, as a signal does in PHP. */
+    @TruffleBoundary
+    private static void sleepNanos(long nanos) {
+        try {
+            Thread.sleep(nanos / 1_000_000L, (int) (nanos % 1_000_000L));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     @TruffleBoundary
     private static Object count(Object value, long mode) {
         if (value instanceof PhpArray array) {
@@ -359,10 +447,60 @@ final class CoreFunctions {
         return Str.lower(text.startsWith("\\") ? text.substring(1) : text);
     }
 
-    private static boolean classExists(PhpContext context, TruffleString name, boolean wantInterface,
-                                       boolean autoload) {
+    /** The names zend_assert_valid_class_name refuses (reserved_class_names), unqualified, in lower case. */
+    private static final java.util.Set<String> RESERVED_CLASS_NAMES = java.util.Set.of("bool", "false", "float",
+            "int", "null", "parent", "self", "static", "string", "true", "void", "never", "iterable", "object", "mixed",
+            "array", "callable");
+
+    /**
+     * class_alias(): the class (autoloaded unless told not to) under one more name. A name in use warns as
+     * zend_class_redeclaration_error_ex does, naming the aliased class's declaration; a reserved one is a compile
+     * error.
+     */
+    @TruffleBoundary
+    private static boolean classAlias(PhpContext context, TruffleString className, TruffleString aliasName,
+                                      boolean autoload) {
+        String name = Str.java(className);
+        PhpClass phpClass = autoload ? context.findClassAutoloading(name) : context.findClass(lowerName(className));
+        if (phpClass == null) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Class \"" + name + "\" not found"),
+                    pl.codeloom.php.runtime.SourceLocation.current());
+            return false;
+        }
+        String alias = Str.java(aliasName);
+        String lowerAlias = lowerName(aliasName);
+        if (RESERVED_CLASS_NAMES.contains(lowerAlias.substring(lowerAlias.lastIndexOf('\\') + 1))) {
+            throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Cannot use \"" + lowerAlias
+                    + "\" as a class alias as it is reserved"), pl.codeloom.php.runtime.SourceLocation.current(), 0);
+        }
+        if (lowerAlias.equals("_")) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED,
+                    Str.of("Using \"_\" as a class alias is deprecated since 8.4"),
+                    pl.codeloom.php.runtime.SourceLocation.current());
+        }
+        if (context.declareAlias(lowerAlias, phpClass)) {
+            return true;
+        }
+        Kind kind = kindOf(phpClass);
+        String type = kind == Kind.TRAIT ? "trait" : kind == Kind.INTERFACE ? "interface" : "class";
+        pl.codeloom.php.runtime.SourceLocation declared = phpClass.getDeclaration()
+                instanceof pl.codeloom.php.runtime.ClassTemplate template ? template.getDeclaredAt() : null;
+        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Cannot redeclare " + type + " " + alias
+                + (declared == null ? "" : " (previously declared in " + declared.file() + ":" + declared.line() + ")")),
+                pl.codeloom.php.runtime.SourceLocation.current());
+        return false;
+    }
+
+    /** class_exists_impl: the class, interface or trait under the name, which only the asked kind satisfies. */
+    private static boolean classExists(PhpContext context, TruffleString name, Kind kind, boolean autoload) {
         PhpClass phpClass = autoload ? context.findClassAutoloading(Str.java(name)) : context.findClass(lowerName(name));
-        return phpClass != null && phpClass.isInterface() == wantInterface;
+        return phpClass != null && kindOf(phpClass) == kind;
+    }
+
+    private static Kind kindOf(PhpClass phpClass) {
+        boolean trait = phpClass.getDeclaration() instanceof pl.codeloom.php.runtime.ClassTemplate template
+                && template.isTrait();
+        return trait ? Kind.TRAIT : phpClass.isInterface() ? Kind.INTERFACE : Kind.CLASS;
     }
 
     /** get_defined_functions()' lists: names in lowercase, as php-src keys its function table. */
@@ -381,12 +519,9 @@ final class CoreFunctions {
     @TruffleBoundary
     private static PhpArray classNames(PhpContext context, Kind kind) {
         PhpArray names = new PhpArray();
-        for (PhpClass phpClass : context.declaredClasses()) {
-            boolean trait = phpClass.getDeclaration() instanceof pl.codeloom.php.runtime.ClassTemplate template
-                    && template.isTrait();
-            Kind of = trait ? Kind.TRAIT : phpClass.isInterface() ? Kind.INTERFACE : Kind.CLASS;
-            if (of == kind) {
-                names.append(Str.of(phpClass.getName()));
+        for (java.util.Map.Entry<String, PhpClass> entry : context.declaredClasses()) {
+            if (kindOf(entry.getValue()) == kind) {
+                names.append(Str.of(entry.getKey()));
             }
         }
         return names;
@@ -396,7 +531,8 @@ final class CoreFunctions {
     private static boolean hasDeclared(PhpClass phpClass, String name) {
         for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
             if (decl.name().equals(name)) {
-                return true;
+                return decl.visibility() != PhpClass.PropertyDecl.PRIVATE || decl.declaringClass() == null
+                        || decl.declaringClass().equals(phpClass.getLowerName());
             }
         }
         return phpClass.getStaticProperty(name) != null;
@@ -418,16 +554,61 @@ final class CoreFunctions {
         return System.identityHashCode(value);
     }
 
-    private static boolean isA(PhpContext context, Object value, TruffleString className, boolean allowString) {
-        String lower = lowerName(className);
-        if (value instanceof PhpObject object) {
-            return object.getPhpClass().isSubclassOf(lower);
-        }
+    /**
+     * is_a_impl: is_a() and is_subclass_of(). A class name given as the value (allow_string) is autoloaded, the
+     * class tested against isn't; is_subclass_of() is false for the class itself.
+     */
+    private static boolean isA(PhpContext context, Object value, TruffleString className, boolean allowString,
+                               boolean onlySubclass) {
+        PhpClass instance;
         if (allowString && value instanceof TruffleString name) {
-            PhpClass phpClass = context.findClass(lowerName(name));
-            return phpClass != null && phpClass.isSubclassOf(lower);
+            instance = context.findClassAutoloading(Str.java(name));
+            if (instance == null) {
+                return false;
+            }
+        } else if (value instanceof PhpObject object) {
+            instance = object.getPhpClass();
+        } else if (value instanceof PhpClosure) {
+            instance = context.findClass("closure");
+        } else {
+            return false;
         }
-        return false;
+        if (!onlySubclass && instance.getName().equals(Str.java(className))) {
+            return true;
+        }
+        PhpClass target = context.findClass(lowerName(className));
+        if (target == null || onlySubclass && target == instance) {
+            return false;
+        }
+        return instance.isSubclassOf(target.getLowerName());
+    }
+
+    /**
+     * method_exists(): a class name is autoloaded (zend_lookup_class); a parent's private method isn't the named
+     * class's, while an object has every method it has; Closure has __invoke.
+     */
+    @TruffleBoundary
+    private static boolean methodExists(PhpContext context, Object target, TruffleString methodName) {
+        PhpClass phpClass;
+        if (target instanceof PhpObject object) {
+            phpClass = object.getPhpClass();
+        } else if (target instanceof PhpClosure) {
+            phpClass = context.findClass("closure");
+        } else if (target instanceof TruffleString name) {
+            phpClass = context.findClassAutoloading(Str.java(name));
+            if (phpClass == null) {
+                return false;
+            }
+        } else {
+            throw Args.typeError("method_exists", 1, "object_or_class", "object|string", target);
+        }
+        String lower = Str.lower(Str.java(methodName));
+        PhpFunction method = phpClass.findMethod(lower);
+        if (method != null) {
+            return !(target instanceof TruffleString) || (method.getModifiers() & PhpFunction.ACC_PRIVATE) == 0
+                    || phpClass.getName().equals(method.getClassName());
+        }
+        return phpClass.getLowerName().equals("closure") && lower.equals("__invoke");
     }
 
     @TruffleBoundary

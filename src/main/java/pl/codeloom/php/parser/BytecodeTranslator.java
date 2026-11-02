@@ -2008,6 +2008,10 @@ public final class BytecodeTranslator {
         private void globalConstant(Ast node) {
             Ast nameNode = node.node("name");
             String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
+            if (language.builtins().deprecation(resolved[1] != null ? resolved[1] : resolved[0]) != null) {
+                // the tree's DeprecatedConstNode raises the deprecation at every fetch; no operation here does
+                throw new Unsupported("deprecated constant", node);
+            }
             b.emitGlobalConstant(resolved[0], language.constantId(resolved[0]),
                     resolved[1] == null ? -1 : language.constantId(resolved[1]));
         }
@@ -2690,7 +2694,7 @@ public final class BytecodeTranslator {
                     }
                     return true;
                 }
-                case "compact", "extract", "get_object_vars", "get_defined_vars" ->
+                case "func_get_arg", "compact", "extract", "get_object_vars", "get_defined_vars" ->
                         throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;

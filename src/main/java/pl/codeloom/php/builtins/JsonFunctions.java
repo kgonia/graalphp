@@ -478,6 +478,8 @@ final class JsonFunctions {
                 array(array);
             } else if (value instanceof PhpObject object) {
                 object(object);
+            } else if (value instanceof pl.codeloom.php.runtime.PhpClosure) {
+                ascii("{}"); // an object without properties
             } else {
                 error = ERROR_UNSUPPORTED_TYPE;
                 ascii("null");

@@ -1,0 +1,7 @@
+{
+  "resources": [
+    {
+      "glob": "pl/codeloom/php/prelude/*"
+    }
+  ]
+}

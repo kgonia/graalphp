@@ -226,6 +226,8 @@ public final class HttpMain {
                 .allowExperimentalOptions(true)
                 .allowEnvironmentAccess(EnvironmentAccess.NONE)
                 .environment(cgiEnvironment(exchange, script, scriptName, body.length))
+                // a web SAPI runs the script in its directory (php_execute_script's VCWD_CHDIR_FILE)
+                .currentWorkingDirectory(script.getParent())
                 .in(new ByteArrayInputStream(body))
                 .out(out)
                 .option("php.Sapi", "cgi")

@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 
 /**
@@ -18,6 +19,8 @@ public final class PhpError extends PhpThrowable {
     private final String phpClass;
     /** The message without the class; getMessage() is what an uncaught error prints, "TypeError: ...". */
     private final String phpMessage;
+    /** The message's bytes when they aren't phpMessage's UTF-8 (a message quoting a PHP string), else null. */
+    private final transient TruffleString messageBytes;
     private final long code;
     /** The calls leading to where the error was raised. */
     private final transient PhpArray trace;
@@ -41,9 +44,19 @@ public final class PhpError extends PhpThrowable {
     }
 
     public PhpError(String phpClass, String message, long code) {
+        this(phpClass, message, null, code);
+    }
+
+    /** An error whose message is a byte string: the object's message has those bytes, valid UTF-8 or not. */
+    public PhpError(String phpClass, TruffleString message) {
+        this(phpClass, Str.java(message), message, 0);
+    }
+
+    private PhpError(String phpClass, String message, TruffleString messageBytes, long code) {
         super(fullMessage(phpClass, message));
         this.phpClass = phpClass;
         this.phpMessage = message;
+        this.messageBytes = messageBytes;
         this.code = code;
         this.trace = Backtrace.forThrowable();
     }
@@ -72,6 +85,17 @@ public final class PhpError extends PhpThrowable {
     public PhpError locatedAt(SourceLocation location) {
         statement = location;
         return this;
+    }
+
+    /**
+     * Places an error that hasn't left any user code at the location given: a built-in that holds on to an error
+     * (a pending exception it chains the next one to) asks for the object before the error surfaces.
+     */
+    @TruffleBoundary
+    public void placeIfUnplaced(SourceLocation location) {
+        if (origin == null && statement == null) {
+            statement = location;
+        }
     }
 
     /** Records the statement of user code the error surfaced in, unless an inner one already did. */
@@ -110,7 +134,7 @@ public final class PhpError extends PhpThrowable {
         if (throwable == null) {
             PhpObject object = context.getClass(phpClass)
                     .instantiate(location(), trace);
-            object.setProperty("message", Str.of(phpMessage));
+            object.setProperty("message", messageBytes != null ? messageBytes : Str.of(phpMessage));
             if (code != 0) {
                 object.setProperty("code", code);
             }

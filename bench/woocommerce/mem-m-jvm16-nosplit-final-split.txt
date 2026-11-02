@@ -1,0 +1,21 @@
+RssAnon             1032 MB
+  heap_live          165 MB
+  heap_garbage        75 MB
+  compiled_code      295 MB
+  jvm_runtime        139 MB
+  malloc_kept         77 MB
+  untracked          281 MB
+factors:
+  heap_ast            14 MB
+  heap_code           56 MB
+  heap_values          6 MB
+  heap_other          89 MB
+  heap_garbage        75 MB
+  machine_code       131 MB
+  code_metadata      164 MB
+  gc                  67 MB
+  class_metadata      44 MB
+  threads              5 MB
+  jvm_other           23 MB
+  untracked          281 MB
+  malloc_kept         77 MB

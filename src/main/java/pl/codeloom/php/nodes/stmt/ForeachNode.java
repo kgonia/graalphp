@@ -217,9 +217,12 @@ public final class ForeachNode extends StmtNode {
         notIterable(this, value);
     }
 
-    /** notIterable for a loop at site. */
+    /** notIterable for a loop at site. A Closure is an object without properties: the loop runs no times, quietly. */
     @TruffleBoundary
     public static void notIterable(Node site, Object value) {
+        if (value instanceof pl.codeloom.php.runtime.PhpClosure) {
+            return;
+        }
         String type = value instanceof Boolean b ? (b ? "true" : "false") : Convert.debugType(value);
         ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING,
                 Str.of("foreach() argument must be of type array|object, " + type + " given"), SourceLocation.of(site));

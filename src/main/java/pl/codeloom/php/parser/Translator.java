@@ -19,6 +19,7 @@ import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.ClosureNode;
 import pl.codeloom.php.nodes.call.DynamicMethodCallNode;
+import pl.codeloom.php.nodes.call.FrameArgNode;
 import pl.codeloom.php.nodes.call.FrameArgsNode;
 import pl.codeloom.php.nodes.call.FunctionCallNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
@@ -653,6 +654,20 @@ public final class Translator {
                 () -> timedBody(kind, () -> translateBody(node, owner, self[0], name, params, new String[0],
                         new boolean[0], declaredNames)));
         self[0].setDeclaredAt(declaredAt(node));
+        int modifiers = 0;
+        if (owner != null) {
+            // a method without a visibility modifier is public; an interface's methods are abstract
+            modifiers = flags & (PhpFunction.ACC_PUBLIC | PhpFunction.ACC_PROTECTED | PhpFunction.ACC_PRIVATE
+                    | PhpFunction.ACC_STATIC | PhpFunction.ACC_FINAL | PhpFunction.ACC_ABSTRACT);
+            if ((modifiers & 7) == 0) {
+                modifiers |= PhpFunction.ACC_PUBLIC;
+            }
+            if (isAbstract) {
+                modifiers |= PhpFunction.ACC_ABSTRACT;
+            }
+        }
+        self[0].setDeclaration(modifiers, typeString(node.node("returnType"), false),
+                node.get("docComment") instanceof String doc ? doc : null, node.endLine);
         return self[0];
     }
 
@@ -665,9 +680,123 @@ public final class Translator {
             boolean nullable = isNullable(type) || isNullConstant(defaultValue);
             params[i] = new PhpFunction.Param((String) param.get("name"), (param.flags & PARAM_REF) != 0,
                     (param.flags & PARAM_VARIADIC) != 0, defaultValue == null ? null : (Object) Boolean.TRUE,
-                    coerceType(type), nullable);
+                    coerceType(type), nullable, typeString(type, isNullConstant(defaultValue)));
         }
         return params;
+    }
+
+    // the type bits, in zend_type_to_string's order of the built-in types
+    private static final int TYPE_STATIC = 1;
+    private static final int TYPE_CALLABLE = 2;
+    private static final int TYPE_ITERABLE = 4;
+    private static final int TYPE_OBJECT = 8;
+    private static final int TYPE_ARRAY = 16;
+    private static final int TYPE_STRING = 32;
+    private static final int TYPE_INT = 64;
+    private static final int TYPE_FLOAT = 128;
+    private static final int TYPE_FALSE = 256;
+    private static final int TYPE_TRUE = 512;
+    private static final int TYPE_VOID = 1024;
+    private static final int TYPE_NEVER = 2048;
+    private static final int TYPE_NULL = 4096;
+    private static final int TYPE_MIXED = 8192;
+    private static final String[] TYPE_KEYWORDS = {"static", "callable", "iterable", "object", "array", "string",
+        "int", "float"};
+
+    /**
+     * A declared type as zend_type_to_string writes it: the class names (and bracketed intersections) as written,
+     * resolved, then the built-in types in php-src's order, with null as "?T" when the rest is one type. self and
+     * parent stay as written (Reflection resolves them against the declaring class). impliedNull: a parameter
+     * whose default is null, which php-src makes nullable.
+     */
+    String typeString(Ast type, boolean impliedNull) {
+        if (type == null) {
+            return null;
+        }
+        List<String> classes = new ArrayList<>();
+        int mask = typeParts(type, classes, impliedNull ? TYPE_NULL : 0);
+        if ((mask & TYPE_MIXED) != 0) {
+            return "mixed";
+        }
+        List<String> parts = new ArrayList<>(classes);
+        for (int bit = 0; bit < TYPE_KEYWORDS.length; bit++) {
+            if ((mask & (1 << bit)) != 0) {
+                parts.add(TYPE_KEYWORDS[bit]);
+            }
+        }
+        if ((mask & (TYPE_FALSE | TYPE_TRUE)) == (TYPE_FALSE | TYPE_TRUE)) {
+            parts.add("bool");
+        } else if ((mask & TYPE_FALSE) != 0) {
+            parts.add("false");
+        } else if ((mask & TYPE_TRUE) != 0) {
+            parts.add("true");
+        }
+        if ((mask & TYPE_VOID) != 0) {
+            parts.add("void");
+        }
+        if ((mask & TYPE_NEVER) != 0) {
+            parts.add("never");
+        }
+        String text = String.join("|", parts);
+        if ((mask & TYPE_NULL) == 0) {
+            return text;
+        }
+        if (text.isEmpty()) {
+            return "null";
+        }
+        return parts.size() == 1 && text.indexOf('&') < 0 ? "?" + text : text + "|null";
+    }
+
+    private int typeParts(Ast type, List<String> classes, int mask) {
+        switch (type.kind) {
+            case "AST_NULLABLE_TYPE":
+                return typeParts(type.node("type"), classes, mask | TYPE_NULL);
+            case "AST_TYPE_UNION": {
+                int union = mask;
+                for (Object child : type.children()) {
+                    Ast part = (Ast) child;
+                    if (part.is("AST_TYPE_INTERSECTION")) {
+                        classes.add("(" + intersection(part) + ")");
+                    } else {
+                        union = typeParts(part, classes, union);
+                    }
+                }
+                return union;
+            }
+            case "AST_TYPE_INTERSECTION":
+                classes.add(intersection(type));
+                return mask;
+            case "AST_TYPE":
+                return mask | switch (type.flags) {
+                    case 1 -> TYPE_NULL;
+                    case 2 -> TYPE_FALSE;
+                    case 3 -> TYPE_TRUE;
+                    case 4 -> TYPE_INT;
+                    case 5 -> TYPE_FLOAT;
+                    case 6 -> TYPE_STRING;
+                    case 7 -> TYPE_ARRAY;
+                    case 8 -> TYPE_OBJECT;
+                    case 12 -> TYPE_CALLABLE;
+                    case 13 -> TYPE_ITERABLE;
+                    case 14 -> TYPE_VOID;
+                    case 15 -> TYPE_STATIC;
+                    case 16 -> TYPE_MIXED;
+                    case 17 -> TYPE_NEVER;
+                    case 18 -> TYPE_FALSE | TYPE_TRUE;
+                    default -> 0;
+                };
+            default:
+                classes.add(className(type));
+                return mask;
+        }
+    }
+
+    private String intersection(Ast type) {
+        List<String> parts = new ArrayList<>();
+        for (Object child : type.children()) {
+            parts.add(className((Ast) child));
+        }
+        return String.join("&", parts);
     }
 
     static boolean isNullable(Ast type) {
@@ -853,6 +982,9 @@ public final class Translator {
                 (node.flags & MODIFIER_STATIC) != 0, true, false,
                 () -> timedBody(Phases.CLOSURE, () -> translateBody(node, owner, self[0], name, params, names, byRef,
                         declaredNames)));
+        self[0].setDeclaredAt(declaredAt(node));
+        self[0].setDeclaration(0, typeString(node.node("returnType"), false),
+                node.get("docComment") instanceof String doc ? doc : null, node.endLine);
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
@@ -929,6 +1061,7 @@ public final class Translator {
         ClassTemplate template = new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members,
                 unsupported);
         template.setDeclaredAt(declaredAt(node));
+        template.setDeclaration(node.flags, node.get("docComment") instanceof String doc ? doc : null, node.endLine);
         return template;
     }
 
@@ -946,7 +1079,10 @@ public final class Translator {
             }
             return members;
         };
-        return new ClassTemplate(name, null, List.of(), false, true, List.of(), null, body);
+        ClassTemplate template = new ClassTemplate(name, null, List.of(), false, true, List.of(), null, body);
+        template.setDeclaredAt(declaredAt(node));
+        template.setDeclaration(node.flags, node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        return template;
     }
 
     private ClassTemplate.TraitUse traitUse(Ast node) {
@@ -1774,6 +1910,11 @@ public final class Translator {
             default:
                 break;
         }
+        String deprecation = language.builtins().deprecation(name);
+        if (deprecation != null) {
+            return new ConstantNodes.DeprecatedConstNode(resolved[0], language.constantId(resolved[0]),
+                    resolved[1] == null ? -1 : language.constantId(resolved[1]), deprecation, node.line);
+        }
         // a predefined constant folds where the name can't mean a namespace's own (`namespace N; const INI_ALL = 0;`)
         Object known = resolved[1] == null ? language.builtins().constant(name) : null;
         if (known != null) {
@@ -1952,6 +2093,23 @@ public final class Translator {
                 return new FrameArgsNode(false);
             case "func_num_args":
                 return new FrameArgsNode(true);
+            case "func_get_arg": {
+                ExprNode[] positionArgs = expressionList(args);
+                if (positionArgs.length != 1) {
+                    break;
+                }
+                int[] paramSlots = null;
+                if (scope != null && function != null) {
+                    List<Integer> slots = new ArrayList<>();
+                    for (PhpFunction.Param param : function.getParams()) {
+                        if (!param.variadic()) {
+                            slots.add(scope.slot(param.name()));
+                        }
+                    }
+                    paramSlots = slots.stream().mapToInt(Integer::intValue).toArray();
+                }
+                return new FrameArgNode(positionArgs[0], paramSlots);
+            }
             // a name resolved at compile time is compiled into the call itself (zend_compile_func_cuf), whose
             // result is the callee's; the built-in function, called by a name resolved at run time, returns a value
             case "call_user_func": {
@@ -1991,8 +2149,12 @@ public final class Translator {
                 if (extractArgs.length == 0) {
                     break;
                 }
+                if (scope != null && scope.includeScopeSlot < 0) {
+                    scope.includeScopeSlot = hiddenSlot("includeScope");
+                }
                 return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
-                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots);
+                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots,
+                        scope == null ? -1 : scope.includeScopeSlot, lexicalClass());
             }
             case "get_object_vars": {
                 ExprNode[] objectArgs = expressionList(args);

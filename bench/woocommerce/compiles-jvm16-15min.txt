@@ -1,0 +1,80 @@
+events: {'queued': 16042, 'start': 12395, 'done': 12346, 'deopt': 179, 'unque.': 3714, 'inval.': 90, 'failed': 3}
+compilations by tier: {'1': 10625, '2': 1721}
+call targets compiled: 10482; compiled more than once: 1690; compilations of those: 3554
+per minute (compilations, compile ms):
+  2026-11-02T06:52   354    47057
+  2026-11-02T06:53   846   173399
+  2026-11-02T06:54  1358   153482
+  2026-11-02T06:55  1488   169361
+  2026-11-02T06:56   727   109619
+  2026-11-02T06:57   767   109198
+  2026-11-02T06:58  1232    44537
+  2026-11-02T06:59  2108    71584
+  2026-11-02T07:00   240    77237
+  2026-11-02T07:01   435   113513
+  2026-11-02T07:02   729   166177
+  2026-11-02T07:03   410   167759
+  2026-11-02T07:04   874   165049
+  2026-11-02T07:05   324   173337
+  2026-11-02T07:06   329   165482
+  2026-11-02T07:07   125   132293
+most compiled (25):
+   462 WC_Data::get_prop
+   165 absint
+   139 esc_attr
+   129 WC_Data::set_prop
+    96 wp_parse_args
+    67 Automattic\WooCommerce\Blocks\Registry\SharedType::get
+    67 Automattic\WooCommerce\Blocks\Registry\Container::get
+    55 is_wp_error
+    54 WP_HTML_Tag_Processor::next_token
+    49 block_has_support
+    46 WP_HTML_Tag_Processor::next_tag
+    44 wp_get_theme
+    44 WC_Settings_API::get_option
+    42 WC_Product::get_status
+    41 WC_Product::get_parent_id
+    38 wp_should_skip_block_supports_serialization
+    38 wp_parse_url
+    38 WC_Product::get_stock_status
+    38 WC_Settings_API::get_form_fields
+    37 WC_Product::get_manage_stock
+    37 WC_Product::managing_stock
+    37 WC_Product::is_type
+    36 WP_Object_Cache::_exists
+    36 WC_Product::get_price
+    36 wp_is_block_theme
+invalidations / deoptimizations by reason:
+     149 deopt uncommon trap
+      70 inval. Profiled Argument Types
+      18 deopt Unknown
+      12 deopt JVMCI invalidate
+      11 inval. Profiled Return Type
+       6 inval. typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[2][final=false][type=!pl.codeloom.php.runtime.PhpArray]
+       3 inval. validRootAssumption Split call node
+most invalidated (25):
+     25 WP_Hook::apply_filters
+     23 apply_filters
+     19 _wp_filter_build_unique_id
+     18 add_filter
+     11 WP_Hook::add_filter
+      9 WP_Object_Cache::_exists
+      7 WP_Object_Cache::get
+      6 do_action
+      6 wpdb::query
+      5 maybe_unserialize
+      4 WP_Post_Type::set_props
+      4 get_option
+      4 _wp_array_get
+      4 wp_replace_in_html_tags
+      3 _get_custom_object_labels
+      3 wp_load_alloptions
+      3 is_serialized
+      3 WP_Dependencies::add
+      3 register_block_type_from_metadata
+      3 update_object_term_cache
+      2 wc_translate_user_roles
+      2 WP_Object_Cache::is_valid_key
+      2 WC_Data::set_props
+      2 WP_HTML_Tag_Processor::after_tag
+      2 sanitize_term

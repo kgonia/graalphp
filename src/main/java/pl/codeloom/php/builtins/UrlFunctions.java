@@ -32,14 +32,14 @@ final class UrlFunctions {
 
     private static final String[] COMPONENTS = {"scheme", "host", "port", "user", "pass", "path", "query",
             "fragment"};
-    private static final int SCHEME = 0;
-    private static final int HOST = 1;
-    private static final int PORT = 2;
-    private static final int USER = 3;
-    private static final int PASS = 4;
-    private static final int PATH = 5;
-    private static final int QUERY = 6;
-    private static final int FRAGMENT = 7;
+    static final int SCHEME = 0;
+    static final int HOST = 1;
+    static final int PORT = 2;
+    static final int USER = 3;
+    static final int PASS = 4;
+    static final int PATH = 5;
+    static final int QUERY = 6;
+    static final int FRAGMENT = 7;
 
     /** parse_url: a port of php-src's php_url_parse_ex2 and PHP_FUNCTION(parse_url). */
     @TruffleBoundary
@@ -140,7 +140,7 @@ final class UrlFunctions {
      * php_url_parse_ex2: the components in COMPONENTS order (null where absent; the port a Long), or null when
      * the URL is seriously malformed.
      */
-    private static Object[] parse(byte[] str) {
+    static Object[] parse(byte[] str) {
         Object[] ret = new Object[8];
         int ue = str.length;
         int s = 0;

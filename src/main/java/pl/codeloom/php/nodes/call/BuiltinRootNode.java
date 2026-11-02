@@ -49,9 +49,15 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         return body.call(arguments);
     }
 
-    /** A method in the class that declares it (the topmost one with this implementation), as php-src's scope. */
+    /**
+     * A method in the class that declares it (the topmost one with this implementation), as php-src's scope. The
+     * prelude's helpers (namespace Truffle) are part of the internal function that called them: no entry.
+     */
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
+        if (name.regionMatches(true, 0, "truffle\\", 0, "truffle\\".length())) {
+            return false;
+        }
         Object[] arguments = frame.getArguments();
         PhpObject self = method && arguments[PhpFunction.ARG_THIS] instanceof PhpObject object ? object : null;
         String className = null;

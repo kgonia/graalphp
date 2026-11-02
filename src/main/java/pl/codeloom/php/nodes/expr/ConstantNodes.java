@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
@@ -17,6 +18,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
@@ -41,6 +43,56 @@ public final class ConstantNodes {
         @Override
         public Object execute(VirtualFrame frame) {
             return lookup.execute();
+        }
+    }
+
+    /**
+     * A deprecated predefined constant (#[\Deprecated], CONST_DEPRECATED): not folded, as php-src doesn't evaluate
+     * one at compile time, and every fetch of it raises its deprecation, at the fetch's own line (a parameter's
+     * default has no statement around it). In a namespace the name finds the namespace's own constant first, which
+     * isn't deprecated.
+     */
+    public static final class DeprecatedConstNode extends ExprNode {
+        private final String name;
+        /** The name's id: the predefined constant's, or with a fallback the namespace's constant's. */
+        private final int id;
+        /** The predefined constant's id when the name is a namespace's unqualified one, else -1. */
+        private final int fallbackId;
+        private final TruffleString deprecation;
+        private final int line;
+
+        public DeprecatedConstNode(String name, int id, int fallbackId, String deprecation, int line) {
+            this.name = name;
+            this.id = id;
+            this.fallbackId = fallbackId;
+            this.deprecation = Str.of(deprecation);
+            this.line = line;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return fetch();
+        }
+
+        @CompilerDirectives.TruffleBoundary
+        private Object fetch() {
+            PhpContext context = PhpContext.get(this);
+            Object value = context.constantAt(id);
+            if (value != null && fallbackId >= 0) {
+                return value;
+            }
+            if (value == null && fallbackId >= 0) {
+                value = context.constantAt(fallbackId);
+            }
+            if (value == null) {
+                throw new PhpError("Undefined constant \"" + name + "\"");
+            }
+            SourceLocation at = SourceLocation.of(this);
+            if (SourceLocation.isUserCode(getRootNode())) {
+                at = new SourceLocation(at.file(), line);
+            }
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, deprecation, at);
+            return value;
         }
     }
 

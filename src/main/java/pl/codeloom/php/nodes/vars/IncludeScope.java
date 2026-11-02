@@ -3,6 +3,8 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
@@ -39,6 +41,28 @@ public final class IncludeScope {
     /** php-src gives an included op_array the including function's scope (ZEND_INCLUDE_OR_EVAL). */
     public String classScope() {
         return classScope;
+    }
+
+    /**
+     * The call's scope, made the first time the call needs it (an include, or extract() of a name the function
+     * has no slot for) and kept in the call's frame at scopeSlot. lexicalClass: the class (lowercase) the function
+     * is written in; a closure's scope is the class it is bound to.
+     */
+    public static IncludeScope forCall(VirtualFrame frame, int scopeSlot, Map<String, Integer> slots,
+                                       String lexicalClass) {
+        if (frame.isObject(scopeSlot) && frame.getObject(scopeSlot) instanceof IncludeScope scope) {
+            return scope;
+        }
+        String classScope = frame.getArguments()[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure
+                ? closure.getScope() == null ? null : closure.getScope().getLowerName() : lexicalClass;
+        IncludeScope scope = newScope(frame.materialize(), slots, classScope);
+        FrameSlots.setObject(frame, scopeSlot, scope);
+        return scope;
+    }
+
+    @TruffleBoundary
+    private static IncludeScope newScope(MaterializedFrame frame, Map<String, Integer> slots, String classScope) {
+        return new IncludeScope(frame, slots, classScope);
     }
 
     /** The scope a file's top-level code runs in: null in the global scope. */

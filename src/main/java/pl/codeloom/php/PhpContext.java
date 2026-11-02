@@ -61,6 +61,8 @@ public final class PhpContext {
     private PhpFunction[] functionSlots = new PhpFunction[256];
     /** The declared classes by lowercase name, in declaration order, as php-src's class table. */
     private final Map<String, PhpClass> classes = new java.util.LinkedHashMap<>();
+    /** The keys of {@link #classes} that class_alias() made (php-src's IS_ALIAS_PTR entries), to their class. */
+    private final Map<String, PhpClass> classAliases = new HashMap<>();
     /** How many of the first functions and classes declared are the built-ins (the prelude's come later). */
     private final int internalFunctions;
     private final int internalClasses;
@@ -111,7 +113,12 @@ public final class PhpContext {
         globalRef("argv").set(argv);
         globalRef("argc").set((long) argv.size());
         response = cgi ? new pl.codeloom.php.builtins.CgiSapi.Response() : null;
+        if (response != null && builtinState.ini().isOn("expose_php")) {
+            // php_request_startup: SAPI_PHP_VERSION_HEADER, which header_remove() can take away
+            response.header("X-Powered-By: PHP/" + Builtins.PHP_VERSION, true, 0);
+        }
         requestBody = cgi ? readRequestBody(env) : new byte[0];
+        builtinState.startupErrors(this, cgi);
         superglobals(argv);
         if (cgi) {
             pl.codeloom.php.builtins.CgiSapi.installRequest(this, env.getEnvironment(), requestBody);
@@ -154,7 +161,7 @@ public final class PhpContext {
         for (Map.Entry<String, String> variable : new java.util.TreeMap<>(env.getEnvironment()).entrySet()) {
             server.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(variable.getKey())), Str.of(variable.getValue()));
         }
-        long millis = System.currentTimeMillis();
+        long micros = pl.codeloom.php.runtime.WallClock.micros();
         if (response == null) {
             String script = argv.size() > 0 ? Str.java((TruffleString) argv.get(0L)) : "";
             server.put(Str.of("PHP_SELF"), Str.of(script));
@@ -163,18 +170,19 @@ public final class PhpContext {
             server.put(Str.of("PATH_TRANSLATED"), Str.of(script));
             server.put(Str.of("DOCUMENT_ROOT"), Str.EMPTY);
         }
-        server.put(Str.of("REQUEST_TIME_FLOAT"), millis / 1000.0);
-        server.put(Str.of("REQUEST_TIME"), millis / 1000);
+        server.put(Str.of("REQUEST_TIME_FLOAT"), micros / 1e6);
+        server.put(Str.of("REQUEST_TIME"), micros / 1_000_000);
         if (response == null) {
             server.put(Str.of("argv"), argv);
             server.put(Str.of("argc"), (long) argv.size());
         }
-        globalRef("_SERVER").set(server);
         for (String name : SUPERGLOBALS) {
             if (!name.equals("_SERVER") && !name.equals("_SESSION")) {
                 globalRef(name).set(new PhpArray());
             }
         }
+        globalRef("_SERVER").set(builtinState.requestGlobals(this, server, (PhpArray) globalRef("_ENV").get(),
+                response != null));
     }
 
     public static PhpContext get(Node node) {
@@ -384,21 +392,24 @@ public final class PhpContext {
      * order. Anonymous classes are listed once declared, where php-src binds them at compile time.
      */
     @TruffleBoundary
-    public List<PhpClass> declaredClasses() {
+    public List<Map.Entry<String, PhpClass>> declaredClasses() {
         for (String file : language.preludeFiles()) {
             if (preludeLoaded.add(file)) {
                 language.preludeRoot(file).getCallTarget().call(new Object[PhpFunction.ARG_FIRST]);
             }
         }
-        List<PhpClass> internal = new java.util.ArrayList<>();
-        List<PhpClass> user = new java.util.ArrayList<>();
+        List<Map.Entry<String, PhpClass>> internal = new java.util.ArrayList<>();
+        List<Map.Entry<String, PhpClass>> user = new java.util.ArrayList<>();
         int index = 0;
-        for (PhpClass phpClass : classes.values()) {
-            boolean builtin = index++ < internalClasses || language.preludeFile(phpClass.getLowerName()) != null;
+        for (Map.Entry<String, PhpClass> entry : classes.entrySet()) {
+            PhpClass phpClass = entry.getValue();
+            // an alias is listed by its key, in lower case (get_declared_class_impl)
+            String name = classAliases.containsKey(entry.getKey()) ? entry.getKey() : phpClass.getName();
+            boolean builtin = index++ < internalClasses || language.preludeFile(entry.getKey()) != null;
             if (!builtin) {
-                user.add(phpClass);
+                user.add(Map.entry(name, phpClass));
             } else if (!isRuntimeHelper(phpClass.getName())) {
-                internal.add(phpClass);
+                internal.add(Map.entry(name, phpClass));
             }
         }
         internal.addAll(user);
@@ -481,12 +492,32 @@ public final class PhpContext {
         if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
+        phpClass.setContextAliases(classAliases);
         phpClass.makeKey(language);
         int id = language.classId(phpClass.getLowerName());
         if (id >= classSlots.length) {
             classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
         }
         classSlots[id] = phpClass;
+    }
+
+    /**
+     * class_alias(): the class under another name too (zend_register_class_alias_ex); false if the name is taken.
+     * The alias is the class itself, so get_class() and ::class keep the class's own name.
+     */
+    @TruffleBoundary
+    public boolean declareAlias(String lowerAlias, PhpClass phpClass) {
+        if (findClass(lowerAlias) != null) {
+            return false;
+        }
+        classes.put(lowerAlias, phpClass);
+        classAliases.put(lowerAlias, phpClass);
+        int id = language.classId(lowerAlias);
+        if (id >= classSlots.length) {
+            classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
+        }
+        classSlots[id] = phpClass;
+        return true;
     }
 
     /** The class declared under a name id (PhpLanguage.classId), or null. */
@@ -744,12 +775,22 @@ public final class PhpContext {
 
     // ---- output ----
 
-    @TruffleBoundary
     public void write(TruffleString s) {
+        write(s, null);
+    }
+
+    /** Output; site: the echo that writes it, where the output starts if it sends the headers (else the call's). */
+    @TruffleBoundary
+    public void write(TruffleString s, com.oracle.truffle.api.nodes.Node site) {
         try {
             if (buffers.isEmpty()) {
+                if (s.isEmpty()) {
+                    // php_output_op: no bytes, no output, and the headers stay unsent
+                    return;
+                }
                 if (response != null && !response.isSent()) {
-                    out.write(response.block());
+                    out.write(response.block(site != null ? pl.codeloom.php.runtime.SourceLocation.of(site)
+                            : outputStartLocation()));
                 }
                 out.write(Str.readBytes(s));
             } else {
@@ -887,11 +928,17 @@ public final class PhpContext {
         return true;
     }
 
+    /** php_output_header's OG(output_start_filename/lineno): the executing PHP code's place, if any runs. */
+    private static pl.codeloom.php.runtime.SourceLocation outputStartLocation() {
+        pl.codeloom.php.runtime.SourceLocation at = pl.codeloom.php.runtime.SourceLocation.current();
+        return at == null || at == pl.codeloom.php.runtime.SourceLocation.UNKNOWN ? null : at;
+    }
+
     @TruffleBoundary
     public void flush() {
         try {
             if (response != null && !response.isSent()) {
-                out.write(response.block());
+                out.write(response.block(outputStartLocation()));
             }
             out.flush();
         } catch (IOException e) {

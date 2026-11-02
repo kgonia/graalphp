@@ -59,7 +59,7 @@ public final class PhpClass {
     private final boolean isInterface;
     private final boolean isAbstract;
     private final Set<String> ancestors = new HashSet<>();
-    private final Map<String, PhpFunction> methods = new HashMap<>();
+    private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
@@ -71,8 +71,16 @@ public final class PhpClass {
     private final List<PhpClass> traits = new ArrayList<>();
     /** The language-level identity inline caches key on; made on first use, once the class is complete. */
     private ClassKey key;
+    /**
+     * The class aliases of the context that declared this class (class_alias(): lowercase alias to its class),
+     * or null; a name test also matches an alias of an ancestor. Kept apart from {@link #ancestors}, which the
+     * class's key fixes for every context.
+     */
+    private Map<String, PhpClass> contextAliases;
     /** The property defaults, evaluated once (declaredDefaults order). */
     private Object[] defaults;
+    /** mangledName's results for the non-public properties, made on first use. */
+    private Map<String, String> mangledNames;
 
     @CompilationFinal private PhpFunction constructor;
 
@@ -139,10 +147,40 @@ public final class PhpClass {
         this.handlers = handlers;
     }
 
-    /** instanceof: this class, a parent, or an implemented interface (lowercase name). */
+    /**
+     * instanceof: this class, a parent, or an implemented interface (lowercase name), under its own name or a
+     * class alias of this context.
+     */
     @TruffleBoundary
     public boolean isSubclassOf(String lowerClassName) {
+        return ancestors.contains(lowerClassName) || isAliasedSubclassOf(lowerClassName);
+    }
+
+    /** {@link #isSubclassOf} by the classes' own names only: what the class's key fixes, in every context. */
+    @TruffleBoundary
+    public boolean isDeclaredSubclassOf(String lowerClassName) {
         return ancestors.contains(lowerClassName);
+    }
+
+    /** Whether the name is a class alias, in this class's context, of this class or an ancestor. */
+    public boolean isAliasedSubclassOf(String lowerClassName) {
+        Map<String, PhpClass> aliases = contextAliases;
+        return aliases != null && aliasedAncestor(aliases, lowerClassName);
+    }
+
+    /** A HashMap's methods stay out of compiled code (native image's runtime compilation refuses them). */
+    @TruffleBoundary
+    private boolean aliasedAncestor(Map<String, PhpClass> aliases, String lowerClassName) {
+        if (aliases.isEmpty()) {
+            return false;
+        }
+        PhpClass target = aliases.get(lowerClassName);
+        return target != null && ancestors.contains(target.lowerName);
+    }
+
+    /** Set when the class is declared in a context: that context's class aliases. */
+    public void setContextAliases(Map<String, PhpClass> aliases) {
+        this.contextAliases = aliases;
     }
 
     public void addInterface(PhpClass iface) {
@@ -182,6 +220,26 @@ public final class PhpClass {
     @TruffleBoundary
     public PhpFunction findMethod(String lowerMethodName) {
         return methods.get(lowerMethodName);
+    }
+
+    /** The methods by lowercase name (own, imported and inherited), for Reflection; read only. */
+    public Map<String, PhpFunction> methods() {
+        return java.util.Collections.unmodifiableMap(methods);
+    }
+
+    /** The interfaces the class implements directly (an interface: those it extends), in declaration order. */
+    public List<PhpClass> directInterfaces() {
+        return java.util.Collections.unmodifiableList(interfaces);
+    }
+
+    /** The traits whose members the class imported, nested ones included, in import order. */
+    public List<PhpClass> traits() {
+        return java.util.Collections.unmodifiableList(traits);
+    }
+
+    /** The class constants by name, in declaration order, unevaluated initializers included; read only. */
+    public java.util.Set<String> constantNames() {
+        return java.util.Collections.unmodifiableSet(constants.keySet());
     }
 
     public PhpFunction getConstructor() {
@@ -296,6 +354,71 @@ public final class PhpClass {
     @TruffleBoundary
     public boolean isDeclaredProperty(String propertyName) {
         return properties.containsKey(propertyName);
+    }
+
+    /** Whether the class declares (or inherits) a static property of the name. */
+    @TruffleBoundary
+    public boolean isStaticProperty(String propertyName) {
+        return staticProperties.containsKey(propertyName);
+    }
+
+    /** Whether the class declares or inherits any property, static or not: php-src's properties_info isn't empty. */
+    public boolean hasPropertyInfo() {
+        return !properties.isEmpty() || !staticProperties.isEmpty();
+    }
+
+    /**
+     * A property's key in php-src's property table (and in serialize(), (array) and get_mangled_object_vars()):
+     * "\0Class\0name" for a private property (Class is the one declaring it), "\0*\0name" for a protected one, the
+     * name itself for a public or undeclared one. Keys are property keys: the bytes as ISO-8859-1 chars.
+     */
+    @TruffleBoundary
+    public String mangledName(String propertyName) {
+        PropertyDecl decl = properties.get(propertyName);
+        if (decl == null || decl.isPublic()) {
+            return propertyName;
+        }
+        if (mangledNames == null) {
+            mangledNames = new HashMap<>();
+        }
+        String mangled = mangledNames.get(propertyName);
+        if (mangled == null) {
+            String scope = decl.visibility() == PropertyDecl.PROTECTED ? "*" : nameKey(declaringClassName(decl));
+            mangled = "\0" + scope + "\0" + propertyName;
+            mangledNames.put(propertyName, mangled);
+        }
+        return mangled;
+    }
+
+    /**
+     * The declared property whose key in php-src's property table is key (see {@link #mangledName}): its name,
+     * or null when key names no declared property's slot.
+     */
+    @TruffleBoundary
+    public String propertyOfMangledName(String key) {
+        if (key.isEmpty() || key.charAt(0) != '\0') {
+            PropertyDecl decl = properties.get(key);
+            return decl != null && decl.isPublic() ? key : null;
+        }
+        String propertyName = key.substring(key.lastIndexOf('\0') + 1);
+        PropertyDecl decl = properties.get(propertyName);
+        return decl != null && !decl.isPublic() && mangledName(propertyName).equals(key) ? propertyName : null;
+    }
+
+    /** The name, as written, of the class declaring the property: this class or an ancestor. */
+    private String declaringClassName(PropertyDecl decl) {
+        for (PhpClass c = this; c != null; c = c.parent) {
+            if (c.lowerName.equals(decl.declaringClass())) {
+                return c.name;
+            }
+        }
+        return name;
+    }
+
+    /** A class name (UTF-8 text) as a property key holds it: its bytes as ISO-8859-1 chars. */
+    public static String nameKey(String className) {
+        return new String(className.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
     @TruffleBoundary

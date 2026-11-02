@@ -43,6 +43,9 @@ import java.util.Map;
  * language ({@link Table}); each new context declares them, the constants and its own instances of the classes.
  */
 public final class Builtins {
+    /** The PHP release this one follows (PHP_VERSION). */
+    public static final String PHP_VERSION = "8.5.12";
+
     private Builtins() {
     }
 
@@ -53,12 +56,14 @@ public final class Builtins {
         private final List<PhpFunction> throwableMethods;
         private final List<PhpFunction> generatorMethods;
         private final List<PhpFunction> closureMethods;
+        private final List<PhpFunction> weakReferenceMethods;
         /** CURLFile's and CURLStringFile's methods; null when libcurl isn't there (no curl extension). */
         private final CurlFunctions.Methods curlMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
                       List<PhpFunction> generatorMethods, List<PhpFunction> closureMethods,
-                      CurlFunctions.Methods curlMethods) {
+                      List<PhpFunction> weakReferenceMethods, CurlFunctions.Methods curlMethods) {
+            this.weakReferenceMethods = weakReferenceMethods;
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
@@ -70,6 +75,12 @@ public final class Builtins {
         /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
         public Object constant(String name) {
             return constants.get(name);
+        }
+
+        /** The deprecation of a deprecated predefined constant (zend_deprecated_constant's message), or null. */
+        public String deprecation(String name) {
+            String why = DEPRECATED_CONSTANTS.get(name);
+            return why == null ? null : "Constant " + name + " is deprecated " + why;
         }
     }
 
@@ -90,6 +101,11 @@ public final class Builtins {
         PasswordFunctions.register(registry);
         FileFunctions.register(registry);
         MysqliFunctions.register(registry);
+        ReflectionFunctions.register(registry);
+        FilterFunctions.register(registry);
+        ExecFunctions.register(registry);
+        MailFunctions.register(registry);
+        DnsFunctions.register(registry);
         // ext/curl is loaded when libcurl is (as an extension php was built without isn't)
         boolean curl = CurlNative.available();
         CurlFunctions.Methods curlMethods = null;
@@ -104,7 +120,8 @@ public final class Builtins {
             PcreFunctions.registerDebug(registry);
         }
         return new Table(constants(curl), List.copyOf(registry.functions()), throwableMethods(registry),
-                generatorMethods(registry), ClosureMethods.methods(registry), curlMethods);
+                generatorMethods(registry), ClosureMethods.methods(registry), WeakReferences.methods(registry),
+                curlMethods);
     }
 
     public static void install(PhpContext context, Table table) {
@@ -117,12 +134,17 @@ public final class Builtins {
         }
     }
 
+    /** The predefined constants #[\Deprecated] marks, with what their deprecation says after the name. */
+    private static final Map<String, String> DEPRECATED_CONSTANTS = Map.of(
+            "FILTER_SANITIZE_STRING", "since 8.1, use htmlspecialchars() instead",
+            "FILTER_SANITIZE_STRIPPED", "since 8.1, use htmlspecialchars() instead");
+
     private static Map<String, Object> constants(boolean curl) {
         Object[][] table = {
                 {"PHP_EOL", Str.of("\n")}, {"PHP_INT_MAX", Long.MAX_VALUE}, {"PHP_INT_MIN", Long.MIN_VALUE},
                 {"PHP_INT_SIZE", 8L}, {"PHP_FLOAT_EPSILON", Math.ulp(1.0)}, {"PHP_FLOAT_MAX", Double.MAX_VALUE},
                 {"PHP_FLOAT_MIN", Double.MIN_NORMAL}, {"INF", Double.POSITIVE_INFINITY}, {"NAN", Double.NaN},
-                {"PHP_VERSION", Str.of("8.5.12")}, {"PHP_MAJOR_VERSION", 8L}, {"PHP_MINOR_VERSION", 5L},
+                {"PHP_VERSION", Str.of(PHP_VERSION)}, {"PHP_MAJOR_VERSION", 8L}, {"PHP_MINOR_VERSION", 5L},
                 {"PHP_RELEASE_VERSION", 12L}, {"PHP_VERSION_ID", 80512L}, {"PHP_OS", Str.of("Linux")},
                 {"PHP_OS_FAMILY", Str.of("Linux")}, {"DIRECTORY_SEPARATOR", Str.of("/")},
                 {"PATH_SEPARATOR", Str.of(":")}, {"M_PI", Math.PI},
@@ -208,6 +230,7 @@ public final class Builtins {
             CurlFunctions.constants(constants);
         }
         SocketFunctions.constants(constants);
+        FilterFunctions.constants(constants);
         return Collections.unmodifiableMap(constants);
     }
 
@@ -220,6 +243,7 @@ public final class Builtins {
         declare(context, "ArrayAccess", null, true);
         declare(context, "Countable", null, true);
         declare(context, "JsonSerializable", null, true);
+        declare(context, "Serializable", null, true);
         PhpClass stringable = declare(context, "Stringable", null, true);
         PhpClass throwable = declare(context, "Throwable", null, true);
         throwable.addInterface(stringable);
@@ -242,6 +266,7 @@ public final class Builtins {
             closure.addMethod(method);
         }
         context.declareClass(closure);
+        WeakReferences.declare(context, table.weakReferenceMethods);
         declare(context, "mysqli", null, false);
         declare(context, "mysqli_result", null, false);
         if (table.curlMethods != null) {
@@ -263,6 +288,8 @@ public final class Builtins {
                 {"TypeError", "Error"}, {"ValueError", "Error"}, {"ArithmeticError", "Error"},
                 {"DivisionByZeroError", "ArithmeticError"}, {"ArgumentCountError", "TypeError"},
                 {"UnhandledMatchError", "Error"},
+                {"Filter\\FilterException", "Exception"},
+                {"Filter\\FilterFailedException", "Filter\\FilterException"},
         };
         for (String[] pair : hierarchy) {
             PhpClass phpClass = new PhpClass(pair[0], context.getClass(pair[1]), false, false,

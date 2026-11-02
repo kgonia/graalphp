@@ -2,16 +2,13 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.vars.FrameSlots;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
-import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.Str;
 
@@ -95,19 +92,6 @@ public final class IncludeNode extends ExprNode {
     }
 
     private IncludeScope callScope(VirtualFrame frame) {
-        if (frame.isObject(scopeSlot) && frame.getObject(scopeSlot) instanceof IncludeScope scope) {
-            return scope;
-        }
-        // a closure's scope is the class it is bound to
-        String classScope = frame.getArguments()[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure
-                ? closure.getScope() == null ? null : closure.getScope().getLowerName() : lexicalClass;
-        IncludeScope scope = newScope(frame.materialize(), slots, classScope);
-        FrameSlots.setObject(frame, scopeSlot, scope);
-        return scope;
-    }
-
-    @TruffleBoundary
-    private static IncludeScope newScope(MaterializedFrame frame, Map<String, Integer> slots, String classScope) {
-        return new IncludeScope(frame, slots, classScope);
+        return IncludeScope.forCall(frame, scopeSlot, slots, lexicalClass);
     }
 }

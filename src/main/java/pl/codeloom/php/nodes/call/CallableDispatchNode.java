@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.NonIdempotent;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
@@ -164,6 +165,8 @@ public abstract class CallableDispatchNode extends Node {
         return PhpLanguage.get(this).functionId(Str.lower(target.function().getName()));
     }
 
+    /** The calling context's: never folded into a cache entry (another context may declare another function). */
+    @NonIdempotent
     protected PhpFunction functionAt(int id) {
         return PhpContext.get(this).functionAt(id);
     }
@@ -182,6 +185,8 @@ public abstract class CallableDispatchNode extends Node {
     }
 
     /** The key of the class the calling context declares under a name id, or null. */
+    /** The calling context's: never folded into a cache entry (another context may have no such class). */
+    @NonIdempotent
     protected ClassKey keyAt(int classId) {
         PhpClass phpClass = PhpContext.get(this).classAt(classId);
         return phpClass == null ? null : phpClass.getKey();

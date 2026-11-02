@@ -179,3 +179,12 @@ Requests' streams transport writes raw HTTP over `stream_socket_client` itself, 
 
 **Status:** [gate-2.md](gate-2.md), "Our own parser (D14)".
 
+
+## D15: mail() hands the message to sendmail as glibc's popen does, by FFM (2026-11-02)
+**Decision:** `mail()` is a port of ext/standard/mail.c, and its `popen(sendmail_path, "w")` and `pclose()` are glibc's, rebuilt over libc by FFM (`ExecFunctions`): `pipe2`, `posix_spawn` of `/bin/sh` with `{"sh", "-c", "--", command}` (glibc 2.41's), the message written to the pipe, `waitpid`. The child gets the context's environment and working directory and the process's stdout and stderr. `mail.log=syslog` goes through libc's `openlog` and `syslog`. On Windows, a development host, the child is Git for Windows' `sh` under a `ProcessBuilder`, and nothing goes to syslog.
+
+**Why:**
+- **The wait status comes back whole.** The JDK's `Process` folds a signal into exit code 128+n, so php's "Sendmail killed by signal 9 (Killed)" would read "exited with non-zero exit code 137". It also names the shell `/bin/sh` in `argv[0]`, and dash prints `argv[0]` in its own messages ("sh: 1: ...: not found").
+- **pclose is fclose.** A child that exits 0 without reading all of a long message fails the last flush, and php then warns "Sendmail pclose failed 32 (Broken pipe)". The port gives the same result.
+- **Checked against PHP 8.5** in the reference image: the bytes sendmail gets for every `mail.cr_lf_mode`, `mail.mixed_lf_and_crlf`, `mail.add_x_header`, `additional_params` and `mail.force_extra_parameters`, `mail.log` to a file, `php://stderr` and syslog (all three `syslog.filter`s), exit statuses 0, 3 and 75, signals 9, 11, 15 and 34, a missing sendmail and a missing `/bin/sh`.
+- **One difference is left:** php-cli ignores SIGPIPE and its children inherit that, while HotSpot handles SIGPIPE, so the shell starts with the default action. A sendmail that writes to a pipe nobody reads is killed by SIGPIPE here and gets EPIPE under php. `posix_spawn` can only reset a signal to its default, not make the child ignore it.

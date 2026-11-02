@@ -5,6 +5,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -45,14 +46,43 @@ public final class CgiSapi {
                 }
             }
         }
-        PhpArray request = get.copy();
-        for (int p = post.firstPosition(); p >= 0; p = post.nextPosition(p)) {
-            request.put(post.keyAt(p), post.valueAt(p));
+        // with filter.default, the superglobals have the values through the default filter, ext/filter the raw ones
+        PhpArray getVariables = FilterFunctions.registeredArray(context, get, key -> true);
+        PhpArray postVariables = FilterFunctions.registeredArray(context, post, key -> true);
+        PhpArray request = getVariables.copy();
+        for (int p = postVariables.firstPosition(); p >= 0; p = postVariables.nextPosition(p)) {
+            request.put(postVariables.keyAt(p), postVariables.valueAt(p));
         }
-        context.globalRef("_GET").set(get);
-        context.globalRef("_POST").set(post);
-        context.globalRef("_COOKIE").set(cookies);
+        context.globalRef("_GET").set(getVariables);
+        context.globalRef("_POST").set(postVariables);
+        context.globalRef("_COOKIE").set(FilterFunctions.registeredArray(context, cookies, key -> true));
         context.globalRef("_REQUEST").set(request);
+        // ext/filter's copies: one exists once a variable went through the input filter, even a variable whose
+        // name registers nothing ("=x")
+        FilterFunctions.Input input = context.builtinState().filterInput;
+        input.get = anyFiltered(environment.getOrDefault("QUERY_STRING", ""), false) ? FilterFunctions.Input.kept(get)
+                : null;
+        input.post = body.length > 0 && contentType.startsWith("application/x-www-form-urlencoded")
+                ? FilterFunctions.Input.kept(post) : null;
+        input.cookie = anyFiltered(environment.getOrDefault("HTTP_COOKIE", ""), true)
+                ? FilterFunctions.Input.kept(cookies) : null;
+    }
+
+    /**
+     * Whether php_default_treat_data passes a variable of the query string (or Cookie header) to the input filter:
+     * a token between separators that isn't empty; for a cookie, one with a name after the leading whitespace.
+     */
+    private static boolean anyFiltered(String input, boolean cookie) {
+        for (String token : input.split(cookie ? ";" : "&")) {
+            int start = 0;
+            while (cookie && start < token.length() && " \t\n\u000b\f\r".indexOf(token.charAt(start)) >= 0) {
+                start++;
+            }
+            if (start < token.length() && !(cookie && token.charAt(start) == '=')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The response's status and headers, as header(), setcookie() and http_response_code() leave them. */
@@ -61,9 +91,15 @@ public final class CgiSapi {
         /** Header lines ("Name: value") in the order set. */
         private final List<String> headers = new ArrayList<>();
         private boolean sent;
+        /** Where the output that sent the headers started (php_output_header); null outside PHP code. */
+        private SourceLocation outputStart;
 
         public boolean isSent() {
             return sent;
+        }
+
+        public SourceLocation outputStart() {
+            return outputStart;
         }
 
         public int status() {
@@ -123,18 +159,24 @@ public final class CgiSapi {
             headers.removeIf(h -> h.regionMatches(true, 0, name + ":", 0, name.length() + 1));
         }
 
-        /** The CGI header block, once: Status, the headers, a default Content-type. */
+        /**
+         * The CGI header block, once: Status, the headers, a default Content-type, which sapi_send_headers adds to
+         * the header list (headers_list() shows it after). start: where the output that sends them started.
+         */
         @TruffleBoundary
-        public byte[] block() {
+        public byte[] block(SourceLocation start) {
             sent = true;
-            StringBuilder block = new StringBuilder("Status: ").append(status).append("\r\n");
+            outputStart = start;
             boolean contentType = false;
             for (String header : headers) {
-                block.append(header).append("\r\n");
                 contentType |= header.regionMatches(true, 0, "Content-Type:", 0, 13);
             }
             if (!contentType) {
-                block.append("Content-type: text/html; charset=UTF-8\r\n");
+                headers.add("Content-type: text/html; charset=UTF-8");
+            }
+            StringBuilder block = new StringBuilder("Status: ").append(status).append("\r\n");
+            for (String header : headers) {
+                block.append(header).append("\r\n");
             }
             return block.append("\r\n").toString().getBytes(StandardCharsets.ISO_8859_1);
         }
