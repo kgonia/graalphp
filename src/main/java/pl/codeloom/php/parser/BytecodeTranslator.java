@@ -897,9 +897,12 @@ public final class BytecodeTranslator {
                     return;
                 }
                 if (ast.is("AST_PROP")) {
-                    b.beginForeachRefProp(writtenPropSite(ast));
-                    expression(ast.get("expr"));
+                    b.beginBlock();
+                    Ast property = delayedProp(ast);
+                    b.beginForeachRefProp(writtenPropSite(property));
+                    expression(property.get("expr"));
                     b.endForeachRefProp();
+                    b.endBlock();
                     return;
                 }
                 if (Translator.isCall(ast)) {
@@ -1107,7 +1110,7 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_DIM":
                     if (node.get("dim") == null) {
-                        throw new Unsupported("[] for reading", node);
+                        throw compileError(node.line, "Cannot use [] for reading");
                     }
                     b.beginReadElement();
                     expression(node.get("expr"));
@@ -1130,11 +1133,13 @@ public final class BytecodeTranslator {
                         break;
                     }
                     if (node.node("var").is("AST_PROP")) {
-                        Ast target = node.node("var");
+                        b.beginBlock();
+                        Ast target = delayedProp(node.node("var"));
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
                         expression(target.get("expr"));
                         b.endCompoundProp();
+                        b.endBlock();
                         break;
                     }
                     b.beginCompoundVar(variable(node.node("var"), "compound assignment to"), node.flags);
@@ -1152,10 +1157,12 @@ public final class BytecodeTranslator {
                         break;
                     }
                     if (node.node("var").is("AST_PROP")) {
-                        Ast target = node.node("var");
+                        b.beginBlock();
+                        Ast target = delayedProp(node.node("var"));
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
                         expression(target.get("expr"));
                         b.endIncDecProp();
+                        b.endBlock();
                         break;
                     }
                     b.emitIncDecVar(variable(node.node("var"), "increment of"), increment, prefix);
@@ -1489,9 +1496,9 @@ public final class BytecodeTranslator {
                 // a reference a foreach by reference bound a hidden local to
                 case "BYTECODE_OBJECT" -> b.emitRefVar(nullsafeObjects.get(place));
                 case "AST_DIM" -> {
+                    b.beginBlock();
                     ElementPlace element = elementPlace(place, "assignment to");
                     boolean append = element.appends();
-                    b.beginBlock();
                     List<Object> keys = placeKeys(element, !append);
                     if (element.variable() != null) {
                         b.beginRefNested(element.variable(), append);
@@ -1506,10 +1513,19 @@ public final class BytecodeTranslator {
                     b.endBlock();
                 }
                 case "AST_PROP" -> {
-                    PropSite site = writtenPropSite(place);
-                    b.beginRefProp(site);
-                    expression(place.get("expr"));
-                    b.endRefProp();
+                    b.beginBlock();
+                    Ast property = delayedProp(place);
+                    if (property.get("prop") instanceof String name) {
+                        b.beginRefProp(propSite(property, name));
+                        expression(property.get("expr"));
+                        b.endRefProp();
+                    } else {
+                        b.beginRefPropNamed(propSite(property, null));
+                        expression(property.get("expr"));
+                        propName(property.get("prop"));
+                        b.endRefPropNamed();
+                    }
+                    b.endBlock();
                 }
                 default -> throw new Unsupported("reference to", place);
             }
@@ -1554,9 +1570,9 @@ public final class BytecodeTranslator {
                     b.endBindVar();
                 }
                 case "AST_DIM" -> {
+                    b.beginBlock();
                     ElementPlace element = elementPlace(target, "assignment to");
                     boolean append = element.appends();
-                    b.beginBlock();
                     List<Object> keys = placeKeys(element, !append);
                     if (element.variable() != null) {
                         b.beginBindNested(element.variable(), append);
@@ -1573,11 +1589,13 @@ public final class BytecodeTranslator {
                     b.endBlock();
                 }
                 case "AST_PROP" -> {
-                    PropSite site = writtenPropSite(target);
-                    b.beginBindProp(site);
+                    b.beginBlock();
+                    Ast property = delayedProp(target);
+                    b.beginBindProp(writtenPropSite(property));
                     refOf(place);
-                    expression(target.get("expr"));
+                    expression(property.get("expr"));
                     b.endBindProp();
+                    b.endBlock();
                 }
                 default -> throw new Unsupported("reference assigned to", target);
             }
@@ -2185,55 +2203,89 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The site of a property written by a compound assignment, an increment or an element write, whose object
-         * is evaluated after the value (php-src delays fetching it): a constant name, and an object that is a
-         * variable, $this or a property of one; other forms stay on the tree.
+         * The site of a property written by a compound assignment, an increment, an element write or a reference
+         * (a place {@link #delayedProp} gave): a constant name; a computed one stays on the tree.
          */
         private PropSite writtenPropSite(Ast target) {
             if (!(target.get("prop") instanceof String name)) {
                 throw new Unsupported("write to a property by a computed name", target);
             }
-            if (!delayedObject(target.get("expr"))) {
-                throw new Unsupported("write to a property of an expression", target);
-            }
             return propSite(target, name);
         }
 
-        /** An object php-src fetches as the write runs (zend_delayed_compile_var): a variable or a property chain. */
-        private boolean delayedObject(Object object) {
-            if (!(object instanceof Ast ast)) {
-                return false;
+        /**
+         * A property written, read and written, or bound (zend_delayed_compile_prop): what php-src evaluates before
+         * the value is evaluated now into hidden locals, the object's parts (see {@link #delayedObject}) then a
+         * computed name; the node returned stands for the place, its object the chain fetched as the write runs.
+         * Emits into the block the caller opened. `?->` on the way is php-src's compile error.
+         */
+        private Ast delayedProp(Ast target) {
+            if (deepestNullsafe(target) != null) {
+                throw compileError(target.line, "Can't use nullsafe operator in write context");
             }
-            if (ast.is("AST_VAR")) {
-                return ast.get("name") instanceof String;
-            }
-            return ast.is("AST_PROP") && ast.get("prop") instanceof String && delayedObject(ast.get("expr"));
+            Object object = delayedObject(target.get("expr"));
+            Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
+            return withParts(target, "expr", object, "prop", prop);
         }
 
         /**
-         * `$obj->name = value` (AssignNode on a PropNode): the value, then the name, then the object, as the tree
-         * evaluates them; with a delayed object (a variable, a property chain) that is php-src's order too. A
-         * computed name that isn't a variable is evaluated before the value, as php-src compiles it with the
-         * delayed property (zend_delayed_compile_prop), and converted when the write runs.
+         * The object of a property place as php-src fetches it (zend_delayed_compile_var): a variable, a property,
+         * an element or a static property is read as the write runs, after the value, down a chain whose keys and
+         * computed names are evaluated now; anything else (a call, `new`) is evaluated now.
+         */
+        private Object delayedObject(Object object) {
+            if (!(object instanceof Ast ast)) {
+                return object;
+            }
+            switch (ast.kind) {
+                case "AST_VAR", "AST_STATIC_PROP", "BYTECODE_OBJECT":
+                    return ast;
+                case "AST_PROP":
+                    return delayedProp(ast);
+                case "AST_DIM": {
+                    if (ast.get("dim") == null) {
+                        // php-src appends a null to write to; read, the tree's error
+                        throw new Unsupported("[] as the object of a property written", ast);
+                    }
+                    Object container = delayedObject(ast.get("expr"));
+                    return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
+                }
+                default:
+                    return onceKey(ast);
+            }
+        }
+
+        /** A copy of node with two of its parts replaced; node itself when they are the same. */
+        private Ast withParts(Ast node, String first, Object firstValue, String second, Object secondValue) {
+            if (node.get(first) == firstValue && node.get(second) == secondValue) {
+                return node;
+            }
+            Map<String, Object> parts = new java.util.LinkedHashMap<>(node.namedOrNull());
+            parts.put(first, firstValue);
+            parts.put(second, secondValue);
+            return new Ast(node.kind, node.flags, node.line, node.endLine, null, parts);
+        }
+
+        /**
+         * `$obj->name = value` (AssignNode on a PropNode), in php-src's order (zend_compile_assign): what it
+         * evaluates before the value (a call as the object, a computed name; see {@link #delayedProp}), the value,
+         * then the object's chain and the write; a computed name is converted as the write runs.
          */
         private void writeProp(Ast target, Object value) {
-            if (!delayedObject(target.get("expr"))) {
-                throw new Unsupported("write to a property of an expression", target);
-            }
-            if (target.get("prop") instanceof String name) {
-                b.beginWriteProp(propSite(target, name));
-                expression(value);
-                expression(target.get("expr"));
-                b.endWriteProp();
-                return;
-            }
             b.beginBlock();
-            Object prop = onceKey(target.get("prop"));
-            b.beginWritePropNamed(propSite(target, null));
-            expression(value);
-            propName(prop);
-            expression(target.get("expr"));
-            b.endWritePropNamed();
+            Ast place = delayedProp(target);
+            if (place.get("prop") instanceof String name) {
+                b.beginWriteProp(propSite(place, name));
+                expression(value);
+                expression(place.get("expr"));
+                b.endWriteProp();
+            } else {
+                b.beginWritePropNamed(propSite(place, null));
+                expression(value);
+                propName(place.get("prop"));
+                expression(place.get("expr"));
+                b.endWritePropNamed();
+            }
             b.endBlock();
         }
 
@@ -2242,21 +2294,42 @@ public final class BytecodeTranslator {
          * key; a key that is a constant or a variable, which the tree evaluates after making the property writable.
          */
         private void writePropElement(Ast target, Object value) {
-            Ast property = target.node("expr");
-            PropSite site = writtenPropSite(property);
+            b.beginBlock();
+            Ast property = delayedProp(target.node("expr"));
             Object dim = target.get("dim");
+            if (!(property.get("prop") instanceof String)) {
+                // `$obj->$name[...] = value`: the name, evaluated now unless a variable, converted after the value
+                if (dim == null) {
+                    b.beginAppendPropElementNamed(propSite(property, null));
+                    expression(value);
+                    propName(property.get("prop"));
+                    expression(property.get("expr"));
+                    b.endAppendPropElementNamed();
+                } else {
+                    b.beginWritePropElementNamed(propSite(property, null));
+                    expression(value);
+                    propName(property.get("prop"));
+                    expression(property.get("expr"));
+                    key(dim);
+                    b.endWritePropElementNamed();
+                }
+                b.endBlock();
+                return;
+            }
+            PropSite site = writtenPropSite(property);
             if (dim == null) {
                 b.beginAppendPropElement(site);
                 expression(value);
                 expression(property.get("expr"));
                 b.endAppendPropElement();
-                return;
+            } else {
+                b.beginWritePropElement(site);
+                expression(value);
+                expression(property.get("expr"));
+                key(dim);
+                b.endWritePropElement();
             }
-            b.beginWritePropElement(site);
-            expression(value);
-            expression(property.get("expr"));
-            key(dim);
-            b.endWritePropElement();
+            b.endBlock();
         }
 
         /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
@@ -2299,8 +2372,7 @@ public final class BytecodeTranslator {
             }
             if (tested instanceof Ast target && target.is("AST_DIM")) {
                 if (target.get("dim") == null) {
-                    // php-src's compile error "Cannot use [] for reading"
-                    throw new Unsupported("isset of []", target);
+                    throw compileError(target.line, "Cannot use [] for reading");
                 }
                 b.beginIssetElement();
                 readIfSet(target.get("expr"));
@@ -2351,8 +2423,7 @@ public final class BytecodeTranslator {
                 switch (ast.kind) {
                     case "AST_DIM" -> {
                         if (ast.get("dim") == null) {
-                            // php-src's compile error "Cannot use [] for reading"
-                            throw new Unsupported("[] for reading", ast);
+                            throw compileError(ast.line, "Cannot use [] for reading");
                         }
                         b.beginElementIfSet();
                         readIfSet(ast.get("expr"));
@@ -2401,27 +2472,40 @@ public final class BytecodeTranslator {
                 return;
             }
             if (target.is("AST_PROP")) {
-                if (!delayedObject(target.get("expr")) || !(target.get("prop") instanceof String name)) {
-                    throw new Unsupported("??= to a property of an expression or by a computed name", target);
-                }
+                // the object's parts evaluated once (php-src's memoized ones), its chain read as isset() reads it,
+                // then fetched again for the write
+                b.beginBlock();
+                Ast place = delayedProp(target);
                 b.beginCoalesce();
-                b.beginReadPropIfSet(propSite(target, name));
-                readIfSet(target.get("expr"));
-                b.endReadPropIfSet();
-                b.beginWriteProp(propSite(target, name));
-                expression(value);
-                expression(target.get("expr"));
-                b.endWriteProp();
+                if (place.get("prop") instanceof String name) {
+                    b.beginReadPropIfSet(propSite(place, name));
+                    readIfSet(place.get("expr"));
+                    b.endReadPropIfSet();
+                    b.beginWriteProp(propSite(place, name));
+                    expression(value);
+                    expression(place.get("expr"));
+                    b.endWriteProp();
+                } else {
+                    b.beginReadPropIfSetNamed(propSite(place, null));
+                    readIfSet(place.get("expr"));
+                    propName(place.get("prop"));
+                    b.endReadPropIfSetNamed();
+                    b.beginWritePropNamed(propSite(place, null));
+                    expression(value);
+                    propName(place.get("prop"));
+                    expression(place.get("expr"));
+                    b.endWritePropNamed();
+                }
                 b.endCoalesce();
+                b.endBlock();
                 return;
             }
             if (target.is("AST_DIM")) {
-                ElementPlace place = elementPlace(target, "??= to");
-                if (place.appends()) {
-                    // php-src's compile error "Cannot use [] for reading"
-                    throw new Unsupported("??= to []", target);
+                if (lastDimAppends(target)) {
+                    throw compileError(target.line, "Cannot use [] for reading");
                 }
                 b.beginBlock();
+                ElementPlace place = elementPlace(target, "??= to");
                 List<Object> keys = placeKeys(place, true);
                 b.beginCoalesce();
                 emitReadIfSet(place, keys);
@@ -2463,6 +2547,10 @@ public final class BytecodeTranslator {
             }
         }
 
+        /**
+         * The place an element chain is: a variable's, or a property's whose object's parts php-src evaluates first
+         * are evaluated now ({@link #delayedProp}), into the block the caller opened.
+         */
         private ElementPlace elementPlace(Ast target, String what) {
             List<Object> dims = new ArrayList<>();
             Ast base = target;
@@ -2472,16 +2560,22 @@ public final class BytecodeTranslator {
             }
             for (int i = 0; i < dims.size() - 1; i++) {
                 if (dims.get(i) == null && !what.equals("assignment to")) {
-                    throw new Unsupported("[] for reading", target);
+                    throw new Unsupported("[] inside a place read", target);
                 }
             }
             if (base.is("AST_VAR") && !isThis(base)) {
                 return new ElementPlace(variable(base, what + " an element of"), null, null, dims);
             }
             if (base.is("AST_PROP")) {
-                return new ElementPlace(null, base, writtenPropSite(base), dims);
+                Ast property = delayedProp(base);
+                return new ElementPlace(null, property, writtenPropSite(property), dims);
             }
             throw new Unsupported(what + " an element of an expression", target);
+        }
+
+        /** `place[]`: an append, which php-src refuses to read (its compile error "Cannot use [] for reading"). */
+        private boolean lastDimAppends(Ast target) {
+            return target.is("AST_DIM") && target.get("dim") == null;
         }
 
         /**
@@ -2514,9 +2608,9 @@ public final class BytecodeTranslator {
          * constants or variables, then the value, then the containers made writable (ElementChain).
          */
         private void nestedWrite(Ast target, Object value) {
+            b.beginBlock();
             ElementPlace place = elementPlace(target, "assignment to");
             boolean append = place.appends();
-            b.beginBlock();
             emitWrite(place, placeKeys(place, !append), value, append);
             b.endBlock();
         }
@@ -2560,11 +2654,12 @@ public final class BytecodeTranslator {
 
         /** `base[k1]...[kn] op= value` (CompoundAssignNode on a DimNode): the keys, the value, then the element. */
         private void nestedCompound(Ast target, Object value, int op) {
-            ElementPlace place = elementPlace(target, "compound assignment to");
-            if (place.appends()) {
-                throw new Unsupported("[] for reading", target);
+            if (lastDimAppends(target)) {
+                // php-src appends a null and combines it; the tree's DimNode can't read the new element
+                throw new Unsupported("compound assignment to []", target);
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "compound assignment to");
             List<Object> keys = placeKeys(place, true);
             if (place.variable() != null) {
                 b.beginCompoundNested(place.variable(), op);
@@ -2583,11 +2678,12 @@ public final class BytecodeTranslator {
 
         /** `++base[k1]...[kn]`, `base[k]--`... (IncDecNode on a DimNode). */
         private void nestedIncDec(Ast target, boolean increment, boolean prefix) {
-            ElementPlace place = elementPlace(target, "increment of");
-            if (place.appends()) {
-                throw new Unsupported("[] for reading", target);
+            if (lastDimAppends(target)) {
+                // php-src appends a null and steps it; the tree's DimNode can't read the new element
+                throw new Unsupported("increment of []", target);
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "increment of");
             List<Object> keys = placeKeys(place, true);
             if (place.variable() != null) {
                 b.beginIncDecNested(place.variable(), increment, prefix);
@@ -2604,12 +2700,11 @@ public final class BytecodeTranslator {
 
         /** `unset(base[k1]...[kn])` (DimNode.unset). */
         private void nestedUnset(Ast target) {
-            ElementPlace place = elementPlace(target, "unset of");
-            if (place.appends()) {
-                // php-src's compile error "Cannot use [] for unsetting"
-                throw new Unsupported("unset of []", target);
+            if (lastDimAppends(target)) {
+                throw compileError(target.line, "Cannot use [] for unsetting");
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "unset of");
             List<Object> keys = placeKeys(place, true);
             if (place.variable() != null) {
                 b.beginUnsetNested(place.variable());
@@ -3239,27 +3334,27 @@ public final class BytecodeTranslator {
                 b.beginSendVar(variable(ast, "argument"), index);
                 b.emitLoadStackValue(callee);
                 b.endSendVar();
+            } else if (ast.is("AST_DIM") && temporaryBase(ast) != null) {
+                temporaryElementArgument(ast, temporaryBase(ast), index, callee);
             } else if (ast.is("AST_DIM") && ast.node("expr").is("AST_VAR") && ast.get("dim") != null) {
                 b.beginSendElement(variable(ast.node("expr"), "argument element of"), index);
                 b.emitLoadStackValue(callee);
                 key(ast.get("dim"));
                 b.endSendElement();
             } else if (ast.is("AST_DIM")) {
-                // a nested element, or an element of a property: its reference or its value
-                ElementPlace place = elementPlace(ast, "argument");
-                if (place.dims().contains(null)) {
-                    // `[]` takes a reference only, else php-src's "Cannot use [] for reading"
-                    throw new Unsupported("argument []", ast);
-                }
+                // a nested element, or an element of a property: its reference or its value; `[]` last takes a
+                // reference only, else the tree's Error "Cannot use [] for reading"
                 b.beginBlock();
-                List<Object> keys = placeKeys(place, true);
+                ElementPlace place = elementPlace(ast, "argument");
+                boolean append = place.appends();
+                List<Object> keys = placeKeys(place, !append);
                 if (place.variable() != null) {
-                    b.beginSendNested(place.variable(), index);
+                    b.beginSendNested(place.variable(), index, append);
                     b.emitLoadStackValue(callee);
                     emitKeys(keys);
                     b.endSendNested();
                 } else {
-                    b.beginSendPropNested(place.site(), index);
+                    b.beginSendPropNested(place.site(), index, append);
                     b.emitLoadStackValue(callee);
                     expression(place.property().get("expr"));
                     emitKeys(keys);
@@ -3271,6 +3366,13 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(callee);
                 expression(ast.get("expr"));
                 b.endSendProp();
+            } else if (ast.is("AST_PROP")) {
+                // `$obj->$name`: the object, then the name (FETCH_OBJ_FUNC_ARG's operands)
+                b.beginSendPropNamed(propSite(ast, null), index);
+                b.emitLoadStackValue(callee);
+                expression(ast.get("expr"));
+                propName(ast.get("prop"));
+                b.endSendPropNamed();
             } else if (ast.is("AST_CALL") || ast.is("AST_METHOD_CALL") || ast.is("AST_STATIC_CALL")) {
                 b.beginSendCall(index);
                 b.emitLoadStackValue(callee);
@@ -3285,6 +3387,54 @@ public final class BytecodeTranslator {
             } else {
                 throw new Unsupported("argument", ast);
             }
+        }
+
+        /**
+         * The base of an element chain that is no variable (zend_is_variable): a call's result, a constant, a literal
+         * or `new` (not $this, whose ArrayAccess the tree has no place for); null for a variable, a property or a
+         * static property.
+         */
+        private Object temporaryBase(Ast dim) {
+            Object base = dim;
+            while (base instanceof Ast ast && ast.is("AST_DIM")) {
+                base = ast.get("expr");
+            }
+            if (base instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_PROP") || ast.is("AST_NULLSAFE_PROP")
+                    || ast.is("AST_STATIC_PROP"))) {
+                return null;
+            }
+            return base;
+        }
+
+        /**
+         * `f()[k1]...[kn]` as an argument (FETCH_DIM_FUNC_ARG on a temporary, SendTemporary): the base and the keys
+         * evaluated, then the value read down the chain, or for a by-reference parameter the element's reference in
+         * a separated copy of a call's array, through the reference a call returned (zend_separate_if_call_and_write);
+         * php-src can't write to any other temporary ("Cannot use temporary expression in write context").
+         */
+        private void temporaryElementArgument(Ast ast, Object base, int index, StackValue callee) {
+            List<Object> dims = new ArrayList<>();
+            for (Object link = ast; link != base; link = ((Ast) link).get("expr")) {
+                dims.add(0, ((Ast) link).get("dim"));
+            }
+            for (int i = 0; i < dims.size() - 1; i++) {
+                if (dims.get(i) == null) {
+                    throw new Unsupported("[] inside a place read", ast);
+                }
+            }
+            boolean append = dims.get(dims.size() - 1) == null;
+            boolean call = Translator.isCall(base) && !constants.compiledInPlace((Ast) base);
+            b.beginSendTemporary(index, append, call);
+            b.emitLoadStackValue(callee);
+            if (call) {
+                callForRef((Ast) base);
+            } else {
+                expression(base);
+            }
+            for (int i = 0; i < (append ? dims.size() - 1 : dims.size()); i++) {
+                key(dims.get(i));
+            }
+            b.endSendTemporary();
         }
 
         // ---- variables and constants ----
