@@ -1,0 +1,13 @@
+== t2
+[engine] opt done engine=1 id=2 ScriptRootNode@1f318316 |Tier 1|Time 94( 86+7 )ms|AST 2|Inlined 0Y 1N|IR 233/ 410|CodeSize 2009|Src n/a
+[engine] opt failed engine=1 id=4 FileRootNode@74971fc5 |Tier 1|Time 15656(3230+12425)ms|Reason: jdk.vm.ci.code.BailoutException: Code installation failed: code is too large
+[engine] opt done engine=1 id=5 ThunkRootNode@2b6b30ba |Tier 1|Time 354( 134+219 )ms|AST 3204|Inlined 0Y 0N|IR 19329/ 46225|CodeSize 440363|Src n/a
+[engine] opt done engine=1 id=2 ScriptRootNode@1f318316 |Tier 2|Time 33( 19+14 )ms|AST 2|Inlined 1Y 0N|IR 539/ 974|CodeSize 4765|Src n/a
+[engine] opt done engine=1 id=5 ThunkRootNode@2b6b30ba |Tier 2|Time 700( 157+543 )ms|AST 3204|Inlined 0Y 0N|IR 19272/ 40820|CodeSize 441539|Src n/a
+1200
+801
+== t1
+[engine] opt done engine=1 id=2 ScriptRootNode@48240af4 |Tier 1|Time 89( 82+7 )ms|AST 2|Inlined 0Y 1N|IR 233/ 410|CodeSize 2009|Src n/a
+[engine] opt done engine=1 id=2 ScriptRootNode@48240af4 |Tier 2|Time 44( 27+18 )ms|AST 2|Inlined 1Y 0N|IR 539/ 974|CodeSize 4765|Src n/a
+1200
+801

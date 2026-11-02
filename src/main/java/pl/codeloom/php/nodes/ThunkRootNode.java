@@ -13,6 +13,8 @@ import pl.codeloom.php.runtime.PhpClass;
  */
 public final class ThunkRootNode extends RootNode implements ClassTemplate.Deferred {
     @Child private ExprNode expression;
+    /** {@link RunOnceCode#classify}: 0 not yet, 1 compiled as any code, 2 large and without a loop. */
+    private volatile byte runOnce;
 
     public ThunkRootNode(PhpLanguage language, ExprNode expression) {
         super(language, FrameDescriptor.newBuilder().build());
@@ -22,6 +24,20 @@ public final class ThunkRootNode extends RootNode implements ClassTemplate.Defer
     @Override
     public Object execute(VirtualFrame frame) {
         return expression.execute(frame);
+    }
+
+    /**
+     * An initializer runs once per class and context: a large one without a loop isn't worth compiling
+     * ({@link RunOnceCode}).
+     */
+    @Override
+    protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {
+        byte kind = runOnce;
+        if (kind == 0) {
+            kind = RunOnceCode.classify(this);
+            runOnce = kind;
+        }
+        return kind != 2;
     }
 
     @Override
