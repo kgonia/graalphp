@@ -60,7 +60,7 @@ public final class Callables {
             return new Target(closure.getFunction(), closure.getBoundThis(), scope, closure, closure.getMagicName());
         }
         if (callable instanceof TruffleString name) {
-            String text = Str.java(name);
+            String text = Str.name(name);
             int separator = text.indexOf("::");
             if (separator > 0) {
                 return method(namedClass(context, text.substring(0, separator), direct, true), null,
@@ -76,10 +76,10 @@ public final class Callables {
                 return null;
             }
             if (first instanceof PhpObject object) {
-                return method(object.getPhpClass(), object, Str.java(methodName), direct);
+                return method(object.getPhpClass(), object, Str.name(methodName), direct);
             }
             if (first instanceof TruffleString className) {
-                return method(namedClass(context, Str.java(className), direct, true), null, Str.java(methodName), direct);
+                return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName), direct);
             }
             return null;
         }
@@ -103,7 +103,7 @@ public final class Callables {
     /** The lowercase name a class-name callable (`['Cls', 'm']`) is looked up by. */
     @TruffleBoundary
     public static String className(TruffleString name) {
-        return Str.lower(stripNamespace(Str.java(name)));
+        return Str.lower(stripNamespace(Str.name(name)));
     }
 
     private static Target method(PhpClass phpClass, PhpObject object, String methodName, boolean direct) {

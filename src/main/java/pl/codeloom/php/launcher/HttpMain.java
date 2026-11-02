@@ -153,6 +153,7 @@ public final class HttpMain {
             }
         });
         http.start();
+        HeapProbe.startIfAsked();
         if (Phases.ENABLED) {
             RequestPhases.printStart();
         }
@@ -200,6 +201,15 @@ public final class HttpMain {
     /** Runs a script as a CGI request and sends its CGI response. */
     private void runScript(HttpExchange exchange, Path script, String scriptName) throws IOException {
         scripts.incrementAndGet();
+        HeapProbe.IN_FLIGHT.incrementAndGet();
+        try {
+            runScriptCounted(exchange, script, scriptName);
+        } finally {
+            HeapProbe.IN_FLIGHT.decrementAndGet();
+        }
+    }
+
+    private void runScriptCounted(HttpExchange exchange, Path script, String scriptName) throws IOException {
         byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
         if (body.length > MAX_BODY) {
             respond(exchange, 413, "text/plain", "Request body too large".getBytes(StandardCharsets.UTF_8));

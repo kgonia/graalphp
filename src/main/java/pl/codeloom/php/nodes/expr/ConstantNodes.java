@@ -119,9 +119,14 @@ public final class ConstantNodes {
 
         protected Object find() {
             PhpContext context = PhpContext.get(this);
-            Object value = context.constantAt(id);
-            if (value == null && fallbackId >= 0) {
-                value = context.constantAt(fallbackId);
+            Object value;
+            if (fallbackId < 0) {
+                value = context.requiredConstantAt(id);
+            } else {
+                value = context.constantAt(id);
+                if (value == null) {
+                    value = context.constantAt(fallbackId);
+                }
             }
             if (value == null) {
                 CompilerDirectives.transferToInterpreter();

@@ -142,6 +142,11 @@ final class FileFunctions {
             return null;
         }
 
+        /** The bytes left from the position to the end as fstat's size tells them, or -1 when it can't. */
+        long remainingHint() {
+            return -1;
+        }
+
         /** flock() support: false for streams without locking (php://memory, php://output, ...). */
         boolean lockable() {
             return false;
@@ -384,7 +389,10 @@ final class FileFunctions {
             return -1;
         }
 
-        /** _php_stream_copy_to_mem: up to maxLength bytes (-1: to the end). */
+        /**
+         * _php_stream_copy_to_mem: up to maxLength bytes (-1: to the end). As php-src, a whole plain file is read
+         * into one array sized from its fstat, instead of through the buffer and arrays that double.
+         */
         final byte[] readAll(long maxLength) {
             if (maxLength == 0) {
                 return EMPTY;
@@ -392,6 +400,27 @@ final class FileFunctions {
             boolean small = maxLength > 0 && maxLength < 4 * CHUNK;
             byte[] out = EMPTY;
             int length = 0;
+            long hint = maxLength < 0 && writePos == readPos ? remainingHint() : -1;
+            if (hint > 0 && hint < Integer.MAX_VALUE - 8) {
+                out = new byte[(int) hint];
+                while (length < out.length) {
+                    int n = rawRead(out, length, out.length - length);
+                    if (n <= 0) {
+                        break;
+                    }
+                    length += n;
+                }
+                position += length;
+                if (length < out.length) {
+                    return Arrays.copyOf(out, length);
+                }
+                if (remainingHint() == 0) {
+                    // the read that would return nothing: it sets eof, as the loop below would
+                    eof = true;
+                    return out;
+                }
+                // the file grew since its fstat: what follows is read as before
+            }
             while (maxLength < 0 || length < maxLength) {
                 if (small && atEof()) {
                     break;
@@ -531,6 +560,15 @@ final class FileFunctions {
                 return FileFunctions.stat(file, true);
             } catch (IOException | RuntimeException e) {
                 return null;
+            }
+        }
+
+        @Override
+        long remainingHint() {
+            try {
+                return Math.max(channel.size() - channel.position(), -1);
+            } catch (IOException e) {
+                return -1;
             }
         }
 

@@ -6,6 +6,10 @@ import pl.codeloom.php.runtime.Phases;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
+import java.lang.management.MemoryUsage;
+import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -25,6 +29,11 @@ import java.util.TreeMap;
  * JVM keeps a name's first, a native image its last), digits dropped so that a pool's threads add up
  * ("TruffleCompiler", "GC Thread#", natively "mpilerThread-"); a thread counts its user and system ticks. Where
  * there is no /proc the map is empty.
+ *
+ * <p>Memory: the bytes the request's thread allocated ({@code alloc_bytes}), the bytes every live thread has allocated
+ * so far by name, digits dropped as above but from the JVM's own names ({@code alloc_by_thread}: a native image's
+ * compiler threads allocate on the same heap as the requests), each collector's count and time so far ({@code gcs}),
+ * and each heap pool's use now and after its last collection ({@code pools}).
  */
 final class RequestPhases {
     /** Linux's USER_HZ: /proc's ticks per second. */
@@ -38,6 +47,7 @@ final class RequestPhases {
     private final long nativeCompileStart;
     private final long gcTimeStart;
     private final long gcCountStart;
+    private final long allocStart;
     private final Phases phases;
     private long contextReady;
     private long evaluated;
@@ -50,6 +60,7 @@ final class RequestPhases {
         nativeCompileStart = NativeClock.compileNanos();
         gcTimeStart = gcTime();
         gcCountStart = gcCount();
+        allocStart = allocatedBytes(threads);
     }
 
     /** The context is built: the language's per-request setup is done. */
@@ -94,6 +105,7 @@ final class RequestPhases {
         field(line, "native_compile_ns", NativeClock.compileNanos() - nativeCompileStart);
         field(line, "gc_ms", gcTime() - gcTimeStart);
         field(line, "gc_n", gcCount() - gcCountStart);
+        field(line, "alloc_bytes", allocatedBytes(threads) - allocStart);
         System.err.println(processCpu(line));
     }
 
@@ -106,6 +118,7 @@ final class RequestPhases {
     private static StringBuilder processCpu(StringBuilder line) {
         field(line, "gc_ms_total", gcTime());
         field(line, "process_cpu_ms", processCpuMillis());
+        memory(line);
         line.append("\"threads_ms\":{");
         boolean first = true;
         for (Map.Entry<String, Long> group : threadCpuMillis().entrySet()) {
@@ -140,6 +153,68 @@ final class RequestPhases {
             }
         }
         return line.append('"');
+    }
+
+    /** The current thread's allocated bytes so far, -1 where the JVM doesn't count them. */
+    private static long allocatedBytes(ThreadMXBean threads) {
+        if (threads instanceof com.sun.management.ThreadMXBean counting && counting.isThreadAllocatedMemorySupported()
+                && counting.isThreadAllocatedMemoryEnabled()) {
+            return counting.getCurrentThreadAllocatedBytes();
+        }
+        return -1;
+    }
+
+    /** The collectors' counts and times, the heap pools' use, and the live threads' allocated bytes, so far. */
+    private static void memory(StringBuilder line) {
+        line.append("\"gcs\":{");
+        boolean first = true;
+        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+            if (!first) {
+                line.append(',');
+            }
+            first = false;
+            quote(line, gc.getName()).append(":[").append(gc.getCollectionCount()).append(',')
+                    .append(gc.getCollectionTime()).append(']');
+        }
+        line.append("},\"pools\":{");
+        first = true;
+        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+            if (pool.getType() != MemoryType.HEAP) {
+                continue;
+            }
+            if (!first) {
+                line.append(',');
+            }
+            first = false;
+            MemoryUsage usage = pool.getUsage();
+            MemoryUsage collected = pool.getCollectionUsage();
+            quote(line, pool.getName()).append(":[").append(usage == null ? -1 : usage.getUsed()).append(',')
+                    .append(usage == null ? -1 : usage.getCommitted()).append(',')
+                    .append(collected == null ? -1 : collected.getUsed()).append(']');
+        }
+        line.append("},\"alloc_by_thread\":{");
+        ThreadMXBean threads = ManagementFactory.getThreadMXBean();
+        if (threads instanceof com.sun.management.ThreadMXBean counting && counting.isThreadAllocatedMemorySupported()
+                && counting.isThreadAllocatedMemoryEnabled()) {
+            long[] ids = counting.getAllThreadIds();
+            long[] bytes = counting.getThreadAllocatedBytes(ids);
+            ThreadInfo[] infos = counting.getThreadInfo(ids);
+            Map<String, Long> groups = new TreeMap<>();
+            for (int i = 0; i < ids.length; i++) {
+                if (infos[i] != null && bytes[i] >= 0) {
+                    groups.merge(infos[i].getThreadName().replaceAll("[0-9]", ""), bytes[i], Long::sum);
+                }
+            }
+            first = true;
+            for (Map.Entry<String, Long> group : groups.entrySet()) {
+                if (!first) {
+                    line.append(',');
+                }
+                first = false;
+                quote(line, group.getKey()).append(':').append(group.getValue());
+            }
+        }
+        line.append("},");
     }
 
     private static long gcTime() {

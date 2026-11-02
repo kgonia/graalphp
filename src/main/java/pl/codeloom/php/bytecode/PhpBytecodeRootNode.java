@@ -738,15 +738,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = CallInfo.class)
     public static final class ResolveFunction {
         /**
-         * With one context, the function found first stays (functions can't be redeclared). The uncached
-         * interpreter has no cache to keep it in: it looks the function up each time (perContext).
+         * With one context, the function found first stays (functions can't be redeclared); with several, a
+         * built-in (FunctionCallNode.Lookup). The uncached interpreter has no cache to keep it in: it looks the
+         * function up each time (perContext).
          */
         @Specialization(assumptions = "singleContext()", excludeForUncached = true)
         public static PhpFunction single(CallInfo call, @Cached("call.find(context())") PhpFunction function) {
             return function;
         }
 
-        @Specialization(replaces = "single")
+        @Specialization(guards = "builtin != null", replaces = "single", excludeForUncached = true)
+        public static PhpFunction builtin(CallInfo call,
+                                          @Cached("call.builtinOrNull(context())") PhpFunction builtin) {
+            return builtin;
+        }
+
+        @Specialization(replaces = {"single", "builtin"})
         public static PhpFunction perContext(CallInfo call, @Bind Node node) {
             return call.find(PhpContext.get(node));
         }

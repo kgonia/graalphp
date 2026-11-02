@@ -42,7 +42,7 @@ JAVA+=" \$JAVA_OPTS_BASE $SERVER_OPTS -Djava.net.preferIPv6Addresses=system -Dpo
 JAVA+=" -cp 'target/classes:target/lib/*'"
 LAUNCHER=pl.codeloom.php.launcher.HttpMain
 # errors shown as php -S shows them (http.sh's)
-HTTP_ARGS="--port=8080 --threads=4 --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
+HTTP_ARGS="--port=8080 --threads=${WPN_THREADS:-4} --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
 HTTP_ARGS+=" -ddisplay_errors=1 -dhtml_errors=0"
 pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?rest_route=/wp/v2/posts"
        "/?s=hello" /nonexistent-page/ "/?fatal=exception" "/?fatal=error")
@@ -110,7 +110,17 @@ check() {
 
 # the server of a variant: container $P-VARIANT on CPUSET, port 8080 inside, PORT on the host
 start() {
-  local variant=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
+  local name=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
+  # VARIANT.TAG: the variant with the tag's own settings, so one measurement compares builds and options:
+  # CLASSES_TAG, NATIVE_BIN_TAG, JAVA_OPTS_TAG (added to JAVA_OPTS), e.g. native-phases.base with
+  # NATIVE_BIN_base=wp-http-phases-base
+  local variant=${name%%.*} tag= setting
+  [ "$variant" = "$name" ] || tag=${name#*.}
+  if [ -n "$tag" ]; then
+    setting=CLASSES_$tag; [ -z "${!setting:-}" ] || local CLASSES=${!setting}
+    setting=NATIVE_BIN_$tag; [ -z "${!setting:-}" ] || local NATIVE_BIN=${!setting}
+    setting=JAVA_OPTS_$tag; [ -z "${!setting:-}" ] || local JAVA_OPTS="${JAVA_OPTS:-} ${!setting}"
+  fi
   case $variant in
     *-java|*-main) opts="-Dpolyglot.php.Parser=java" ;;
     # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
@@ -135,6 +145,8 @@ start() {
     native-*) local binary=wp-http
               [ "$variant" != native-main ] || binary=wp-http-main
               [ "$variant" != native-phases ] || binary=wp-http-phases
+              # NATIVE_BIN: another build of target/native for this variant (wp-http-phases-base, ...)
+              [ -z "${NATIVE_BIN:-}" ] || binary=$NATIVE_BIN
               cmd="exec target/native/$binary \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
     *) echo "unknown variant $variant"; exit 2 ;;
@@ -151,8 +163,8 @@ start() {
     agent=(-v "$root/target/native/config:/agent")
     cmd=${cmd/$LAUNCHER/-agentlib:native-image-agent=config-merge-dir=/agent $LAUNCHER}
   fi
-  docker rm -f $P-$variant > /dev/null 2>&1 || true
-  MSYS_NO_PATHCONV=1 docker run -d --name $P-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network $P-net \
+  docker rm -f $P-$name > /dev/null 2>&1 || true
+  MSYS_NO_PATHCONV=1 docker run -d --name $P-$name --cpuset-cpus "$cpus" -p "$port:8080" --network $P-net \
     --ip $NET.10 --add-host host.docker.internal:$NET.2 "${env[@]}" "${agent[@]}" "${extra[@]}" \
     -v $P-site:/srv:ro -w /srv \
     $image sh -c "$cmd" > /dev/null
@@ -161,7 +173,7 @@ start() {
     curl -s -o /dev/null "http://127.0.0.1:$port/wp-includes/css/dashicons.css" && return 0
     sleep 0.2
   done
-  echo "$P-$variant did not start"; docker logs $P-$variant 2>&1 | tail -20; return 1
+  echo "$P-$name did not start"; docker logs $P-$name 2>&1 | tail -20; return 1
 }
 
 stop() {
