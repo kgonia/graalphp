@@ -355,14 +355,29 @@ load() {
 # (polyglot.log.file), the server's output to server.log. At the end the server closes its engine
 # (php.http.closeFile), which prints what an engine prints at its close (CompilationStatistics,
 # TraceSplittingSummary). Run beside a benchmark only under another WPN_NAME, WPN_NET and WPN_DB_PORT, with its
-# database off the benchmark's CPUs (WPN_DB_CPUS).
+# database off the benchmark's CPUs (WPN_DB_CPUS). DIAG_SEED=gate2-seed (target/$P/gate2-seed.sql, Gate 2's database:
+# WooCommerce inactive) runs plain WordPress instead, under VUS curl loops over Gate 2's front-end pages.
 diag() {
   local tag=$1 duration=$2 dir=$out/diag/$1 port=${DIAG_PORT:-8098}
   rm -rf "$dir" && mkdir -p "$dir"
   stop jvm
-  SEED=seed-load reset_db
-  WC_DOCKER_ARGS="-v $root/$dir:/out ${WC_DOCKER_ARGS:-}"     JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close ${JAVA_OPTS:-}"     THREADS=${THREADS:-16} start jvm "${DIAG_CPUS:-6-13}" $port
-  k6_run jvm 13 "${VUS:-16}" "$duration" 0.5 $tag-diag
+  SEED=${DIAG_SEED:-seed-load} reset_db
+  WC_DOCKER_ARGS="-v $root/$dir:/out ${WC_DOCKER_ARGS:-}" \
+    JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close ${JAVA_OPTS:-}" \
+    THREADS=${THREADS:-16} start jvm "${DIAG_CPUS:-6-13}" $port
+  if [ -z "${DIAG_SEED:-}" ]; then
+    k6_run jvm 13 "${VUS:-16}" "$duration" 0.5 $tag-diag
+  else
+    local end=$(($(date +%s) + ${duration%s})) i
+    for i in $(seq "${VUS:-16}"); do
+      ( while [ "$(date +%s)" -lt $end ]; do
+          for page in / "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" "/?s=hello" "/?rest_route=/wp/v2/posts"; do
+            curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:$port$page" || true
+          done
+        done ) &
+    done
+    wait
+  fi
   # the engine closes after the next request
   touch "$dir/close"
   curl -s -o /dev/null "http://127.0.0.1:$port/wp-includes/css/dashicons.css" || true
