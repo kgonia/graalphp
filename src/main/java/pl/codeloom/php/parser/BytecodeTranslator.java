@@ -501,6 +501,9 @@ public final class BytecodeTranslator {
                 case "AST_FOREACH":
                     foreach(node);
                     break;
+                case "AST_SWITCH":
+                    switchStatement(node);
+                    break;
                 case "AST_BREAK":
                 case "AST_CONTINUE": {
                     int depth = node.get("depth") instanceof Long d ? d.intValue() : 1;
@@ -673,6 +676,61 @@ public final class BytecodeTranslator {
             if (afterContinue != null) {
                 afterContinue.run();
             }
+            b.endBlock();
+        }
+
+        /**
+         * switch (LoopNodes.SwitchNode): the subject once, then each case's value in order, compared to it loosely
+         * (`==`, ZEND_CASE) until one is equal; the bodies follow one another (fall-through) from that case's, or
+         * from default's (wherever it is) when none is. The switch is a level for break and continue, a continue
+         * targeting it acting as break.
+         */
+        private void switchStatement(Ast node) {
+            Ast list = node.node("stmts");
+            List<Ast> cases = new ArrayList<>();
+            int defaultIndex = -1;
+            for (int i = 0; list != null && i < list.size(); i++) {
+                Ast switchCase = (Ast) list.child(i);
+                if (switchCase.get("cond") == null) {
+                    if (defaultIndex >= 0) {
+                        // php-src's compile error "Switch statements may only contain one default clause"
+                        throw new Unsupported("switch with two default clauses", switchCase);
+                    }
+                    defaultIndex = i;
+                }
+                cases.add(switchCase);
+            }
+            b.beginBlock();
+            BytecodeLocal subject = b.createLocal();
+            b.beginStoreLocal(subject);
+            expression(node.get("cond"));
+            b.endStoreLocal();
+            BytecodeLabel end = b.createLabel();
+            List<BytecodeLabel> bodies = new ArrayList<>();
+            for (int i = 0; i < cases.size(); i++) {
+                bodies.add(b.createLabel());
+            }
+            for (int i = 0; i < cases.size(); i++) {
+                Object condition = cases.get(i).get("cond");
+                if (condition == null) {
+                    continue;
+                }
+                b.beginIfThen();
+                b.beginEqual();
+                b.emitLoadLocal(subject);
+                expression(condition);
+                b.endEqual();
+                b.emitBranch(bodies.get(i));
+                b.endIfThen();
+            }
+            b.emitBranch(defaultIndex >= 0 ? bodies.get(defaultIndex) : end);
+            loops.add(new Loop(end, end));
+            for (int i = 0; i < cases.size(); i++) {
+                b.emitLabel(bodies.get(i));
+                statements(cases.get(i).node("stmts"));
+            }
+            loops.remove(loops.size() - 1);
+            b.emitLabel(end);
             b.endBlock();
         }
 
