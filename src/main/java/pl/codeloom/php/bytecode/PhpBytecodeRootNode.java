@@ -49,6 +49,7 @@ import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
+import pl.codeloom.php.nodes.call.FrameArgNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.call.InstantiateNode;
 import pl.codeloom.php.nodes.call.MethodCallNode;
@@ -1901,6 +1902,39 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             list.append(PhpRef.deref(arguments[PhpFunction.ARG_FIRST + i]));
         }
         return list;
+    }
+
+    /**
+     * func_get_arg($position) (FrameArgNode): a declared parameter's variable as it holds it now (null when
+     * unset), an extra argument as passed; php-src's ValueError for a position outside the arguments passed.
+     */
+    @Operation
+    public static final class FuncGetArg {
+        @Specialization
+        public static Object arg(VirtualFrame frame, Object position, @Bind PhpBytecodeRootNode root,
+                                 @Bind BytecodeNode bytecode) {
+            return root.passedArgument(frame, bytecode, Convert.toLong(position));
+        }
+    }
+
+    /** func_get_arg()'s value (see FuncGetArg); the loop over the parameters is over constants. */
+    @ExplodeLoop
+    Object passedArgument(VirtualFrame frame, BytecodeNode bytecode, long offset) {
+        if (offset < 0) {
+            throw FrameArgNode.negativeOffset();
+        }
+        Object[] arguments = frame.getArguments();
+        if (offset >= arguments.length - PhpFunction.ARG_FIRST) {
+            throw FrameArgNode.offsetPastArguments();
+        }
+        // the variadic parameter's arguments are extra ones (php-src's num_args leaves it out)
+        int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1 : params.length;
+        for (int i = 0; i < declared; i++) {
+            if (i == offset) {
+                return Variables.value(Locals.stored(frame, variables[parameterLocals[i]], bytecode));
+            }
+        }
+        return PhpRef.deref(arguments[PhpFunction.ARG_FIRST + (int) offset]);
     }
 
     /** php-src's E_DEPRECATED at this instruction's line. */

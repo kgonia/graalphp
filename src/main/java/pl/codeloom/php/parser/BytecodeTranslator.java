@@ -2721,8 +2721,8 @@ public final class BytecodeTranslator {
             switch (lower) {
                 case "func_get_args", "func_num_args" -> {
                     if (args.size() != 0) {
-                        // php-src's ArgumentCountError
-                        throw new Unsupported(lower + "() with arguments", node);
+                        // php-src compiles a call with arguments as any other: the built-in's ArgumentCountError
+                        return false;
                     }
                     if (lower.equals("func_get_args")) {
                         b.emitFuncGetArgs();
@@ -2773,7 +2773,17 @@ public final class BytecodeTranslator {
                     }
                     return true;
                 }
-                case "func_get_arg", "compact", "extract", "get_object_vars", "get_defined_vars" ->
+                case "func_get_arg" -> {
+                    if (args.size() != 1 || hasUnpackOrNames(args)) {
+                        // the built-in, called as any function (the tree's): its ArgumentCountError
+                        return false;
+                    }
+                    b.beginFuncGetArg();
+                    expression(args.child(0));
+                    b.endFuncGetArg();
+                    return true;
+                }
+                case "compact", "extract", "get_object_vars", "get_defined_vars" ->
                         throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;

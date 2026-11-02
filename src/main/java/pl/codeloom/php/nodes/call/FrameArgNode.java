@@ -27,21 +27,31 @@ public final class FrameArgNode extends ExprNode {
     public Object execute(VirtualFrame frame) {
         long offset = Convert.toLong(position.execute(frame));
         if (offset < 0) {
-            throw new PhpError("ValueError", "func_get_arg(): Argument #1 ($position) must be greater than or equal "
-                    + "to 0");
+            throw negativeOffset();
         }
         if (paramSlots == null) {
             throw new PhpError("Error", "func_get_arg() cannot be called from the global scope");
         }
         Object[] arguments = frame.getArguments();
         if (offset >= arguments.length - PhpFunction.ARG_FIRST) {
-            throw new PhpError("ValueError", "func_get_arg(): Argument #1 ($position) must be less than the number "
-                    + "of the arguments passed to the currently executed function");
+            throw offsetPastArguments();
         }
         if (offset < paramSlots.length) {
             Object value = LocalVarNode.raw(frame, paramSlots[(int) offset]);
             return value == null ? PhpNull.NULL : PhpRef.deref(value);
         }
         return PhpRef.deref(arguments[PhpFunction.ARG_FIRST + (int) offset]);
+    }
+
+    /** php-src's ValueError for a negative position. */
+    public static PhpError negativeOffset() {
+        return new PhpError("ValueError", "func_get_arg(): Argument #1 ($position) must be greater than or equal "
+                + "to 0");
+    }
+
+    /** php-src's ValueError for a position past the arguments passed. */
+    public static PhpError offsetPastArguments() {
+        return new PhpError("ValueError", "func_get_arg(): Argument #1 ($position) must be less than the number "
+                + "of the arguments passed to the currently executed function");
     }
 }
