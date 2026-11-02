@@ -19,6 +19,7 @@
 | [native-calls.md](native-calls.md) | Native calls (PCRE2, libcurl, libc) through one FFM helper, on the JVM and in a native image: the contract for adding a binding, and why it is fast on both |
 | [partial-evaluation.md](partial-evaluation.md) | What Truffle compiles of our interpreter: the partial-evaluation rules mapped onto our code, the diagnosis (`tests/gate2/compile-diag.sh`, `CompilationTest` in `mvn test`) and how to read it, the failures and explosions found on WordPress and their fixes |
 | [visit-phases.md](visit-phases.md) | Where a WordPress visit's time goes (include, parse, body reads, translation, native calls, compilation, GC, execution; cold, early and warm, JVM and native, PHP with and without OPcache), and what parsing ahead, a pre-pass or a parse-free start could gain at most |
+| [gc.md](gc.md) | Why the GC is a large part of a native visit (the serial GC's 20 MB eden, ten collections a visit, each walking the compiled code), where a visit's 190 MB of allocation come from (required by PHP or ours), the fixes, one request's live heap (2-3 MB) against the server's fixed cost, and what virtual threads would change |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 

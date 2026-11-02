@@ -75,6 +75,13 @@ public final class PhpArray implements TruffleObject {
         return new PhpArray(capacity);
     }
 
+    /** An empty array with room for capacity ints, unboxed (the int strategy) until another value comes. */
+    public static PhpArray ofLongCapacity(int capacity) {
+        PhpArray array = new PhpArray();
+        array.store = new long[Math.max(capacity, 1)];
+        return array;
+    }
+
     /** A packed list of the given values; holders of nested arrays are counted. */
     public static PhpArray list(Object... items) {
         PhpArray array = new PhpArray(items.length);
@@ -158,7 +165,7 @@ public final class PhpArray implements TruffleObject {
     /** A shallow copy with no holders; nested arrays gain one holder each (the copy now also holds them). */
     @TruffleBoundary
     public PhpArray copy() {
-        PhpArray copy = new PhpArray(1);
+        PhpArray copy = new PhpArray();
         copy.size = size;
         copy.nextIndex = nextIndex;
         copy.pointer = pointer;
@@ -994,15 +1001,20 @@ public final class PhpArray implements TruffleObject {
         if (store instanceof Hash hash) {
             return hash;
         }
-        if (store instanceof long[]) {
-            boxLongs();
-        }
-        Object[] old = (Object[]) store;
         int count = size;
         Hash hash = new Hash(Integer.highestOneBit(Math.max(MIN_CAPACITY, count * 2) - 1) << 1);
-        for (int i = 0; i < count; i++) {
-            long key = i;
-            hash.add(key, hash(key), old[i]);
+        if (store instanceof long[] longs) {
+            // the ints go into the hash's slots boxed once, without an Object[] in between (none when empty)
+            for (int i = 0; i < count; i++) {
+                long key = i;
+                hash.add(key, hash(key), longs[i]);
+            }
+        } else {
+            Object[] old = (Object[]) store;
+            for (int i = 0; i < count; i++) {
+                long key = i;
+                hash.add(key, hash(key), old[i]);
+            }
         }
         store = hash;
         return hash;
