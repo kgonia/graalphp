@@ -98,7 +98,8 @@ public final class ArrayLiteralNode extends ExprNode {
         return array;
     }
 
-    private static void spread(PhpArray array, Object source) {
+    /** `...$source` into array: its elements, int keys renumbered, string keys kept; only an array unpacks. */
+    public static void spread(PhpArray array, Object source) {
         if (!(source instanceof PhpArray items)) {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Only arrays and Traversables can be unpacked");

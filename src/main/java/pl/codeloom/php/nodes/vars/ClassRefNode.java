@@ -56,13 +56,31 @@ public final class ClassRefNode extends Node {
             return phpClass;
         }
         if (dynamic != null) {
-            Object value = dynamic.execute(frame);
-            if (value instanceof PhpObject object) {
-                return object.getPhpClass();
-            }
-            return PhpContext.get(this).getClass(Str.java(Convert.toStr(value)));
+            return classOf(this, dynamic.execute(frame));
         }
         return named.execute();
+    }
+
+    /** The class an expression names: an object's class, or the class of the name the value converts to. */
+    public static PhpClass classOf(Node site, Object value) {
+        if (value instanceof PhpObject object) {
+            return object.getPhpClass();
+        }
+        return PhpContext.get(site).getClass(Str.java(Convert.toStr(value)));
+    }
+
+    /**
+     * The class declared under a name's id in the context; else (not declared yet) by name, which autoloads or
+     * throws. The miss stays in compiled code: in a server each request is a new context, where built-in classes
+     * are loaded and autoloaded ones declared on first use, so a transfer to the interpreter here deoptimized once
+     * per request.
+     */
+    public static PhpClass find(PhpContext context, int id, String name) {
+        PhpClass phpClass = context.classAt(id);
+        if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, phpClass == null)) {
+            phpClass = context.getClass(name); // throws "not found"
+        }
+        return phpClass;
     }
 
     /** A class by name: with one context the class found first, else the calling context's by name id. */
@@ -85,18 +103,9 @@ public final class ClassRefNode extends Node {
             return find(id);
         }
 
-        /**
-         * The class under the name's id; else (not declared yet) by name, which autoloads or throws. The miss stays
-         * in compiled code: in a server each request is a new context, where built-in classes are loaded and
-         * autoloaded ones declared on first use, so a transfer to the interpreter here deoptimized once per request.
-         */
+        /** The class under the name's id ({@link ClassRefNode#find}). */
         protected PhpClass find(int id) {
-            PhpContext context = PhpContext.get(this);
-            PhpClass phpClass = context.classAt(id);
-            if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, phpClass == null)) {
-                phpClass = context.getClass(name); // throws "not found"
-            }
-            return phpClass;
+            return ClassRefNode.find(PhpContext.get(this), id, name);
         }
 
         protected int classId() {

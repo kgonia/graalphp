@@ -13,6 +13,7 @@ import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -156,7 +157,7 @@ public final class DimNode extends LValueNode {
             return;
         }
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Cannot use object of type " + target + " as array");
+        throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(target) + " as array");
     }
 
     @Override
@@ -221,21 +222,26 @@ public final class DimNode extends LValueNode {
         }
     }
 
+    /** The key is evaluated whatever the container holds, as php-src evaluates it before ISSET_ISEMPTY_DIM_OBJ. */
     @Override
     public boolean isSet(VirtualFrame frame) {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
+        Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            return read.execute(array, rawKey(frame)) != PhpNull.NULL;
+            return read.execute(array, offset) != PhpNull.NULL;
         }
         if (value == null || value == PhpNull.NULL) {
             return false;
         }
         notArray.enter();
-        return isSetIn(value, rawKey(frame));
+        return isSetIn(this, value, offset);
     }
 
-    /** isset() of an element of a string (an offset in range) or an ArrayAccess object (offsetExists()). */
-    private boolean isSetIn(Object value, Object offsetValue) {
+    /**
+     * isset() of an element of a string (an offset in range) or an ArrayAccess object (offsetExists(), called from
+     * site); false for other values.
+     */
+    public static boolean isSetIn(Node site, Object value, Object offsetValue) {
         if (value instanceof TruffleString string) {
             if (offsetValue instanceof TruffleString s && Convert.numericValue(s) == null) {
                 return false;
@@ -245,29 +251,30 @@ public final class DimNode extends LValueNode {
             return offset < 0 ? -offset <= length : offset < length;
         }
         if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return Convert.toBool(object.callMethod(this, "offsetexists", offsetValue));
+            return Convert.toBool(object.callMethod(site, "offsetexists", offsetValue));
         }
         return false;
     }
 
     /**
-     * The container and the key are evaluated once, as php-src's FETCH_DIM_IS does: isSet and execute each
+     * The container and the key are evaluated once, the key whatever the container holds, as php-src's FETCH_DIM_IS
+     * does: isSet and execute each
      * evaluated them again, so a nested `$a[x][y][z] ?? d` compiled 2^depth copies of the lookups below it, and
      * an ArrayAccess container's offsetGet() or a key's side effects ran more than once.
      */
     @Override
     public Object readIfSet(VirtualFrame frame) {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
+        Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            Object element = read.execute(array, rawKey(frame));
+            Object element = read.execute(array, offset);
             return element == PhpNull.NULL ? null : element;
         }
         if (value == null || value == PhpNull.NULL) {
             return null;
         }
         notArray.enter();
-        Object offset = rawKey(frame);
-        return isSetIn(value, offset) ? read.execute(value, offset) : null;
+        return isSetIn(this, value, offset) ? read.execute(value, offset) : null;
     }
 
     @Override

@@ -14,7 +14,7 @@ import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 
-/** `new Cls(args)`: instantiate, then call the constructor (inline-cached on the class). */
+/** `new Cls(args)`: instantiate, then call the constructor (inline-cached on the class), if there is one. */
 public final class NewNode extends ExprNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
@@ -32,6 +32,9 @@ public final class NewNode extends ExprNode {
         PhpObject object = instantiate.execute(phpClass);
         if (phpClass.getConstructor() != null) {
             construct.execute(frame, phpClass, object, args);
+        } else if (args.count() > 0) {
+            // ZEND_NEW without a constructor: the arguments go to zend_pass_function, evaluated and dropped
+            args.values(frame);
         }
         return object;
     }

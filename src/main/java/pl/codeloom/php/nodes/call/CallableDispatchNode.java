@@ -57,11 +57,19 @@ public abstract class CallableDispatchNode extends Node {
     protected Object closure(PhpClosure callable, Object[] values,
                              @Cached("callable.getFunction()") PhpFunction cachedFunction,
                              @Cached("create(cachedFunction.getCallTarget())") DirectCallNode call) {
+        return result(call.call(closureArguments(callable, values)));
+    }
+
+    /**
+     * The frame arguments of a closure's call: its bound $this and scope, the closure, and the values (as
+     * __call's two for a closure made of a method __call stands in for).
+     */
+    public static Object[] closureArguments(PhpClosure callable, Object[] values) {
         PhpObject self = callable.getBoundThis();
         PhpClass scope = self != null ? self.getPhpClass() : callable.getScope();
         Object[] arguments = callable.getMagicName() == null ? values
                 : Callables.magicValues(callable.getMagicName(), values);
-        return result(call.call(ArgumentsNode.frameArguments(self, scope, callable, arguments)));
+        return ArgumentsNode.frameArguments(self, scope, callable, arguments);
     }
 
     /**

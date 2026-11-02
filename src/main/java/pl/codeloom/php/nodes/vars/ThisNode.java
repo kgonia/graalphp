@@ -10,6 +10,11 @@ import pl.codeloom.php.runtime.PhpFunction;
 public final class ThisNode extends ExprNode {
     @Override
     public Object execute(VirtualFrame frame) {
+        return self(frame);
+    }
+
+    /** The frame's $this; outside an object's method an Error. */
+    public static Object self(VirtualFrame frame) {
         Object self = frame.getArguments()[PhpFunction.ARG_THIS];
         if (self == null) {
             CompilerDirectives.transferToInterpreter();
@@ -22,6 +27,10 @@ public final class ThisNode extends ExprNode {
     public static final class IsSetNode extends ExprNode {
         @Override
         public Object execute(VirtualFrame frame) {
+            return isSet(frame);
+        }
+
+        public static boolean isSet(VirtualFrame frame) {
             return frame.getArguments()[PhpFunction.ARG_THIS] != null;
         }
 
