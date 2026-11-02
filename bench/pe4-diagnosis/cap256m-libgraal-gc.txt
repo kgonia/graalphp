@@ -1,0 +1,33 @@
+target/pe4d/diag/cap256m-long/server.log: 13597 collections in 79 isolate lives (GC(0) lines), 337.7 s of pauses; largest heap before a collection 345 MB, after one 263 MB
+     7308     71.1 s  Incremental (Hinted GC)
+     4060     59.3 s  Incremental (Collect on allocation)
+     1922    144.7 s  Full (Hinted GC)
+      307     62.5 s  Full (Collect on allocation)
+  minute: collections, pause s, largest heap after one MB
+     0   1576    28.4     126
+     1   1053    18.9      70
+     2    869    18.3      89
+     3   1000    21.3     260
+     4   1104    16.1      61
+     5    714    35.0     263
+     6    561    66.0     259
+     7    789    21.0     260
+     8    942    15.8      66
+     9    870    16.1      86
+    10    887    17.7      67
+    11    818    15.5     105
+    12    739    15.5     121
+    13    766    15.3     109
+    14    771    14.7     108
+    15    138     2.2     113
+target/pe4d/diag/cap256m/server.log: 4418 collections in 20 isolate lives (GC(0) lines), 83.0 s of pauses; largest heap before a collection 332 MB, after one 247 MB
+     2415     18.6 s  Incremental (Hinted GC)
+     1026     13.8 s  Incremental (Collect on allocation)
+      852     33.5 s  Full (Hinted GC)
+      125     17.1 s  Full (Collect on allocation)
+  minute: collections, pause s, largest heap after one MB
+     0   1495    25.7     118
+     1   1062    18.7      73
+     2   1007    17.8     129
+     3    753    19.3     247
+     4    101     1.5      55

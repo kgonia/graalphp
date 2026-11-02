@@ -3,7 +3,8 @@
 # 14-21, interleaved:
 # - mem-before: question 3 and 4, the memrun of runs.sh's baseline (12 min at 16 users, half buying, 16 threads,
 #   the same logging) on the build before the merge (866e156), twice, around a fourth baseline of the merged build:
-#   whether the merge changed libgraal's burst.
+#   whether the merge changed libgraal's burst; and one run with libgraal's heap capped at 256 MB per isolate
+#   (where the diagnosis run cap256m-long saw the three largest compilations fail early, and no other).
 # - ab-more: question 4's A/B, rounds 4-6 (as runs.sh ab), on a quieter box.
 # Usage: bench/pe4-diagnosis/runs2.sh mem-before|ab-more
 set -euo pipefail
@@ -15,9 +16,10 @@ log+=" -Dpolyglot.engine.CompilationFailureAction=Print -Dpolyglot.log.file=/out
 log+=" -Djdk.graal.internal.PrintGC=true"
 case ${1:-} in
   mem-before)
-    for run in before-r1 base-r4 before-r2; do
+    for run in before-r1 base-r4 cap256m-r1 before-r2; do
       if [ "${run%-r*}" = before ]; then classes=target/classes-before; else classes=target/classes; fi
-      DEV_CLASSES=$classes SNAP=60 JAVA_OPTS="$log" woo memrun jvm 16 m-$run 16 720s
+      extra=; [ "${run%-r*}" != cap256m ] || extra=-Djdk.graal.internal.MaxHeapSize=256m
+      DEV_CLASSES=$classes SNAP=60 JAVA_OPTS="$log $extra" woo memrun jvm 16 m-$run 16 720s
     done ;;
   ab-more)
     for r in 4 5 6; do
