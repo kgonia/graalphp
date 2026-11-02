@@ -34,8 +34,11 @@ ranked. Nothing here changes the interpreter: the branch `pe4-diagnosis` (on `wo
    reached, 1 GB stopped only the classmap, 256 MB stopped the giants early and one or two ordinary compilations
    (RssAnon 1.9 GB against 5.0). **One compiler thread: no loss in three interleaved rounds** (10.9/12.6/15.4 against
    10.5/9.8/15.3 pages/s), 62% less compiler CPU, 40-50% less memory.
-4. **#19 and #20 on WooCommerce:** in the memruns on a quiet box +12-28% pages/s, −10-22% CPU-s per page, −22-27%
-   p99, −30-37% memory.peak (8.1/7.4 → 5.2/5.1 GB); TBD-ABSHORT
+4. **#19 and #20 on WooCommerce:** in the memruns on a quiet box +12-28% pages/s, −10-22% CPU-s per page, −22-27% p99,
+   −30-37% memory.peak (8.1/7.4 → 5.2/5.1 GB); **at steady state (six interleaved rounds after 300 s of warm-up, every
+   visitor buying) no difference in orders/s or CPU-s per page (−1%, +1%)**, memory.peak −8%: the gain is in the first
+   minutes, while compilation dominates. The first server of a round won all six rounds, whichever build, so only the
+   reversed order makes the A/B fair.
 5. **Round 4's targets, ranked** (section 5): don't compile run-once code that can't pay back (or make its literals
    templates); dispatch keyed on the resolved method; `defined()` as a node; a user function's call without the
    per-context lookup; holder counts out of line; polymorphism reported only where a copy helps; and, the owner's
@@ -361,7 +364,34 @@ diagnosis server worked on 6-13 (box 56-65% busy); rounds 4-6 later, without it.
 **The A/B** (every visitor buying, 120 s at 16 users after the warm-up; `bench/pe4-diagnosis/ab-table.md`; a cell
 is the median of the rounds with their range):
 
-TBD-ABTABLE
+| round (order) | box busy | orders/s before → after | p50 ms | p99 ms | CPU-s per page | memory.peak MB | after / before: orders, CPU per page, peak |
+|---|---|---|---|---|---|---|---|
+| 1 (before first) | 64% | 1.71 → 1.32 | 1033 → 1365 | 2416 → 2892 | 0.569 → 0.730 | 4114 → 3451 | 0.77, 1.28, 0.84 |
+| 2 (after first) | 56-62% | 1.29 → 1.52 | 1400 → 1182 | 2775 → 2712 | 0.748 → 0.635 | 3039 → 2988 | 1.18, 0.85, 0.98 |
+| 3 (before first) | 56-64% | 1.41 → 1.33 | 1271 → 1290 | 2973 → 2754 | 0.689 → 0.729 | 2971 → 2957 | 0.94, 1.06, 1.00 |
+| 4 (after first) | 35-36% | 1.60 → 1.80 | 1126 → 985 | 2339 → 2243 | 0.607 → 0.539 | 4148 → 3318 | 1.13, 0.89, 0.80 |
+| 5 (before first) | 35-36% | 1.65 → 1.54 | 1122 → 1175 | 2264 → 3127 | 0.592 → 0.625 | 5252 → 4458 | 0.93, 1.06, 0.85 |
+| 6 (after first) | 35-36% | 1.48 → 1.51 | 1213 → 1190 | 2689 → 2885 | 0.651 → 0.642 | 3853 → 4078 | 1.02, 0.99, 1.06 |
+| **6 rounds** (median, range) | | 1.54 (1.29-1.71) → 1.52 (1.32-1.80) | 1170 → 1186 | 2552 → 2819 | 0.629 → 0.638 | 3984 → 3384 | **geometric mean 0.99, 1.01, 0.92** |
+| rounds 4-6 (quiet box) | | | | | | | geometric mean 1.02, 0.98, 0.90 |
+
+(Round 1's "before" has no box-load samples: the sampler started a minute later.)
+
+**What it says:**
+- **At steady state with every visitor buying, #19 and #20 change WooCommerce's throughput and CPU per page by less
+  than this A/B can see**: −1% orders and +1% CPU-s per page over six rounds, +2% and −2% over the three quiet ones,
+  each round's ratio between 0.77 and 1.18. p99 is no better (2.8 s against 2.6 s, medians; within the rounds' spread).
+- **Memory.peak is 8-10% lower** (geometric mean; lower in 5 of 6 rounds), the same direction as the memruns but
+  smaller: after a 300 s warm-up the giants have mostly been tried, and the peak is set by whichever of them
+  overlapped.
+- **The server that runs first in a round wins every time** (6 of 6, by 2-30% in orders/s), whichever build it is,
+  though every server starts from the same database dump. Its cause isn't known (the database container's caches or
+  the host's are candidates); reversing the order every other round is what cancels it, so a single A/B pair on this
+  stack is not evidence either way.
+- The memruns' +12-28% (below) is therefore in **the first minutes**, while compilation dominates (less to compile
+  after round 3, less libgraal memory), not in faster steady-state code; which of the two it is wasn't separated.
+  Rounds 4-6 at 300 s of warm-up already sit inside the long tail of section 2, where both builds run mostly compiled
+  code.
 
 **The memruns** (section 3's table: 12 minutes from cold, 16 users half buying): on the same quiet box (35-36%),
 before against the merged build's baselines of rounds 3 and 4:
