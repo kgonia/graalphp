@@ -81,6 +81,7 @@ public final class HttpMain {
     }
 
     public static void main(String[] args) throws IOException {
+        PhpMain.compilerDefaults();
         String host = "127.0.0.1";
         int port = 8080;
         int threads = Runtime.getRuntime().availableProcessors();

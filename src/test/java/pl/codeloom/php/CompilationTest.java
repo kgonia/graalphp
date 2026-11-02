@@ -47,7 +47,9 @@ class CompilationTest {
             Map.entry("engine.OSRCompilationThreshold", "1000"),
             Map.entry("engine.TraceCompilation", "true"),
             Map.entry("engine.CompilationFailureAction", "Print"),
-            Map.entry("compiler.TracePerformanceWarnings", "all"));
+            Map.entry("compiler.TracePerformanceWarnings", "all"),
+            // as the launchers default it (PhpMain.compilerDefaults)
+            Map.entry("compiler.FirstTierUseEconomy", "false"));
 
     static Stream<String> programs() throws IOException {
         try (Stream<Path> files = Files.list(Path.of("src/test/resources/compile"))) {

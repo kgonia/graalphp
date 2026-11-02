@@ -46,6 +46,7 @@ public final class BatchMain {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        PhpMain.compilerDefaults();
         String astRoot = "target/ast";
         String list = null;
         String outDir = null;
