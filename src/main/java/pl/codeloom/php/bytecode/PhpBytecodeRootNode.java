@@ -1328,6 +1328,54 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    // ---- list() (ListAssignNode) ----
+
+    /**
+     * An element of a list() assignment's value (FETCH_LIST_R): an array's element, null when it is missing; an
+     * ArrayAccess object's offsetGet(); null for anything else (ListAssignNode).
+     */
+    @Operation
+    public static final class ListElement {
+        @Specialization
+        public static Object array(PhpArray container, Object key,
+                                   @Shared @Cached ElementNodes.ElementReadNode read) {
+            return read.execute(container, key);
+        }
+
+        @Specialization
+        public static Object object(PhpObject container, Object key,
+                                    @Shared @Cached ElementNodes.ElementReadNode read) {
+            return read.execute(container, key);
+        }
+
+        @Fallback
+        public static Object other(Object container, Object key) {
+            return PhpNull.NULL;
+        }
+    }
+
+    /** A value held while a list() that writes the variable it came from is assigned (php-src's copy of it). */
+    @Operation
+    public static final class HoldValue {
+        @Specialization
+        public static Object hold(Object value) {
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            return value;
+        }
+    }
+
+    @Operation
+    public static final class ReleaseValue {
+        @Specialization
+        public static void release(Object value) {
+            if (value instanceof PhpArray array) {
+                array.removeHolder();
+            }
+        }
+    }
+
     // ---- calls ----
 
     /** The function a call by name calls, looked up before its arguments as php-src's INIT_FCALL does. */

@@ -668,8 +668,16 @@ public final class BytecodeTranslator {
 
         /** A loop's body, then (after the label `continue` goes to) what a step of the loop does next. */
         private void loopBody(Loop outer, Ast body, Runnable afterContinue) {
+            loopBody(outer, body, null, afterContinue);
+        }
+
+        /** A loop's body after what a step does first (a foreach binding its targets), then afterContinue. */
+        private void loopBody(Loop outer, Ast body, Runnable first, Runnable afterContinue) {
             b.beginBlock();
             Loop loop = new Loop(outer.breakLabel(), b.createLabel());
+            if (first != null) {
+                first.run();
+            }
             loops.add(loop);
             statements(body);
             loops.remove(loops.size() - 1);
@@ -735,14 +743,39 @@ public final class BytecodeTranslator {
             b.endBlock();
         }
 
-        /** foreach by value into variables (ForeachNode): the loop holds the array until it ends, however it ends. */
+        /**
+         * foreach by value (ForeachNode): the loop holds the array until it ends, however it ends. A value target
+         * that is a list() or a place other than a variable takes the element from a hidden local, then the key
+         * (zend_compile_foreach assigns them in that order).
+         */
         private void foreach(Ast node) {
             Ast value = node.node("value");
             if (value.is("AST_REF")) {
                 throw new Unsupported("foreach by reference", node);
             }
-            BytecodeLocal valueVariable = variable(value, "foreach into");
-            BytecodeLocal keyVariable = node.get("key") == null ? null : variable(node.node("key"), "foreach key");
+            Ast keyTarget = node.node("key");
+            if (keyTarget != null && keyTarget.is("AST_ARRAY")) {
+                // php-src's compile error "Cannot use list as key element"
+                throw new Unsupported("foreach key into list()", keyTarget);
+            }
+            boolean direct = isVariable(value) && (keyTarget == null || isVariable(keyTarget));
+            if (value.is("AST_ARRAY")) {
+                checkList(value);
+            }
+            BytecodeLocal valueVariable = direct ? variable(value, "foreach into") : b.createLocal();
+            BytecodeLocal keyVariable = keyTarget == null ? null
+                    : direct ? variable(keyTarget, "foreach key") : b.createLocal();
+            Runnable bind = direct ? null : () -> {
+                if (value.is("AST_ARRAY")) {
+                    destructure(value, valueVariable);
+                } else {
+                    assignFrom(value, valueVariable, value);
+                }
+                b.emitUnsetVar(valueVariable);
+                if (keyTarget != null) {
+                    assignFrom(keyTarget, keyVariable, keyTarget);
+                }
+            };
             b.beginBlock();
             BytecodeLocal state = b.createLocal();
             BytecodeLocal position = b.createLocal();
@@ -759,7 +792,7 @@ public final class BytecodeTranslator {
                     keyVariable != null);
             b.emitLoadLocal(state);
             b.endForeachNext();
-            loopBody(loop, node.node("stmts"), null);
+            loopBody(loop, node.node("stmts"), bind, null);
             b.endWhile();
             b.endTryFinally();
             b.emitLabel(loop.breakLabel());
@@ -1227,6 +1260,10 @@ public final class BytecodeTranslator {
 
         private void assignment(Ast node) {
             Ast target = node.node("var");
+            if (target.is("AST_ARRAY")) {
+                listAssignment(target, node.get("expr"));
+                return;
+            }
             if (target.is("AST_PROP")) {
                 writeProp(target, node.get("expr"));
                 return;
@@ -1264,6 +1301,166 @@ public final class BytecodeTranslator {
                 return;
             }
             throw new Unsupported("assignment target", target);
+        }
+
+        // ---- list() ----
+
+        /**
+         * `[$a, 'k' => $b, [$c]] = value` (ListAssignNode, zend_compile_list_assign): the value first, then the
+         * elements in order, each destructured from it (see {@link #destructure}); the value is the result. When a
+         * target writes the variable the value is read from (zend_list_has_assign_to_self), the value is held while
+         * the list is assigned, as php-src's copy of it, so those writes copy the array first.
+         */
+        private void listAssignment(Ast list, Object value) {
+            checkList(list);
+            b.beginBlock();
+            BytecodeLocal source = b.createLocal();
+            boolean hold = assignsTo(list, value);
+            b.beginStoreLocal(source);
+            if (hold) {
+                b.beginHoldValue();
+            }
+            expression(value);
+            if (hold) {
+                b.endHoldValue();
+            }
+            b.endStoreLocal();
+            if (hold) {
+                b.beginTryFinally(() -> {
+                    b.beginReleaseValue();
+                    b.emitLoadLocal(source);
+                    b.endReleaseValue();
+                });
+                destructure(list, source);
+                b.endTryFinally();
+            } else {
+                destructure(list, source);
+            }
+            b.emitLoadLocal(source);
+            b.endBlock();
+        }
+
+        /**
+         * php-src's compile errors for a list() target, and the references in one, which aren't covered yet: the
+         * function stays on the tree.
+         */
+        private void checkList(Ast list) {
+            boolean keyed = false;
+            boolean unkeyed = false;
+            boolean any = false;
+            for (Object child : list.children()) {
+                if (!(child instanceof Ast element)) {
+                    continue;
+                }
+                any = true;
+                if (element.is("AST_UNPACK")) {
+                    // "Spread operator is not supported in assignments"
+                    throw new Unsupported("spread in list()", element);
+                }
+                if ((element.flags & ARRAY_ELEM_REF) != 0) {
+                    throw new Unsupported("reference in list()", element);
+                }
+                if (element.get("key") == null) {
+                    unkeyed = true;
+                } else {
+                    keyed = true;
+                }
+                if (element.node("value").is("AST_ARRAY")) {
+                    checkList(element.node("value"));
+                }
+            }
+            if (!any) {
+                // "Cannot use empty list"
+                throw new Unsupported("empty list()", list);
+            }
+            if (keyed && unkeyed) {
+                // "Cannot mix keyed and unkeyed array entries in assignments"
+                throw new Unsupported("list() with keyed and unkeyed entries", list);
+            }
+        }
+
+        /**
+         * The elements of a list() from the value in source, in order (ListAssignNode.assign): an element's key (a
+         * positional one counts from 0, skipped entries too), the element read (ListElement: null when missing or
+         * the value isn't an array, an ArrayAccess object's offsetGet()), then assigned to its target, a nested
+         * list destructuring it in turn.
+         */
+        private void destructure(Ast list, BytecodeLocal source) {
+            b.beginBlock();
+            long position = 0;
+            for (Object child : list.children()) {
+                if (!(child instanceof Ast element)) {
+                    position++;
+                    continue;
+                }
+                Object key = element.get("key");
+                BytecodeLocal item = b.createLocal();
+                b.beginStoreLocal(item);
+                b.beginListElement();
+                b.emitLoadLocal(source);
+                if (key == null) {
+                    b.emitLoadConstant(position++);
+                } else {
+                    key(key);
+                }
+                b.endListElement();
+                b.endStoreLocal();
+                Ast target = element.node("value");
+                if (target.is("AST_ARRAY")) {
+                    destructure(target, item);
+                } else {
+                    assignFrom(target, item, element);
+                }
+            }
+            b.endBlock();
+        }
+
+        /** `target = value` where the value is in a local already (a list's element, a foreach's value or key). */
+        private void assignFrom(Ast target, BytecodeLocal value, Ast near) {
+            Map<String, Object> parts = new java.util.LinkedHashMap<>();
+            parts.put("var", target);
+            parts.put("expr", standIn(value, near));
+            assignment(new Ast("AST_ASSIGN", 0, target.line, target.endLine, null, parts));
+        }
+
+        /** A node standing for a value in a local where an expression is expected (see expressionBody). */
+        private Ast standIn(BytecodeLocal local, Ast near) {
+            Ast stand = new Ast("BYTECODE_OBJECT", 0, near == null ? 0 : near.line, near == null ? 0 : near.endLine,
+                    null, null);
+            nullsafeObjects.put(stand, local);
+            return stand;
+        }
+
+        /**
+         * zend_list_has_assign_to_self: whether a target of the list (down nested lists, elements and properties)
+         * is the variable the value is.
+         */
+        private boolean assignsTo(Ast list, Object value) {
+            if (!(value instanceof Ast variable && variable.is("AST_VAR") && variable.get("name") instanceof String name)) {
+                return false;
+            }
+            for (Object child : list.children()) {
+                if (!(child instanceof Ast element)) {
+                    continue;
+                }
+                Ast target = element.node("value");
+                if (target.is("AST_ARRAY")) {
+                    if (assignsTo(target, value)) {
+                        return true;
+                    }
+                    continue;
+                }
+                while (target.is("AST_DIM") || target.is("AST_PROP") || target.is("AST_STATIC_PROP")) {
+                    if (!(target.get(target.is("AST_STATIC_PROP") ? "class" : "expr") instanceof Ast inner)) {
+                        break;
+                    }
+                    target = inner;
+                }
+                if (target.is("AST_VAR") && name.equals(target.get("name"))) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void binary(Ast node) {
@@ -2359,6 +2556,11 @@ public final class BytecodeTranslator {
                 throw new Unsupported(what + " $" + name, node);
             }
             return local;
+        }
+
+        /** A plain variable (a CV): no $this, no variable variable. */
+        private boolean isVariable(Ast node) {
+            return node.is("AST_VAR") && node.get("name") instanceof String && !isThis(node);
         }
 
         /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */
