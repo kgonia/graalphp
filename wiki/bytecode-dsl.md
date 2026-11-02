@@ -311,7 +311,7 @@ Compilation on:
   - A typed read (`getLong`) of a local that holds a boxed int must not accept it. `UnexpectedResultException`'s constructor invalidates compiled code (`SlowPathException` calls `transferToInterpreterAndInvalidate`), so every such read deoptimized. The operation goes generic instead. A cleared local has to be tested first: the frame has no value to put in the exception (`FrameSlotTypeException`).
   - Booleans aren't boxing-eliminated. A short circuit's result reached `Not` unboxed on one path and boxed on the other, and compiled code deoptimized at each change of path.
   - Releasing the locals' arrays on exit is an `@EpilogReturn`/`@EpilogExceptional` loop over the locals by offset (`BytecodeNode.getLocalValue`, which boxes ints and floats in the interpreter).
-- **The parser lambda** holds the function's `AstBody`, not its tree. The first run takes the body the tree translator already read; later runs (`ensureSourceInformation`, at the first error or backtrace through the function) read it again. Locals are numbered in a fixed order: parameters, captures, then the body's variables as met. What a run makes for a place in the body (a call site's `CallInfo`, a constant array) is made by the first run and taken by later runs in the same order. So a reparse emits the same bytecode and makes nothing new. Closures and functions declared inside a bytecode body would make a `PhpFunction` per run, so they fall back to the tree for now.
+- **The parser lambda** holds the function's `AstBody`, not its tree. The first run takes the body the tree translator already read; later runs (`ensureSourceInformation`, at the first error or backtrace through the function) read it again. Locals are numbered in a fixed order: parameters, captures, then the body's variables as met. What a run makes for a place in the body (a call site's `CallInfo`, a constant array) is made by the first run and taken by later runs in the same order. So a reparse emits the same bytecode and makes nothing new. A closure declared inside a bytecode body is such an object too: its `PhpFunction` (Translator.closureParts) is made by the first run, so every run and every closure made from the place share it, as the tree's ClosureNode does. Functions and classes declared inside a body still fall back to the tree.
 - **Locations:** the generated root overrides `getSourceSection()`, so a bytecode function's locations come from `BytecodeLocation`s. A throw records the instruction (`PhpError.surfacedAt`, innermost first, through `interceptTruffleException`), and the line is looked up when a message or a trace needs it. Backtraces find the call site from the calling instruction's `CallInfo` operand.
 
 ### Reproduce
@@ -525,3 +525,120 @@ What still blocks the other 1,509. A function counts under each of its blockers;
   #   -Dpolyglot.cpusampler.Period=1 -Dphp.http.closeAfter=<6 x visits>, one cold visit, then 1 + 100 visits
   python tests/bytecode/s2_profile.py reasons.json 1.44 native-warm.histogram native-cold.histogram
   ```
+
+## S3: generators on continuations (2026-11-02, branch `bytecode-generators`)
+
+**What changed.** A generator function runs on the Bytecode DSL whenever `BytecodeTranslator` covers its whole body,
+in the default configuration too: `Translator.translateBody` offers a body to the bytecode translator when
+`php.Interpreter=bytecode` or when it contains a yield (`language.bytecode() || generator`). A generator is a root
+of its own kind, so this needs no other function on bytecode. The tree's resumable statements (`GeneratorNodes`)
+stay only for generators the translator doesn't cover, which `-Dphp.bytecode.report=all` lists with the construct.
+- **Calling** a generator function runs the prologue (the parameters are bound, the errors of a bad call are the
+  call's), then `GeneratorStart`, a custom `@Yield`, which makes the `PhpGenerator` and returns the Generator
+  object from the call: no wrapper root.
+- **A yield** is `Resumed(YieldValue(key, value))`: `YieldValue` (custom `@Yield`) records the key and value and
+  suspends; the continuation keeps the bytecode index and the operand stack, so the operands an expression had
+  evaluated before its yield are still there when it resumes (php-src keeps `zend_execute_data`'s temporaries).
+  `Resumed` gives the sent value, throws what `throw()` passed, or throws `PhpGenerator.Destroyed` when a suspended
+  generator is destroyed, which runs the finally blocks around the yield as `zend_generator_dtor_storage` does
+  (catch blocks don't take it). The generator is read from a local, not the stack: in compiled code a yield copies
+  the operands below its own into the continuation's frame, and a statement's yield then copies none.
+- **`yield from`** is `Resumed(YieldFrom(source))`: `PhpGenerator` follows `zend_generators.c` (`values` for an
+  array or Iterator, the delegation tree of `node.parent` with several children, `get_current`/`update_current`,
+  the cached end of a chain, `DO_INIT`, ClosedGeneratorException), and resumes the body after the `yield from`
+  with the delegate's return value.
+- **The runtime**: send targets, `rewind()` after the first yield, "Cannot resume an already running generator",
+  "Cannot traverse an already closed generator", by-reference iteration, `__debugInfo`, no `new`/clone/
+  serialization of Generator. Generators still suspended at the end of a clean request are destroyed then, in the
+  order they were made (destruction when the last reference goes needs object reference counts: issue 005).
+- **Traces, locations and the calling scope** see a continuation's code as its function's root, on the generator's
+  frame (`SourceLocation.codeRoot`/`codeFrame`).
+
+**The constructs generator bodies needed** (one commit each, every one also used by functions on bytecode with
+`php.Interpreter=bytecode`): try/catch/finally and throw; `$this` and properties (PropNode's own access, one copy);
+method and static calls, `new`, class constants, `::class`, `instanceof`, `?->`; interpolation; casts, `print`,
+global constants; `isset`/`empty`/`??`/`??=`; `switch` and `break N`; the built-ins the tree compiles in place,
+as calls; nested element writes and `unset`; `list()` and foreach into lists; references, `global`, `static`,
+functions returning by reference, array literals with `&` and spreads; foreach by reference; calls of callable
+values, first-class callables, `func_get_args()`, parameter defaults; closures and arrow functions.
+
+### Inventory
+Generator functions (a function, method or closure containing yield), each translated without running it
+(`tests/bytecode/scan.php`, report=all, `tests/bytecode/generators_inventory.py`): Gate 2's WordPress 7.2-beta1
+with its plugins, WooCommerce 11.2.1 (downloads.wordpress.org, data only), php-src's `Zend/tests/generators`, the
+smoke tests.
+
+| source | generators | on bytecode before (main) | on bytecode now | on the tree now | of these, the tree can't translate either |
+|---|---|---|---|---|---|
+| WordPress | 6 | 0 | 6 | 0 | 0 |
+| WooCommerce | 12 | 0 | 12 | 0 | 0 |
+| smoke tests | 25 | 0 | 25 | 0 | 0 |
+| php-src generator tests | 273 | 0 | 262 | 11 | 9 |
+
+- **Before**, every generator was on the tree, and the bytecode translator would have refused each for yield
+  itself (245 of 276 generators of php-src's tests, 108 for yield alone), then `yield from` (85), `new` (60), try
+  (58), throw (30), method calls (19), `$this` (14), properties (13), `function &gen()` (13), in-place built-ins
+  (11), static calls (10), interpolation (10), print (7), callable calls (6), switch (4) and a long tail.
+- **Run by WordPress's 21 Gate 2 pages:** four (`WP_HTML_Tag_Processor::class_list`, `WP_HTML_Open_Elements::
+  walk_down`/`walk_up`, `WP_HTML_Active_Formatting_Elements::walk_up`), all on bytecode now, in the default
+  configuration. WooCommerce's standalone ones (`ISO3166::iterator`/`getIterator`, `Block_Delimiter::
+  scan_delimiters`, `UnicodeString::walkString`, `Uri::buildQueryString`'s closure) give PHP's output on both builds.
+  `ErrorFormatter::getErrors` (a yield inside switch) couldn't be translated by the tree at all; it is on bytecode.
+- **What still keeps a generator on the tree** (php-src's tests only): an anonymous class (3), a superglobal
+  argument (1), an assignment to a property of an expression `f()->x = v` (1); named arguments (4) and variable
+  variables (2), which the tree can't translate either. Issue 004 stays open for exactly these.
+
+### Validation
+- **Smoke:** every test equals PHP 8.5's in both modes (`tree` and `php.Interpreter=bytecode`), including
+  `generators-resume` (issue 004's cases, yields in every expression position, switch, match, foreach by reference
+  and list() around a yield) and `generators-api`, which failed on main.
+- **php-src `Zend/tests/generators`** (184 cases): 101 pass on main (`d2ecac8`), 126 now; no case passing on main fails.
+  What still fails: destruction when the last reference goes (issue 005: `finally_ran_on_close`, `run_on_dtor`'s
+  order, `gh9750-*`, `yield_from_force_closed`), Fiber (9), WeakReference and MultipleIterator (missing classes),
+  final classes, object handles of iterators (foreach over an object takes a handle in php-src), named arguments.
+- **php-src, all cases** (`tests/phpt/run.sh --reuse-oracle`, 7,341): main 3,180 pass, this branch 3,241 (+61); no case passing on main fails.
+- **WordPress pages:** 19/21 equal PHP's on the JVM (the two oEmbed links), as on main.
+- **`mvn test`** passes, CompilationTest included.
+
+### Performance
+Interleaved A/B rounds on CPUs 14-21 (`bench/gate1/ab.sh`, the order reversed every other round), main
+(`d2ecac8`) against this branch, both with `php.Parser=java`; times are the median of each run's last quarter,
+ms per iteration; the ratio is this branch's time over main's per round (median, IQR), below 1 faster; peak memory
+is the container's `memory.peak`.
+
+`bench/generators` (60 iterations, 6 rounds), the consumer loops in the interpreter (a foreach over an object
+reports no loop count, so the kernels' closures stay uncompiled in both builds):
+
+| kernel | main ms | branch ms | ratio (IQR) |
+|---|---|---|---|
+| foreach_range (100,000 `yield $i`) | 4.15 | 9.75 | **2.28 (1.95-2.57)** |
+| keyed (`yield $k => $v` over an array) | 5.06 | 4.23 | 0.91 (0.72-1.72) |
+| send_loop (100,000 `send()`) | 3.35 | 2.98 | 0.89 (0.83-1.05) |
+| yield_from_chain (5 nested `yield from`) | 14.56 | 2.45 | **0.16 (0.12-0.21)** |
+| yield_from_arrays | 2.61 | 2.93 | 1.12 (0.81-1.43) |
+| html_walk (WordPress's walk_down/walk_up) | 2.83 | 3.82 | **1.33 (1.06-1.63)** |
+| iterate_lines (PHPMailer's iterateLines) | 10.88 | 8.68 | 0.80 (0.68-0.87) |
+| peak memory | 981 MB | 579 MB | **0.59** |
+
+- **Faster** where a resume does more than step a counter: `yield from` chains (each resume goes straight to the
+  generator at the end of the chain; the tree re-entered every level), sends, bodies with work between yields.
+- **Slower on the tightest loops**, a yield and an increment per resume: the fixed cost of a resume is higher.
+  JFR on foreach_range: the continuation's call target profiles its two arguments at each call from the runtime
+  (`OptimizedCallTarget.profileArguments`, about 14% of the samples), `Backtrace.callFrom` sets the encapsulating
+  node at each step (about 22%, as on main), and before `caa084f` each yield copied the generator operand into the
+  continuation frame (24%; fixed: 0.8x). With 300 iterations the gap narrows to 1.2x (4.68 against 3.86 ms) as the
+  bytecode warms up. Not fixed: a resume path that compiled code can inline (a DirectCallNode on the continuation
+  from a compiled consumer) is the way; open.
+- **Gate 1** (`bench/gate1/ab.sh all 200 6`, default configuration): within noise, hooks 1.02 (1.01-1.04), escape
+  0.99, slugs 1.00, wpautop 1.01, wptexturize 0.91, blocks 0.95, kses 0.95; peak memory 1.00. Checksums equal
+  main's.
+- **Not measured** on this branch: the WordPress visit (`native.sh measure`; its 21 pages run four small generators)
+  and the native image (the box had under 2 GB free when the build was due).
+
+**Reproduce**
+```
+P=-Dpolyglot.php.Parser=java
+DRIVER=bench/generators/run.php AB_OUT=target/ab-gen bench/gate1/ab.sh all 60 6 "main@$P" "gen@$P"
+AB_OUT=target/ab-gate1 bench/gate1/ab.sh all 200 6 main gen
+# inventory: tests/bytecode/scan.php over each list, then generators_inventory.py (the header of each says how)
+```

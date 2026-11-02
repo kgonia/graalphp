@@ -152,49 +152,53 @@ public final class UnaryNodes {
         }
     }
 
+    /** `(int)`; the bytecode interpreter proxies it (CastLong), as the casts below. */
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ToLongNode extends UnaryNode {
         @Specialization
-        protected long same(long value) {
+        public static long same(long value) {
             return value;
         }
 
         @Specialization
-        protected long bool(boolean value) {
+        public static long bool(boolean value) {
             return value ? 1 : 0;
         }
 
         @Fallback
-        protected long other(Object value) {
+        public static long other(Object value) {
             return Convert.toLong(value);
         }
     }
 
     /** `(float)`: an int widens through the implicit cast. */
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ToDoubleNode extends UnaryNode {
         @Specialization
-        protected double same(double value) {
+        public static double same(double value) {
             return value;
         }
 
         @Fallback
-        protected double other(Object value) {
+        public static double other(Object value) {
             return Convert.toDouble(value);
         }
     }
 
+    @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ToStringNode extends UnaryNode {
         @Specialization
-        protected TruffleString same(TruffleString value) {
+        public static TruffleString same(TruffleString value) {
             return value;
         }
 
         @Specialization
-        protected TruffleString number(long value, @Cached TruffleString.FromLongNode fromLong) {
+        public static TruffleString number(long value, @Cached TruffleString.FromLongNode fromLong) {
             return fromLong.execute(value, Str.ENC, true);
         }
 
         @Fallback
-        protected TruffleString other(Object value) {
+        public static TruffleString other(Object value) {
             return Convert.toStr(value);
         }
     }
@@ -223,17 +227,20 @@ public final class UnaryNodes {
         protected Object cast(Object value) {
             switch (type) {
                 case CastNode.TO_ARRAY:
-                    return value instanceof PhpArray ? value : toArray(value);
+                    return value instanceof PhpArray ? value : toArray(this, value);
                 case CastNode.TO_OBJECT:
-                    return value instanceof PhpObject ? value : toObject(value);
+                    return value instanceof PhpObject ? value : toObject(this, value);
                 default:
                     return PhpNull.NULL;
             }
         }
 
-        /** An object's properties become its property table's entries, under their mangled names. */
+        /**
+         * `(array)` of a value that isn't an array: an object's properties become its property table's entries, under
+         * their mangled names; null an empty array, anything else a one-element list.
+         */
         @TruffleBoundary
-        private PhpArray toArray(Object value) {
+        public static PhpArray toArray(Node site, Object value) {
             if (value == PhpNull.NULL) {
                 return new PhpArray();
             }
@@ -246,8 +253,9 @@ public final class UnaryNodes {
             return PhpArray.list(value);
         }
 
-        private Object toObject(Object value) {
-            PhpObject object = PhpContext.get(this).getClass("stdClass").instantiate();
+        /** `(object)` of a value that isn't an object: a stdClass of an array's elements, or of a scalar as $scalar. */
+        public static PhpObject toObject(Node site, Object value) {
+            PhpObject object = PhpContext.get(site).getClass("stdClass").instantiate();
             if (value instanceof PhpArray array) {
                 fill(object, array);
             } else if (value != PhpNull.NULL) {

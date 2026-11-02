@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.expr;
 
+import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -38,23 +39,27 @@ public final class InterpolationNode extends ExprNode {
         return Str.join(null, values);
     }
 
-    /** A part as it is joined: a string or an int as it is (the join writes its digits), anything else converted. */
-    abstract static class PartNode extends Node {
+    /**
+     * A part as it is joined: a string or an int as it is (the join writes its digits), anything else converted.
+     * The bytecode interpreter proxies it (InterpolationPart).
+     */
+    @OperationProxy.Proxyable(allowUncached = true)
+    public abstract static class PartNode extends Node {
         abstract Object execute(Object value);
 
         @Specialization
-        protected static TruffleString string(TruffleString value) {
+        public static TruffleString string(TruffleString value) {
             return value;
         }
 
         @Specialization
-        protected static long number(long value) {
+        public static long number(long value) {
             return value;
         }
 
         /** Floats, booleans, null, arrays, objects (__toString): the runtime conversion. */
         @Fallback
-        protected static TruffleString other(Object value) {
+        public static TruffleString other(Object value) {
             return Convert.toStr(value);
         }
     }

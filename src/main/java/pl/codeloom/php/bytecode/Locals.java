@@ -141,6 +141,13 @@ final class Locals {
         return ref;
     }
 
+    /** The variable becomes the reference (`$x = &...`, LocalVarNode.bindRef), giving up what it held first. */
+    static void bindRef(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, PhpRef ref) {
+        Variables.released(stored(frame, variable, bytecode));
+        ref.bind();
+        variable.setObject(bytecode, frame, ref);
+    }
+
     static void unset(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) {
         Variables.released(stored(frame, variable, bytecode));
         variable.clear(bytecode, frame);

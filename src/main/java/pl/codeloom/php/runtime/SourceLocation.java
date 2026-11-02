@@ -6,6 +6,7 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.bytecode.BytecodeLocation;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameInstance;
 import com.oracle.truffle.api.nodes.Node;
@@ -38,7 +39,21 @@ public record SourceLocation(String file, int line) {
      * PHP) stands for php-src's internal code: locations and traces skip it as php-src skips internal frames.
      */
     public static boolean isUserCode(RootNode root) {
-        return root instanceof Code && !root.isInternal();
+        RootNode code = codeRoot(root);
+        return code instanceof Code && !code.isInternal();
+    }
+
+    /**
+     * The root whose code a frame runs: a generator's body resumed at a yield runs on a continuation root, whose
+     * code is its function's bytecode root.
+     */
+    public static RootNode codeRoot(RootNode root) {
+        return root instanceof ContinuationRootNode continuation ? (RootNode) continuation.getSourceRootNode() : root;
+    }
+
+    /** The frame that code runs on: a continuation's is its first argument, the generator's frame. */
+    public static Frame codeFrame(RootNode root, Frame frame) {
+        return root instanceof ContinuationRootNode && frame != null ? (Frame) frame.getArguments()[0] : frame;
     }
 
     /** The innermost statement around the node, in its root's file; for the prelude's code, as current(). */
@@ -108,15 +123,28 @@ public record SourceLocation(String file, int line) {
      */
     private static BytecodeLocation bytecodeLocation(Node node, RootNode root) {
         BytecodeNode bytecode = BytecodeNode.get(node);
-        Frame frame = Truffle.getRuntime().iterateFrames(instance -> instance.getCallTarget() == root.getCallTarget()
-                ? instance.getFrame(FrameInstance.FrameAccess.READ_ONLY) : null);
-        return bytecode == null || frame == null ? null : bytecode.getBytecodeLocation(frame, node);
+        Frame frame = Truffle.getRuntime().iterateFrames(instance -> {
+            RootNode running = ((RootCallTarget) instance.getCallTarget()).getRootNode();
+            return codeRoot(running) == root
+                    ? codeFrame(running, instance.getFrame(FrameInstance.FrameAccess.READ_ONLY)) : null;
+        });
+        if (bytecode == null || frame == null) {
+            return null;
+        }
+        // a node an instruction's node holds (a cached helper, such as an InstantiateNode) runs for that instruction
+        Node instruction = node;
+        if (instruction != bytecode) {
+            while (instruction.getParent() != null && instruction.getParent() != bytecode) {
+                instruction = instruction.getParent();
+            }
+        }
+        return bytecode.getBytecodeLocation(frame, instruction);
     }
 
     /** The instruction of a bytecode root a frame (not the innermost) is calling from, else null. */
     @TruffleBoundary
     public static BytecodeLocation callingInstruction(FrameInstance frame) {
-        RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+        RootNode root = codeRoot(((RootCallTarget) frame.getCallTarget()).getRootNode());
         return root instanceof BytecodeRootNode ? BytecodeLocation.get(frame) : null;
     }
 
@@ -127,7 +155,7 @@ public record SourceLocation(String file, int line) {
     @TruffleBoundary
     public static SourceLocation current() {
         Object[] found = Truffle.getRuntime().iterateFrames(frame -> {
-            RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            RootNode root = codeRoot(((RootCallTarget) frame.getCallTarget()).getRootNode());
             if (!isUserCode(root)) {
                 return null;
             }

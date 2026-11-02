@@ -251,8 +251,10 @@ public final class Builtins {
         PhpClass generator = new PhpClass("Generator", null, false, false, context.getLanguage().rootShape(),
                 "Generator");
         generator.addInterface(iterator);
-        // ZEND_ACC_NOT_SERIALIZABLE
-        generator.setHandlers(new PhpClass.ObjectHandlers(null, null, false, false, true, false));
+        // zend_register_generator_ce: no `new`, no clone, no serialization
+        generator.setHandlers(new PhpClass.ObjectHandlers(
+                "The \"Generator\" class is reserved for internal use and cannot be manually instantiated", null,
+                true, false, true, false));
         for (PhpFunction method : table.generatorMethods) {
             generator.addMethod(method);
         }
@@ -281,7 +283,7 @@ public final class Builtins {
                 {"RuntimeException", "Exception"}, {"OutOfBoundsException", "RuntimeException"},
                 {"OverflowException", "RuntimeException"}, {"RangeException", "RuntimeException"},
                 {"UnderflowException", "RuntimeException"}, {"UnexpectedValueException", "RuntimeException"},
-                {"JsonException", "Exception"},
+                {"JsonException", "Exception"}, {"ClosedGeneratorException", "Exception"},
                 {"CompileError", "Error"}, {"ParseError", "CompileError"},
                 {"TypeError", "Error"}, {"ValueError", "Error"}, {"ArithmeticError", "Error"},
                 {"DivisionByZeroError", "ArithmeticError"}, {"ArgumentCountError", "TypeError"},
@@ -420,7 +422,12 @@ public final class Builtins {
                 registry.method("send", false, arguments -> generator(arguments).send(Args.get(arguments, 0))),
                 registry.method("getReturn", false, arguments -> generator(arguments).getReturn()),
                 registry.method("throw", false, arguments -> generator(arguments).throwInto(
-                        new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))));
+                        new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))),
+                registry.method("__debugInfo", false, arguments -> {
+                    PhpArray info = new PhpArray();
+                    info.put(Str.of("function"), Str.of(generator(arguments).getFunctionName()));
+                    return info;
+                }));
     }
 
     private static pl.codeloom.php.runtime.PhpGenerator generator(Object[] arguments) {

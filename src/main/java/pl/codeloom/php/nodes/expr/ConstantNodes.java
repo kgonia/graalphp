@@ -11,12 +11,15 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.SourceLocation;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.Str;
 
 /** Global and class constants. */
@@ -118,21 +121,7 @@ public final class ConstantNodes {
         }
 
         protected Object find() {
-            PhpContext context = PhpContext.get(this);
-            Object value;
-            if (fallbackId < 0) {
-                value = context.requiredConstantAt(id);
-            } else {
-                value = context.constantAt(id);
-                if (value == null) {
-                    value = context.constantAt(fallbackId);
-                }
-            }
-            if (value == null) {
-                CompilerDirectives.transferToInterpreter();
-                throw new PhpError("Undefined constant \"" + name + "\"");
-            }
-            return value;
+            return globalConstant(PhpContext.get(this), name, id, fallbackId);
         }
 
         protected Assumption singleContext() {
@@ -217,12 +206,7 @@ public final class ConstantNodes {
         }
 
         protected Object find(PhpClass phpClass) {
-            Object found = phpClass.getConstant(name);
-            if (found == null) {
-                CompilerDirectives.transferToInterpreter();
-                throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
-            }
-            return found;
+            return classConstant(phpClass, name);
         }
 
         protected Assumption singleContext() {
@@ -230,7 +214,67 @@ public final class ConstantNodes {
         }
     }
 
-    /** `static::class` and `$obj::class`. */
+    /**
+     * The value of the global constant name (id its constantId; fallbackId the global one's for an unqualified name
+     * in a namespace, else -1) in context; an Error if it isn't defined.
+     */
+    public static Object globalConstant(PhpContext context, String name, int id, int fallbackId) {
+        Object value;
+        if (fallbackId < 0) {
+            value = context.requiredConstantAt(id);
+        } else {
+            value = context.constantAt(id);
+            if (value == null) {
+                value = context.constantAt(fallbackId);
+            }
+        }
+        if (value == null) {
+            CompilerDirectives.transferToInterpreter();
+            throw new PhpError("Undefined constant \"" + name + "\"");
+        }
+        return value;
+    }
+
+    /** The value of a class's constant; an Error if it has none of the name. */
+    public static Object classConstant(PhpClass phpClass, String name) {
+        Object found = phpClass.getConstant(name);
+        if (found == null) {
+            CompilerDirectives.transferToInterpreter();
+            throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
+        }
+        return found;
+    }
+
+    /**
+     * `$obj::class` (ZEND_FETCH_CLASS_NAME of a value): the object's class name; anything but an object is a
+     * TypeError.
+     */
+    public static final class ObjectClassNameNode extends ExprNode {
+        @Child private ExprNode object;
+
+        public ObjectClassNameNode(ExprNode object) {
+            this.object = object;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return objectClassName(object.execute(frame));
+        }
+    }
+
+    /** The class name `$value::class` gives: a Closure's is Closure; a value that isn't an object is a TypeError. */
+    public static TruffleString objectClassName(Object value) {
+        if (value instanceof PhpObject object) {
+            return Str.of(object.getPhpClass().getName());
+        }
+        if (value instanceof PhpClosure) {
+            return Str.of("Closure");
+        }
+        CompilerDirectives.transferToInterpreter();
+        throw new PhpError("TypeError", "Cannot use \"::class\" on " + Args.valueName(value));
+    }
+
+    /** `static::class`. */
     public static final class ClassNameNode extends ExprNode {
         @Child private ClassRefNode classRef;
 

@@ -112,9 +112,10 @@ public final class Backtrace {
     public static PhpArray here(int options, int limit, int skip) {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
-            levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
-                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
-                    SourceLocation.callingInstruction(frame)));
+            RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            levels.add(new Level(SourceLocation.codeRoot(root),
+                    SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
+                    frame.getCallNode(), SourceLocation.callingInstruction(frame)));
             return null;
         }, skip);
         return build(levels, options, limit);
@@ -326,7 +327,10 @@ public final class Backtrace {
     private static void appendKey(ByteBuilder out, PhpArray entry, TruffleString key) {
         Object value = entry.get(key);
         if (value instanceof TruffleString text) {
-            out.write(text);
+            // TRACE_APPEND_KEY appends a C string: an anonymous class's name ends at its NUL
+            String name = Str.java(text);
+            int nul = name.indexOf('\0');
+            out.write(nul < 0 ? text : Str.of(name.substring(0, nul)));
         } else if (value != null) {
             out.writeAscii("[unknown]");
         }

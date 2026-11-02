@@ -109,4 +109,19 @@ final class Proxies {
     @ReportPolymorphism.Exclude
     public abstract static class ReadElement extends ElementNodes.ElementReadNode {
     }
+
+    @OperationProxy.Proxyable(allowUncached = true)
+    @ReportPolymorphism.Exclude
+    public abstract static class CastLong extends UnaryNodes.ToLongNode {
+    }
+
+    @OperationProxy.Proxyable(allowUncached = true)
+    @ReportPolymorphism.Exclude
+    public abstract static class CastDouble extends UnaryNodes.ToDoubleNode {
+    }
+
+    @OperationProxy.Proxyable(allowUncached = true)
+    @ReportPolymorphism.Exclude
+    public abstract static class CastString extends UnaryNodes.ToStringNode {
+    }
 }
