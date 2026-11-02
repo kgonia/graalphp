@@ -242,11 +242,32 @@ section 5):
 
 ## 3. libgraal's heap: one isolate per compiler thread, a cap, one compiler thread
 
-TBD-Q3
+**One isolate per compiler thread, recreated after a second idle.** `-XX:JVMCITraceLevel=1` (`cap256m`, and a CLI
+run) prints each JVMCI runtime and its `JavaVM`, libgraal's isolate: every Truffle compiler thread
+(`TruffleCompilerThread-N`) and every HotSpot JIT thread (`JVMCI-native CompilerThread-N`) gets a runtime of its own
+(GraalVM 25.4's `-XX:JVMCIThreadsPerNativeLibraryRuntime` is 1), and an isolate is shut down when its thread has
+been idle for `JVMCICompilerIdleDelay` (1,000 ms) and created again on its next compilation: 70-72 isolate lives in a
+12-minute memrun (PrintGC's `GC(0)` lines), 30 `JavaVM`s in `cap256m`'s 4 minutes. So **`-Djdk.graal.internal.MaxHeapSize`
+caps each isolate, not the total**: with 3 Truffle compiler threads and 1-2 HotSpot JIT threads busy at once,
+libgraal can hold up to 4-5 caps. (`-XX:JVMCIThreadsPerNativeLibraryRuntime=0` would share one runtime, and so one
+heap, between the threads; not measured.)
+
+**What a compilation does at the cap: it fails, and its function stays interpreted.** At 1 GB the classmap's
+compilation (section 1) ended after 117 s with `java.lang.OutOfMemoryError: Garbage-collected heap size exceeded`,
+reported by Truffle as a failed compilation (`opt failed ... Reason: java.lang.OutOfMemoryError`), not retried, the
+server unharmed: the same outcome as without a cap, where it timed out at 100 s. Before failing, an isolate at its
+cap collects again and again: in `cap256m` one isolate ran full collections of 0.7-1.2 s each with 156-247 MB live.
+
+TBD-MEM
 
 ## 4. #19 and #20 on WooCommerce
 
-TBD-Q4
+**Method** (`bench/pe4-diagnosis/runs.sh ab`, `runs2.sh ab-more`): `woo.sh load jvm 16`, each server's own life on
+CPUs 14-21: 300 s of warm-up (16 users, half buying), then 120 s at 16 users with every visitor buying; before
+(`866e156`) and after (`b6ca11c`) interleaved, the order reversed every other round. Rounds 1-3 ran while the
+diagnosis server worked on 6-13 (box 56-65% busy); rounds 4-6 later, without it.
+
+TBD-AB
 
 ## 5. Round 4's targets, ranked
 
