@@ -2671,14 +2671,16 @@ public final class BytecodeTranslator {
             }
             CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0], language.functionId(Str.lower(resolved[0])),
                     resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), special));
-            boolean needsCallee = false;
-            for (Object arg : args.children()) {
-                if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
-                        || ast.is("AST_CALLABLE_CONVERT"))) {
-                    throw new Unsupported("argument", ast);
-                }
-                needsCallee |= !plainArgument(arg);
+            if (unpacks(args)) {
+                b.beginCallSpread(info, byRefContext);
+                b.beginBindStackValue();
+                b.emitResolveFunction(info);
+                StackValue spreadCallee = b.endBindStackValue();
+                spreadArguments(args, spreadCallee);
+                b.endCallSpread();
+                return;
             }
+            boolean needsCallee = argumentsNeedCallee(args);
             if (byRefContext) {
                 b.beginCallRef(info);
             } else {
@@ -2733,7 +2735,8 @@ public final class BytecodeTranslator {
                 }
                 case "call_user_func" -> {
                     if (args.size() == 0 || hasUnpackOrNames(args)) {
-                        throw new Unsupported("call_user_func() without a callable or with unpacking", node);
+                        // php-src compiles it as a call of the built-in (zend_compile_func_cuf)
+                        return false;
                     }
                     b.beginCallUserFunc(compiled);
                     for (Object arg : args.children()) {
@@ -2744,7 +2747,8 @@ public final class BytecodeTranslator {
                 }
                 case "call_user_func_array" -> {
                     if (args.size() != 2 || hasUnpackOrNames(args)) {
-                        throw new Unsupported("call_user_func_array() but with two arguments", node);
+                        // php-src compiles it as a call of the built-in (zend_compile_func_cufa)
+                        return false;
                     }
                     b.beginCallUserFuncArray(compiled);
                     expression(args.child(0));
@@ -2808,27 +2812,119 @@ public final class BytecodeTranslator {
          */
         private void callValue(Ast node, Object calleeValue, boolean keepRef) {
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
-            b.beginCallValue(keepRef);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
+            if (spread) {
+                b.beginCallValueSpread(keepRef);
+            } else {
+                b.beginCallValue(keepRef);
+            }
             b.beginBindStackValue();
             b.beginResolveCallable();
             calleeValue(calleeValue);
             b.endResolveCallable();
             StackValue target = b.endBindStackValue();
-            callableArguments(args, target, needsCallee);
-            b.endCallValue();
+            callableArguments(args, target, needsCallee, spread);
+            if (spread) {
+                b.endCallValueSpread();
+            } else {
+                b.endCallValue();
+            }
         }
 
-        /** The function operand of a CallValue (its arguments' callee) and the arguments. */
-        private void callableArguments(Ast args, StackValue target, boolean needsCallee) {
+        /** The function operand of a CallValue (its arguments' callee) and the arguments, a list if spread. */
+        private void callableArguments(Ast args, StackValue target, boolean needsCallee, boolean spread) {
             StackValue calleeValue = callee(needsCallee, () -> {
                 b.beginTargetFunction();
                 b.emitLoadStackValue(target);
                 b.endTargetFunction();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+        }
+
+        /** A call's arguments sent once its callee is known: each an operand, or the list a call unpacking takes. */
+        private void arguments(Ast args, StackValue callee, boolean spread) {
+            if (spread) {
+                spreadArguments(args, callee);
+                return;
             }
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, callee);
+            }
+        }
+
+        /**
+         * Whether a call unpacks arguments (`f($a, ...$b)`), checked as php-src's zend_compile_args does: no
+         * positional argument after an unpacked one (its compile error); named arguments stay on the tree, whose
+         * translation doesn't cover them either.
+         */
+        private boolean unpacks(Ast args) {
+            boolean unpacked = false;
+            for (Object arg : args.children()) {
+                if (arg instanceof Ast ast && (ast.is("AST_NAMED_ARG") || ast.is("AST_CALLABLE_CONVERT"))) {
+                    throw new Unsupported("argument", ast);
+                }
+                if (isUnpack(arg)) {
+                    unpacked = true;
+                } else if (unpacked) {
+                    throw compileError(arg instanceof Ast ast ? ast.line : args.line,
+                            "Cannot use positional argument after argument unpacking");
+                }
+            }
+            return unpacked;
+        }
+
+        private static boolean isUnpack(Object arg) {
+            return arg instanceof Ast ast && ast.is("AST_UNPACK");
+        }
+
+        /**
+         * The arguments of a call that unpacks, as the list its call takes (SpreadStart, ArgumentsNode's spread):
+         * the arguments before the first `...` sent as any call's, at their constant positions; then each unpacked
+         * array's elements, by reference where they land on the callee's by-reference parameters (a variable's
+         * array separated for it, SpreadVar).
+         */
+        private void spreadArguments(Ast args, StackValue callee) {
+            int count = args.size();
+            for (int i = count - 1; i >= 0; i--) {
+                Object arg = args.child(i);
+                if (!isUnpack(arg)) {
+                    b.beginSpreadAdd();
+                } else if (((Ast) arg).get("expr") instanceof Ast unpacked && isVariable(unpacked)) {
+                    b.beginSpreadVar(variable(unpacked, "unpacking of"));
+                } else {
+                    b.beginSpreadValue();
+                }
+            }
+            b.emitSpreadStart();
+            for (int i = 0; i < count; i++) {
+                Object arg = args.child(i);
+                if (!isUnpack(arg)) {
+                    argument(arg, i, callee);
+                    b.endSpreadAdd();
+                    continue;
+                }
+                b.emitLoadStackValue(callee);
+                Object unpacked = ((Ast) arg).get("expr");
+                if (unpacked instanceof Ast ast && isVariable(ast)) {
+                    b.endSpreadVar();
+                } else {
+                    expression(unpacked);
+                    b.endSpreadValue();
+                }
+            }
+        }
+
+        /**
+         * A compile error php-src raises (Translator.compileError): reported at the line, and the bailout returned
+         * ends the script. report=all's search, which translates the function again and again, takes it as a
+         * construct instead.
+         */
+        private RuntimeException compileError(int line, String message) {
+            if (skip != null) {
+                return new Unsupported("compile error: " + message, null);
+            }
+            return Translator.compileError(path, line, message);
         }
 
         /** Whether a call's arguments need the callee (some may go by reference); no unpacking or names. */
@@ -2879,22 +2975,36 @@ public final class BytecodeTranslator {
             if (!(node.get("method") instanceof String name)) {
                 // `$obj->$name(args)` (DynamicMethodCallNode): the callable [$obj, name], then the arguments
                 Ast args = node.node("args");
-                boolean needsCallee = argumentsNeedCallee(args);
-                b.beginCallValue(byRefContext);
+                boolean spread = unpacks(args);
+                boolean needsCallee = spread || argumentsNeedCallee(args);
+                if (spread) {
+                    b.beginCallValueSpread(byRefContext);
+                } else {
+                    b.beginCallValue(byRefContext);
+                }
                 b.beginBindStackValue();
                 b.beginResolveDynamicMethod();
                 expression(node.get("expr"));
                 expression(node.get("method"));
                 b.endResolveDynamicMethod();
                 StackValue target = b.endBindStackValue();
-                callableArguments(args, target, needsCallee);
-                b.endCallValue();
+                callableArguments(args, target, needsCallee, spread);
+                if (spread) {
+                    b.endCallValueSpread();
+                } else {
+                    b.endCallValue();
+                }
                 return;
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
-            b.beginCallMethod(site, byRefContext);
+            if (spread) {
+                b.beginCallMethodSpread(site, byRefContext);
+            } else {
+                b.beginCallMethod(site, byRefContext);
+            }
             b.beginBindStackValue();
             expression(node.get("expr"));
             StackValue receiver = b.endBindStackValue();
@@ -2903,10 +3013,12 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(receiver);
                 b.endResolveMethod();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endCallMethodSpread();
+            } else {
+                b.endCallMethod();
             }
-            b.endCallMethod();
         }
 
         /**
@@ -2928,9 +3040,14 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
-            b.beginCallStatic(site, byRefContext);
+            if (spread) {
+                b.beginCallStaticSpread(site, byRefContext);
+            } else {
+                b.beginCallStatic(site, byRefContext);
+            }
             b.beginBindStackValue();
             classRef(node.get("class"));
             StackValue phpClass = b.endBindStackValue();
@@ -2939,10 +3056,12 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(phpClass);
                 b.endResolveStaticMethod();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endCallStaticSpread();
+            } else {
+                b.endCallStatic();
             }
-            b.endCallStatic();
         }
 
         /**
@@ -2955,8 +3074,13 @@ public final class BytecodeTranslator {
                 throw new Unsupported("anonymous class", node);
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
-            b.beginConstruct();
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
+            if (spread) {
+                b.beginConstructSpread();
+            } else {
+                b.beginConstruct();
+            }
             b.beginBindStackValue();
             b.beginInstantiate();
             classRef(node.get("class"));
@@ -2967,10 +3091,12 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(object);
                 b.endResolveConstructor();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endConstructSpread();
+            } else {
+                b.endConstruct();
             }
-            b.endConstruct();
         }
 
         /**

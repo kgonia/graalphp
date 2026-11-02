@@ -1752,6 +1752,95 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    // ---- calls unpacking arguments (ArgumentsNode.buildWithSpread) ----
+
+    /**
+     * The arguments of a call with `...`: SpreadStart makes the list, each SpreadAdd adds an argument sent as any
+     * (php-src allows only unpacking after the first unpacked one, so their positions are constants), each
+     * SpreadValue or SpreadVar the elements of an unpacked array; the call (CallSpread, CallMethodSpread...) takes
+     * the list. `f($a, ...$b)` is CallSpread(f, SpreadVar(SpreadAdd(SpreadStart, $a), f)).
+     */
+    @Operation
+    public static final class SpreadStart {
+        @Specialization
+        public static SpreadArguments start() {
+            return new SpreadArguments();
+        }
+    }
+
+    @Operation
+    public static final class SpreadAdd {
+        @Specialization
+        public static SpreadArguments add(SpreadArguments list, Object value) {
+            list.add(value);
+            return list;
+        }
+    }
+
+    /**
+     * `...value`: the elements of an array, each by reference where it lands on a by-reference parameter of the
+     * function (as it is: a temporary array's elements aren't made references); php-src's Error for a value that
+     * isn't an array.
+     */
+    @Operation
+    public static final class SpreadValue {
+        @Specialization
+        public static SpreadArguments spread(SpreadArguments list, PhpFunction function, Object value) {
+            int position = list.size();
+            if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
+                ArgumentsNode.addSpreadRefs(list.values(), array, function, position, false);
+            } else {
+                ArgumentsNode.addSpread(list.values(), value);
+            }
+            return list;
+        }
+    }
+
+    /**
+     * `...$x`: as SpreadValue, but the variable's array is separated first when an element lands on a by-reference
+     * parameter, and the elements passed by reference become references in it.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class SpreadVar {
+        @Specialization
+        public static SpreadArguments spread(VirtualFrame frame, LocalAccessor variable, SpreadArguments list,
+                                             PhpFunction function, @Bind BytecodeNode bytecode, @Bind Node node,
+                                             @Cached InlinedBranchProfile sharedArray,
+                                             @Cached InlinedBranchProfile refArray,
+                                             @Cached InlinedBranchProfile createdArray) {
+            Object value = Variables.value(Locals.stored(frame, variable, bytecode));
+            int position = list.size();
+            if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
+                PhpArray writable = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
+                        createdArray);
+                ArgumentsNode.addSpreadRefs(list.values(), writable, function, position, true);
+            } else {
+                ArgumentsNode.addSpread(list.values(), value);
+            }
+            return list;
+        }
+    }
+
+    /** `name(...)` with unpacked arguments: as Call and CallRef (keepRef), the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallSpread {
+        @Specialization(guards = "function == cachedFunction", limit = "1")
+        public static Object direct(CallInfo call, boolean keepRef, PhpFunction function, SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return result(callNode.call(arguments.frameArguments()), keepRef);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(CallInfo call, boolean keepRef, PhpFunction function,
+                                      SpreadArguments arguments, @Cached IndirectCallNode callNode) {
+            return result(callNode.call(function.getCallTarget(), arguments.frameArguments()), keepRef);
+        }
+    }
+
     // ---- calls of callable values (CallableCallNode, DynamicMethodCallNode, CallableConvertNodes) ----
 
     /**
@@ -1810,6 +1899,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached IndirectCallNode callNode) {
             return result(callNode.call(target.function().getCallTarget(), targetArguments(target, arguments)),
                     keepRef);
+        }
+    }
+
+    /** `$f(...)` with unpacked arguments (SpreadStart): as CallValue, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallValueSpread {
+        @Specialization(guards = "target.function() == cachedFunction", limit = "4")
+        public static Object direct(boolean keepRef, Callables.Target target, PhpFunction function,
+                                    SpreadArguments arguments,
+                                    @Cached("target.function()") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return CallValue.direct(keepRef, target, function, arguments.frameArguments(), cachedFunction, callNode);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(boolean keepRef, Callables.Target target, PhpFunction function,
+                                      SpreadArguments arguments, @Cached IndirectCallNode callNode) {
+            return CallValue.indirect(keepRef, target, function, arguments.frameArguments(), callNode);
         }
     }
 
@@ -2156,6 +2264,38 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `$obj->name(...)` with unpacked arguments (SpreadStart): as CallMethod, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallMethodSpread {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                    SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return CallMethod.direct(site, keepRef, receiver, function, arguments.frameArguments(), cachedFunction,
+                    callNode);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                      SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
+            return CallMethod.indirect(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object byValue(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                     SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode,
+                                     @Bind Node node) {
+            return CallMethod.byValue(site, keepRef, receiver, function, arguments.frameArguments(), callNode, node);
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
     /** A call's arguments, without the frame's first slots. */
     private static Object[] values(Object[] arguments) {
         Object[] values = new Object[arguments.length - PhpFunction.ARG_FIRST];
@@ -2270,6 +2410,44 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return callerStatic;
             }
             return phpClass;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `Cls::name(...)` with unpacked arguments (SpreadStart): as CallStatic, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallStaticSpread {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                    PhpFunction function, SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.direct(frame, site, keepRef, phpClass, function, arguments.frameArguments(),
+                    cachedFunction, callNode, subclassTest);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                      PhpFunction function, SpreadArguments arguments,
+                                      @Shared @Cached IndirectCallNode callNode,
+                                      @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.indirect(frame, site, keepRef, phpClass, function, arguments.frameArguments(),
+                    callNode, subclassTest);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object magic(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                   PhpFunction function, SpreadArguments arguments,
+                                   @Shared @Cached IndirectCallNode callNode,
+                                   @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.magic(frame, site, keepRef, phpClass, function, arguments.frameArguments(), callNode,
+                    subclassTest);
         }
 
         public static boolean isByValue(PhpFunction function) {
@@ -2501,6 +2679,33 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "isByValue(constructor)")
         public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
                                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments) {
+            return object;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `new Cls(...)` with unpacked arguments (SpreadStart): as Construct, the frame arguments from the list. */
+    @Operation
+    public static final class ConstructSpread {
+        @Specialization(guards = {"!isByValue(constructor)", "constructor == cachedConstructor"}, limit = "4")
+        public static PhpObject direct(PhpObject object, PhpFunction constructor, SpreadArguments arguments,
+                                       @Cached("constructor") PhpFunction cachedConstructor,
+                                       @Cached("create(cachedConstructor.getCallTarget())") DirectCallNode callNode) {
+            return Construct.direct(object, constructor, arguments.frameArguments(), cachedConstructor, callNode);
+        }
+
+        @Specialization(guards = "!isByValue(constructor)", replaces = "direct")
+        public static PhpObject indirect(PhpObject object, PhpFunction constructor, SpreadArguments arguments,
+                                         @Cached IndirectCallNode callNode) {
+            return Construct.indirect(object, constructor, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "isByValue(constructor)")
+        public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
+                                                   SpreadArguments arguments) {
             return object;
         }
 
