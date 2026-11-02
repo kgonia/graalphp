@@ -101,6 +101,11 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         this.generatorSlot = slot;
     }
 
+    /** A generator function's body, or null. */
+    public RootCallTarget getGeneratorBody() {
+        return generatorBody;
+    }
+
     /**
      * Binds the arguments, runs the body and releases the locals however the call ends (a return, the end of the
      * body, an exception, also one thrown while binding). A generator function's frame outlives the call: the

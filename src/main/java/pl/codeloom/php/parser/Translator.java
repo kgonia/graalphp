@@ -727,7 +727,8 @@ public final class Translator {
                 return bytecode;
             }
         } else if (language.bytecode()) {
-            BytecodeTranslator.reportGenerator(display);
+            BytecodeTranslator.reportGenerator(language, path, source, internal, node, owner, target, display, params,
+                    captures, captureByRef, declaredNames);
         }
         Scope bodyScope = new Scope();
         Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,

@@ -184,11 +184,20 @@ public final class BytecodeTranslator {
         return new ArrayList<>(reasons);
     }
 
-    /** That a generator stays on the tree (its caller doesn't translate generators), for the report. */
-    static void reportGenerator(String display) {
+    /**
+     * That a generator stays on the tree (its caller doesn't translate generators), for the report; report=all
+     * also lists what else in its body the translator doesn't cover, the yields included.
+     */
+    static void reportGenerator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
+                                Translator.ClassInfo owner, PhpFunction function, String display,
+                                PhpFunction.Param[] params, String[] captures, boolean[] captureByRef, Names names) {
         report("tree     " + display + ": generator");
         if (REPORT_ALL) {
-            report("all      " + display + ": generator");
+            List<String> reasons = new ArrayList<>();
+            reasons.add("generator");
+            reasons.addAll(collect(language, path, source, internal, declaration, owner, function, display, params,
+                    captures, captureByRef, names));
+            report("all      " + display + ": " + String.join(" | ", reasons));
         }
     }
 
