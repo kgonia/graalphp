@@ -120,9 +120,9 @@ start() {
   local ip
   case $variant in php) ip=11 ;; fpm) ip=12 ;; jvm) ip=13 ;; jvm-phases) ip=14 ;; native) ip=15 ;; *) ip=16 ;; esac
   # DEV=1: the classes from the host's target/classes, not the volume's copy (while fixing); WC_DOCKER_ARGS: more
-  # docker run arguments (a debugging mount)
+  # docker run arguments (a debugging mount); DEV_CLASSES: another directory of classes (a snapshot for the load runs)
   local dev=()
-  [ -z "${DEV:-}" ] || dev=(-v "$root/target/classes:/srv/target/classes:ro")
+  [ -z "${DEV:-}" ] || dev=(-v "$root/${DEV_CLASSES:-target/classes}:/srv/target/classes:ro")
   docker rm -f $P-$variant > /dev/null 2>&1 || true
   MSYS_NO_PATHCONV=1 docker run -d --name $P-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network $P-net \
     --ip $NET.$ip --add-host host.docker.internal:$NET.2 "${env[@]}" "${dev[@]}" ${WC_DOCKER_ARGS:-} \
