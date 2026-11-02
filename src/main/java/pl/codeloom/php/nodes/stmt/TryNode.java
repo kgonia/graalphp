@@ -93,7 +93,7 @@ public final class TryNode extends StmtNode {
      * in pending's chain or pending in thrown's (a cycle).
      */
     @TruffleBoundary
-    static void setPrevious(PhpContext context, PhpThrowable thrown, PhpThrowable pending) {
+    public static void setPrevious(PhpContext context, PhpThrowable thrown, PhpThrowable pending) {
         PhpObject exception = thrown.toThrowable(context);
         PhpObject previous = pending.toThrowable(context);
         if (exception == previous) {
@@ -120,7 +120,7 @@ public final class TryNode extends StmtNode {
     }
 
     @TruffleBoundary
-    static boolean matches(PhpObject thrown, String[] types) {
+    public static boolean matches(PhpObject thrown, String[] types) {
         for (String type : types) {
             if (thrown.getPhpClass().isSubclassOf(type)) {
                 return true;

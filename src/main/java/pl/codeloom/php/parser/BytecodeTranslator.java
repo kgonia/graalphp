@@ -225,6 +225,8 @@ public final class BytecodeTranslator {
         private final Translator constants;
         private final Map<String, BytecodeLocal> variables = new HashMap<>();
         private final List<Loop> loops = new ArrayList<>();
+        /** In a finally block, how many of loops are outside it: break and continue may not leave it. */
+        private int loopsOutsideFinally;
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
         /** The next object of made to take, or to make. */
@@ -496,6 +498,10 @@ public final class BytecodeTranslator {
                     if (depth < 1 || depth > loops.size()) {
                         throw new Unsupported("break out of " + depth + " levels", node);
                     }
+                    if (loops.size() - depth < loopsOutsideFinally) {
+                        // php-src's compile error "jump out of a finally block is disallowed"
+                        throw new Unsupported("break or continue out of a finally block", node);
+                    }
                     Loop loop = loops.get(loops.size() - depth);
                     b.emitBranch(node.is("AST_CONTINUE") ? loop.continueLabel() : loop.breakLabel());
                     break;
@@ -505,6 +511,9 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_UNSET":
                     b.emitUnsetVar(variable(node.node("var"), "unset of"));
+                    break;
+                case "AST_TRY":
+                    tryStatement(node);
                     break;
                 default:
                     expressionStatement(node);
@@ -685,6 +694,120 @@ public final class BytecodeTranslator {
             b.endBlock();
         }
 
+        /**
+         * try / catch / finally (TryNode). The finally block is the otherwise of a TryCatchOtherwise, emitted at
+         * each way out of the try and its catch blocks (the end, return, break, continue); an exception leaving them
+         * runs it in the catch, unless it is a bailout, then goes on, and an exception the finally block throws
+         * takes the pending one as its previous. A return in the finally block drops what was pending, as the DSL's
+         * early exits do; php-src refuses a break or continue out of it.
+         */
+        private void tryStatement(Ast node) {
+            Ast finallyBody = node.node("finally");
+            if (finallyBody == null) {
+                tryCatch(node);
+                return;
+            }
+            // the loops in the finally block are its own, wherever it is emitted
+            List<Loop> around = new ArrayList<>(loops);
+            Runnable finallyCode = () -> {
+                List<Loop> inner = new ArrayList<>(loops);
+                int outside = loopsOutsideFinally;
+                loops.clear();
+                loops.addAll(around);
+                loopsOutsideFinally = around.size();
+                statements(finallyBody);
+                loopsOutsideFinally = outside;
+                loops.clear();
+                loops.addAll(inner);
+            };
+            b.beginTryCatchOtherwise(finallyCode);
+            tryCatch(node);
+            b.beginBlock();
+            BytecodeLocal pending = b.createLocal();
+            b.beginStoreLocal(pending);
+            b.emitLoadException();
+            b.endStoreLocal();
+            b.beginIfThen();
+            b.beginFinallyRuns();
+            b.emitLoadLocal(pending);
+            b.endFinallyRuns();
+            b.beginTryCatch();
+            finallyCode.run();
+            b.beginThrowFromFinally();
+            b.emitLoadException();
+            b.emitLoadLocal(pending);
+            b.endThrowFromFinally();
+            b.endTryCatch();
+            b.endIfThen();
+            b.beginRethrow();
+            b.emitLoadLocal(pending);
+            b.endRethrow();
+            b.endBlock();
+            b.endTryCatchOtherwise();
+        }
+
+        /**
+         * The try block and its catch blocks (TryNode.tryCatch): the exception, a runtime error made into its PHP
+         * object, goes to the first catch block one of whose classes it is an instance of; with none, it goes on.
+         */
+        private void tryCatch(Ast node) {
+            Ast catches = node.node("catches");
+            if (catches == null || catches.size() == 0) {
+                statements(node.node("try"));
+                return;
+            }
+            b.beginTryCatch();
+            statements(node.node("try"));
+            b.beginBlock();
+            BytecodeLocal exception = b.createLocal();
+            BytecodeLocal thrown = b.createLocal();
+            b.beginStoreLocal(exception);
+            b.emitLoadException();
+            b.endStoreLocal();
+            b.beginStoreLocal(thrown);
+            b.beginCaughtThrowable();
+            b.emitLoadLocal(exception);
+            b.endCaughtThrowable();
+            b.endStoreLocal();
+            catchClauses(catches, 0, exception, thrown);
+            b.endBlock();
+            b.endTryCatch();
+        }
+
+        private void catchClauses(Ast catches, int index, BytecodeLocal exception, BytecodeLocal thrown) {
+            if (index == catches.size()) {
+                b.beginRethrow();
+                b.emitLoadLocal(exception);
+                b.endRethrow();
+                return;
+            }
+            Ast handler = (Ast) catches.child(index);
+            Ast classes = handler.node("class");
+            String[] types = (String[]) made(() -> {
+                String[] lower = new String[classes.size()];
+                for (int i = 0; i < lower.length; i++) {
+                    Ast name = (Ast) classes.child(i);
+                    lower[i] = Str.lower(names.className((String) name.get("name"), name.flags));
+                }
+                return lower;
+            });
+            BytecodeLocal target = handler.get("var") == null ? null : variable(handler.node("var"), "catch into");
+            b.beginIfThenElse();
+            b.beginCatchMatches(types);
+            b.emitLoadLocal(thrown);
+            b.endCatchMatches();
+            b.beginBlock();
+            if (target != null) {
+                b.beginWriteVarStatement(target);
+                b.emitLoadLocal(thrown);
+                b.endWriteVarStatement();
+            }
+            statements(handler.node("stmts"));
+            b.endBlock();
+            catchClauses(catches, index + 1, exception, thrown);
+            b.endIfThenElse();
+        }
+
         // ---- expressions ----
 
         /** A condition: the value's truthiness, unless it is a boolean already. */
@@ -799,6 +922,11 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_YIELD_FROM":
                     yieldFrom(node);
+                    break;
+                case "AST_THROW":
+                    b.beginThrow();
+                    expression(node.get("expr"));
+                    b.endThrow();
                     break;
                 default:
                     throw new Unsupported("expression", node);

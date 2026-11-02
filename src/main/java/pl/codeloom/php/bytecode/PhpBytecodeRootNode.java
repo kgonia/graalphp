@@ -47,6 +47,7 @@ import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
+import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.PropNode;
@@ -62,6 +63,7 @@ import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -1110,6 +1112,80 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object resumed(PhpGenerator generator, Object value) {
             return generator.resumed(value);
+        }
+    }
+
+    // ---- try / catch / finally (TryNode) and throw ----
+
+    /** `throw value` (ThrowNode), as a statement or an expression: it never gives a value. */
+    @Operation
+    public static final class Throw {
+        @Specialization
+        public static Object doThrow(Object value) {
+            BasicStmts.ThrowNode.throwValue(value);
+            return value;
+        }
+    }
+
+    /**
+     * The object the catch blocks of a try see for exception (TryNode.handle): a PHP exception's, or a runtime
+     * error's made into one; for any other exception (a destroyed generator's unwinding, a bailout) null, which no
+     * catch block takes.
+     */
+    @Operation
+    public static final class CaughtThrowable {
+        @Specialization
+        public static Object caught(Object exception, @Bind Node node) {
+            if (exception instanceof PhpThrowable thrown) {
+                return thrown.toThrowable(PhpContext.get(node));
+            }
+            return PhpNull.NULL;
+        }
+    }
+
+    /** Whether a catch block of these types (lowercase class names) takes the caught object (TryNode.matches). */
+    @Operation
+    @ConstantOperand(type = String[].class)
+    public static final class CatchMatches {
+        @Specialization
+        public static boolean matches(String[] types, Object thrown) {
+            return thrown instanceof PhpObject object && TryNode.matches(object, types);
+        }
+    }
+
+    /** An exception no catch block took goes on as it was. */
+    @Operation
+    public static final class Rethrow {
+        @Specialization
+        public static void rethrow(Object exception) {
+            throw (AbstractTruffleException) exception;
+        }
+    }
+
+    /**
+     * Whether a finally block runs as exception leaves its try: for PHP's exceptions and a destroyed generator's
+     * unwinding; not for a bailout after a fatal error, which runs none (TryNode).
+     */
+    @Operation
+    public static final class FinallyRuns {
+        @Specialization
+        public static boolean runs(Object exception) {
+            return exception instanceof PhpThrowable || exception instanceof PhpGenerator.Destroyed;
+        }
+    }
+
+    /**
+     * An exception a finally block throws while pending leaves the try: a PHP exception takes a pending PHP
+     * exception as its previous (TryNode.setPrevious), and goes on.
+     */
+    @Operation
+    public static final class ThrowFromFinally {
+        @Specialization
+        public static void chain(Object thrown, Object pending, @Bind Node node) {
+            if (thrown instanceof PhpThrowable exception && pending instanceof PhpThrowable previous) {
+                TryNode.setPrevious(PhpContext.get(node), exception, previous);
+            }
+            throw (AbstractTruffleException) thrown;
         }
     }
 
