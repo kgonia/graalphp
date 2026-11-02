@@ -850,9 +850,7 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
-        // a generator runs on bytecode whenever its body translates, whichever interpreter is chosen: its
-        // continuations resume it where it stopped, which the tree's resumable statements can't (issue 004)
-        if (language.bytecode() || generator) {
+        if (language.bytecode()) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
                     owner, target, display, params, captures, captureByRef, declaredNames, generator);
             if (bytecode != null) {
