@@ -20,7 +20,7 @@
 #   (woo_check.py). Results in target/$WPN_NAME/load.
 # Usage: tests/gate2/woo.sh db | volume | setup | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
 #        | walk VARIANT PORT | compare A B | dbrows NAME | fpm-image | load VARIANT THREADS TAG LEVELS...
-#        | k6 VARIANT IP VUS DURATION BUY NAME | clean
+#        | k6 VARIANT IP VUS DURATION BUY NAME | bench ROUNDS LEVELS... | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -232,17 +232,27 @@ k6_run() { # variant ip vus duration buy name
   # the warm-up's every request, for its curve
   case $name in *-warm) csv=(--out csv=/out/$name.csv.gz) ;; esac
   docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $db > $dir/$name.db.id
+  # InnoDB's row lock counters before and after the run
+  docker exec $db mariadb -uroot -proot -P3307 -N -e "show global status where Variable_name in
+    ('Innodb_row_lock_waits', 'Innodb_row_lock_time', 'Innodb_deadlocks', 'Questions', 'Com_commit')" \
+    > $dir/$name.dbstatus.before
   # a *-phases server's request lines before the run
   local first=$(docker logs $P-$variant 2>&1 | grep -c '^phases {' || true)
   MSYS_NO_PATHCONV=1 docker run --rm --name $P-sampler --cpuset-cpus 0-5 --pid=host --cgroupns=host \
     -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
-    python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json > $dir/$name.sampler.log 2>&1 &
+    python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json /out/$name.db.id \
+    > $dir/$name.sampler.log 2>&1 &
   sampler=$!
   MSYS_NO_PATHCONV=1 docker run --rm --name $P-k6 --cpuset-cpus 0-5 --network $P-net \
     -v "$root/tests/gate2:/scripts:ro" -v "$root/$dir:/out" -e BASE=http://$NET.$ip:8080 -e VUS=$vus \
     -e DURATION=$duration -e BUY=$buy -e SUMMARY=/out/$name.k6.json grafana/k6:1.3.0 run -q --no-color \
     "${csv[@]}" /scripts/woo-load.js > $dir/$name.k6.log 2>&1 || true
   touch $dir/stop
+  docker exec $db mariadb -uroot -proot -P3307 -N -e "show global status where Variable_name in
+    ('Innodb_row_lock_waits', 'Innodb_row_lock_time', 'Innodb_deadlocks', 'Questions', 'Com_commit')" \
+    > $dir/$name.dbstatus.after
+  docker exec $db mariadb -uroot -proot -P3307 -e "show engine innodb status\G" > $dir/$name.innodb.txt 2>&1
   case $variant in *-phases)
     docker logs $P-$variant > $dir/$name.server.log 2>&1
     python -I tests/gate2/woo_report.py phases $dir/$name.server.log $first \
@@ -252,6 +262,27 @@ k6_run() { # variant ip vus duration buy name
   python -I tests/gate2/woo_check.py $db $dir/$name.k6.log 100000 > $dir/$name.check.json
   python -I tests/gate2/woo_report.py line "$dir/$name"
   case $name in *-warm) python -I tests/gate2/woo_report.py warm "$dir/$name" ;; esac
+}
+
+# bench ROUNDS LEVELS...: the load runs of every configuration in CONFIGS (VARIANT:THREADS, default "jvm:8 jvm:16
+# native:16 fpm:8 fpm:16"), ROUNDS times, the order reversed every other round; each configuration's own server life
+# (load, tag VARIANTTHREADS-rROUND). WARM: the JVM's and native image's warm-up (default 300s), php-fpm's 60s.
+bench() {
+  local rounds=$1 r i order config variant threads
+  shift
+  local configs=(${CONFIGS:-jvm:8 jvm:16 native:16 fpm:8 fpm:16})
+  local n=${#configs[@]}
+  for r in $(seq "$rounds"); do
+    if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
+    for i in $order; do
+      config=${configs[$i]}
+      variant=${config%:*} threads=${config#*:}
+      case $variant in
+        fpm|php) WARM=${FPM_WARM:-60s} load $variant $threads $variant$threads-r$r "$@" ;;
+        *) WARM=${JVM_WARM:-300s} load $variant $threads $variant$threads-r$r "$@" ;;
+      esac
+    done
+  done
 }
 
 # load VARIANT THREADS TAG LEVELS...: one server's life on CPUs 14-21 (holding the CPU lock): started from the seed,
@@ -302,6 +333,7 @@ case ${1:-} in
   fpm-image) fpm_image ;;
   load-seed) load_seed ;;
   load) shift; load "$@" ;;
+  bench) shift; bench "$@" ;;
   k6) shift; k6_run "$@" ;;
   clean) clean ;;
   *) sed -n 2,22p "$0"; exit 2 ;;

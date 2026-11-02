@@ -22,8 +22,19 @@ def load(name):
     return tuple(json.load(open(name + suffix)) for suffix in (".k6.json", ".sample.json", ".check.json"))
 
 
+def db_status(name):
+    """The InnoDB counters' change over the run (NAME.dbstatus.before/.after), when they were taken."""
+    try:
+        before, after = ({k: int(v) for k, v in (line.split() for line in open(name + suffix) if line.strip())}
+                         for suffix in (".dbstatus.before", ".dbstatus.after"))
+    except OSError:
+        return {}
+    return {k: after[k] - before.get(k, 0) for k in after}
+
+
 def numbers(name):
     k, s, c = load(name)
+    db = db_status(name)
     m = k["metrics"]
     seconds = k["state"]["testRunDurationMs"] / 1000
 
@@ -39,6 +50,8 @@ def numbers(name):
             "cpu_s": s["cpu_s"], "cpu_per_order": s["cpu_s"] / orders if orders else None,
             "cpu_per_page": s["cpu_s"] / count("pages") if count("pages") else None,
             "rss_anon": s["max_rss_anon"], "current": s["max_current"], "peak": s["peak"],
+            "db_cpu_per_s": s.get("db_cpu_s", 0) / seconds, "lock_waits": db.get("Innodb_row_lock_waits"),
+            "lock_ms": db.get("Innodb_row_lock_time"), "deadlocks": db.get("Innodb_deadlocks"),
             "db_orders": c["orders"], "db_problems": c["problem_count"], "db_problem": c["problems"][:3]}
 
 
@@ -47,7 +60,8 @@ def line(name):
     print(f"{os.path.basename(name)}: {n['orders']} orders ({n['orders_s']:.2f}/s), {n['pages_s']:.1f} pages/s,"
           f" p50 {n['p50']:.0f} p95 {n['p95']:.0f} p99 {n['p99']:.0f} ms, failed {n['failed']:.4f}, checks failed"
           f" {n['check_fails']}, php errors {n['php_errors']}; CPU {n['cpu_s']:.1f} s, RssAnon max"
-          f" {n['rss_anon']:.0f} MB, current max {n['current']:.0f} MB, peak {n['peak']:.0f} MB;"
+          f" {n['rss_anon']:.0f} MB, current max {n['current']:.0f} MB, peak {n['peak']:.0f} MB; DB {n['db_cpu_per_s']:.2f}"
+          f" cores, {n['lock_waits']} row lock waits ({n['lock_ms']} ms);"
           f" db: {n['db_orders']} orders, {n['db_problems']} problems {n['db_problem']}")
 
 
@@ -118,8 +132,8 @@ def table(directory, out):
         runs.setdefault((engine, mix, int(level)), []).append(numbers(name))
     rows = []
     lines = ["| engine | buy | conc. | rounds | orders/s | pages/s | p50 ms | p95 ms | p99 ms | errors | CPU-s/order"
-             " | CPU-s/page | RssAnon MB | memory.current MB | memory.peak MB | db problems |",
-             "|" + "---|" * 16]
+             " | CPU-s/page | RssAnon MB | memory.current MB | memory.peak MB | DB cores | lock waits | db problems |",
+             "|" + "---|" * 18]
     for (engine, mix, level), ns in sorted(runs.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2])):
         def med(key):
             values = [n[key] for n in ns if n[key] is not None]
@@ -138,7 +152,8 @@ def table(directory, out):
                      f" | {med('pages_s'):.1f} | {med('p50'):.0f} | {med('p95'):.0f} | {med('p99'):.0f}"
                      f" ({spread('p99', '{:.0f}')}) | {errors:.2%} / {sum(n['php_errors'] for n in ns)} php"
                      f" | {med('cpu_per_order') or 0:.2f} | {med('cpu_per_page'):.3f} | {med('rss_anon'):.0f}"
-                     f" | {med('current'):.0f} | {med('peak'):.0f} | {sum(n['db_problems'] for n in ns)} |")
+                     f" | {med('current'):.0f} | {med('peak'):.0f} | {med('db_cpu_per_s'):.2f}"
+                     f" | {med('lock_waits') or 0:.0f} | {sum(n['db_problems'] for n in ns)} |")
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     json.dump(rows, open(os.path.splitext(out)[0] + ".json", "w"), indent=1)
