@@ -47,11 +47,12 @@ public final class CallableConvertNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return convert(PhpContext.get(this));
+            return convert(PhpContext.get(this), displayName, id, fallbackId);
         }
 
+        /** The closure of the function named displayName (its name id, the global one's or -1) in context. */
         @TruffleBoundary
-        private Object convert(PhpContext context) {
+        public static Object convert(PhpContext context, String displayName, int id, int fallbackId) {
             PhpFunction function = context.functionAt(id);
             if (function == null && fallbackId >= 0) {
                 function = context.functionAt(fallbackId);
@@ -83,8 +84,9 @@ public final class CallableConvertNodes {
             return convert(target, method);
         }
 
+        /** The closure of target's method name, bound to it; php-src's Errors for what has none. */
         @TruffleBoundary
-        private static Object convert(Object target, String name) {
+        public static Object convert(Object target, String name) {
             if (target instanceof PhpClosure closure) {
                 if (Str.lower(name).equals("__invoke")) {
                     return closure;
@@ -128,11 +130,13 @@ public final class CallableConvertNodes {
             Object[] callerArgs = frame.getArguments();
             Object caller = callerArgs[PhpFunction.ARG_THIS];
             Object callerStatic = callerArgs[PhpFunction.ARG_STATIC];
-            return convert(phpClass, caller, forwarding && callerStatic instanceof PhpClass called ? called : phpClass);
+            return convert(phpClass, caller, forwarding && callerStatic instanceof PhpClass called ? called : phpClass,
+                    name);
         }
 
+        /** The closure of phpClass's method name for a caller whose $this is caller, called as staticClass. */
         @TruffleBoundary
-        private Object convert(PhpClass phpClass, Object caller, PhpClass staticClass) {
+        public static Object convert(PhpClass phpClass, Object caller, PhpClass staticClass, String name) {
             PhpObject self = caller instanceof PhpObject object
                     && object.getPhpClass().isSubclassOf(phpClass.getLowerName()) ? object : null;
             PhpFunction method = phpClass.findMethod(Str.lower(name));
@@ -171,8 +175,9 @@ public final class CallableConvertNodes {
             return convert(PhpContext.get(this), callable.execute(frame));
         }
 
+        /** What the call of value would call, as a Closure. */
         @TruffleBoundary
-        private static Object convert(PhpContext context, Object value) {
+        public static Object convert(PhpContext context, Object value) {
             if (value instanceof PhpClosure closure) {
                 return closure;
             }

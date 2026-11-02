@@ -475,7 +475,7 @@ final class CoreFunctions {
             return Convert.toLong(object.callMethod("count"));
         }
         throw new PhpError("TypeError", "count(): Argument #1 ($value) must be of type Countable|array, "
-                + Convert.typeName(value == null ? PhpNull.NULL : value) + " given");
+                + Args.valueName(value == null ? PhpNull.NULL : value) + " given");
     }
 
     @TruffleBoundary

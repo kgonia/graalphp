@@ -28,7 +28,9 @@ public final class ArrayKey {
             return Str.EMPTY;
         }
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Cannot access offset of type " + Convert.typeName(key) + " on array");
+        // zend_illegal_container_offset: a TypeError naming the type as zend_zval_type_name does
+        throw new PhpError("TypeError", "Cannot access offset of type " + Operators.zvalTypeName(key)
+                + " on array");
     }
 
     /** "123" and "-5" become ints; "0123", "1.5", " 1", "-0" and out-of-range digits stay strings. */

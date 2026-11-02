@@ -7,7 +7,7 @@ import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Backtrace;
-import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
@@ -48,19 +48,19 @@ public final class MethodCallNode extends CallNode {
                 }
                 return call.execute(closure, args.values(frame));
             }
-            return closureMethod(closure, args.values(frame));
+            return closureMethod(this, lowerName, closure, args.values(frame));
         }
-        throw memberOnNonObject(target);
+        throw memberOnNonObject(lowerName, target);
     }
 
-    /** The Closure class's other methods (bindTo, call) on a closure value. */
+    /** The Closure class's other methods (bindTo, call) on a closure value, called from site. */
     @TruffleBoundary
-    private Object closureMethod(PhpClosure closure, Object[] values) {
-        PhpFunction method = PhpContext.get(this).getClass("Closure").findMethod(lowerName);
+    public static Object closureMethod(Node site, String lowerName, PhpClosure closure, Object[] values) {
+        PhpFunction method = PhpContext.get(site).getClass("Closure").findMethod(lowerName);
         if (method == null) {
             throw new PhpError("Call to undefined method Closure::" + lowerName + "()");
         }
-        return Backtrace.callFrom(this, () -> method.getCallTarget().call(
+        return Backtrace.callFrom(site, () -> method.getCallTarget().call(
                 ArgumentsNode.frameArguments(closure, null, null, values)));
     }
 
@@ -78,9 +78,10 @@ public final class MethodCallNode extends CallNode {
         }
     }
 
+    /** A method called on a value that isn't an object: the value as zend_zval_value_name names it. */
     @TruffleBoundary
-    private PhpError memberOnNonObject(Object target) {
-        return new PhpError("Call to a member function " + lowerName + "() on " + Convert.typeName(target));
+    public static PhpError memberOnNonObject(String lowerName, Object target) {
+        return new PhpError("Call to a member function " + lowerName + "() on " + Args.valueName(target));
     }
 
     /**
@@ -133,6 +134,19 @@ public final class MethodCallNode extends CallNode {
             } finally {
                 lock.unlock();
             }
+        }
+
+        /** The method of a class an object's method call calls, or __call standing in for it; else an Error. */
+        @TruffleBoundary
+        public static PhpFunction findMethod(PhpClass phpClass, String lowerName) {
+            PhpFunction method = phpClass.findMethod(lowerName);
+            if (method == null) {
+                method = phpClass.findMethod("__call");
+            }
+            if (method == null) {
+                throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+            }
+            return method;
         }
 
         @TruffleBoundary

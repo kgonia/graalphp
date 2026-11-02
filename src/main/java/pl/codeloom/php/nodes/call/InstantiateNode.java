@@ -62,8 +62,15 @@ public abstract class InstantiateNode extends Node {
     @Specialization(replaces = {"sameClass", "sameKey"})
     @TruffleBoundary
     protected PhpObject generic(PhpClass phpClass) {
+        return instantiate(phpClass, this);
+    }
+
+    /** An instance by the class's own (uncached) path; a Throwable made at site's statement. */
+    @TruffleBoundary
+    public static PhpObject instantiate(PhpClass phpClass, Node site) {
         // a stack walk only for a Throwable: arguments are evaluated before instantiate() looks at the class
-        return phpClass.isThrowable() ? phpClass.instantiate(location(), trace()) : phpClass.instantiate();
+        return phpClass.isThrowable() ? phpClass.instantiate(SourceLocation.of(site), trace())
+                : phpClass.instantiate();
     }
 
     /** Where a Throwable made here was made: this `new`'s statement. */

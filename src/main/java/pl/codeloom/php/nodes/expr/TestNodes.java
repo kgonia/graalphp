@@ -100,8 +100,9 @@ public final class TestNodes {
             return test(value, target);
         }
 
+        /** Whether value is an instance of the class target names (an object's class, or a name). */
         @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
-        private static boolean test(Object value, Object target) {
+        public static boolean test(Object value, Object target) {
             String lowerClassName;
             if (target instanceof PhpObject object) {
                 lowerClassName = object.getPhpClass().getLowerName();

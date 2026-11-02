@@ -6,6 +6,7 @@ import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.call.ClosureNode;
+import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.stmt.DeclareNodes;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
@@ -75,7 +76,12 @@ final class DebugFunctions {
             return;
         }
         try {
-            roots.add(function.getCallTarget().getRootNode());
+            RootNode root = function.getCallTarget().getRootNode();
+            roots.add(root);
+            // a generator's body is a root of its own
+            if (root instanceof FunctionRootNode tree && tree.getGeneratorBody() != null) {
+                roots.add(tree.getGeneratorBody().getRootNode());
+            }
         } catch (PhpError e) {
             errors.append(Str.of(e.getMessage()));
         }

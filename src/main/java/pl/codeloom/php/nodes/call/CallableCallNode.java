@@ -33,18 +33,17 @@ public final class CallableCallNode extends CallNode {
     @Override
     public Object executeRef(VirtualFrame frame) {
         Object target = callable.execute(frame);
-        Object[] values;
-        if (argsArray != null) {
-            Object array = argsArray.execute(frame);
-            if (!(array instanceof PhpArray list)) {
-                CompilerDirectives.transferToInterpreter();
-                throw new PhpError("call_user_func_array(): Argument #2 ($args) must be of type array");
-            }
-            values = toValues(list);
-        } else {
-            values = args.values(frame);
-        }
+        Object[] values = argsArray != null ? arrayArguments(argsArray.execute(frame)) : args.values(frame);
         return dispatch.execute(target, values);
+    }
+
+    /** call_user_func_array()'s arguments: the array's elements (see toValues); anything else is a TypeError. */
+    public static Object[] arrayArguments(Object array) {
+        if (!(array instanceof PhpArray list)) {
+            CompilerDirectives.transferToInterpreter();
+            throw new PhpError("call_user_func_array(): Argument #2 ($args) must be of type array");
+        }
+        return toValues(list);
     }
 
     /**

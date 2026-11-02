@@ -87,6 +87,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -850,14 +851,14 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
-        if (language.bytecode() && !generator) {
+        // a generator runs on bytecode whenever its body translates, whichever interpreter is chosen: its
+        // continuations resume it where it stopped, which the tree's resumable statements can't (issue 004)
+        if (language.bytecode() || generator) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
-                    owner, target, display, params, captures, captureByRef, declaredNames);
+                    owner, target, display, params, captures, captureByRef, declaredNames, generator);
             if (bytecode != null) {
                 return bytecode;
             }
-        } else if (language.bytecode()) {
-            BytecodeTranslator.reportGenerator(display);
         }
         Scope bodyScope = new Scope();
         Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,
@@ -920,6 +921,25 @@ public final class Translator {
     }
 
     private ExprNode closure(Ast node) {
+        ClosureParts parts = closureParts(node, name -> scope == null || scope.slots.containsKey(name));
+        ExprNode[] captureNodes = new ExprNode[parts.captures().length];
+        for (int i = 0; i < captureNodes.length; i++) {
+            captureNodes[i] = variable(parts.captures()[i]);
+        }
+        ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
+        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(), scopeRef);
+    }
+
+    /**
+     * A closure's or arrow function's function, made where its declaration is translated, and the variables of
+     * the enclosing code it captures (by reference where byRef says): a closure's use list, or every variable an
+     * arrow function's body names (nested arrow functions' too) that the enclosing code has (enclosingVariable),
+     * but its parameters and $this.
+     */
+    record ClosureParts(PhpFunction function, String[] captures, boolean[] byRef, boolean isStatic) {
+    }
+
+    ClosureParts closureParts(Ast node, Predicate<String> enclosingVariable) {
         boolean arrow = node.is("AST_ARROW_FUNC");
         PhpFunction.Param[] params = params(node.node("params"));
         // read for the captures and $this here, and again when the closure is first called
@@ -934,7 +954,7 @@ public final class Translator {
             }
             used.remove("this");
             for (String name : used) {
-                if (scope == null || scope.slots.containsKey(name)) {
+                if (enclosingVariable.test(name)) {
                     captureNames.add(name);
                     captureRefs.add(false);
                 }
@@ -948,10 +968,8 @@ public final class Translator {
         }
         String[] names = captureNames.toArray(new String[0]);
         boolean[] byRef = new boolean[names.length];
-        ExprNode[] captureNodes = new ExprNode[names.length];
         for (int i = 0; i < names.length; i++) {
             byRef[i] = captureRefs.get(i);
-            captureNodes[i] = variable(names[i]);
         }
         // php-src's name: after the file at top level, the enclosing closure, or Class::function() it's declared in
         String enclosing = function == null ? path
@@ -971,8 +989,7 @@ public final class Translator {
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
-        ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
-        return new ClosureNode(self[0], captureNodes, byRef, (node.flags & MODIFIER_STATIC) != 0, scopeRef);
+        return new ClosureParts(self[0], names, byRef, (node.flags & MODIFIER_STATIC) != 0);
     }
 
     /** Variable names used in an arrow function body (including nested arrow functions, which capture too). */
@@ -1935,7 +1952,7 @@ public final class Translator {
                     return new ConstNode(Str.of(name));
             }
         }
-        return new ConstantNodes.ClassNameNode(classRef(classNode));
+        return new ConstantNodes.ObjectClassNameNode(expression(classNode));
     }
 
     private ExprNode magicConstant(Ast node) {

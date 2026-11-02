@@ -120,7 +120,7 @@ public final class TryNode extends StmtNode {
     }
 
     @TruffleBoundary
-    static boolean matches(PhpObject thrown, String[] types) {
+    public static boolean matches(PhpObject thrown, String[] types) {
         for (String type : types) {
             if (thrown.getPhpClass().isSubclassOf(type)) {
                 return true;

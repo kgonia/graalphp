@@ -255,7 +255,11 @@ public final class BasicStmts {
 
         @Override
         public void execute(VirtualFrame frame) {
-            Object thrown = value.execute(frame);
+            throwValue(value.execute(frame));
+        }
+
+        /** ZEND_THROW: a Throwable object goes up as a PHP exception; anything else is an Error. */
+        public static void throwValue(Object thrown) {
             if (thrown instanceof PhpObject object && object.getPhpClass().isSubclassOf("throwable")) {
                 throw new PhpException(object);
             }
