@@ -1,6 +1,7 @@
 package pl.codeloom.php.bytecode;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -57,6 +58,7 @@ import pl.codeloom.php.nodes.expr.ArrayLiteralNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
 import pl.codeloom.php.nodes.expr.ConstantNodes;
+import pl.codeloom.php.nodes.expr.IncludeNode;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.expr.TestNodes;
@@ -93,6 +95,9 @@ import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A PHP function body as Truffle Bytecode DSL bytecode ({@link BytecodeTranslator} builds it), beside the tree's
@@ -187,6 +192,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean generatorHasFinally;
     /** `function &f()` (no generator): every return gives a PhpRef. */
     @CompilationFinal private boolean returnsRef;
+    /** The PHP variables' names, by the offsets of {@link #variables}, for access by name (BytecodeScope). */
+    private Map<String, Integer> variableOffsets = Map.of();
+    /**
+     * The hidden local keeping the call's variables by name ({@link BytecodeScope}) once an include or extract()
+     * has made them; null when the body has neither.
+     */
+    @CompilationFinal private LocalAccessor scopeLocal;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -223,6 +235,52 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
+     * The variables' names (by offset, as the variables were given to initialize), and the local keeping the call's
+     * {@link BytecodeScope} (null if the body neither includes nor extracts).
+     */
+    public void initializeNames(String[] variableNames, LocalAccessor callScopeLocal) {
+        Map<String, Integer> offsets = new HashMap<>();
+        for (int i = 0; i < variableNames.length; i++) {
+            offsets.put(variableNames[i], i);
+        }
+        this.variableOffsets = offsets;
+        this.scopeLocal = callScopeLocal;
+    }
+
+    /** The local of the function's variable of this name, or null if the function names no such variable. */
+    LocalAccessor variableNamed(String variableName) {
+        Integer offset = variableOffsets.get(variableName);
+        return offset == null ? null : variables[offset];
+    }
+
+    /**
+     * The call's variables by name: made at the call's first include or extract() (IncludeScope.forCall), with the
+     * calling scope the included code has (a closure's bound class, else the function's).
+     */
+    BytecodeScope callScope(VirtualFrame frame, BytecodeNode bytecode) {
+        BytecodeScope scope = existingScope(frame, bytecode);
+        if (scope != null) {
+            return scope.at(bytecode);
+        }
+        scope = newScope(frame.materialize(), bytecode, PropNode.callingScope(frame, scopeName));
+        scopeLocal.setObject(bytecode, frame, scope);
+        return scope;
+    }
+
+    @TruffleBoundary
+    private BytecodeScope newScope(MaterializedFrame frame, BytecodeNode bytecode, String classScope) {
+        return new BytecodeScope(this, frame, bytecode, classScope);
+    }
+
+    /** The call's variables by name if an include or extract() has made them, else null. */
+    BytecodeScope existingScope(VirtualFrame frame, BytecodeNode bytecode) {
+        if (scopeLocal == null || scopeLocal.isCleared(bytecode, frame)) {
+            return null;
+        }
+        return scopeLocal.getObject(bytecode, frame) instanceof BytecodeScope scope ? scope.at(bytecode) : null;
+    }
+
+    /**
      * Prints the bytecode as it is when the process exits (php.bytecode.dump), for debugging: after the run, the
      * instructions show what the interpreter has quickened them to.
      */
@@ -250,6 +308,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     released(i, RELEASED_REF);
                     ref.unbind();
                 }
+            }
+        }
+        if (scopeLocal != null) {
+            BytecodeScope scope = existingScope(frame, bytecode);
+            if (scope != null) {
+                // the variables only the included code or extract() named
+                scope.release();
+                scopeLocal.clear(bytecode, frame);
             }
         }
     }
@@ -1925,6 +1991,28 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static long count(VirtualFrame frame) {
             return frame.getArguments().length - PhpFunction.ARG_FIRST;
+        }
+    }
+
+    // ---- the call's variables by name: include, extract(), compact(), get_object_vars() ----
+
+    /**
+     * include / require (_once) in a function (IncludeNode): the file runs in the call's variables (its
+     * {@link BytecodeScope}), with the call's $this and static class. Out of line as the tree's: the path's
+     * resolution and the file's run are a call each. This instruction is the file's caller in traces.
+     */
+    @Operation
+    @ConstantOperand(type = IncludeSite.class)
+    public static final class Include {
+        @Specialization
+        public static Object include(VirtualFrame frame, IncludeSite site, Object path,
+                                     @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                     @Bind Node node) {
+            CallTarget file = IncludeNode.resolve(node, path, site.once());
+            if (file == null) {
+                return Boolean.TRUE;
+            }
+            return IncludeNode.run(node, file, frame.getArguments(), root.callScope(frame, bytecode));
         }
     }
 

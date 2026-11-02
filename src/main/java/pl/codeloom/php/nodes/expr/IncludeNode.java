@@ -46,21 +46,22 @@ public final class IncludeNode extends ExprNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        CallTarget file = resolve(path.execute(frame));
+        CallTarget file = resolve(this, path.execute(frame), once);
         if (file == null) {
             return Boolean.TRUE;
         }
-        return run(file, frame.getArguments(), slots == null ? null : callScope(frame));
+        return run(this, file, frame.getArguments(), slots == null ? null : callScope(frame));
     }
 
     /**
      * The included file's call target, or null when an _once include finds the file included already. One call
      * for the path's conversion, its resolution and the file's loading, which run once per include: inlined as
      * five calls, they made top-level code with hundreds of includes (wp-settings.php) too large to install.
+     * Also a function's include on bytecode (site: its instruction's node).
      */
     @TruffleBoundary
-    private CallTarget resolve(Object pathValue) {
-        PhpContext context = PhpContext.get(this);
+    public static CallTarget resolve(Node site, Object pathValue, boolean once) {
+        PhpContext context = PhpContext.get(site);
         String canonical = context.canonicalPath(Str.java(Convert.toStr(pathValue)));
         if (!context.markIncluded(canonical) && once) {
             return null;
@@ -73,17 +74,18 @@ public final class IncludeNode extends ExprNode {
      * arguments, its exception handling) was most of what was left of an include's compiled code. This node is the
      * call's location, as an inlined call node's parent would be, so traces list the include. What the file throws
      * (an exit(), an error) leaves the including code compiled. own: the including code's arguments; callScope:
-     * a function's variables (null at the top, where the file gets the scope the including code has).
+     * a function's variables (null at the top, where the file gets the scope the including code has). site: the
+     * call's location (on bytecode, the include instruction's node).
      */
     @TruffleBoundary(transferToInterpreterOnException = false)
-    private Object run(CallTarget file, Object[] own, IncludeScope callScope) {
+    public static Object run(Node site, CallTarget file, Object[] own, IncludeScope callScope) {
         Object[] arguments = new Object[PhpFunction.ARG_FIRST];
         arguments[PhpFunction.ARG_THIS] = own[PhpFunction.ARG_THIS];
         arguments[PhpFunction.ARG_STATIC] = own[PhpFunction.ARG_STATIC];
         arguments[IncludeScope.ARG] = callScope != null ? callScope
                 : own[IncludeScope.ARG] instanceof IncludeScope scope ? scope : null;
         EncapsulatingNodeReference encapsulating = EncapsulatingNodeReference.getCurrent();
-        Node previous = encapsulating.set(this);
+        Node previous = encapsulating.set(site);
         try {
             return file.call(arguments);
         } finally {

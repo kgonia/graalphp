@@ -15,6 +15,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.ClassSite;
+import pl.codeloom.php.bytecode.IncludeSite;
 import pl.codeloom.php.bytecode.LiteralSite;
 import pl.codeloom.php.bytecode.MethodSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
@@ -92,6 +93,10 @@ public final class BytecodeTranslator {
     private final List<Object> made = new ArrayList<>();
     /** The variables' locals, made by the first run (later runs number them alike). */
     private LocalAccessor[] variableLocals;
+    /** The variables' names, in the order of their locals. */
+    private String[] variableNames;
+    /** The hidden local keeping the call's variables by name (an include, extract()), or null if none needs it. */
+    private LocalAccessor scopeLocal;
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
     private boolean firstRun = true;
@@ -157,6 +162,7 @@ public final class BytecodeTranslator {
                 Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
+        root.initializeNames(translator.variableNames, translator.scopeLocal);
         if (generator) {
             root.initializeGenerator(function.returnsRef(), hasFinally(body == null ? declaration.body() : body));
         } else if (function.returnsRef()) {
@@ -239,6 +245,8 @@ public final class BytecodeTranslator {
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
+        /** The local keeping the call's variables by name, made where the body first needs it. */
+        private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
         /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
@@ -287,6 +295,7 @@ public final class BytecodeTranslator {
             }
             if (variableLocals == null) {
                 variableLocals = locals.toArray(new LocalAccessor[0]);
+                variableNames = names.toArray(new String[0]);
             }
             if (source != null) {
                 b.beginSource(source);
@@ -1236,6 +1245,9 @@ public final class BytecodeTranslator {
                 case "AST_CLOSURE":
                 case "AST_ARROW_FUNC":
                     closure(node);
+                    break;
+                case "AST_INCLUDE_OR_EVAL":
+                    include(node);
                     break;
                 default:
                     throw new Unsupported("expression", node);
@@ -2755,6 +2767,34 @@ public final class BytecodeTranslator {
             }
         }
 
+        /** The call's variables by name are kept in a hidden local, made where the body first needs them. */
+        private void useCallScope() {
+            if (callScope == null) {
+                callScope = b.createLocal();
+                if (firstRun) {
+                    scopeLocal = LocalAccessor.constantOf(callScope);
+                }
+            }
+        }
+
+        /**
+         * include / require (_once) (Translator's IncludeNode): the path, then the file run in the call's
+         * variables. eval stays on the tree, which doesn't cover it either.
+         */
+        private void include(Ast node) {
+            String kind = switch (node.flags) {
+                case EXEC_EVAL -> throw new Unsupported("eval", node);
+                case EXEC_INCLUDE_ONCE -> "include_once";
+                case EXEC_REQUIRE -> "require";
+                case EXEC_REQUIRE_ONCE -> "require_once";
+                default -> "include";
+            };
+            useCallScope();
+            b.beginInclude((IncludeSite) made(() -> new IncludeSite(kind)));
+            expression(node.get("expr"));
+            b.endInclude();
+        }
+
         private boolean hasUnpackOrNames(Ast args) {
             for (Object arg : args.children()) {
                 if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
@@ -3216,6 +3256,10 @@ public final class BytecodeTranslator {
 
     // php-ast flag values (Translator's)
     private static final int ARRAY_ELEM_REF = 1;
+    private static final int EXEC_EVAL = 1;
+    private static final int EXEC_INCLUDE_ONCE = 4;
+    private static final int EXEC_REQUIRE = 8;
+    private static final int EXEC_REQUIRE_ONCE = 16;
     private static final int PROMOTED = 7 | 128;
 
     /** Whether a body has a finally block, outside the functions and classes declared in it. */
