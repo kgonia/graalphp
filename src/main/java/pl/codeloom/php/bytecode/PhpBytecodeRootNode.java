@@ -59,6 +59,7 @@ import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
+import pl.codeloom.php.nodes.stmt.GeneratorRefIteration;
 import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
@@ -83,6 +84,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -253,9 +255,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                                 int bytecodeIndex) {
         releaseVariables(frame, bytecodeNode);
         for (LocalAccessor state : foreachStates) {
-            if (!state.isCleared(bytecodeNode, frame)
-                    && state.getObject(bytecodeNode, frame) instanceof PhpArray held) {
-                held.removeHolder();
+            if (state.isCleared(bytecodeNode, frame)) {
+                continue;
+            }
+            Object held = state.getObject(bytecodeNode, frame);
+            if (held instanceof PhpArray array) {
+                array.removeHolder();
+                state.clear(bytecodeNode, frame);
+            } else if (held instanceof RefIteration iteration) {
+                iteration.end(PhpContext.get(bytecodeNode));
                 state.clear(bytecodeNode, frame);
             }
         }
@@ -2232,6 +2240,125 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             state.clear(bytecode, frame);
             position.clear(bytecode, frame);
+        }
+    }
+
+    // ---- foreach by reference (ForeachNode's by-reference paths, RefIteration) ----
+
+    /**
+     * The subject of a foreach by reference that is a variable (ForeachNode.executeByRef, FE_RESET_RW on a CV): an
+     * array makes the variable a reference, which the loop takes; any other value is passed on as it is.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class ForeachRefVar {
+        @Specialization
+        public static Object subject(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
+            Object value = Variables.value(Locals.stored(frame, variable, bytecode));
+            return value instanceof PhpArray ? Locals.makeRef(frame, variable, bytecode) : value;
+        }
+    }
+
+    /** As ForeachRefVar, for a property of an object (PropNode.execute, then makeRef for an array). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ForeachRefProp {
+        @Specialization
+        public static Object subject(VirtualFrame frame, PropSite site, Object object,
+                                     @Cached(value = "site.create()", uncached = "site.uncached()",
+                                             neverDefault = true) PropNode access) {
+            Object value = access.readOn(frame, object, site.name);
+            return value instanceof PhpArray ? access.makeRefOn(frame, object, site.name) : value;
+        }
+    }
+
+    /**
+     * Starts a foreach by reference (FE_RESET_RW): a reference holding an array, or an array (a temporary, which
+     * the loop changes unseen), is iterated as RefIteration follows it; a Generator yielding by reference by its
+     * references (GeneratorRefIteration); anything else warns, and the loop runs no step.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class, name = "state")
+    public static final class ForeachRefStart {
+        @Specialization
+        public static void start(VirtualFrame frame, LocalAccessor state, Object subject,
+                                 @Bind BytecodeNode bytecode, @Bind Node node) {
+            Object value = subject instanceof PhpRef ref ? ref.get() : subject;
+            if (value instanceof PhpArray) {
+                PhpRef ref = subject instanceof PhpRef held ? held : PhpRef.unbound(value);
+                state.setObject(bytecode, frame, RefIteration.start(PhpContext.get(node), ref));
+            } else if (value instanceof PhpObject object) {
+                state.setObject(bytecode, frame, GeneratorRefIteration.start(node, object));
+            } else {
+                ForeachNode.notIterable(node, value);
+                state.setObject(bytecode, frame, PhpNull.NULL);
+            }
+        }
+    }
+
+    /**
+     * The next step of a foreach by reference (FE_FETCH_RW): the value variable bound to the next element's
+     * reference, then the key (hasKey); false at the end. An array is the one the loop's reference holds now
+     * (RefIteration.current), which warns and ends the loop once it isn't one.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class, name = "value")
+    @ConstantOperand(type = LocalAccessor.class, name = "key")
+    @ConstantOperand(type = boolean.class, name = "hasKey")
+    public static final class ForeachRefNext {
+        @Specialization
+        public static boolean array(VirtualFrame frame, LocalAccessor value, LocalAccessor key, boolean hasKey,
+                                    RefIteration iteration, @Bind BytecodeNode bytecode, @Bind Node node) {
+            PhpArray array = iteration.current();
+            if (array == null) {
+                ForeachNode.notIterable(node, iteration.ref().get());
+                return false;
+            }
+            int from = iteration.position();
+            int p = from == RefIteration.END ? -1 : array.positionFrom(from);
+            if (p < 0) {
+                return false;
+            }
+            iteration.setPosition(p + 1);
+            Locals.bindRef(frame, value, bytecode, array.refAtPosition(p));
+            if (hasKey) {
+                Locals.write(frame, key, bytecode, array.keyAt(p));
+            }
+            return true;
+        }
+
+        @Specialization
+        public static boolean generator(VirtualFrame frame, LocalAccessor value, LocalAccessor key, boolean hasKey,
+                                        GeneratorRefIteration iteration, @Bind BytecodeNode bytecode,
+                                        @Bind Node node) {
+            if (!iteration.advance(node)) {
+                return false;
+            }
+            Locals.bindRef(frame, value, bytecode, iteration.currentRef(node));
+            if (hasKey) {
+                Locals.write(frame, key, bytecode, PhpRef.deref(iteration.key(node)));
+            }
+            return true;
+        }
+
+        @Fallback
+        public static boolean done(VirtualFrame frame, LocalAccessor value, LocalAccessor key, boolean hasKey,
+                                   Object state) {
+            return false;
+        }
+    }
+
+    /** However the loop ends: it lets go of the reference and the iterator (FE_FREE). */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class, name = "state")
+    public static final class ForeachRefEnd {
+        @Specialization
+        public static void end(VirtualFrame frame, LocalAccessor state, @Bind BytecodeNode bytecode,
+                               @Bind Node node) {
+            if (!state.isCleared(bytecode, frame) && state.getObject(bytecode, frame) instanceof RefIteration it) {
+                it.end(PhpContext.get(node));
+            }
+            state.clear(bytecode, frame);
         }
     }
 

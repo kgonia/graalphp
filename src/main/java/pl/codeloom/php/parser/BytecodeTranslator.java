@@ -781,7 +781,8 @@ public final class BytecodeTranslator {
         private void foreach(Ast node) {
             Ast value = node.node("value");
             if (value.is("AST_REF")) {
-                throw new Unsupported("foreach by reference", node);
+                foreachByRef(node);
+                return;
             }
             Ast keyTarget = node.node("key");
             if (keyTarget != null && keyTarget.is("AST_ARRAY")) {
@@ -827,6 +828,88 @@ public final class BytecodeTranslator {
             b.endTryFinally();
             b.emitLabel(loop.breakLabel());
             b.endBlock();
+        }
+
+        /**
+         * foreach by reference (ForeachNode.executeByRef): the subject's reference (a variable or a property holding
+         * an array becomes one; an element is made one; a call gives the reference its callee returned; anything
+         * else is a temporary), which the loop holds; each step binds the value target to the next element's
+         * reference, then assigns the key. A Generator yielding by reference gives its references.
+         */
+        private void foreachByRef(Ast node) {
+            Ast value = node.node("value").node("var");
+            Ast keyTarget = node.node("key");
+            if (value.is("AST_ARRAY")) {
+                throw new Unsupported("foreach by reference into list()", value);
+            }
+            if (keyTarget != null && (keyTarget.is("AST_ARRAY") || keyTarget.is("AST_REF"))) {
+                // php-src's compile errors "Cannot use list as key element", "Key element cannot be a reference"
+                throw new Unsupported("foreach key into list() or by reference", keyTarget);
+            }
+            boolean direct = isVariable(value) && (keyTarget == null || isVariable(keyTarget));
+            BytecodeLocal valueVariable = direct ? variable(value, "foreach into") : b.createLocal();
+            BytecodeLocal keyVariable = keyTarget == null ? null
+                    : direct ? variable(keyTarget, "foreach key") : b.createLocal();
+            Runnable bind = direct ? null : () -> {
+                bindFrom(value, valueVariable);
+                b.emitUnsetVar(valueVariable);
+                if (keyTarget != null) {
+                    assignFrom(keyTarget, keyVariable, keyTarget);
+                }
+            };
+            b.beginBlock();
+            BytecodeLocal state = b.createLocal();
+            if (firstRun) {
+                foreachStates.add(LocalAccessor.constantOf(state));
+            }
+            b.beginForeachRefStart(state);
+            foreachRefSubject(node.get("expr"));
+            b.endForeachRefStart();
+            Loop loop = new Loop(b.createLabel(), null);
+            b.beginTryFinally(() -> b.emitForeachRefEnd(state));
+            b.beginWhile();
+            b.beginForeachRefNext(valueVariable, keyVariable == null ? valueVariable : keyVariable,
+                    keyVariable != null);
+            b.emitLoadLocal(state);
+            b.endForeachRefNext();
+            loopBody(loop, node.node("stmts"), bind, null);
+            b.endWhile();
+            b.endTryFinally();
+            b.emitLabel(loop.breakLabel());
+            b.endBlock();
+        }
+
+        /** The subject of a foreach by reference, as ForeachRefStart takes it. */
+        private void foreachRefSubject(Object subject) {
+            if (subject instanceof Ast ast) {
+                if (isVariable(ast)) {
+                    b.emitForeachRefVar(variable(ast, "foreach by reference over"));
+                    return;
+                }
+                if (ast.is("AST_DIM") || ast.is("AST_STATIC_PROP")) {
+                    refOf(ast);
+                    return;
+                }
+                if (ast.is("AST_PROP")) {
+                    b.beginForeachRefProp(writtenPropSite(ast));
+                    expression(ast.get("expr"));
+                    b.endForeachRefProp();
+                    return;
+                }
+                if (Translator.isCall(ast)) {
+                    callForRef(ast);
+                    return;
+                }
+            }
+            expression(subject);
+        }
+
+        /** `target = &local`, the reference in a local (a foreach's value), bound to a place. */
+        private void bindFrom(Ast target, BytecodeLocal local) {
+            Map<String, Object> parts = new java.util.LinkedHashMap<>();
+            parts.put("var", target);
+            parts.put("expr", standIn(local, target));
+            assignRef(new Ast("AST_ASSIGN_REF", 0, target.line, target.endLine, null, parts));
         }
 
         /**
@@ -1349,7 +1432,7 @@ public final class BytecodeTranslator {
         private boolean isRefPlace(Ast node) {
             return switch (node.kind) {
                 case "AST_VAR" -> !isThis(node) && !"GLOBALS".equals(node.get("name"));
-                case "AST_DIM", "AST_PROP", "AST_STATIC_PROP" -> true;
+                case "AST_DIM", "AST_PROP", "AST_STATIC_PROP", "BYTECODE_OBJECT" -> true;
                 default -> false;
             };
         }
@@ -1362,6 +1445,8 @@ public final class BytecodeTranslator {
         private void refOf(Ast place) {
             switch (place.kind) {
                 case "AST_VAR" -> b.emitRefVar(variable(place, "reference to"));
+                // a reference a foreach by reference bound a hidden local to
+                case "BYTECODE_OBJECT" -> b.emitRefVar(nullsafeObjects.get(place));
                 case "AST_DIM" -> {
                     ElementPlace element = elementPlace(place, "assignment to");
                     boolean append = element.appends();

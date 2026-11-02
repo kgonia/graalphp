@@ -250,8 +250,9 @@ public final class ForeachNode extends StmtNode {
         Object value = subject.execute(frame);
         if (!(value instanceof PhpArray)) {
             CompilerDirectives.transferToInterpreter();
-            if (value instanceof PhpObject) {
-                throw new PhpError("foreach by reference over an object is not supported");
+            if (value instanceof PhpObject object) {
+                iterateObjectByRef(frame, object);
+                return;
             }
             if (subject instanceof DimNode) {
                 // FETCH_DIM_W has created the element (null) before FE_RESET_RW looks at it
@@ -278,8 +279,9 @@ public final class ForeachNode extends StmtNode {
         Object value = ref.get();
         if (!(value instanceof PhpArray)) {
             CompilerDirectives.transferToInterpreter();
-            if (value instanceof PhpObject) {
-                throw new PhpError("foreach by reference over an object is not supported");
+            if (value instanceof PhpObject object) {
+                iterateObjectByRef(frame, object);
+                return;
             }
             notIterable(value);
             return;
@@ -292,6 +294,24 @@ public final class ForeachNode extends StmtNode {
         } finally {
             frame.clear(arraySlot);
             iteration.end(context);
+        }
+    }
+
+    /**
+     * foreach by reference over an object: a Generator of a function yielding by reference gives its references
+     * (GeneratorRefIteration, which raises php-src's errors for other iterators); the value is bound to each, then
+     * the key is written.
+     */
+    private void iterateObjectByRef(VirtualFrame frame, PhpObject subject) {
+        GeneratorRefIteration iteration = GeneratorRefIteration.start(this, subject);
+        while (iteration.advance(this)) {
+            bind.bindRef(frame, iteration.currentRef(this));
+            if (bind.hasKey()) {
+                bind.writeKey(frame, PhpRef.deref(iteration.key(this)));
+            }
+            if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
+                return;
+            }
         }
     }
 

@@ -229,9 +229,15 @@ var_dump($data);
 function &notAVariable() {
     yield 42;
 }
+// the notice without the file, whose path differs between the runs
+set_error_handler(function ($type, $message, $file, $line) {
+    echo "[$type] $message (line $line)\n";
+    return true;
+});
 foreach (notAVariable() as $v) {
     var_dump($v);
 }
+restore_error_handler();
 show('by ref over a by-value generator', function () {
     foreach (api() as &$v) {
     }
