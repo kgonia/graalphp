@@ -453,11 +453,12 @@ public final class PhpGenerator {
         return continuation.getCallTarget().call(frame, resume);
     }
 
-    /** zend_generator_close: no current element any more, nothing to resume. */
+    /**
+     * zend_generator_close: nothing to resume any more. The last key and value stay (the methods give null for a
+     * closed generator), as a `yield from` that delegated to it takes the value when it finishes.
+     */
     private void close() {
         open = false;
-        key = null;
-        value = null;
         if (values != null) {
             endValues();
         }
