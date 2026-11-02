@@ -22,8 +22,8 @@ ranked. Nothing here changes the interpreter: the branch `pe4-diagnosis` (on `wo
    WordPress's after PE (~60k); like for like WooCommerce's is 11-18% larger (more of its paths run).
 2. **Compilation doesn't settle because of volume, not instability:** ~10,400 call targets in 15 minutes, 3%
    recompiled; the queue holds 300-700 tasks the whole time, and Truffle raises the thresholds with its load (×3-13),
-   so first compilations trickle in for as long as we measured. By time, tier 2 is 49-62% of compilation, split
-   copies 9-17%, the three failed giants 9-11%. **Splits** (6,258 in 15 minutes) come mostly from
+   so first compilations trickle in for as long as we measured. By time, tier 2 is 49-53% of compilation, split
+   copies 9-15%, the three failed giants 9-11%. **Splits** (6,258 in 15 minutes) come mostly from
    `MethodCallNode.Dispatch` reporting polymorphism on receivers of many classes that resolve to one method
    (`WC_Data::get_prop` 947 splits, 458 compiled); also `AssignNode`, `===`, `ToBoolean`, `instanceof`, `ToString`,
    `ToLong`, and `StableValueNode`, which can never stabilize across requests.
@@ -47,12 +47,13 @@ ranked. Nothing here changes the interpreter: the branch `pe4-diagnosis` (on `wo
   `SERVER_OPTS`, GraalVM 25.4.4.1.1 (libgraal), the tree interpreter.
 - **Two stacks.** The timed runs (`bench/pe4-diagnosis/runs.sh`) ran on `pe4-*` (server on CPUs 14-21 under the CPU
   lock, database on 22-23); the diagnosis runs (`bench/pe4-diagnosis/diag.sh`, `woo.sh diag`) on `pe4d-*` (server on
-  6-13, database on 12-13), at the same time. The diagnosis runs are slow (6 pages/s under the full trace against
-  ~11 untraced) and only their counts are read, never their times as such.
-- **The box was busy:** 56-65% of its 24 CPUs during the timed runs (`tests/gate2/hostload.py`, from a sampler of
-  `/proc/stat`), about a third of it the diagnosis server. Every timed comparison is interleaved, so both sides saw
-  the same load, but absolute throughput is below #21's (1.3-1.7 orders/s at 16 users every visitor buying, against
-  #21's 2.1).
+  6-13, database on 12-13), beside the first timed runs (until 14:23: the A/B's rounds 1-3 and the memruns' rounds
+  1-2). The diagnosis runs are slow (6 pages/s under the full trace against 10-15 untraced) and only their counts are
+  read, never their times as such.
+- **The box's load:** 47-65% of its 24 CPUs busy while the diagnosis server ran, 35-38% later
+  (`tests/gate2/hostload.py`, from a sampler of `/proc/stat`; the server under test alone is a third). Every timed
+  comparison is interleaved, so both sides of a round saw the same load; across rounds throughput moved by up to
+  50% with it, so compare within a round.
 - **Builds:** "after" is `b6ca11c` (`target/classes`), "before" is `866e156` (`target/classes-before`, #21's code
   without #19 and #20), both mounted into the server (`DEV=1 DEV_CLASSES`).
 
@@ -95,7 +96,7 @@ Graal's tiers, wall time of the compilation, PE + Graal; the box was loaded, so 
 |---|---|---|---|---|---|
 | `jetpack_autoload_classmap.php` (top level) | 26,552 | **272,886** (921,612 before PE's own cleanup) | – | **failed: 100 s timeout** (85 s PE) | 0 of 2 |
 | `PaymentsExtensionSuggestions::$country_extensions` (a `ThunkRootNode`) | 6,365 | **217,076** | – | **failed after 80 s**: "stack offset for oopmap is greater than encoding limit" | 0 |
-| `woocommerce/i18n/states.php` (top level) | – | 105,599 | – | **failed after 39-52 s**: code too large | 0 of 2,042 |
+| `woocommerce/i18n/states.php` (top level) | 18,640 | 105,599 | – | **failed after 39-52 s**: code too large | 0 of 2,042 |
 | `WP_Query::get_posts` T1 / T2 | 9,796 | 53,306 / 106,154; 52,873 / 100,419 | 511 / 476 KB | 6.5 s (3.0+3.5); **19.1 s** (3.2+15.9) | 0 of 98-128 |
 | `wp-settings.php` | 7,079 | 39,714 / 88,164 | 513 KB | 6.2 s | 0 |
 | `WP_Theme_JSON::sanitize` T1 / T2 | 1,455 | 32,691; 31,688 | 350 KB | 4.0 s; 11.4 s | 0 |
@@ -135,7 +136,7 @@ What each column is, and the sites behind it:
   of an array, every argument, every element stored. The thunk has 1,364 of them (35,162 nodes), `sanitize` 427.
 - **Element reads**: the string-key read's slot check and miss (`rawIfKeyAt`, `SlotCacheNode.lookup`, `getRaw`,
   `deref`): `get_block_nodes` 328 sites. Round 3's large-function rule (one call per read outside loops) applies to
-  `get_posts` and the top-level files, not to these: they have fewer than 3,000 AST nodes.
+  `get_posts`, not to these: they have fewer than 3,000 AST nodes.
 - **Locals, references**: `Variables.value` (580 sites in get_posts), `LocalVarNode.writeObject`, `readIfSet`,
   `FrameWithoutBoxing.unsafeCast`, `refArrayForWrite`, and the locals' release (`FunctionRootNode.releaseLocals`,
   1,414 nodes in one place).
@@ -190,12 +191,12 @@ where the wall times sum to 2,012 s, so read the shares, not the seconds.
 
 | | `m-base-r1`: compilations | wall s | share | `d1-trace`: compilations | wall s | share |
 |---|---|---|---|---|---|---|
-| functions, tier 2 | 819 | 992 | **49%** | 1,616 | 1,572 | **62%** |
-| functions, tier 1 | 4,533 | 489 | 24% | 8,831 (incl. splits) | 670 | 26% |
-| split copies, tier 1 / tier 2 | 2,578 / 67 | 146 / 49 | **9%** | 3,764 / 235 (in the rows above) | 173 / 212 | **17%** |
+| functions, tier 2 | 819 | 992 | **49%** | 1,509 | 1,343 | **53%** |
+| functions, tier 1 | 4,533 | 489 | 24% | 5,103 | 454 | 18% |
+| split copies, tier 1 / tier 2 | 2,578 / 67 | 146 / 49 | **9%** | 3,749 / 235 | 173 / 212 | **15%** |
 | three failed giants (section 1) | 3 | 216 | **11%** | 3 | 219 | 9% |
-| other run-once code (file tops, thunks), tier 1 | 1,499 | 55 | 3% | 1,538 | 275 | 11% |
-| a target compiled again at the same tier | 155 | 60 | 3% | ~200 | ~50 | 2% |
+| other run-once code (file tops, thunks) | 1,502 | 61 | 3% | 1,540 | 66 | 3% |
+| a target compiled again at the same tier | 155 | 60 | 3% | 229 | 66 | 3% |
 
 - **Recompilation is rare:** 3% of the time. Invalidations over 15 minutes: 107 (93 "Profiled Argument Types", 8
   return types, 2 object-location generalizations, 5 split call nodes); HotSpot traps of Truffle code: 230, spread
@@ -213,11 +214,11 @@ where the wall times sum to 2,012 s, so read the shares, not the seconds.
   first compilations; 10,561 of 23,365 enqueued tasks were dropped as stale (`Dequeues`). **Compilation doesn't
   settle because WooCommerce's request path is ~10,000 call targets and 3 compiler threads (`CompilerThreads`
   default here) compile it at ~1,000 compilations a minute, mostly tier 2 by time.**
-- **Tier 2 is the bulk** (49-62%): each function used often enough recompiled with its callees inlined. 1,466 of
-  tier 2's 1,585 s in `d1-trace` were functions of at most 1,000 AST nodes (829 of at most 50 nodes, at 1,955 IR
+- **Tier 2 is the bulk** (49-53% for functions, 51-61% with split copies): each function used often enough recompiled with its callees inlined. 1,466 of
+  tier 2's 1,585 s in `d1-trace` (split copies included) were functions of at most 1,000 AST nodes (829 of at most 50 nodes, at 1,955 IR
   nodes on average after inlining 3.2 callees).
 
-**Splitting: 9-17% of the compile time, 12% of the code (12 of 97 MB).** In `d1-trace` Truffle made 6,258 splits
+**Splitting: 9-15% of the compile time, 12% of the code (12 of 97 MB).** In `d1-trace` Truffle made 6,258 splits
 of 534 functions (3,999 compiled) and refused 2,978 as too big (`SplittingMaxCalleeSize` 100: `get_option` 518
 times, `_wp_specialchars` 224). Splitting multiplies the call targets the queue has to reach, more than their
 time. Which nodes asked for them (`SplittingTraceEvents`: a polymorphic event names the node class that reported it;
@@ -403,7 +404,7 @@ confirm it:
 | # | Target | Evidence | Expected | Confirm with |
 |---|---|---|---|---|
 | 1 | **Don't compile run-once code that can't pay back**: a top-level file or a thunk (property default, constant initializer) that runs once per request, has no loop and is large. `RootNode.prepareForCompilation` (25.4 has it) can decline it; or give a literal with constant parts a constant template (the classmap's 2,411 entries differ only in `$baseDir`), and fold `self::CONST` of the declaring class in constant expressions at link time, as php-src's `zend_try_ct_eval_class_const` does (`$country_extensions`' 1,092 references are partly other classes', so this alone doesn't make it constant) | the three failed giants: 11% of the compile time, a compiler thread blocked 36-117 s each, libgraal's peak heap (section 3), a thunk with no source position ("Src n/a"); the classmap interpreted costs 0.2% of the requests' time; with one compiler thread none of them compiled and throughput didn't fall | −10-14% compile CPU (−2-3% of the server's CPU), libgraal's peak −0.4-0.8 GB per isolate, the queue's load down | memrun: `pe4_report.py kinds` (no failures, file/thunk share), `libgraal_gc.py`, `pe4_memtable.py`; `d1-trace` with 0 permanent bailouts |
-| 2 | **Method dispatch keyed on the resolved method** (`MethodCallNode.Dispatch`, also static and constructor dispatch): a receiver class whose lookup gives the cached function shares its entry | `Dispatch` reported in functions with 3,264 of 6,258 splits; `WC_Data::get_prop` 947 splits, 458 compilations, 33 s, the most of any function; the product getters 56-67 copies each; up to 4 inlined call paths per site where one target is called | splits −40-50%, split copies' compile time (9-17%) about halved, fewer call targets for the queue, one inlined call per `$this->` site | `d1-trace`: `pe4_report.py splits` and `compile`; Gate 1's hooks and blocks A/B; `woo.sh load` A/B |
+| 2 | **Method dispatch keyed on the resolved method** (`MethodCallNode.Dispatch`, also static and constructor dispatch): a receiver class whose lookup gives the cached function shares its entry | `Dispatch` reported in functions with 3,264 of 6,258 splits; `WC_Data::get_prop` 947 splits, 458 compilations, 33 s, the most of any function; the product getters 56-67 copies each; up to 4 inlined call paths per site where one target is called | splits −40-50%, split copies' compile time (9-15%) about halved, fewer call targets for the queue, one inlined call per `$this->` site | `d1-trace`: `pe4_report.py splits` and `compile`; Gate 1's hooks and blocks A/B; `woo.sh load` A/B |
 | 3 | **`defined('NAME')` as a node**: the name's constant id resolved at translation, `constantAt(id) != null`, as php-src's `ZEND_DEFINED` with its cache slot; today a built-in call converting the name to a Java `String` and hashing it into the context's map | 6.2% of the sampled request time (with the sampler's bias toward boundary calls); 951 WooCommerce files start with `defined('ABSPATH') || exit;`, 1,846 literal `defined()` sites in WooCommerce and core | a few % of request time; to be measured first | count the calls per request (a counter, or JFR's Java frames); `woo.sh load` A/B |
 | 4 | **A user function's call without the per-context lookup**: the running context in the frame (or arguments) instead of `PhpContext.get`'s thread-local read, and the function cached per site when the language serves one context | ~20 IR nodes a call (`fastGet` + `functionAt`); 36% of `default-filters.php`'s IR, 40% of `states.php`'s, 34% of `wp_default_scripts`', 5-6% of `get_posts`'; round 3 left it open | −5-10% code in call-heavy functions, less per call | `CompilationTest`'s per-operation costs (round 3's method), the largest compilations' `categories` |
 | 5 | **Holder counts out of the straight line**: `addHolder` / `removeHolder` inline at every assignment, argument and element store (~19-26 IR nodes a site, its rare path a boundary call with an exception edge); a fresh literal's nested arrays could take their count without the tests | 21% of `sanitize`'s IR, 16% of the thunk's, 13% of `get_block_nodes`', 8% of `get_posts`' | −5-15% of array-heavy functions' code | `categories` before/after; Gate 1 (kses, blocks) A/B |

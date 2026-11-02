@@ -1,0 +1,28 @@
+compile wall time: 2534 s
+  function T2                1509    1343 s   53%
+  function T1                5103     454 s   18%
+  failed                        3     219 s    9%
+  split copy T2               235     212 s    8%
+  split copy T1              3749     173 s    7%
+  top level, thunk T1        1535      56 s    2%
+  function T1 again           196      46 s    2%
+  function T2 again            18      19 s    1%
+  top level, thunk T2           5      10 s    0%
+  split copy T1 again          15       1 s    0%
+  per minute (UTC): compilations, s; of them a target again at the same tier: n, s
+    11:05   632    135   183    46
+    11:06  1153    169    11     6
+    11:07  1237    167     4     6
+    11:08   917    170     2     1
+    11:09   612    126     2     2
+    11:10   318    120     0     0
+    11:11   688    167     2     2
+    11:12  1916    132     0     0
+    11:13  1686     99     0     0
+    11:14   483    155     0     0
+    11:15   634    167     0     0
+    11:16   455    174     7     1
+    11:17   650    170     6     0
+    11:18   655    167     4     2
+    11:19   302    174     8     0
+    11:20    27     24     0     0
