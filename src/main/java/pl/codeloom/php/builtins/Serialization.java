@@ -61,7 +61,11 @@ final class Serialization {
     }
 
     private static void warning(PhpContext context, String message) {
-        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(message), SourceLocation.current());
+        warning(context, Str.of(message));
+    }
+
+    private static void warning(PhpContext context, TruffleString message) {
+        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, message, SourceLocation.current());
     }
 
     /** A class name as a C string prints it (%s): up to its first NUL, as an anonymous class's name. */
@@ -922,7 +926,7 @@ final class Serialization {
             } else {
                 return FAIL;
             }
-            String property = propertyFor(frame.object, frame.phpClass, Str.key(name));
+            String property = propertyFor(frame.phpClass, Str.key(name));
             return property == null ? FAIL : value(frame.object, property);
         }
 
@@ -1599,14 +1603,6 @@ final class Serialization {
             return FAIL;
         }
 
-        private void warning(PhpContext ctx, TruffleString message) {
-            ErrorFunctions.raise(ctx, ErrorFunctions.E_WARNING, message, SourceLocation.current());
-        }
-
-        private static void warning(PhpContext ctx, String message) {
-            Serialization.warning(ctx, message);
-        }
-
         private void notice(String message) {
             ErrorFunctions.raise(context, ErrorFunctions.E_NOTICE, Str.of(message), SourceLocation.current());
         }
@@ -1617,7 +1613,7 @@ final class Serialization {
          * a mangled one of this class or "*"), else the key as a dynamic property; null when the key is a broken
          * mangled name (with php-src's notice).
          */
-        private String propertyFor(PhpObject object, PhpClass phpClass, String key) {
+        private String propertyFor(PhpClass phpClass, String key) {
             String declared = phpClass.propertyOfMangledName(key);
             if (declared != null) {
                 return declared;
