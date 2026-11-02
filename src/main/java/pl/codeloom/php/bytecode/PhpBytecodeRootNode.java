@@ -3323,7 +3323,30 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `unset($_SESSION)` (GlobalVarNode.unset): the global named. */
+    /** `$GLOBALS[key]` by a computed key read (GlobalsDimNode.execute): the global the key names, or null. */
+    @Operation
+    public static final class GlobalsElementValue {
+        @Specialization
+        public static Object read(Object key, @Bind Node node) {
+            PhpRef ref = PhpContext.get(node).findGlobal(GlobalsDimNode.toName(key));
+            return ref == null ? PhpNull.NULL : ref.get();
+        }
+    }
+
+    /** `$GLOBALS[key]` by a computed key as a place (GlobalsDimNode.makeRef): as GlobalRef. */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "create")
+    public static final class GlobalsElementRef {
+        @Specialization
+        public static Object ref(boolean create, Object key, @Bind Node node) {
+            PhpContext context = PhpContext.get(node);
+            String name = GlobalsDimNode.toName(key);
+            PhpRef ref = create ? context.globalRef(name) : context.findGlobal(name);
+            return ref == null ? PhpNull.NULL : ref;
+        }
+    }
+
+    /** `unset($_SESSION)`, `unset($GLOBALS[key])` (GlobalVarNode, GlobalsDimNode unset): the global named. */
     @Operation
     public static final class UnsetGlobal {
         @Specialization
@@ -3332,13 +3355,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `$_SESSION = &place` (GlobalVarNode.bindRef): the reference, then the global named. */
+    /** `$_SESSION = &place`, `$GLOBALS[key] = &place` (bindRef): the reference, then the global named. */
     @Operation
     public static final class BindGlobal {
         @Specialization
         public static Object bind(PhpRef ref, Object key, @Bind Node node) {
             PhpContext.get(node).bindGlobal(GlobalsDimNode.toName(key), ref);
             return ref.get();
+        }
+    }
+
+    /** `$GLOBALS` read as a whole (GlobalsArrayNode): a copy of the global variables. */
+    @Operation
+    public static final class GlobalsArray {
+        @Specialization
+        public static PhpArray read(@Bind Node node) {
+            return PhpContext.get(node).globalsArray();
         }
     }
 

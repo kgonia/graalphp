@@ -22,6 +22,7 @@ import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.bytecode.StaticPropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
+import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -1100,6 +1101,8 @@ public final class BytecodeTranslator {
                 case "AST_VAR":
                     if (isThis(node)) {
                         b.emitReadThis();
+                    } else if (isGlobals(node)) {
+                        b.emitGlobalsArray();
                     } else if (refPlace(node) instanceof RefPlace place) {
                         place.read();
                     } else {
@@ -1121,6 +1124,10 @@ public final class BytecodeTranslator {
                 case "AST_DIM":
                     if (node.get("dim") == null) {
                         throw new Unsupported("[] for reading", node);
+                    }
+                    if (isGlobals(node.get("expr"))) {
+                        refPlace(node).read();
+                        break;
                     }
                     b.beginReadElement();
                     expression(node.get("expr"));
@@ -2330,6 +2337,11 @@ public final class BytecodeTranslator {
                 b.emitIssetThis();
                 return;
             }
+            if (isGlobals(tested)) {
+                // zend_compile_isset_or_empty: $GLOBALS is set
+                b.emitLoadConstant(Boolean.TRUE);
+                return;
+            }
             if (refPlace(tested) instanceof RefPlace place) {
                 b.beginIsSetValue();
                 place.readIfSet();
@@ -2375,6 +2387,11 @@ public final class BytecodeTranslator {
          * is, then its falsiness; empty($this) is !isset($this).
          */
         private void empty(Object tested) {
+            if (isGlobals(tested)) {
+                // zend_compile_isset_or_empty: $GLOBALS is not empty
+                b.emitLoadConstant(Boolean.FALSE);
+                return;
+            }
             b.beginNot();
             if (isThis(tested)) {
                 b.emitIssetThis();
@@ -2398,6 +2415,10 @@ public final class BytecodeTranslator {
                         if (ast.get("dim") == null) {
                             // php-src's compile error "Cannot use [] for reading"
                             throw new Unsupported("[] for reading", ast);
+                        }
+                        if (isGlobals(ast.get("expr"))) {
+                            refPlace(ast).readIfSet();
+                            return;
                         }
                         b.beginElementIfSet();
                         readIfSet(ast.get("expr"));
@@ -2530,7 +2551,8 @@ public final class BytecodeTranslator {
         private ElementPlace elementPlace(Ast target, String what) {
             List<Object> dims = new ArrayList<>();
             Ast base = target;
-            while (base.is("AST_DIM")) {
+            // down to the base; `$GLOBALS[name]` is a place of its own (a global), the base of the keys below it
+            while (base.is("AST_DIM") && !isGlobals(base.get("expr"))) {
                 dims.add(0, base.get("dim"));
                 base = base.node("expr");
             }
@@ -3176,7 +3198,7 @@ public final class BytecodeTranslator {
             if (!(arg instanceof Ast ast)) {
                 return true;
             }
-            if (isThis(ast)) {
+            if (isThis(ast) || isGlobals(ast)) {
                 // passed as a value, as the tree's arguments pass it
                 return true;
             }
@@ -3285,25 +3307,29 @@ public final class BytecodeTranslator {
 
         /**
          * A place whose storage is a reference (Translator.place's StaticPropNode, GlobalVarNode, GlobalsDimNode):
-         * `Cls::$name`, of a class reference (a name, self, parent, static, an expression); or a superglobal.
+         * `Cls::$name`, of a class reference (a name, self, parent, static, an expression); a global by name, a
+         * superglobal or `$GLOBALS['name']` by a constant key (php-src's ZEND_FETCH_GLOBAL of a CONST); or
+         * `$GLOBALS[key]` by a computed key, which names the global when the place is used.
          */
         private final class RefPlace {
             private final Object classNode;
             private final StaticPropSite site;
             private final String global;
+            private Object key;
             /** A class that is an expression, evaluated by prepare (zend_compile_class_ref fetches it at once). */
             private BytecodeLocal classLocal;
             private boolean prepared;
 
-            RefPlace(Object classNode, StaticPropSite site, String global) {
+            RefPlace(Object classNode, StaticPropSite site, String global, Object key) {
                 this.classNode = classNode;
                 this.site = site;
                 this.global = global;
+                this.key = key;
             }
 
             /**
              * Before a value assigned to the place, or a second use of it: what php-src evaluates first, a class
-             * that is an expression (zend_delayed_compile_var).
+             * that is an expression, and a key that isn't a constant or a variable (zend_delayed_compile_var).
              */
             void prepare() {
                 if (prepared) {
@@ -3315,6 +3341,9 @@ public final class BytecodeTranslator {
                     b.beginStoreLocal(classLocal);
                     classRef(classNode);
                     b.endStoreLocal();
+                }
+                if (key != null) {
+                    key = onceKey(key);
                 }
             }
 
@@ -3332,8 +3361,12 @@ public final class BytecodeTranslator {
                     b.beginReadStaticProp(site);
                     emitClass();
                     b.endReadStaticProp();
-                } else {
+                } else if (global != null) {
                     b.emitGlobalValue(global);
+                } else {
+                    b.beginGlobalsElementValue();
+                    expression(key);
+                    b.endGlobalsElementValue();
                 }
             }
 
@@ -3354,8 +3387,12 @@ public final class BytecodeTranslator {
                     b.beginStaticPropRef(site);
                     emitClass();
                     b.endStaticPropRef();
-                } else {
+                } else if (global != null) {
                     b.emitGlobalRef(global, create);
+                } else {
+                    b.beginGlobalsElementRef(create);
+                    expression(key);
+                    b.endGlobalsElementRef();
                 }
             }
 
@@ -3387,7 +3424,11 @@ public final class BytecodeTranslator {
 
             /** A global's name, as UnsetGlobal and BindGlobal take it. */
             private void name() {
-                b.emitLoadConstant(made(() -> Str.of(global)));
+                if (global != null) {
+                    b.emitLoadConstant(made(() -> Str.of(global)));
+                } else {
+                    expression(key);
+                }
             }
         }
 
@@ -3402,16 +3443,38 @@ public final class BytecodeTranslator {
                         throw new Unsupported("static property by a computed name", node);
                     }
                     StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name)));
-                    return new RefPlace(node.get("class"), site, null);
+                    return new RefPlace(node.get("class"), site, null, null);
                 }
                 case "AST_VAR" -> {
                     return node.get("name") instanceof String name && PhpContext.SUPERGLOBALS.contains(name)
-                            ? new RefPlace(null, null, name) : null;
+                            ? new RefPlace(null, null, name, null) : null;
+                }
+                case "AST_DIM" -> {
+                    if (!isGlobals(node.get("expr"))) {
+                        return null;
+                    }
+                    Object dim = node.get("dim");
+                    if (dim == null) {
+                        // php-src's compile errors "Cannot append to $GLOBALS", "Cannot use [] for reading"
+                        throw new Unsupported("[] of $GLOBALS", node);
+                    }
+                    String name = constantGlobalName(dim);
+                    return name != null ? new RefPlace(null, null, name, null) : new RefPlace(null, null, null, dim);
                 }
                 default -> {
                     return null;
                 }
             }
+        }
+
+        /** The global a constant string or int key of $GLOBALS names (GlobalsDimNode.toName), else null. */
+        private String constantGlobalName(Object dim) {
+            if (!constantShaped(dim)) {
+                return null;
+            }
+            Object constant = constantValue(dim);
+            return constant instanceof TruffleString || constant instanceof Long ? GlobalsDimNode.toName(constant)
+                    : null;
         }
 
         // ---- variables and constants ----
@@ -3541,6 +3604,11 @@ public final class BytecodeTranslator {
 
     private static boolean isThis(Object value) {
         return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
+    }
+
+    /** `$GLOBALS` itself (Translator.isGlobals). */
+    private static boolean isGlobals(Object value) {
+        return value instanceof Ast node && node.is("AST_VAR") && "GLOBALS".equals(node.get("name"));
     }
 
     /** Whether a variable of this name is a local: $this, $GLOBALS and the superglobals are not. */
