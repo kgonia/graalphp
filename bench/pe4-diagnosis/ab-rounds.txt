@@ -1,0 +1,36 @@
+ab-before-r1-1-16.sample.json: no samples
+ab-after-r1-1-16: box CPU busy 64%, load average 26.2 (12 samples)
+ab-before-r2-1-16: box CPU busy 62%, load average 23.3 (12 samples)
+ab-after-r2-1-16: box CPU busy 56%, load average 24.6 (13 samples)
+ab-before-r3-1-16: box CPU busy 56%, load average 22.6 (12 samples)
+ab-after-r3-1-16: box CPU busy 64%, load average 24.5 (13 samples)
+ab-before-r4-1-16: box CPU busy 35%, load average 16.6 (12 samples)
+ab-after-r4-1-16: box CPU busy 36%, load average 17.0 (12 samples)
+ab-before-r5-1-16: box CPU busy 36%, load average 18.9 (13 samples)
+ab-after-r5-1-16: box CPU busy 35%, load average 17.3 (13 samples)
+ab-before-r6-1-16: box CPU busy 35%, load average 18.6 (12 samples)
+ab-after-r6-1-16: box CPU busy 36%, load average 18.4 (13 samples)
+target/pe4/ab.log:ab-before-r1: jvm --threads 16 up in 1721 ms
+target/pe4/ab.log:ab-after-r1: jvm --threads 16 up in 2856 ms
+target/pe4/ab.log:ab-after-r2: jvm --threads 16 up in 2569 ms
+target/pe4/ab.log:ab-before-r2: jvm --threads 16 up in 1667 ms
+target/pe4/ab.log:ab-before-r3: jvm --threads 16 up in 2429 ms
+target/pe4/ab.log:ab-after-r3: jvm --threads 16 up in 2537 ms
+target/pe4/ab2.log:ab-after-r4: jvm --threads 16 up in 2258 ms
+target/pe4/ab2.log:ab-before-r4: jvm --threads 16 up in 1774 ms
+target/pe4/ab2.log:ab-before-r5: jvm --threads 16 up in 1956 ms
+target/pe4/ab2.log:ab-after-r5: jvm --threads 16 up in 1845 ms
+target/pe4/ab2.log:ab-after-r6: jvm --threads 16 up in 3140 ms
+target/pe4/ab2.log:ab-before-r6: jvm --threads 16 up in 2591 ms
+ab-before-r1-1-16: 220 orders (1.71/s), 13.7 pages/s, p50 1033 p95 1997 p99 2416 ms, failed 0.0000, checks failed 0, php errors 0; CPU 1001.0 s, RssAnon max 4064 MB, current max 4086 MB, peak 4114 MB; DB 0.54 cores, 83 row lock waits (4 ms); db: 220 orders, 0 problems []
+ab-after-r1-1-16: 164 orders (1.32/s), 10.6 pages/s, p50 1365 p95 2521 p99 2892 ms, failed 0.0000, checks failed 0, php errors 0; CPU 957.7 s, RssAnon max 3424 MB, current max 3443 MB, peak 3451 MB; DB 0.55 cores, 97 row lock waits (26 ms); db: 164 orders, 0 problems []
+ab-after-r2-1-16: 192 orders (1.52/s), 12.2 pages/s, p50 1182 p95 2451 p99 2712 ms, failed 0.0000, checks failed 0, php errors 0; CPU 975.7 s, RssAnon max 2967 MB, current max 2985 MB, peak 2988 MB; DB 0.55 cores, 86 row lock waits (201 ms); db: 192 orders, 0 problems []
+ab-before-r2-1-16: 161 orders (1.29/s), 10.3 pages/s, p50 1400 p95 2496 p99 2775 ms, failed 0.0000, checks failed 0, php errors 0; CPU 963.1 s, RssAnon max 3013 MB, current max 3031 MB, peak 3039 MB; DB 0.54 cores, 59 row lock waits (8 ms); db: 161 orders, 0 problems []
+ab-before-r3-1-16: 176 orders (1.41/s), 11.3 pages/s, p50 1271 p95 2431 p99 2973 ms, failed 0.0000, checks failed 0, php errors 0; CPU 969.6 s, RssAnon max 2952 MB, current max 2970 MB, peak 2971 MB; DB 0.52 cores, 61 row lock waits (17 ms); db: 176 orders, 0 problems []
+ab-after-r3-1-16: 170 orders (1.33/s), 10.6 pages/s, p50 1290 p95 2526 p99 2754 ms, failed 0.0000, checks failed 0, php errors 0; CPU 991.2 s, RssAnon max 2923 MB, current max 2940 MB, peak 2957 MB; DB 0.56 cores, 98 row lock waits (31 ms); db: 170 orders, 0 problems []
+ab-after-r4-1-16: 224 orders (1.80/s), 14.4 pages/s, p50 985 p95 1831 p99 2243 ms, failed 0.0000, checks failed 0, php errors 0; CPU 966.2 s, RssAnon max 3298 MB, current max 3317 MB, peak 3318 MB; DB 0.56 cores, 86 row lock waits (1 ms); db: 224 orders, 0 problems []
+ab-before-r4-1-16: 199 orders (1.60/s), 12.8 pages/s, p50 1126 p95 2058 p99 2339 ms, failed 0.0000, checks failed 0, php errors 0; CPU 967.1 s, RssAnon max 4119 MB, current max 4142 MB, peak 4148 MB; DB 0.52 cores, 87 row lock waits (60 ms); db: 199 orders, 0 problems []
+ab-before-r5-1-16: 208 orders (1.65/s), 13.2 pages/s, p50 1122 p95 1976 p99 2264 ms, failed 0.0000, checks failed 0, php errors 0; CPU 984.8 s, RssAnon max 5208 MB, current max 5234 MB, peak 5252 MB; DB 0.51 cores, 91 row lock waits (3 ms); db: 208 orders, 0 problems []
+ab-after-r5-1-16: 192 orders (1.54/s), 12.3 pages/s, p50 1175 p95 2133 p99 3127 ms, failed 0.0000, checks failed 0, php errors 0; CPU 959.8 s, RssAnon max 4395 MB, current max 4419 MB, peak 4458 MB; DB 0.55 cores, 132 row lock waits (190 ms); db: 192 orders, 0 problems []
+ab-after-r6-1-16: 192 orders (1.51/s), 12.1 pages/s, p50 1190 p95 2227 p99 2885 ms, failed 0.0000, checks failed 0, php errors 0; CPU 985.7 s, RssAnon max 4026 MB, current max 4049 MB, peak 4078 MB; DB 0.57 cores, 85 row lock waits (36 ms); db: 192 orders, 0 problems []
+ab-before-r6-1-16: 184 orders (1.48/s), 11.8 pages/s, p50 1213 p95 2404 p99 2689 ms, failed 0.0000, checks failed 0, php errors 0; CPU 957.9 s, RssAnon max 3806 MB, current max 3827 MB, peak 3853 MB; DB 0.55 cores, 82 row lock waits (31 ms); db: 184 orders, 0 problems []
