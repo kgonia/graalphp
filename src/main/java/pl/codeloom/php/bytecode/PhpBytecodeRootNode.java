@@ -1870,6 +1870,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * A closure or arrow function (ClosureNode): the values it captures (an array gains the closure as a holder)
+     * and references (bound to it), $this unless it is static, and the class scope (null outside classes).
+     */
+    @Operation
+    @ConstantOperand(type = PhpFunction.class)
+    @ConstantOperand(type = boolean[].class, name = "byRef")
+    @ConstantOperand(type = boolean.class, name = "isStatic")
+    public static final class MakeClosure {
+        @Specialization
+        public static PhpClosure make(VirtualFrame frame, PhpFunction function, boolean[] byRef, boolean isStatic,
+                                      Object scope, @Variadic Object[] captures) {
+            Object[] captured = new Object[captures.length];
+            for (int i = 0; i < captured.length; i++) {
+                Object value = captures[i];
+                if (byRef[i]) {
+                    ((PhpRef) value).bind();
+                } else if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+                captured[i] = value;
+            }
+            Object self = isStatic ? null : frame.getArguments()[PhpFunction.ARG_THIS];
+            return new PhpClosure(function, self instanceof PhpObject object ? object : null,
+                    scope instanceof PhpClass phpClass ? phpClass : null, captured);
+        }
+    }
+
     // ---- methods, classes and objects (MethodCallNode, StaticCallNode, NewNode, ClassRefNode) ----
 
     /**

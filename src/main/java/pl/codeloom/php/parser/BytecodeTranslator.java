@@ -1233,6 +1233,10 @@ public final class BytecodeTranslator {
                     expression(node.get("expr"));
                     b.endThrow();
                     break;
+                case "AST_CLOSURE":
+                case "AST_ARROW_FUNC":
+                    closure(node);
+                    break;
                 default:
                     throw new Unsupported("expression", node);
             }
@@ -1430,6 +1434,41 @@ public final class BytecodeTranslator {
                 return;
             }
             throw new Unsupported("assignment target", target);
+        }
+
+        // ---- closures ----
+
+        /**
+         * A closure or arrow function (Translator.closure, ClosureNode): its function is made once for this place
+         * (a reparse takes the same); the variables it captures by value (an array gains it as a holder) or by
+         * reference, then $this unless it is static, and the class it is written in as its scope.
+         */
+        private void closure(Ast node) {
+            Translator.ClosureParts parts = (Translator.ClosureParts) made(
+                    () -> constants.closureParts(node, variables::containsKey));
+            String[] captures = parts.captures();
+            BytecodeLocal[] locals = new BytecodeLocal[captures.length];
+            for (int i = 0; i < captures.length; i++) {
+                locals[i] = plainVariable(captures[i]) ? variables.get(captures[i]) : null;
+                if (locals[i] == null) {
+                    // php-src's compile errors for $this and auto-globals
+                    throw new Unsupported("capture of $" + captures[i], node);
+                }
+            }
+            b.beginMakeClosure(parts.function(), parts.byRef(), parts.isStatic());
+            if (owner == null) {
+                b.emitLoadConstant(PhpNull.NULL);
+            } else {
+                b.emitResolveClass(classSite(owner.name()));
+            }
+            for (int i = 0; i < locals.length; i++) {
+                if (parts.byRef()[i]) {
+                    b.emitRefVar(locals[i]);
+                } else {
+                    b.emitReadVar(locals[i]);
+                }
+            }
+            b.endMakeClosure();
         }
 
         // ---- references ----
@@ -3165,7 +3204,18 @@ public final class BytecodeTranslator {
             return;
         }
         switch (ast.kind) {
-            case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
+            case "AST_CLOSURE":
+                // the variables a closure's use list names are the enclosing function's (php-src's CVs)
+                if (ast.get("uses") instanceof Ast uses) {
+                    for (Object use : uses.children()) {
+                        if (use instanceof Ast variable && variable.get("name") instanceof String name
+                                && plainVariable(name)) {
+                            names.add(name);
+                        }
+                    }
+                }
+                return;
+            case "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
                 return;
             case "AST_VAR":
                 if (ast.get("name") instanceof String name && plainVariable(name)) {
