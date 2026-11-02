@@ -10,7 +10,7 @@
 #   find no server: neither WP-Cron nor the Action Scheduler runs during a run, on every engine alike), PORT on the
 #   host; wp-content/uploads is a tmpfs of the container's own (WooCommerce's logs). THREADS: the JVM's and native
 #   server's threads, php -S's workers, php-fpm's pm.max_children (default 4).
-#   Variants: php (php -S, OPcache and its tracing JIT, as native.sh's), fpm (php-fpm behind nginx, OPcache, the
+#   Variants: php (php -S, OPcache and its tracing JIT, as native.sh's, log_errors on as every server's), fpm (php-fpm behind nginx, OPcache, the
 #   tracing JIT, validate_timestamps=0, pm=static), jvm (the tree, our parser), jvm-phases (with the phase counters),
 #   native (target/native/wp-http), native-phases (target/native/wp-http-phases).
 # - walk VARIANT PORT: tests/gate2/woo_walk.py, the store's pages and actions; then the rows it wrote (dbrows).
@@ -105,7 +105,7 @@ start() {
   local variant=$1 cpus=${2:-6-13} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd env=()
   case $variant in
     php) image=bootshare-php:8.5; env=(-e PHP_CLI_SERVER_WORKERS=$THREADS)
-         cmd="cd $WP && exec php -d auto_prepend_file= -S 0.0.0.0:8080" ;;
+         cmd="cd $WP && exec php -d auto_prepend_file= -d log_errors=1 -S 0.0.0.0:8080" ;;
     fpm) image=$FPM_IMAGE; env=(-e FPM_CHILDREN=$THREADS)
          cmd="exec /usr/local/bin/woo-fpm-start" ;;
     jvm) cmd="$JAVA ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --threads=$THREADS" ;;
@@ -119,12 +119,13 @@ start() {
   # an address per variant, so that two servers can run side by side (the walks)
   local ip
   case $variant in php) ip=11 ;; fpm) ip=12 ;; jvm) ip=13 ;; jvm-phases) ip=14 ;; native) ip=15 ;; *) ip=16 ;; esac
-  # DEV=1: the classes from the host's target/classes, not the volume's copy (while fixing)
+  # DEV=1: the classes from the host's target/classes, not the volume's copy (while fixing); WC_DOCKER_ARGS: more
+  # docker run arguments (a debugging mount)
   local dev=()
   [ -z "${DEV:-}" ] || dev=(-v "$root/target/classes:/srv/target/classes:ro")
   docker rm -f $P-$variant > /dev/null 2>&1 || true
   MSYS_NO_PATHCONV=1 docker run -d --name $P-$variant --cpuset-cpus "$cpus" -p "$port:8080" --network $P-net \
-    --ip $NET.$ip --add-host host.docker.internal:$NET.2 "${env[@]}" "${dev[@]}" \
+    --ip $NET.$ip --add-host host.docker.internal:$NET.2 "${env[@]}" "${dev[@]}" ${WC_DOCKER_ARGS:-} \
     -v $P-site:/srv:ro --tmpfs /srv/$WP/wp-content/uploads:mode=1777 -w /srv \
     $image sh -c "$cmd" > /dev/null
   [ -z "${NOWAIT:-}" ] || return 0
@@ -170,7 +171,7 @@ walk() {
   # lock (doing_cron) set, which makes wp-cron.php return at once: cleared before each run.
   local i
   for i in 1 2; do
-    sleep 2
+    sleep 10
     docker exec $db mariadb -uroot -proot -P3307 wordpress -e \
       "delete from wp_options where option_name in ('_transient_doing_cron', '_transient_timeout_doing_cron')"
     curl -s -H 'Host: localhost' -o "$out/walk/$variant/wp-cron-run$i.body" -w '%{http_code}\n' \
@@ -194,9 +195,10 @@ compare() {
     fi
   done
   # the PHP errors and the shell's lines (mail()'s sendmail) in the servers' logs, in order: php -S stamps them
+  # with its worker's pid and the time
   local la lb
-  la=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$a/server.log" | sed -E 's/^\[[^]]*\] //' || true)
-  lb=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$b/server.log" | sed -E 's/^\[[^]]*\] //' || true)
+  la=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$a/server.log" | sed -E 's/^(\[[^]]*\] )+//' || true)
+  lb=$(grep -E '(PHP [A-Z][a-z]+( error)?: |^sh: )' "$b/server.log" | sed -E 's/^(\[[^]]*\] )+//' || true)
   if [ "$la" = "$lb" ]; then echo "same server log errors ($(printf '%s' "$la" | grep -c . || true) lines)"
   else echo "DIFF server log errors:"; diff <(printf '%s\n' "$la") <(printf '%s\n' "$lb") | head -20 || true; failed=1; fi
   for f in $out/rows/$1/*.tsv; do
