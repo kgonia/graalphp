@@ -66,6 +66,7 @@ import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
+import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
@@ -2153,6 +2154,9 @@ public final class Translator {
         }
         // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
         boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
+        if (special && Str.lower(resolved[0]).equals("defined")) {
+            return defined(definedName(args.child(0)));
+        }
         ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args, special);
         if (intrinsic != null) {
             return intrinsic;
@@ -2197,14 +2201,41 @@ public final class Translator {
                  "doubleval", "strval", "count", "sizeof", "gettype", "clone" -> count == 1;
             case "get_class" -> count <= 1;
             case "array_key_exists" -> count == 2;
-            case "defined" -> count == 1 && args.child(0) instanceof String constant && constant.indexOf('\\') < 0
-                    && constant.indexOf(':') < 0;
+            case "defined" -> count == 1 && definedName(args.child(0)) instanceof String constant
+                    && constant.indexOf('\\') < 0 && constant.indexOf(':') < 0;
             case "chr" -> count == 1 && args.child(0) instanceof Long;
             case "ord" -> count == 1 && args.child(0) instanceof String;
             case "sprintf" -> count >= 1 && args.child(0) instanceof String format && format.length() < 256
                     && sprintfPlaceholders(format) == count - 1;
             default -> false;
         };
+    }
+
+    /**
+     * The name a literal argument of defined() gives (zend_compile_func_defined: any literal, as zval_get_string
+     * converts it, precision 14 for a float), or null for an argument that isn't a literal.
+     */
+    private static String definedName(Object arg) {
+        if (arg instanceof String name) {
+            return name;
+        }
+        if (arg instanceof Long l) {
+            return Long.toString(l);
+        }
+        return arg instanceof Double d ? Convert.doubleToString(d) : null;
+    }
+
+    /**
+     * defined('NAME') compiled in place (ZEND_DEFINED). As zend_compile_func_defined, a name zend_try_ct_eval_const
+     * knows at compile time is true: true, false and null in any case, and the predefined constants.
+     */
+    private ExprNode defined(String name) {
+        String lower = Str.lower(name);
+        if (lower.equals("true") || lower.equals("false") || lower.equals("null")
+                || language.builtins().constant(name) != null) {
+            return new ConstNode(Boolean.TRUE);
+        }
+        return new ConstantNodes.DefinedNode(language.constantId(name));
     }
 
     /** zend_compile_func_sprintf's test: the number of %s and %d in a format of only those (and %%), else -1. */
