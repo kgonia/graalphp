@@ -271,7 +271,33 @@ TBD-AB
 
 ## 5. Round 4's targets, ranked
 
-TBD-Q5
+**Where the requests' time goes** (`d5-sampler`: the CPU sampler after 4 minutes, 10 minutes, 3,175 requests'
+histograms summed by `tests/gate2/sampler_report.py`; the sampler samples the request threads' stacks, so a
+database wait counts too, and samples land where compiled code polls for safepoints, at its boundary calls): **85%
+of the sampled time is in tier-2 code, 10.8% tier 1, 4.3% the interpreter.** The flat profile has `wpdb::query`
+11% (its inlined `mysqli_query`, the database round trip), `defined` **6.2%**, `WP_Hook::apply_filters` 5.1%,
+`apply_filters` 3.7%, `WP_Object_Cache::is_valid_key` 2.5%, `get_option` 2.1%; built-ins together 18%. What runs
+interpreted is little: the classmap (2.2 s in 10 minutes, 0.2%, every request, against its 100 s compilation that
+failed), `mysqli_real_connect`, the first calls of getters' new split copies. So after the warm-up the requests
+are compiled code, and **their time is the code per operation, not missing compilation**; the server's CPU besides
+them is the compiler (21%) and the GC (14%).
+
+The targets, ranked by expected gain on WooCommerce's CPU per page and memory, each with its evidence and how to
+confirm it:
+
+| # | Target | Evidence | Expected | Confirm with |
+|---|---|---|---|---|
+| 1 | **Don't compile run-once code that can't pay back**: a top-level file or a thunk (property default, constant initializer) that runs once per request, has no loop and is large. `RootNode.prepareForCompilation` (25.4 has it) can decline it; or give a literal with constant parts a constant template (the classmap's 2,411 entries differ only in `$baseDir`), and fold `self::CONST` of the declaring class in constant expressions at link time, as php-src's `zend_try_ct_eval_class_const` does (`$country_extensions`' 1,092 references are partly other classes', so this alone doesn't make it constant) | the three failed giants: 11% of the compile time, a compiler thread blocked 36-117 s each, libgraal's peak heap (section 3), a thunk with no source position ("Src n/a"); the classmap interpreted costs 0.2% of the requests' time; with one compiler thread none of them compiled and throughput didn't fall | −10-14% compile CPU (−2-3% of the server's CPU), libgraal's peak −0.4-0.8 GB per isolate, the queue's load down | memrun: `pe4_report.py kinds` (no failures, file/thunk share), `libgraal_gc.py`, `pe4_memtable.py`; `d1-trace` with 0 permanent bailouts |
+| 2 | **Method dispatch keyed on the resolved method** (`MethodCallNode.Dispatch`, also static and constructor dispatch): a receiver class whose lookup gives the cached function shares its entry | `Dispatch` reported in functions with 3,264 of 6,258 splits; `WC_Data::get_prop` 947 splits, 458 compilations, 33 s, the most of any function; the product getters 56-67 copies each; up to 4 inlined call paths per site where one target is called | splits −40-50%, split copies' compile time (9-17%) about halved, fewer call targets for the queue, one inlined call per `$this->` site | `d1-trace`: `pe4_report.py splits` and `compile`; Gate 1's hooks and blocks A/B; `woo.sh load` A/B |
+| 3 | **`defined('NAME')` as a node**: the name's constant id resolved at translation, `constantAt(id) != null`, as php-src's `ZEND_DEFINED` with its cache slot; today a built-in call converting the name to a Java `String` and hashing it into the context's map | 6.2% of the sampled request time (with the sampler's bias toward boundary calls); 951 WooCommerce files start with `defined('ABSPATH') || exit;`, 1,846 literal `defined()` sites in WooCommerce and core | a few % of request time; to be measured first | count the calls per request (a counter, or JFR's Java frames); `woo.sh load` A/B |
+| 4 | **A user function's call without the per-context lookup**: the running context in the frame (or arguments) instead of `PhpContext.get`'s thread-local read, and the function cached per site when the language serves one context | ~20 IR nodes a call (`fastGet` + `functionAt`); 36% of `default-filters.php`'s IR, 40% of `states.php`'s, 34% of `wp_default_scripts`', 5-6% of `get_posts`'; round 3 left it open | −5-10% code in call-heavy functions, less per call | `CompilationTest`'s per-operation costs (round 3's method), the largest compilations' `categories` |
+| 5 | **Holder counts out of the straight line**: `addHolder` / `removeHolder` inline at every assignment, argument and element store (~19-26 IR nodes a site, its rare path a boundary call with an exception edge); a fresh literal's nested arrays could take their count without the tests | 21% of `sanitize`'s IR, 16% of the thunk's, 13% of `get_block_nodes`', 8% of `get_posts`' | −5-15% of array-heavy functions' code | `categories` before/after; Gate 1 (kses, blocks) A/B |
+| 6 | **Report polymorphism only where a copy helps**: no `@ReportPolymorphism` on `StableValueNode` (a per-context value never stabilizes), `@ReportPolymorphism.Exclude` on `AssignNode` and the conversions and tests (`ToBoolean`, `ToLong`, `ToString`, `===`, `instanceof`) | together reported in functions with ~2,700 splits (`AssignNode` 1,021, `===` 537, `ToBoolean` 327, `ToString` 257, `instanceof` 256, `ToLong` 208, `StableValue` 145); `absint` 203 splits, `esc_attr` 158 | splits −20-30% more after #2 | as #2, and Gate 1's escape and slugs (where splitting paid in 2026-10-28's test) |
+| 7 | **Less compile volume overall** (owner's choice of flags; code-level it is #1, #2, #6): one compiler thread compiled 3,678 times instead of 9,654, never the giants, at the same throughput and half the memory (section 3); libgraal's collections paused its isolates for ~200 s in 12 minutes (1,300-1,500 hinted full collections), and an isolate is torn down after 1 s idle and rebuilt 70 times | `m-ct1-*` against `m-base-*`; `libgraal_gc.py` | TBD-CT1-GAIN | interleaved memruns (done here: section 3), then a longer one (30 min) for the late compilations |
+
+Not targets: deoptimization (3% of compile time recompiles, no cycle), performance warnings (none), the slow paths
+(behind boundaries already), Truffle's inlining (the largest functions inline nothing because they are over its
+budget; their size is the issue, items 4-5).
 
 ## Files
 - `tests/gate2/woo.sh diag`: a diagnosis server's life under the load, its engine closed at the end (statistics).
