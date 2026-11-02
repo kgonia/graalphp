@@ -1,0 +1,1310 @@
+[engine] Truffle runtime statistics for engine 1
+    Compilations                : 12424
+      Success                   : 12365
+      Temporary Bailouts        : 55
+        jdk.graal.compiler.core.common.CancellationBailoutException: Compilation cancelled.: 31
+        jdk.graal.compiler.core.common.RetryableBailoutException: Compilable not ready for compilation.: 21
+        jdk.graal.compiler.core.common.RetryableBailoutException: Assumption invalidated while compiling code: Object[Instance<com.oracle.truffle.runtime.OptimizedAssumption>]: 3
+      Permanent Bailouts        : 3
+        jdk.vm.ci.code.BailoutException: Code installation failed: code is too large: 1
+        jdk.graal.compiler.core.common.PermanentBailoutException: Compilation exceeded 100.000 seconds (GC time is 6459 ms of 100112 ms elapsed). 
+ Phase timings:
+ Root -> com.oracle.truffle.runtime.OptimizedCallTarget.profiledPERoot(Object[])->100112ms elapsed [startMS=0] graphSizeBefore->After=[0->0]
+	TruffleTier->84995ms elapsed [startMS=146255427] graphSizeBefore->After=[1->272880]
+		AgnosticInliningPhase->84680ms elapsed [startMS=146255427] graphSizeBefore->After=[1->272880]
+			PostPartialEvaluationSuite->71298ms elapsed [startMS=146263664] graphSizeBefore->After=[921612->272878]
+				InsertProxyPhase->2560ms elapsed [startMS=146263664] graphSizeBefore->After=[921612->921612]
+				ConvertDeoptimizeToGuardPhase->596ms elapsed [startMS=146266224] graphSizeBefore->After=[921612->837194]
+					DeadCodeEliminationPhase->14ms elapsed [startMS=146266586] graphSizeBefore->After=[842016->842016]
+					IncrementalCanonicalizerPhase->210ms elapsed [startMS=146266610] graphSizeBefore->After=[842016->837194]
+				PostPartialEvaluationSuite$InlineReplacementsPhase->2ms elapsed [startMS=146266820] graphSizeBefore->After=[837194->837194]
+				CanonicalizerPhase->1071ms elapsed [startMS=146266822] graphSizeBefore->After=[837194->786539]
+				ConditionalEliminationPhase->53876ms elapsed [startMS=146267894] graphSizeBefore->After=[786539->752774]
+					IncrementalCanonicalizerPhase->18ms elapsed [startMS=146321752] graphSizeBefore->After=[752774->752774]
+				FrameAccessVerificationPhase->50ms elapsed [startMS=146321770] graphSizeBefore->After=[752774->752774]
+				PartialEscapePhase->13124ms elapsed [startMS=146321821] graphSizeBefore->After=[752774->272878]
+					SchedulePhase->180ms elapsed [startMS=146321985] graphSizeBefore->After=[752774->752774]
+					DeadCodeEliminationPhase->3377ms elapsed [startMS=146331399] graphSizeBefore->After=[591222->311470]
+					IncrementalCanonicalizerPhase->73ms elapsed [startMS=146334872] graphSizeBefore->After=[311470->272878]
+				PhiTransformPhase->16ms elapsed [startMS=146334946] graphSizeBefore->After=[272878->272878]
+			PostPartialEvaluationSuite->5073ms elapsed [startMS=146335018] graphSizeBefore->After=[272886->272880]
+				InsertProxyPhase->306ms elapsed [startMS=146335018] graphSizeBefore->After=[272886->272884]
+				ConvertDeoptimizeToGuardPhase->9ms elapsed [startMS=146335324] graphSizeBefore->After=[272884->272884]
+				CanonicalizerPhase->90ms elapsed [startMS=146335334] graphSizeBefore->After=[272884->272880]
+				ConditionalEliminationPhase->1242ms elapsed [startMS=146335424] graphSizeBefore->After=[272880->272880]
+				PartialEscapePhase->3407ms elapsed [startMS=146336667] graphSizeBefore->After=[272880->272880]
+					SchedulePhase->125ms elapsed [startMS=146336667] graphSizeBefore->After=[272880->272880]
+				PhiTransformPhase->17ms elapsed [startMS=146340074] graphSizeBefore->After=[272880->272880]
+		ReportPerformanceWarningsPhase->11ms elapsed [startMS=146340410] graphSizeBefore->After=[272880->272880]
+	EconomyHighTier->623ms elapsed [startMS=146340525] graphSizeBefore->After=[272880->304324]
+		CanonicalizerPhase->76ms elapsed [startMS=146340525] graphSizeBefore->After=[272880->272880]
+		HighTierLoweringPhase->547ms elapsed [startMS=146340601] graphSizeBefore->After=[272880->304324]
+			SchedulePhase->225ms elapsed [startMS=146340601] graphSizeBefore->After=[272880->272880]
+			IncrementalCanonicalizerPhase->127ms elapsed [startMS=146341021] graphSizeBefore->After=[318097->304324]
+	EconomyMidTier->2154ms elapsed [startMS=146341149] graphSizeBefore->After=[304324->503738]
+		TruffleSafepointInsertionPhase->5ms elapsed [startMS=146341286] graphSizeBefore->After=[304324->304327]
+		GuardLoweringPhase->150ms elapsed [startMS=146341292] graphSizeBefore->After=[304328->347729]
+		MidTierLoweringPhase->1219ms elapsed [startMS=146341443] graphSizeBefore->After=[347729->480354]
+			SchedulePhase->276ms elapsed [startMS=146341443] graphSizeBefore->After=[347729->347729]
+			IncrementalCanonicalizerPhase->101ms elapsed [startMS=146342562] graphSizeBefore->After=[511722->480354]
+		FrameStateAssignmentPhase->81ms elapsed [startMS=146342847] graphSizeBefore->After=[480354->465163]
+		DynamicDeoptimizationGroupingPhase->74ms elapsed [startMS=146342929] graphSizeBefore->After=[465163->474809]
+			DeoptimizationGroupingPhase->74ms elapsed [startMS=146342929] graphSizeBefore->After=[465163->474809]
+		CanonicalizerPhase->195ms elapsed [startMS=146343004] graphSizeBefore->After=[474809->469982]
+		WriteBarrierAdditionPhase->9ms elapsed [startMS=146343293] graphSizeBefore->After=[469982->503738]
+	EconomyLowTier->12236ms elapsed [startMS=146343303] graphSizeBefore->After=[503738->0]
+		LowTierLoweringPhase->12236ms elapsed [startMS=146343303] graphSizeBefore->After=[503738->0]
+			SchedulePhase->320ms elapsed [startMS=146343303] graphSizeBefore->After=[503738->503738] <===== TIMEOUT HERE: 1
+        jdk.graal.compiler.core.common.PermanentBailoutException: stack offset 82432 for oopmap is greater than encoding limit 63068: 1
+      Failed                    : 0
+      Interrupted               : 1
+    Invalidated                 : 107
+        Profiled Argument Types : 93
+        Profiled Return Type    : 8
+        validRootAssumption of WP_HTML_Tag_Processor::after_tag Split call node: 1
+        typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[23][final=false][type=!pl.codeloom.php.runtime.PhpArray]: 1
+        validRootAssumption of WC_Product_Data_Store_CPT::read_product_data Split call node: 1
+        validRootAssumption of WP_Object_Cache::get Split call node: 1
+        typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[2][final=false][type=!pl.codeloom.php.runtime.PhpArray]: 1
+        validRootAssumption of {closure:apply_block_hooks_to_content():1211} Split call node: 1
+    Queues                      : 23365
+    Dequeues                    : 10976
+        Stale compilation task  : 10561
+        Target inlined into only caller: 305
+        Split call node         : 59
+        Profiled Argument Types : 30
+        Profiled Return Type    : 9
+        validRootAssumption of get_option Split call node: 1
+        validRootAssumption of wc_clean Split call node: 1
+        validRootAssumption of WP_HTML_Tag_Processor::after_tag Split call node: 1
+        validRootAssumption of WC_Product_Data_Store_CPT::read_product_data Split call node: 1
+        validRootAssumption of WP_Object_Cache::get Split call node: 1
+        Polyglot engine was closed.: 1
+        validRootAssumption of {closure:apply_block_hooks_to_content():1211} Split call node: 1
+        nodeRewritingAssumption of WP_HTML_Tag_Processor::after_tag: 1
+        nodeRewritingAssumption of {closure:apply_block_hooks_to_content():1211}: 1
+        nodeRewritingAssumption of wc_clean: 1
+        typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[2][final=false][type=!pl.codeloom.php.runtime.PhpArray]: 1
+        validRootAssumption of WP_Query::parse_tax_query Split call node: 1
+    Splits                      : 6258
+    Compilation Accuracy        : 0.991388
+    Queue Accuracy              : 0.530238
+    Compilation Utilization     : 2.868243
+    Remaining Compilation Queue : 0
+    Time to queue               : count=23365, sum=10523017364471, min=     619, average=450375234.94, max=896462001, maxTarget=WC_Countries::get_countries
+    Time waiting in queue       : count=12363, sum=301158223337, min=     541, average= 24359639.52, max=866624245, maxTarget=ForeachNode.ArrayStep@d6e37df<OSR>
+  ---------------------------   :
+  AST node statistics           :
+    Truffle node count          : count=12386, sum=   1697505, min=       1, average=      137.05, max=   26552, maxTarget=FileRootNode@44865067
+    Truffle call count          : count=12386, sum=     49539, min=       0, average=        4.00, max=    2042, maxTarget=FileRootNode@6e3a086a
+      Indirect                  : count=12386, sum=      2405, min=       0, average=        0.19, max=      33, maxTarget=WC_Frontend_Scripts::get_scripts
+      Direct                    : count=12386, sum=     47134, min=       0, average=        3.81, max=    2042, maxTarget=FileRootNode@6e3a086a
+        Dispatched              : count=12386, sum=     37316, min=       0, average=        3.01, max=    2042, maxTarget=FileRootNode@6e3a086a
+        Inlined                 : count=12386, sum=      9818, min=       0, average=        0.79, max=      96, maxTarget=FileRootNode@178ba97f
+        ----------              :
+        Cloned                  : count=12386, sum=         0, min=       0, average=        0.00, max=       0, maxTarget=BuiltinRootNode@4fd702a4
+        Not Cloned              : count=12386, sum=     46126, min=       0, average=        3.72, max=    2042, maxTarget=FileRootNode@6e3a086a
+    Truffle loops               : count=12386, sum=      3783, min=       0, average=        0.31, max=      25, maxTarget=WP_Theme_JSON::sanitize
+  Truffle nodes                 :
+        LocalVarNode            : count=12386, sum=    203221, min=       0, average=       16.41, max=    1180, maxTarget=WP_Query::get_posts
+        ConstNode               : count=12386, sum=    142739, min=       0, average=       11.52, max=   12056, maxTarget=FileRootNode@44865067
+        ExprStmtNode            : count=12386, sum=     70369, min=       0, average=        5.68, max=     496, maxTarget=FileRootNode@71f4e84d
+        BlockNode               : count=12386, sum=     66453, min=       0, average=        5.37, max=     267, maxTarget=WP_Query::get_posts
+        ArgumentsNode           : count=12386, sum=     65569, min=       0, average=        5.29, max=    2043, maxTarget=FileRootNode@6e3a086a
+        ArrayKeyNodeGen         : count=12386, sum=     64525, min=       0, average=        5.21, max=     571, maxTarget=WP_Query::get_posts
+        AssignNodeGen           : count=12386, sum=     51787, min=       0, average=        4.18, max=     381, maxTarget=WP_Query::get_posts
+        OptimizedDirectCallNode : count=12386, sum=     46126, min=       0, average=        3.72, max=    2042, maxTarget=FileRootNode@6e3a086a
+        FunctionCallNode        : count=12386, sum=     44572, min=       0, average=        3.60, max=    2043, maxTarget=FileRootNode@6e3a086a
+        DispatchNodeGen         : count=12386, sum=     44572, min=       0, average=        3.60, max=    2043, maxTarget=FileRootNode@6e3a086a
+        LookupNodeGen           : count=12386, sum=     44572, min=       0, average=        3.60, max=    2043, maxTarget=FileRootNode@6e3a086a
+        ElementWriteNodeGen     : count=12386, sum=     41521, min=       0, average=        3.35, max=     383, maxTarget=WP_Query::get_posts
+        ElementReadNodeGen      : count=12386, sum=     41521, min=       0, average=        3.35, max=     383, maxTarget=WP_Query::get_posts
+        DimNode                 : count=12386, sum=     41521, min=       0, average=        3.35, max=     383, maxTarget=WP_Query::get_posts
+        CachedDispatchFirst     : count=12386, sum=     39354, min=       0, average=        3.18, max=     304, maxTarget=WP_Query::get_posts
+        Cached                  : count=12386, sum=     37537, min=       0, average=        3.03, max=     331, maxTarget=WP_Query::get_posts
+        AnyKey                  : count=12386, sum=     37537, min=       0, average=        3.03, max=     331, maxTarget=WP_Query::get_posts
+        IfNode                  : count=12386, sum=     36446, min=       0, average=        2.94, max=     204, maxTarget=WP_Query::get_posts
+        ThisNode                : count=12386, sum=     33344, min=       0, average=        2.69, max=     243, maxTarget=WP_HTML_Processor::step_in_body
+        DirectData              : count=12386, sum=     29598, min=       0, average=        2.39, max=    2042, maxTarget=FileRootNode@6e3a086a
+        PropNode                : count=12386, sum=     29303, min=       0, average=        2.37, max=     295, maxTarget=WP_Query::get_posts
+        ExistingKeyIdentity     : count=12386, sum=     27085, min=       0, average=        2.19, max=     311, maxTarget=WP_Query::get_posts
+        ToBooleanNodeGen        : count=12386, sum=     26460, min=       0, average=        2.14, max=     201, maxTarget=WP_Query::get_posts
+        ReturnNode              : count=12386, sum=     26305, min=       0, average=        2.12, max=      66, maxTarget=rest_validate_value_from_schema
+        OtherKeyData            : count=12386, sum=     18573, min=       0, average=        1.50, max=     158, maxTarget=WP_Query::get_posts
+        SlotCacheNode           : count=12386, sum=     18573, min=       0, average=        1.50, max=     158, maxTarget=WP_Query::get_posts
+        ConditionNode           : count=12386, sum=     18260, min=       0, average=        1.47, max=     135, maxTarget=redirect_canonical
+        FunctionRootNode        : count=12386, sum=     16837, min=       0, average=        1.36, max=      37, maxTarget=Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractAddressSchema::get_properties
+        PartNodeGen             : count=12386, sum=     16549, min=       0, average=        1.34, max=    1044, maxTarget=FileRootNode@72b415da
+        MethodCallNode          : count=12386, sum=     15700, min=       0, average=        1.27, max=     251, maxTarget=wp_default_scripts
+        DispatchNodeGen         : count=12386, sum=     15700, min=       0, average=        1.27, max=     251, maxTarget=wp_default_scripts
+        NotNode                 : count=12386, sum=     14325, min=       0, average=        1.16, max=     100, maxTarget=FileRootNode@b76690e
+        AndOrNode               : count=12386, sum=     12866, min=       0, average=        1.04, max=      95, maxTarget=redirect_canonical
+        IdenticalNodeGen        : count=12386, sum=     12845, min=       0, average=        1.04, max=      62, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        CachedData              : count=12386, sum=     12492, min=       0, average=        1.01, max=     183, maxTarget=wp_default_scripts
+        MissingKeyIdentity      : count=12386, sum=     10414, min=       0, average=        0.84, max=     146, maxTarget=has_block
+        ClassRefNode            : count=12386, sum=     10014, min=       0, average=        0.81, max=    1092, maxTarget=ThunkRootNode@7b7c8721
+        NamedNodeGen            : count=12386, sum=      9868, min=       0, average=        0.80, max=    1092, maxTarget=ThunkRootNode@7b7c8721
+        ArrayLiteralNode        : count=12386, sum=      9603, min=       0, average=        0.78, max=    2412, maxTarget=FileRootNode@44865067
+        IssetNode               : count=12386, sum=      8719, min=       0, average=        0.70, max=      33, maxTarget=WP_Block_Type::prepare_attributes_for_render
+        EqualNodeGen            : count=12386, sum=      7435, min=       0, average=        0.60, max=      94, maxTarget=WP_HTML_Processor::step_in_body
+        GlobalRefNodeGen        : count=12386, sum=      7421, min=       0, average=        0.60, max=    2414, maxTarget=FileRootNode@44865067
+        CachedDispatchNext      : count=12386, sum=      7369, min=       0, average=        0.59, max=     178, maxTarget=WP_Query::get_posts
+        ConcatNodeGen           : count=12386, sum=      5563, min=       0, average=        0.45, max=    2411, maxTarget=FileRootNode@44865067
+        TypeTestNode            : count=12386, sum=      5272, min=       0, average=        0.43, max=      32, maxTarget=wp_apply_spacing_support
+        ConcatNodeGen           : count=12386, sum=      5018, min=       0, average=        0.41, max=    2411, maxTarget=FileRootNode@44865067
+        ReadByteNodeGen         : count=12386, sum=      4955, min=       0, average=        0.40, max=      91, maxTarget=WP_HTML_Processor::step_in_body
+        EmptyNode               : count=12386, sum=      4609, min=       0, average=        0.37, max=      64, maxTarget=WP_Query::get_posts
+        DeclareFunctionNode     : count=12386, sum=      4426, min=       0, average=        0.36, max=     249, maxTarget=FileRootNode@4b40e6ee
+        GlobalVarNode           : count=12386, sum=      4080, min=       0, average=        0.33, max=    2414, maxTarget=FileRootNode@44865067
+        BuiltinRootNode         : count=12386, sum=      3814, min=       0, average=        0.31, max=      96, maxTarget=FileRootNode@178ba97f
+        OptimizedDefaultOSRLoopNode: count=12386, sum=      3783, min=       0, average=        0.31, max=      25, maxTarget=WP_Theme_JSON::sanitize
+        SubclassTestNodeGen     : count=12386, sum=      3658, min=       0, average=        0.30, max=      41, maxTarget=WP_Theme_JSON::get_styles_for_block
+        ClassConstLookupNodeGen : count=12386, sum=      3622, min=       0, average=        0.29, max=    1092, maxTarget=ThunkRootNode@7b7c8721
+        ClassConstNode          : count=12386, sum=      3622, min=       0, average=        0.29, max=    1092, maxTarget=ThunkRootNode@7b7c8721
+        TernaryNode             : count=12386, sum=      3357, min=       0, average=        0.27, max=      21, maxTarget=wp_get_layout_style
+        GlobalNode              : count=12386, sum=      3341, min=       0, average=        0.27, max=      17, maxTarget=FileRootNode@2ded40e
+        BindNodeGen             : count=12386, sum=      3310, min=       0, average=        0.27, max=      25, maxTarget=WP_Theme_JSON::sanitize
+        ForeachNode             : count=12386, sum=      3310, min=       0, average=        0.27, max=      25, maxTarget=WP_Theme_JSON::sanitize
+        FileVarNode             : count=12386, sum=      3261, min=       0, average=        0.26, max=    2414, maxTarget=FileRootNode@44865067
+        ArrayStep               : count=12386, sum=      3252, min=       0, average=        0.26, max=      25, maxTarget=WP_Theme_JSON::sanitize
+        StaticCallNode          : count=12386, sum=      2833, min=       0, average=        0.23, max=      41, maxTarget=WP_Theme_JSON::get_styles_for_block
+        DispatchNodeGen         : count=12386, sum=      2833, min=       0, average=        0.23, max=      41, maxTarget=WP_Theme_JSON::get_styles_for_block
+        BreakNode               : count=12386, sum=      2707, min=       0, average=        0.22, max=      66, maxTarget=map_meta_cap
+        LessNodeGen             : count=12386, sum=      2669, min=       0, average=        0.22, max=      24, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        InterpolationNode       : count=12386, sum=      2550, min=       0, average=        0.21, max=     149, maxTarget=wp_default_scripts
+        GlobalConstNode         : count=12386, sum=      2548, min=       0, average=        0.21, max=     702, maxTarget=FileRootNode@72b415da
+        GlobalConstLookupNodeGen: count=12386, sum=      2548, min=       0, average=        0.21, max=     702, maxTarget=FileRootNode@72b415da
+        ConcatChainNode         : count=12386, sum=      2488, min=       0, average=        0.20, max=     347, maxTarget=FileRootNode@72b415da
+        OptimizedIndirectCallNode: count=12386, sum=      2405, min=       0, average=        0.19, max=      33, maxTarget=WC_Frontend_Scripts::get_scripts
+        EqualNodeGen            : count=12386, sum=      2402, min=       0, average=        0.19, max=     173, maxTarget=WP_HTML_Processor::step_in_body
+        CachedData              : count=12386, sum=      2148, min=       0, average=        0.17, max=      33, maxTarget=WC_Frontend_Scripts::get_scripts
+        NewNode                 : count=12386, sum=      2139, min=       0, average=        0.17, max=      36, maxTarget=create_initial_rest_routes
+        ConstructNodeGen        : count=12386, sum=      2139, min=       0, average=        0.17, max=      36, maxTarget=create_initial_rest_routes
+        InstantiateNodeGen      : count=12386, sum=      2139, min=       0, average=        0.17, max=      36, maxTarget=create_initial_rest_routes
+        KeyExistsNodeGen        : count=12386, sum=      1979, min=       0, average=        0.16, max=      20, maxTarget=WC_Product::is_on_sale
+        StableValueNodeGen      : count=12386, sum=      1949, min=       0, average=        0.16, max=     686, maxTarget=FileRootNode@72b415da
+        PerContextData          : count=12386, sum=      1949, min=       0, average=        0.16, max=     686, maxTarget=FileRootNode@72b415da
+        WritableArrayNode       : count=12386, sum=      1853, min=       0, average=        0.15, max=      12, maxTarget=wc_price
+        CoalesceNode            : count=12386, sum=      1719, min=       0, average=        0.14, max=      30, maxTarget=wp_render_layout_support_flag
+        CompoundAssignNodeGen   : count=12386, sum=      1690, min=       0, average=        0.14, max=      46, maxTarget=WP_Query::get_posts
+        FileRootNode            : count=12386, sum=      1510, min=       0, average=        0.12, max=       1, maxTarget=FileRootNode@178ba97f
+        InArrayNodeGen          : count=12386, sum=      1433, min=       0, average=        0.12, max=      10, maxTarget=WP_Query::get_posts
+        ByteIndexOfStringNodeGen: count=12386, sum=      1424, min=       0, average=        0.11, max=      17, maxTarget=WC_Autoloader::autoload
+        ToStrNodeGen            : count=12386, sum=      1385, min=       0, average=        0.11, max=      32, maxTarget=WP_Query::get_posts
+        DeclareClassNode        : count=12386, sum=      1254, min=       0, average=        0.10, max=      25, maxTarget=FileRootNode@6ca1bc0
+        ArrayPopNodeGen         : count=12386, sum=      1251, min=       0, average=        0.10, max=       8, maxTarget=wc_price
+        ToLongNodeGen           : count=12386, sum=      1159, min=       0, average=        0.09, max=      16, maxTarget=image_constrain_size_for_editor
+        SameKeyData             : count=12386, sum=      1157, min=       0, average=        0.09, max=      36, maxTarget=create_initial_rest_routes
+        AddNodeGen              : count=12386, sum=      1107, min=       0, average=        0.09, max=      94, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        CachedData              : count=12386, sum=      1060, min=       0, average=        0.09, max=      17, maxTarget=WC_Autoloader::autoload
+        IncDecNodeGen           : count=12386, sum=      1016, min=       0, average=        0.08, max=       9, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        StaticPropNode          : count=12386, sum=      1003, min=       0, average=        0.08, max=      17, maxTarget=WP_Theme_JSON::get_blocks_metadata
+        LookupNodeGen           : count=12386, sum=      1003, min=       0, average=        0.08, max=      17, maxTarget=WP_Theme_JSON::get_blocks_metadata
+        SubstringByteIndexNodeGen: count=12386, sum=       981, min=       0, average=        0.08, max=      10, maxTarget=WP_HTML_Tag_Processor::class_name_updates_to_attributes_updates
+        CountNodeGen            : count=12386, sum=       976, min=       0, average=        0.08, max=      16, maxTarget=FilterIterator::next
+        ContainsNodeGen         : count=12386, sum=       908, min=       0, average=        0.07, max=      61, maxTarget=WP_HTML_Doctype_Info::__construct
+        IncludeNode             : count=12386, sum=       901, min=       0, average=        0.07, max=     352, maxTarget=FileRootNode@72b415da
+        CachedData              : count=12386, sum=       868, min=       0, average=        0.07, max=      33, maxTarget=create_initial_rest_routes
+        SubstrNodeGen           : count=12386, sum=       855, min=       0, average=        0.07, max=      11, maxTarget=WP_Interactivity_API::get_directive_entries
+        ToOtherNodeGen          : count=12386, sum=       830, min=       0, average=        0.07, max=      12, maxTarget=WP_Query::parse_tax_query
+        InstanceofNode          : count=12386, sum=       825, min=       0, average=        0.07, max=       8, maxTarget=wp_apply_border_support
+        ToStringNodeGen         : count=12386, sum=       789, min=       0, average=        0.06, max=      10, maxTarget=plugins_url
+        StrReplaceNodeGen       : count=12386, sum=       783, min=       0, average=        0.06, max=       8, maxTarget=sanitize_title_with_dashes
+        CallableDispatchNodeGen : count=12386, sum=       753, min=       0, average=        0.06, max=      14, maxTarget=wp_get_layout_style
+        StrlenNodeGen           : count=12386, sum=       730, min=       0, average=        0.06, max=       8, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        UnsetNode               : count=12386, sum=       720, min=       0, average=        0.06, max=      14, maxTarget=FileRootNode@72b415da
+        SubNodeGen              : count=12386, sum=       695, min=       0, average=        0.06, max=      26, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        ConcatData              : count=12386, sum=       654, min=       0, average=        0.05, max=      16, maxTarget=WP_Query::get_posts
+        CachedToUncachedDispatch: count=12386, sum=       646, min=       0, average=        0.05, max=      17, maxTarget=WC_Product_Data_Store_CPT::read
+        RegionEqualByteIndexNodeGen: count=12386, sum=       626, min=       0, average=        0.05, max=      16, maxTarget=FileRootNode@2ded40e
+        FrameArgsNode           : count=12386, sum=       606, min=       0, average=        0.05, max=       4, maxTarget=wc_price
+        ToDoubleNodeGen         : count=12386, sum=       581, min=       0, average=        0.05, max=      12, maxTarget=WP_Query::parse_query
+        ImplodeNodeGen          : count=12386, sum=       580, min=       0, average=        0.05, max=      21, maxTarget=WP_Query::get_posts
+        CaseNodeGen             : count=12386, sum=       578, min=       0, average=        0.05, max=       8, maxTarget=WC_Product::set_manage_stock
+        ArrayUnshiftNodeGen     : count=12386, sum=       550, min=       0, average=        0.04, max=       4, maxTarget=wc_price
+        ArrayMapNodeGen         : count=12386, sum=       526, min=       0, average=        0.04, max=      18, maxTarget=WP_Query::get_posts
+        GetInternalByteArrayNodeGen: count=12386, sum=       513, min=       0, average=        0.04, max=      10, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        ClosureNode             : count=12386, sum=       498, min=       0, average=        0.04, max=      30, maxTarget=Automattic\WooCommerce\Blocks\Domain\Bootstrap::register_dependencies
+        TrimNodeGen             : count=12386, sum=       433, min=       0, average=        0.03, max=       6, maxTarget=WP_Style_Engine_CSS_Declarations::filter_declaration
+        StaticVarNode           : count=12386, sum=       422, min=       0, average=        0.03, max=      18, maxTarget=wptexturize
+        EchoNode                : count=12386, sum=       412, min=       0, average=        0.03, max=      41, maxTarget=WC_Settings_API::generate_select_html
+        ArrayKeysNodeGen        : count=12386, sum=       391, min=       0, average=        0.03, max=       8, maxTarget=WP_Theme_JSON::get_block_nodes
+        ByteIndexOfCodePointSetNodeGen: count=12386, sum=       384, min=       0, average=        0.03, max=       8, maxTarget=WC_Product::set_manage_stock
+        ThrowNode               : count=12386, sum=       376, min=       0, average=        0.03, max=       9, maxTarget=Automattic\WooCommerce\Internal\DependencyManagement\RuntimeContainer::instantiate_class_using_reflection
+        GlobalsDimNode          : count=12386, sum=       374, min=       0, average=        0.03, max=      21, maxTarget=FileRootNode@72b415da
+        WhileNode               : count=12386, sum=       357, min=       0, average=        0.03, max=       5, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        WhileBody               : count=12386, sum=       357, min=       0, average=        0.03, max=       5, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        MapData                 : count=12386, sum=       333, min=       0, average=        0.03, max=      10, maxTarget=WP_Query::get_posts
+        ArrayFilterNodeGen      : count=12386, sum=       326, min=       0, average=        0.03, max=       6, maxTarget=build_query_vars_from_query_block
+        NopNode                 : count=12386, sum=       322, min=       0, average=        0.03, max=       1, maxTarget=WP_HTML_Tag_Processor::class_list
+        ExplodeNodeGen          : count=12386, sum=       309, min=       0, average=        0.02, max=       4, maxTarget=sanitize_option
+        NamedData               : count=12386, sum=       308, min=       0, average=        0.02, max=      10, maxTarget=WP_Query::get_posts
+        ToBoolNodeGen           : count=12386, sum=       306, min=       0, average=        0.02, max=       6, maxTarget=wp_load_alloptions
+        StrposNodeGen           : count=12386, sum=       304, min=       0, average=        0.02, max=      13, maxTarget=WC_Autoloader::autoload
+        SwitchNode              : count=12386, sum=       292, min=       0, average=        0.02, max=       6, maxTarget=WP_HTML_Tag_Processor@anonymous /srv/target/gate2/wordpress/wp-includes/kses.php:1071$0::sanitize
+        CallableCallNode        : count=12386, sum=       248, min=       0, average=        0.02, max=      14, maxTarget=wp_get_layout_style
+        MoveNode                : count=12386, sum=       245, min=       0, average=        0.02, max=       5, maxTarget=WP_Hook::add_filter
+        CoalesceAssignNode      : count=12386, sum=       242, min=       0, average=        0.02, max=      11, maxTarget=WP_Post_Type::set_props
+        CastData                : count=12386, sum=       234, min=       0, average=        0.02, max=       5, maxTarget=WC_Product_Data_Store_CPT::read
+        SpanNode                : count=12386, sum=       221, min=       0, average=        0.02, max=      10, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        ClosureData             : count=12386, sum=       189, min=       0, average=        0.02, max=       4, maxTarget=traverse_and_serialize_blocks
+        ObjectVarsNode          : count=12386, sum=       180, min=       0, average=        0.01, max=       4, maxTarget=get_terms
+        RefAssignNode           : count=12386, sum=       177, min=       0, average=        0.01, max=       7, maxTarget=Automattic\WooCommerce\Blocks\Patterns\PatternRegistry::get_category_labels
+        TryNode                 : count=12386, sum=       171, min=       0, average=        0.01, max=       3, maxTarget=Automattic\WooCommerce\Internal\Features\FeaturesController::feature_is_enabled
+        ListAssignNode          : count=12386, sum=       147, min=       0, average=        0.01, max=       4, maxTarget=WP_REST_Request::get_param
+        ListAssignExprNode      : count=12386, sum=       146, min=       0, average=        0.01, max=       4, maxTarget=WP_REST_Request::get_param
+        DefineNode              : count=12386, sum=       142, min=       0, average=        0.01, max=      89, maxTarget=FileRootNode@3efdf91c
+        MulNodeGen              : count=12386, sum=       128, min=       0, average=        0.01, max=      14, maxTarget=wp_initial_constants
+        BitOrNodeGen            : count=12386, sum=       126, min=       0, average=        0.01, max=      12, maxTarget=FileRootNode@2c60b015
+        GettypeNode             : count=12386, sum=       125, min=       0, average=        0.01, max=       8, maxTarget=_wp_scripts_add_args_data
+        ObjectMethodData        : count=12386, sum=       119, min=       0, average=        0.01, max=       3, maxTarget=WP_Hook::apply_filters
+        FromLongNodeGen         : count=12386, sum=       113, min=       0, average=        0.01, max=       4, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        CurrentNode             : count=12386, sum=       112, min=       0, average=        0.01, max=       4, maxTarget=WP_Hook::add_filter
+        ForBody                 : count=12386, sum=       111, min=       0, average=        0.01, max=       3, maxTarget=register_block_type_from_metadata
+        ForNode                 : count=12386, sum=       110, min=       0, average=        0.01, max=       3, maxTarget=register_block_type_from_metadata
+        BitAndNodeGen           : count=12386, sum=       103, min=       0, average=        0.01, max=       9, maxTarget=FilterIterator::skip
+        Generic                 : count=12386, sum=        99, min=       0, average=        0.01, max=      10, maxTarget=WP_Term::get_instance
+        CallbackData            : count=12386, sum=        95, min=       0, average=        0.01, max=       2, maxTarget=Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::filter_raw_meta_data
+        DynamicMethodCallNode   : count=12386, sum=        77, min=       0, average=        0.01, max=       2, maxTarget=Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::set_order_prop <split-12672>
+        DivNodeGen              : count=12386, sum=        75, min=       0, average=        0.01, max=       3, maxTarget=wp_get_typography_font_size_value
+        RefStep                 : count=12386, sum=        63, min=       0, average=        0.01, max=       4, maxTarget=Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils::has_block_including_patterns
+        SilenceNode             : count=12386, sum=        58, min=       0, average=        0.00, max=       4, maxTarget=Automattic\Jetpack\Autoloader\jpeb35ca63f2409e94839b80ff9a2b637d\al5_0_0\Path_Processor::find_directory_with_autoloader
+        ArrayPushNodeGen        : count=12386, sum=        52, min=       0, average=        0.00, max=       3, maxTarget=_http_build_query
+        ArraySliceNodeGen       : count=12386, sum=        48, min=       0, average=        0.00, max=       3, maxTarget=_load_script_textdomain_from_src
+        CompactNode             : count=12386, sum=        42, min=       0, average=        0.00, max=       8, maxTarget=Automattic\Jetpack\Connection\Manager::internal_verify_xml_rpc_signature
+        ThunkRootNode           : count=12386, sum=        33, min=       0, average=        0.00, max=       1, maxTarget=ThunkRootNode@771c0417
+        UcfirstNodeGen          : count=12386, sum=        20, min=       0, average=        0.00, max=       3, maxTarget=plugins_url
+        OrdNodeGen              : count=12386, sum=        18, min=       0, average=        0.00, max=       1, maxTarget=utf8_uri_encode
+        ClassMethodData         : count=12386, sum=        16, min=       0, average=        0.00, max=       4, maxTarget=Automattic\WooCommerce\Packages::initialize_packages
+        ClassNameNode           : count=12386, sum=        15, min=       0, average=        0.00, max=       2, maxTarget=Automattic\WooCommerce\Internal\Admin\Schedulers\ImportScheduler::init <split-6298>
+        NegateNodeGen           : count=12386, sum=        14, min=       0, average=        0.00, max=       1, maxTarget=add_query_arg
+        GotoNode                : count=12386, sum=        14, min=       0, average=        0.00, max=       3, maxTarget=WP_HTML_Processor::step_in_body
+        DynamicCompactNode      : count=12386, sum=        13, min=       0, average=        0.00, max=       3, maxTarget=WP_Query::get_posts
+        FrameArgNode            : count=12386, sum=         9, min=       0, average=        0.00, max=       2, maxTarget=WP_Taxonomy::add_rewrite_rules
+        DynamicInstanceofNode   : count=12386, sum=         9, min=       0, average=        0.00, max=       1, maxTarget=TruffleReflection::invokedOn
+        NewAnonymousClassNode   : count=12386, sum=         9, min=       0, average=        0.00, max=       1, maxTarget=wp_sanitize_html_kses
+        ModNodeGen              : count=12386, sum=         9, min=       0, average=        0.00, max=       2, maxTarget=wc_get_loop_class
+        BlockNode               : count=12386, sum=         8, min=       0, average=        0.00, max=       3, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        LabeledBlockNode        : count=12386, sum=         7, min=       0, average=        0.00, max=       1, maxTarget=WP_HTML_Processor::step_in_body
+        SpaceshipNodeGen        : count=12386, sum=         6, min=       0, average=        0.00, max=       2, maxTarget=WP_Interactivity_API::{closure:WP_Interactivity_API::get_directive_entries():1025}
+        LoopOSRRootNode         : count=12386, sum=         6, min=       0, average=        0.00, max=       1, maxTarget=ForeachNode.ArrayStep@d6e37df<OSR>
+        ChrNode                 : count=12386, sum=         4, min=       0, average=        0.00, max=       1, maxTarget=utf8_uri_encode
+        YieldNode               : count=12386, sum=         3, min=       0, average=        0.00, max=       1, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        BodyRootNode            : count=12386, sum=         3, min=       0, average=        0.00, max=       1, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        IfNode                  : count=12386, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        BitNotNodeGen           : count=12386, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=wp_upload_dir
+        WhileNode               : count=12386, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        BitXorNodeGen           : count=12386, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wp_start_template_enhancement_output_buffer
+        ReturnRefNode           : count=12386, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=WC_Legacy_Cart::__get
+        ScriptRootNode          : count=12386, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=ScriptRootNode@28937a7d
+        ForNode                 : count=12386, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=GeneratorNodes.BodyRootNode@29d919d6
+        ExtractNode             : count=12386, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wc_get_template
+  ---------------------------   :
+  Compilation Tier 1            :
+    Compilation Rate            :     73488.86 bytes/second
+      Truffle Tier Rate         :    218042.31 bytes/second
+      Graal Tier Rate           :    208942.86 bytes/second
+      Installation Rate         :    999128.45 bytes/second
+    Time for compilation (us)   : count=10639, sum= 993533080, min=    2093, average=    93385.95, max=100114898, maxTarget=FileRootNode@44865067
+      Truffle Tier (us)         : count=10598, sum= 334859826, min=    2419, average=    31596.51, max= 3398368, maxTarget=wp_default_scripts
+      Graal Tier (us)           : count=10598, sum= 349442956, min=    1002, average=    32972.54, max= 3049729, maxTarget=FileRootNode@72b415da
+      Code Installation (us)    : count=10598, sum=  73077301, min=     921, average=     6895.39, max=  743598, maxTarget=WP_REST_Block_Types_Controller::get_item_schema
+    Graal node count            :
+      After Truffle Tier        : count=10606, sum=   7960126, min=      69, average=      750.53, max=  272880, maxTarget=FileRootNode@44865067
+      After Graal Tier          : count=10602, sum=  14882223, min=      88, average=     1403.72, max=  281875, maxTarget=FileRootNode@6e3a086a
+    Graal compilation result    :
+      Code size                 : count=10598, sum=  73013611, min=     434, average=     6889.38, max=  525493, maxTarget=FileRootNode@72b415da
+      Total frame size          : count=10598, sum=   2479312, min=      48, average=      233.94, max=   10960, maxTarget=WP_Theme_JSON::sanitize
+      Exception handlers        : count=10598, sum=    128996, min=       1, average=       12.17, max=    1290, maxTarget=FileRootNode@72b415da
+      Infopoints                : count=10598, sum=   1121032, min=       8, average=      105.78, max=   13174, maxTarget=FileRootNode@72b415da
+        CALL                    : count=10598, sum=    847719, min=       8, average=       79.99, max=    8461, maxTarget=FileRootNode@72b415da
+        IMPLICIT_EXCEPTION      : count=10598, sum=    266245, min=       0, average=       25.12, max=    4707, maxTarget=FileRootNode@72b415da
+        SAFEPOINT               : count=10598, sum=      7068, min=       0, average=        0.67, max=     117, maxTarget=WP_Theme_JSON::sanitize
+    Marks                       : count=10598, sum=    231236, min=       9, average=       21.82, max=    1310, maxTarget=FileRootNode@72b415da
+    Data references             : count=10598, sum=    459782, min=       3, average=       43.38, max=    3718, maxTarget=FileRootNode@72b415da
+    Graal nodes after Truffle tier:
+        FrameState              : count=10606, sum=   1411773, min=      10, average=      133.11, max=   48282, maxTarget=FileRootNode@44865067
+        BeginNode               : count=10606, sum=    941361, min=       9, average=       88.76, max=   31258, maxTarget=ThunkRootNode@7b7c8721
+        ConstantNode            : count=10606, sum=    621399, min=       9, average=       58.59, max=   21932, maxTarget=FileRootNode@44865067
+        EndNode                 : count=10606, sum=    590817, min=       5, average=       55.71, max=   19162, maxTarget=ThunkRootNode@7b7c8721
+        IfNode                  : count=10606, sum=    398267, min=       4, average=       37.55, max=   12725, maxTarget=ThunkRootNode@7b7c8721
+        LoadFieldNode           : count=10606, sum=    366028, min=       5, average=       34.51, max=    9651, maxTarget=FileRootNode@44865067
+        FixedGuardNode          : count=10606, sum=    358521, min=       0, average=       33.80, max=   14466, maxTarget=FileRootNode@44865067
+        PiNode                  : count=10606, sum=    320493, min=       1, average=       30.22, max=    6174, maxTarget=FileRootNode@6e3a086a
+        VirtualObjectState      : count=10606, sum=    202866, min=       0, average=       19.13, max=   24117, maxTarget=FileRootNode@44865067
+        MergeNode               : count=10606, sum=    188575, min=       1, average=       17.78, max=    7237, maxTarget=FileRootNode@44865067
+        InstanceOfNode          : count=10606, sum=    179435, min=       0, average=       16.92, max=    3678, maxTarget=ThunkRootNode@7b7c8721
+        ValuePhiNode            : count=10606, sum=    176109, min=       1, average=       16.60, max=    7238, maxTarget=FileRootNode@44865067
+        IsNullNode              : count=10606, sum=    167173, min=       1, average=       15.76, max=    5708, maxTarget=ThunkRootNode@7b7c8721
+        IntegerEqualsNode       : count=10606, sum=    147193, min=       1, average=       13.88, max=    7234, maxTarget=FileRootNode@44865067
+        LoadIndexedNode         : count=10606, sum=    145979, min=       0, average=       13.76, max=    6131, maxTarget=FileRootNode@6e3a086a
+        DeoptimizeNode          : count=10606, sum=    143154, min=       1, average=       13.50, max=    5339, maxTarget=ThunkRootNode@7b7c8721
+        ExceptionObjectNode     : count=10606, sum=    141260, min=       1, average=       13.32, max=    5339, maxTarget=ThunkRootNode@7b7c8721
+        InvokeWithExceptionNode : count=10606, sum=    140841, min=       1, average=       13.28, max=    5339, maxTarget=ThunkRootNode@7b7c8721
+        MethodCallTargetNode    : count=10606, sum=    140841, min=       1, average=       13.28, max=    5339, maxTarget=ThunkRootNode@7b7c8721
+        AddNode                 : count=10606, sum=    114791, min=       4, average=       10.82, max=    4827, maxTarget=FileRootNode@44865067
+        IntegerLessThanNode     : count=10606, sum=     90164, min=       2, average=        8.50, max=    4825, maxTarget=FileRootNode@44865067
+        VirtualArrayNode        : count=10606, sum=     83333, min=       0, average=        7.86, max=    4825, maxTarget=FileRootNode@44865067
+        ObjectEqualsNode        : count=10606, sum=     83277, min=       0, average=        7.85, max=    2049, maxTarget=FileRootNode@6e3a086a
+        StoreFieldNode          : count=10606, sum=     71713, min=       2, average=        6.76, max=    3176, maxTarget=ThunkRootNode@7b7c8721
+        AllocatedObjectNode     : count=10606, sum=     51602, min=       0, average=        4.87, max=    4825, maxTarget=FileRootNode@44865067
+        CommitAllocationNode    : count=10606, sum=     50281, min=       0, average=        4.74, max=    4825, maxTarget=FileRootNode@44865067
+        PiArrayNode             : count=10606, sum=     42299, min=       0, average=        3.99, max=    2042, maxTarget=FileRootNode@6e3a086a
+        VirtualInstanceNode     : count=10606, sum=     40825, min=       0, average=        3.85, max=    9648, maxTarget=FileRootNode@44865067
+        IntegerBelowNode        : count=10606, sum=     40732, min=       0, average=        3.84, max=    2041, maxTarget=FileRootNode@6e3a086a
+        ArrayLengthNode         : count=10606, sum=     38840, min=       0, average=        3.66, max=    2093, maxTarget=ThunkRootNode@7b7c8721
+        HotSpotLoadReservedReferenceNode: count=10606, sum=     32088, min=       0, average=        3.03, max=    2041, maxTarget=FileRootNode@6e3a086a
+        RightShiftNode          : count=10606, sum=     31974, min=       3, average=        3.01, max=      14, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        StoreIndexedNode        : count=10606, sum=     27813, min=       0, average=        2.62, max=   12056, maxTarget=FileRootNode@44865067
+        SignExtendNode          : count=10606, sum=     27056, min=       0, average=        2.55, max=    4822, maxTarget=FileRootNode@44865067
+        IntegerTestNode         : count=10606, sum=     24736, min=       0, average=        2.33, max=    7233, maxTarget=FileRootNode@44865067
+        NarrowNode              : count=10606, sum=     21770, min=       0, average=        2.05, max=    4822, maxTarget=FileRootNode@44865067
+        StateSplitProxyNode     : count=10606, sum=     21510, min=       2, average=        2.03, max=      14, maxTarget=WC_Email::__construct
+        ConditionalNode         : count=10606, sum=     20551, min=       0, average=        1.94, max=     279, maxTarget=ThunkRootNode@7b7c8721
+        LeftShiftNode           : count=10606, sum=     19185, min=       0, average=        1.81, max=     470, maxTarget=ThunkRootNode@7b7c8721
+        GuardedUnsafeLoadNode   : count=10606, sum=     17168, min=       0, average=        1.62, max=     691, maxTarget=WP_Query::get_posts
+        UnboxNode               : count=10606, sum=     16995, min=       0, average=        1.60, max=     880, maxTarget=ThunkRootNode@7b7c8721
+        ShortCircuitOrNode      : count=10606, sum=     16275, min=       0, average=        1.53, max=    2411, maxTarget=FileRootNode@44865067
+        ValueProxyNode          : count=10606, sum=     15293, min=       0, average=        1.44, max=     261, maxTarget=WP_Theme_JSON::sanitize
+        AndNode                 : count=10606, sum=     14922, min=       0, average=        1.41, max=    4822, maxTarget=FileRootNode@44865067
+        AllocatingBoxNode       : count=10606, sum=     12881, min=       0, average=        1.21, max=     448, maxTarget=ThunkRootNode@7b7c8721
+        MulNode                 : count=10606, sum=     11109, min=       1, average=        1.05, max=      53, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        MaterializedObjectState : count=10606, sum=     11095, min=       0, average=        1.05, max=    2411, maxTarget=FileRootNode@44865067
+        ParameterNode           : count=10606, sum=     10606, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        StartNode               : count=10606, sum=     10606, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        ReturnNode              : count=10606, sum=     10606, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        LoopExitNode            : count=10606, sum=      9385, min=       0, average=        0.88, max=     119, maxTarget=WP_Theme_JSON::sanitize
+        ZeroExtendNode          : count=10606, sum=      7934, min=       0, average=        0.75, max=     101, maxTarget=FileRootNode@b76690e
+        LoopEndNode             : count=10606, sum=      7361, min=       0, average=        0.69, max=     117, maxTarget=WP_Theme_JSON::sanitize
+        ConditionAnchorNode     : count=10606, sum=      7093, min=       0, average=        0.67, max=     244, maxTarget=WP_HTML_Tag_Processor::after_tag
+        TrustedBoxedValue       : count=10606, sum=      7093, min=       0, average=        0.67, max=     100, maxTarget=WP_Query::parse_query
+        LoopBeginNode           : count=10606, sum=      5690, min=       0, average=        0.54, max=      77, maxTarget=WP_Theme_JSON::sanitize
+        OrNode                  : count=10606, sum=      4283, min=       0, average=        0.40, max=      86, maxTarget=WP_HTML_Processor::step_in_body
+        UnreachableControlSinkNode: count=10606, sum=      4099, min=       0, average=        0.39, max=     470, maxTarget=ThunkRootNode@7b7c8721
+        UnreachableBeginNode    : count=10606, sum=      4099, min=       0, average=        0.39, max=     470, maxTarget=ThunkRootNode@7b7c8721
+        NewArrayNode            : count=10606, sum=      4018, min=       0, average=        0.38, max=     266, maxTarget=ThunkRootNode@7b7c8721
+        CopyOf                  : count=10606, sum=      3930, min=       0, average=        0.37, max=     470, maxTarget=ThunkRootNode@7b7c8721
+        RawStoreNode            : count=10606, sum=      3896, min=       0, average=        0.37, max=     287, maxTarget=WP_Rewrite::init
+        XorNode                 : count=10606, sum=      2855, min=       0, average=        0.27, max=      62, maxTarget=WP_Query::get_posts
+        GetClassNode            : count=10606, sum=      2470, min=       0, average=        0.23, max=     262, maxTarget=ThunkRootNode@7b7c8721
+        VirtualBoxingNode       : count=10606, sum=      2323, min=       0, average=        0.22, max=      21, maxTarget=WP_HTML_Tag_Processor@anonymous /srv/target/gate2/wordpress/wp-includes/kses.php:1071$0::sanitize
+        UnsignedMaxNode         : count=10606, sum=      2207, min=       0, average=        0.21, max=     262, maxTarget=ThunkRootNode@7b7c8721
+        RawLoadNode             : count=10606, sum=      2185, min=       0, average=        0.21, max=      93, maxTarget=WP_HTML_Processor::step_in_body
+        ArrayCopyWithConversionsNode: count=10606, sum=      1988, min=       0, average=        0.19, max=      28, maxTarget=get_post_type_capabilities
+        MaxNode                 : count=10606, sum=      1653, min=       0, average=        0.16, max=     208, maxTarget=ThunkRootNode@7b7c8721
+        PureBoxNode             : count=10606, sum=      1381, min=       0, average=        0.13, max=      38, maxTarget=wp_get_layout_style
+        IntegerSwitchNode       : count=10606, sum=      1048, min=       0, average=        0.10, max=      90, maxTarget=WP_HTML_Processor::step_in_body
+        FloatLessThanNode       : count=10606, sum=      1021, min=       0, average=        0.10, max=     448, maxTarget=ThunkRootNode@7b7c8721
+        ArrayRegionEqualsNode   : count=10606, sum=       953, min=       0, average=        0.09, max=      17, maxTarget=WP_HTML_Processor::is_void
+        UnsignedRightShiftNode  : count=10606, sum=       768, min=       0, average=        0.07, max=      17, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        SubNode                 : count=10606, sum=       653, min=       0, average=        0.06, max=      28, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        ClassIsAssignableFromNode: count=10606, sum=       645, min=       0, average=        0.06, max=      36, maxTarget=create_initial_rest_routes
+        FloatEqualsNode         : count=10606, sum=       639, min=       0, average=        0.06, max=     224, maxTarget=ThunkRootNode@7b7c8721
+        FloatConvertNode        : count=10606, sum=       567, min=       0, average=        0.05, max=     224, maxTarget=ThunkRootNode@7b7c8721
+        ValueAnchorNode         : count=10606, sum=       562, min=       0, average=        0.05, max=     272, maxTarget=WP_Rewrite::init
+        ArrayIndexOfNode        : count=10606, sum=       468, min=       0, average=        0.04, max=      15, maxTarget=WC_Autoloader::autoload
+        ArrayCopyNode           : count=10606, sum=       419, min=       0, average=        0.04, max=       6, maxTarget=WC_Email::__construct
+        IntegerAddExactOverflowNode: count=10606, sum=       354, min=       0, average=        0.03, max=      29, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        IntegerAddExactNode     : count=10606, sum=       347, min=       0, average=        0.03, max=      29, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        CalcStringAttributesNode: count=10606, sum=       255, min=       0, average=        0.02, max=       6, maxTarget=ActionScheduler::autoload
+        MinNode                 : count=10606, sum=       226, min=       0, average=        0.02, max=      24, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        ArrayIndexOfMacroNode   : count=10606, sum=       169, min=       0, average=        0.02, max=       4, maxTarget=WP_HTML_Tag_Processor@anonymous /srv/target/gate2/wordpress/wp-includes/kses.php:1071$0::sanitize
+        NegateNode              : count=10606, sum=       125, min=       0, average=        0.01, max=      13, maxTarget=wp_register_typography_support
+        IntegerSubExactNode     : count=10606, sum=       122, min=       0, average=        0.01, max=       9, maxTarget=Automattic\Block_Scanner::next_delimiter
+        IntegerSubExactOverflowNode: count=10606, sum=       115, min=       0, average=        0.01, max=       8, maxTarget=Automattic\Block_Scanner::next_delimiter
+        IndexAddressNode        : count=10606, sum=       111, min=       0, average=        0.01, max=      12, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        JavaReadNode            : count=10606, sum=       111, min=       0, average=        0.01, max=      12, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        SignedFloatingIntegerDivNode: count=10606, sum=        77, min=       0, average=        0.01, max=       8, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        ReinterpretNode         : count=10606, sum=        73, min=       0, average=        0.01, max=      21, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        CountLeadingZerosNode   : count=10606, sum=        37, min=       0, average=        0.00, max=       4, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        IntegerMulExactOverflowNode: count=10606, sum=        33, min=       0, average=        0.00, max=      10, maxTarget=wp_initial_constants
+        IntegerMulExactNode     : count=10606, sum=        33, min=       0, average=        0.00, max=      10, maxTarget=wp_initial_constants
+        FloatDivNode            : count=10606, sum=        30, min=       0, average=        0.00, max=       2, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        SignedRemNode           : count=10606, sum=        14, min=       0, average=        0.00, max=       2, maxTarget=wp_constrain_dimensions
+        SignedDivNode           : count=10606, sum=        12, min=       0, average=        0.00, max=       2, maxTarget=wp_constrain_dimensions
+        UnwindNode              : count=10606, sum=        10, min=       0, average=        0.00, max=       1, maxTarget=WP::parse_request
+        SignedFloatingIntegerRemNode: count=10606, sum=         3, min=       0, average=        0.00, max=       1, maxTarget=wpdb::prepare
+        IntegerNormalizeCompareNode: count=10606, sum=         1, min=       0, average=        0.00, max=       1, maxTarget={closure:wp_maybe_inline_styles():3487}
+        IntegerMulHighNode      : count=10606, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wp_initial_constants
+    Graal nodes after Graal tier:
+        BeginNode               : count=10602, sum=   2320290, min=      12, average=      218.85, max=   34133, maxTarget=FileRootNode@6e3a086a
+        AMD64AddressNode        : count=10602, sum=   1892389, min=       8, average=      178.49, max=   53778, maxTarget=FileRootNode@6e3a086a
+        EndNode                 : count=10602, sum=   1241561, min=       7, average=      117.11, max=   11991, maxTarget=FileRootNode@6e3a086a
+        FrameState              : count=10602, sum=   1147425, min=       4, average=      108.23, max=   25477, maxTarget=FileRootNode@6e3a086a
+        ReadNode                : count=10602, sum=   1132113, min=       7, average=      106.78, max=   21824, maxTarget=FileRootNode@6e3a086a
+        WriteNode               : count=10602, sum=   1032397, min=       4, average=       97.38, max=   36511, maxTarget=FileRootNode@6e3a086a
+        IfNode                  : count=10602, sum=    911914, min=       5, average=       86.01, max=    9403, maxTarget=FileRootNode@6e3a086a
+        ConstantNode            : count=10602, sum=    761282, min=      12, average=       71.81, max=    9429, maxTarget=FileRootNode@6e3a086a
+        MergeNode               : count=10602, sum=    463633, min=       2, average=       43.73, max=    4734, maxTarget=FileRootNode@6e3a086a
+        ValuePhiNode            : count=10602, sum=    312553, min=       0, average=       29.48, max=    4806, maxTarget=FileRootNode@6e3a086a
+        HotSpotCompressionNode  : count=10602, sum=    298569, min=       0, average=       28.16, max=    3845, maxTarget=FileRootNode@6e3a086a
+        MemoryAnchorNode        : count=10602, sum=    257066, min=       2, average=       24.25, max=    4729, maxTarget=FileRootNode@6e3a086a
+        PointerEqualsNode       : count=10602, sum=    243114, min=       0, average=       22.93, max=    2586, maxTarget=WP_Query::get_posts
+        AddNode                 : count=10602, sum=    212325, min=       4, average=       20.03, max=    2808, maxTarget=FileRootNode@6e3a086a
+        ReadRegisterNode        : count=10602, sum=    207897, min=       1, average=       19.61, max=    4647, maxTarget=FileRootNode@6e3a086a
+        IntegerBelowNode        : count=10602, sum=    205395, min=       0, average=       19.37, max=    6837, maxTarget=FileRootNode@6e3a086a
+        DeoptimizeNode          : count=10602, sum=    204698, min=       1, average=       19.31, max=    2290, maxTarget=FileRootNode@6e3a086a
+        PrefetchAllocateNode    : count=10602, sum=    176104, min=       0, average=       16.61, max=    7086, maxTarget=FileRootNode@6e3a086a
+        IntegerEqualsNode       : count=10602, sum=    162015, min=       2, average=       15.28, max=    1432, maxTarget=WP_Query::get_posts
+        VirtualObjectState      : count=10602, sum=    158660, min=       0, average=       14.97, max=   10175, maxTarget=FileRootNode@6e3a086a
+        HotSpotDirectCallTargetNode: count=10602, sum=    154015, min=       2, average=       14.53, max=    2266, maxTarget=FileRootNode@6e3a086a
+        NullCheckNode           : count=10602, sum=    153340, min=       0, average=       14.46, max=    4511, maxTarget=FileRootNode@6e3a086a
+        InvokeWithExceptionNode : count=10602, sum=    132677, min=       1, average=       12.51, max=    2193, maxTarget=FileRootNode@6e3a086a
+        IsNullNode              : count=10602, sum=    123468, min=       1, average=       11.65, max=    1134, maxTarget=WP_Query::get_posts
+        IntegerLessThanNode     : count=10602, sum=     87639, min=       2, average=        8.27, max=     690, maxTarget=WP_Theme_JSON::sanitize
+        ForeignCallNode         : count=10602, sum=     77911, min=       0, average=        7.35, max=    2454, maxTarget=FileRootNode@6e3a086a
+        WordCastNode            : count=10602, sum=     75220, min=       0, average=        7.09, max=    2454, maxTarget=FileRootNode@6e3a086a
+        PublishWritesNode       : count=10602, sum=     71498, min=       0, average=        6.74, max=    2440, maxTarget=FileRootNode@6e3a086a
+        DynamicDeoptimizeNode   : count=10602, sum=     66602, min=       0, average=        6.28, max=    2049, maxTarget=FileRootNode@6e3a086a
+        MembarNode              : count=10602, sum=     57311, min=       0, average=        5.41, max=    2190, maxTarget=FileRootNode@6e3a086a
+        ZeroExtendNode          : count=10602, sum=     56014, min=       0, average=        5.28, max=     464, maxTarget=WP_Theme_JSON::sanitize
+        VirtualArrayNode        : count=10602, sum=     48384, min=       0, average=        4.56, max=     261, maxTarget=FileRootNode@6e3a086a
+        SignExtendNode          : count=10602, sum=     37006, min=       0, average=        3.49, max=     339, maxTarget=WP_Query::get_posts
+        G1PostWriteBarrierNode  : count=10602, sum=     35429, min=       0, average=        3.34, max=    1470, maxTarget=FileRootNode@6e3a086a
+        RightShiftNode          : count=10602, sum=     31961, min=       3, average=        3.01, max=      14, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        LeftShiftNode           : count=10602, sum=     29054, min=       0, average=        2.74, max=     315, maxTarget=WP_Theme_JSON::sanitize
+        ConditionalNode         : count=10602, sum=     24208, min=       0, average=        2.28, max=     239, maxTarget=WP_Theme_JSON::sanitize
+        VirtualInstanceNode     : count=10602, sum=     22636, min=       0, average=        2.14, max=     231, maxTarget=WC_Countries::get_country_locale
+        ObjectEqualsNode        : count=10602, sum=     22474, min=       0, average=        2.12, max=     297, maxTarget=WP_Query::get_posts
+        InvokeNode              : count=10602, sum=     21338, min=       1, average=        2.01, max=     187, maxTarget=WP_Theme_JSON::sanitize
+        IntegerTestNode         : count=10602, sum=     20098, min=       0, average=        1.90, max=     338, maxTarget=WooCommerce::includes
+        G1PreWriteBarrierNode   : count=10602, sum=     18828, min=       0, average=        1.78, max=    1206, maxTarget=FileRootNode@6e3a086a
+        NarrowNode              : count=10602, sum=     15946, min=       0, average=        1.50, max=     224, maxTarget=WooCommerce::includes
+        LoopExitNode            : count=10602, sum=     14360, min=       0, average=        1.35, max=     269, maxTarget=FileRootNode@6e3a086a
+        LoopEndNode             : count=10602, sum=     12489, min=       0, average=        1.18, max=     269, maxTarget=FileRootNode@6e3a086a
+        MulNode                 : count=10602, sum=     11068, min=       1, average=        1.04, max=      49, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        LoopBeginNode           : count=10602, sum=     10823, min=       0, average=        1.02, max=     269, maxTarget=FileRootNode@6e3a086a
+        CurrentJavaThreadNode   : count=10602, sum=     10602, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        ParameterNode           : count=10602, sum=     10602, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        StartNode               : count=10602, sum=     10602, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        ReturnNode              : count=10602, sum=     10602, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@4fd702a4
+        AndNode                 : count=10602, sum=     10447, min=       0, average=        0.99, max=     113, maxTarget=WooCommerce::includes
+        SafepointNode           : count=10602, sum=      7313, min=       0, average=        0.69, max=     117, maxTarget=WP_Theme_JSON::sanitize
+        OrNode                  : count=10602, sum=      6932, min=       0, average=        0.65, max=      86, maxTarget=WP_HTML_Processor::step_in_body
+        MaterializedObjectState : count=10602, sum=      5551, min=       0, average=        0.52, max=     104, maxTarget=create_initial_rest_routes
+        ZeroMemoryNode          : count=10602, sum=      3714, min=       0, average=        0.35, max=      64, maxTarget=Automattic\WooCommerce\StoreApi\RoutesController::__construct
+        UnsignedRightShiftNode  : count=10602, sum=      3454, min=       0, average=        0.33, max=      59, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        SubNode                 : count=10602, sum=      3233, min=       0, average=        0.30, max=      59, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        NegateNode              : count=10602, sum=      2816, min=       0, average=        0.27, max=      59, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        BitCountNode            : count=10602, sum=      2691, min=       0, average=        0.25, max=      59, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        PointerCastNode         : count=10602, sum=      2691, min=       0, average=        0.25, max=      59, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        ValueAnchorNode         : count=10602, sum=      2619, min=       0, average=        0.25, max=     133, maxTarget=WP_Rewrite::init
+        XorNode                 : count=10602, sum=      2032, min=       0, average=        0.19, max=      59, maxTarget=WP_Query::get_posts
+        VirtualBoxingNode       : count=10602, sum=      2028, min=       0, average=        0.19, max=      20, maxTarget=WP_HTML_Tag_Processor@anonymous /srv/target/gate2/wordpress/wp-includes/kses.php:1071$0::sanitize
+        ArrayCopyWithConversionsNode: count=10602, sum=      1984, min=       0, average=        0.19, max=      28, maxTarget=get_post_type_capabilities
+        UnsignedMaxNode         : count=10602, sum=      1927, min=       0, average=        0.18, max=      64, maxTarget=Automattic\WooCommerce\StoreApi\RoutesController::__construct
+        MaxNode                 : count=10602, sum=      1430, min=       0, average=        0.13, max=      39, maxTarget=WP_Theme_JSON::sanitize
+        ArrayRegionEqualsNode   : count=10602, sum=       951, min=       0, average=        0.09, max=      17, maxTarget=WP_HTML_Processor::is_void
+        IntegerSwitchNode       : count=10602, sum=       927, min=       0, average=        0.09, max=      90, maxTarget=WP_HTML_Processor::step_in_body
+        MemoryPhiNode           : count=10602, sum=       795, min=       0, average=        0.07, max=      12, maxTarget=WC_Email::__construct
+        ArrayIndexOfNode        : count=10602, sum=       632, min=       0, average=        0.06, max=      16, maxTarget=WC_Autoloader::autoload
+        FloatLessThanNode       : count=10602, sum=       573, min=       0, average=        0.05, max=      70, maxTarget=Automattic\WooCommerce\StoreApi\RoutesController::__construct
+        FloatEqualsNode         : count=10602, sum=       415, min=       0, average=        0.04, max=      35, maxTarget=Automattic\WooCommerce\StoreApi\RoutesController::__construct
+        IntegerAddExactSplitNode: count=10602, sum=       363, min=       0, average=        0.03, max=      29, maxTarget=WP_HTML_Tag_Processor::parse_next_tag
+        FloatConvertNode        : count=10602, sum=       343, min=       0, average=        0.03, max=      35, maxTarget=Automattic\WooCommerce\StoreApi\RoutesController::__construct
+        CalcStringAttributesNode: count=10602, sum=       230, min=       0, average=        0.02, max=       6, maxTarget=ActionScheduler::autoload
+        MinNode                 : count=10602, sum=       189, min=       0, average=        0.02, max=      24, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        IntegerSubExactSplitNode: count=10602, sum=       121, min=       0, average=        0.01, max=       8, maxTarget=Automattic\Block_Scanner::next_delimiter
+        SignedDivNode           : count=10602, sum=        89, min=       0, average=        0.01, max=       8, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        CountLeadingZerosNode   : count=10602, sum=        37, min=       0, average=        0.00, max=       4, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        IntegerMulExactSplitNode: count=10602, sum=        33, min=       0, average=        0.00, max=      10, maxTarget=wp_initial_constants
+        FloatDivNode            : count=10602, sum=        30, min=       0, average=        0.00, max=       2, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        SignedRemNode           : count=10602, sum=        17, min=       0, average=        0.00, max=       2, maxTarget=wp_constrain_dimensions
+        UnwindNode              : count=10602, sum=        10, min=       0, average=        0.00, max=       1, maxTarget=WP::parse_request
+        IntegerMulHighNode      : count=10602, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wp_initial_constants
+  ---------------------------   :
+  Compilation Tier 2            :
+    Compilation Rate            :     45523.84 bytes/second
+      Truffle Tier Rate         :    186685.76 bytes/second
+      Graal Tier Rate           :     64986.17 bytes/second
+      Installation Rate         :   1040305.45 bytes/second
+    Time for compilation (us)   : count=1784, sum=1608709443, min=    5801, average=   901742.96, max=19105045, maxTarget=WP_Query::get_posts
+      Truffle Tier (us)         : count=1767, sum= 392288209, min=    2363, average=   222008.04, max= 3155704, maxTarget=WP_Query::get_posts
+      Graal Tier (us)           : count=1767, sum=1126926318, min=    1033, average=   637762.49, max=15218265, maxTarget=WP_Query::get_posts
+      Code Installation (us)    : count=1767, sum=  70397231, min=    1187, average=    39839.97, max=  731076, maxTarget=WP_Query::get_posts
+    Graal node count            :
+      After Truffle Tier        : count=1780, sum=   7103066, min=       8, average=     3990.49, max=   52873, maxTarget=WP_Query::get_posts
+      After Graal Tier          : count=1767, sum=  14877808, min=      21, average=     8419.81, max=  100419, maxTarget=WP_Query::get_posts
+    Graal compilation result    :
+      Code size                 : count=1767, sum=  73234624, min=     189, average=    41445.74, max=  488417, maxTarget=WP_Query::get_posts
+      Total frame size          : count=1767, sum=    784560, min=      32, average=      444.01, max=    3120, maxTarget=WP_HTML_Tag_Processor@anonymous /srv/target/gate2/wordpress/wp-includes/kses.php:1071$0::sanitize
+      Exception handlers        : count=1767, sum=    117253, min=       0, average=       66.36, max=     765, maxTarget=WP_Query::get_posts
+      Infopoints                : count=1767, sum=    942725, min=       6, average=      533.52, max=    6715, maxTarget=WP_Query::get_posts
+        CALL                    : count=1767, sum=    721791, min=       6, average=      408.48, max=    5243, maxTarget=WP_Query::get_posts
+        IMPLICIT_EXCEPTION      : count=1767, sum=    207819, min=       0, average=      117.61, max=    2079, maxTarget=FileRootNode@71f4e84d
+        SAFEPOINT               : count=1767, sum=     13115, min=       0, average=        7.42, max=     150, maxTarget=WP_Theme_JSON::sanitize
+    Marks                       : count=1767, sum=    153879, min=       8, average=       87.08, max=     897, maxTarget=WP_Query::get_posts
+    Data references             : count=1767, sum=    453586, min=       1, average=      256.70, max=    3627, maxTarget=WP_Query::get_posts
+    Graal nodes after Truffle tier:
+        FrameState              : count=1780, sum=   1193107, min=       1, average=      670.28, max=    9396, maxTarget=WP_Query::get_posts
+        BeginNode               : count=1780, sum=   1067407, min=       0, average=      599.67, max=    6870, maxTarget=WP_Query::get_posts
+        EndNode                 : count=1780, sum=    686476, min=       0, average=      385.66, max=    4598, maxTarget=WP_Query::get_posts
+        IfNode                  : count=1780, sum=    472179, min=       0, average=      265.27, max=    3084, maxTarget=WP_Query::get_posts
+        LoadFieldNode           : count=1780, sum=    335320, min=       0, average=      188.38, max=    2634, maxTarget=WP_Query::get_posts
+        ConstantNode            : count=1780, sum=    301147, min=       2, average=      169.18, max=    2779, maxTarget=WP_Query::get_posts
+        PiNode                  : count=1780, sum=    296235, min=       1, average=      166.42, max=    2982, maxTarget=WP_Query::get_posts
+        FixedGuardNode          : count=1780, sum=    269024, min=       0, average=      151.14, max=    3225, maxTarget=WP_Query::get_posts
+        InstanceOfNode          : count=1780, sum=    243335, min=       0, average=      136.71, max=    1963, maxTarget=WP_Query::get_posts
+        MergeNode               : count=1780, sum=    211572, min=       0, average=      118.86, max=    1567, maxTarget=WP_Query::get_posts
+        ValuePhiNode            : count=1780, sum=    192961, min=       0, average=      108.41, max=    1289, maxTarget=WP_Query::get_posts
+        IntegerEqualsNode       : count=1780, sum=    149685, min=       0, average=       84.09, max=    1339, maxTarget=WP_Query::get_posts
+        VirtualObjectState      : count=1780, sum=    143412, min=       0, average=       80.57, max=    1594, maxTarget=WC_Countries::get_country_locale
+        DeoptimizeNode          : count=1780, sum=    118257, min=       0, average=       66.44, max=     795, maxTarget=WP_Query::get_posts
+        ExceptionObjectNode     : count=1780, sum=    116752, min=       0, average=       65.59, max=     749, maxTarget=WP_Query::get_posts
+        IsNullNode              : count=1780, sum=    115835, min=       0, average=       65.08, max=    1161, maxTarget=FileRootNode@71f4e84d
+        InvokeWithExceptionNode : count=1780, sum=    115761, min=       0, average=       65.03, max=     749, maxTarget=WP_Query::get_posts
+        MethodCallTargetNode    : count=1780, sum=    115761, min=       0, average=       65.03, max=     749, maxTarget=WP_Query::get_posts
+        LoadIndexedNode         : count=1780, sum=     82792, min=       0, average=       46.51, max=    1076, maxTarget=FileRootNode@71f4e84d
+        ObjectEqualsNode        : count=1780, sum=     79779, min=       0, average=       44.82, max=     909, maxTarget=WP_Query::get_posts
+        AddNode                 : count=1780, sum=     79435, min=       0, average=       44.63, max=     452, maxTarget=WP_Theme_JSON::sanitize
+        StoreFieldNode          : count=1780, sum=     73563, min=       0, average=       41.33, max=     506, maxTarget=WP_Theme_JSON::sanitize
+        IntegerLessThanNode     : count=1780, sum=     72438, min=       0, average=       40.70, max=     548, maxTarget=WP_Theme_JSON::sanitize
+        VirtualArrayNode        : count=1780, sum=     43996, min=       0, average=       24.72, max=     500, maxTarget=FileRootNode@71f4e84d
+        ArrayLengthNode         : count=1780, sum=     31762, min=       0, average=       17.84, max=     492, maxTarget=FileRootNode@71f4e84d
+        SignExtendNode          : count=1780, sum=     31394, min=       0, average=       17.64, max=     168, maxTarget=WP_Theme_JSON::sanitize
+        IntegerBelowNode        : count=1780, sum=     28673, min=       0, average=       16.11, max=     492, maxTarget=FileRootNode@71f4e84d
+        VirtualInstanceNode     : count=1780, sum=     27154, min=       0, average=       15.26, max=     253, maxTarget=WC_Countries::get_country_locale
+        LeftShiftNode           : count=1780, sum=     26059, min=       0, average=       14.64, max=     172, maxTarget=WP_Theme_JSON::get_block_nodes
+        AllocatedObjectNode     : count=1780, sum=     25771, min=       0, average=       14.48, max=     496, maxTarget=FileRootNode@71f4e84d
+        UnboxNode               : count=1780, sum=     24395, min=       0, average=       13.71, max=      94, maxTarget=WP_Query::parse_query
+        CommitAllocationNode    : count=1780, sum=     24362, min=       0, average=       13.69, max=     496, maxTarget=FileRootNode@71f4e84d
+        AllocatingBoxNode       : count=1780, sum=     22542, min=       0, average=       12.66, max=      75, maxTarget=WC_Product::is_on_sale
+        ConditionalNode         : count=1780, sum=     21399, min=       0, average=       12.02, max=     146, maxTarget=WP_Query::get_posts
+        MaterializedObjectState : count=1780, sum=     21143, min=       0, average=       11.88, max=     100, maxTarget=FileRootNode@40cad7d6
+        NarrowNode              : count=1780, sum=     16425, min=       0, average=        9.23, max=     101, maxTarget=WP_User::has_cap
+        ValueProxyNode          : count=1780, sum=     15735, min=       0, average=        8.84, max=     236, maxTarget=WP_Theme_JSON::sanitize
+        PiArrayNode             : count=1780, sum=     14640, min=       0, average=        8.22, max=     548, maxTarget=FileRootNode@71f4e84d
+        GuardedUnsafeLoadNode   : count=1780, sum=     14462, min=       0, average=        8.12, max=     691, maxTarget=WP_Query::get_posts
+        IntegerTestNode         : count=1780, sum=     14142, min=       0, average=        7.94, max=     176, maxTarget=WP_Query::get_posts
+        StoreIndexedNode        : count=1780, sum=     13578, min=       0, average=        7.63, max=     305, maxTarget=WC_Countries::get_country_locale
+        HotSpotLoadReservedReferenceNode: count=1780, sum=     13094, min=       0, average=        7.36, max=     547, maxTarget=FileRootNode@71f4e84d
+        ShortCircuitOrNode      : count=1780, sum=     12410, min=       0, average=        6.97, max=     139, maxTarget=has_block
+        LoopExitNode            : count=1780, sum=      9831, min=       0, average=        5.52, max=     119, maxTarget=WP_Theme_JSON::sanitize
+        LoopEndNode             : count=1780, sum=      8385, min=       0, average=        4.71, max=     117, maxTarget=WP_Theme_JSON::sanitize
+        VirtualBoxingNode       : count=1780, sum=      8257, min=       0, average=        4.64, max=      48, maxTarget=FileRootNode@40cad7d6
+        UnreachableControlSinkNode: count=1780, sum=      8072, min=       0, average=        4.53, max=      69, maxTarget=WP_Theme_JSON::sanitize
+        UnreachableBeginNode    : count=1780, sum=      8072, min=       0, average=        4.53, max=      69, maxTarget=WP_Theme_JSON::sanitize
+        CopyOf                  : count=1780, sum=      7861, min=       0, average=        4.42, max=      69, maxTarget=WP_Theme_JSON::sanitize
+        AndNode                 : count=1780, sum=      7779, min=       0, average=        4.37, max=     102, maxTarget=WP_Query::get_posts
+        ZeroExtendNode          : count=1780, sum=      6188, min=       0, average=        3.48, max=      94, maxTarget=WP_User::has_cap
+        LoopBeginNode           : count=1780, sum=      5986, min=       0, average=        3.36, max=      77, maxTarget=WP_Theme_JSON::sanitize
+        XorNode                 : count=1780, sum=      5761, min=       0, average=        3.24, max=      62, maxTarget=WP_Query::get_posts
+        GetClassNode            : count=1780, sum=      4627, min=       0, average=        2.60, max=      31, maxTarget=WP_Theme_JSON::sanitize
+        NewArrayNode            : count=1780, sum=      4355, min=       0, average=        2.45, max=      32, maxTarget=traverse_and_serialize_block
+        OrNode                  : count=1780, sum=      4332, min=       0, average=        2.43, max=      47, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        MaxNode                 : count=1780, sum=      4162, min=       0, average=        2.34, max=      39, maxTarget=WP_Theme_JSON::sanitize
+        RawStoreNode            : count=1780, sum=      3473, min=       0, average=        1.95, max=     133, maxTarget=WP_Query::get_posts
+        UnsignedMaxNode         : count=1780, sum=      3307, min=       0, average=        1.86, max=      27, maxTarget=Automattic\WooCommerce\Blocks\BlockTypesController::register_blocks
+        RawLoadNode             : count=1780, sum=      2372, min=       0, average=        1.33, max=      87, maxTarget=map_meta_cap
+        TrustedBoxedValue       : count=1780, sum=      1899, min=       0, average=        1.07, max=      78, maxTarget=WP_Query::get_posts
+        ConditionAnchorNode     : count=1780, sum=      1869, min=       0, average=        1.05, max=     240, maxTarget=WP_Query::init_query_flags
+        ParameterNode           : count=1780, sum=      1780, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        StartNode               : count=1780, sum=      1780, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        ReturnNode              : count=1780, sum=      1780, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        ArrayCopyWithConversionsNode: count=1780, sum=      1268, min=       0, average=        0.71, max=      28, maxTarget=get_post_type_capabilities
+        IntegerAddExactNode     : count=1780, sum=      1267, min=       0, average=        0.71, max=      35, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        IntegerAddExactOverflowNode: count=1780, sum=      1241, min=       0, average=        0.70, max=      35, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        PureBoxNode             : count=1780, sum=      1095, min=       0, average=        0.62, max=      38, maxTarget=wp_get_layout_style
+        IntegerSwitchNode       : count=1780, sum=      1092, min=       0, average=        0.61, max=      87, maxTarget=map_meta_cap
+        SubNode                 : count=1780, sum=      1040, min=       0, average=        0.58, max=      28, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        ArrayCopyNode           : count=1780, sum=       991, min=       0, average=        0.56, max=      10, maxTarget=traverse_and_serialize_block
+        UnsignedRightShiftNode  : count=1780, sum=       937, min=       0, average=        0.53, max=      17, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        MulNode                 : count=1780, sum=       832, min=       0, average=        0.47, max=      52, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        ArrayRegionEqualsNode   : count=1780, sum=       772, min=       0, average=        0.43, max=      28, maxTarget=wp_get_typography_font_size_value
+        ArrayIndexOfNode        : count=1780, sum=       577, min=       0, average=        0.32, max=      17, maxTarget=WC_Autoloader::autoload
+        ClassIsAssignableFromNode: count=1780, sum=       539, min=       0, average=        0.30, max=      30, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        MinNode                 : count=1780, sum=       507, min=       0, average=        0.28, max=      24, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        CalcStringAttributesNode: count=1780, sum=       493, min=       0, average=        0.28, max=      10, maxTarget=WP_HTML_Tag_Processor::class_name_updates_to_attributes_updates
+        FloatLessThanNode       : count=1780, sum=       338, min=       0, average=        0.19, max=      24, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        ValueAnchorNode         : count=1780, sum=       315, min=       0, average=        0.18, max=      23, maxTarget=WP_Post_Type::add_supports <split-730>
+        RightShiftNode          : count=1780, sum=       301, min=       0, average=        0.17, max=      16, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        FloatEqualsNode         : count=1780, sum=       249, min=       0, average=        0.14, max=      13, maxTarget=wp_register_typography_support
+        FloatConvertNode        : count=1780, sum=       230, min=       0, average=        0.13, max=      12, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        ArrayIndexOfMacroNode   : count=1780, sum=       211, min=       0, average=        0.12, max=       8, maxTarget=WC_Product::set_manage_stock
+        IntegerSubExactNode     : count=1780, sum=       210, min=       0, average=        0.12, max=      18, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        IntegerSubExactOverflowNode: count=1780, sum=       199, min=       0, average=        0.11, max=      16, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        IndexAddressNode        : count=1780, sum=       189, min=       0, average=        0.11, max=      12, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        JavaReadNode            : count=1780, sum=       189, min=       0, average=        0.11, max=      12, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        StateSplitProxyNode     : count=1780, sum=       179, min=       0, average=        0.10, max=      10, maxTarget=WP_HTML_Tag_Processor::base_class_next_token
+        NegateNode              : count=1780, sum=       160, min=       0, average=        0.09, max=      13, maxTarget=wp_register_typography_support
+        SignedFloatingIntegerDivNode: count=1780, sum=       130, min=       0, average=        0.07, max=       8, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        ReinterpretNode         : count=1780, sum=        81, min=       0, average=        0.05, max=      21, maxTarget=GeneratorNodes.BodyRootNode@113152dd
+        CountLeadingZerosNode   : count=1780, sum=        63, min=       0, average=        0.04, max=       4, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        FloatDivNode            : count=1780, sum=        28, min=       0, average=        0.02, max=       3, maxTarget=wp_get_typography_font_size_value
+        SignedDivNode           : count=1780, sum=        16, min=       0, average=        0.01, max=       2, maxTarget=wp_constrain_dimensions
+        SignedRemNode           : count=1780, sum=        16, min=       0, average=        0.01, max=       2, maxTarget=wp_constrain_dimensions
+        SignedFloatingIntegerRemNode: count=1780, sum=         4, min=       0, average=        0.00, max=       1, maxTarget=wpdb::prepare
+        UnwindNode              : count=1780, sum=         4, min=       0, average=        0.00, max=       1, maxTarget=WP_Hook::apply_filters
+        IntegerMulExactOverflowNode: count=1780, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=WP_Query::get_posts
+        IntegerMulExactNode     : count=1780, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=WP_Query::get_posts
+        IntegerNormalizeCompareNode: count=1780, sum=         1, min=       0, average=        0.00, max=       1, maxTarget={closure:wp_maybe_inline_styles():3487}
+        NotNode                 : count=1780, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wp_upload_dir
+    Graal nodes after Graal tier:
+        BeginNode               : count=1767, sum=   2280137, min=       2, average=     1290.40, max=   15494, maxTarget=WP_Query::get_posts
+        AMD64AddressNode        : count=1767, sum=   1777650, min=       1, average=     1006.03, max=   13400, maxTarget=WP_Query::get_posts
+        FrameState              : count=1767, sum=   1367634, min=       1, average=      773.99, max=    8910, maxTarget=WP_Query::get_posts
+        EndNode                 : count=1767, sum=   1349777, min=       2, average=      763.88, max=    8832, maxTarget=WP_Query::get_posts
+        IfNode                  : count=1767, sum=   1038535, min=       1, average=      587.74, max=    7077, maxTarget=WP_Query::get_posts
+        ReadNode                : count=1767, sum=   1038425, min=       1, average=      587.68, max=    7483, maxTarget=WP_Query::get_posts
+        WriteNode               : count=1767, sum=    972758, min=       0, average=      550.51, max=    9787, maxTarget=WC_Countries::get_country_locale
+        MergeNode               : count=1767, sum=    441514, min=       1, average=      249.87, max=    3106, maxTarget=WP_Query::get_posts
+        ValuePhiNode            : count=1767, sum=    402753, min=       0, average=      227.93, max=    2140, maxTarget=WP_Query::get_posts
+        ConstantNode            : count=1767, sum=    348899, min=       3, average=      197.45, max=    2549, maxTarget=WP_Query::get_posts
+        PointerEqualsNode       : count=1767, sum=    294972, min=       0, average=      166.93, max=    2480, maxTarget=WP_Query::get_posts
+        HotSpotCompressionNode  : count=1767, sum=    282364, min=       0, average=      159.80, max=    1902, maxTarget=WP_Query::get_posts
+        AddNode                 : count=1767, sum=    274691, min=       0, average=      155.46, max=    1592, maxTarget=WP_Theme_JSON::sanitize
+        MemoryAnchorNode        : count=1767, sum=    244157, min=       1, average=      138.18, max=    1440, maxTarget=WP_Query::get_posts
+        DeoptimizeNode          : count=1767, sum=    216219, min=       0, average=      122.37, max=    1921, maxTarget=WP_Query::get_posts
+        IntegerBelowNode        : count=1767, sum=    200059, min=       0, average=      113.22, max=    1025, maxTarget=WP_Query::get_posts
+        ReadRegisterNode        : count=1767, sum=    194625, min=       0, average=      110.14, max=    1241, maxTarget=WP_Query::get_posts
+        IntegerEqualsNode       : count=1767, sum=    159958, min=       1, average=       90.53, max=    1365, maxTarget=WP_Query::get_posts
+        VirtualObjectState      : count=1767, sum=    147287, min=       0, average=       83.35, max=    1591, maxTarget=WC_Countries::get_country_locale
+        PrefetchAllocateNode    : count=1767, sum=    146610, min=       0, average=       82.97, max=    1488, maxTarget=FileRootNode@71f4e84d
+        IsNullNode              : count=1767, sum=    136549, min=       0, average=       77.28, max=     899, maxTarget=WP_Query::get_posts
+        IntegerLessThanNode     : count=1767, sum=    128997, min=       0, average=       73.00, max=    1121, maxTarget=WP_Theme_JSON::sanitize
+        HotSpotDirectCallTargetNode: count=1767, sum=    125136, min=       1, average=       70.82, max=     786, maxTarget=WP_Query::get_posts
+        InvokeWithExceptionNode : count=1767, sum=    117253, min=       0, average=       66.36, max=     765, maxTarget=WP_Query::get_posts
+        ZeroExtendNode          : count=1767, sum=     98033, min=       0, average=       55.48, max=     628, maxTarget=WP_Theme_JSON::sanitize
+        NullCheckNode           : count=1767, sum=     97774, min=       0, average=       55.33, max=     609, maxTarget=WC_Countries::get_country_locale
+        WordCastNode            : count=1767, sum=     90343, min=       0, average=       51.13, max=    1004, maxTarget=WC_Countries::get_country_locale
+        ForeignCallNode         : count=1767, sum=     72081, min=       0, average=       40.79, max=     547, maxTarget=WC_Countries::get_country_locale
+        PublishWritesNode       : count=1767, sum=     66750, min=       0, average=       37.78, max=     545, maxTarget=WC_Countries::get_country_locale
+        MembarNode              : count=1767, sum=     63929, min=       0, average=       36.18, max=     496, maxTarget=FileRootNode@71f4e84d
+        LeftShiftNode           : count=1767, sum=     48718, min=       0, average=       27.57, max=     416, maxTarget=WP_Theme_JSON::sanitize
+        LoopExitNode            : count=1767, sum=     44708, min=       0, average=       25.30, max=     474, maxTarget=WP_Theme_JSON::sanitize
+        LoopEndNode             : count=1767, sum=     44228, min=       0, average=       25.03, max=     493, maxTarget=WP_Theme_JSON::sanitize
+        LoadAddressNode         : count=1767, sum=     43390, min=       0, average=       24.56, max=     468, maxTarget=WP_Theme_JSON::sanitize
+        SubNode                 : count=1767, sum=     43015, min=       0, average=       24.34, max=     450, maxTarget=WP_Theme_JSON::sanitize
+        LoopBeginNode           : count=1767, sum=     38556, min=       0, average=       21.82, max=     421, maxTarget=WP_Theme_JSON::sanitize
+        VirtualArrayNode        : count=1767, sum=     37586, min=       0, average=       21.27, max=     275, maxTarget=WC_Countries::get_country_locale
+        G1PostWriteBarrierNode  : count=1767, sum=     36904, min=       0, average=       20.89, max=     621, maxTarget=WC_Countries::get_country_locale
+        SignExtendNode          : count=1767, sum=     32150, min=       0, average=       18.19, max=     283, maxTarget=WP_Query::get_posts
+        ObjectEqualsNode        : count=1767, sum=     31384, min=       0, average=       17.76, max=     262, maxTarget=WP_Query::get_posts
+        DynamicDeoptimizeNode   : count=1767, sum=     28049, min=       0, average=       15.87, max=     182, maxTarget=WP_Query::get_posts
+        G1PreWriteBarrierNode   : count=1767, sum=     25669, min=       0, average=       14.53, max=     230, maxTarget=WP_Query::get_posts
+        ConditionalNode         : count=1767, sum=     25286, min=       0, average=       14.31, max=     172, maxTarget=WP_Theme_JSON::sanitize
+        NarrowNode              : count=1767, sum=     23377, min=       0, average=       13.23, max=      95, maxTarget=WP_Theme_JSON::sanitize
+        VirtualInstanceNode     : count=1767, sum=     20051, min=       0, average=       11.35, max=     251, maxTarget=WC_Countries::get_country_locale
+        AndNode                 : count=1767, sum=     19124, min=       0, average=       10.82, max=     159, maxTarget=WP_Theme_JSON::sanitize
+        IntegerTestNode         : count=1767, sum=     18917, min=       0, average=       10.71, max=     206, maxTarget=WP_Query::get_posts
+        ValueAnchorNode         : count=1767, sum=     15450, min=       0, average=        8.74, max=     164, maxTarget=WP_Theme_JSON::sanitize
+        MaterializedObjectState : count=1767, sum=     14071, min=       0, average=        7.96, max=      97, maxTarget=FileRootNode@178ba97f
+        SafepointNode           : count=1767, sum=     13115, min=       0, average=        7.42, max=     150, maxTarget=WP_Theme_JSON::sanitize
+        UnsignedRightShiftNode  : count=1767, sum=     12090, min=       0, average=        6.84, max=      99, maxTarget=WP_Theme_JSON::sanitize
+        ZeroMemoryNode          : count=1767, sum=      9158, min=       0, average=        5.18, max=      94, maxTarget=WP_Theme_JSON::sanitize
+        UnsignedMinNode         : count=1767, sum=      8807, min=       0, average=        4.98, max=     107, maxTarget=WP_Theme_JSON::sanitize
+        InvokeNode              : count=1767, sum=      7883, min=       1, average=        4.46, max=      39, maxTarget=wp_get_layout_style
+        NegateNode              : count=1767, sum=      7870, min=       0, average=        4.45, max=      72, maxTarget=WP_Theme_JSON::sanitize
+        VirtualBoxingNode       : count=1767, sum=      7841, min=       0, average=        4.44, max=      54, maxTarget=WC_Frontend_Scripts::register_scripts
+        OrNode                  : count=1767, sum=      5419, min=       0, average=        3.07, max=      46, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        MaxNode                 : count=1767, sum=      5094, min=       0, average=        2.88, max=      72, maxTarget=WP_Theme_JSON::sanitize
+        ReturnNode              : count=1767, sum=      5026, min=       1, average=        2.84, max=      37, maxTarget=wp_apply_aria_label_support
+        XorNode                 : count=1767, sum=      2775, min=       0, average=        1.57, max=      40, maxTarget=WP_Query::get_posts
+        SimdNarrowingReinterpretNode: count=1767, sum=      2713, min=       0, average=        1.54, max=       5, maxTarget=WC_Product::__construct
+        IntegerAddExactSplitNode: count=1767, sum=      2467, min=       0, average=        1.40, max=      38, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        UnsignedMaxNode         : count=1767, sum=      2238, min=       0, average=        1.27, max=      27, maxTarget=Automattic\WooCommerce\Blocks\BlockTypesController::register_blocks
+        MultiGuardNode          : count=1767, sum=      2218, min=       0, average=        1.26, max=      78, maxTarget=traverse_and_serialize_block
+        CurrentJavaThreadNode   : count=1767, sum=      1767, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        ParameterNode           : count=1767, sum=      1767, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        StartNode               : count=1767, sum=      1767, min=       1, average=        1.00, max=       1, maxTarget=BuiltinRootNode@45aee462
+        ArrayCopyWithConversionsNode: count=1767, sum=      1368, min=       0, average=        0.77, max=      30, maxTarget=get_post_type_capabilities
+        IntegerSwitchNode       : count=1767, sum=      1026, min=       0, average=        0.58, max=      34, maxTarget=map_meta_cap
+        ArrayIndexOfNode        : count=1767, sum=       983, min=       0, average=        0.56, max=      29, maxTarget=wpautop
+        MulNode                 : count=1767, sum=       907, min=       0, average=        0.51, max=      56, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        BitCountNode            : count=1767, sum=       847, min=       0, average=        0.48, max=      30, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        PointerCastNode         : count=1767, sum=       847, min=       0, average=        0.48, max=      30, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        ArrayRegionEqualsNode   : count=1767, sum=       793, min=       0, average=        0.45, max=      28, maxTarget=wp_get_typography_font_size_value
+        OriginalLimitCheckedIVPhi: count=1767, sum=       586, min=       0, average=        0.33, max=      12, maxTarget=traverse_and_serialize_block
+        GuardedValueNode        : count=1767, sum=       561, min=       0, average=        0.32, max=      12, maxTarget=traverse_and_serialize_block
+        RightShiftNode          : count=1767, sum=       560, min=       0, average=        0.32, max=      23, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        MinNode                 : count=1767, sum=       499, min=       0, average=        0.28, max=      22, maxTarget=WP_HTML_Tag_Processor::get_attribute <split-5363>
+        CalcStringAttributesNode: count=1767, sum=       449, min=       0, average=        0.25, max=      10, maxTarget=WP_HTML_Tag_Processor::class_name_updates_to_attributes_updates
+        FloatLessThanNode       : count=1767, sum=       325, min=       0, average=        0.18, max=      24, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        IntegerMulExactSplitNode: count=1767, sum=       294, min=       0, average=        0.17, max=      11, maxTarget=WP_Query::get_posts
+        GuardPhiNode            : count=1767, sum=       260, min=       0, average=        0.15, max=      12, maxTarget=WP_HTML_Tag_Processor::get_updated_html <split-5367>
+        FloatEqualsNode         : count=1767, sum=       235, min=       0, average=        0.13, max=      13, maxTarget=wp_register_typography_support
+        IntegerSubExactSplitNode: count=1767, sum=       204, min=       0, average=        0.12, max=      16, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        FloatConvertNode        : count=1767, sum=       194, min=       0, average=        0.11, max=      12, maxTarget=Automattic\WooCommerce\Blocks\BlockTemplatesRegistry::init
+        IntegerMulHighNode      : count=1767, sum=       135, min=       0, average=        0.08, max=       8, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        CountLeadingZerosNode   : count=1767, sum=       115, min=       0, average=        0.07, max=       7, maxTarget=WP_Theme_JSON::compute_spacing_sizes
+        IntegerAddExactNode     : count=1767, sum=        50, min=       0, average=        0.03, max=       4, maxTarget=WP_List_Util::filter
+        SignedRemNode           : count=1767, sum=        16, min=       0, average=        0.01, max=       3, maxTarget=wp_constrain_dimensions
+        FloatDivNode            : count=1767, sum=        14, min=       0, average=        0.01, max=       3, maxTarget=wp_get_typography_font_size_value
+        SignedDivNode           : count=1767, sum=        13, min=       0, average=        0.01, max=       1, maxTarget=WP_Token_Map::read_token
+        UnwindNode              : count=1767, sum=         4, min=       0, average=        0.00, max=       1, maxTarget=WP_Hook::apply_filters
+        ReinterpretNode         : count=1767, sum=         3, min=       0, average=        0.00, max=       1, maxTarget=Automattic\Jetpack\Autoloader\jpeb35ca63f2409e94839b80ff9a2b637d\al5_0_0\Manifest_Reader::register_manifest
+        IntegerSubExactNode     : count=1767, sum=         2, min=       0, average=        0.00, max=       1, maxTarget=Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::has_block_variation
+        NotNode                 : count=1767, sum=         1, min=       0, average=        0.00, max=       1, maxTarget=wp_upload_dir
+[engine] opt unque. engine=1  id=13908 ForeachNode.ArrayStep@be40c2b<OSR>                 |Tier 2|Count/Thres          0/    10000|Queue: Size    0 Change  0  Load  1.00 Time     0us                                   |UTC 2026-11-02T11:20:08.687|Src n/a|Reason Non permanent bailout: jdk.graal.compiler.core.common.CancellationBailoutException: Compilation cancelled.
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :     265506
+Split limit (limit for the number of nodes to create through splitting)           :     996285
+Splits (number of targets created through splitting)                              :       6265
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :     265788
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     665556
+Increase in nodes                                                                 :     39.93%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :      31913
+Percent of split nodes wasted                                                     :     12.01%
+Targets wasted due to splitting                                                   :        710
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS
+WC_Data::get_prop                                                                 :        947
+absint                                                                            :        203
+WC_Data::set_prop                                                                 :        200
+esc_attr                                                                          :        158
+Automattic\WooCommerce\Blocks\Registry\SharedType::get                            :         95
+Automattic\WooCommerce\Blocks\Registry\Container::get                             :         94
+is_wp_error                                                                       :         90
+WP_REST_Controller::add_additional_fields_schema                                  :         72
+WC_Product::get_manage_stock                                                      :         67
+WC_Product::get_parent_id                                                         :         65
+WP_Object_Cache::_exists                                                          :         65
+WC_Product::managing_stock                                                        :         62
+WC_Product::get_status                                                            :         60
+WC_Order::get_address_prop                                                        :         59
+WC_Product::is_type                                                               :         58
+Automattic\WooCommerce\StoreApi\SchemaController::get                             :         58
+WC_Settings_API::get_form_fields                                                  :         57
+WC_Product::get_price                                                             :         57
+WC_Product::get_stock_status                                                      :         56
+WC_Settings_API::get_option                                                       :         54
+esc_html                                                                          :         54
+wp_get_theme                                                                      :         53
+WP_HTML_Tag_Processor::next_token                                                 :         51
+WP_Object_Cache::delete                                                           :         48
+wp_cache_delete                                                                   :         46
+block_has_support                                                                 :         45
+WP_HTML_Tag_Processor::next_tag                                                   :         43
+WP_HTML_Tag_Processor::matches                                                    :         42
+Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value      :         41
+WC_Data_Store::__call                                                             :         41
+WC_Product::get_backorders                                                        :         41
+WP_REST_Controller::get_endpoint_args_for_item_schema                             :         41
+WC_Session::set                                                                   :         40
+wp_is_block_theme                                                                 :         40
+wc_get_page_id                                                                    :         40
+wc_string_to_bool                                                                 :         38
+WC_Data::maybe_read_meta_data                                                     :         37
+WC_Abstract_Order::get_status                                                     :         35
+WP_Widget_Factory::register                                                       :         34
+get_theme_root                                                                    :         34
+register_widget                                                                   :         33
+wp_parse_url                                                                      :         33
+wp_should_skip_block_supports_serialization                                       :         32
+WC_Product::is_in_stock                                                           :         31
+Automattic\WooCommerce\Blocks\Integrations\IntegrationRegistry::initialize        :         30
+has_filter                                                                        :         30
+WP_HTML_Tag_Processor::get_updated_html                                           :         30
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::initialize                :         29
+Automattic\WooCommerce\Utilities\NumberUtil::normalize                            :         27
+wp_filter_object_list                                                             :         27
+get_the_terms                                                                     :         26
+WP_Query::is_singular                                                             :         26
+WC_Product::is_viewable                                                           :         25
+is_singular                                                                       :         24
+WC_Product::exists                                                                :         24
+WC_Product::get_name                                                              :         24
+WC_Product::get_image_id                                                          :         23
+WC_Product::get_permalink                                                         :         23
+WC_Product::get_sold_individually                                                 :         22
+Automattic\WooCommerce\Utilities\NumberUtil::round                                :         21
+WC_Settings_API::init_settings                                                    :         21
+WC_Product::is_purchasable                                                        :         21
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::{closure:Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::force_schema_readonly():314}:         21
+WC_Order::get_customer_id                                                         :         21
+WC_Product::is_sold_individually                                                  :         20
+WP_Scripts::add_inline_script                                                     :         20
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::force_schema_readonly  :         20
+WC_Product::get_tax_status                                                        :         19
+WP_HTML_Tag_Processor::has_class                                                  :         19
+WC_Product::get_stock_quantity                                                    :         19
+WC_Data_Store::load                                                               :         19
+WP_HTML_Tag_Processor::get_attribute                                              :         19
+WC_Shipping_Method::get_option                                                    :         18
+WC_Product::backorders_allowed                                                    :         18
+wc_get_order                                                                      :         18
+WC_Product::get_sale_price                                                        :         17
+WP_HTML_Tag_Processor::get_decoded_attribute_value                                :         17
+WC_Order::get_billing_email                                                       :         17
+get_stylesheet_directory                                                          :         16
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::get_item_schema        :         16
+WC_Product::get_sku                                                               :         16
+WP_Dependencies::query                                                            :         16
+WC_Data::get_meta_data                                                            :         16
+WP_HTML_Tag_Processor::is_tag_closer                                              :         16
+Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableQuery::arg_isset     :         16
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::remove_arg_options     :         15
+WC_Product::is_virtual                                                            :         15
+WP_Hook::has_filter                                                               :         15
+WC_Order::get_changes                                                             :         15
+WP_Styles::add_inline_style                                                       :         14
+WC_Data_Store_WP::get_term_ids                                                    :         14
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::{closure:Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::remove_arg_options():92}:         14
+WP_Object_Cache::add                                                              :         14
+get_post_types                                                                    :         14
+get_template_directory                                                            :         14
+WC_Product::get_virtual                                                           :         14
+wp_nonce_tick                                                                     :         14
+WC_Product::is_on_backorder                                                       :         14
+get_metadata                                                                      :         14
+WC_Widget::__construct                                                            :         13
+WC_Order::get_user_id                                                             :         13
+WP_REST_Controller::get_collection_params                                         :         13
+WC_Abstract_Order::has_status                                                     :         13
+WC_Product::get_attributes                                                        :         13
+WC_Product::get_regular_price                                                     :         13
+Automattic\WooCommerce\Blocks\Domain\Package::get_url                             :         13
+WP_Query::__construct                                                             :         13
+WC_Order_Item::get_order_id                                                       :         13
+WC_Product::get_length                                                            :         13
+wc_remove_number_precision                                                        :         13
+wp_cache_add                                                                      :         12
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::__construct             :         12
+WooCommerce::is_rest_api_request                                                  :         12
+wp_next_scheduled                                                                 :         12
+WC_Product::get_title                                                             :         12
+wp_create_nonce                                                                   :         12
+WC_Product::get_height                                                            :         12
+wc_get_price_to_display                                                           :         12
+WC_Product::get_width                                                             :         12
+Automattic\WooCommerce\Blocks\Assets\Api::get_asset_url                           :         12
+wp_add_inline_style                                                               :         12
+WC_Order::save                                                                    :         12
+WC_Data::set_id                                                                   :         11
+WP_Post_Type::get_rest_controller                                                 :         11
+WC_Order::get_user                                                                :         11
+WC_Order::maybe_set_user_billing_email                                            :         11
+wc_remove_number_precision_deep                                                   :         11
+WC_Cart_Totals::set_total                                                         :         11
+WC_Product::get_weight                                                            :         11
+sanitize_text_field                                                               :         10
+Automattic\WooCommerce\Blocks\Assets\Api::register_style                          :         10
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_block_type_editor_script:         10
+is_wc_endpoint_url                                                                :         10
+wp_script_is                                                                      :         10
+WC_Cart::get_total                                                                :         10
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::enqueue_scripts           :         10
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_block_type_style      :          9
+get_taxonomies                                                                    :          9
+Automattic\WooCommerce\StoreApi\Schemas\V1\CartShippingRateSchema::get_rate_prop  :          9
+WC_Product_Variable::get_variation_prices                                         :          9
+Automattic\WooCommerce\StoreApi\StoreApi::container                               :          9
+WC_Email::get_option                                                              :          9
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::enqueue_assets            :          9
+WC_Product::needs_shipping                                                        :          9
+WC_Abstract_Order::get_date_created                                               :          9
+WC_Product::is_taxable                                                            :          9
+WC_Abstract_Order::get_shipping_methods                                           :          9
+WC_Order::get_order_number                                                        :          9
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractAddressSchema::__construct     :          8
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::get_recursive_schema_property_defaults:          8
+WC_Data::set_defaults                                                             :          8
+WC_Data::delete_meta_data                                                         :          8
+wpdb::placeholder_escape                                                          :          8
+WC_Product::is_downloadable                                                       :          8
+WC_Cache_Helper::get_transient_version                                            :          8
+WC_Order_Item::set_order_id                                                       :          8
+esc_js                                                                            :          8
+WC_Abstract_Order::get_total                                                      :          8
+WC_Abstract_Order::get_shipping_tax                                               :          7
+WC_Data_Store_WP::get_props_to_update                                             :          7
+Automattic\WooCommerce\Blocks\BlockTypes\OrderConfirmation\AbstractOrderConfirmationBlock::email_verification_required:          7
+WC_Cart::needs_shipping                                                           :          7
+Automattic\WooCommerce\Proxies\LegacyProxy::call_function                         :          7
+WC_Product::get_gallery_image_ids                                                 :          7
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_block_type_script     :          7
+WC_Product::get_downloadable                                                      :          7
+WC_Product::get_review_count                                                      :          7
+current_time                                                                      :          7
+WC_Product::get_average_rating                                                    :          7
+WC_Order::get_payment_method                                                      :          7
+WC_Product::get_availability_class                                                :          7
+WC_Data_Store_WP::filter_raw_meta_data                                            :          7
+WC_Product::get_short_description                                                 :          7
+WC_Product::get_max_purchase_quantity                                             :          6
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_block_type_editor_style:          6
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::get_extended_schema    :          6
+wp_theme_has_theme_json                                                           :          6
+wp_cache_get_last_changed                                                         :          6
+WC_REST_Controller::get_endpoint_args_for_item_schema                             :          6
+WC_Abstract_Order::get_currency                                                   :          6
+WP_REST_Meta_Fields::get_field_schema                                             :          6
+Automattic\WooCommerce\Proxies\LegacyProxy::get_instance_of                       :          6
+WC_Order::get_payment_method_title                                                :          6
+get_user_by                                                                       :          6
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::get_endpoint_args_for_item_schema:          6
+WC_Data_Store::update                                                             :          6
+wc_attribute_taxonomy_slug                                                        :          6
+Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::is_cart_page               :          6
+get_query_template                                                                :          6
+WP_Widget::_register_one                                                          :          6
+WC_Abstract_Order::get_cart_tax                                                   :          6
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::__construct          :          6
+WC_Product::is_publicly_viewable                                                  :          5
+WC_Product::get_upsell_ids                                                        :          5
+WC_Product::get_availability                                                      :          5
+WC_Product::add_to_cart_url                                                       :          5
+WC_Data_Store::create                                                             :          5
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractSchema::get_item_responses_from_schema:          5
+WC_Product::get_cross_sell_ids                                                    :          5
+add_image_size                                                                    :          5
+WC_Cart::get_cart_hash                                                            :          5
+WC_Session_Handler::get_session_data                                              :          5
+Abstract_WC_Order_Item_Type_Data_Store::clear_cache                               :          5
+WC_Abstract_Order::set_total_tax                                                  :          5
+WC_Product::get_description                                                       :          5
+TruffleReflection::scoped                                                         :          5
+wp_has_border_feature_support                                                     :          5
+WC_Product::get_date_on_sale_to                                                   :          5
+WC_Data::add_meta_data                                                            :          5
+WC_Product::get_featured                                                          :          5
+WC_Order::get_order_key                                                           :          5
+WC_Product::get_default_attributes                                                :          5
+WC_Order::get_shipping_country                                                    :          5
+wpdb::add_placeholder_escape                                                      :          5
+Automattic\Jetpack\Connection\Manager::__construct                                :          5
+WC_Product::get_price_html                                                        :          5
+WC_Product::get_dimensions                                                        :          5
+WP_HTML_Tag_Processor::get_token_name                                             :          5
+WooCommerce::load_plugin_textdomain                                               :          5
+Automattic\WooCommerce\Blocks\BlockTypes\Cart::get_block_type_script              :          5
+WC_Order::get_base_data                                                           :          5
+Automattic\WooCommerce\Blocks\BlockTypes\OrderConfirmation\AbstractOrderConfirmationBlock::get_view_order_permissions:          5
+WC_Data_Store::read                                                               :          5
+WC_Product::get_post_password                                                     :          5
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::has_cart_token       :          4
+WC_Product_Variable::is_on_sale                                                   :          4
+WC_Product::get_rating_count                                                      :          4
+post_type_exists                                                                  :          4
+WP_Style_Engine::is_valid_style_value                                             :          4
+Automattic\WooCommerce\Utilities\ArrayUtil::{closure:Automattic\WooCommerce\Utilities\ArrayUtil::get_selector_callback():153}:          4
+wc_get_cart_url                                                                   :          4
+WP_Dependencies::do_items                                                         :          4
+WC_Product::is_featured                                                           :          4
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractRoute::get_item_schema          :          4
+WC_Order::get_address                                                             :          4
+WC_Abstract_Order::get_values_for_total                                           :          4
+load_script_translations                                                          :          4
+Automattic\WooCommerce\StoreApi\Utilities\CartController::load_cart               :          4
+WC_Product_Data_Store_CPT::read_extra_data                                        :          4
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::register_block_type_assets:          4
+WP_HTML_Open_Elements::current_node                                               :          4
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractRoute::get_response_by_request_method:          4
+WC_Product::get_rating_counts                                                     :          4
+wp_add_inline_script                                                              :          4
+WooCommerce::is_request                                                           :          4
+content_url                                                                       :          4
+WC_Product::get_slug                                                              :          4
+wc_add_number_precision_deep                                                      :          4
+WC_Payment_Gateway::init_settings                                                 :          4
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_chunks_paths          :          4
+wc_get_attribute_taxonomy_ids                                                     :          4
+WC_Product::is_shipping_taxable                                                   :          4
+WC_Order_Item::set_order                                                          :          4
+Automattic\WooCommerce\Internal\Admin\Schedulers\ImportScheduler::get_actions     :          4
+wc_get_product_visibility_term_ids                                                :          4
+WP_Widget_Media::__construct                                                      :          4
+Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::update_address_index_meta:          4
+WC_Order::get_date_paid                                                           :          4
+WC_Order::get_data                                                                :          4
+WC_Payment_Gateways::get_available_payment_gateways                               :          4
+Automattic\WooCommerce\Blocks\Integrations\IntegrationRegistry::register          :          4
+WP_REST_Revisions_Controller::__construct                                         :          4
+wp_style_is                                                                       :          4
+map_deep                                                                          :          4
+_get_non_cached_ids                                                               :          4
+DateTime::setTimezone                                                             :          4
+Automattic\WooCommerce\StoreApi\Utilities\CartTokenUtils::get_cart_token_expiration:          4
+block_core_post_template_uses_featured_image                                      :          4
+WC_Product::get_date_on_sale_from                                                 :          4
+ActionScheduler_TimezoneHelper::get_local_timezone_offset                         :          4
+WC_Data::save                                                                     :          4
+WC_Session_Handler::__construct                                                   :          4
+WC_Abstract_Order::get_shipping_total                                             :          4
+WC_Order::get_shipping_state                                                      :          3
+Automattic\WooCommerce\Utilities\ArrayUtil::select                                :          3
+wp_lazyload_term_meta                                                             :          3
+TruffleReflection::method                                                         :          3
+Automattic\WooCommerce\Blocks\Templates\AbstractTemplateCompatibility::init       :          3
+wc_load_cart                                                                      :          3
+WC_Abstract_Order::get_coupon_codes                                               :          3
+WC_Abstract_Order::set_date_modified                                              :          3
+WC_Session_Handler::init_session                                                  :          3
+WooCommerce::initialize_session                                                   :          3
+wc_set_loop_prop                                                                  :          3
+Abstract_WC_Order_Data_Store_CPT::clear_caches                                    :          3
+ActionScheduler_TimezoneHelper::set_local_timezone                                :          3
+Automattic\WooCommerce\StoreApi\Formatters::register                              :          3
+WC_Session_Handler::init                                                          :          3
+Automattic\WooCommerce\Internal\Admin\Logging\FileV2\FileController::get_file_size_limit:          3
+WC_Abstract_Order::set_currency                                                   :          3
+wc_attribute_taxonomy_id_by_name                                                  :          3
+wp_cache_delete_multiple                                                          :          3
+WP_Object_Cache::delete_multiple                                                  :          3
+WC_Abstract_Order::get_cart_subtotal_for_order                                    :          3
+Automattic\WooCommerce\StoreApi\Utilities\CartTokenUtils::get_cart_token          :          3
+Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils::get_templates_directory   :          3
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractRoute::prepare_item_for_response:          3
+WC_Order::get_billing_country                                                     :          3
+WC_Abstract_Order::set_version                                                    :          3
+WP_Scripts::get_inline_script_data                                                :          3
+Automattic\WooCommerce\Blocks\Templates\AbstractTemplateCompatibility::current_template_has_legacy_template_block:          3
+WC_Cart::set_shipping_tax                                                         :          3
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::register_editor_script_asset:          3
+WP_Metadata_Lazyloader::queue_objects                                             :          3
+Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractAddressSchema::sanitize_callback:          3
+Automattic\WooCommerce\Database\Migrations\MetaToCustomTableMigrator::__construct :          3
+wpdb::_real_escape                                                                :          3
+Abstract_WC_Order_Item_Type_Data_Store::__construct                               :          3
+Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils::supports_block_templates  :          3
+WC_Payment_Gateway::is_available                                                  :          3
+WC_Product::set_description                                                       :          3
+Automattic\WooCommerce\StoreApi\Schemas\V1\CheckoutSchema::get_additional_fields_schema:          3
+WC_Abstract_Order::type_to_group                                                  :          3
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::__construct               :          3
+WP_REST_Attachments_Controller::get_endpoint_args_for_item_schema                 :          3
+WP_Dependencies::set_group                                                        :          3
+Automattic\WooCommerce\Blocks\Utils\ProductDescriptionUtils::is_description_accessible:          3
+WC_Product::get_valid_tax_classes                                                 :          3
+wp_recovery_mode                                                                  :          3
+wp_convert_hr_to_bytes                                                            :          3
+WC_Shipping_Rate::set_taxes                                                       :          2
+Automattic\WooCommerce\Blocks\Utils\ProductDescriptionUtils::guarded_format       :          2
+Automattic\WooCommerce\Blocks\BlockTypes\ProductCollection\QueryBuilder::array_merge_recursive_replace_non_array_properties:          2
+WC_Logger::log                                                                    :          2
+WC_Shipping::register_shipping_method                                             :          2
+WC_Product_Simple::__construct                                                    :          2
+Automattic\WooCommerce\Blocks\Templates\ClassicTemplatesCompatibility::init       :          2
+WC_Abstract_Order::get_fees                                                       :          2
+WC_Abstract_Privacy::__construct                                                  :          2
+WP_Rewrite::add_rewrite_tag                                                       :          2
+rest_get_route_for_post                                                           :          2
+WC_Order::get_billing_state                                                       :          2
+WP_Theme_JSON::resolve_custom_css_format                                          :          2
+WC_Payment_Gateway::get_order_total                                               :          2
+WC_Order::get_cart_hash                                                           :          2
+rest_get_route_for_post_type_items                                                :          2
+rest_get_queried_resource_route                                                   :          2
+WP_Theme_JSON::update_paragraph_text_indent_selector                              :          2
+WC_Shipping_Flat_Rate::__construct                                                :          2
+WP_REST_Autosaves_Controller::get_collection_params                               :          2
+{closure:make_after_block_visitor():1670}                                         :          2
+WP_Query::init                                                                    :          2
+Automattic\WooCommerce\Internal\Admin\Schedulers\ImportScheduler::init            :          2
+WC_Data_Store_WP::add_meta                                                        :          2
+WC_Order::maybe_set_date_paid                                                     :          2
+WC_Order::update_status                                                           :          2
+WC_Data::get_meta_cache_key                                                       :          2
+WP_Recovery_Mode::get_email_rate_limit                                            :          2
+WC_Order::get_shipping_city                                                       :          2
+WP_HTML_Tag_Processor::get_token_type                                             :          2
+Automattic\WooCommerce\Internal\Admin\Logging\FileV2\FileController::write_to_file:          2
+WC_Abstract_Order::set_cart_tax                                                   :          2
+get_block_theme_folders                                                           :          2
+WP_REST_Terms_Controller::__construct                                             :          2
+get_userdata                                                                      :          2
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::add_response_headers :          2
+Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::update_order_meta:          2
+Automattic\WooCommerce\Blocks\Templates\AbstractTemplateCompatibility::set_compatibility_layer_flag:          2
+WC_Order_Item_Product_Data_Store::save_item_data                                  :          2
+WC_Order::set_payment_method                                                      :          2
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::load_cart_session    :          2
+WP_Scripts::get_inline_script_tag                                                 :          2
+WC_Customer_Data_Store_Session::save_to_session                                   :          2
+WC_Data_Store_WP::read_meta                                                       :          2
+WC_Shipping_Method::get_rates_for_package                                         :          2
+ActionScheduler_Abstract_Schema::register_tables                                  :          2
+WC_Order::get_shipping_postcode                                                   :          2
+WC_Email::setup_locale                                                            :          2
+Automattic\WooCommerce\Utilities\OrderUtil::remove_status_prefix                  :          2
+Automattic\Jetpack\Autoloader\jpeb35ca63f2409e94839b80ff9a2b637d\al5_0_0\Plugin_Locator::convert_plugins_to_paths:          2
+wc_get_product_term_ids                                                           :          2
+WC_Product::set_price                                                             :          2
+get_theme_file_path                                                               :          2
+WC_Order::maybe_set_date_completed                                                :          2
+add_site_option                                                                   :          2
+Automattic\WooCommerce\Caching\WPCacheEngine::get_cached_object                   :          2
+WC_Order_Item_Shipping_Data_Store::save_item_data                                 :          2
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_low_stock_remaining :          2
+Automattic\WooCommerce\Blocks\Domain\Bootstrap::__construct                       :          2
+get_status_header_desc                                                            :          2
+WP_Scripts::is_valid_fetchpriority                                                :          2
+Automattic\WooCommerce\Internal\Email\EmailLogger::{closure:Automattic\WooCommerce\Internal\Email\EmailLogger::resolve_recipient():305}:          2
+WC_Email::restore_locale                                                          :          2
+WP_Block_Bindings_Source::get_value                                               :          2
+WC_Customer_Data_Store_Session::create                                            :          2
+ReflectionClass::getConstructor                                                   :          2
+WC_Product::set_attributes                                                        :          2
+WP_Script_Modules::get_highest_fetchpriority                                      :          2
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::get_cart_token       :          2
+Automattic\WooCommerce\StoreApi\RoutesController::get_all_routes                  :          2
+wc_round_tax_total                                                                :          2
+WP_Dependencies::dequeue                                                          :          2
+WP_HTML_Processor::get_adjusted_current_node                                      :          2
+Abstract_WC_Order_Item_Type_Data_Store::create                                    :          2
+WC_Shipping_Rate::set_cost                                                        :          2
+Automattic\WooCommerce\Blocks\Templates\SingleProductTemplateCompatibility::{closure:Automattic\WooCommerce\Blocks\Templates\SingleProductTemplateCompatibility::wrap_single_product_template():290}:          2
+ActionScheduler_DBStore::query_actions                                            :          2
+WC_Cart_Session::remove_shipping_for_package_from_session                         :          2
+WP_Background_Process::__construct                                                :          2
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::register_chunk_translations:          2
+WC_REST_Controller::add_additional_fields_schema                                  :          2
+WP_Widget::_register                                                              :          2
+Automattic\WooCommerce\StoreApi\Routes\V1\ProductsById::get_route_response        :          2
+WC_Abstract_Order::get_discount_total                                             :          2
+_inject_theme_attribute_in_template_part_block                                    :          2
+WC_Abstract_Order::get_version                                                    :          2
+{closure:make_before_block_visitor():1614}                                        :          2
+WP_Textdomain_Registry::set                                                       :          2
+wc_implode_html_attributes                                                        :          2
+Automattic\WooCommerce\Admin\Features\Features::get_instance                      :          2
+WP_Style_Engine::store_css_rule                                                   :          2
+__checked_selected_helper                                                         :          2
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_images              :          2
+WC_Email::send_notification                                                       :          2
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_remaining_stock     :          2
+WP_Textdomain_Registry::get                                                       :          2
+WP_Object_Cache::get_multiple                                                     :          1
+_add_block_template_info                                                          :          1
+wc_restore_locale                                                                 :          1
+WC_Abstract_Order::set_prices_include_tax                                         :          1
+WP_Style_Engine::compile_css                                                      :          1
+Automattic\Jetpack\Assets::{closure:Automattic\Jetpack\Assets::register_script():374}:          1
+_config_wp_siteurl                                                                :          1
+Automattic\WooCommerce\StoreApi\Utilities\OrderController::create_order_from_cart :          1
+Automattic\WooCommerce\StoreApi\Routes\V1\Checkout::update_customer_address_field :          1
+WC_Cart_Session::{closure:WC_Cart_Session::dedupe_cookies():414}                  :          1
+Automattic\WooCommerce\StoreApi\RoutesController::get                             :          1
+Automattic\WooCommerce\Blocks\Package::{closure:Automattic\WooCommerce\Blocks\Package::container():105}:          1
+WP_Font_Utils::apply_sanitizer                                                    :          1
+WC_Product_Variation_Data_Store_CPT::generate_product_title                       :          1
+WC_Abstract_Order::set_shipping_total                                             :          1
+WC_Order::set_payment_method_title                                                :          1
+WC_Order::set_billing_email                                                       :          1
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::{closure:Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_item_response():601}:          1
+WP_Block_Metadata_Registry::find_collection_path                                  :          1
+WP_Post_Type::add_supports                                                        :          1
+WC_Order::set_created_via                                                         :          1
+WC_Product::set_sold_individually                                                 :          1
+WP_REST_Settings_Controller::get_item_schema                                      :          1
+wc_tokenize_path                                                                  :          1
+Automattic\WooCommerce\StoreApi\Routes\V1\Checkout::get_route_post_response       :          1
+WP_Block_Supports::register_attributes                                            :          1
+WC_Order::get_total_refunded                                                      :          1
+WC_Abstract_Order::set_discount_tax                                               :          1
+Automattic\WooCommerce\Admin\Features\Features::should_load_features              :          1
+_wptexturize_pushpop_element                                                      :          1
+_config_wp_home                                                                   :          1
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::is_password_protected   :          1
+Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils::should_use_blockified_product_grid_templates:          1
+WP_Style_Engine::get_classnames                                                   :          1
+WC_Meta_Data::get_changes                                                         :          1
+Automattic\WooCommerce\Internal\BatchProcessing\BatchProcessingController::enqueue_processor:          1
+WC_Abstract_Order::set_shipping_tax                                               :          1
+wc_timezone_offset                                                                :          1
+WC_Cart_Session::find_cookie_by_name                                              :          1
+Automattic\WooCommerce\Blocks\Templates\ClassicTemplatesCompatibility::__construct:          1
+WooCommerce::frontend_includes                                                    :          1
+wp_get_schedules                                                                  :          1
+Automattic\WooCommerce\Blocks\Utils\ProductAvailabilityUtils::get_product_availability:          1
+wp_logout_url                                                                     :          1
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractRoute::get_response             :          1
+WC_Abstract_Order::set_date_created                                               :          1
+Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::create    :          1
+WP_Recovery_Mode::get_link_ttl                                                    :          1
+Automattic\WooCommerce\Internal\Admin\Logging\LogHandlerFileV2::handle            :          1
+ActionScheduler_DBStore::{closure:ActionScheduler_DBStore::get_group_ids():358}   :          1
+wp_parse_str                                                                      :          1
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::{closure:Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_item_response():609}:          1
+WP_Scripts::get_eligible_loading_strategy                                         :          1
+WC_Payment_Gateways::__construct                                                  :          1
+WP_Taxonomy::__construct                                                          :          1
+Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::get_grouped_products    :          1
+WP_Font_Face_Resolver::to_theme_file_uri                                          :          1
+WC_Product_Variable_Data_Store_CPT::read_product_data                             :          1
+WC_Order::set_order_key                                                           :          1
+WP_Block_Metadata_Registry::get_metadata                                          :          1
+Automattic\WooCommerce\Caching\ObjectCache::get                                   :          1
+WC_Order::set_customer_user_agent                                                 :          1
+WP_Recovery_Mode_Cookie_Service::is_cookie_set                                    :          1
+WC_Breadcrumb::generate                                                           :          1
+WP_Block_Parser_Frame::__construct                                                :          1
+WC_Countries::get_continent_code_for_country                                      :          1
+WC_Order::set_customer_ip_address                                                 :          1
+Automattic\WooCommerce\Admin\API\Init::instance                                   :          1
+WC_Cart::needs_payment                                                            :          1
+Automattic\WooCommerce\Admin\API\Init::__construct                                :          1
+ActionScheduler_Store::get_scheduled_date_string_local                            :          1
+ReflectionClass::getMethod                                                        :          1
+Automattic\WooCommerce\Internal\Brands::init                                      :          1
+WC_Abstract_Order::set_total                                                      :          1
+get_theme_file_uri                                                                :          1
+Automattic\WooCommerce\Blocks\DependencyDetection::is_woocommerce_script          :          1
+Automattic\WooCommerce\Blocks\BlockTypes\ProductTemplate::block_core_post_template_uses_featured_image:          1
+Automattic\WooCommerce\Blocks\Templates\SingleProductTemplateCompatibility::wrap_single_product_template:          1
+WP_REST_Settings_Controller::register_routes                                      :          1
+Automattic\WooCommerce\Internal\Email\EmailLogger::resolve_recipient              :          1
+WC_Order::set_customer_id                                                         :          1
+WC_Product::set_sale_price                                                        :          1
+WC_Product::set_tax_status                                                        :          1
+Automattic\WooCommerce\StoreApi\Routes\V1\AbstractCartRoute::check_nonce          :          1
+wc_switch_to_site_locale                                                          :          1
+Automattic\WooCommerce\Database\Migrations\CustomOrderTable\PostsToOrdersMigrationController::get_migrated_meta_keys:          1
+Automattic\WooCommerce\Blocks\Templates\SingleProductTemplateCompatibility::add_compatibility_layer:          1
+wp_nonce_url                                                                      :          1
+WC_Product_Data_Store_CPT::update_or_delete_post_meta                             :          1
+WP_Textdomain_Registry::get_paths_for_domain                                      :          1
+TruffleReflection::constructible                                                  :          1
+wp_get_theme_data_template_parts                                                  :          1
+WP_REST_Posts_Controller::__construct                                             :          1
+ReflectionClass::newInstance                                                      :          1
+ReflectionClass::hasMethod                                                        :          1
+Automattic\WooCommerce\Admin\ReportsSync::init                                    :          1
+WC_Order::set_cart_hash                                                           :          1
+WP_Interactivity_API::process_directives                                          :          1
+ActionScheduler_DBLogger::log                                                     :          1
+WC_Order::set_customer_note                                                       :          1
+WC_Product::set_regular_price                                                     :          1
+Automattic\WooCommerce\StoreApi\Utilities\QuantityLimits::adjust_product_quantity_limit:          1
+_add_block_template_part_area_info                                                :          1
+Abstract_WC_Order_Data_Store_CPT::get_post_status                                 :          1
+Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore::set_order_prop:          1
+Automattic\WooCommerce\Blocks\BlockTypesController::block_should_have_data_attributes:          1
+WC_Product_Data_Store_CPT::read_stock_quantity                                    :          1
+WP_Scripts::set_group                                                             :          1
+WP_Widget_Media::_register_one                                                    :          1
+wc_get_attribute_taxonomy_labels                                                  :          1
+Automattic\WooCommerce\Admin\Features\Features::__construct                       :          1
+Automattic\WooCommerce\Blocks\Domain\Services\DraftOrders::init                   :          1
+WC_Product::set_stock_quantity                                                    :          1
+Automattic\WooCommerce\StoreApi\Schemas\V1\CheckoutSchema::__construct            :          1
+Automattic\Jetpack\Autoloader\jpeb35ca63f2409e94839b80ff9a2b637d\al5_0_0\Plugin_Locator::find_using_option:          1
+Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::{closure:Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::shipping_methods_exist():94}:          1
+wp_get_theme_data_custom_templates                                                :          1
+WC_Abstract_Order::set_discount_total                                             :          1
+--- NODES
+class pl.codeloom.php.nodes.call.MethodCallNodeFactory$DispatchNodeGen                                                  :       1550
+class pl.codeloom.php.nodes.expr.ConstantNodesFactory$StableValueNodeGen                                                :        491
+class pl.codeloom.php.nodes.ToBooleanNodeGen                                                                            :        301
+class pl.codeloom.php.nodes.call.CallableDispatchNodeGen                                                                :        262
+class pl.codeloom.php.nodes.expr.CompareNodesFactory$IdenticalNodeGen                                                   :        255
+class pl.codeloom.php.nodes.SubclassTestNodeGen                                                                         :        144
+class pl.codeloom.php.nodes.call.NewNodeFactory$ConstructNodeGen                                                        :         61
+class pl.codeloom.php.nodes.expr.AssignNodesFactory$AssignNodeGen                                                       :         58
+class pl.codeloom.php.nodes.expr.UnaryNodesFactory$ToLongNodeGen                                                        :         44
+class pl.codeloom.php.nodes.stmt.ForeachNodeFactory$BindNodeGen                                                         :         27
+class pl.codeloom.php.nodes.expr.UnaryNodesFactory$ToStringNodeGen                                                      :         26
+class pl.codeloom.php.nodes.call.InstantiateNodeGen                                                                     :         26
+class pl.codeloom.php.nodes.vars.ElementNodesFactory$ElementReadNodeGen                                                 :         25
+class pl.codeloom.php.nodes.intrinsics.BuiltinNodesFactory$InArrayNodeGen                                               :         17
+class pl.codeloom.php.nodes.expr.CompareNodesFactory$LessNodeGen                                                        :         15
+class pl.codeloom.php.nodes.call.StaticCallNodeFactory$DispatchNodeGen                                                  :         11
+class pl.codeloom.php.nodes.intrinsics.BuiltinNodesFactory$KeyExistsNodeGen                                             :          6
+class pl.codeloom.php.nodes.expr.CompareNodesFactory$EqualNodeGen                                                       :          5
+class pl.codeloom.php.nodes.expr.UnaryNodesFactory$ToDoubleNodeGen                                                      :          4
+class pl.codeloom.php.nodes.expr.ArithmeticNodesFactory$ConcatNodeGen                                                   :          2
+class pl.codeloom.php.nodes.intrinsics.BuiltinNodesFactory$CaseNodeGen                                                  :          2
+class pl.codeloom.php.nodes.intrinsics.BuiltinNodesFactory$SubstrNodeGen                                                :          1
+class pl.codeloom.php.nodes.expr.ArithmeticNodesFactory$MulNodeGen                                                      :          1
+class pl.codeloom.php.nodes.intrinsics.BuiltinNodesFactory$TrimNodeGen                                                  :          1

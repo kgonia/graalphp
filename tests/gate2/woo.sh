@@ -20,7 +20,8 @@
 #   (woo_check.py). Results in target/$WPN_NAME/load.
 # Usage: tests/gate2/woo.sh db | volume | setup | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
 #        | walk VARIANT PORT | compare A B | dbrows NAME | fpm-image | load VARIANT THREADS TAG LEVELS...
-#        | k6 VARIANT IP VUS DURATION BUY NAME | bench ROUNDS LEVELS... | clean
+#        | k6 VARIANT IP VUS DURATION BUY NAME | bench ROUNDS LEVELS... | memrun VARIANT THREADS TAG VUS DURATION
+#        | diag TAG DURATION | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$(pwd -W 2>/dev/null || pwd)
@@ -216,7 +217,7 @@ cpu_lock() {
   until mkdir $CPU_LOCK 2> /dev/null; do
     echo "CPUs 14-21 are taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1); waiting"; sleep 60
   done
-  echo "claude-wordpress-$P (wordpress-woo): woo.sh load $*, since $(date '+%F %T')" > $CPU_LOCK/note
+  echo "claude-wordpress-$P ($(basename "$root")): woo.sh $*, since $(date '+%F %T')" > $CPU_LOCK/note
 }
 cpu_unlock() {
   rm -rf $CPU_LOCK
@@ -279,7 +280,8 @@ memrun() {
   SEED=seed-load reset_db
   cpu_lock "memrun $variant $threads $tag $vus $duration"
   trap cpu_unlock EXIT
-  THREADS=$threads start $variant 14-21 8096
+  # the run's directory is the server's /out: JAVA_OPTS may log there (-Dpolyglot.log.file=/out/engine.log)
+  WC_DOCKER_ARGS="-v $root/$dir:/out ${WC_DOCKER_ARGS:-}" THREADS=$threads start $variant 14-21 8096
   if [ "$variant" != fpm ]; then
     ( while [ ! -e "$dir/stop" ]; do
         sleep ${SNAP:-60}
@@ -347,6 +349,44 @@ load() {
   trap - EXIT
 }
 
+# diag TAG DURATION: a diagnosis run, not timed (wiki/pe-round4-diagnosis.md): one JVM server's life on DIAG_CPUS
+# (default 6-13, off the benchmark cores) from the load seed, THREADS (default 16) threads, VUS (default 16) k6 users
+# half buying for DURATION. JAVA_OPTS carries the trace options; the engine's log goes to target/$P/diag/TAG/engine.log
+# (polyglot.log.file), the server's output to server.log. At the end the server closes its engine
+# (php.http.closeFile), which prints what an engine prints at its close (CompilationStatistics,
+# TraceSplittingSummary). Run beside a benchmark only under another WPN_NAME, WPN_NET and WPN_DB_PORT, with its
+# database off the benchmark's CPUs (WPN_DB_CPUS). DIAG_SEED=gate2-seed (target/$P/gate2-seed.sql, Gate 2's database:
+# WooCommerce inactive) runs plain WordPress instead, under VUS curl loops over Gate 2's front-end pages.
+diag() {
+  local tag=$1 duration=$2 dir=$out/diag/$1 port=${DIAG_PORT:-8098}
+  rm -rf "$dir" && mkdir -p "$dir"
+  stop jvm
+  SEED=${DIAG_SEED:-seed-load} reset_db
+  WC_DOCKER_ARGS="-v $root/$dir:/out ${WC_DOCKER_ARGS:-}" \
+    JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close ${JAVA_OPTS:-}" \
+    THREADS=${THREADS:-16} start jvm "${DIAG_CPUS:-6-13}" $port
+  if [ -z "${DIAG_SEED:-}" ]; then
+    k6_run jvm 13 "${VUS:-16}" "$duration" 0.5 $tag-diag
+  else
+    local end=$(($(date +%s) + ${duration%s})) i
+    for i in $(seq "${VUS:-16}"); do
+      ( while [ "$(date +%s)" -lt $end ]; do
+          for page in / "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" "/?s=hello" "/?rest_route=/wp/v2/posts"; do
+            curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:$port$page" || true
+          done
+        done ) &
+    done
+    wait
+  fi
+  # the engine closes after the next request
+  touch "$dir/close"
+  curl -s -o /dev/null "http://127.0.0.1:$port/wp-includes/css/dashicons.css" || true
+  timeout 900 docker wait $P-jvm > /dev/null 2>&1 || echo "$P-jvm did not close its engine in 900 s"
+  docker logs $P-jvm > "$dir/server.log" 2>&1 || true
+  stop jvm
+  echo "$tag: $(grep -c '^\[engine\] opt done' "$dir/engine.log" || true) compilations, engine.log $(du -h "$dir/engine.log" | cut -f1)"
+}
+
 clean() {
   for c in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f "$c" > /dev/null; done
   docker volume rm $P-site > /dev/null 2>&1 || true
@@ -368,7 +408,8 @@ case ${1:-} in
   load) shift; load "$@" ;;
   bench) shift; bench "$@" ;;
   memrun) shift; memrun "$@" ;;
+  diag) shift; diag "$@" ;;
   k6) shift; k6_run "$@" ;;
   clean) clean ;;
-  *) sed -n 2,22p "$0"; exit 2 ;;
+  *) sed -n 2,24p "$0"; exit 2 ;;
 esac

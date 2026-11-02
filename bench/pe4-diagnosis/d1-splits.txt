@@ -1,0 +1,135 @@
+polymorphic events: 3335; outcomes: {'Early return: true': 1797, 'Return: true': 1342, 'One caller! Analysing parent.': 1280, 'Early return: false': 817, 'Set needs split to true': 721, 'Return: false': 659, 'Set needs split to true via parent': 621}
+splits made (engine.TraceSplitting): 6258 of 534 functions; refused as too big (over SplittingMaxCalleeSize): 2978 of 342 functions
+
+node classes reporting polymorphism (30): events; split functions whose own nodes reported it, and their splits (a function with several classes counts for each)
+     1550   228 fns   3264 splits  MethodCallNodeFactory.DispatchNodeGen
+      491    23 fns    145 splits  ConstantNodesFactory.StableValueNodeGen
+      301    46 fns    327 splits  ToBooleanNodeGen
+      262    21 fns    196 splits  CallableDispatchNodeGen
+      255    47 fns    537 splits  CompareNodesFactory.IdenticalNodeGen
+      144    28 fns    256 splits  SubclassTestNodeGen
+       61     6 fns    106 splits  NewNodeFactory.ConstructNodeGen
+       58    16 fns   1021 splits  AssignNodesFactory.AssignNodeGen
+       44     4 fns    208 splits  UnaryNodesFactory.ToLongNodeGen
+       27    10 fns     34 splits  ForeachNodeFactory.BindNodeGen
+       26     7 fns    257 splits  UnaryNodesFactory.ToStringNodeGen
+       26     8 fns    115 splits  InstantiateNodeGen
+       25     5 fns     82 splits  ElementNodesFactory.ElementReadNodeGen
+       17     5 fns     52 splits  BuiltinNodesFactory.InArrayNodeGen
+       15     4 fns      7 splits  CompareNodesFactory.LessNodeGen
+       11     3 fns      7 splits  StaticCallNodeFactory.DispatchNodeGen
+        6     1 fns     65 splits  BuiltinNodesFactory.KeyExistsNodeGen
+        5     0 fns      0 splits  CompareNodesFactory.EqualNodeGen
+        4     3 fns      7 splits  UnaryNodesFactory.ToDoubleNodeGen
+        2     1 fns     38 splits  BuiltinNodesFactory.CaseNodeGen
+        2     1 fns      5 splits  ArithmeticNodesFactory.ConcatNodeGen
+        1     0 fns      0 splits  ArithmeticNodesFactory.MulNodeGen
+        1     0 fns      0 splits  BuiltinNodesFactory.SubstrNodeGen
+        1     0 fns      0 splits  BuiltinNodesFactory.TrimNodeGen
+  splits of functions none of whose own nodes reported polymorphism (split for a callee, via parent): 894 of 6258
+
+functions split most (30): splits, AST, needs split direct / via parent, the node classes reporting in it
+     947 AST  106    1/3    WC_Data::get_prop   [DispatchNodeGen 4, AssignNodeGen 4]
+     203 AST   51    3/17   absint   [ToLongNodeGen 27]
+     200 AST   79    1/0    WC_Data::set_prop   [IdenticalNodeGen 2]
+     158 AST   39    1/2    esc_attr   [ToStringNodeGen 4]
+      95 AST   34    1/3    Automattic\WooCommerce\Blocks\Registry\SharedType::get   [-]
+      94 AST   54    1/0    Automattic\WooCommerce\Blocks\Registry\Container::get   [-]
+      90 AST   22    1/0    is_wp_error   [SubclassTestNodeGen 3]
+      72 AST   78    1/0    WP_REST_Controller::add_additional_fields_schema   [DispatchNodeGen 4]
+      67 AST   14    1/0    WC_Product::get_manage_stock   [DispatchNodeGen 1]
+      65 AST   59    1/7    WP_Object_Cache::_exists   [KeyExistsNodeGen 6, ElementReadNodeGen 3]
+      65 AST   18    1/0    WC_Product::get_parent_id   [DispatchNodeGen 3]
+      62 AST   29    1/0    WC_Product::managing_stock   [DispatchNodeGen 3]
+      60 AST   18    1/0    WC_Product::get_status   [DispatchNodeGen 3]
+      59 AST  145    1/0    WC_Order::get_address_prop   [DispatchNodeGen 1]
+      58 AST   79    1/2    Automattic\WooCommerce\StoreApi\SchemaController::get   [ConstructNodeGen 12, InstantiateNodeGen 4]
+      58 AST   27    1/0    WC_Product::is_type   [DispatchNodeGen 2]
+      57 AST   32    1/0    WC_Settings_API::get_form_fields   [CallableDispatchNodeGen 6]
+      57 AST   16    1/0    WC_Product::get_price   [DispatchNodeGen 2]
+      56 AST   14    1/0    WC_Product::get_stock_status   [DispatchNodeGen 1]
+      54 AST  168    1/3    WC_Settings_API::get_option   [DispatchNodeGen 20]
+      54 AST   39    1/0    esc_html   [ToStringNodeGen 1]
+      53 AST  142    0/17   wp_get_theme   [StableValueNodeGen 54]
+      50 AST   11    1/0    WP_HTML_Tag_Processor::next_token   [DispatchNodeGen 4]
+      48 AST   94    1/2    WP_Object_Cache::delete   [-]
+      46 AST   15    1/0    wp_cache_delete   [-]
+      45 AST   91    1/5    block_has_support   [IdenticalNodeGen 14]
+      42 AST   88    1/0    WP_HTML_Tag_Processor::next_tag   [DispatchNodeGen 3]
+      42 AST  137    1/0    WP_HTML_Tag_Processor::matches   [DispatchNodeGen 3]
+      41 AST   33    1/6    Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value   [CallableDispatchNodeGen 16]
+      41 AST   61    1/7    WC_Data_Store::__call   [CallableDispatchNodeGen 12]
+
+refused splits, most (10):
+     518 get_option
+     224 _wp_specialchars
+     104 get_post
+      91 register_block_type_from_metadata
+      81 WP_HTML_Tag_Processor::base_class_next_token
+      71 WP_REST_Controller::get_context_param
+      70 WC_Abstract_Order::get_items
+      54 WP_Theme::__construct
+      54 wpdb::prepare
+      53 wc_format_decimal
+
+engine.TraceSplittingSummary at the engine's close (first 60 lines):
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :     265506
+Split limit (limit for the number of nodes to create through splitting)           :     996285
+Splits (number of targets created through splitting)                              :       6265
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :     265788
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     665556
+Increase in nodes                                                                 :     39.93%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :      31913
+Percent of split nodes wasted                                                     :     12.01%
+Targets wasted due to splitting                                                   :        710
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS
+WC_Data::get_prop                                                                 :        947
+absint                                                                            :        203
+WC_Data::set_prop                                                                 :        200
+esc_attr                                                                          :        158
+Automattic\WooCommerce\Blocks\Registry\SharedType::get                            :         95
+Automattic\WooCommerce\Blocks\Registry\Container::get                             :         94
+is_wp_error                                                                       :         90
+WP_REST_Controller::add_additional_fields_schema                                  :         72
+WC_Product::get_manage_stock                                                      :         67
+WC_Product::get_parent_id                                                         :         65
+WP_Object_Cache::_exists                                                          :         65
+WC_Product::managing_stock                                                        :         62
+WC_Product::get_status                                                            :         60
+WC_Order::get_address_prop                                                        :         59
+WC_Product::is_type                                                               :         58
+Automattic\WooCommerce\StoreApi\SchemaController::get                             :         58
+WC_Settings_API::get_form_fields                                                  :         57
+WC_Product::get_price                                                             :         57
+WC_Product::get_stock_status                                                      :         56
+WC_Settings_API::get_option                                                       :         54
+esc_html                                                                          :         54
+wp_get_theme                                                                      :         53
+WP_HTML_Tag_Processor::next_token                                                 :         51
+WP_Object_Cache::delete                                                           :         48
+wp_cache_delete                                                                   :         46
+block_has_support                                                                 :         45
+WP_HTML_Tag_Processor::next_tag                                                   :         43
+WP_HTML_Tag_Processor::matches                                                    :         42
+Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value      :         41
+WC_Data_Store::__call                                                             :         41
+WC_Product::get_backorders                                                        :         41
+WP_REST_Controller::get_endpoint_args_for_item_schema                             :         41
+WC_Session::set                                                                   :         40
+wp_is_block_theme                                                                 :         40
+wc_get_page_id                                                                    :         40
+wc_string_to_bool                                                                 :         38
+WC_Data::maybe_read_meta_data                                                     :         37
+WC_Abstract_Order::get_status                                                     :         35
+WP_Widget_Factory::register                                                       :         34
+get_theme_root                                                                    :         34
+register_widget                                                                   :         33
+wp_parse_url                                                                      :         33
+wp_should_skip_block_supports_serialization                                       :         32
+WC_Product::is_in_stock                                                           :         31
+Automattic\WooCommerce\Blocks\Integrations\IntegrationRegistry::initialize        :         30
+has_filter                                                                        :         30
+WP_HTML_Tag_Processor::get_updated_html                                           :         30

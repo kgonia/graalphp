@@ -1,0 +1,459 @@
+# Partial evaluation round 4: what WooCommerce makes Truffle compile, and why it never stops (diagnosis, 2026-11-02)
+
+## Question
+[woocommerce.md](woocommerce.md) (#21) found a JVM serving WooCommerce at a quarter of php-fpm's orders, a page costing
+0.46 CPU-s against 0.11, compilation that never settles (12,346 compilations of 10,482 call targets in 15 minutes,
+`WC_Data::get_prop` 462 times), `WP_Query::get_posts` at 115-122k IR nodes against ~60k on WordPress, a property
+default's `ThunkRootNode` failing after 60 s, and libgraal's heap bursting to 5.8 GB. This page measures and explains,
+for the owner to choose round 4's work: what the largest compilations are made of, why compilation doesn't settle,
+what a cap on libgraal's heap does, what #19 (round 3) and #20 (allocations) did to WooCommerce, and the targets,
+ranked. Nothing here changes the interpreter: the branch `pe4-diagnosis` (on `woocommerce` after its merge of main,
+`b6ca11c`) adds diagnosis scripts only.
+
+## Short answer
+1. **The largest compilations are run-once code and their own bodies, never inlined callees.** The three largest are
+   a file's top level and a property default that run once per request: the Jetpack classmap (272,886 IR nodes after
+   PE, 921,612 before PE's cleanup; times out after 100-358 s), `PaymentsExtensionSuggestions::$country_extensions`
+   (217,076; fails after 74-100 s on an oopmap limit) and `states.php` (105,599; code too large). Then
+   `WP_Query::get_posts` (53,424), `wp-settings.php`, `WP_Theme_JSON::sanitize`, `get_block_nodes`: no PHP callee
+   is inlined into any of them (they start over Truffle's 12,000-node budget); their IR is our Java per operation:
+   frame states 19-35%, holder counts up to 21%, element reads up to 26%, locals 12-27%, a user function's call and
+   its per-context lookup up to 40%. **`get_posts` did not double:** #21 compared its IR after Graal (115-122k) with
+   WordPress's after PE (~60k); like for like WooCommerce's is 11-18% larger (more of its paths run).
+2. **Compilation doesn't settle because of volume, not instability:** ~10,400 call targets in 15 minutes, 3%
+   recompiled; the queue holds 300-700 tasks the whole time, and Truffle raises the thresholds with its load (×3-13),
+   so first compilations trickle in for as long as we measured. By time, tier 2 is 49-53% of compilation, split
+   copies 9-15%, the three failed giants 9-11%. **Splits** (6,258 in 15 minutes) come mostly from
+   `MethodCallNode.Dispatch` reporting polymorphism on receivers of many classes that resolve to one method
+   (`WC_Data::get_prop` 947 splits, 458 compiled); also `AssignNode`, `===`, `ToBoolean`, `instanceof`, `ToString`,
+   `ToLong`, and `StableValueNode`, which can never stabilize across requests.
+3. **libgraal: one isolate per compiler thread**, rebuilt after a second idle (70 lives in 12 minutes), so
+   `-Djdk.graal.internal.MaxHeapSize` caps each isolate. A compilation over its cap fails with an `OutOfMemoryError`
+   and its function stays interpreted; the server is unharmed. **The burst is the giants compiling at the same
+   time:** on a quiet box 3.1-3.6 GB of libgraal on the merged build, 5.3-5.4 GB on `866e156`. A 2 GB cap was never
+   reached, 1 GB stopped only the classmap, 256 MB stopped the giants early and one or two ordinary compilations
+   (RssAnon 1.9 GB against 5.0). **One compiler thread: no loss in three interleaved rounds** (10.9/12.6/15.4 against
+   10.5/9.8/15.3 pages/s), 62% less compiler CPU, 40-50% less memory.
+4. **#19 and #20 on WooCommerce:** in the memruns on a quiet box +12-28% pages/s, −10-22% CPU-s per page, −22-27% p99,
+   −30-37% memory.peak (8.1/7.4 → 5.2/5.1 GB); **at steady state (six interleaved rounds after 300 s of warm-up, every
+   visitor buying) no difference in orders/s or CPU-s per page (−1%, +1%)**, memory.peak −8%: the gain is in the first
+   minutes, while compilation dominates. The first server of a round won all six rounds, whichever build, so only the
+   reversed order makes the A/B fair.
+5. **Round 4's targets, ranked** (section 5): don't compile run-once code that can't pay back (or make its literals
+   templates); dispatch keyed on the resolved method; `defined()` as a node; a user function's call without the
+   per-context lookup; holder counts out of line; polymorphism reported only where a copy helps; and, the owner's
+   choice of flags, fewer compiler threads or a per-isolate cap.
+
+## Setup
+- **The store and the load** are #21's: `tests/gate2/woo.sh`, WooCommerce 11.2.1 on WordPress 7.2-beta1, the load
+  seed, k6 on CPUs 0-5 with 16 users, half of them buying unless said otherwise, `HttpMain --threads 16`, Gate 2's
+  `SERVER_OPTS`, GraalVM 25.4.4.1.1 (libgraal), the tree interpreter.
+- **Two stacks.** The timed runs (`bench/pe4-diagnosis/runs.sh`) ran on `pe4-*` (server on CPUs 14-21 under the CPU
+  lock, database on 22-23); the diagnosis runs (`bench/pe4-diagnosis/diag.sh`, `woo.sh diag`) on `pe4d-*` (server on
+  6-13, database on 12-13), beside the first timed runs (until 14:23: the A/B's rounds 1-3 and the memruns' rounds
+  1-2). The diagnosis runs are slow (6 pages/s under the full trace against 10-15 untraced) and only their counts are
+  read, never their times as such.
+- **The box's load:** 47-65% of its 24 CPUs busy while the diagnosis server ran, 35-38% later
+  (`tests/gate2/hostload.py`, from a sampler of `/proc/stat`; the server under test alone is a third). Every timed
+  comparison is interleaved, so both sides of a round saw the same load; across rounds throughput moved by up to
+  50% with it, so compare within a round.
+- **Builds:** "after" is `b6ca11c` (`target/classes`), "before" is `866e156` (`target/classes-before`, #21's code
+  without #19 and #20), both mounted into the server (`DEV=1 DEV_CLASSES`).
+
+### The tools, following Optimizing.md
+[Optimizing.md](https://github.com/oracle/graal/blob/master/truffle/docs/Optimizing.md) (read 2026-11-02) lists the
+tools below. What each gave on this workload, on GraalVM 25.4 with libgraal:
+
+| Tool | What it showed here |
+|---|---|
+| `engine.TraceCompilation`, `TraceCompilationDetails` | every compilation, its tier, wall time (PE + Graal), AST, inlined calls, IR after PE and after Graal, code size; with Details the queue: its size, its load, and the **scaled thresholds** (below) |
+| `engine.CompilationStatistics`, `CompilationStatisticDetails` | at the engine's close: bailouts with **phase timings of the failed compilation**, invalidation and dequeue reasons, splits, Truffle node and Graal node histograms per compilation |
+| `compiler.TraceInlining` | Truffle's inlining per compilation: callees inlined or cut off, their IR estimate |
+| `engine.TraceSplitting`, `SplittingTraceEvents`, `TraceSplittingSummary` | each split and each refused split ("Target too big"), each polymorphic event with **the node class that reported it**, and the summary at close |
+| `compiler.TraceNodeExpansion`, `TraceMethodExpansion` (`truffleTier`) | the IR nodes after PE of one compilation by Truffle node and by Java method; restricted with `engine.CompileOnly`. **The method tree needs `compiler.NodeSourcePositions=true`**: without it every node is charged to `<root>` |
+| `engine.TraceTransferToInterpreter`, `TraceAssumptions`, `-Xlog:deoptimization=debug` | transfers by our source location; HotSpot's traps of Truffle code |
+| `compiler.TracePerformanceWarnings=all` | none, as after round 2 |
+| `cpusampler` with `ShowTiers` | where the requests' time goes, by PHP function and tier (interpreter, tier 1, tier 2) |
+| `compiler.InstrumentBoundaries` | **unusable on 25.4 with libgraal**: every one of 7,968 compilations failed (`ClassCastException: SnippetObjectConstant cannot be cast to HotSpotObjectConstantImpl`) |
+| `-XX:JVMCITraceLevel=1` (not in Optimizing.md) | each JVMCI runtime and libgraal isolate created and shut down, by thread (section 3) |
+| `-Djdk.graal.internal.PrintGC=true` (not in Optimizing.md) | libgraal's collections: heap sizes, pauses, causes (`tests/gate2/libgraal_gc.py`) |
+| `engine.TraceCompilationPolymorphism` | printed nothing |
+| `compiler.MethodExpansionStatistics`, `NodeExpansionStatistics` | printed nothing at the engine's close (as partial-evaluation.md found) |
+| IGV (`-Djdk.graal.Dump=Truffle:1`) | not used: the expansion trees and the Graal node histograms answered the questions without a viewer |
+
+**The optimization log** ([OptimizationLog.md](https://github.com/oracle/graal/blob/master/compiler/docs/OptimizationLog.md):
+`-Djdk.graal.OptimizationLog=Directory`, `OptimizationLogPath`, `TrackNodeSourcePosition=true`) **has no Truffle
+compilation in it**, on libgraal and on jargraal (`-XX:-UseJVMCINativeLibrary`) alike: a run compiling one PHP
+function (`CompileOnly`, confirmed by `TraceCompilation`) wrote 384 compilation units on libgraal, every one a host
+method (HotSpot's JIT compiling Java: `String.startsWith`, `HashMap.putVal`, our `ConcatNode.concat`, the
+interpreter's `profiledPERoot` as Java), and none whose name or positions mention the PHP function. So the
+optimization log and `mx profdiff` cover how Graal compiles the interpreter itself (what runs before a function is
+compiled), not partial evaluation; Truffle's own traces above are the tools for that.
+
+## 1. What the largest compilations are made of
+
+**The largest compilations under the load** (`d1-trace`, 15 minutes, every function; IR nodes after PE and after
+Graal's tiers, wall time of the compilation, PE + Graal; the box was loaded, so the times are long):
+
+| Compilation | AST | IR after PE / after Graal | code | time (PE + Graal) | PHP callees inlined |
+|---|---|---|---|---|---|
+| `jetpack_autoload_classmap.php` (top level) | 26,552 | **272,886** (921,612 before PE's own cleanup) | – | **failed: 100 s timeout** (85 s PE) | 0 of 2 |
+| `PaymentsExtensionSuggestions::$country_extensions` (a `ThunkRootNode`) | 6,365 | **217,076** | – | **failed after 80 s**: "stack offset for oopmap is greater than encoding limit" | 0 |
+| `woocommerce/i18n/states.php` (top level) | 18,640 | 105,599 | – | **failed after 39-52 s**: code too large | 0 of 2,042 |
+| `WP_Query::get_posts` T1 / T2 | 9,796 | 53,306 / 106,154; 52,873 / 100,419 | 511 / 476 KB | 6.5 s (3.0+3.5); **19.1 s** (3.2+15.9) | 0 of 98-128 |
+| `wp-settings.php` | 7,079 | 39,714 / 88,164 | 513 KB | 6.2 s | 0 |
+| `WP_Theme_JSON::sanitize` T1 / T2 | 1,455 | 32,691; 31,688 | 350 KB | 4.0 s; 11.4 s | 0 |
+| `WP_Theme_JSON::get_block_nodes` | 1,691 | 26,403; 25,850 | 310 KB | 4.0 s; 8.2 s | 0 |
+| `default-filters.php` | 5,105 | 24,835; 24,129 | 303 KB | 4.4 s; 5.6 s | 0 of 494 |
+| `WP_Term_Query::get_terms` | 2,894 | 23,862; 23,691 | 208 KB | 2.3 s; 6.3 s | 0 |
+| `wp_default_scripts` | 5,859 | 21,339 | 327 KB | 6.8 s | 0 of 439 |
+| `WooCommerce::includes` | 1,140 | 19,918 | 217 KB | 1.5 s | 0 |
+| `wp_render_layout_support_flag` (5 copies) | 2,117 | 18,462-19,024 | 177 KB | 1.5-5.2 s | 0 |
+
+**No large compilation inlines a PHP callee.** Truffle's inlining (`TraceInlining`) explores a root's callees only
+within `compiler.InliningExpansionBudget` and `InliningInliningBudget` (12,000 each, in its IR estimate); every root
+above starts over it (get_posts at 51,947-54,445), so all its 98 callees are cut off, and tier 1 inlines nothing
+anyway (`FirstTierInliningPolicy`: trivial only). **So the IR is the function's own body and the Java of our nodes;
+the composition is a question of code per PHP operation**, as in rounds 2 and 3.
+
+**By the Java that made the IR** (`TraceMethodExpansion`, `d2-after`: the same targets alone, `CompileOnly`; shares of
+the IR after PE, each method's self count; "frame states" is `<root>`, the nodes no method is charged with, mostly
+`FrameState`s, the largest Graal node kind after PE, 338k of the run's nodes):
+
+| | frame states | holder counts | element reads | building arrays | locals, references | calls | context, class, constant lookups | properties | strings | includes, file vars |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `get_posts` (53,424) | 26% | 8% | 5% | 3% | 23% | 5% | 1% | 11% | 5% | 0 |
+| `sanitize` (32,661) | 19% | **21%** | 17% | 13% | 12% | 1% | 0 | 0 | 0 | 0 |
+| `get_block_nodes` (26,403) | 22% | 13% | **26%** | 10% | 14% | 1% | 0 | 0 | 0 | 0 |
+| `get_terms` (23,501) | 23% | 10% | 13% | 1% | **27%** | 4% | 1% | 4% | 3% | 0 |
+| `default-filters.php` (24,809) | 29% | 4% | 0 | 0 | 1% | **36%** | 13% | 0 | 0 | 3% |
+| `wp_default_scripts` (21,293) | 35% | 1% | 0 | 6% | 1% | **34%** | 10% | 0 | 4% | 0 |
+| `wp-settings.php` (39,646) | 20% | 4% | 1% | 0 | 1% | 9% | **22%** | 2% | 7% | **17%** |
+| `WooCommerce::includes` (19,905) | 21% | 0 | 0 | 0 | 10% | 3% | 7% | 0 | 23% | **28%** |
+| the thunk (217,076) | 21% | **16%** | 0 | ~15% | 0 | 0 | **~25%** | 0 | 0 | 0 |
+| `states.php` (105,599) | 34% | 0 | 0 | 8% | 0 | **~40%** | 12% | 0 | 0 | 0 |
+| the classmap (272,858) | 27% | 0 | 0 | 15% | 0 | 0 | 0 | 0 | **15%** | **13%** |
+
+What each column is, and the sites behind it:
+- **Holder counts**: `PhpArray.addHolder` and `removeHolder`, ~19-26 IR nodes a site, inline at every assignment
+  of an array, every argument, every element stored. The thunk has 1,364 of them (35,162 nodes), `sanitize` 427.
+- **Element reads**: the string-key read's slot check and miss (`rawIfKeyAt`, `SlotCacheNode.lookup`, `getRaw`,
+  `deref`): `get_block_nodes` 328 sites. Round 3's large-function rule (one call per read outside loops) applies to
+  `get_posts`, not to these: they have fewer than 3,000 AST nodes.
+- **Locals, references**: `Variables.value` (580 sites in get_posts), `LocalVarNode.writeObject`, `readIfSet`,
+  `FrameWithoutBoxing.unsafeCast`, `refArrayForWrite`, and the locals' release (`FunctionRootNode.releaseLocals`,
+  1,414 nodes in one place).
+- **Calls**: a user function's call is `OptimizedCallTarget.doInvoke`, `ArgumentsNode.build`, and its lookup in the
+  running context: `PhpContext.functionAt` plus the context's thread-local read (`OptimizedFastThreadLocal.fastGet`),
+  ~20 IR nodes a call, the cost round 3 left open. `states.php` makes 2,042 calls of `__()` (4,079 thread-local
+  reads, 4,082 `functionAt`), `default-filters.php` 494 of `add_filter`, `wp_default_scripts` 439 of `$scripts->add`.
+- **Context, class and constant lookups**: in the thunk, each of its 1,092 `self::X` / `PaymentsProviders::X` costs
+  `ClassRefNode$Named.find` (2 per site), `PhpContext.classAt` and `ClassConstLookup.find`: ~30 IR nodes; in
+  `wp-settings.php` the 686 constant reads (`requiredConstantAt`, `GlobalConstLookup`) and their thread-local reads.
+- **Strings**: the classmap's 2,411 `$baseDir . '/...'` concatenate inline (`TruffleString$ConcatNode`, code ranges:
+  12,044 expansions), as `534819b` (round 2) chose for two strings.
+- **Includes, file variables**: the classmap reads `$baseDir`/`$vendorDir` 4,823 times (`FileVarNode`);
+  `WooCommerce::includes` 224 include scopes (`IncludeScope.forCall`).
+- **Slow paths are behind boundaries already**: no performance warning; what stays inline is the fast path of each
+  operation, repeated per site. The Graal node histogram after PE (`CompilationStatisticDetails`) has, besides the
+  frame states, `InvokeWithExceptionNode`s with their `ExceptionObjectNode` and `DeoptimizeNode`: 5,339 each in the
+  thunk, one per boundary call and its exception edge.
+
+**Why the run-once code is the largest.** The three failures are code that runs once per request: a file's top level
+and a property default's initializer (evaluated per context on first use, as php-src evaluates them per request).
+Each is a long straight line of array literal elements (`ArrayLiteralNode` explodes its elements: 2,411 nested
+literals in the classmap, 1,092 class constants in `$country_extensions`) or of calls (`states.php`). Called once per
+request, they reach the scaled first-tier threshold (2,464-2,579 calls, section 2) after ~2,500 requests and are
+compiled at ~1 call per request. **They are the libgraal heap bursts:** the classmap's PE built 921,612 nodes before
+`ConditionalEliminationPhase` (54 s of its 85 s) and `PartialEscapePhase` brought it to 272,878 (the bailout's phase
+timings, `CompilationStatistics`); in the memruns libgraal's heap peaks when these compile (section 3).
+
+**`get_posts` did not double from WordPress to WooCommerce.** #21's 115-122k was the IR *after Graal's tiers* (the
+second number of `IR a/b`), WordPress's ~60k the IR *after PE*. Like for like, the same server and front-end pages of
+Gate 2's database (`wp-after`, `wp-before`) against WooCommerce's load:
+
+| `WP_Query::get_posts`, first tier | AST | IR after PE | IR after Graal | code |
+|---|---|---|---|---|
+| WordPress, before (`866e156`) | 9,214 | 53,810 | 107,331 | 509 KB |
+| WooCommerce, before | 9,961 | 59,531 | 117,473 | 567 KB |
+| WordPress, after (`b6ca11c`) | 9,214 | 45,241 | 91,887 | 446 KB |
+| WooCommerce, after | 9,961 | 53,424 | 106,368 | 524 KB |
+
+WooCommerce's is 11% (before) and 18% (after) larger: its queries take more of the function's paths (product
+meta and tax queries), so more of its nodes specialize (8% more AST nodes) and fewer branches stay unreached.
+**Round 3 took 10% off it on WooCommerce** (59,531 → 53,424): the string-key read's inline check is gone
+(`rawIfKeyAt` 4,030 → 0 nodes, `SlotCacheNode.lookup` 1,869 → 810, `deref` 1,927 → 826), and a built-in found by
+name no longer looks itself up (`FunctionCallNode.find` 249 → 0). At 524 KB it is at 80% of HotSpot's 640 KB.
+
+## 2. Why compilation never settles
+
+**Not instability: volume, and a queue that never drains.** Compilation time by kind, from two runs: the untraced
+baseline memrun (`m-base-r1`, 12 minutes, `TraceCompilation` only) and the full trace (`d1-trace`, 15 minutes, a
+slower server). Times are the compilations' wall time on a saturated box: the compiler threads' CPU was 1,119 s
+where the wall times sum to 2,012 s, so read the shares, not the seconds.
+
+| | `m-base-r1`: compilations | wall s | share | `d1-trace`: compilations | wall s | share |
+|---|---|---|---|---|---|---|
+| functions, tier 2 | 819 | 992 | **49%** | 1,509 | 1,343 | **53%** |
+| functions, tier 1 | 4,533 | 489 | 24% | 5,103 | 454 | 18% |
+| split copies, tier 1 / tier 2 | 2,578 / 67 | 146 / 49 | **9%** | 3,749 / 235 | 173 / 212 | **15%** |
+| three failed giants (section 1) | 3 | 216 | **11%** | 3 | 219 | 9% |
+| other run-once code (file tops, thunks) | 1,502 | 61 | 3% | 1,540 | 66 | 3% |
+| a target compiled again at the same tier | 155 | 60 | 3% | 229 | 66 | 3% |
+
+- **Recompilation is rare:** 3% of the time. Invalidations over 15 minutes: 107 (93 "Profiled Argument Types", 8
+  return types, 2 object-location generalizations, 5 split call nodes); HotSpot traps of Truffle code: 230, spread
+  over `apply_filters` (14), `WP_Hook::apply_filters` (13), `WP_Object_Cache::get` (11)... Transfers to the
+  interpreter: 244, the profiles learning (`IfNode` 42, `PropNode.accessible` 30, `LocalVarNode.met` 26). No
+  performance warning, no deopt cycle. #21's 270 invalidations were the same kind.
+- **What keeps it going is new call targets:** 10,392 distinct targets compiled in 15 minutes, 1,764 of them more
+  than once (a tier-2 compilation after tier 1 counts). In the last minutes of `d1-trace` 40-200 first tier-1
+  compilations of functions and 90-400 of split copies still arrive every minute, with bursts (1,626 in minute 8,
+  2,178 in `m-base-r1`'s minute 9).
+- **The queue is overloaded the whole time.** `TraceCompilationDetails`: the queue held 300-700 tasks in every
+  minute, its load 2.5-12.9 (1 is normal). With `engine.DynamicCompilationThresholds` (default on) Truffle raises
+  the thresholds with the load: the median threshold of a tier-1 enqueue was 1,175-5,275 calls (default 400, ×3-13),
+  of a tier-2 enqueue 25,625-123,125 (default 10,000). So a function used once per request waits for 1,000-5,000
+  requests before it is even queued, and the thresholds fall as the load falls, which is the slow trickle of
+  first compilations; 10,561 of 23,365 enqueued tasks were dropped as stale (`Dequeues`). **Compilation doesn't
+  settle because WooCommerce's request path is ~10,000 call targets and 3 compiler threads (`CompilerThreads`
+  default here) compile it at ~800 compilations a minute, mostly tier 2 by time.**
+- **Tier 2 is the bulk** (49-53% for functions, 51-61% with split copies): each function used often enough is
+  recompiled with its callees inlined. 1,466 of tier 2's 1,585 s in `d1-trace` (split copies included) were
+  functions of at most 1,000 AST nodes (829 of at most 50 nodes, at 1,955 IR nodes on average after inlining 3.2
+  callees).
+
+**Splitting: 9-15% of the compile time, 12% of the code (12 of 97 MB).** In `d1-trace` Truffle made 6,258 splits
+of 534 functions (3,999 compiled) and refused 2,978 as too big (`SplittingMaxCalleeSize` 100: `get_option` 518
+times, `_wp_specialchars` 224). Splitting multiplies the call targets the queue has to reach, more than their
+time. Which nodes asked for them (`SplittingTraceEvents`: a polymorphic event names the node class that reported it;
+a function needs a split when one of its own nodes reports, or "via parent" for a callee with one caller):
+
+| node class reporting polymorphism | events | split functions where it reported | their splits |
+|---|---|---|---|
+| `MethodCallNode.Dispatch` | 1,550 | 228 | **3,264** |
+| `ConstantNodes.StableValueNode` | 491 | 23 | 145 |
+| `ToBooleanNode` | 301 | 46 | 327 |
+| `CallableDispatchNode` | 262 | 21 | 196 |
+| `CompareNodes.IdenticalNode` (`===`) | 255 | 47 | 537 |
+| `SubclassTestNode` (`instanceof`, `is_wp_error`) | 144 | 28 | 256 |
+| `NewNode.Construct` | 61 | 6 | 106 |
+| `AssignNode` | 58 | 16 | 1,021 |
+| `UnaryNodes.ToLongNode` (`absint`'s `(int)`) | 44 | 4 | 208 |
+| `UnaryNodes.ToStringNode` (`esc_attr`) | 26 | 7 | 257 |
+
+(A function where several classes reported is counted under each; 894 of the 6,258 splits were of functions none
+of whose own nodes reported, split for a callee.) The functions split most: `WC_Data::get_prop` 947 (106 AST
+nodes: `Dispatch` and `AssignNode`), `absint` 203 (`ToLongNode`), `WC_Data::set_prop` 200 (`===`), `esc_attr` 158
+(`ToStringNode`), `SharedType::get` and `Container::get` 94-95 (WooCommerce's DI container), `is_wp_error` 90
+(`instanceof`), and the product getters (`WC_Product::get_price`, `get_status`, `get_parent_id`, `is_type`, ...,
+56-67 each: `Dispatch`).
+
+**Why `WC_Data::get_prop` is split per caller and compiled 458 times.** Every product and order getter is
+`return $this->get_prop('price', $context);`, and `get_prop` calls `$this->get_hook_prefix()`. `MethodCallNode`'s
+cache is keyed on the receiver's class (`receiver.getPhpClass().getKey() == cachedKey`, limit 4): a site that sees
+`WC_Product_Simple`, `WC_Product_Variable`, `WC_Product_Variation` and `WC_Order` goes polymorphic and reports,
+although for `$this->get_prop(...)` every one of those classes resolves to the same `WC_Data::get_prop`. Splitting
+then copies `get_prop` per getter and each getter per caller, and no copy becomes monomorphic: the receivers vary
+inside every caller too. `AssignNode`'s report is `$value = ...` taking a string, an array, an object.
+**`StableValueNode` can never stabilize across requests:** it caches a constant's value by identity, and a
+constant computed at run time (`define('WP_CONTENT_DIR', ABSPATH . 'wp-content')`) is a new `TruffleString` in every
+context, so the second request makes the site polymorphic, in every copy alike (`wp_get_theme`: 54 events, 53
+splits).
+
+**What we could report differently** (code-level, for the owner to choose; each needs the measurements in
+section 5):
+1. `MethodCallNode.Dispatch` (and `StaticCallNode`, `NewNode`'s constructor dispatch): cache on the resolved
+   method, not the receiver's class: a class whose lookup gives the cached `PhpFunction` takes the same entry (one
+   `DirectCallNode`), so a call site with many receiver classes and one target stays monomorphic, doesn't report,
+   and compiles one inlined call instead of up to four.
+2. `StableValueNode`: no `@ReportPolymorphism`; its generic case is what every later context needs, and a split
+   copy meets new objects all the same.
+3. `AssignNode` and the conversions and tests (`ToBooleanNode`, `ToLongNode`, `ToStringNode`, `IdenticalNode`,
+   `SubclassTestNode`): `@ReportPolymorphism.Exclude`, so a value of another type no longer copies a helper per
+   caller. Splitting paid on Gate 1 (gate-2.md: hooks, escape, slugs 11-25% slower without any splitting), and which
+   of these reports made those copies isn't known, so this one needs the kernels' A/B, not only the server's.
+4. Not a reporting change but the larger part: tier 2 recompiles everything hot with inlining, and the queue's
+   load raises every threshold; fewer and smaller call targets (1-3, and section 1's code per operation) are what
+   bring the load down.
+
+## 3. libgraal's heap: one isolate per compiler thread, a cap, one compiler thread
+
+**One isolate per compiler thread, recreated after a second idle.** `-XX:JVMCITraceLevel=1` (`cap256m`, and a CLI
+run) prints each JVMCI runtime and its `JavaVM`, libgraal's isolate: every Truffle compiler thread
+(`TruffleCompilerThread-N`) and every HotSpot JIT thread (`JVMCI-native CompilerThread-N`) gets a runtime of its own
+(GraalVM 25.4's `-XX:JVMCIThreadsPerNativeLibraryRuntime` is 1), and an isolate is shut down when its thread has
+been idle for `JVMCICompilerIdleDelay` (1,000 ms) and created again on its next compilation: 70-72 isolate lives in a
+12-minute memrun (PrintGC's `GC(0)` lines), 30 `JavaVM`s in `cap256m`'s 4 minutes. So **`-Djdk.graal.internal.MaxHeapSize`
+caps each isolate, not the total**: with 3 Truffle compiler threads and 1-2 HotSpot JIT threads busy at once,
+libgraal can hold up to 4-5 caps. (`-XX:JVMCIThreadsPerNativeLibraryRuntime=0` would share one runtime, and so one
+heap, between the threads; not measured.)
+
+**What a compilation does at the cap: it fails, and its function stays interpreted.** At 1 GB the classmap's
+compilation (section 1) ended after 117 s with `java.lang.OutOfMemoryError: Garbage-collected heap size exceeded`,
+reported by Truffle as a failed compilation (`opt failed ... Reason: java.lang.OutOfMemoryError`), not retried, the
+server unharmed: the same outcome as without a cap, where it timed out at 100 s. Before failing, an isolate at its
+cap collects again and again: in `cap256m` one isolate ran full collections of 0.7-1.2 s each with 156-247 MB live.
+
+**The memruns** (`bench/pe4-diagnosis/runs.sh mem`, `runs2.sh mem-before`; `woo.sh memrun jvm 16`: 12 minutes at
+16 users, half buying, from a cold server, NMT and a snapshot a minute, every run with `TraceCompilation` and
+libgraal's `PrintGC`; the merged build unless "before"; rounds interleaved, the order reversed in round 2;
+`tests/gate2/pe4_memtable.py`):
+
+| run (box busy) | build, option | orders/s | pages/s | p99 s | CPU-s/page | RssAnon max | memory.peak | libgraal at most | CPU: requests / compiler / GC | compilations; failed (wall s) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| r1 (53-62%) | baseline | 0.81 | 10.5 | 4.1 | 0.73 | 3.3 GB | 3.3 GB | 0.85 GB | 63 / 21 / 14% | 9,654; 3 (216) |
+| | one compiler thread | 0.83 | 10.9 | 3.6 | 0.71 | 1.6 GB | 1.6 GB | 0.16 GB | 75 / 8 / 16% | 3,678; 0 |
+| | cap 2 GB | 0.72 | 9.3 | 4.6 | 0.83 | 2.7 GB | 2.8 GB | 0.89 GB | 63 / 21 / 14% | 9,245; 3 |
+| | cap 1 GB | 0.94 | 12.3 | 3.7 | 0.63 | 3.1 GB | 3.2 GB | 0.89 GB | 62 / 22 / 14% | 10,437; 3 (one OOM) |
+| r2 (38-62%) | cap 1 GB | 1.14 | 14.6 | 2.7 | 0.53 | 3.1 GB | 3.1 GB | 1.03 GB | 61 / 22 / 16% | 11,444; 3 (one OOM) |
+| | cap 2 GB | 0.84 | 10.8 | 3.8 | 0.72 | 2.7 GB | 2.8 GB | 1.03 GB | 63 / 21 / 14% | 10,084; 3 |
+| | one compiler thread | 0.97 | 12.6 | 3.0 | 0.61 | 2.0 GB | 2.1 GB | 0.59 GB | 74 / 8 / 16% | 3,938; 0 |
+| | baseline | 0.74 | 9.8 | 4.2 | 0.78 | 2.8 GB | 2.8 GB | 1.04 GB | 63 / 21 / 14% | 9,333; 3 |
+| r3 (36%) | baseline | 1.17 | 15.3 | 2.4 | 0.51 | 5.1 GB | 5.2 GB | **3.6 GB** | 60 / 23 / 16% | 11,549; 3 |
+| | one compiler thread | 1.19 | 15.4 | 2.5 | 0.50 | 3.0 GB | 3.0 GB | 1.3 GB | 73 / 9 / 17% | 3,953; 0 |
+| r4 (35-36%) | **before** (`866e156`) | 0.98 | 12.7 | 3.2 | 0.61 | 8.0 GB | 8.1 GB | **5.3 GB** | 59 / 24 / 15% | 9,437; 3 (602) |
+| | baseline | 1.11 | 14.2 | 2.5 | 0.55 | 5.0 GB | 5.1 GB | 3.1 GB | 60 / 23 / 15% | 10,769; 3 (347) |
+| | cap 256 MB | 1.06 | 13.4 | 3.0 | 0.58 | 1.9 GB | 2.0 GB | 0.32 GB | 61 / 22 / 15% | 10,972; 4 OOM |
+| | **before** | 0.95 | 12.0 | 3.3 | 0.65 | 7.3 GB | 7.4 GB | **5.4 GB** | 61 / 22 / 15% | 10,071; 3 (352) |
+
+(`bench/pe4-diagnosis/mem-table.md` has every column; "libgraal at most" is memsplit's untracked at the worst
+snapshot; the box's load per run is `mem-hostload.txt`. Round 4 is `runs2.sh mem-before`.)
+
+- **The burst is the run-once giants compiling at the same time.** In the baselines of rounds 1 and 2 (a busy box)
+  libgraal's share of RssAnon (memsplit's "untracked") peaked at 0.85-1.0 GB and one isolate's heap after a
+  collection at 560 MB, while the classmap, the thunk and `states.php` compiled one after another (minutes 6-11 of
+  `m-base-r1`; ~75 MB after them). In round 3 (the box 36% busy) the classmap (223 s) and the thunk (75 s) compiled at
+  the same time on two threads in minutes 6-7: two isolates of 1.4-1.7 GB each after a collection, libgraal **3.6 GB**,
+  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. Round 4's baseline did the same (3.1 GB, the classmap 244 s).
+  That is #21's 5.8 GB, which was `866e156`:
+  on it (round 4's "before" runs) the giants take longer still (the classmap 358 s, `states.php` timing out at 170 s
+  where the merged build fails it as code too large in 25-43 s, the thunk 74-82 s), all three overlap, and libgraal
+  reaches **5.3-5.4 GB**, one isolate 2.7 GB, RssAnon 7.3-8.0 GB; their failed compilations took 352-602 s.
+- **A 2 GB cap was not reached** in rounds 1-2 (an isolate's largest heap 813-826 MB); round 3's baseline shows an
+  isolate can reach 1.7 GB, so at 2 GB it would be close.
+- **A 1 GB cap is reached once per run, by the classmap**, which then fails with the `OutOfMemoryError` above
+  after 117 s instead of timing out after 100 s; nothing else changes (the same 3 failures, the same compile time),
+  and libgraal's share stayed at 0.9-1.0 GB (both rounds on a busier box). PrintGC reported up to 1,252 MB after a collection
+  at the 1 GB cap (and 263 MB at 256 MB), so the cap is not a hard bound on what an isolate holds.
+- **A 256 MB cap** (`cap256m-long`, the diagnosis stack, 15 minutes) fails all three giants early (11, 36 and 22 s
+  instead of 100, 80 and 39 s: 91 s of failed compilation instead of 216 s) but also one ordinary tier-2
+  compilation (`WP_Widget::_register`), and its isolates collect more (338 s of pauses in 15 minutes). As a memrun
+  (`m-cap256m-r1`, beside round 4's baseline on the same quiet box): RssAnon **1.9 GB against 5.0 GB**, libgraal 0.3
+  GB against 3.1 GB, the giants failing after 22-66 s, but one more ordinary compilation lost
+  (`WC_Frontend_Scripts::get_scripts`, tier 1), and 13.4 pages/s against 14.2 (one round: within the noise, not
+  shown to be free).
+- **One compiler thread** (`engine.CompilerThreads=1`): 3,678-3,953 compilations instead of 9,333-11,549, 38% of
+  the compiler's CPU (420-462 s against 1,112-1,213), and the giants only at the end (in round 3 an isolate reached
+  1.4 GB in minute 12, libgraal 1.3 GB; in rounds 1-2 never); RssAnon 1.6-3.0 GB against 2.8-5.1 GB. **Its
+  throughput was not lower in any of the three rounds:** 10.9 / 12.6 / 15.4 pages/s against the baseline's 10.5 /
+  9.8 / 15.3 (orders/s 0.83 / 0.97 / 1.19 against 0.81 / 0.74 / 1.17), p99 3.6 / 3.0 / 2.5 s against 4.1 / 4.2 /
+  2.4 s, CPU-s per page 0.71 / 0.61 / 0.50 against 0.73 / 0.78 / 0.51. #21's single-run "no loss" holds. The
+  requests' threads take 73-75% of the server's CPU instead of 60-63%: the cores the compiler leaves go to them,
+  and what the other threads compiled late (the long tail, section 2) wasn't paying back within 12 minutes.
+- **The box's load moves throughput more than any of these options**: 9.3-15.4 pages/s across runs, with the box
+  36-62% busy (`hostload.py`); compare within a round.
+
+## 4. #19 and #20 on WooCommerce
+
+**Method** (`bench/pe4-diagnosis/runs.sh ab`, `runs2.sh ab-more`): `woo.sh load jvm 16`, each server's own life on
+CPUs 14-21: 300 s of warm-up (16 users, half buying), then 120 s at 16 users with every visitor buying; before
+(`866e156`) and after (`b6ca11c`) interleaved, the order reversed every other round. Rounds 1-3 ran while the
+diagnosis server worked on 6-13 (box 56-65% busy); rounds 4-6 later, without it.
+
+**The A/B** (every visitor buying, 120 s at 16 users after the warm-up; `bench/pe4-diagnosis/ab-table.md`; a cell
+is the median of the rounds with their range):
+
+| round (order) | box busy | orders/s before → after | p50 ms | p99 ms | CPU-s per page | memory.peak MB | after / before: orders, CPU per page, peak |
+|---|---|---|---|---|---|---|---|
+| 1 (before first) | 64% | 1.71 → 1.32 | 1033 → 1365 | 2416 → 2892 | 0.569 → 0.730 | 4114 → 3451 | 0.77, 1.28, 0.84 |
+| 2 (after first) | 56-62% | 1.29 → 1.52 | 1400 → 1182 | 2775 → 2712 | 0.748 → 0.635 | 3039 → 2988 | 1.18, 0.85, 0.98 |
+| 3 (before first) | 56-64% | 1.41 → 1.33 | 1271 → 1290 | 2973 → 2754 | 0.689 → 0.729 | 2971 → 2957 | 0.94, 1.06, 1.00 |
+| 4 (after first) | 35-36% | 1.60 → 1.80 | 1126 → 985 | 2339 → 2243 | 0.607 → 0.539 | 4148 → 3318 | 1.13, 0.89, 0.80 |
+| 5 (before first) | 35-36% | 1.65 → 1.54 | 1122 → 1175 | 2264 → 3127 | 0.592 → 0.625 | 5252 → 4458 | 0.93, 1.06, 0.85 |
+| 6 (after first) | 35-36% | 1.48 → 1.51 | 1213 → 1190 | 2689 → 2885 | 0.651 → 0.642 | 3853 → 4078 | 1.02, 0.99, 1.06 |
+| **6 rounds** (median, range) | | 1.54 (1.29-1.71) → 1.52 (1.32-1.80) | 1170 → 1186 | 2552 → 2819 | 0.629 → 0.638 | 3984 → 3384 | **geometric mean 0.99, 1.01, 0.92** |
+| rounds 4-6 (quiet box) | | | | | | | geometric mean 1.02, 0.98, 0.90 |
+
+(Round 1's "before" has no box-load samples: the sampler started a minute later.)
+
+**What it says:**
+- **At steady state with every visitor buying, #19 and #20 change WooCommerce's throughput and CPU per page by less
+  than this A/B can see**: −1% orders and +1% CPU-s per page over six rounds, +2% and −2% over the three quiet ones,
+  each round's ratio between 0.77 and 1.18. p99 is no better (2.8 s against 2.6 s, medians; within the rounds' spread).
+- **Memory.peak is 8-10% lower** (geometric mean; lower in 5 of 6 rounds), the same direction as the memruns but
+  smaller: after a 300 s warm-up the giants have mostly been tried, and the peak is set by whichever of them
+  overlapped.
+- **The server that runs first in a round wins every time** (6 of 6, by 2-30% in orders/s), whichever build it is,
+  though every server starts from the same database dump. Its cause isn't known (the database container's caches or
+  the host's are candidates); reversing the order every other round is what cancels it, so a single A/B pair on this
+  stack is not evidence either way.
+- The memruns' +12-28% (below) is therefore in **the first minutes**, while compilation dominates (less to compile
+  after round 3, less libgraal memory), not in faster steady-state code; which of the two it is wasn't separated.
+  Rounds 4-6 at 300 s of warm-up already sit inside the long tail of section 2, where both builds run mostly compiled
+  code.
+
+**The memruns** (section 3's table: 12 minutes from cold, 16 users half buying): on the same quiet box (35-36%),
+before against the merged build's baselines of rounds 3 and 4:
+
+| | before (`866e156`), 2 runs | after (`b6ca11c`), 2 runs | after / before |
+|---|---|---|---|
+| pages/s | 12.7, 12.0 | 15.3, 14.2 | **+12-28%** (medians +19%) |
+| orders/s | 0.98, 0.95 | 1.17, 1.11 | +13-23% |
+| p99 | 3.2, 3.3 s | 2.4, 2.5 s | −22-27% |
+| CPU-s per page | 0.61, 0.65 | 0.51, 0.55 | **−10-22%** |
+| RssAnon max | 8.0, 7.3 GB | 5.1, 5.0 GB | −31-37% |
+| memory.peak | 8.1, 7.4 GB | 5.2, 5.1 GB | **−30-37%** |
+| libgraal at most | 5.3, 5.4 GB | 3.6, 3.1 GB | −32-43% |
+| failed compilations' wall time | 602, 352 s | 324, 347 s | −1-46% (the classmap still 223-244 s) |
+
+**Where it comes from:**
+- **Code per operation (#19):** `get_posts` 59,531 → 53,424 IR nodes after PE (section 1), and the same rules shrink
+  every function with string-key reads in large bodies; `states.php` fails as code too large in 25-43 s instead of
+  timing out at 170 s.
+- **The giants' memory:** smaller graphs while the classmap, the thunk and `states.php` compile, so libgraal's burst
+  is 1.7-2.3 GB smaller and the server's peak ~2.5-3 GB lower. It is not gone: on a quiet box the merged build still
+  reaches 3.1-3.6 GB of libgraal (section 3).
+- **Allocation (#20):** the requests' allocation (gc.md: −16% a visit on WordPress) shows here only as a GC share
+  that didn't grow with the higher throughput (15% of the server's CPU before and after); the memruns don't separate
+  #20 from #19.
+
+## 5. Round 4's targets, ranked
+
+**Where the requests' time goes** (`d5-sampler`: the CPU sampler after 4 minutes, 10 minutes, 3,175 requests'
+histograms summed by `tests/gate2/sampler_report.py`; the sampler samples the request threads' stacks, so a
+database wait counts too, and samples land where compiled code polls for safepoints, at its boundary calls): **85%
+of the sampled time is in tier-2 code, 10.8% tier 1, 4.3% the interpreter.** The flat profile has `wpdb::query`
+11% (its inlined `mysqli_query`, the database round trip), `defined` **6.2%**, `WP_Hook::apply_filters` 5.1%,
+`apply_filters` 3.7%, `WP_Object_Cache::is_valid_key` 2.5%, `get_option` 2.1%; built-ins together 18%. What runs
+interpreted is little: the classmap (2.2 s in 10 minutes, 0.2%, every request, against its 100 s compilation that
+failed), `mysqli_real_connect`, the first calls of getters' new split copies. So after the warm-up the requests
+are compiled code, and **their time is the code per operation, not missing compilation**; the server's CPU besides
+them is the compiler (21%) and the GC (14%).
+
+The targets, ranked by expected gain on WooCommerce's CPU per page and memory, each with its evidence and how to
+confirm it:
+
+| # | Target | Evidence | Expected | Confirm with |
+|---|---|---|---|---|
+| 1 | **Don't compile run-once code that can't pay back**: a top-level file or a thunk (property default, constant initializer) that runs once per request, has no loop and is large. `RootNode.prepareForCompilation` (25.4 has it) can decline it; or give a literal with constant parts a constant template (the classmap's 2,411 entries differ only in `$baseDir`), and fold `self::CONST` of the declaring class in constant expressions at link time, as php-src's `zend_try_ct_eval_class_const` does (`$country_extensions`' 1,092 references are partly other classes', so this alone doesn't make it constant) | the three failed giants: 11% of the compile time, a compiler thread blocked 36-117 s each, libgraal's peak heap (section 3), a thunk with no source position ("Src n/a"); the classmap interpreted costs 0.2% of the requests' time; with one compiler thread none of them compiled and throughput didn't fall | −10-14% compile CPU (−2-3% of the server's CPU), libgraal's peak −0.4-0.8 GB per isolate, the queue's load down | memrun: `pe4_report.py kinds` (no failures, file/thunk share), `libgraal_gc.py`, `pe4_memtable.py`; `d1-trace` with 0 permanent bailouts |
+| 2 | **Method dispatch keyed on the resolved method** (`MethodCallNode.Dispatch`, also static and constructor dispatch): a receiver class whose lookup gives the cached function shares its entry | `Dispatch` reported in functions with 3,264 of 6,258 splits; `WC_Data::get_prop` 947 splits, 458 compilations, 33 s, the most of any function; the product getters 56-67 copies each; up to 4 inlined call paths per site where one target is called | splits −40-50%, split copies' compile time (9-15%) about halved, fewer call targets for the queue, one inlined call per `$this->` site | `d1-trace`: `pe4_report.py splits` and `compile`; Gate 1's hooks and blocks A/B; `woo.sh load` A/B |
+| 3 | **`defined('NAME')` as a node**: the name's constant id resolved at translation, `constantAt(id) != null`, as php-src's `ZEND_DEFINED` with its cache slot; today a built-in call converting the name to a Java `String` and hashing it into the context's map | 6.2% of the sampled request time (with the sampler's bias toward boundary calls); 951 WooCommerce files start with `defined('ABSPATH') || exit;`, 1,846 literal `defined()` sites in WooCommerce and core | a few % of request time; to be measured first | count the calls per request (a counter, or JFR's Java frames); `woo.sh load` A/B |
+| 4 | **A user function's call without the per-context lookup**: the running context in the frame (or arguments) instead of `PhpContext.get`'s thread-local read, and the function cached per site when the language serves one context | ~20 IR nodes a call (`fastGet` + `functionAt`); 36% of `default-filters.php`'s IR, 40% of `states.php`'s, 34% of `wp_default_scripts`', 5-6% of `get_posts`'; round 3 left it open | −5-10% code in call-heavy functions, less per call | `CompilationTest`'s per-operation costs (round 3's method), the largest compilations' `categories` |
+| 5 | **Holder counts out of the straight line**: `addHolder` / `removeHolder` inline at every assignment, argument and element store (~19-26 IR nodes a site, its rare path a boundary call with an exception edge); a fresh literal's nested arrays could take their count without the tests | 21% of `sanitize`'s IR, 16% of the thunk's, 13% of `get_block_nodes`', 8% of `get_posts`' | −5-15% of array-heavy functions' code | `categories` before/after; Gate 1 (kses, blocks) A/B |
+| 6 | **Report polymorphism only where a copy helps**: no `@ReportPolymorphism` on `StableValueNode` (a per-context value never stabilizes), `@ReportPolymorphism.Exclude` on `AssignNode` and the conversions and tests (`ToBoolean`, `ToLong`, `ToString`, `===`, `instanceof`) | together reported in functions with ~2,700 splits (`AssignNode` 1,021, `===` 537, `ToBoolean` 327, `ToString` 257, `instanceof` 256, `ToLong` 208, `StableValue` 145); `absint` 203 splits, `esc_attr` 158 | splits −20-30% more after #2 | as #2, and Gate 1's escape and slugs (where splitting paid in 2026-10-28's test) |
+| 7 | **Less compile volume overall** (owner's choice of flags; code-level it is #1, #2, #6): one compiler thread compiled 3,678 times instead of 9,654, never the giants, at the same throughput and half the memory (section 3); libgraal's collections paused its isolates for ~200 s in 12 minutes (1,300-1,500 hinted full collections), and an isolate is torn down after 1 s idle and rebuilt 70 times | `m-ct1-*` against `m-base-*`; `libgraal_gc.py` | as one compiler thread did: the compiler's CPU −60%, memory −40-50%, throughput level or better; capped at 256 MB per isolate, libgraal 0.3 GB instead of 3 GB | interleaved memruns (done here: section 3), then a longer one (30 min) for the late compilations |
+
+Not targets: deoptimization (3% of compile time recompiles, no cycle), performance warnings (none), the slow paths
+(behind boundaries already), Truffle's inlining (the largest functions inline nothing because they are over its
+budget; their size is the issue, items 4-5).
+
+## Files
+- `tests/gate2/woo.sh diag`: a diagnosis server's life under the load, its engine closed at the end (statistics).
+- `bench/pe4-diagnosis/diag.sh`: every diagnosis run of this page with its options; `runs.sh`: the timed runs.
+- `tests/gate2/pe4_report.py`: compile (splits against originals, by size, the largest), splits (polymorphic
+  events by node class, the functions split most), inlining, expansion (own body, inlined callees, node classes,
+  Java methods), deopts.
+- `tests/gate2/libgraal_gc.py`: libgraal's collections from `-Djdk.graal.internal.PrintGC=true`.
+- `tests/gate2/hostload.py`: how busy the box was during each timed run.
+- `bench/pe4-diagnosis/`: the reports and tables of this page's runs.
