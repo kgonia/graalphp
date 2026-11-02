@@ -37,6 +37,9 @@ var_dump(defined('Pe4A::X'), defined('pe4a::X'), defined('Pe4A::x'), defined('Pe
 var_dump(Pe4A::inside(), Pe4B::sub(), Pe4B::inside());
 var_dump(defined('Pe4A::class'), defined('Pe4A::T'), Pe4A::T, defined('\Pe4A::X'), defined('::X'), defined('Pe4A:X'));
 var_dump(defined('Missing::X'));
+trait Pe4Trait { public const TC = 1; public static function own() { return [defined('self::TC'), defined('Pe4Trait::TC')]; } }
+class Pe4UsesTrait { use Pe4Trait; }
+var_dump(defined('Pe4Trait::TC'), defined('Pe4UsesTrait::TC'), Pe4UsesTrait::own());
 class Pe4C extends Pe4B { static function f() { $g = function () { return [defined('self::R'), defined('static::R')]; };
     return $g(); } }
 var_dump(Pe4C::f());

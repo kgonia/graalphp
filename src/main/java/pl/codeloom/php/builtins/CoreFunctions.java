@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -442,7 +443,9 @@ final class CoreFunctions {
             } else {
                 phpClass = context.findClassAutoloading(className);
             }
-            return phpClass != null && phpClass.getConstant(name.substring(colon + 1)) != null;
+            // a trait's constants are reached through the classes that use it only (zend_get_class_constant_ex)
+            return phpClass != null && !(phpClass.getDeclaration() instanceof ClassTemplate template
+                    && template.isTrait()) && phpClass.getConstant(name.substring(colon + 1)) != null;
         }
         if (context.findConstant(name) != null) {
             return true;
