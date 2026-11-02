@@ -175,6 +175,17 @@ final class CoreFunctions {
                     : Str.of(phpClass.getParent().getName());
         });
         r.fn("get_object_vars", a -> objectVars(Args.get(a, 0)));
+        r.fn("get_mangled_object_vars", a -> {
+            Object value = Args.get(a, 0);
+            if (value instanceof PhpObject object) {
+                return object.toArray();
+            }
+            if (value instanceof pl.codeloom.php.runtime.PhpClosure) {
+                // a Closure has no properties
+                return new PhpArray();
+            }
+            throw Args.typeError("get_mangled_object_vars", 1, "object", "object", value);
+        });
         r.fn("spl_object_id", a -> (long) objectId(Args.get(a, 0)));
         r.fn("spl_object_hash", a -> Str.of(String.format("%032x", objectId(Args.get(a, 0)))));
         r.fn("is_a", (context, a) -> isA(context, Args.get(a, 0), Args.str(a, 1), Args.bool(a, 2, false), false));

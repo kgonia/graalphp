@@ -11,7 +11,6 @@ import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Ini;
 import pl.codeloom.php.nodes.ExprNode;
@@ -22,7 +21,6 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 /** Unary minus/plus, bitwise not, and casts, specialized on the operand's type. */
@@ -233,21 +231,14 @@ public final class UnaryNodes {
             }
         }
 
-        /** An object's properties become a hash made at its size: distinct names make distinct keys. */
+        /** An object's properties become its property table's entries, under their mangled names. */
         @TruffleBoundary
         private PhpArray toArray(Object value) {
             if (value == PhpNull.NULL) {
                 return new PhpArray();
             }
             if (value instanceof PhpObject object) {
-                Object[] names = object.propertyNames();
-                PhpLanguage language = PhpLanguage.get(this);
-                PhpArray array = PhpArray.ofHashCapacity(names.length);
-                for (Object name : names) {
-                    Object key = pl.codeloom.php.runtime.ArrayKey.of(language.propertyKeyString((String) name));
-                    array.addEntry(key, PhpArray.hashOf(key), PhpRef.deref(object.getProperty((String) name)));
-                }
-                return array;
+                return object.toArray();
             }
             if (value instanceof PhpClosure) {
                 return PhpArray.list(value);
