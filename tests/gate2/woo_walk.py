@@ -25,6 +25,15 @@ MASKS = [
     (r'(%22|%5C%22)[0-9a-f]{10}(%22|%5C%22)', r'\1NONCE\2'),
     (r'\A[0-9a-f]{10}\Z', 'NONCE'),
     (r'"Nonce-Timestamp":[0-9]+', '"Nonce-Timestamp":TIME'),
+    (r'(%22Nonce-Timestamp%22%3A)[0-9]+', r'\1TIME'),
+    (r'(nonce%3D)[0-9a-f]{10}', r'\1NONCE'),
+    # random per install and per order
+    (r'(share_key%22%3A%22)[A-Za-z0-9]+', r'\1KEY'),
+    (r'place-order-debug-[0-9a-f]{8}', 'place-order-debug-ID'),
+    # how long ago the walk placed its orders, how long the store has been up
+    (r'[0-9]+ (second|minute|min)s? ago', 'AGO'),
+    (r'[0-9]{1,2}:[0-9]{2} (am|pm)', 'CLOCK'),
+    (r'active_for=[0-9]+', 'active_for=N'),
     # related products are shuffled (wc_get_related_products)
     (r'"related_ids":\[[0-9,]*\]', '"related_ids":[IDS]'),
     # uniqid() in element ids (quantity_6ae7c2321636e)

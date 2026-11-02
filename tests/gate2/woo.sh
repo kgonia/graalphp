@@ -149,13 +149,16 @@ dbrows() {
                wc_product_meta_lookup comments; do
     docker exec $db mariadb -uroot -proot -P3307 wordpress -e "select * from wp_$table" 2> /dev/null \
       | sed -E -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/DATETIME/g' -e 's/wc_order_[A-Za-z0-9]{13}/wc_order_KEY/g' \
+        -e 's/place-order-debug-[0-9a-f]{8}/place-order-debug-ID/g' \
       > "$dir/$table.tsv" || true
   done
   docker exec $db mariadb -uroot -proot -P3307 wordpress -e "select post_id, meta_key, meta_value from wp_postmeta
     where meta_key in ('_stock', 'total_sales', '_stock_status') order by post_id, meta_key" > "$dir/stock.tsv"
   docker exec $db mariadb -uroot -proot -P3307 wordpress -e "select option_name, option_value from wp_options
     where option_name like '%transient%' or option_name like 'woocommerce%' order by option_name" \
-    | sed -E -e 's/[0-9]{10}/TIME/g' > "$dir/options.tsv"
+    | sed -E -e 's/(wc_report_[a-z_]+_)[0-9a-f]{32}/\1HASH/' -e 's/active_for=[0-9]+/active_for=N/' \
+        -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/DATETIME/g' \
+        -e 's/^(woocommerce_share_key\t).*/\1KEY/' -e 's/[0-9]{10}(\.[0-9]+)?/TIME/g' > "$dir/options.tsv"
   echo "$name: $(wc -l < "$dir/wc_orders.tsv") order lines, $(wc -l < "$dir/woocommerce_order_items.tsv") item lines"
 }
 
