@@ -14,7 +14,9 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.bytecode.CallInfo;
+import pl.codeloom.php.bytecode.ClassSite;
 import pl.codeloom.php.bytecode.LiteralSite;
+import pl.codeloom.php.bytecode.MethodSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
@@ -228,6 +230,8 @@ public final class BytecodeTranslator {
         private final List<Loop> loops = new ArrayList<>();
         /** In a finally block, how many of loops are outside it: break and continue may not leave it. */
         private int loopsOutsideFinally;
+        /** The objects of `?->`s being short-circuited, by the node standing for each in the rest of its chain. */
+        private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
         /** The next object of made to take, or to make. */
@@ -861,7 +865,15 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast node = (Ast) value;
+            Ast nullsafe = deepestNullsafe(node);
+            if (nullsafe != null) {
+                nullsafeChain(node, nullsafe);
+                return;
+            }
             switch (node.kind) {
+                case "BYTECODE_OBJECT":
+                    b.emitLoadLocal(nullsafeObjects.get(node));
+                    break;
                 case "AST_VAR":
                     if (isThis(node)) {
                         b.emitReadThis();
@@ -944,6 +956,24 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_CALL":
                     call(node, false);
+                    break;
+                case "AST_METHOD_CALL":
+                    methodCall(node, false);
+                    break;
+                case "AST_STATIC_CALL":
+                    staticCall(node, false);
+                    break;
+                case "AST_NEW":
+                    newObject(node);
+                    break;
+                case "AST_CLASS_CONST":
+                    classConstant(node);
+                    break;
+                case "AST_CLASS_NAME":
+                    className(node);
+                    break;
+                case "AST_INSTANCEOF":
+                    instanceOf(node);
                     break;
                 case "AST_MATCH":
                     match(node);
@@ -1302,6 +1332,62 @@ public final class BytecodeTranslator {
                     owner == null ? null : Str.lower(owner.name()), scopeInFrame, thisInMethod));
         }
 
+        /**
+         * The deepest `?->` on a chain's object path (php-src's short-circuited chain of properties, method calls and
+         * elements), which is evaluated first; null for a node that isn't such a chain or has none.
+         */
+        private Ast deepestNullsafe(Ast node) {
+            Ast found = null;
+            for (Ast link = node; link != null; ) {
+                switch (link.kind) {
+                    case "AST_NULLSAFE_PROP", "AST_NULLSAFE_METHOD_CALL" -> found = link;
+                    case "AST_PROP", "AST_METHOD_CALL", "AST_DIM" -> {
+                    }
+                    default -> {
+                        return found;
+                    }
+                }
+                link = link.get("expr") instanceof Ast inner ? inner : null;
+            }
+            return found;
+        }
+
+        /**
+         * A chain read with a `?->` (ZEND_JMP_NULL): its object is evaluated into a local; null short-circuits the
+         * rest of the chain, its value null, else the rest runs on the object, the `?->` as `->` (with further
+         * `?->`s of its own). The object's expression is the chain up to it, which short-circuits the same way.
+         */
+        private void nullsafeChain(Ast node, Ast nullsafe) {
+            b.beginBlock();
+            BytecodeLocal object = b.createLocal();
+            b.beginStoreLocal(object);
+            expression(nullsafe.get("expr"));
+            b.endStoreLocal();
+            b.beginConditional();
+            b.beginIsNull();
+            b.emitLoadLocal(object);
+            b.endIsNull();
+            b.emitLoadConstant(PhpNull.NULL);
+            Ast objectNode = new Ast("BYTECODE_OBJECT", 0, nullsafe.line, nullsafe.endLine, null, null);
+            nullsafeObjects.put(objectNode, object);
+            expression(withObject(node, nullsafe, objectNode));
+            b.endConditional();
+            b.endBlock();
+        }
+
+        /** A copy of the chain from node down to nullsafe, which becomes a plain access to object. */
+        private Ast withObject(Ast node, Ast nullsafe, Ast object) {
+            Map<String, Object> parts = new java.util.LinkedHashMap<>(node.namedOrNull());
+            String kind = node.kind;
+            if (node == nullsafe) {
+                parts.put("expr", object);
+                kind = node.is("AST_NULLSAFE_PROP") ? "AST_PROP" : "AST_METHOD_CALL";
+            } else {
+                parts.put("expr", withObject(node.node("expr"), nullsafe, object));
+            }
+            return new Ast(kind, node.flags, node.line, node.endLine, null, parts);
+        }
+
         /** `$obj->name`, `$obj->$name` (PropNode.execute): the object, then the name. */
         private void readProp(Ast node) {
             if (node.get("prop") instanceof String name) {
@@ -1397,6 +1483,10 @@ public final class BytecodeTranslator {
 
         /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
         private void unsetProp(Ast target) {
+            if (target.node("expr") != null && deepestNullsafe(target.node("expr")) != null) {
+                // php-src's compile error: ?-> in a write context
+                throw new Unsupported("unset with ?->", target);
+            }
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
@@ -1527,6 +1617,230 @@ public final class BytecodeTranslator {
             }
         }
 
+        /** Whether a call's arguments need the callee (some may go by reference); no unpacking or names. */
+        private boolean argumentsNeedCallee(Ast args) {
+            boolean needsCallee = false;
+            for (Object arg : args.children()) {
+                if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
+                        || ast.is("AST_CALLABLE_CONVERT"))) {
+                    throw new Unsupported("argument", ast);
+                }
+                needsCallee |= !plainArgument(arg);
+            }
+            return needsCallee;
+        }
+
+        /**
+         * The callee resolving instruction a call's arguments ask about their parameters, kept on the operand stack
+         * for them when they need it (as {@link #call}'s).
+         */
+        private StackValue callee(boolean needed, Runnable resolve) {
+            if (!needed) {
+                resolve.run();
+                return null;
+            }
+            b.beginBindStackValue();
+            resolve.run();
+            return b.endBindStackValue();
+        }
+
+        /**
+         * `$obj->name(args)` (MethodCallNode): the receiver, then its method (INIT_METHOD_CALL), then the arguments
+         * as the method's parameters take them.
+         */
+        private void methodCall(Ast node, boolean byRefContext) {
+            if (Translator.isCallableConvert(node)) {
+                throw new Unsupported("first-class callable of a method", node);
+            }
+            if (!(node.get("method") instanceof String name)) {
+                throw new Unsupported("call of a method by a computed name", node);
+            }
+            Ast args = node.node("args");
+            boolean needsCallee = argumentsNeedCallee(args);
+            MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
+            b.beginCallMethod(site, byRefContext);
+            b.beginBindStackValue();
+            expression(node.get("expr"));
+            StackValue receiver = b.endBindStackValue();
+            StackValue calleeValue = callee(needsCallee, () -> {
+                b.beginResolveMethod(site);
+                b.emitLoadStackValue(receiver);
+                b.endResolveMethod();
+            });
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, calleeValue);
+            }
+            b.endCallMethod();
+        }
+
+        /**
+         * `Cls::name(args)`, `self::`, `parent::`, `static::` (StaticCallNode): the class, then its method
+         * (INIT_STATIC_METHOD_CALL), then the arguments; self, parent and static forward the called class.
+         */
+        private void staticCall(Ast node, boolean byRefContext) {
+            if (Translator.isCallableConvert(node)) {
+                throw new Unsupported("first-class callable of a static method", node);
+            }
+            if (!(node.get("method") instanceof String name)) {
+                throw new Unsupported("call of a static method by a computed name", node);
+            }
+            Ast classNode = node.node("class");
+            String lower = classNode != null && classNode.is("AST_NAME") ? Str.lower(classNameOf(classNode)) : "";
+            boolean forwarding = lower.equals("self") || lower.equals("parent") || lower.equals("static");
+            Ast args = node.node("args");
+            boolean needsCallee = argumentsNeedCallee(args);
+            MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
+            b.beginCallStatic(site, byRefContext);
+            b.beginBindStackValue();
+            classRef(node.get("class"));
+            StackValue phpClass = b.endBindStackValue();
+            StackValue calleeValue = callee(needsCallee, () -> {
+                b.beginResolveStaticMethod(site);
+                b.emitLoadStackValue(phpClass);
+                b.endResolveStaticMethod();
+            });
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, calleeValue);
+            }
+            b.endCallStatic();
+        }
+
+        /**
+         * `new Cls(args)` (NewNode, ZEND_NEW): the class, the object with its defaults, its constructor, then the
+         * arguments as the constructor's parameters take them and its call; without a constructor the arguments are
+         * evaluated by value and dropped (zend_pass_function). The object is the value.
+         */
+        private void newObject(Ast node) {
+            if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
+                throw new Unsupported("anonymous class", node);
+            }
+            Ast args = node.node("args");
+            boolean needsCallee = argumentsNeedCallee(args);
+            b.beginConstruct();
+            b.beginBindStackValue();
+            b.beginInstantiate();
+            classRef(node.get("class"));
+            b.endInstantiate();
+            StackValue object = b.endBindStackValue();
+            StackValue calleeValue = callee(needsCallee, () -> {
+                b.beginResolveConstructor();
+                b.emitLoadStackValue(object);
+                b.endResolveConstructor();
+            });
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, calleeValue);
+            }
+            b.endConstruct();
+        }
+
+        /**
+         * A class reference (Translator.classRef), as a PhpClass: a name (self and parent as the enclosing class's
+         * names), static's late-static-binding class, or an expression's (an object's class or a name).
+         */
+        private void classRef(Object classNode) {
+            if (classNode instanceof Ast chain && deepestNullsafe(chain) != null) {
+                // the class of a static call is part of the chain ?-> short-circuits
+                throw new Unsupported("class of a ?-> chain", chain);
+            }
+            if (!(classNode instanceof Ast ast) || !ast.is("AST_NAME")) {
+                b.beginClassOf();
+                expression(classNode);
+                b.endClassOf();
+                return;
+            }
+            String name = classNameOf(ast);
+            switch (Str.lower(name)) {
+                case "self" -> b.emitResolveClass(classSite(enclosingClass(ast).name()));
+                case "parent" -> b.emitResolveClass(classSite(parentClass(ast)));
+                case "static" -> b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
+                default -> b.emitResolveClass(classSite(name));
+            }
+        }
+
+        private String classNameOf(Ast name) {
+            return names.className((String) name.get("name"), name.flags);
+        }
+
+        private ClassSite classSite(String name) {
+            return (ClassSite) made(() -> new ClassSite(name, language.classId(Str.lower(name))));
+        }
+
+        /** The class the code is written in, for self and static (the tree's requireClass). */
+        private Translator.ClassInfo enclosingClass(Ast node) {
+            if (owner == null) {
+                throw new Unsupported("self, parent or static outside a class", node);
+            }
+            return owner;
+        }
+
+        private String parentClass(Ast node) {
+            String parent = enclosingClass(node).parentName();
+            if (parent == null) {
+                throw new Unsupported("parent in a class without a parent", node);
+            }
+            return parent;
+        }
+
+        /** `Cls::NAME` (ClassConstNode): a named class's value may stay, static::'s is looked up per call. */
+        private void classConstant(Ast node) {
+            String constantName = (String) node.get("const");
+            if (constantName.equalsIgnoreCase("class")) {
+                className(node);
+                return;
+            }
+            Object classNode = node.get("class");
+            boolean cacheable = classNode instanceof Ast named && named.is("AST_NAME")
+                    && !classNameOf(named).equalsIgnoreCase("static");
+            b.beginClassConstant(constantName, cacheable);
+            classRef(classNode);
+            b.endClassConstant();
+        }
+
+        /** `Cls::class` (Translator.classNameExpr): a name as written, self's and parent's; static's per call. */
+        private void className(Ast node) {
+            Object classNode = node.get("class");
+            if (!(classNode instanceof Ast ast) || !ast.is("AST_NAME")) {
+                throw new Unsupported("::class of an expression", node);
+            }
+            String name = classNameOf(ast);
+            switch (Str.lower(name)) {
+                case "self" -> b.emitLoadConstant(made(() -> Str.of(enclosingClass(ast).name())));
+                case "parent" -> b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
+                case "static" -> {
+                    b.beginClassName();
+                    b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
+                    b.endClassName();
+                }
+                default -> b.emitLoadConstant(made(() -> Str.of(name)));
+            }
+        }
+
+        /**
+         * `$x instanceof Name` (InstanceofNode, the class need not exist; self is the enclosing class) and
+         * `$x instanceof $class` (DynamicInstanceofNode). The tree takes static as self and parent as a class
+         * named "parent": those stay on the tree.
+         */
+        private void instanceOf(Ast node) {
+            Ast classNode = node.node("class");
+            if (!classNode.is("AST_NAME")) {
+                b.beginInstanceOfValue();
+                expression(node.get("expr"));
+                expression(classNode);
+                b.endInstanceOfValue();
+                return;
+            }
+            String name = classNameOf(classNode);
+            switch (Str.lower(name)) {
+                case "self" -> name = enclosingClass(node).name();
+                case "static", "parent" -> throw new Unsupported("instanceof static or parent", node);
+                default -> {
+                }
+            }
+            b.beginInstanceOf(Str.lower(name));
+            expression(node.get("expr"));
+            b.endInstanceOf();
+        }
+
         /** An argument whose value is passed whatever the callee's parameter: no place and no call. */
         private boolean plainArgument(Object arg) {
             if (!(arg instanceof Ast ast)) {
@@ -1543,6 +1857,10 @@ public final class BytecodeTranslator {
         }
 
         private void argument(Object arg, int index, StackValue callee) {
+            if (arg instanceof Ast chain && deepestNullsafe(chain) != null) {
+                // by value, or php-src's error for a by-reference parameter
+                throw new Unsupported("argument with ?->", chain);
+            }
             if (plainArgument(arg)) {
                 expression(arg);
                 return;
@@ -1562,10 +1880,16 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(callee);
                 expression(ast.get("expr"));
                 b.endSendProp();
-            } else if (ast.is("AST_CALL")) {
+            } else if (ast.is("AST_CALL") || ast.is("AST_METHOD_CALL") || ast.is("AST_STATIC_CALL")) {
                 b.beginSendCall(index);
                 b.emitLoadStackValue(callee);
-                call(ast, true);
+                if (ast.is("AST_CALL")) {
+                    call(ast, true);
+                } else if (ast.is("AST_METHOD_CALL")) {
+                    methodCall(ast, true);
+                } else {
+                    staticCall(ast, true);
+                }
                 b.endSendCall();
             } else {
                 throw new Unsupported("argument", ast);

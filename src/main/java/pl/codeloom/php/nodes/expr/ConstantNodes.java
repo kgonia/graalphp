@@ -160,17 +160,22 @@ public final class ConstantNodes {
         }
 
         protected Object find(PhpClass phpClass) {
-            Object found = phpClass.getConstant(name);
-            if (found == null) {
-                CompilerDirectives.transferToInterpreter();
-                throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
-            }
-            return found;
+            return classConstant(phpClass, name);
         }
 
         protected Assumption singleContext() {
             return PhpLanguage.get(this).singleContext();
         }
+    }
+
+    /** The value of a class's constant; an Error if it has none of the name. */
+    public static Object classConstant(PhpClass phpClass, String name) {
+        Object found = phpClass.getConstant(name);
+        if (found == null) {
+            CompilerDirectives.transferToInterpreter();
+            throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
+        }
+        return found;
     }
 
     /** `static::class` and `$obj::class`. */

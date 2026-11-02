@@ -128,7 +128,17 @@ public record SourceLocation(String file, int line) {
             return codeRoot(running) == root
                     ? codeFrame(running, instance.getFrame(FrameInstance.FrameAccess.READ_ONLY)) : null;
         });
-        return bytecode == null || frame == null ? null : bytecode.getBytecodeLocation(frame, node);
+        if (bytecode == null || frame == null) {
+            return null;
+        }
+        // a node an instruction's node holds (a cached helper, such as an InstantiateNode) runs for that instruction
+        Node instruction = node;
+        if (instruction != bytecode) {
+            while (instruction.getParent() != null && instruction.getParent() != bytecode) {
+                instruction = instruction.getParent();
+            }
+        }
+        return bytecode.getBytecodeLocation(frame, instruction);
     }
 
     /** The instruction of a bytecode root a frame (not the innermost) is calling from, else null. */

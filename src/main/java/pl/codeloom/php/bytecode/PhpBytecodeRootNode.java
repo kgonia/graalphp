@@ -19,6 +19,7 @@ import com.oracle.truffle.api.bytecode.Variadic;
 import com.oracle.truffle.api.bytecode.Yield;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.dsl.TypeSystemReference;
@@ -39,15 +40,24 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.PhpTypes;
 import pl.codeloom.php.nodes.ToStrNode;
+import pl.codeloom.php.nodes.SubclassTestNode;
+import pl.codeloom.php.nodes.call.ArgumentsNode;
 import pl.codeloom.php.nodes.call.CallNode;
+import pl.codeloom.php.nodes.call.CallableDispatchNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
+import pl.codeloom.php.nodes.call.InstantiateNode;
+import pl.codeloom.php.nodes.call.MethodCallNode;
+import pl.codeloom.php.nodes.call.StaticCallNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
+import pl.codeloom.php.nodes.expr.ConstantNodes;
 import pl.codeloom.php.nodes.expr.MatchNode;
+import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.TryNode;
+import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.PropNode;
@@ -55,8 +65,11 @@ import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
+import pl.codeloom.php.runtime.Callables;
+import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -1167,6 +1180,415 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 CallNode.notice(node, CallNode.PASSED_VALUE);
             }
             return result;
+        }
+    }
+
+    // ---- methods, classes and objects (MethodCallNode, StaticCallNode, NewNode, ClassRefNode) ----
+
+    /**
+     * The method `$obj->name(args)` calls, found before the arguments (INIT_METHOD_CALL) by the receiver's class,
+     * inline-cached on its key (MethodCallNode.Dispatch); BY_VALUE for __call standing in for it and for a Closure
+     * receiver, whose arguments go by value; a receiver that isn't an object is an Error.
+     */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    public static final class ResolveMethod {
+        @Specialization(guards = "receiver.getPhpClass().getKey() == cachedKey", limit = "4")
+        public static PhpFunction cached(MethodSite site, PhpObject receiver,
+                                         @Cached("receiver.getPhpClass().getKey()") ClassKey cachedKey,
+                                         @Cached("find(site, receiver.getPhpClass())") PhpFunction method) {
+            return method;
+        }
+
+        @Specialization(replaces = "cached")
+        public static PhpFunction object(MethodSite site, PhpObject receiver) {
+            return find(site, receiver.getPhpClass());
+        }
+
+        @Specialization
+        public static PhpFunction closure(MethodSite site, PhpClosure receiver) {
+            return MethodSite.BY_VALUE;
+        }
+
+        @Fallback
+        public static PhpFunction other(MethodSite site, Object receiver) {
+            throw MethodCallNode.memberOnNonObject(site.lowerName, receiver);
+        }
+
+        public static PhpFunction find(MethodSite site, PhpClass phpClass) {
+            PhpFunction method = MethodCallNode.Dispatch.findMethod(phpClass, site.lowerName);
+            return isMagic(phpClass, site.lowerName) ? MethodSite.BY_VALUE : method;
+        }
+
+        @TruffleBoundary
+        private static boolean isMagic(PhpClass phpClass, String lowerName) {
+            return phpClass.findMethod(lowerName) == null;
+        }
+    }
+
+    /**
+     * `$obj->name(args)` once the arguments are sent: $this is the receiver unless the method is static, the
+     * called class the receiver's (MethodCallNode). By value: __call with the name as called and the arguments in
+     * an array, a Closure's __invoke (CallableDispatchNode) or its other methods (bindTo, call). keepRef: the
+     * result goes where a returned reference is kept (an argument).
+     */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallMethod {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            PhpObject object = (PhpObject) receiver;
+            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : object;
+            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            return result(callNode.call(arguments), keepRef);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Shared @Cached IndirectCallNode callNode) {
+            PhpObject object = (PhpObject) receiver;
+            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : object;
+            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            return result(callNode.call(function.getCallTarget(), arguments), keepRef);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object byValue(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                     @Shared @Cached IndirectCallNode callNode, @Bind Node node) {
+            Object[] values = values(arguments);
+            if (receiver instanceof PhpClosure closure) {
+                if (site.lowerName.equals("__invoke")) {
+                    return result(callNode.call(closure.getFunction().getCallTarget(),
+                            CallableDispatchNode.closureArguments(closure, values)), keepRef);
+                }
+                return result(MethodCallNode.closureMethod(node, site.lowerName, closure, values), keepRef);
+            }
+            PhpObject object = (PhpObject) receiver;
+            PhpClass phpClass = object.getPhpClass();
+            return result(callNode.call(magicMethod(phpClass, "__call").getCallTarget(),
+                    ArgumentsNode.frameArguments(object, phpClass, null,
+                            Callables.magicValues(site.calledName, values))), keepRef);
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** A call's arguments, without the frame's first slots. */
+    private static Object[] values(Object[] arguments) {
+        Object[] values = new Object[arguments.length - PhpFunction.ARG_FIRST];
+        System.arraycopy(arguments, PhpFunction.ARG_FIRST, values, 0, values.length);
+        return values;
+    }
+
+    private static Object result(Object returned, boolean keepRef) {
+        return keepRef ? returned : PhpRef.deref(returned);
+    }
+
+    @TruffleBoundary
+    private static PhpFunction magicMethod(PhpClass phpClass, String lowerName) {
+        return phpClass.findMethod(lowerName);
+    }
+
+    /**
+     * The method `Cls::name(args)` calls, found before the arguments (INIT_STATIC_METHOD_CALL), inline-cached on the
+     * class's key (StaticCallNode.Dispatch); BY_VALUE when __call or __callStatic stands in for it.
+     */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    public static final class ResolveStaticMethod {
+        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
+        public static PhpFunction cached(MethodSite site, PhpClass phpClass,
+                                         @Cached("phpClass.getKey()") ClassKey cachedKey,
+                                         @Cached("find(site, phpClass)") PhpFunction method) {
+            return method;
+        }
+
+        @Specialization(replaces = "cached")
+        public static PhpFunction generic(MethodSite site, PhpClass phpClass) {
+            return find(site, phpClass);
+        }
+
+        public static PhpFunction find(MethodSite site, PhpClass phpClass) {
+            PhpFunction method = StaticCallNode.Dispatch.findStatic(phpClass, site.lowerName);
+            return method == null ? MethodSite.BY_VALUE : method;
+        }
+    }
+
+    /**
+     * `Cls::name(args)` once the arguments are sent (StaticCallNode): a non-static method gets the caller's $this
+     * when it is an instance of the class; a forwarding call (self::, parent::, static::) keeps the caller's
+     * late-static-binding class. By value: __call on that $this, else __callStatic.
+     */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallStatic {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                    PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Shared @Cached SubclassTestNode subclassTest) {
+            Object[] caller = frame.getArguments();
+            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null
+                    : callerThis(caller, phpClass, subclassTest);
+            arguments[PhpFunction.ARG_STATIC] = staticClass(site, caller, phpClass);
+            return result(callNode.call(arguments), keepRef);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                      PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Shared @Cached IndirectCallNode callNode,
+                                      @Shared @Cached SubclassTestNode subclassTest) {
+            Object[] caller = frame.getArguments();
+            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null
+                    : callerThis(caller, phpClass, subclassTest);
+            arguments[PhpFunction.ARG_STATIC] = staticClass(site, caller, phpClass);
+            return result(callNode.call(function.getCallTarget(), arguments), keepRef);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object magic(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                   PhpFunction function,
+                                   @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                   @Shared @Cached IndirectCallNode callNode,
+                                   @Shared @Cached SubclassTestNode subclassTest) {
+            Object[] caller = frame.getArguments();
+            Object self = callerThis(caller, phpClass, subclassTest);
+            PhpClass staticClass = staticClass(site, caller, phpClass);
+            Object[] values = Callables.magicValues(site.calledName, values(arguments));
+            PhpFunction viaCall = self != null ? magicMethod(phpClass, "__call") : null;
+            if (viaCall != null) {
+                return result(callNode.call(viaCall.getCallTarget(),
+                        ArgumentsNode.frameArguments(self, staticClass, null, values)), keepRef);
+            }
+            PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
+            if (viaStatic == null) {
+                throw StaticCallNode.Dispatch.undefined(phpClass, site.lowerName);
+            }
+            return result(callNode.call(viaStatic.getCallTarget(),
+                    ArgumentsNode.frameArguments(null, staticClass, null, values)), keepRef);
+        }
+
+        /** The caller's $this when it is an instance of the class. */
+        private static Object callerThis(Object[] caller, PhpClass phpClass, SubclassTestNode subclassTest) {
+            Object self = caller[PhpFunction.ARG_THIS];
+            if (self instanceof PhpObject object && !subclassTest.execute(object.getPhpClass(), phpClass)) {
+                return null;
+            }
+            return self;
+        }
+
+        private static PhpClass staticClass(MethodSite site, Object[] caller, PhpClass phpClass) {
+            if (site.forwarding && caller[PhpFunction.ARG_STATIC] instanceof PhpClass callerStatic) {
+                return callerStatic;
+            }
+            return phpClass;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /**
+     * A class by name (ClassRefNode.named): with one context the class found first stays (classes can't be
+     * redeclared); the uncached interpreter looks it up each time.
+     */
+    @Operation
+    @ConstantOperand(type = ClassSite.class)
+    public static final class ResolveClass {
+        @Specialization(assumptions = "singleContext()", excludeForUncached = true)
+        public static PhpClass single(ClassSite site, @Cached("site.find(context())") PhpClass phpClass) {
+            return phpClass;
+        }
+
+        @Specialization(replaces = "single")
+        public static PhpClass perContext(ClassSite site, @Bind Node node) {
+            return site.find(PhpContext.get(node));
+        }
+
+        public static Assumption singleContext() {
+            return PhpLanguage.get(null).singleContext();
+        }
+
+        public static PhpContext context() {
+            return PhpContext.get(null);
+        }
+    }
+
+    /** `static` (ClassRefNode.lateStatic): the called class the frame was passed, else the class written in. */
+    @Operation
+    @ConstantOperand(type = ClassSite.class)
+    public static final class ResolveLateStatic {
+        @Specialization
+        public static PhpClass resolve(VirtualFrame frame, ClassSite site, @Bind Node node) {
+            if (frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass) {
+                return phpClass;
+            }
+            return site.find(PhpContext.get(node));
+        }
+    }
+
+    /** `$class::...`, `new $class`: an object's class, or the class a name names (ClassRefNode.classOf). */
+    @Operation
+    public static final class ClassOf {
+        @Specialization
+        public static PhpClass of(Object value, @Bind Node node) {
+            return ClassRefNode.classOf(node, value);
+        }
+    }
+
+    /** `Cls::NAME` (ClassConstNode): with one context, a named class's value stays once found. */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = boolean.class, name = "cacheable")
+    public static final class ClassConstant {
+        @Specialization(guards = {"cacheable", "phpClass == cachedClass"}, limit = "1",
+                assumptions = "singleContext()", excludeForUncached = true)
+        public static Object single(String name, boolean cacheable, PhpClass phpClass,
+                                    @Cached("phpClass") PhpClass cachedClass,
+                                    @Cached("classConstant(cachedClass, name)") Object value) {
+            return value;
+        }
+
+        @Specialization(replaces = "single")
+        public static Object perCall(String name, boolean cacheable, PhpClass phpClass) {
+            return ConstantNodes.classConstant(phpClass, name);
+        }
+
+        public static Object classConstant(PhpClass phpClass, String name) {
+            return ConstantNodes.classConstant(phpClass, name);
+        }
+
+        public static Assumption singleContext() {
+            return PhpLanguage.get(null).singleContext();
+        }
+    }
+
+    /** `static::class` (ClassNameNode). */
+    @Operation
+    public static final class ClassName {
+        @Specialization
+        public static TruffleString name(PhpClass phpClass) {
+            return Str.of(phpClass.getName());
+        }
+    }
+
+    /** Whether a `?->`'s object is null (ZEND_JMP_NULL), which short-circuits the rest of its chain. */
+    @Operation
+    public static final class IsNull {
+        @Specialization
+        public static boolean isNull(Object value) {
+            return value == PhpNull.NULL;
+        }
+    }
+
+    /** `$x instanceof Name` (InstanceofNode): the class need not be loaded; a Closure is an instance of Closure. */
+    @Operation
+    @ConstantOperand(type = String.class, name = "lowerName")
+    public static final class InstanceOf {
+        @Specialization
+        public static boolean object(String lowerName, PhpObject value, @Cached SubclassTestNode subclassTest) {
+            return subclassTest.execute(value.getPhpClass(), lowerName);
+        }
+
+        @Specialization
+        public static boolean closure(String lowerName, PhpClosure value) {
+            return lowerName.equals("closure");
+        }
+
+        @Fallback
+        public static boolean other(String lowerName, Object value) {
+            return false;
+        }
+    }
+
+    /** `$x instanceof $class` (DynamicInstanceofNode), and `instanceof static`'s class. */
+    @Operation
+    public static final class InstanceOfValue {
+        @Specialization
+        public static boolean test(Object value, Object target) {
+            return TestNodes.DynamicInstanceofNode.test(value, target);
+        }
+    }
+
+    /**
+     * `new Cls(args)` (NewNode): the object, with its declared properties at their defaults (InstantiateNode),
+     * before the arguments.
+     */
+    @Operation
+    public static final class Instantiate {
+        @Specialization(excludeForUncached = true)
+        public static PhpObject cached(PhpClass phpClass, @Cached(neverDefault = true) InstantiateNode instantiate) {
+            return instantiate.execute(phpClass);
+        }
+
+        @Specialization(replaces = "cached")
+        public static PhpObject uncached(PhpClass phpClass, @Bind Node node) {
+            return InstantiateNode.instantiate(phpClass, node);
+        }
+    }
+
+    /**
+     * The constructor a `new` calls, for its arguments (NEW resolves it first); BY_VALUE for a class without one,
+     * whose arguments are evaluated and dropped.
+     */
+    @Operation
+    public static final class ResolveConstructor {
+        @Specialization
+        public static PhpFunction constructor(PhpObject object) {
+            PhpFunction constructor = object.getPhpClass().getConstructor();
+            return constructor == null ? MethodSite.BY_VALUE : constructor;
+        }
+    }
+
+    /**
+     * The constructor's call on the new object (NewNode.Construct): $this the object, the called class its; the
+     * object is the value.
+     */
+    @Operation
+    public static final class Construct {
+        @Specialization(guards = {"!isByValue(constructor)", "constructor == cachedConstructor"}, limit = "4")
+        public static PhpObject direct(PhpObject object, PhpFunction constructor,
+                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                       @Cached("constructor") PhpFunction cachedConstructor,
+                                       @Cached("create(cachedConstructor.getCallTarget())") DirectCallNode callNode) {
+            arguments[PhpFunction.ARG_THIS] = object;
+            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            callNode.call(arguments);
+            return object;
+        }
+
+        @Specialization(guards = "!isByValue(constructor)", replaces = "direct")
+        public static PhpObject indirect(PhpObject object, PhpFunction constructor,
+                                         @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                         @Cached IndirectCallNode callNode) {
+            arguments[PhpFunction.ARG_THIS] = object;
+            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            callNode.call(constructor.getCallTarget(), arguments);
+            return object;
+        }
+
+        @Specialization(guards = "isByValue(constructor)")
+        public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
+                                                   @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments) {
+            return object;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
         }
     }
 

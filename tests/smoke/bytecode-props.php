@@ -315,3 +315,20 @@ foreach (counter($c) as $k => $v) {
 }
 show('generator', [$c->count, $c->text]);
 
+// in a generator, which runs on bytecode in either mode: ++ and -- of a property of null say "increment/decrement"
+// as php-src's do (the tree's say "assign")
+function incOnNull($v) {
+    try {
+        $v->x++;
+    } catch (Error $e) {
+        yield $e->getMessage();
+    }
+    try {
+        --$v->x;
+    } catch (Error $e) {
+        yield $e->getMessage();
+    }
+}
+foreach (incOnNull(null) as $message) {
+    echo $message, "\n";
+}

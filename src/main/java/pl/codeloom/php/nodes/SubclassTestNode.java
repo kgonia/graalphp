@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes;
 
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.Node;
@@ -14,6 +15,7 @@ import pl.codeloom.php.runtime.PhpClass;
  * same string at every call of a site) or a class (self::, parent::).
  */
 @ReportPolymorphism
+@GenerateUncached
 public abstract class SubclassTestNode extends Node {
     static final int LIMIT = 4;
 
