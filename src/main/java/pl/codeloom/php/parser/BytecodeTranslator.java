@@ -13,6 +13,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.ClassSite;
 import pl.codeloom.php.bytecode.LiteralSite;
@@ -28,6 +29,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -61,6 +63,11 @@ public final class BytecodeTranslator {
     private static final int COLLECT_LIMIT = 500;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
+    /**
+     * For finding a function the bytecode runs differently by halving: php.bytecode.only=BITS:VALUE keeps on the
+     * tree every function whose name's hash doesn't end in VALUE's BITS bits.
+     */
+    private static final String ONLY = System.getProperty("php.bytecode.only");
 
     /** A construct the translator doesn't cover: the function stays on the tree. */
     static final class Unsupported extends RuntimeException {
@@ -129,6 +136,14 @@ public final class BytecodeTranslator {
                                     Ast declaration, Ast body, Translator.ClassInfo owner, PhpFunction function,
                                     String display, PhpFunction.Param[] params, String[] captures,
                                     boolean[] captureByRef, Names names, boolean generator) {
+        if (ONLY != null) {
+            int bits = Integer.parseInt(ONLY.split(":")[0]);
+            int value = Integer.parseInt(ONLY.split(":")[1]);
+            if ((display.hashCode() & ((1 << bits) - 1)) != value) {
+                report("tree     " + display + ": php.bytecode.only");
+                return null;
+            }
+        }
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration, body,
                 owner, function, display, params, captures, captureByRef, names, generator);
         BytecodeParser<PhpBytecodeRootNodeGen.Builder> parser = translator::parse;
@@ -255,6 +270,18 @@ public final class BytecodeTranslator {
 
         // ---- the function ----
 
+        /**
+         * php-src's compile error at node's line (Translator.compileError: reported, the bailout ends the script);
+         * report=all's runs leaving nodes out only note it.
+         */
+        private RuntimeException compileError(Ast node, String message) {
+            if (skip != null) {
+                return new Unsupported(message, node);
+            }
+            return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
+                    new SourceLocation(path, node.line), 0);
+        }
+
         /** A function returning by reference (`function &f()`); a generator's `&` is for its yields. */
         private boolean returnsRef() {
             return function.returnsRef() && !generator;
@@ -268,16 +295,29 @@ public final class BytecodeTranslator {
                 names.add(param.name());
             }
             if (names.size() != params.length) {
-                throw new Unsupported("parameters with the same name", declaration);
-            }
-            for (String capture : captures) {
-                names.add(capture);
+                Set<String> seen = new java.util.HashSet<>();
+                for (PhpFunction.Param param : params) {
+                    if (!seen.add(param.name())) {
+                        throw compileError(declaration, "Redefinition of parameter $" + param.name());
+                    }
+                }
             }
             for (String name : names) {
-                if (!plainVariable(name)) {
-                    // PHP refuses these at compile time; the tree has its own handling of the names
-                    throw new Unsupported("$" + name + " as a parameter or capture", declaration);
+                if (name.equals("this")) {
+                    throw compileError(declaration, "Cannot use $this as parameter");
                 }
+                if (!plainVariable(name)) {
+                    throw compileError(declaration, "Cannot re-assign auto-global variable " + name);
+                }
+            }
+            for (String capture : captures) {
+                if (capture.equals("this")) {
+                    throw compileError(declaration, "Cannot use $this as lexical variable");
+                }
+                if (!plainVariable(capture)) {
+                    throw compileError(declaration, "Cannot use auto-global as lexical variable");
+                }
+                names.add(capture);
             }
             collectVariables(body, names);
             List<LocalAccessor> locals = new ArrayList<>();
@@ -528,12 +568,19 @@ public final class BytecodeTranslator {
                 case "AST_BREAK":
                 case "AST_CONTINUE": {
                     int depth = node.get("depth") instanceof Long d ? d.intValue() : 1;
-                    if (depth < 1 || depth > loops.size()) {
-                        throw new Unsupported("break out of " + depth + " levels", node);
+                    String keyword = node.is("AST_CONTINUE") ? "continue" : "break";
+                    if (depth < 1) {
+                        throw compileError(node, "'" + keyword + "' operator accepts only positive integers");
+                    }
+                    if (loops.isEmpty()) {
+                        throw compileError(node, "'" + keyword + "' not in the 'loop' or 'switch' context");
+                    }
+                    if (depth > loops.size()) {
+                        throw compileError(node, "Cannot '" + keyword + "' " + depth + " level"
+                                + (depth == 1 ? "" : "s"));
                     }
                     if (loops.size() - depth < loopsOutsideFinally) {
-                        // php-src's compile error "jump out of a finally block is disallowed"
-                        throw new Unsupported("break or continue out of a finally block", node);
+                        throw compileError(node, "jump out of a finally block is disallowed");
                     }
                     Loop loop = loops.get(loops.size() - depth);
                     b.emitBranch(node.is("AST_CONTINUE") ? loop.continueLabel() : loop.breakLabel());
@@ -754,8 +801,7 @@ public final class BytecodeTranslator {
                 Ast switchCase = (Ast) list.child(i);
                 if (switchCase.get("cond") == null) {
                     if (defaultIndex >= 0) {
-                        // php-src's compile error "Switch statements may only contain one default clause"
-                        throw new Unsupported("switch with two default clauses", switchCase);
+                        throw compileError(switchCase, "Switch statements may only contain one default clause");
                     }
                     defaultIndex = i;
                 }
@@ -1263,9 +1309,9 @@ public final class BytecodeTranslator {
          * to the subject (`===`, until one is identical); after the last, the default arm or UnhandledMatchError.
          */
         private void match(Ast node) {
-            if (Translator.secondDefaultArm(node) != null) {
-                // a compile error, which the tree's translation raises
-                throw new Unsupported("match with two default arms", node);
+            Ast secondDefault = Translator.secondDefaultArm(node);
+            if (secondDefault != null) {
+                throw compileError(secondDefault, "Match expressions may only contain one default arm");
             }
             Ast armList = node.node("stmts");
             List<Ast> arms = new ArrayList<>();
@@ -1681,8 +1727,7 @@ public final class BytecodeTranslator {
                 }
                 any = true;
                 if (element.is("AST_UNPACK")) {
-                    // "Spread operator is not supported in assignments"
-                    throw new Unsupported("spread in list()", element);
+                    throw compileError(element, "Spread operator is not supported in assignments");
                 }
                 if ((element.flags & ARRAY_ELEM_REF) != 0) {
                     throw new Unsupported("reference in list()", element);
@@ -1697,12 +1742,10 @@ public final class BytecodeTranslator {
                 }
             }
             if (!any) {
-                // "Cannot use empty list"
-                throw new Unsupported("empty list()", list);
+                throw compileError(list, "Cannot use empty list");
             }
             if (keyed && unkeyed) {
-                // "Cannot mix keyed and unkeyed array entries in assignments"
-                throw new Unsupported("list() with keyed and unkeyed entries", list);
+                throw compileError(list, "Cannot mix keyed and unkeyed array entries in assignments");
             }
         }
 
@@ -2603,8 +2646,7 @@ public final class BytecodeTranslator {
         private void nestedUnset(Ast target) {
             ElementPlace place = elementPlace(target, "unset of");
             if (place.appends()) {
-                // php-src's compile error "Cannot use [] for unsetting"
-                throw new Unsupported("unset of []", target);
+                throw compileError(target, "Cannot use [] for unsetting");
             }
             b.beginBlock();
             List<Object> keys = placeKeys(place, true);
