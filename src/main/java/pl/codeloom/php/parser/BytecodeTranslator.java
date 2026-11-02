@@ -342,7 +342,13 @@ public final class BytecodeTranslator {
                     b.beginConditional();
                     b.emitArgumentGiven(i);
                     b.emitArgument(i);
-                    constant(defaultValue, param);
+                    // a default that isn't a literal (a class constant, a constant, new) is evaluated when the
+                    // argument is missing, after the parameters before it are bound (FunctionRootNode)
+                    if (constantShaped(defaultValue)) {
+                        constant(defaultValue, param);
+                    } else {
+                        expression(defaultValue);
+                    }
                     b.endConditional();
                 }
                 b.endBindParameter();
@@ -2502,19 +2508,30 @@ public final class BytecodeTranslator {
         private void call(Ast node, boolean byRefContext) {
             Ast callee = node.node("expr");
             Ast args = node.node("args");
-            if (!callee.is("AST_NAME") || ((String) callee.get("name")).contains("::")
-                    || Translator.isCallableConvert(node)) {
-                throw new Unsupported("call of a callable value", node);
+            // a string callee naming a method, 'A::m'(), calls it as the value would be called
+            boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
+            Object callable = method ? made(() -> Str.of((String) callee.get("name"))) : callee;
+            if (Translator.isCallableConvert(node)) {
+                if (!callee.is("AST_NAME") || method) {
+                    b.beginConvertValue();
+                    calleeValue(callable);
+                    b.endConvertValue();
+                    return;
+                }
+                String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
+                b.emitConvertFunction(resolved[0], language.functionId(Str.lower(resolved[0])),
+                        resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
+                return;
+            }
+            if (!callee.is("AST_NAME") || method) {
+                callValue(node, callable, byRefContext);
+                return;
             }
             String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
             String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
             String lower = Str.lower(name);
-            switch (lower) {
-                case "func_get_args", "func_num_args", "call_user_func", "call_user_func_array", "get_class",
-                     "get_called_class", "compact", "extract", "get_object_vars", "get_defined_vars" ->
-                        throw new Unsupported(lower + "()", node);
-                default -> {
-                }
+            if (frameFunction(node, lower, args, resolved[1] == null)) {
+                return;
             }
             boolean special = resolved[1] == null && constants.compiledSpecially(Str.lower(resolved[0]), args);
             // the other built-ins the tree compiles in place (Intrinsics) are called as the built-ins they stand
@@ -2561,6 +2578,123 @@ public final class BytecodeTranslator {
             }
         }
 
+        private void calleeValue(Object value) {
+            if (value instanceof TruffleString constant) {
+                b.emitLoadConstant(constant);
+            } else {
+                expression(value);
+            }
+        }
+
+        /**
+         * The built-ins the tree compiles itself (Translator.call): func_get_args(), func_num_args(),
+         * call_user_func(), call_user_func_array(), get_class() and get_called_class() without arguments; false
+         * for any other call. compiled: the name was resolved at compile time.
+         */
+        private boolean frameFunction(Ast node, String lower, Ast args, boolean compiled) {
+            switch (lower) {
+                case "func_get_args", "func_num_args" -> {
+                    if (args.size() != 0) {
+                        // php-src's ArgumentCountError
+                        throw new Unsupported(lower + "() with arguments", node);
+                    }
+                    if (lower.equals("func_get_args")) {
+                        b.emitFuncGetArgs();
+                    } else {
+                        b.emitFuncNumArgs();
+                    }
+                    return true;
+                }
+                case "call_user_func" -> {
+                    if (args.size() == 0 || hasUnpackOrNames(args)) {
+                        throw new Unsupported("call_user_func() without a callable or with unpacking", node);
+                    }
+                    b.beginCallUserFunc(compiled);
+                    for (Object arg : args.children()) {
+                        expression(arg);
+                    }
+                    b.endCallUserFunc();
+                    return true;
+                }
+                case "call_user_func_array" -> {
+                    if (args.size() != 2 || hasUnpackOrNames(args)) {
+                        throw new Unsupported("call_user_func_array() but with two arguments", node);
+                    }
+                    b.beginCallUserFuncArray(compiled);
+                    expression(args.child(0));
+                    expression(args.child(1));
+                    b.endCallUserFuncArray();
+                    return true;
+                }
+                case "get_class", "get_called_class" -> {
+                    if (args.size() != 0) {
+                        return false;
+                    }
+                    if (owner == null) {
+                        // php-src's Error; the tree's lateStatic(null) has no class to fall back to
+                        throw new Unsupported(lower + "() outside a class", node);
+                    }
+                    if (lower.equals("get_class")) {
+                        // php-src 8.5's deprecation, which the tree's constant doesn't raise
+                        b.beginBlock();
+                        b.emitDeprecation("Calling get_class() without arguments is deprecated");
+                        b.emitLoadConstant(made(() -> Str.of(owner.name())));
+                        b.endBlock();
+                    } else {
+                        b.beginClassName();
+                        b.emitResolveLateStatic(classSite(owner.name()));
+                        b.endClassName();
+                    }
+                    return true;
+                }
+                case "compact", "extract", "get_object_vars", "get_defined_vars" ->
+                        throw new Unsupported(lower + "()", node);
+                default -> {
+                    return false;
+                }
+            }
+        }
+
+        private boolean hasUnpackOrNames(Ast args) {
+            for (Object arg : args.children()) {
+                if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
+                        || ast.is("AST_CALLABLE_CONVERT"))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * `$f(args)`, `'Cls::m'(args)`, `[$obj, 'm'](args)` (CallableCallNode): the callable resolved first
+         * (INIT_DYNAMIC_CALL), then the arguments as its function's parameters take them (SEND_VAR_EX), then the
+         * call.
+         */
+        private void callValue(Ast node, Object calleeValue, boolean keepRef) {
+            Ast args = node.node("args");
+            boolean needsCallee = argumentsNeedCallee(args);
+            b.beginCallValue(keepRef);
+            b.beginBindStackValue();
+            b.beginResolveCallable();
+            calleeValue(calleeValue);
+            b.endResolveCallable();
+            StackValue target = b.endBindStackValue();
+            callableArguments(args, target, needsCallee);
+            b.endCallValue();
+        }
+
+        /** The function operand of a CallValue (its arguments' callee) and the arguments. */
+        private void callableArguments(Ast args, StackValue target, boolean needsCallee) {
+            StackValue calleeValue = callee(needsCallee, () -> {
+                b.beginTargetFunction();
+                b.emitLoadStackValue(target);
+                b.endTargetFunction();
+            });
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, calleeValue);
+            }
+        }
+
         /** Whether a call's arguments need the callee (some may go by reference); no unpacking or names. */
         private boolean argumentsNeedCallee(Ast args) {
             boolean needsCallee = false;
@@ -2594,10 +2728,32 @@ public final class BytecodeTranslator {
          */
         private void methodCall(Ast node, boolean byRefContext) {
             if (Translator.isCallableConvert(node)) {
-                throw new Unsupported("first-class callable of a method", node);
+                // `$obj->name(...)` (CallableConvertNodes.MethodNode): the object, then the name
+                b.beginConvertMethod();
+                expression(node.get("expr"));
+                Object method = node.get("method");
+                if (method instanceof String constant) {
+                    b.emitLoadConstant(made(() -> Str.of(constant)));
+                } else {
+                    expression(method);
+                }
+                b.endConvertMethod();
+                return;
             }
             if (!(node.get("method") instanceof String name)) {
-                throw new Unsupported("call of a method by a computed name", node);
+                // `$obj->$name(args)` (DynamicMethodCallNode): the callable [$obj, name], then the arguments
+                Ast args = node.node("args");
+                boolean needsCallee = argumentsNeedCallee(args);
+                b.beginCallValue(byRefContext);
+                b.beginBindStackValue();
+                b.beginResolveDynamicMethod();
+                expression(node.get("expr"));
+                expression(node.get("method"));
+                b.endResolveDynamicMethod();
+                StackValue target = b.endBindStackValue();
+                callableArguments(args, target, needsCallee);
+                b.endCallValue();
+                return;
             }
             Ast args = node.node("args");
             boolean needsCallee = argumentsNeedCallee(args);
@@ -2622,15 +2778,19 @@ public final class BytecodeTranslator {
          * (INIT_STATIC_METHOD_CALL), then the arguments; self, parent and static forward the called class.
          */
         private void staticCall(Ast node, boolean byRefContext) {
-            if (Translator.isCallableConvert(node)) {
-                throw new Unsupported("first-class callable of a static method", node);
-            }
             if (!(node.get("method") instanceof String name)) {
                 throw new Unsupported("call of a static method by a computed name", node);
             }
             Ast classNode = node.node("class");
             String lower = classNode != null && classNode.is("AST_NAME") ? Str.lower(classNameOf(classNode)) : "";
             boolean forwarding = lower.equals("self") || lower.equals("parent") || lower.equals("static");
+            if (Translator.isCallableConvert(node)) {
+                // `Cls::name(...)` (CallableConvertNodes.StaticMethodNode)
+                b.beginConvertStatic(name, forwarding);
+                classRef(node.get("class"));
+                b.endConvertStatic();
+                return;
+            }
             Ast args = node.node("args");
             boolean needsCallee = argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));

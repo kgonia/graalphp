@@ -38,10 +38,13 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.PhpTypes;
 import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
+import pl.codeloom.php.nodes.call.CallableCallNode;
+import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
@@ -1640,6 +1643,230 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 CallNode.notice(node, CallNode.PASSED_VALUE);
             }
             return result;
+        }
+    }
+
+    // ---- calls of callable values (CallableCallNode, DynamicMethodCallNode, CallableConvertNodes) ----
+
+    /**
+     * What `$f(args)` calls, found before its arguments (INIT_DYNAMIC_CALL, Callables.resolveCall): a closure, a
+     * function's or "Cls::method"'s name, [$obj, 'method'], ['Cls', 'method']; php-src's Error for anything else.
+     */
+    @Operation
+    public static final class ResolveCallable {
+        @Specialization
+        public static Callables.Target resolve(Object callable, @Bind Node node) {
+            return Callables.resolveCall(PhpContext.get(node), callable);
+        }
+    }
+
+    /** What `$obj->$name(args)` calls (DynamicMethodCallNode): the callable [$obj, name], the name a string. */
+    @Operation
+    public static final class ResolveDynamicMethod {
+        @Specialization
+        public static Callables.Target resolve(Object object, Object name, @Bind Node node,
+                                               @Cached ToStrNode toStr) {
+            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, toStr.execute(name)));
+        }
+    }
+
+    /**
+     * The function a callable's arguments ask about their parameters (SEND_VAR_EX): BY_VALUE when __call or
+     * __callStatic stands in for a method, whose arguments go by value.
+     */
+    @Operation
+    public static final class TargetFunction {
+        @Specialization
+        public static PhpFunction function(Callables.Target target) {
+            return target.magicName() != null ? MethodSite.BY_VALUE : target.function();
+        }
+    }
+
+    /**
+     * `$f(args)` once the arguments are sent: the target's function with its $this, scope and closure (as
+     * CallableDispatchNode calls it); a method __call stands in for gets the name and the arguments in an array.
+     * keepRef: the result goes where a returned reference is kept.
+     */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallValue {
+        @Specialization(guards = "target.function() == cachedFunction", limit = "4")
+        public static Object direct(boolean keepRef, Callables.Target target, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("target.function()") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return result(callNode.call(targetArguments(target, arguments)), keepRef);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(boolean keepRef, Callables.Target target, PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Cached IndirectCallNode callNode) {
+            return result(callNode.call(target.function().getCallTarget(), targetArguments(target, arguments)),
+                    keepRef);
+        }
+    }
+
+    /** The frame arguments of a call of target (Callables.Target.frameArguments) in the array the call built. */
+    private static Object[] targetArguments(Callables.Target target, Object[] arguments) {
+        if (target.magicName() != null) {
+            return target.frameArguments(values(arguments));
+        }
+        arguments[PhpFunction.ARG_THIS] = target.thisObject();
+        arguments[PhpFunction.ARG_STATIC] = target.staticClass();
+        arguments[PhpFunction.ARG_CLOSURE] = target.closure();
+        return arguments;
+    }
+
+    /**
+     * call_user_func($f, args...) (CallableCallNode with the built-in's parameter): the arguments by value, the
+     * callable resolved as a built-in's (its TypeError). keepRef: php-src compiles the call into the callee's
+     * (zend_compile_func_cuf), whose result a returned reference may be.
+     */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallUserFunc {
+        static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func", 1, false);
+
+        @Specialization(excludeForUncached = true)
+        public static Object cached(boolean keepRef, Object callable, @Variadic Object[] values,
+                                    @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
+            return dispatch.execute(callable, values);
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object uncached(boolean keepRef, Object callable, @Variadic Object[] values,
+                                      @Bind Node node) {
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        }
+    }
+
+    /** call_user_func_array($f, $args): as CallUserFunc, the arguments the array's elements (references stay). */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallUserFuncArray {
+        static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func_array", 1, false);
+
+        @Specialization(excludeForUncached = true)
+        public static Object cached(boolean keepRef, Object callable, Object args,
+                                    @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
+            return dispatch.execute(callable, CallableCallNode.arrayArguments(args));
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object uncached(boolean keepRef, Object callable, Object args, @Bind Node node) {
+            Object[] values = CallableCallNode.arrayArguments(args);
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        }
+    }
+
+    @TruffleBoundary
+    private static Object callTarget(Callables.Target target, Object[] values, boolean keepRef) {
+        return result(target.function().getCallTarget().call(target.frameArguments(values)), keepRef);
+    }
+
+    /**
+     * func_get_args() (php-src's): the arguments passed, each declared parameter's as its variable holds it now
+     * (null when unset), the extra ones as they were passed.
+     */
+    @Operation
+    public static final class FuncGetArgs {
+        @Specialization
+        public static PhpArray args(VirtualFrame frame, @Bind PhpBytecodeRootNode root,
+                                    @Bind BytecodeNode bytecode) {
+            return root.passedArguments(frame, bytecode);
+        }
+    }
+
+    /** func_get_args()'s array (see FuncGetArgs); the loop over the parameters is over constants. */
+    @ExplodeLoop
+    PhpArray passedArguments(VirtualFrame frame, BytecodeNode bytecode) {
+        Object[] arguments = frame.getArguments();
+        int count = arguments.length - PhpFunction.ARG_FIRST;
+        PhpArray list = PhpArray.ofCapacity(count);
+        // the variadic parameter's arguments are extra ones (php-src's num_args leaves it out)
+        int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1 : params.length;
+        int fromVariables = Math.min(count, declared);
+        for (int i = 0; i < declared; i++) {
+            if (i < fromVariables) {
+                list.append(Variables.value(Locals.stored(frame, variables[parameterLocals[i]], bytecode)));
+            }
+        }
+        for (int i = fromVariables; i < count; i++) {
+            list.append(PhpRef.deref(arguments[PhpFunction.ARG_FIRST + i]));
+        }
+        return list;
+    }
+
+    /** php-src's E_DEPRECATED at this instruction's line. */
+    @Operation
+    @ConstantOperand(type = String.class, name = "message")
+    public static final class Deprecation {
+        @Specialization
+        public static void deprecated(String message, @Bind Node node) {
+            deprecation(node, message);
+        }
+    }
+
+    @TruffleBoundary
+    private static void deprecation(Node node, String message) {
+        ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_DEPRECATED, Str.of(message),
+                SourceLocation.of(node));
+    }
+
+    /** func_num_args(): how many arguments the call passed. */
+    @Operation
+    public static final class FuncNumArgs {
+        @Specialization
+        public static long count(VirtualFrame frame) {
+            return frame.getArguments().length - PhpFunction.ARG_FIRST;
+        }
+    }
+
+    /** `f(...)` (CallableConvertNodes.FunctionNode): a Closure of the function the name resolves to. */
+    @Operation
+    @ConstantOperand(type = String.class, name = "displayName")
+    @ConstantOperand(type = int.class, name = "id")
+    @ConstantOperand(type = int.class, name = "fallbackId")
+    public static final class ConvertFunction {
+        @Specialization
+        public static Object convert(String displayName, int id, int fallbackId, @Bind Node node) {
+            return CallableConvertNodes.FunctionNode.convert(PhpContext.get(node), displayName, id, fallbackId);
+        }
+    }
+
+    /** `$obj->name(...)`, `$obj->$name(...)` (CallableConvertNodes.MethodNode): the object, then the name. */
+    @Operation
+    public static final class ConvertMethod {
+        @Specialization
+        public static Object convert(Object object, Object name, @Cached ToStrNode toStr) {
+            return CallableConvertNodes.MethodNode.convert(object, Str.java(toStr.execute(name)));
+        }
+    }
+
+    /**
+     * `Cls::name(...)` (CallableConvertNodes.StaticMethodNode): a non-static method takes the caller's $this when
+     * it is an instance of the class; a forwarding one (self::, parent::, static::) keeps the called class.
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = boolean.class, name = "forwarding")
+    public static final class ConvertStatic {
+        @Specialization
+        public static Object convert(VirtualFrame frame, String name, boolean forwarding, PhpClass phpClass) {
+            Object[] caller = frame.getArguments();
+            Object called = caller[PhpFunction.ARG_STATIC];
+            return CallableConvertNodes.StaticMethodNode.convert(phpClass, caller[PhpFunction.ARG_THIS],
+                    forwarding && called instanceof PhpClass calledClass ? calledClass : phpClass, name);
+        }
+    }
+
+    /** `$f(...)` (CallableConvertNodes.ValueNode): what the call `$f()` would call; a Closure stays itself. */
+    @Operation
+    public static final class ConvertValue {
+        @Specialization
+        public static Object convert(Object callable, @Bind Node node) {
+            return CallableConvertNodes.ValueNode.convert(PhpContext.get(node), callable);
         }
     }
 
