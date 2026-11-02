@@ -8,6 +8,7 @@ import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -30,7 +31,7 @@ import pl.codeloom.php.runtime.Str;
 public final class PropNode extends LValueNode {
     @Child private ExprNode object;
     @Child private ExprNode nameExpr;
-    @Child private DynamicObjectLibrary objects = DynamicObjectLibrary.getFactory().createDispatched(4);
+    @Child private DynamicObjectLibrary objects;
     private final String constantName;
     /** The class (lowercase) the code is written in, or null outside classes. */
     private final String lexicalClass;
@@ -66,12 +67,30 @@ public final class PropNode extends LValueNode {
     /** constantName is an interned property name, or null with nameExpr computing it. */
     public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
                     boolean scopeInFrame) {
+        this(object, constantName, nameExpr, lexicalClass, scopeInFrame, object instanceof ThisNode && !scopeInFrame,
+                DynamicObjectLibrary.getFactory().createDispatched(4));
+    }
+
+    private PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
+                     boolean scopeInFrame, boolean thisInMethod, DynamicObjectLibrary objects) {
         this.object = object;
         this.constantName = constantName;
         this.nameExpr = nameExpr;
         this.lexicalClass = lexicalClass;
         this.scopeInFrame = scopeInFrame;
-        this.thisInMethod = object instanceof ThisNode && !scopeInFrame;
+        this.thisInMethod = thisInMethod;
+        this.objects = objects;
+    }
+
+    /**
+     * The property access of a site whose object and name a bytecode instruction evaluates, which the *On methods
+     * take. constantName is null for a name computed per access ({@link #dynamicName}); thisInMethod as the
+     * tree's (`$this->name` in a method); uncached for the uncached interpreter, which doesn't adopt the node.
+     */
+    public static PropNode forOperands(String constantName, String lexicalClass, boolean scopeInFrame,
+                                       boolean thisInMethod, boolean uncached) {
+        return new PropNode(null, constantName, null, lexicalClass, scopeInFrame, thisInMethod,
+                uncached ? DynamicObjectLibrary.getUncached() : DynamicObjectLibrary.getFactory().createDispatched(4));
     }
 
     /** Notes that a write here met a case; in compiled code that hadn't seen it, deoptimizes first. */
@@ -86,23 +105,31 @@ public final class PropNode extends LValueNode {
         return constantName != null ? constantName : dynamicName(nameExpr.execute(frame));
     }
 
+    /** A property name computed at run time (`$obj->$name`): the value as a string, as a property key. */
     @TruffleBoundary
-    private static String dynamicName(Object value) {
+    public static String dynamicName(Object value) {
         return Str.key(Convert.toStr(value));
     }
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
-        Object value = object.execute(frame);
+        return target(object.execute(frame), name, action);
+    }
+
+    private static PhpObject target(Object value, String name, String action) {
         if (value instanceof PhpObject phpObject) {
             return phpObject;
         }
         throw notAnObject(action, name, value);
     }
 
+    /**
+     * The error of a write (action "assign", "modify"...) to a property of a value that isn't an object
+     * (zend_throw_non_object_error: the value as zend_zval_value_name names it).
+     */
     @TruffleBoundary
-    private static PhpError notAnObject(String action, String name, Object value) {
+    public static PhpError notAnObject(String action, String name, Object value) {
         return new PhpError("Attempt to " + action + " property \"" + Str.keyText(name) + "\" on "
-                + Convert.typeName(value));
+                + Args.valueName(value));
     }
 
     // ---- visibility ----
@@ -204,7 +231,11 @@ public final class PropNode extends LValueNode {
     @Override
     public Object execute(VirtualFrame frame) {
         Object value = object.execute(frame);
-        String name = name(frame);
+        return readOn(frame, value, name(frame));
+    }
+
+    /** The read of property name of value, evaluated (null for a value that isn't an object). */
+    public Object readOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
             if (!accessible(frame, phpObject, name)) {
                 return inaccessibleRead(phpObject, name);
@@ -251,7 +282,12 @@ public final class PropNode extends LValueNode {
     @Override
     public void write(VirtualFrame frame, Object value) {
         String name = name(frame);
-        PhpObject phpObject = target(frame, name, "assign");
+        writeOn(frame, target(frame, name, "assign"), name, value);
+    }
+
+    /** `object->name = value`, the object evaluated: an error if it isn't one. */
+    public void writeOn(VirtualFrame frame, Object target, String name, Object value) {
+        PhpObject phpObject = target(target, name, "assign");
         if (!accessible(frame, phpObject, name)) {
             inaccessibleWrite(phpObject, name, value);
             return;
@@ -292,7 +328,12 @@ public final class PropNode extends LValueNode {
     @Override
     public PhpRef makeRef(VirtualFrame frame) {
         String name = name(frame);
-        PhpObject phpObject = target(frame, name, "modify");
+        return makeRefOn(frame, target(frame, name, "modify"), name);
+    }
+
+    /** makeRef of property name of target, evaluated: an error if it isn't an object. */
+    public PhpRef makeRefOn(VirtualFrame frame, Object target, String name) {
+        PhpObject phpObject = target(target, name, "modify");
         if (!accessible(frame, phpObject, name)) {
             return new PhpRef(inaccessibleRead(phpObject, name));
         }
@@ -335,7 +376,12 @@ public final class PropNode extends LValueNode {
     @Override
     public PhpArray arrayForWrite(VirtualFrame frame) {
         String name = name(frame);
-        PhpObject phpObject = target(frame, name, "modify");
+        return arrayForWriteOn(frame, target(frame, name, "modify"), name);
+    }
+
+    /** arrayForWrite of property name of target, evaluated: an error if it isn't an object. */
+    public PhpArray arrayForWriteOn(VirtualFrame frame, Object target, String name) {
+        PhpObject phpObject = target(target, name, "modify");
         if (!accessible(frame, phpObject, name)) {
             return overloadedArray(inaccessibleRead(phpObject, name));
         }
@@ -382,8 +428,14 @@ public final class PropNode extends LValueNode {
     @Override
     public void unset(VirtualFrame frame) {
         Object value = object.execute(frame);
+        if (value instanceof PhpObject) {
+            unsetOn(frame, value, name(frame));
+        }
+    }
+
+    /** unset() of property name of value, evaluated (nothing for a value that isn't an object). */
+    public void unsetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            String name = name(frame);
             if (!accessible(frame, phpObject, name)) {
                 inaccessibleUnset(phpObject, name);
                 return;
@@ -412,8 +464,12 @@ public final class PropNode extends LValueNode {
     @Override
     public boolean isSet(VirtualFrame frame) {
         Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
+        return value instanceof PhpObject && isSetOn(frame, value, name(frame));
+    }
+
+    /** isset() of property name of value, as readIfSet evaluated it (null when unset). */
+    public boolean isSetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            String name = name(frame);
             if (!accessible(frame, phpObject, name)) {
                 return magicIsset(phpObject, name);
             }
@@ -436,8 +492,12 @@ public final class PropNode extends LValueNode {
     @Override
     public Object readIfSet(VirtualFrame frame) {
         Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
+        return value instanceof PhpObject ? readIfSetOn(frame, value, name(frame)) : null;
+    }
+
+    /** readIfSet of property name of value, as readIfSet evaluated it (null when unset). */
+    public Object readIfSetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            String name = name(frame);
             Object property;
             if (!accessible(frame, phpObject, name)) {
                 property = null;

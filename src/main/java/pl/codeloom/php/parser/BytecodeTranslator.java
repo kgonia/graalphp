@@ -17,6 +17,7 @@ import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.LiteralSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
+import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
@@ -510,7 +511,11 @@ public final class BytecodeTranslator {
                     returnValue(node.get("expr"), node);
                     break;
                 case "AST_UNSET":
-                    b.emitUnsetVar(variable(node.node("var"), "unset of"));
+                    if (node.node("var").is("AST_PROP")) {
+                        unsetProp(node.node("var"));
+                    } else {
+                        b.emitUnsetVar(variable(node.node("var"), "unset of"));
+                    }
                     break;
                 case "AST_TRY":
                     tryStatement(node);
@@ -858,7 +863,17 @@ public final class BytecodeTranslator {
             Ast node = (Ast) value;
             switch (node.kind) {
                 case "AST_VAR":
-                    b.emitReadVar(variable(node, "read of"));
+                    if (isThis(node)) {
+                        b.emitReadThis();
+                    } else {
+                        b.emitReadVar(variable(node, "read of"));
+                    }
+                    break;
+                case "AST_PROP":
+                    readProp(node);
+                    break;
+                case "AST_ISSET":
+                    isset(node.get("var"));
                     break;
                 case "AST_DIM":
                     if (node.get("dim") == null) {
@@ -876,6 +891,14 @@ public final class BytecodeTranslator {
                     if (node.flags == 260) {
                         throw new Unsupported("??=", node);
                     }
+                    if (node.node("var").is("AST_PROP")) {
+                        Ast target = node.node("var");
+                        b.beginCompoundProp(writtenPropSite(target), node.flags);
+                        expression(node.get("expr"));
+                        expression(target.get("expr"));
+                        b.endCompoundProp();
+                        break;
+                    }
                     b.beginCompoundVar(variable(node.node("var"), "compound assignment to"), node.flags);
                     expression(node.get("expr"));
                     b.endCompoundVar();
@@ -883,11 +906,19 @@ public final class BytecodeTranslator {
                 case "AST_PRE_INC":
                 case "AST_PRE_DEC":
                 case "AST_POST_INC":
-                case "AST_POST_DEC":
-                    b.emitIncDecVar(variable(node.node("var"), "increment of"),
-                            node.is("AST_PRE_INC") || node.is("AST_POST_INC"),
-                            node.is("AST_PRE_INC") || node.is("AST_PRE_DEC"));
+                case "AST_POST_DEC": {
+                    boolean increment = node.is("AST_PRE_INC") || node.is("AST_POST_INC");
+                    boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
+                    if (node.node("var").is("AST_PROP")) {
+                        Ast target = node.node("var");
+                        b.beginIncDecProp(writtenPropSite(target), increment, prefix);
+                        expression(target.get("expr"));
+                        b.endIncDecProp();
+                        break;
+                    }
+                    b.emitIncDecVar(variable(node.node("var"), "increment of"), increment, prefix);
                     break;
+                }
                 case "AST_BINARY_OP":
                     binary(node);
                     break;
@@ -1077,6 +1108,14 @@ public final class BytecodeTranslator {
 
         private void assignment(Ast node) {
             Ast target = node.node("var");
+            if (target.is("AST_PROP")) {
+                writeProp(target, node.get("expr"));
+                return;
+            }
+            if (target.is("AST_DIM") && target.node("expr").is("AST_PROP")) {
+                writePropElement(target, node.get("expr"));
+                return;
+            }
             if (target.is("AST_VAR")) {
                 b.beginWriteVar(variable(target, "assignment to"));
                 expression(node.get("expr"));
@@ -1250,6 +1289,175 @@ public final class BytecodeTranslator {
             b.endLiteralEnd();
         }
 
+        // ---- $this and properties ----
+
+        /**
+         * A property access's site: its name (null when computed), the class the code is written in, and how the
+         * calling scope is found (PropNode's, as Translator.place makes it).
+         */
+        private PropSite propSite(Ast node, String name) {
+            boolean scopeInFrame = function.getName().startsWith(CLOSURE_PREFIX);
+            boolean thisInMethod = isThis(node.get("expr")) && !scopeInFrame;
+            return (PropSite) made(() -> new PropSite(name == null ? null : Str.sourceKey(name),
+                    owner == null ? null : Str.lower(owner.name()), scopeInFrame, thisInMethod));
+        }
+
+        /** `$obj->name`, `$obj->$name` (PropNode.execute): the object, then the name. */
+        private void readProp(Ast node) {
+            if (node.get("prop") instanceof String name) {
+                b.beginReadProp(propSite(node, name));
+                expression(node.get("expr"));
+                b.endReadProp();
+                return;
+            }
+            b.beginReadPropNamed(propSite(node, null));
+            expression(node.get("expr"));
+            propName(node.get("prop"));
+            b.endReadPropNamed();
+        }
+
+        private void propName(Object prop) {
+            b.beginPropName();
+            expression(prop);
+            b.endPropName();
+        }
+
+        /**
+         * The site of a property written by a compound assignment, an increment or an element write, whose object
+         * is evaluated after the value (php-src delays fetching it): a constant name, and an object that is a
+         * variable, $this or a property of one; other forms stay on the tree.
+         */
+        private PropSite writtenPropSite(Ast target) {
+            if (!(target.get("prop") instanceof String name)) {
+                throw new Unsupported("write to a property by a computed name", target);
+            }
+            if (!delayedObject(target.get("expr"))) {
+                throw new Unsupported("write to a property of an expression", target);
+            }
+            return propSite(target, name);
+        }
+
+        /** An object php-src fetches as the write runs (zend_delayed_compile_var): a variable or a property chain. */
+        private boolean delayedObject(Object object) {
+            if (!(object instanceof Ast ast)) {
+                return false;
+            }
+            if (ast.is("AST_VAR")) {
+                return ast.get("name") instanceof String;
+            }
+            return ast.is("AST_PROP") && ast.get("prop") instanceof String && delayedObject(ast.get("expr"));
+        }
+
+        /**
+         * `$obj->name = value` (AssignNode on a PropNode): the value, then the name, then the object, as the tree
+         * evaluates them; with a delayed object (a variable, a property chain) that is php-src's order too.
+         */
+        private void writeProp(Ast target, Object value) {
+            if (!delayedObject(target.get("expr"))) {
+                throw new Unsupported("write to a property of an expression", target);
+            }
+            if (target.get("prop") instanceof String name) {
+                b.beginWriteProp(propSite(target, name));
+                expression(value);
+                expression(target.get("expr"));
+                b.endWriteProp();
+                return;
+            }
+            b.beginWritePropNamed(propSite(target, null));
+            expression(value);
+            propName(target.get("prop"));
+            expression(target.get("expr"));
+            b.endWritePropNamed();
+        }
+
+        /**
+         * `$obj->name[key] = value`, `$obj->name[] = value` (DimNode.write on a PropNode): the value, the object, the
+         * key; a key that is a constant or a variable, which the tree evaluates after making the property writable.
+         */
+        private void writePropElement(Ast target, Object value) {
+            Ast property = target.node("expr");
+            PropSite site = writtenPropSite(property);
+            Object dim = target.get("dim");
+            if (dim == null) {
+                b.beginAppendPropElement(site);
+                expression(value);
+                expression(property.get("expr"));
+                b.endAppendPropElement();
+                return;
+            }
+            if (!constantShaped(dim) && !(dim instanceof Ast key && key.is("AST_VAR"))) {
+                throw new Unsupported("element of a property by a computed key", target);
+            }
+            b.beginWritePropElement(site);
+            expression(value);
+            expression(property.get("expr"));
+            key(dim);
+            b.endWritePropElement();
+        }
+
+        /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
+        private void unsetProp(Ast target) {
+            Object prop = target.get("prop");
+            if (prop instanceof String name) {
+                b.beginUnsetProp(propSite(target, name));
+                expression(target.get("expr"));
+                b.endUnsetProp();
+                return;
+            }
+            if (!(prop instanceof Ast ast && ast.is("AST_VAR"))) {
+                throw new Unsupported("unset of a property by a computed name", target);
+            }
+            b.beginUnsetPropNamed(propSite(target, null));
+            expression(target.get("expr"));
+            propName(prop);
+            b.endUnsetPropNamed();
+        }
+
+        /**
+         * isset($this), isset($obj->name) (TestNodes.IssetNode with one place): the object as the tree's readIfSet
+         * reads it, a property of it through __isset; a computed name only from a variable.
+         */
+        private void isset(Object tested) {
+            if (isThis(tested)) {
+                b.emitIssetThis();
+                return;
+            }
+            if (!(tested instanceof Ast target) || !target.is("AST_PROP")) {
+                throw new Unsupported("isset of", tested instanceof Ast ast ? ast : null);
+            }
+            Object prop = target.get("prop");
+            if (prop instanceof String name) {
+                b.beginIssetProp(propSite(target, name));
+                issetObject(target.get("expr"));
+                b.endIssetProp();
+                return;
+            }
+            if (!(prop instanceof Ast ast && ast.is("AST_VAR"))) {
+                throw new Unsupported("isset of a property by a computed name", target);
+            }
+            b.beginIssetPropNamed(propSite(target, null));
+            issetObject(target.get("expr"));
+            propName(prop);
+            b.endIssetPropNamed();
+        }
+
+        /** The object of a property isset() tests: a property of one read as readIfSet; a variable or a value. */
+        private void issetObject(Object object) {
+            if (object instanceof Ast ast) {
+                if (ast.is("AST_PROP") && ast.get("prop") instanceof String name) {
+                    b.beginReadPropIfSet(propSite(ast, name));
+                    issetObject(ast.get("expr"));
+                    b.endReadPropIfSet();
+                    return;
+                }
+                if (ast.is("AST_PROP") || ast.is("AST_NULLSAFE_PROP") || ast.is("AST_DIM")
+                        || ast.is("AST_STATIC_PROP")) {
+                    throw new Unsupported("isset of a property of", ast);
+                }
+            }
+            expression(object);
+        }
+
         // ---- calls ----
 
         /**
@@ -1324,6 +1532,10 @@ public final class BytecodeTranslator {
             if (!(arg instanceof Ast ast)) {
                 return true;
             }
+            if (isThis(ast)) {
+                // passed as a value, as the tree's arguments pass it
+                return true;
+            }
             if (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP")) {
                 return false;
             }
@@ -1345,6 +1557,11 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(callee);
                 key(ast.get("dim"));
                 b.endSendElement();
+            } else if (ast.is("AST_PROP") && ast.get("prop") instanceof String name) {
+                b.beginSendProp(propSite(ast, name), index);
+                b.emitLoadStackValue(callee);
+                expression(ast.get("expr"));
+                b.endSendProp();
             } else if (ast.is("AST_CALL")) {
                 b.beginSendCall(index);
                 b.emitLoadStackValue(callee);
@@ -1464,6 +1681,13 @@ public final class BytecodeTranslator {
             }
         }
         return false;
+    }
+
+    /** The name prefix of closures (Translator's): their calling scope is the bound one. */
+    private static final String CLOSURE_PREFIX = "{closure:";
+
+    private static boolean isThis(Object value) {
+        return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
     }
 
     /** Whether a variable of this name is a local: $this, $GLOBALS and the superglobals are not. */

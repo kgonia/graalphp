@@ -51,6 +51,7 @@ import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.PropNode;
+import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
@@ -701,6 +702,272 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    // ---- $this and properties (ThisNode, PropNode) ----
+
+    /** `$this`: outside an object's method an Error. */
+    @Operation
+    public static final class ReadThis {
+        @Specialization
+        public static Object read(VirtualFrame frame) {
+            return ThisNode.self(frame);
+        }
+    }
+
+    @Operation
+    public static final class IssetThis {
+        @Specialization
+        public static boolean isSet(VirtualFrame frame) {
+            return ThisNode.IsSetNode.isSet(frame);
+        }
+    }
+
+    /** `$obj->$name`'s name, converted once it is evaluated (PropNode.dynamicName). */
+    @Operation
+    public static final class PropName {
+        @Specialization
+        public static String name(Object value) {
+            return PropNode.dynamicName(value);
+        }
+    }
+
+    /** `$obj->name` (PropNode.execute): the object, then the property; null for a value that isn't an object. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadProp {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readOn(frame, object, site.name);
+        }
+    }
+
+    /** `$obj->$name`: the object, then the name (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropNamed {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object, String name,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readOn(frame, object, name);
+        }
+    }
+
+    /**
+     * `$obj->name = value` (AssignNode on a PropNode): the value is evaluated first, then the object, which must be
+     * one; the value is the result.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class WriteProp {
+        @Specialization
+        public static Object write(VirtualFrame frame, PropSite site, Object value, Object object,
+                                   @Cached(value = "site.create()", uncached = "site.uncached()",
+                                           neverDefault = true) PropNode access) {
+            access.writeOn(frame, object, site.name, value);
+            return value;
+        }
+    }
+
+    /** `$obj->$name = value`: the value, the name, then the object. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class WritePropNamed {
+        @Specialization
+        public static Object write(VirtualFrame frame, PropSite site, Object value, String name, Object object,
+                                   @Cached(value = "site.create()", uncached = "site.uncached()",
+                                           neverDefault = true) PropNode access) {
+            access.writeOn(frame, object, name, value);
+            return value;
+        }
+    }
+
+    /**
+     * `$obj->name op= value` (ZEND_ASSIGN_OBJ_OP): the value, then the object, evaluated once; the property is read
+     * and written through the tree's rules (__get then __set for one that doesn't exist or the scope may not
+     * access), `.=` converting the property's value first, then the operand.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class, name = "op")
+    public static final class CompoundProp {
+        @Specialization(guards = "op == 8")
+        public static Object concat(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access,
+                                    @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
+                                    @Cached TruffleString.ConcatNode concat) {
+            PhpObject target = propertyTarget(object, site.name, "assign");
+            TruffleString left = currentToStr.execute(access.readOn(frame, target, site.name));
+            TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
+            access.writeOn(frame, target, site.name, result);
+            return result;
+        }
+
+        @Specialization(guards = "op != 8")
+        public static Object generic(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
+                                     @Cached(value = "site.create()", uncached = "site.uncached()",
+                                             neverDefault = true) PropNode access, @Bind Node node) {
+            PhpObject target = propertyTarget(object, site.name, "assign");
+            Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame, target, site.name),
+                    operand);
+            access.writeOn(frame, target, site.name, result);
+            return result;
+        }
+    }
+
+    /**
+     * `++$obj->name`, `$obj->name--`... (ZEND_PRE_INC_OBJ...): the object evaluated once, the property read,
+     * stepped and written.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "increment")
+    @ConstantOperand(type = boolean.class, name = "prefix")
+    public static final class IncDecProp {
+        @Specialization
+        public static Object step(VirtualFrame frame, PropSite site, boolean increment, boolean prefix, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access, @Bind Node node) {
+            PhpObject target = propertyTarget(object, site.name, "increment/decrement");
+            Object old = access.readOn(frame, target, site.name);
+            Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            access.writeOn(frame, target, site.name, updated);
+            return prefix ? updated : old;
+        }
+    }
+
+    /** The object whose property a compound write changes; a value that isn't one is php-src's error. */
+    private static PhpObject propertyTarget(Object object, String name, String action) {
+        if (object instanceof PhpObject target) {
+            return target;
+        }
+        throw PropNode.notAnObject(action, name, object);
+    }
+
+    /** `unset($obj->name)` (PropNode.unset): nothing for a value that isn't an object. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class UnsetProp {
+        @Specialization
+        public static void unset(VirtualFrame frame, PropSite site, Object object,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access) {
+            access.unsetOn(frame, object, site.name);
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class UnsetPropNamed {
+        @Specialization
+        public static void unset(VirtualFrame frame, PropSite site, Object object, String name,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access) {
+            access.unsetOn(frame, object, name);
+        }
+    }
+
+    /** `isset($obj->name)` (PropNode.isSet), the object as isset reads it (ReadPropIfSet for a property). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class IssetProp {
+        @Specialization
+        public static boolean isSet(VirtualFrame frame, PropSite site, Object object,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access) {
+            return access.isSetOn(frame, object, site.name);
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class IssetPropNamed {
+        @Specialization
+        public static boolean isSet(VirtualFrame frame, PropSite site, Object object, String name,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access) {
+            return access.isSetOn(frame, object, name);
+        }
+    }
+
+    /**
+     * A property as the object of an isset() (PropNode.readIfSet): __isset decides for one that doesn't exist, then
+     * __get gives it; null when unset or null.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropIfSet {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            Object value = access.readIfSetOn(frame, object, site.name);
+            return value == null ? PhpNull.NULL : value;
+        }
+    }
+
+    /**
+     * `$obj->name[key] = value` (DimNode.write on a PropNode): the value is held while the property's array is made
+     * writable (PropNode.arrayForWrite); a property holding an object takes the write as an ArrayAccess.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class WritePropElement {
+        @Specialization
+        public static Object write(VirtualFrame frame, PropSite site, Object value, Object object, Object key,
+                                   @Cached(value = "site.create()", uncached = "site.uncached()",
+                                           neverDefault = true) PropNode access,
+                                   @Cached ElementNodes.ElementWriteNode write, @Bind Node node) {
+            PhpArray held = value instanceof PhpArray array ? array : null;
+            if (held != null) {
+                held.addHolder();
+            }
+            try {
+                PhpArray array = access.arrayForWriteOn(frame, object, site.name);
+                if (array == null) {
+                    DimNode.writeToObject(node, access.readOn(frame, object, site.name), key, value);
+                } else {
+                    write.execute(array, key, value);
+                }
+            } finally {
+                if (held != null) {
+                    held.removeHolder();
+                }
+            }
+            return value;
+        }
+    }
+
+    /** `$obj->name[] = value`. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class AppendPropElement {
+        @Specialization
+        public static Object append(VirtualFrame frame, PropSite site, Object value, Object object,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access, @Bind Node node) {
+            PhpArray held = value instanceof PhpArray array ? array : null;
+            if (held != null) {
+                held.addHolder();
+            }
+            try {
+                PhpArray array = access.arrayForWriteOn(frame, object, site.name);
+                if (array == null) {
+                    DimNode.writeToObject(node, access.readOn(frame, object, site.name), PhpNull.NULL, value);
+                } else {
+                    array.append(value);
+                }
+            } finally {
+                if (held != null) {
+                    held.removeHolder();
+                }
+            }
+            return value;
+        }
+    }
+
     /**
      * An array literal (ArrayLiteralNode): LiteralStart makes the array, each LiteralAppend or LiteralPut inserts
      * an element as soon as it is evaluated (an array value gains the literal as a holder before the next element
@@ -865,6 +1132,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @TruffleBoundary
         private static PhpError overloadedElement() {
             return new PhpError("Indirect modification of overloaded element");
+        }
+    }
+
+    /** A property of an object as argument index: its reference (PropNode.makeRef) or its value. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class)
+    public static final class SendProp {
+        @Specialization
+        public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            if (function.isByRef(index)) {
+                return access.makeRefOn(frame, object, site.name);
+            }
+            return access.readOn(frame, object, site.name);
         }
     }
 
