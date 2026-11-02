@@ -10,14 +10,16 @@
 #   expansion trees (truffleTier); the merged build and 866e156 (15 min each).
 # - wp-after, wp-before: the same for WP_Query::get_posts on plain WordPress (Gate 2's database, front-end pages),
 #   both builds (8 min each).
-# - d5-sampler: the CPU sampler after 5 minutes, with the time per tier, histogram (15 min).
-# - d4-boundaries: Truffle boundaries called from compiled code, counted (InstrumentBoundaries; 12 min).
+# - d5-sampler: the CPU sampler after 4 minutes, with the time per tier, histogram (10 min; a 6 GB heap: with
+#   -Xmx1g the sampler ran out of heap writing its histogram at the engine's close).
+# - d4-boundaries: Truffle boundaries called from compiled code, counted (InstrumentBoundaries; 12 min). On 25.4 with
+#   libgraal every compilation failed with it (ClassCastException: SnippetObjectConstant), so it has no results.
+# - cap256m-long: as cap256m for 15 minutes, until the largest compilations.
 # Usage: bench/pe4-diagnosis/diag.sh RUN...
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export WPN_NAME=pe4d WPN_NET=172.31.82 WPN_DB_PORT=3352 WPN_DB_CPUS=12-13 DEV=1 DEV_CLASSES=target/classes
-# woo-next.sh: woo.sh with diag's plain WordPress mode, while a running benchmark holds woo.sh open
-woo() { bash tests/gate2/${WOO_SCRIPT:-woo.sh} "$@"; }
+woo() { bash tests/gate2/woo.sh "$@"; }
 TOP="WP_Query::get_posts,WP_Theme_JSON::sanitize,WP_Theme_JSON::get_block_nodes,WP_Term_Query::get_terms"
 TOP+=",wp_default_scripts,WooCommerce::includes,wp_render_layout_support_flag,ThunkRootNode,FileRootNode"
 TOP+=",CartCheckoutUtils::get_country_data,WC_Data::get_prop,WP_Comment_Query::get_comment_ids"
@@ -28,8 +30,8 @@ EXPAND+=" -Dpolyglot.compiler.MethodExpansionStatistics=truffleTier -Dpolyglot.c
 EXPAND+=" -Dpolyglot.engine.CompilationStatistics=true -Dpolyglot.engine.CompilationStatisticDetails=true"
 for run in "$@"; do
   case $run in
-    cap256m)
-      JAVA_OPTS="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationFailureAction=Print -Djdk.graal.internal.MaxHeapSize=256m -Djdk.graal.internal.PrintGC=true -XX:JVMCITraceLevel=1" woo diag $run 240s ;;
+    cap256m|cap256m-long)
+      JAVA_OPTS="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationFailureAction=Print -Djdk.graal.internal.MaxHeapSize=256m -Djdk.graal.internal.PrintGC=true -XX:JVMCITraceLevel=1" woo diag $run $([ $run = cap256m ] && echo 240s || echo 900s) ;;
     d1-trace)
       t="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.TraceCompilationDetails=true"
       t+=" -Dpolyglot.engine.CompilationFailureAction=Print -Dpolyglot.engine.TraceSplitting=true"
@@ -47,9 +49,9 @@ for run in "$@"; do
       DIAG_SEED=gate2-seed JAVA_OPTS="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompileOnly=WP_Query::get_posts -Dpolyglot.compiler.TraceMethodExpansion=truffleTier" woo diag $run 480s
       export DEV_CLASSES=target/classes ;;
     d5-sampler)
-      JAVA_OPTS="-Dpolyglot.cpusampler=true -Dpolyglot.cpusampler.Delay=300000 -Dpolyglot.cpusampler.ShowTiers=true -Dpolyglot.cpusampler.SummariseThreads=true -Dpolyglot.cpusampler.Output=histogram -Dpolyglot.cpusampler.OutputFile=/out/cpusampler.txt -Dpolyglot.engine.TraceCompilation=true" woo diag $run 900s ;;
+      JAVA_OPTS="-Xmx6g -Dpolyglot.cpusampler=true -Dpolyglot.cpusampler.Delay=240000 -Dpolyglot.cpusampler.ShowTiers=true -Dpolyglot.cpusampler.SummariseThreads=true -Dpolyglot.cpusampler.Output=histogram -Dpolyglot.cpusampler.OutputFile=/out/cpusampler.txt -Dpolyglot.engine.TraceCompilation=true" woo diag $run 600s ;;
     d4-boundaries)
       JAVA_OPTS="-Dpolyglot.compiler.InstrumentBoundaries=true -Dpolyglot.compiler.InstrumentationTableSize=100000 -Dpolyglot.engine.TraceCompilation=true" woo diag $run 720s ;;
-    *) sed -n 2,16p "$0"; exit 2 ;;
+    *) sed -n 2,21p "$0"; exit 2 ;;
   esac
 done
