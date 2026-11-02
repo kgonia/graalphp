@@ -494,7 +494,7 @@ final class EncodingFunctions {
 
     @TruffleBoundary
     private static TruffleString uniqid(String prefix, boolean moreEntropy) {
-        long micros = System.currentTimeMillis() * 1000 + (System.nanoTime() / 1000) % 1000;
+        long micros = pl.codeloom.php.runtime.WallClock.uniqidMicros();
         String id = prefix + String.format("%08x%05x", micros / 1_000_000, micros % 1_000_000);
         if (moreEntropy) {
             id += String.format(Locale.ROOT, ".%08d", RANDOM.nextInt(100_000_000));

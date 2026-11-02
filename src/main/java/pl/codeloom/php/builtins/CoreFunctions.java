@@ -20,6 +20,7 @@ import pl.codeloom.php.runtime.Str;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.CRC32;
 
 /** Types, constants, classes and objects, output, time, math and error handling. */
@@ -284,11 +285,11 @@ final class CoreFunctions {
         });
         r.fn("time", a -> System.currentTimeMillis() / 1000);
         r.fn("microtime", a -> {
-            long micros = System.currentTimeMillis() * 1000;
+            long micros = pl.codeloom.php.runtime.WallClock.micros();
             if (Args.bool(a, 0, false)) {
                 return micros / 1e6;
             }
-            return Str.of(String.format("%.8f %d", (micros % 1_000_000) / 1e6, micros / 1_000_000));
+            return Str.of(String.format(Locale.ROOT, "%.8f %d", (micros % 1_000_000) / 1e6, micros / 1_000_000));
         });
         // ext/standard/basic_functions.c: the request's thread sleeps (php_sleep, usleep, nanosleep)
         r.fn("sleep", a -> {
@@ -329,7 +330,7 @@ final class CoreFunctions {
         });
         r.fn("time_sleep_until", (context, a) -> {
             double until = Convert.toDouble(Args.get(a, 0));
-            double now = System.currentTimeMillis() / 1e3;
+            double now = pl.codeloom.php.runtime.WallClock.micros() / 1e6;
             if (until < now) {
                 ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("time_sleep_until(): Argument #1"
                         + " ($timestamp) must be greater than or equal to the current time"),

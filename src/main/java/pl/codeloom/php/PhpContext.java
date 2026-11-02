@@ -154,7 +154,7 @@ public final class PhpContext {
         for (Map.Entry<String, String> variable : new java.util.TreeMap<>(env.getEnvironment()).entrySet()) {
             server.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(variable.getKey())), Str.of(variable.getValue()));
         }
-        long millis = System.currentTimeMillis();
+        long micros = pl.codeloom.php.runtime.WallClock.micros();
         if (response == null) {
             String script = argv.size() > 0 ? Str.java((TruffleString) argv.get(0L)) : "";
             server.put(Str.of("PHP_SELF"), Str.of(script));
@@ -163,8 +163,8 @@ public final class PhpContext {
             server.put(Str.of("PATH_TRANSLATED"), Str.of(script));
             server.put(Str.of("DOCUMENT_ROOT"), Str.EMPTY);
         }
-        server.put(Str.of("REQUEST_TIME_FLOAT"), millis / 1000.0);
-        server.put(Str.of("REQUEST_TIME"), millis / 1000);
+        server.put(Str.of("REQUEST_TIME_FLOAT"), micros / 1e6);
+        server.put(Str.of("REQUEST_TIME"), micros / 1_000_000);
         if (response == null) {
             server.put(Str.of("argv"), argv);
             server.put(Str.of("argc"), (long) argv.size());

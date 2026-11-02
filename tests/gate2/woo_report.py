@@ -86,6 +86,7 @@ def phases(log, first, last):
     """Where a run's CPU went on a *-phases server: its requests' lines FIRST..LAST of the server log's
     "phases {...}" lines (RequestPhases): the process's CPU by thread group between the two (phases_report.py's
     groups), and on the requests' threads the phases' wall times added up, GC pauses apart."""
+    sys.dont_write_bytecode = True
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import phases_report
     records = list(phases_report.lines(log, "phases"))[int(first):int(last)]
