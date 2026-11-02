@@ -300,7 +300,10 @@ public final class Backtrace {
     private static void appendKey(ByteBuilder out, PhpArray entry, TruffleString key) {
         Object value = entry.get(key);
         if (value instanceof TruffleString text) {
-            out.write(text);
+            // TRACE_APPEND_KEY appends a C string: an anonymous class's name ends at its NUL
+            String name = Str.java(text);
+            int nul = name.indexOf('\0');
+            out.write(nul < 0 ? text : Str.of(name.substring(0, nul)));
         } else if (value != null) {
             out.writeAscii("[unknown]");
         }
