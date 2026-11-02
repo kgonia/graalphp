@@ -21,7 +21,6 @@ import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
-import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -1837,14 +1836,14 @@ public final class BytecodeTranslator {
                 }
             }
             boolean special = resolved[1] == null && constants.compiledSpecially(Str.lower(resolved[0]), args);
-            if (!name.isEmpty() && Intrinsics.handles(lower)) {
-                if ((lower.equals("count") || lower.equals("sizeof")) && args.size() == 1 && special) {
-                    b.beginCount();
-                    expression(args.child(0));
-                    b.endCount();
-                    return;
-                }
-                throw new Unsupported("built-in compiled in place: " + lower, node);
+            // the other built-ins the tree compiles in place (Intrinsics) are called as the built-ins they stand
+            // for: none reads the caller's frame; a call php-src compiles into an opcode of its own makes no frame
+            // in traces (CallInfo's frameless)
+            if ((lower.equals("count") || lower.equals("sizeof")) && args.size() == 1 && special) {
+                b.beginCount();
+                expression(args.child(0));
+                b.endCount();
+                return;
             }
             CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0], language.functionId(Str.lower(resolved[0])),
                     resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), special));

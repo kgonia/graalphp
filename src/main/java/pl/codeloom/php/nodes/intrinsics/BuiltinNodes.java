@@ -14,6 +14,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.builtins.StringFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
@@ -132,7 +133,7 @@ public final class BuiltinNodes {
     @TruffleBoundary
     static PhpError arrayTypeError(String function, Object value) {
         return new PhpError("TypeError", function + "(): Argument #1 ($array) must be of type array, "
-                + Convert.typeName(value) + " given");
+                + Args.valueName(value) + " given");
     }
 
     // ---- strings ----

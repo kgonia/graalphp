@@ -74,7 +74,7 @@ final class ArrayFunctions {
         r.fn("array_column", a -> column(Args.array(a, 0, "array_column"), Args.get(a, 1), Args.get(a, 2)));
         r.fn("array_pop", "1", a -> pop(Args.ref(a, 0)));
         r.fn("array_push", "1", a -> {
-            PhpArray array = writable(Args.ref(a, 0));
+            PhpArray array = writable(Args.ref(a, 0), "array_push");
             for (int i = 1; i < Args.count(a); i++) {
                 array.append(Args.get(a, i));
             }
@@ -181,7 +181,7 @@ final class ArrayFunctions {
             return result;
         });
         r.fn("array_walk", "1", (context, a) -> {
-            PhpArray array = writable(Args.ref(a, 0));
+            PhpArray array = writable(Args.ref(a, 0), "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
@@ -205,7 +205,7 @@ final class ArrayFunctions {
             return carry;
         });
         r.fn("array_walk_recursive", "1", (context, a) -> {
-            PhpArray array = writable(Args.ref(a, 0));
+            PhpArray array = writable(Args.ref(a, 0), "array_walk_recursive");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));
             walkRecursive(array, callback, Args.has(a, 2) ? Args.get(a, 2) : null);
@@ -237,7 +237,7 @@ final class ArrayFunctions {
         r.fn("shuffle", "1", a -> {
             PhpRef ref = Args.ref(a, 0);
             List<Object> values = new ArrayList<>();
-            PhpArray array = writable(ref);
+            PhpArray array = writable(ref, "shuffle");
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 values.add(array.valueAt(p));
             }
@@ -455,9 +455,11 @@ final class ArrayFunctions {
         return result;
     }
 
-    private static PhpArray writable(PhpRef ref) {
+    /** The by-reference array argument of function, writable; anything else is php-src's TypeError. */
+    private static PhpArray writable(PhpRef ref, String function) {
         if (!(ref.get() instanceof PhpArray)) {
-            throw new PhpError("TypeError", "Argument #1 ($array) must be of type array");
+            throw new PhpError("TypeError", function + "(): Argument #1 ($array) must be of type array, "
+                    + Args.valueName(ref.get()) + " given");
         }
         return ref.arrayForWrite();
     }
@@ -616,7 +618,7 @@ final class ArrayFunctions {
     @TruffleBoundary
     private static PhpArray splice(Object[] a) {
         PhpRef ref = Args.ref(a, 0);
-        PhpArray array = writable(ref);
+        PhpArray array = writable(ref, "array_splice");
         int n = array.size();
         long offset = Args.lng(a, 1, 0);
         Long length = StringFunctions.lengthArg(a, 2);
@@ -790,7 +792,7 @@ final class ArrayFunctions {
     @TruffleBoundary
     private static long unshift(Object[] a) {
         PhpRef ref = Args.ref(a, 0);
-        PhpArray array = writable(ref);
+        PhpArray array = writable(ref, "array_unshift");
         PhpArray result = new PhpArray();
         for (int i = 1; i < Args.count(a); i++) {
             result.append(Args.get(a, i));
