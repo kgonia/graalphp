@@ -14,6 +14,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.io.IOException;
@@ -68,19 +69,30 @@ final class RuntimeFunctions {
 
         // ---- HTTP headers and cookies: the CGI SAPI's response; php-cli sends none ----
         r.fn("header", (context, a) -> {
-            if (context.response() != null && !context.response().isSent()) {
+            if (context.response() != null && headersNotSent(context, "Cannot modify header information")) {
                 context.response().header(Str.java(Args.str(a, 0)), Args.bool(a, 1, true), (int) Args.lng(a, 2, 0));
             }
             return PhpNull.NULL;
         });
         r.fn("header_remove", (context, a) -> {
-            if (context.response() != null && !context.response().isSent()) {
+            if (context.response() != null && headersNotSent(context, "Cannot modify header information")) {
                 context.response().remove(Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL
                         ? Str.java(Args.str(a, 0)) : null);
             }
             return PhpNull.NULL;
         });
-        r.fn("headers_sent", (context, a) -> context.response() != null && context.response().isSent());
+        // headers_sent(&$filename, &$line): where the output that sent them started
+        r.fn("headers_sent", "11", (context, a) -> {
+            boolean sent = context.response() != null && context.response().isSent();
+            SourceLocation start = sent ? context.response().outputStart() : null;
+            if (Args.has(a, 0)) {
+                Args.ref(a, 0).set(start != null ? Str.of(start.file()) : Str.EMPTY);
+            }
+            if (Args.has(a, 1)) {
+                Args.ref(a, 1).set(start != null ? (long) start.line() : 0L);
+            }
+            return sent;
+        });
         r.fn("headers_list", (context, a) -> context.response() == null ? new PhpArray()
                 : PhpArray.ofStrings(context.response().headers().toArray(new String[0])));
         r.fn("http_response_code", (context, a) -> {
@@ -88,7 +100,16 @@ final class RuntimeFunctions {
                 return Boolean.FALSE;
             }
             long previous = context.response().status();
-            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL && !context.response().isSent()) {
+            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL) {
+                // PHP_FUNCTION(http_response_code): no new code once the headers are out
+                if (context.response().isSent()) {
+                    SourceLocation start = context.response().outputStart();
+                    ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(start != null
+                            ? "http_response_code(): Cannot set response code - headers already sent (output started at " + start.file()
+                            + ":" + start.line() + ")" : "http_response_code(): Cannot set response code - headers already sent"),
+                            SourceLocation.current());
+                    return Boolean.FALSE;
+                }
                 context.response().setStatus((int) Args.lng(a, 0, 200));
             }
             return previous;
@@ -259,11 +280,27 @@ final class RuntimeFunctions {
         if (context.response() == null) {
             return Boolean.TRUE;
         }
-        if (context.response().isSent()) {
+        if (!headersNotSent(context, "Cannot modify header information")) {
             return Boolean.FALSE;
         }
         context.response().header(header, false, 0);
         return Boolean.TRUE;
+    }
+
+    /**
+     * sapi_header_op's check: once the headers are sent, a warning where the output started (php_output_header kept
+     * it), and the header isn't changed.
+     */
+    @TruffleBoundary
+    private static boolean headersNotSent(PhpContext context, String what) {
+        if (!context.response().isSent()) {
+            return true;
+        }
+        SourceLocation start = context.response().outputStart();
+        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(start != null
+                ? what + " - headers already sent by (output started at " + start.file() + ":" + start.line() + ")"
+                : what + " - headers already sent"), SourceLocation.current());
+        return false;
     }
 
 }

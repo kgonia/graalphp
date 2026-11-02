@@ -43,6 +43,9 @@ import java.util.Map;
  * language ({@link Table}); each new context declares them, the constants and its own instances of the classes.
  */
 public final class Builtins {
+    /** The PHP release this one follows (PHP_VERSION). */
+    public static final String PHP_VERSION = "8.5.12";
+
     private Builtins() {
     }
 
@@ -141,7 +144,7 @@ public final class Builtins {
                 {"PHP_EOL", Str.of("\n")}, {"PHP_INT_MAX", Long.MAX_VALUE}, {"PHP_INT_MIN", Long.MIN_VALUE},
                 {"PHP_INT_SIZE", 8L}, {"PHP_FLOAT_EPSILON", Math.ulp(1.0)}, {"PHP_FLOAT_MAX", Double.MAX_VALUE},
                 {"PHP_FLOAT_MIN", Double.MIN_NORMAL}, {"INF", Double.POSITIVE_INFINITY}, {"NAN", Double.NaN},
-                {"PHP_VERSION", Str.of("8.5.12")}, {"PHP_MAJOR_VERSION", 8L}, {"PHP_MINOR_VERSION", 5L},
+                {"PHP_VERSION", Str.of(PHP_VERSION)}, {"PHP_MAJOR_VERSION", 8L}, {"PHP_MINOR_VERSION", 5L},
                 {"PHP_RELEASE_VERSION", 12L}, {"PHP_VERSION_ID", 80512L}, {"PHP_OS", Str.of("Linux")},
                 {"PHP_OS_FAMILY", Str.of("Linux")}, {"DIRECTORY_SEPARATOR", Str.of("/")},
                 {"PATH_SEPARATOR", Str.of(":")}, {"M_PI", Math.PI},

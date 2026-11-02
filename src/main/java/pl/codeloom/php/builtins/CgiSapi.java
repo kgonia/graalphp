@@ -5,6 +5,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -90,9 +91,15 @@ public final class CgiSapi {
         /** Header lines ("Name: value") in the order set. */
         private final List<String> headers = new ArrayList<>();
         private boolean sent;
+        /** Where the output that sent the headers started (php_output_header); null outside PHP code. */
+        private SourceLocation outputStart;
 
         public boolean isSent() {
             return sent;
+        }
+
+        public SourceLocation outputStart() {
+            return outputStart;
         }
 
         public int status() {
@@ -152,18 +159,24 @@ public final class CgiSapi {
             headers.removeIf(h -> h.regionMatches(true, 0, name + ":", 0, name.length() + 1));
         }
 
-        /** The CGI header block, once: Status, the headers, a default Content-type. */
+        /**
+         * The CGI header block, once: Status, the headers, a default Content-type, which sapi_send_headers adds to
+         * the header list (headers_list() shows it after). start: where the output that sends them started.
+         */
         @TruffleBoundary
-        public byte[] block() {
+        public byte[] block(SourceLocation start) {
             sent = true;
-            StringBuilder block = new StringBuilder("Status: ").append(status).append("\r\n");
+            outputStart = start;
             boolean contentType = false;
             for (String header : headers) {
-                block.append(header).append("\r\n");
                 contentType |= header.regionMatches(true, 0, "Content-Type:", 0, 13);
             }
             if (!contentType) {
-                block.append("Content-type: text/html; charset=UTF-8\r\n");
+                headers.add("Content-type: text/html; charset=UTF-8");
+            }
+            StringBuilder block = new StringBuilder("Status: ").append(status).append("\r\n");
+            for (String header : headers) {
+                block.append(header).append("\r\n");
             }
             return block.append("\r\n").toString().getBytes(StandardCharsets.ISO_8859_1);
         }

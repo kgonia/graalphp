@@ -57,6 +57,7 @@ public final class Ini {
         directives.put("error_prepend_string", new Directive(null, ALL));
         directives.put("error_reporting", new Directive(null, ALL));
         directives.put("fatal_error_backtraces", new Directive("1", ALL));
+        directives.put("expose_php", new Directive("1", SYSTEM));
         directives.put("file_uploads", new Directive("1", SYSTEM));
         directives.put("html_errors", new Directive("1", ALL));
         directives.put("ignore_repeated_errors", new Directive("0", ALL));
@@ -598,6 +599,11 @@ public final class Ini {
             }
         }
         return out.toString();
+    }
+
+    /** A boolean directive's value as zend_ini_parse_bool reads it. */
+    public boolean isOn(String name) {
+        return bool(values.get(name));
     }
 
     /** A boolean directive as zend_ini_parse_bool reads it: on, yes, true, or a non-zero number. */

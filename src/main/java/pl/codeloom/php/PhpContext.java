@@ -110,6 +110,10 @@ public final class PhpContext {
         globalRef("argv").set(argv);
         globalRef("argc").set((long) argv.size());
         response = cgi ? new pl.codeloom.php.builtins.CgiSapi.Response() : null;
+        if (response != null && builtinState.ini().isOn("expose_php")) {
+            // php_request_startup: SAPI_PHP_VERSION_HEADER, which header_remove() can take away
+            response.header("X-Powered-By: PHP/" + Builtins.PHP_VERSION, true, 0);
+        }
         requestBody = cgi ? readRequestBody(env) : new byte[0];
         builtinState.startupErrors(this, cgi);
         superglobals(argv);
@@ -717,12 +721,22 @@ public final class PhpContext {
 
     // ---- output ----
 
-    @TruffleBoundary
     public void write(TruffleString s) {
+        write(s, null);
+    }
+
+    /** Output; site: the echo that writes it, where the output starts if it sends the headers (else the call's). */
+    @TruffleBoundary
+    public void write(TruffleString s, com.oracle.truffle.api.nodes.Node site) {
         try {
             if (buffers.isEmpty()) {
+                if (s.isEmpty()) {
+                    // php_output_op: no bytes, no output, and the headers stay unsent
+                    return;
+                }
                 if (response != null && !response.isSent()) {
-                    out.write(response.block());
+                    out.write(response.block(site != null ? pl.codeloom.php.runtime.SourceLocation.of(site)
+                            : outputStartLocation()));
                 }
                 out.write(Str.readBytes(s));
             } else {
@@ -860,11 +874,17 @@ public final class PhpContext {
         return true;
     }
 
+    /** php_output_header's OG(output_start_filename/lineno): the executing PHP code's place, if any runs. */
+    private static pl.codeloom.php.runtime.SourceLocation outputStartLocation() {
+        pl.codeloom.php.runtime.SourceLocation at = pl.codeloom.php.runtime.SourceLocation.current();
+        return at == null || at == pl.codeloom.php.runtime.SourceLocation.UNKNOWN ? null : at;
+    }
+
     @TruffleBoundary
     public void flush() {
         try {
             if (response != null && !response.isSent()) {
-                out.write(response.block());
+                out.write(response.block(outputStartLocation()));
             }
             out.flush();
         } catch (IOException e) {
