@@ -223,3 +223,20 @@ show('gen', $g->send(null));
 show('gen', $g->send('B'));
 $g->next();
 show('gen', $g->current());
+
+// isset() of a property whose name is a call, the object first (opis/json-schema's ErrorFormatter::getErrors)
+function keyword($label, $name) { echo "[name $label]"; return $name; }
+function objectOf($label, $object) { echo "[object $label]"; return $object; }
+function computedNames() {
+    $map = (object) ['required' => 'r', 'n' => null];
+    var_dump(isset($map->{keyword('a', 'required')}), isset(objectOf('b', $map)->{keyword('b', 'n')}),
+        isset(objectOf('c', null)->{keyword('c', 'x')}), empty($map->{keyword('d', 'required')}));
+    foreach (['required', 'missing'] as $k) {
+        if (isset($map->{strtoupper($k) === 'REQUIRED' ? $k : 'no'})) {
+            yield $k => $map->{$k};
+        }
+    }
+}
+foreach (computedNames() as $k => $v) {
+    echo "$k => $v\n";
+}

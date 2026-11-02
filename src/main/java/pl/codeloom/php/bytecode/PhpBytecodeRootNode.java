@@ -1254,6 +1254,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** ReadPropIfSet by a computed name, evaluated after the object. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropIfSetNamed {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object, String name,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            Object value = access.readIfSetOn(frame, object, name);
+            return value == null ? PhpNull.NULL : value;
+        }
+    }
+
     /**
      * `$obj->name[key] = value` (DimNode.write on a PropNode): the value is held while the property's array is made
      * writable (PropNode.arrayForWrite); a property holding an object takes the write as an ArrayAccess.

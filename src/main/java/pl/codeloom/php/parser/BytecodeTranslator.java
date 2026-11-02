@@ -2239,9 +2239,7 @@ public final class BytecodeTranslator {
                 b.endIssetProp();
                 return;
             }
-            if (!(prop instanceof Ast ast && ast.is("AST_VAR"))) {
-                throw new Unsupported("isset of a property by a computed name", target);
-            }
+            // the object, then the name (ZEND_ISSET_ISEMPTY_PROP_OBJ's operands, as PropNode.isSet reads them)
             b.beginIssetPropNamed(propSite(target, null));
             readIfSet(target.get("expr"));
             propName(prop);
@@ -2285,7 +2283,12 @@ public final class BytecodeTranslator {
                     }
                     case "AST_PROP" -> {
                         if (!(ast.get("prop") instanceof String name)) {
-                            throw new Unsupported("isset of a property by a computed name", ast);
+                            // the object, then the name, as PropNode.readIfSet evaluates them
+                            b.beginReadPropIfSetNamed(propSite(ast, null));
+                            readIfSet(ast.get("expr"));
+                            propName(ast.get("prop"));
+                            b.endReadPropIfSetNamed();
+                            return;
                         }
                         b.beginReadPropIfSet(propSite(ast, name));
                         readIfSet(ast.get("expr"));
