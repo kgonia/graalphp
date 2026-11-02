@@ -88,7 +88,8 @@ function assignments() {
     $o = new stdClass;
     $o->{side('prop', 'p')} = yield 'property';
     $o->list[side('idx', 3)] = yield 'property element';
-    var_dump($o);
+    // as an array: object ids aren't reused once freed, as php-src reuses its handles
+    var_dump((array) $o);
     [$p, [$q, $r]] = [side('l1', 1), yield 'list'];
     var_dump($p, $q, $r);
     ['a' => $s, 'b' => $t] = yield 'keyed list';

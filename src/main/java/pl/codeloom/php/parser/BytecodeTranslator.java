@@ -2133,7 +2133,9 @@ public final class BytecodeTranslator {
 
         /**
          * `$obj->name = value` (AssignNode on a PropNode): the value, then the name, then the object, as the tree
-         * evaluates them; with a delayed object (a variable, a property chain) that is php-src's order too.
+         * evaluates them; with a delayed object (a variable, a property chain) that is php-src's order too. A
+         * computed name that isn't a variable is evaluated before the value, as php-src compiles it with the
+         * delayed property (zend_delayed_compile_prop), and converted when the write runs.
          */
         private void writeProp(Ast target, Object value) {
             if (!delayedObject(target.get("expr"))) {
@@ -2146,11 +2148,14 @@ public final class BytecodeTranslator {
                 b.endWriteProp();
                 return;
             }
+            b.beginBlock();
+            Object prop = onceKey(target.get("prop"));
             b.beginWritePropNamed(propSite(target, null));
             expression(value);
-            propName(target.get("prop"));
+            propName(prop);
             expression(target.get("expr"));
             b.endWritePropNamed();
+            b.endBlock();
         }
 
         /**
