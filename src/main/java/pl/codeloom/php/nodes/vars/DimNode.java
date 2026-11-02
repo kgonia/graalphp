@@ -113,7 +113,7 @@ public final class DimNode extends LValueNode {
     }
 
     @TruffleBoundary
-    private static void letGo(PhpArray held) {
+    public static void letGo(PhpArray held) {
         held.removeHolder();
     }
 

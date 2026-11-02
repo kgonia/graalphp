@@ -45,7 +45,7 @@ final class ObjectIteration {
 
     /** Binds the next element's key (hasKey) and value; false at the end. */
     boolean next(VirtualFrame frame, LocalAccessor value, LocalAccessor key, boolean hasKey, BytecodeNode bytecode,
-                 Node site) {
+                 Node site, Locals.Writes keyWrites, Locals.Writes valueWrites) {
         if (iterator != null) {
             if (started) {
                 ForeachNode.step(site, iterator, "next");
@@ -56,9 +56,9 @@ final class ObjectIteration {
             }
             Object current = PhpRef.deref(ForeachNode.step(site, iterator, "current"));
             if (hasKey) {
-                Locals.write(frame, key, bytecode, PhpRef.deref(ForeachNode.step(site, iterator, "key")));
+                keyWrites.write(frame, key, bytecode, PhpRef.deref(ForeachNode.step(site, iterator, "key")));
             }
-            Locals.write(frame, value, bytecode, current);
+            valueWrites.write(frame, value, bytecode, current);
             return true;
         }
         Object[] property = nextProperty();
@@ -66,9 +66,9 @@ final class ObjectIteration {
             return false;
         }
         if (hasKey) {
-            Locals.write(frame, key, bytecode, property[0]);
+            keyWrites.write(frame, key, bytecode, property[0]);
         }
-        Locals.write(frame, value, bytecode, property[1]);
+        valueWrites.write(frame, value, bytecode, property[1]);
         return true;
     }
 

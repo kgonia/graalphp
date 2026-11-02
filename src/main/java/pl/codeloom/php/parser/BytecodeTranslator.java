@@ -1799,6 +1799,13 @@ public final class BytecodeTranslator {
                     return;
                 }
                 case 15 -> throw new Unsupported("binary operator " + node.flags, node);
+                case 8 -> {
+                    List<Object> parts = concatOperands(node);
+                    if (parts.size() >= 3) {
+                        concatChain(parts);
+                        return;
+                    }
+                }
                 default -> {
                 }
             }
@@ -1806,6 +1813,52 @@ public final class BytecodeTranslator {
             expression(node.get("left"));
             expression(node.get("right"));
             endBinary(node);
+        }
+
+        /**
+         * The operands of `a . b . c ...` (Translator.foldConcat): a left operand that is itself a concatenation
+         * extends the chain, unless it folds to a literal.
+         */
+        private List<Object> concatOperands(Ast node) {
+            List<Object> parts = new ArrayList<>();
+            if (node.get("left") instanceof Ast left && left.is("AST_BINARY_OP") && left.flags == 8
+                    && !constantShaped(left)) {
+                parts.addAll(concatOperands(left));
+            } else {
+                parts.add(node.get("left"));
+            }
+            parts.add(node.get("right"));
+            return parts;
+        }
+
+        /**
+         * Three or more operands (ConcatChainNode): one join, where a `.` per pair compiled a concatenation each.
+         * As php-src's chain of ZEND_CONCAT, the first two are evaluated, then converted (the second waits in a
+         * local), and each next one is evaluated and converted in turn.
+         */
+        private void concatChain(List<Object> parts) {
+            BytecodeLocal second = b.createLocal();
+            b.beginInterpolate();
+            b.beginInterpolationPart();
+            b.beginFirstOfTwo();
+            expression(parts.get(0));
+            b.beginBlock();
+            b.beginStoreLocal(second);
+            expression(parts.get(1));
+            b.endStoreLocal();
+            b.emitLoadConstant(PhpNull.NULL);
+            b.endBlock();
+            b.endFirstOfTwo();
+            b.endInterpolationPart();
+            b.beginInterpolationPart();
+            b.emitLoadLocal(second);
+            b.endInterpolationPart();
+            for (int i = 2; i < parts.size(); i++) {
+                b.beginInterpolationPart();
+                expression(parts.get(i));
+                b.endInterpolationPart();
+            }
+            b.endInterpolate();
         }
 
         private void beginBinary(Ast node) {
