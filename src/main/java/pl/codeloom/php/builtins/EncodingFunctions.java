@@ -2,16 +2,9 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
-import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.runtime.ArrayKey;
-import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
-import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpNull;
-import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
@@ -26,7 +19,10 @@ import java.util.zip.CRC32;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-/** serialize / unserialize, base64, hex, base conversion, hashes and HMACs, and cryptographic randomness. */
+/**
+ * serialize / unserialize (see {@link Serialization}), base64, hex, base conversion, hashes and HMACs, and
+ * cryptographic randomness.
+ */
 final class EncodingFunctions {
     private EncodingFunctions() {
     }
@@ -35,7 +31,14 @@ final class EncodingFunctions {
 
     static void register(Registry r) {
         r.fn("serialize", (context, a) -> Serialization.serialize(context, Args.get(a, 0)));
-        r.fn("unserialize", (context, a) -> unserialize(context, Str.bytes(Args.str(a, 0)), Args.get(a, 1)));
+        r.fn("unserialize", (context, a) -> {
+            TruffleString data = Args.string(context, a, 0, "unserialize", "data", false);
+            Object options = Args.get(a, 1);
+            if (options != null && !(options instanceof PhpArray)) {
+                throw Args.typeError("unserialize", 2, "options", "array", options);
+            }
+            return Serialization.unserialize(context, data, (PhpArray) options);
+        });
         r.fn("base64_encode", a -> Str.of(Base64.getEncoder().encode(Str.bytes(Args.str(a, 0)))));
         r.fn("base64_decode", a -> base64Decode(Str.bytes(Args.str(a, 0)), Args.bool(a, 1, false)));
         r.fn("hex2bin", a -> hex2bin(Str.readBytes(Args.str(a, 0))));
@@ -54,257 +57,6 @@ final class EncodingFunctions {
         r.fn("hash_equals", a -> MessageDigest.isEqual(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1))));
         r.fn("hash_algos", a -> PhpArray.ofStrings("md5", "sha1", "sha224", "sha256", "sha384", "sha512", "crc32b"));
         r.fn("hash_hmac_algos", a -> PhpArray.ofStrings("md5", "sha1", "sha224", "sha256", "sha384", "sha512"));
-    }
-
-
-    // ---- unserialize ----
-
-    /** unserialize_max_depth's default: deeper nesting fails, as php-src's. */
-    private static final long MAX_DEPTH = 4096;
-
-    /**
-     * unserialize($data, $options): false for malformed input. A class allowed_classes excludes, or one that
-     * doesn't exist, becomes a __PHP_Incomplete_Class without being autoloaded or woken; what __wakeup throws
-     * propagates.
-     */
-    @TruffleBoundary
-    static Object unserialize(PhpContext context, byte[] input, Object options) {
-        Reader reader = new Reader(context, input, options instanceof PhpArray array ? array : null);
-        try {
-            return reader.value();
-        } catch (IllegalArgumentException | IndexOutOfBoundsException malformed) {
-            return Boolean.FALSE;
-        }
-    }
-
-    private static final class Reader {
-        private final PhpContext context;
-        private final byte[] s;
-        private int pos;
-        /** allowed_classes: null for all, else the allowed lower-case names (none for false). */
-        private final java.util.Set<String> allowedClasses;
-        private final long maxDepth;
-        private long depth;
-
-        Reader(PhpContext context, byte[] s, PhpArray options) {
-            this.context = context;
-            this.s = s;
-            Object allowed = options == null ? null : options.get(ArrayKey.of(Str.of("allowed_classes")));
-            if (allowed == null || allowed == Boolean.TRUE) {
-                allowedClasses = null;
-            } else {
-                allowedClasses = new java.util.HashSet<>();
-                if (allowed instanceof PhpArray names) {
-                    for (int p = names.firstPosition(); p >= 0; p = names.nextPosition(p)) {
-                        allowedClasses.add(Str.lower(Str.java(Convert.toStr(names.valueAt(p)))));
-                    }
-                }
-            }
-            Object depthOption = options == null ? null : options.get(ArrayKey.of(Str.of("max_depth")));
-            long requested = depthOption == null ? 0 : Convert.toLong(depthOption);
-            maxDepth = requested > 0 ? requested : MAX_DEPTH;
-        }
-
-        /** Entering a nested array or object; php-src counts only the ones with elements. */
-        private void enter(long elements) {
-            if (elements > 0 && depth++ >= maxDepth) {
-                throw new IllegalArgumentException("unserialize: maximum depth of " + maxDepth + " exceeded");
-            }
-        }
-
-        private void leave(long elements) {
-            if (elements > 0) {
-                depth--;
-            }
-        }
-
-        /**
-         * An array or object being read: its elements come as key, value, key, value... Nesting is kept on an
-         * explicit stack, not the Java one, so the depth php-src allows (4096) fits any thread.
-         */
-        private static final class Container {
-            final long count;
-            final PhpArray array;
-            final PhpObject object;
-            final PhpClass phpClass;
-            long read;
-            Object key;
-
-            Container(long count, PhpArray array, PhpObject object, PhpClass phpClass) {
-                this.count = count;
-                this.array = array;
-                this.object = object;
-                this.phpClass = phpClass;
-            }
-        }
-
-        /** The value at the current position, with everything nested in it. */
-        Object value() {
-            java.util.ArrayDeque<Container> open = new java.util.ArrayDeque<>();
-            while (true) {
-                Object value;
-                Container started = start();
-                if (started == null) {
-                    value = scalar();
-                } else if (started.count > 0) {
-                    open.push(started);
-                    continue;
-                } else {
-                    value = finish(started);
-                }
-                // hand the value to the containers it completes, innermost first
-                while (true) {
-                    Container top = open.peek();
-                    if (top == null) {
-                        return value;
-                    }
-                    if (top.key == null) {
-                        if (!(value instanceof Long) && !(value instanceof TruffleString)) {
-                            throw new IllegalArgumentException("unserialize: a key must be an int or a string");
-                        }
-                        top.key = value;
-                        break;
-                    }
-                    store(top, top.key, value);
-                    top.key = null;
-                    if (++top.read < top.count) {
-                        break;
-                    }
-                    open.pop();
-                    value = finish(top);
-                }
-            }
-        }
-
-        /** An array or object header (`a:n:{`, `O:len:"Class":n:{`), or null for a scalar. */
-        private Container start() {
-            char type = (char) s[pos];
-            if (type == 'a') {
-                expect("a:");
-                long count = number(':');
-                expect("{");
-                enter(count);
-                return new Container(count, new PhpArray(), null, null);
-            }
-            if (type != 'O') {
-                return null;
-            }
-            expect("O:");
-            String className = Str.java(bytes(number(':')));
-            expect(":");
-            long count = number(':');
-            expect("{");
-            enter(count);
-            boolean allowed = allowedClasses == null || allowedClasses.contains(Str.lower(className));
-            PhpClass phpClass = allowed ? context.findClassAutoloading(className) : null;
-            PhpObject object;
-            if (phpClass != null && phpClass.getHandlers() != null && phpClass.getHandlers().notSerializable()) {
-                throw new PhpError("Exception", "Unserialization of '" + phpClass.getName() + "' is not allowed");
-            }
-            if (phpClass != null) {
-                object = phpClass.instantiate();
-            } else {
-                object = context.getClass("__PHP_Incomplete_Class").instantiate();
-                object.setProperty("__PHP_Incomplete_Class_Name", Str.of(className));
-            }
-            return new Container(count, null, object, phpClass);
-        }
-
-        private static void store(Container container, Object key, Object value) {
-            if (container.array != null) {
-                container.array.put(ArrayKey.of(key), value);
-                return;
-            }
-            String name = Str.key(Convert.toStr(key));
-            // private and protected properties are serialized as "\0Class\0name" and "\0*\0name"
-            if (name.startsWith("\0")) {
-                name = name.substring(name.indexOf('\0', 1) + 1);
-            }
-            container.object.setProperty(name, value);
-        }
-
-        /** The closing brace: the array, or the object (woken if its class has __wakeup). */
-        private Object finish(Container container) {
-            expect("}");
-            leave(container.count);
-            if (container.array != null) {
-                return container.array;
-            }
-            if (container.phpClass != null && container.phpClass.findMethod("__wakeup") != null) {
-                container.object.callMethod("__wakeup");
-            }
-            return container.object;
-        }
-
-        private Object scalar() {
-            char type = (char) s[pos];
-            switch (type) {
-                case 'N':
-                    expect("N;");
-                    return PhpNull.NULL;
-                case 'b': {
-                    expect("b:");
-                    long v = number(';');
-                    return v != 0;
-                }
-                case 'i': {
-                    expect("i:");
-                    return number(';');
-                }
-                case 'd': {
-                    expect("d:");
-                    String text = until(';');
-                    return switch (text) {
-                        case "NAN" -> Double.NaN;
-                        case "INF" -> Double.POSITIVE_INFINITY;
-                        case "-INF" -> Double.NEGATIVE_INFINITY;
-                        default -> Double.parseDouble(text);
-                    };
-                }
-                case 's': {
-                    expect("s:");
-                    TruffleString value = bytes(number(':'));
-                    expect(";");
-                    return value;
-                }
-                default:
-                    throw new IllegalArgumentException("unserialize: unexpected " + type);
-            }
-        }
-
-        private void expect(String text) {
-            for (int i = 0; i < text.length(); i++) {
-                if (s[pos++] != text.charAt(i)) {
-                    throw new IllegalArgumentException("unserialize: expected " + text);
-                }
-            }
-        }
-
-        private String until(char end) {
-            int start = pos;
-            while (s[pos] != end) {
-                pos++;
-            }
-            String text = new String(s, start, pos - start, StandardCharsets.ISO_8859_1);
-            pos++;
-            return text;
-        }
-
-        private long number(char end) {
-            return Long.parseLong(until(end));
-        }
-
-        /** A quoted byte string of a known length: "..." (checked against the input before copying). */
-        private TruffleString bytes(long length) {
-            expect("\"");
-            if (length < 0 || length > s.length - pos) {
-                throw new IllegalArgumentException("unserialize: string length " + length + " past the end");
-            }
-            byte[] value = java.util.Arrays.copyOfRange(s, pos, pos + (int) length);
-            pos += (int) length;
-            expect("\"");
-            return Str.of(value);
-        }
     }
 
     // ---- the rest ----

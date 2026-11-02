@@ -437,6 +437,32 @@ public final class PhpArray implements TruffleObject {
         append(value);
     }
 
+    /**
+     * Stores the value in the element's slot whatever the slot holds, a reference included (which put() writes
+     * through): unserialize() reading a key a second time replaces the element in place, as php-src does.
+     */
+    @TruffleBoundary
+    public void replace(Object key, Object value) {
+        if (!(getRaw(key) instanceof PhpRef)) {
+            put(key, value);
+            return;
+        }
+        // a reference element: the store holds objects, packed or hashed
+        Object old;
+        countIn(value);
+        if (store instanceof Object[] packed) {
+            int index = (int) (long) (Long) key;
+            old = packed[index];
+            packed[index] = value;
+        } else {
+            Hash hash = (Hash) store;
+            int slot = hash.find(key, hash(key));
+            old = hash.values[slot];
+            hash.values[slot] = value;
+        }
+        countOut(old, value);
+    }
+
     /** Stores a PhpRef (or replaces whatever is there) under a normalized key: `$a[k] = &$x`. */
     @TruffleBoundary
     public void putRef(Object key, PhpRef ref) {
