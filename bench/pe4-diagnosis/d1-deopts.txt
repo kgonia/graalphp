@@ -1,0 +1,25 @@
+invalidations and deoptimizations by reason (15):
+     230 deopt uncommon trap
+         apply_filters 14, WP_Hook::apply_filters 13, WP_Object_Cache::get 11, WP_List_Util::pluck 10
+      93 inval. Profiled Argument Types
+         register_block_type_from_metadata 4, wp_load_alloptions 3, WP_Object_Cache::_exists 3, maybe_unserialize 3
+      12 deopt JVMCI invalidate
+         add_filter 4, maybe_unserialize 4, get_the_terms 4
+      10 deopt Unknown
+         WP_Hook::apply_filters 4, wp_replace_in_html_tags 3, WP_HTML_Tag_Processor::skip_script_data 1, Automattic\WooCommerce\Blocks\Templates\ArchiveProductTemplatesCompatibility::inject_hooks 1
+       8 inval. Profiled Return Type
+         get_option 1, maybe_unserialize 1, update_meta_cache 1, get_translations_for_domain 1
+       2 deopt unknown
+         doing_action 1, _load_textdomain_just_in_time 1
+       1 inval. typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[2][final=false][type=!pl.codeloom.php.run
+         add_filter 1
+       1 inval. validRootAssumption of WP_Object_Cache::get Split call node
+         WP_Object_Cache::get 1
+       1 inval. typed object location generalizing object type !pl.codeloom.php.runtime.PhpArray => !java.lang.Object Object[23][final=false][type=!pl.codeloom.php.ru
+         WP_HTML_Tag_Processor::after_tag 1
+       1 inval. validRootAssumption of WC_Product_Data_Store_CPT::read_product_data Split call node
+         WC_Product_Data_Store_CPT::read_product_data 1
+       1 inval. validRootAssumption of WP_HTML_Tag_Processor::after_tag Split call node
+         WP_HTML_Tag_Processor::after_tag 1
+       1 inval. validRootAssumption of {closure:apply_block_hooks_to_content():1211} Split call node
+         {closure:apply_block_hooks_to_content():1211} 1
