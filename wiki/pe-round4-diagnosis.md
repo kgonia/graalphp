@@ -205,7 +205,8 @@ where the wall times sum to 2,012 s, so read the shares, not the seconds.
   performance warning, no deopt cycle. #21's 270 invalidations were the same kind.
 - **What keeps it going is new call targets:** 10,392 distinct targets compiled in 15 minutes, 1,764 of them more
   than once (a tier-2 compilation after tier 1 counts). In the last minutes of `d1-trace` 40-200 first tier-1
-  compilations of functions and 90-400 of split copies still arrive every minute, with bursts (1,626 in minute 8, 2,178 in `m-base-r1`'s minute 9).
+  compilations of functions and 90-400 of split copies still arrive every minute, with bursts (1,626 in minute 8,
+  2,178 in `m-base-r1`'s minute 9).
 - **The queue is overloaded the whole time.** `TraceCompilationDetails`: the queue held 300-700 tasks in every
   minute, its load 2.5-12.9 (1 is normal). With `engine.DynamicCompilationThresholds` (default on) Truffle raises
   the thresholds with the load: the median threshold of a tier-1 enqueue was 1,175-5,275 calls (default 400, ×3-13),
@@ -213,10 +214,11 @@ where the wall times sum to 2,012 s, so read the shares, not the seconds.
   requests before it is even queued, and the thresholds fall as the load falls, which is the slow trickle of
   first compilations; 10,561 of 23,365 enqueued tasks were dropped as stale (`Dequeues`). **Compilation doesn't
   settle because WooCommerce's request path is ~10,000 call targets and 3 compiler threads (`CompilerThreads`
-  default here) compile it at ~1,000 compilations a minute, mostly tier 2 by time.**
-- **Tier 2 is the bulk** (49-53% for functions, 51-61% with split copies): each function used often enough recompiled with its callees inlined. 1,466 of
-  tier 2's 1,585 s in `d1-trace` (split copies included) were functions of at most 1,000 AST nodes (829 of at most 50 nodes, at 1,955 IR
-  nodes on average after inlining 3.2 callees).
+  default here) compile it at ~800 compilations a minute, mostly tier 2 by time.**
+- **Tier 2 is the bulk** (49-53% for functions, 51-61% with split copies): each function used often enough is
+  recompiled with its callees inlined. 1,466 of tier 2's 1,585 s in `d1-trace` (split copies included) were
+  functions of at most 1,000 AST nodes (829 of at most 50 nodes, at 1,955 IR nodes on average after inlining 3.2
+  callees).
 
 **Splitting: 9-15% of the compile time, 12% of the code (12 of 97 MB).** In `d1-trace` Truffle made 6,258 splits
 of 534 functions (3,999 compiled) and refused 2,978 as too big (`SplittingMaxCalleeSize` 100: `get_option` 518
@@ -266,8 +268,8 @@ section 5):
    copy meets new objects all the same.
 3. `AssignNode` and the conversions and tests (`ToBooleanNode`, `ToLongNode`, `ToStringNode`, `IdenticalNode`,
    `SubclassTestNode`): `@ReportPolymorphism.Exclude`, so a value of another type no longer copies a helper per
-   caller. These are where splitting paid on Gate 1 (gate-2.md: hooks, escape, slugs 11-25% slower without any
-   splitting), so this one needs the kernels' A/B, not only the server's.
+   caller. Splitting paid on Gate 1 (gate-2.md: hooks, escape, slugs 11-25% slower without any splitting), and which
+   of these reports made those copies isn't known, so this one needs the kernels' A/B, not only the server's.
 4. Not a reporting change but the larger part: tier 2 recompiles everything hot with inlining, and the queue's
    load raises every threshold; fewer and smaller call targets (1-3, and section 1's code per operation) are what
    bring the load down.
@@ -320,7 +322,8 @@ snapshot; the box's load per run is `mem-hostload.txt`. Round 4 is `runs2.sh mem
   collection at 560 MB, while the classmap, the thunk and `states.php` compiled one after another (minutes 6-11 of
   `m-base-r1`; ~75 MB after them). In round 3 (the box 36% busy) the classmap (223 s) and the thunk (75 s) compiled at
   the same time on two threads in minutes 6-7: two isolates of 1.4-1.7 GB each after a collection, libgraal **3.6 GB**,
-  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. Round 4's baseline did the same (3.1 GB, the classmap 244 s). That is #21's 5.8 GB, which was `866e156`:
+  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. Round 4's baseline did the same (3.1 GB, the classmap 244 s).
+  That is #21's 5.8 GB, which was `866e156`:
   on it (round 4's "before" runs) the giants take longer still (the classmap 358 s, `states.php` timing out at 170 s
   where the merged build fails it as code too large in 25-43 s, the thunk 74-82 s), all three overlap, and libgraal
   reaches **5.3-5.4 GB**, one isolate 2.7 GB, RssAnon 7.3-8.0 GB; their failed compilations took 352-602 s.
