@@ -10,7 +10,36 @@ what a cap on libgraal's heap does, what #19 (round 3) and #20 (allocations) did
 ranked. Nothing here changes the interpreter: the branch `pe4-diagnosis` (on `woocommerce` after its merge of main,
 `b6ca11c`) adds diagnosis scripts only.
 
-TBD-SHORT
+## Short answer
+1. **The largest compilations are run-once code and their own bodies, never inlined callees.** The three largest are
+   a file's top level and a property default that run once per request: the Jetpack classmap (272,886 IR nodes after
+   PE, 921,612 before PE's cleanup; times out after 100-358 s), `PaymentsExtensionSuggestions::$country_extensions`
+   (217,076; fails after 74-100 s on an oopmap limit) and `states.php` (105,599; code too large). Then
+   `WP_Query::get_posts` (53,424), `wp-settings.php`, `WP_Theme_JSON::sanitize`, `get_block_nodes`: no PHP callee
+   is inlined into any of them (they start over Truffle's 12,000-node budget); their IR is our Java per operation:
+   frame states 19-35%, holder counts up to 21%, element reads up to 26%, locals 12-27%, a user function's call and
+   its per-context lookup up to 40%. **`get_posts` did not double:** #21 compared its IR after Graal (115-122k) with
+   WordPress's after PE (~60k); like for like WooCommerce's is 11-18% larger (more of its paths run).
+2. **Compilation doesn't settle because of volume, not instability:** ~10,400 call targets in 15 minutes, 3%
+   recompiled; the queue holds 300-700 tasks the whole time, and Truffle raises the thresholds with its load (×3-13),
+   so first compilations trickle in for as long as we measured. By time, tier 2 is 49-62% of compilation, split
+   copies 9-17%, the three failed giants 9-11%. **Splits** (6,258 in 15 minutes) come mostly from
+   `MethodCallNode.Dispatch` reporting polymorphism on receivers of many classes that resolve to one method
+   (`WC_Data::get_prop` 947 splits, 458 compiled); also `AssignNode`, `===`, `ToBoolean`, `instanceof`, `ToString`,
+   `ToLong`, and `StableValueNode`, which can never stabilize across requests.
+3. **libgraal: one isolate per compiler thread**, rebuilt after a second idle (70 lives in 12 minutes), so
+   `-Djdk.graal.internal.MaxHeapSize` caps each isolate. A compilation over its cap fails with an `OutOfMemoryError`
+   and its function stays interpreted; the server is unharmed. **The burst is the giants compiling at the same
+   time:** on a quiet box 3.1-3.6 GB of libgraal on the merged build, 5.3-5.4 GB on `866e156`. A 2 GB cap was never
+   reached, 1 GB stopped only the classmap, 256 MB stopped the giants early and one or two ordinary compilations
+   (RssAnon 1.9 GB against 5.0). **One compiler thread: no loss in three interleaved rounds** (10.9/12.6/15.4 against
+   10.5/9.8/15.3 pages/s), 62% less compiler CPU, 40-50% less memory.
+4. **#19 and #20 on WooCommerce:** in the memruns on a quiet box +12-28% pages/s, −10-22% CPU-s per page, −22-27%
+   p99, −30-37% memory.peak (8.1/7.4 → 5.2/5.1 GB); TBD-ABSHORT
+5. **Round 4's targets, ranked** (section 5): don't compile run-once code that can't pay back (or make its literals
+   templates); dispatch keyed on the resolved method; `defined()` as a node; a user function's call without the
+   per-context lookup; holder counts out of line; polymorphism reported only where a copy helps; and, the owner's
+   choice of flags, fewer compiler threads or a per-isolate cap.
 
 ## Setup
 - **The store and the load** are #21's: `tests/gate2/woo.sh`, WooCommerce 11.2.1 on WordPress 7.2-beta1, the load
@@ -325,7 +354,35 @@ CPUs 14-21: 300 s of warm-up (16 users, half buying), then 120 s at 16 users wit
 (`866e156`) and after (`b6ca11c`) interleaved, the order reversed every other round. Rounds 1-3 ran while the
 diagnosis server worked on 6-13 (box 56-65% busy); rounds 4-6 later, without it.
 
-TBD-AB
+**The A/B** (every visitor buying, 120 s at 16 users after the warm-up; `bench/pe4-diagnosis/ab-table.md`; a cell
+is the median of the rounds with their range):
+
+TBD-ABTABLE
+
+**The memruns** (section 3's table: 12 minutes from cold, 16 users half buying): on the same quiet box (35-36%),
+before against the merged build's baselines of rounds 3 and 4:
+
+| | before (`866e156`), 2 runs | after (`b6ca11c`), 2 runs | after / before |
+|---|---|---|---|
+| pages/s | 12.7, 12.0 | 15.3, 14.2 | **+12-28%** (medians +19%) |
+| orders/s | 0.98, 0.95 | 1.17, 1.11 | +13-23% |
+| p99 | 3.2, 3.3 s | 2.4, 2.5 s | −22-27% |
+| CPU-s per page | 0.61, 0.65 | 0.51, 0.55 | **−10-22%** |
+| RssAnon max | 8.0, 7.3 GB | 5.1, 5.0 GB | −31-37% |
+| memory.peak | 8.1, 7.4 GB | 5.2, 5.1 GB | **−30-37%** |
+| libgraal at most | 5.3, 5.4 GB | 3.6, 3.1 GB | −32-43% |
+| failed compilations' wall time | 602, 352 s | 324, 347 s | −1-46% (the classmap still 223-244 s) |
+
+**Where it comes from:**
+- **Code per operation (#19):** `get_posts` 59,531 → 53,424 IR nodes after PE (section 1), and the same rules shrink
+  every function with string-key reads in large bodies; `states.php` fails as code too large in 25-43 s instead of
+  timing out at 170 s.
+- **The giants' memory:** smaller graphs while the classmap, the thunk and `states.php` compile, so libgraal's burst
+  is 1.7-2.3 GB smaller and the server's peak ~2.5-3 GB lower. It is not gone: on a quiet box the merged build still
+  reaches 3.1-3.6 GB of libgraal (section 3).
+- **Allocation (#20):** the requests' allocation (gc.md: −16% a visit on WordPress) shows here only as a GC share
+  that didn't grow with the higher throughput (15% of the server's CPU before and after); the memruns don't separate
+  #20 from #19.
 
 ## 5. Round 4's targets, ranked
 
