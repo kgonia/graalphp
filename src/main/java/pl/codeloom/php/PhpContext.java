@@ -1,5 +1,6 @@
 package pl.codeloom.php;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
@@ -478,6 +479,7 @@ public final class PhpContext {
         if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
+        phpClass.makeKey(language);
         int id = language.classId(phpClass.getLowerName());
         if (id >= classSlots.length) {
             classSlots = Arrays.copyOf(classSlots, grown(classSlots.length, id));
@@ -514,6 +516,20 @@ public final class PhpContext {
     public Object constantAt(int id) {
         Object[] slots = constantSlots;
         return id < slots.length ? slots[id] : null;
+    }
+
+    /**
+     * constantAt for a read that is an error when the constant isn't defined. The slots grow when a constant is
+     * defined, so an id past them is such an error: compiled code leaves that case to the interpreter, rather
+     * than merging a null into the value it tests next.
+     */
+    public Object requiredConstantAt(int id) {
+        Object[] slots = constantSlots;
+        if (id >= slots.length) {
+            CompilerDirectives.transferToInterpreter();
+            return null;
+        }
+        return slots[id];
     }
 
     // ---- global variables ----

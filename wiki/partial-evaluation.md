@@ -385,19 +385,208 @@ with the order reversed every other round. The server ran on CPUs 14-21, the cli
     type" (a property's shape generalizing), against 9 compilations on the tree.
   - `--check` fails it on these two counts.
 
+## Round 3 (2026-11-01): hoisted casts, code per operation, the bytecode interpreter
+Branch `pe-round3` (on `main`, round 2's result `8493192`; `main` merged in at `f7e634a`, #18), GraalVM 25.4.4.1.1.
+"Before" is `main`: `8493192` for the per-site costs and the diagnosis runs before the merge, `f7e634a` for the
+checks, Gate 1 and the visits, which ran on the merged branch (`b9e424a`).
+
+**How the costs were measured.**
+- **Per operation**, not per function: a generated PHP file has, for each pattern (`$s += $q['k']`, `isset($q['k'])`,
+  a call, a method call, a constant read...), a function with 30 copies of it and one with 60. Both compile at the
+  first tier in an engine of several contexts (CompilationTest's options), and the difference over 30 is the
+  pattern's cost: IR nodes after PE, at the end, and bytes of machine code, which is what HotSpot's install limit
+  counts. With one context (`bin-php.sh`) constants and functions are compile-time constants, so these are the
+  server's costs.
+- **One cost per guard.** In this code a guard or an explicit deopt that stays in the final code costs about 40 bytes
+  (its branch and its stub), a load 5 to 7; a boundary call about 150 (spills around it, its exception's deopt).
+- **The sanitize recompiles** were bisected on a reproducer: `WP_Theme_JSON::sanitize` copied into a subclass, so
+  that parts of it can be cut, run on the core's and the theme's `theme.json` files in a multi-context engine with
+  `-Xlog:deoptimization=debug` (its `cid` is `TraceCompilation`'s `CompId`).
+
+### 1. `WP_Theme_JSON::sanitize`: casts that Graal hoisted as guards
+**The cause.** `PhpArray`'s per-layout accessors cast the store: `(Object[]) store`, `(Hash) store`,
+`(long[]) store`. A cast compiles to a guard (`ClassCastException`), and the element access after it to another
+(`NullCheckException`). Graal's speculative guard movement (SGM) moves guards out of loops, with the nodes they
+depend on, and here it moved them past the tests that made them hold: the layout test of the specialization, the
+element read's slot check. At the loop's entry they then failed for a value the body would never have cast, and the
+function was invalidated and compiled again, once per such guard.
+- The reproducer reproduced the round-2 traps (`ForeachNode.runArray` bci 20 and `ElementReadNode.otherKey` bci 10,
+  `null_check`, both the last frame state before a loop).
+- Cutting the function down located them: `array_slice($node['path'], 1)` inside
+  `foreach (static::PRESETS_METADATA ...)` inside `foreach (static::get_setting_nodes(...))`. With
+  `ArraySliceNode`'s `Object[]` loop out of line, or with SGM off, both traps went away.
+- **The fix** (`b12e48b`): the accessors test the store with `instanceof`, whose else is unreachable
+  (`transferToInterpreter`, without invalidation). An `instanceof` is control flow, which anchors what depends on
+  it; no cast guard is left to move. Code size and Gate 1 didn't change (below).
+
+**What it did** (JVM, `compile-diag.sh run wp-jvm`, 40 rounds):
+
+| | before | after |
+|---|---|---|
+| `sanitize` compiled / deoptimized | 8 / 4 | **5 / 2** |
+| `null_check` traps in Truffle compilations | 8 | **2** (`wpdb::query`, `wp_replace_in_html_tags`) |
+| HotSpot traps in Truffle compilations | 51 | 45 |
+
+- `sanitize`'s two deopts left are profiles: a `DimNode.isSet` case met first at the first tier, and at the second
+  tier a transfer from a specialization at a loop's entry (`ForeachNode.runArray` bci 20, the loop's `BindNode`
+  meeting a new layout).
+- **SGM off** (`-Djdk.graal.SpeculativeGuardMovement=false`), as a comparison only: on the reproducer it removed the
+  same two traps and nothing else after the fix. It is global, so it stays on.
+- **An empty array's foreach** was a suspect too: a loop's guards hoisted to its entry would fail for an array the
+  loop never iterates. Skipping the loop for an empty array (tree and bytecode) only moved the traps to the next loop
+  entry (`PhpArray.addHolder` bci 32) and didn't change the counts (9 compilations, 4 deopts), so it isn't in the
+  branch.
+- **`array_slice` returns early on an empty slice** (`caba5cb`), as asked: no loop and no store for it.
+- **Natively** (`compile-diag.sh run wp-native`, merged), the implicit-exception deoptimizations went from round
+  2's 10 to **3**. `PhpArray.getRaw`'s 6 and `ArraySliceNode.packed`'s 2 are gone. Left: one null check each in
+  `PhpArray.put` (`wpdb::query`) and `PhpArray.appendPacked` (`wp_replace_in_html_tags`), and one class cast in
+  `CallableDispatchNode.generic` (`apply_filters`). `sanitize` compiles three times there (two splits at the first
+  tier, one at the second) and isn't among the targets compiled four times or more.
+
+### 2. Code per operation: `WP_Query::get_posts` 22% under HotSpot's limit
+**Where the code was.** `TraceMethodExpansion` of `get_posts` (59,802 IR nodes after PE) summed by method, with the
+number of sites:
+- the string-key read's slot check and miss (`rawIfKeyAt`, `SlotCacheNode.lookup`, `deref`): 466 sites, about 8,000
+  IR nodes, and per read about 550 bytes of code;
+- holder updates (`addHolder` 131 sites, `removeHolder` 52): 3,644, about 20 a site, most of it the inline call for
+  an array with references;
+- calls: a call of a user function cost 643 bytes, of a built-in 594, a method call 598; with several contexts each
+  looked its function up in the running context (`fastGet`, the slot array, its bounds, a null test);
+- frame states and the rest (`<root>`): 12,133, a quarter.
+
+**The fixes**, one commit each (multi-context engine, first tier, bytes of code per site; IR nodes after PE):
+
+| Commit | Cause, and the fix | before → after |
+|---|---|---|
+| `bf1f2ed` FunctionCallNode | A built-in found by name was looked up per context at each call; every context declares the same built-ins first and none can be redeclared, so the call keeps it | `urldecode($a)`: 594 → 279 (43 → 25) |
+| `5c0f85e` Constants | A constant read merged a null into the value for an id past the slots; that case is the undefined constant's error, left to the interpreter | `C1 . C2 . '/x'`: 987 → 893 (85 → 55) |
+| `c174b1d` PhpArray | A hash kept keys and values in two arrays: the remembered slot's check loaded and bounds-checked both; now one array, key at 2i, value at 2i + 1, one unsigned compare | `$s += $q['k']` 575 → 548, `isset` 442 → 395, `!empty` 586 → 545 |
+| `ca665cf` PhpClass | The class key was made lazily by an inline call at every method call, `new` and static call; it is made when the class is declared | `$o->m($t)`: 598 → 467 (61 → 41) |
+| `bdf4bd7` FunctionCallNode | An undeclared function had a null test of its own besides the dispatch's identity test; it fails the identity test now, and the dispatch raises the error (before the arguments, as php-src) | `f1($t)`: 643 → 600 (49 → 47) |
+| `898f651` SlotCacheNode | In a large function (`nodes.LargeCode`: 3,000 nodes and more), a string-key read outside any loop is the slot cache's call alone, without the inline check | `$q['k']` 548 → 235, `isset` 395 → 147, `!empty` 545 → 300 |
+
+- **The large-function rule.** HotSpot's 640 KB binds only functions of thousands of AST nodes. In them a read outside
+  any loop runs once per call of the function, so the call costs a few nanoseconds per call of `get_posts`, for 460
+  reads. Reads in loops, every read in smaller functions (all of Gate 1's kernels' functions, the largest about
+  1,900 nodes) and the bytecode interpreter's reads keep the inline check.
+- **Built-ins only.** A user function's call still looks the function up in the running context: a context may not
+  have declared it yet, and php-src raises that error before the arguments are evaluated. That lookup is about 250
+  bytes a call with several contexts. The context's thread-local read alone is about 90 of them, and keeping the
+  context in the frame would remove it; that change touches every `PhpContext.get` and wasn't made.
+
+**The largest compilations** (JVM, first tier, bytes of code; IR nodes after PE):
+
+| | before | after |
+|---|---|---|
+| `WP_Query::get_posts` | 585,571 (60,182): 89% of 640 KB | **511,431 (50,794): 78%** |
+| `wp-admin/menu.php`'s top level (3,288 AST nodes) | 520,690 (38,473) | 512,119 (37,960) |
+| `wp-settings.php`'s top level (7,057) | 513,667 (38,609) | 506,765 (37,778) |
+| `WP_Theme_JSON::sanitize` | 380,992 (33,308) | 376,482 (34,020) |
+
+`CompilationTest`'s budgets are the new numbers with a little room: `Query::sql` 23,641 → 22,953 IR nodes (budget
+26,000 → 24,000), `includes.php`'s top level 16,011 → 11,511 (18,000 → 12,500), and the new `large-function.php`
+(`query-builder.php`'s method three times over, 7,920 AST nodes, so large): 50,049, 534 KB, budget 52,000.
+
+### 3. The bytecode interpreter
+**Round 2's note** was a run of 12 rounds. Compilation was still going on at its end (95 targets in round 12), and
+`--check` failed on 9 recompilations in the last 10 rounds and on `apply_filters`'s 11 compilations. This round's
+runs go to compile-diag's 40 rounds (`INTERPRETER=bytecode compile-diag.sh run wp-jvm`):
+
+| | `main` (`f7e634a`) | branch (merged, `b9e424a`) |
+|---|---|---|
+| total compile time, host load | 1,333 s, host near 100% | 1,298 s, host 100%; **491 s**, host median 60% |
+| the last 10 rounds: recompilations | 0 | 0 |
+| `WP_Hook::apply_filters` compiled / deoptimized | 9 / 7 | 9 / 7; 10 / 8 in the quiet run |
+| `WP_Theme_JSON::sanitize` compiled / deoptimized | 9 / 4 | **5 / 2** |
+| `--check` | fails: 1,333 s of compilation (allowed 950), one compilation of 36.7 s (allowed 30) | **passes** in the quiet run; with the host at 100% it fails on the total time alone |
+
+- **It settles, given the rounds.** The bytecode interpreter covers about 13% of the functions WordPress calls, so
+  most of its compilations are the tree's: the same targets, reaching their call counts on the same pages. After
+  40 rounds nothing compiles a second time, on `main` too. Round 2's run stopped while first compilations were
+  still arriving.
+- **What the branch changed for it:**
+  - `sanitize`'s recompiles: the hoisted casts in `PhpArray` (item 1) are shared by both interpreters.
+  - A built-in's call resolves once (`bf1f2ed`: `PhpBytecodeRootNode`'s `ResolveFunction` got the tree's
+    `builtin` specialization, through `CallInfo.builtinOrNull`). Only these two bytecode files changed.
+- **Compile time is the host's.** The tree's `wp-jvm`, run beside it under the same load, took 1,306 s, and 457 s
+  on the quieter host. So the threshold stays at 950 s.
+- **`apply_filters`' two invalidations** are "typed object location generalizing object type": a property of
+  `WP_Hook` that first held one type gets another, and the object model generalizes its location once. The tree
+  has them too (1-3 per run). They come early, not in the last rounds.
+
+### Checks and a visit
+All of them ran on the merged branch (`b9e424a`) against `main` (`f7e634a`).
+
+**Correctness:**
+- **`mvn test`:** 38 tests, 0 failures. 4 skipped: the parser's reference corpus isn't generated in this worktree.
+- **Smoke:** 84/84 against PHP 8.5.
+- **Gate 1's checksums** equal PHP's in every run: 4,800 per kernel over the A/B's 12 runs.
+- **WordPress:** 19/21 pages equal to PHP on the JVM and natively, on a database just reset. The two differ only in
+  the oEmbed link, as before.
+- **php-src `.phpt`:** 3,171 strict, before and after. Four cases changed their category, none from the change:
+  - `Zend/tests/67468.php` (an undefined `highlight_string`) and `try/try_finally_008.php` timed out at 10 s
+    after, at the start of the batch, with the host loaded. Run alone, both behave the same on both builds.
+  - `deprecated/constants/value_unknown_at_compile_time_001.php` prints a `random_int` result, and
+    `class_name/bug69754.php` the date: the before-run's oracle and the after-run fell on different days.
+- **The compilation diagnosis** (`compile-diag.sh run`, `compile_report.py --check`): passes on all four runs,
+  `kernels-jvm`, `wp-jvm` (40 rounds: 0 recompilations in the last 10, 457 s of compilation), `kernels-native` and
+  `wp-native` (2 late recompilations, `WP_Font_Utils::sanitize_from_schema` at both tiers; 2 are allowed). An earlier
+  `wp-jvm` run, with the host at 100%, failed on 1,306 s of compilation and on `apply_filters` compiled 12 times (3
+  generalizations of a property's location instead of 1-2). The quiet rerun compiled it 9 times. The bytecode
+  interpreter: item 3.
+
+**Gate 1** (`bench/gate1/ab.sh all 400 6 before after`, CPUs 14-21 under the CPU lock). Other agents kept the
+host busy all night: its median CPU over the A/B was 96% (50-100%), and every kernel ran about twice as long as on a
+quiet host. The per-round ratios, after to before, median and IQR:
+
+| hooks | escape | slugs | wpautop | wptexturize | blocks | kses | peak memory |
+|---|---|---|---|---|---|---|---|
+| 0.97 (0.92–1.02) | 1.01 (0.90–1.09) | 0.92 (0.85–1.12) | 0.96 (0.92–1.04) | 1.09 (1.05–1.33) | 1.01 (0.90–1.11) | 1.03 (0.80–1.16) | 0.92 (0.88–0.96) |
+
+- `wptexturize` was 1.11 in an earlier loaded run too, so it was run alone: 10 rounds, 0.99 (0.88–1.12), host
+  83%. Before the merge, on a quieter host, the full A/B gave 0.95-1.06 for every kernel.
+- So no kernel moved beyond the noise. The changes cut code in large functions and in multi-context engines, and
+  Gate 1's kernels have neither.
+
+**What it does to a visit** (`tests/gate2/native.sh measure`, 200 visits with a 1 s pause, `CPU_LOCK_HELD=1`,
+`jvm-main jvm-java native-main native-java`). `*-main` is before (`target/classes-main` and `wp-http-main`,
+`f7e634a`) and `*-java` is after (`wp-http`, `b9e424a`). Both are production builds. There were three rounds,
+the order reversed in the second, each round under its own hold of the CPU lock. The server ran on CPUs 14-21,
+the client on 0-5 and the database on 22-23. The host was loaded by other agents: the runs' median CPU was 35-82%.
+`HOST_QUIET` and `HOST_LOADED` were set to 101, so no run waited and none was repeated. Each cell is the median of
+three rounds, with their range.
+
+| | cold visit: wait, CPU-s | warm wait per visit | warm CPU-s per visit | RssAnon warm | memory.peak warm |
+|---|---|---|---|---|---|
+| JVM, before | 8.44 s (8.03–8.59), 45.3 | 0.936 s (0.858–1.247) | 2.44 (2.32–2.96) | 1016 MB | 1590 MB (1584–1624) |
+| **JVM, after** | 9.30 s (8.72–10.47), 49.2 | 0.885 s (0.841–0.894) | 2.36 (2.20–2.40) | 946 MB | 1294 MB (1160–1535) |
+| native, before | 3.89 s (3.27–4.56), 12.0 | 1.149 s (0.784–1.298) | 2.75 (1.80–3.06) | 510 MB | 861 MB (761–893) |
+| **native, after** | 4.04 s (2.98–4.81), 12.3 | 1.199 s (0.700–1.283) | 3.00 (1.70–3.08) | 481 MB | 604 MB (601–634) |
+
+- **Paired by round** (after / before):
+  - JVM warm CPU-s per visit 0.97, 0.95 and 0.81, and warm wait 0.95, 0.98 and 0.72.
+  - Native warm CPU-s 1.01, 1.09 and 0.94, and warm wait 0.99, 1.04 and 0.89.
+  - memory.peak warm 0.71-0.97 on the JVM and 0.67-0.83 natively; RssAnon warm 0.93 and 0.94.
+- **The JVM's cold visit** was 1.16× in two of the three rounds. So it was measured again on its own: 6 interleaved
+  rounds of 5 visits (`measure 6 5 1 jvm-main jvm-java`, host 43-76%). The cold visit's CPU-s per round was
+  1.19, 1.08, 0.97, 0.91, 0.81 and 0.96, median 0.97, and its wait 0.98 (0.80–1.15). There is no cold-visit loss.
+- **In short:** with this much load on the host, a visit is level within the noise on both engines. Warm memory is
+  lower after, most clearly natively (861 → 604 MB memory.peak, 510 → 481 MB RssAnon). One array per hash instead
+  of two is the change that saves memory, and the peak's size also depends on when the GC ran.
+
 ## What is left open
-- **`get_posts` is 9% under HotSpot's limit.**
-  - What is left in it is spread over about 9,400 AST nodes, about 6.4 IR nodes each.
-  - The next costs are the element reads' slot check and the unattributed frame state (about a fifth of the IR
-    nodes after PE).
-  - With several contexts, a constant read costs about 25 IR nodes (`PhpContext.get`, the context's slot array,
-    the stable-value test): 300 of them are 7,600 IR nodes in `includes.php`.
-- **Speculative guard movement still recompiles `WP_Theme_JSON::sanitize`** (7 to 9 compilations). Its hoisted
-  null checks in `foreach` and element reads fail once per compilation.
-  - SGM is a global Graal option that speeds up loops everywhere, so turning it off is the owner's choice and wasn't
-    measured.
-  - The `array_slice` case has a local fix: return early from an empty slice.
+- **`get_posts` is 22% under HotSpot's limit** (511 KB of 640 KB after round 3; 89% before it).
+  - A user function's call still looks the function up in the running context: about 250 bytes a site with
+    several contexts, about 90 of them the context's thread-local read. Keeping the context in the frame would
+    remove that read, but the change touches every `PhpContext.get`.
+  - Frame states and code no method is charged for (`<root>` in `TraceMethodExpansion`) are about a fifth of the
+    IR nodes after PE.
+- **Speculative guard movement stays on.** After round 3's fix, turning it off changes nothing on the `sanitize`
+  reproducer. `sanitize`'s two deopts left are profiles (a `DimNode.isSet` case, a `foreach` meeting a new layout).
+- **`apply_filters` compiles 9 to 12 times** on both interpreters. Its invalidations are a `WP_Hook` property's
+  location generalizing (1-3 a run) and argument-type profiles, all of them in the first rounds.
+- **The compile-time threshold** (950 s for `wp-jvm`) is met on a quiet host (457 s tree, 491 s bytecode). With the
+  host near 100% the same runs take 1,300 s and fail on it.
 - **`include` in a PHP exception's trace** prints its path (`require('/srv/...')`) where php-src prints `require()`.
   This was so before round 2.
-- **`$GLOBALS['x'] += 1`** is unsupported ("Unsupported compound assignment"), as before: `includes.php` writes
-  `$GLOBALS['count'] = $GLOBALS['count'] + 3` instead.
+- `$GLOBALS['x'] += 1`, open after round 2, works since `879acbe` (#18).

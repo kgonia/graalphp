@@ -29,6 +29,10 @@ public final class CallInfo implements Backtrace.CallSite {
         return FunctionCallNode.find(context, displayName, id, fallbackId);
     }
 
+    PhpFunction builtinOrNull(PhpContext context) {
+        return FunctionCallNode.builtinOrNull(context, displayName, id, fallbackId);
+    }
+
     @Override
     public boolean isFrameless() {
         return frameless;
