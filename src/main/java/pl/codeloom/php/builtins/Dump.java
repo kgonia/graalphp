@@ -6,6 +6,7 @@ import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -118,6 +119,24 @@ final class Dump {
         } else if (value instanceof PhpObject object) {
             if (!enter(object)) {
                 ascii("*RECURSION*\n");
+                return;
+            }
+            if (object.getPhpClass().findMethod("__debuginfo") != null) {
+                // zend_std_get_debug_info: __debugInfo()'s array stands for the properties
+                Object info = PhpRef.deref(object.callMethod("__debuginfo"));
+                if (!(info instanceof PhpArray debug)) {
+                    throw new PhpError("__debuginfo() must return an array");
+                }
+                ascii(common + "object(");
+                utf8(object.getPhpClass().getName());
+                ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
+                for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
+                    spaces(level + 1);
+                    dumpKey(debug.keyAt(p));
+                    varDump(debug.rawAt(p), level + 2);
+                }
+                leave(object);
+                closeBrace(level);
                 return;
             }
             Object[] names = object.propertyNames();

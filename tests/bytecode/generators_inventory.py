@@ -3,8 +3,8 @@ generator function (a function, method or closure containing yield) of each sour
 and for those on the tree the constructs that keep it there.
 
 A generator on the tree is reported as "all NAME: generator | constructs..." (before S3: every generator), one on
-bytecode as "bytecode NAME (generator)". A file the tree can't translate either is listed in the scan's stdout
-(FILE.out beside FILE.log): those count as generators on neither, with their error.
+bytecode as "bytecode NAME (generator)". A body the tree can't translate either (its error is in the scan's stdout,
+FILE.out beside FILE.log) is still counted on the tree; the last column counts those errors.
 
 Usage: python -I generators_inventory.py SOURCE=LOG [SOURCE=LOG...] [--details]
 """
@@ -86,7 +86,7 @@ def read(log):
 def main():
     sources = [a.split("=", 1) for a in sys.argv[1:] if "=" in a]
     details = "--details" in sys.argv
-    print("| source | generators | on bytecode | on the tree | the tree can't translate the file |")
+    print("| source | generators | on bytecode | on the tree | of which the tree can't translate the body either |")
     print("|---|---|---|---|---|")
     blockers = collections.Counter()
     only = collections.Counter()
@@ -94,7 +94,7 @@ def main():
     for source, log in sources:
         on_bytecode, on_tree, failed = read(log)
         per_source[source] = (on_bytecode, on_tree, failed)
-        print(f"| {source} | {len(on_bytecode) + len(on_tree) + len(failed)} | {len(on_bytecode)} | {len(on_tree)} "
+        print(f"| {source} | {len(on_bytecode) + len(on_tree)} | {len(on_bytecode)} | {len(on_tree)} "
               f"| {len(failed)} |")
         for reasons in on_tree.values():
             found = {c for c in map(construct, reasons) if c}

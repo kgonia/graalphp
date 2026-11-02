@@ -127,6 +127,18 @@ public final class PhpGenerator {
         return object;
     }
 
+    /**
+     * The generator function's name as __debugInfo gives it (php-src's: Class::method, or the function's name, a
+     * closure's {closure:...}).
+     */
+    @TruffleBoundary
+    public String getFunctionName() {
+        if (treeBody instanceof com.oracle.truffle.api.RootCallTarget target) {
+            return target.getRootNode().getName();
+        }
+        return ((com.oracle.truffle.api.nodes.RootNode) start.getSourceRootNode()).getName();
+    }
+
     /** Whether the generator has ended (it can't be resumed any more). */
     public boolean isClosed() {
         return !open;

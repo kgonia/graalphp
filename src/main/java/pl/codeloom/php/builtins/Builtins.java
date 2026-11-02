@@ -391,7 +391,12 @@ public final class Builtins {
                 registry.method("send", false, arguments -> generator(arguments).send(Args.get(arguments, 0))),
                 registry.method("getReturn", false, arguments -> generator(arguments).getReturn()),
                 registry.method("throw", false, arguments -> generator(arguments).throwInto(
-                        new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))));
+                        new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))),
+                registry.method("__debugInfo", false, arguments -> {
+                    PhpArray info = new PhpArray();
+                    info.put(Str.of("function"), Str.of(generator(arguments).getFunctionName()));
+                    return info;
+                }));
     }
 
     private static pl.codeloom.php.runtime.PhpGenerator generator(Object[] arguments) {
