@@ -1,0 +1,13 @@
+target | IR(PE) | frame states, unattributed | holder counts | array element access | array building | locals and references | calls | context and class lookups | properties (object model) | strings | includes and file variables | other
+WP_Theme_JSON::get_block_nodes | 26403 | 22% | 13% | 26% | 10% | 14% | 1% | 0% | 0% | 0% | 0% | 14%
+WP_Theme_JSON::sanitize | 32661 | 19% | 21% | 17% | 13% | 12% | 1% | 0% | 0% | 0% | 0% | 16%
+wp_render_layout_support_flag | 18794 | 25% | 11% | 18% | 5% | 12% | 4% | 2% | 2% | 3% | 0% | 17%
+FileRootNode@25c3adb3 | 24809 | 29% | 4% | 0% | 0% | 1% | 36% | 13% | 0% | 0% | 3% | 12%
+WP_Term_Query::get_terms | 23501 | 23% | 10% | 13% | 1% | 27% | 4% | 1% | 4% | 3% | 0% | 13%
+wp_default_scripts | 21293 | 35% | 1% | 0% | 6% | 1% | 34% | 10% | 0% | 4% | 0% | 9%
+WP_Query::get_posts | 53424 | 26% | 8% | 5% | 3% | 23% | 5% | 1% | 11% | 5% | 0% | 13%
+WP_Comment_Query::get_comment_ids | 17905 | 23% | 10% | 16% | 4% | 20% | 2% | 0% | 8% | 6% | 0% | 12%
+FileRootNode@a4cefa3 | 11847 | 33% | 23% | 0% | 14% | 0% | 19% | 6% | 0% | 0% | 0% | 4%
+FileRootNode@6e6b4584 | 39646 | 20% | 4% | 1% | 0% | 1% | 9% | 22% | 2% | 7% | 17% | 18%
+FileRootNode@1cb0ee61 | 13904 | 26% | 0% | 0% | 27% | 0% | 34% | 11% | 0% | 0% | 0% | 2%
+WooCommerce::includes | 19905 | 21% | 0% | 0% | 0% | 10% | 3% | 7% | 0% | 23% | 28% | 9%

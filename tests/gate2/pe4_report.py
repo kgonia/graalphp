@@ -14,9 +14,14 @@ and prints what the other reports don't.
   (by the callee's source line), and by Truffle node class; and the method expansion trees
   (compiler.TraceMethodExpansion=truffleTier) by Java method (self counts).
 - deopts: invalidations and deoptimizations by reason and target (TraceCompilation).
+- kinds: compile time by kind (functions, split copies, top-level code and thunks, failures, a target compiled
+  again at the same tier), and per minute (TraceCompilation's UTC).
+- categories: for the given targets, the IR nodes after PE of each one's final compilation (the method expansion
+  tree whose total is its TraceCompilation IR) in categories of our Java (holder counts, element access, locals,
+  calls, lookups, ...): a table row per target.
 
-Usage: python -I tests/gate2/pe4_report.py LOG compile|splits|deopts [--top N]
-       python -I tests/gate2/pe4_report.py LOG inlining|expansion TARGET... [--top N]
+Usage: python -I tests/gate2/pe4_report.py LOG compile|splits|deopts|kinds [--top N]
+       python -I tests/gate2/pe4_report.py LOG inlining|expansion|categories TARGET... [--top N]
 """
 import argparse
 import collections
@@ -321,11 +326,98 @@ def expansion_report(path, wanted, top):
             for name, n in by_method.most_common(top):
                 print(f'    {n:7d} {100 * n / max(1, total):5.1f}% {calls[name]:6d}  {name}')
 
+DONE_UTC = re.compile(r'^\[engine\] opt done\s+engine=\d+\s+id=\s*(\d+)\s+(.*?)\s*\|Tier (\d)\|Time\s+(\d+)\(.*\|UTC \S{11}(\d\d:\d\d)')
+
+
+def kinds_report(path):
+    kinds = collections.defaultdict(lambda: [0, 0.0])
+    seen = set()
+    minutes = collections.defaultdict(lambda: [0, 0.0, 0, 0.0])
+    for line in lines(path):
+        m = DONE_UTC.match(line)
+        f = FAILED.match(line)
+        if m:
+            ident, name, tier, ms, minute = m.group(1), m.group(2), m.group(3), int(m.group(4)) / 1000, m.group(5)
+            if 'FileRootNode' in name or 'ThunkRootNode' in name:
+                kind = 'top level, thunk'
+            elif '<split-' in name:
+                kind = 'split copy'
+            else:
+                kind = 'function'
+            kind += f' T{tier}'
+            again = (ident, tier) in seen
+            seen.add((ident, tier))
+            if again:
+                kind += ' again'
+            row = minutes[minute]
+            row[0] += 1
+            row[1] += ms
+            row[2] += again
+            row[3] += ms if again else 0
+        elif f:
+            kind, ms = 'failed', int(f.group(4)) / 1000
+        else:
+            continue
+        kinds[kind][0] += 1
+        kinds[kind][1] += ms
+    total = sum(v[1] for v in kinds.values()) or 1
+    print(f'compile wall time: {total:.0f} s')
+    for kind, (n, s) in sorted(kinds.items(), key=lambda kv: -kv[1][1]):
+        print(f'  {kind:24s} {n:6d} {s:7.0f} s {100 * s / total:4.0f}%')
+    print('  per minute (UTC): compilations, s; of them a target again at the same tier: n, s')
+    for minute in sorted(minutes):
+        n, s, again, s_again = minutes[minute]
+        print(f'    {minute} {n:5d} {s:6.0f} {again:5d} {s_again:5.0f}')
+
+
+CATEGORIES = [
+    ('frame states, unattributed', r'^<root>$'),
+    ('holder counts', r'PhpArray\.(addHolder|removeHolder|isShared)'),
+    ('element reads', r'PhpArray\.(rawIfKeyAt|getRaw|hashValueAt|isKeyAt|longAt|get|hashGetLong|slotOf|rawAt)\(|'
+                      r'SlotCacheNode|ElementRead|DimNode|ArrayKey'),
+    ('building arrays', r'PhpArray(\$Hash)?\.(put|append|appendPacked|add|pushLong|ofHashCapacity|<init>|toObjects|'
+                        r'countIn)|ArrayLiteralNode'),
+    ('locals, references', r'LocalVarNode|Variables\.|FrameWithoutBoxing|PhpRef\.|Places\.|releaseLocals|'
+                           r'bindParameters|bindArguments'),
+    ('calls', r'OptimizedCallTarget\.(doInvoke|callDirect|injectReturnValueProfile)|OptimizedDirectCallNode|'
+              r'ArgumentsNode|DispatchNodeGen|FunctionCallNode|PhpContext\.functionAt|MethodCallNode|Lookup'),
+    ('context, class, constant lookups', r'OptimizedFastThreadLocal|PhpContext\.(classAt|requiredConstantAt)|'
+                                         r'ClassRefNode|ClassConstLookup|GlobalConstLookup|PhpClass\.getKey'),
+    ('properties', r'PropNode|DynamicObject|ExtLocations|UnsafeAccess'),
+    ('strings', r'TruffleString|TSCodeRange|ConcatNode|ConcatChain|Interpolation|Str\.'),
+    ('includes, file variables', r'IncludeNode|IncludeScope|FileVarNode|GlobalRef'),
+]
+
+
+def categories_report(path, wanted):
+    done = collections.defaultdict(set)
+    for line in lines(path):
+        m = DONE.match(line)
+        if m:
+            done[m.group(2)].add(int(m.group(10)))
+    print('target | IR after PE | ' + ' | '.join(name for name, _ in CATEGORIES) + ' | other')
+    seen = set()
+    for target, rows in expansion_trees(path, wanted):
+        if target in seen or not rows or rows[0][1] != '<root>' or rows[0][2] not in done.get(target, ()):
+            continue
+        seen.add(target)
+        total = rows[0][2]
+        shares = collections.Counter()
+        for row in rows:
+            for name, rx in CATEGORIES:
+                if re.search(rx, row[1]):
+                    shares[name] += row[3]
+                    break
+            else:
+                shares['other'] += row[3]
+        cells = ' | '.join(f'{100 * shares[name] / total:.0f}%' for name, _ in CATEGORIES)
+        print(f'{target} | {total} | {cells} | {100 * shares["other"] / total:.0f}%')
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('log')
-    ap.add_argument('what', choices=['compile', 'splits', 'deopts', 'inlining', 'expansion'])
+    ap.add_argument('what', choices=['compile', 'splits', 'deopts', 'inlining', 'expansion', 'kinds', 'categories'])
     ap.add_argument('targets', nargs='*')
     ap.add_argument('--top', type=int, default=25)
     a = ap.parse_args()
@@ -337,6 +429,10 @@ def main():
         deopts_report(a.log, a.top)
     elif a.what == 'inlining':
         inlining_report(a.log, a.targets, a.top)
+    elif a.what == 'kinds':
+        kinds_report(a.log)
+    elif a.what == 'categories':
+        categories_report(a.log, a.targets)
     else:
         expansion_report(a.log, a.targets, a.top)
 

@@ -1,0 +1,87 @@
+=== d1-trace
+compilations done: 12365 (10392 targets), failed: 3, invalidated: 107, deoptimized: 254; compile time 2533.9 s (partial evaluation 726.9 s of the successful), 218.8 s in failed compilations
+engine statistics: permanent bailouts 3, failed 0, temporary bailouts 55, invalidated 107
+
+-- failures and bailouts (3)
+    1  timeout         at (no frame of ours)
+         tier 1 100113 ms  FileRootNode@44865067: jdk.graal.compiler.core.common.PermanentBailoutException: Compilation exceeded 100.000 seconds (GC time is ...
+    1  other           at (no frame of ours)
+         tier 1  79530 ms  ThunkRootNode@7b7c8721: jdk.graal.compiler.core.common.PermanentBailoutException: stack offset 82432 for oopmap is greater than enc...
+    1  code too large  at (no frame of ours)
+         tier 1  39195 ms  FileRootNode@6e3a086a: jdk.vm.ci.code.BailoutException: Code installation failed: code is too large
+  engine statistics, permanent bailouts:
+    Code installation failed: code is too large: 1  jdk.vm.ci.code.BailoutException
+    Compilation exceeded 100.000 seconds (GC time is 6459 ms of 100112 ms elapsed).  jdk.graal.compiler.core.common.PermanentBailoutException
+
+-- largest compilations by IR nodes after partial evaluation (top 15)
+   IR(PE)  IR(end)   code  ms(PE+graal)  tier  AST  target
+   53306   106154  523948   6490(3033+3456)     1  9796  WP_Query::get_posts
+   52873   100419  488417  19102(3156+15946)     2  9796  WP_Query::get_posts
+   39714    88164  525493   6196(2807+3389)     1  7079  FileRootNode@72b415da
+   32691    60435  359097   3968(1008+2959)     1  1455  WP_Theme_JSON::sanitize
+   31688    66728  362476  11393(1007+10386)     2  1455  WP_Theme_JSON::sanitize
+   26403    55200  318320   4047(903+3144)     1  1691  WP_Theme_JSON::get_block_nodes
+   25850    60650  317679   8157(802+7355)     2  1691  WP_Theme_JSON::get_block_nodes
+   24835    60813  310624   4392(1716+2675)     1  5105  FileRootNode@71f4e84d
+   24129    52177  250316   5636(2522+3114)     2  5105  FileRootNode@71f4e84d
+   23862    45713  213360   2272(1050+1223)     1  2894  WP_Term_Query::get_terms
+   23691    43021  197766   6349(1076+5273)     2  2894  WP_Term_Query::get_terms
+   21339    62051  335323   6808(3398+3409)     1  5859  wp_default_scripts
+   19918    42003  222209   1546(569+978)     1  1140  WooCommerce::includes
+   19024    35856  182101   1609(690+918)     1  2117  wp_render_layout_support_flag
+   19022    35848  184066   1496(593+903)     1  2127  wp_render_layout_support_flag
+
+-- slowest compilations (top 15)
+ 19102 ms (3156+15946)  IR  52873  tier 2  WP_Query::get_posts
+ 11393 ms (1007+10386)  IR  31688  tier 2  WP_Theme_JSON::sanitize
+  8157 ms (802+7355)  IR  25850  tier 2  WP_Theme_JSON::get_block_nodes
+  6808 ms (3398+3409)  IR  21339  tier 1  wp_default_scripts
+  6490 ms (3033+3456)  IR  53306  tier 1  WP_Query::get_posts
+  6349 ms (1076+5273)  IR  23691  tier 2  WP_Term_Query::get_terms
+  6196 ms (2807+3389)  IR  39714  tier 1  FileRootNode@72b415da
+  5977 ms (884+5093)  IR  16197  tier 2  WP::parse_request
+  5636 ms (2522+3114)  IR  24129  tier 2  FileRootNode@71f4e84d
+  5338 ms (531+4807)  IR  13875  tier 2  Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils::ge...
+  5219 ms (744+4476)  IR  18659  tier 2  wp_render_layout_support_flag
+  4764 ms (397+4366)  IR  11564  tier 2  WC_Frontend_Scripts::register_scripts
+  4740 ms (798+3941)  IR  12931  tier 2  WP_Dependencies::do_items <split-6479>
+  4662 ms (688+3974)  IR  14237  tier 2  get_post_class
+  4470 ms (510+3960)  IR  13961  tier 2  register_core_block_style_handles
+
+-- targets compiled, invalidated or deoptimized many times
+   7 compiled    4 invalidated    7 deopt  get_option  3x Profiled Argument Types, 1x Profiled Return Type
+   7 compiled    3 invalidated   11 deopt  WP_Object_Cache::get  2x Profiled Argument Types, 1x validRootAssumption of WP_Object_Cache::get Spl...
+   6 compiled    4 invalidated    8 deopt  maybe_unserialize  3x Profiled Argument Types, 1x Profiled Return Type
+   6 compiled    4 invalidated    1 deopt  register_block_type_from_metadata  4x Profiled Argument Types
+   6 compiled    3 invalidated    2 deopt  update_object_term_cache  3x Profiled Argument Types
+   5 compiled    3 invalidated    4 deopt  WP_Object_Cache::_exists  3x Profiled Argument Types
+   5 compiled    3 invalidated    0 deopt  wp_load_alloptions  3x Profiled Argument Types
+   7 compiled    1 invalidated    5 deopt  wpdb::query  1x Profiled Return Type
+   7 compiled    1 invalidated    5 deopt  get_translations_for_domain  1x Profiled Return Type
+   6 compiled    1 invalidated   14 deopt  apply_filters  1x Profiled Argument Types
+   5 compiled    2 invalidated    2 deopt  WP_Hook::add_filter  2x Profiled Argument Types
+   5 compiled    2 invalidated    5 deopt  _wp_filter_build_unique_id  2x Profiled Argument Types
+   5 compiled    2 invalidated    0 deopt  __  2x Profiled Argument Types
+   7 compiled    0 invalidated    9 deopt  WP_HTML_Tag_Processor::base_class_next_token  
+   7 compiled    0 invalidated   10 deopt  WP_List_Util::pluck  
+  invalidation reasons: 93x Profiled Argument Types, 8x Profiled Return Type, 1x typed object location generalizing object type !pl.codelo..., 1x validRootAssumption of WP_Object_Cache::get Split call node, 1x typed object location generalizing object type !pl.codelo..., 1x validRootAssumption of WC_Product_Data_Store_CPT::read_pr..., 1x validRootAssumption of WP_HTML_Tag_Processor::after_tag S..., 1x validRootAssumption of {closure:apply_block_hooks_to_cont...
+
+-- performance warnings (0), by our source location
+
+-- transfers to the interpreter in compiled code (244), by our source location
+   42  at nodes.stmt.BasicStmts$IfNode.execute(BasicStmts.java:104)
+   30  at nodes.vars.PropNode.accessible(PropNode.java:112)
+   26  at nodes.vars.LocalVarNode.met(LocalVarNode.java:155)
+   20  at nodes.expr.AssignNodesFactory$AssignNodeGen.execute_generic2(AssignNodesFactory.java:126)
+   14  at nodes.expr.LogicNodes$AndOrNode.executeCondition(LogicNodes.java:42)
+   14  at nodes.expr.CompareNodes$IdenticalNode.strings(CompareNodes.java:64)
+    9  at nodes.expr.CompareNodes$EqualNode.equalStrings(CompareNodes.java:147)
+    8  at nodes.call.MethodCallNode$Dispatch.cached(MethodCallNode.java:122)
+    8  at nodes.vars.ElementNodesFactory$ArrayKeyNodeGen.execute(ElementNodesFactory.java:108)
+    7  at nodes.call.FunctionCallNode$Dispatch.direct(FunctionCallNode.java:157)
+    6  at nodes.call.MethodCallNodeFactory$DispatchNodeGen.execute(MethodCallNodeFactory.java:86)
+    5  at nodes.expr.AssignNodes$CompoundAssignNode.concat(AssignNodes.java:173)
+    5  at nodes.expr.CompareNodesFactory$IdenticalNodeGen.executeCondition_generic5(CompareNodesFactory.java:310)
+    5  at nodes.vars.PropNode.write(PropNode.java:278)
+    5  at nodes.call.FunctionRootNode.released(FunctionRootNode.java:312)
+
