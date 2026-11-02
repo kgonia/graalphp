@@ -74,6 +74,34 @@ public final class PhpObject extends DynamicObject {
         return result;
     }
 
+    /**
+     * The properties as php-src's property table holds them: the declared ones in declaration order (a parent's
+     * first) under their mangled keys ({@link PhpClass#mangledName}), then the dynamic ones in the order they
+     * were added; as key, raw value (a PhpRef stays one), key, raw value... An unset declared property isn't
+     * there.
+     */
+    @TruffleBoundary
+    public Object[] propertyTable() {
+        Object[] names = propertyNames();
+        Object[] table = new Object[names.length * 2];
+        int i = 0;
+        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+            Object value = getProperty(decl.name());
+            if (value != null) {
+                table[i++] = phpClass.mangledName(decl.name());
+                table[i++] = value;
+            }
+        }
+        for (Object name : names) {
+            String property = (String) name;
+            if (!phpClass.isDeclaredProperty(property)) {
+                table[i++] = property;
+                table[i++] = getProperty(property);
+            }
+        }
+        return i == table.length ? table : java.util.Arrays.copyOf(table, i);
+    }
+
     /** The names of the properties code in the scope may access, in order. */
     @TruffleBoundary
     public List<String> visiblePropertyNames(String scope) {

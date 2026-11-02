@@ -74,6 +74,23 @@ public final class DeclareNodes {
                 0);
     }
 
+    /**
+     * What linking a class reports (zend_do_link_class): implementing Serializable without both __serialize() and
+     * __unserialize() is deprecated (zend_implement_serializable), unless the class is declared abstract.
+     */
+    private static PhpClass linked(PhpContext context, PhpClass phpClass, StmtNode site) {
+        if (!phpClass.isInterface() && !phpClass.isAbstract() && phpClass.isDeclaredSubclassOf("serializable")
+                && (phpClass.findMethod("__serialize") == null || phpClass.findMethod("__unserialize") == null)) {
+            // the name as %s prints it: an anonymous class's up to its NUL
+            String name = phpClass.getName().split("\0", 2)[0];
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + " implements the "
+                    + "Serializable interface, which is deprecated. Implement __serialize() and __unserialize() "
+                    + "instead (or in addition, if support for old PHP versions is necessary)"),
+                    site != null ? SourceLocation.of(site) : SourceLocation.current());
+        }
+        return phpClass;
+    }
+
     public static final class DeclareClassNode extends StmtNode {
         private final ClassTemplate template;
 
@@ -96,7 +113,7 @@ public final class DeclareNodes {
             if (previous != null) {
                 throw redeclared(context, previous, template, this);
             }
-            context.declareClass(template.instantiate(context));
+            context.declareClass(linked(context, template.instantiate(context), this));
         }
     }
 
@@ -128,7 +145,7 @@ public final class DeclareNodes {
         @TruffleBoundary
         private static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
             if (context.findClass(lowerName) == null) {
-                context.declareClass(template.instantiate(context));
+                context.declareClass(linked(context, template.instantiate(context), null));
             }
         }
     }

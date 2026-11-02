@@ -239,6 +239,7 @@ public final class Builtins {
         declare(context, "ArrayAccess", null, true);
         declare(context, "Countable", null, true);
         declare(context, "JsonSerializable", null, true);
+        declare(context, "Serializable", null, true);
         PhpClass stringable = declare(context, "Stringable", null, true);
         PhpClass throwable = declare(context, "Throwable", null, true);
         throwable.addInterface(stringable);
@@ -246,6 +247,8 @@ public final class Builtins {
         PhpClass generator = new PhpClass("Generator", null, false, false, context.getLanguage().rootShape(),
                 "Generator");
         generator.addInterface(iterator);
+        // ZEND_ACC_NOT_SERIALIZABLE
+        generator.setHandlers(new PhpClass.ObjectHandlers(null, null, false, false, true, false));
         for (PhpFunction method : table.generatorMethods) {
             generator.addMethod(method);
         }

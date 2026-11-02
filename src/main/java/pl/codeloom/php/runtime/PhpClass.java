@@ -78,6 +78,8 @@ public final class PhpClass {
     private Map<String, PhpClass> contextAliases;
     /** The property defaults, evaluated once (declaredDefaults order). */
     private Object[] defaults;
+    /** mangledName's results for the non-public properties, made on first use. */
+    private Map<String, String> mangledNames;
 
     @CompilationFinal private PhpFunction constructor;
 
@@ -347,6 +349,71 @@ public final class PhpClass {
     @TruffleBoundary
     public boolean isDeclaredProperty(String propertyName) {
         return properties.containsKey(propertyName);
+    }
+
+    /** Whether the class declares (or inherits) a static property of the name. */
+    @TruffleBoundary
+    public boolean isStaticProperty(String propertyName) {
+        return staticProperties.containsKey(propertyName);
+    }
+
+    /** Whether the class declares or inherits any property, static or not: php-src's properties_info isn't empty. */
+    public boolean hasPropertyInfo() {
+        return !properties.isEmpty() || !staticProperties.isEmpty();
+    }
+
+    /**
+     * A property's key in php-src's property table (and in serialize(), (array) and get_mangled_object_vars()):
+     * "\0Class\0name" for a private property (Class is the one declaring it), "\0*\0name" for a protected one, the
+     * name itself for a public or undeclared one. Keys are property keys: the bytes as ISO-8859-1 chars.
+     */
+    @TruffleBoundary
+    public String mangledName(String propertyName) {
+        PropertyDecl decl = properties.get(propertyName);
+        if (decl == null || decl.isPublic()) {
+            return propertyName;
+        }
+        if (mangledNames == null) {
+            mangledNames = new HashMap<>();
+        }
+        String mangled = mangledNames.get(propertyName);
+        if (mangled == null) {
+            String scope = decl.visibility() == PropertyDecl.PROTECTED ? "*" : nameKey(declaringClassName(decl));
+            mangled = "\0" + scope + "\0" + propertyName;
+            mangledNames.put(propertyName, mangled);
+        }
+        return mangled;
+    }
+
+    /**
+     * The declared property whose key in php-src's property table is key (see {@link #mangledName}): its name,
+     * or null when key names no declared property's slot.
+     */
+    @TruffleBoundary
+    public String propertyOfMangledName(String key) {
+        if (key.isEmpty() || key.charAt(0) != '\0') {
+            PropertyDecl decl = properties.get(key);
+            return decl != null && decl.isPublic() ? key : null;
+        }
+        String propertyName = key.substring(key.lastIndexOf('\0') + 1);
+        PropertyDecl decl = properties.get(propertyName);
+        return decl != null && !decl.isPublic() && mangledName(propertyName).equals(key) ? propertyName : null;
+    }
+
+    /** The name, as written, of the class declaring the property: this class or an ancestor. */
+    private String declaringClassName(PropertyDecl decl) {
+        for (PhpClass c = this; c != null; c = c.parent) {
+            if (c.lowerName.equals(decl.declaringClass())) {
+                return c.name;
+            }
+        }
+        return name;
+    }
+
+    /** A class name (UTF-8 text) as a property key holds it: its bytes as ISO-8859-1 chars. */
+    public static String nameKey(String className) {
+        return new String(className.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
     @TruffleBoundary

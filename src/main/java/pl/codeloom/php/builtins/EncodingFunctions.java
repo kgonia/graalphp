@@ -34,7 +34,7 @@ final class EncodingFunctions {
     static final SecureRandom RANDOM = new SecureRandom();
 
     static void register(Registry r) {
-        r.fn("serialize", a -> serialize(Args.get(a, 0)));
+        r.fn("serialize", (context, a) -> Serialization.serialize(context, Args.get(a, 0)));
         r.fn("unserialize", (context, a) -> unserialize(context, Str.bytes(Args.str(a, 0)), Args.get(a, 1)));
         r.fn("base64_encode", a -> Str.of(Base64.getEncoder().encode(Str.bytes(Args.str(a, 0)))));
         r.fn("base64_decode", a -> base64Decode(Str.bytes(Args.str(a, 0)), Args.bool(a, 1, false)));
@@ -56,80 +56,6 @@ final class EncodingFunctions {
         r.fn("hash_hmac_algos", a -> PhpArray.ofStrings("md5", "sha1", "sha224", "sha256", "sha384", "sha512"));
     }
 
-
-    // ---- serialize ----
-
-    /** Serialized output: ASCII syntax and the raw bytes of strings. */
-    private static final class Out {
-        final ByteBuilder bytes = new ByteBuilder();
-
-        Out append(String ascii) {
-            bytes.write(ascii.getBytes(StandardCharsets.ISO_8859_1));
-            return this;
-        }
-
-        Out append(TruffleString s) {
-            bytes.write(s);
-            return this;
-        }
-    }
-
-    @TruffleBoundary
-    static TruffleString serialize(Object value) {
-        Out out = new Out();
-        serialize(out, PhpRef.deref(value));
-        return Str.of(out.bytes.toByteArray());
-    }
-
-    private static void serialize(Out out, Object value) {
-        if (value == PhpNull.NULL || value == null) {
-            out.append("N;");
-        } else if (value instanceof Boolean b) {
-            out.append(b ? "b:1;" : "b:0;");
-        } else if (value instanceof Long l) {
-            out.append("i:").append(Long.toString(l)).append(";");
-        } else if (value instanceof Double d) {
-            out.append("d:").append(Convert.doubleToRepr(d)).append(";");
-        } else if (value instanceof TruffleString s) {
-            string(out, s);
-        } else if (value instanceof PhpArray array) {
-            out.append("a:").append(Integer.toString(array.size())).append(":{");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                key(out, array.keyAt(p));
-                serialize(out, array.valueAt(p));
-            }
-            out.append("}");
-        } else if (value instanceof PhpObject object) {
-            if (object.getPhpClass().getHandlers() != null && object.getPhpClass().getHandlers().notSerializable()) {
-                throw new PhpError("Exception", "Serialization of '" + object.getPhpClass().getName()
-                        + "' is not allowed");
-            }
-            Object[] names = object.propertyNames();
-            TruffleString className = Str.of(object.getPhpClass().getName());
-            out.append("O:").append(Integer.toString(className.byteLength(Str.ENC)))
-                    .append(":\"").append(className).append("\":")
-                    .append(Integer.toString(names.length)).append(":{");
-            for (Object name : names) {
-                string(out, Str.ofKey((String) name));
-                serialize(out, PhpRef.deref(object.getProperty((String) name)));
-            }
-            out.append("}");
-        } else {
-            throw new PhpError("Exception", "Serialization of '" + Convert.typeName(value) + "' is not allowed");
-        }
-    }
-
-    private static void key(Out out, Object key) {
-        if (key instanceof Long l) {
-            out.append("i:").append(Long.toString(l)).append(";");
-        } else {
-            string(out, (TruffleString) key);
-        }
-    }
-
-    private static void string(Out out, TruffleString s) {
-        out.append("s:").append(Integer.toString(s.byteLength(Str.ENC))).append(":\"").append(s).append("\";");
-    }
 
     // ---- unserialize ----
 
