@@ -227,6 +227,10 @@ public final class Builtins {
         PhpClass generator = new PhpClass("Generator", null, false, false, context.getLanguage().rootShape(),
                 "Generator");
         generator.addInterface(iterator);
+        // zend_register_generator_ce: no `new`, no clone, no serialization
+        generator.setHandlers(new PhpClass.ObjectHandlers(
+                "The \"Generator\" class is reserved for internal use and cannot be manually instantiated", null,
+                true, false, true, false));
         for (PhpFunction method : table.generatorMethods) {
             generator.addMethod(method);
         }

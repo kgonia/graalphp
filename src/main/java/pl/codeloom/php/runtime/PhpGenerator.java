@@ -119,7 +119,7 @@ public final class PhpGenerator {
     /** The Generator object over a new generator. */
     @TruffleBoundary
     public PhpObject newObject(PhpContext context) {
-        PhpObject object = context.getClass("Generator").instantiate();
+        PhpObject object = context.getClass("Generator").instantiateInternal();
         object.setInternal(this);
         if (hasFinally) {
             context.generatorWithFinally(this);
