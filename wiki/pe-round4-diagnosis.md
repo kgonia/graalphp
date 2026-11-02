@@ -265,14 +265,35 @@ cap collects again and again: in `cap256m` one isolate ran full collections of 0
 libgraal's `PrintGC`; the merged build unless "before"; rounds interleaved, the order reversed in round 2;
 `tests/gate2/pe4_memtable.py`):
 
-TBD-MEMTABLE
+| run (box busy) | build, option | orders/s | pages/s | p99 s | CPU-s/page | RssAnon max | memory.peak | libgraal at most | CPU: requests / compiler / GC | compilations; failed (wall s) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| r1 (53-62%) | baseline | 0.81 | 10.5 | 4.1 | 0.73 | 3.3 GB | 3.3 GB | 0.85 GB | 63 / 21 / 14% | 9,654; 3 (216) |
+| | one compiler thread | 0.83 | 10.9 | 3.6 | 0.71 | 1.6 GB | 1.6 GB | 0.16 GB | 75 / 8 / 16% | 3,678; 0 |
+| | cap 2 GB | 0.72 | 9.3 | 4.6 | 0.83 | 2.7 GB | 2.8 GB | 0.89 GB | 63 / 21 / 14% | 9,245; 3 |
+| | cap 1 GB | 0.94 | 12.3 | 3.7 | 0.63 | 3.1 GB | 3.2 GB | 0.89 GB | 62 / 22 / 14% | 10,437; 3 (one OOM) |
+| r2 (38-62%) | cap 1 GB | 1.14 | 14.6 | 2.7 | 0.53 | 3.1 GB | 3.1 GB | 1.03 GB | 61 / 22 / 16% | 11,444; 3 (one OOM) |
+| | cap 2 GB | 0.84 | 10.8 | 3.8 | 0.72 | 2.7 GB | 2.8 GB | 1.03 GB | 63 / 21 / 14% | 10,084; 3 |
+| | one compiler thread | 0.97 | 12.6 | 3.0 | 0.61 | 2.0 GB | 2.1 GB | 0.59 GB | 74 / 8 / 16% | 3,938; 0 |
+| | baseline | 0.74 | 9.8 | 4.2 | 0.78 | 2.8 GB | 2.8 GB | 1.04 GB | 63 / 21 / 14% | 9,333; 3 |
+| r3 (36%) | baseline | 1.17 | 15.3 | 2.4 | 0.51 | 5.1 GB | 5.2 GB | **3.6 GB** | 60 / 23 / 16% | 11,549; 3 |
+| | one compiler thread | 1.19 | 15.4 | 2.5 | 0.50 | 3.0 GB | 3.0 GB | 1.3 GB | 73 / 9 / 17% | 3,953; 0 |
+| r4 (35-36%) | **before** (`866e156`) | 0.98 | 12.7 | 3.2 | 0.61 | 8.0 GB | 8.1 GB | **5.3 GB** | 59 / 24 / 15% | 9,437; 3 (602) |
+| | baseline | 1.11 | 14.2 | 2.5 | 0.55 | 5.0 GB | 5.1 GB | 3.1 GB | 60 / 23 / 15% | 10,769; 3 (347) |
+| | cap 256 MB | 1.06 | 13.4 | 3.0 | 0.58 | 1.9 GB | 2.0 GB | 0.32 GB | 61 / 22 / 15% | 10,972; 4 OOM |
+| | **before** | 0.95 | 12.0 | 3.3 | 0.65 | 7.3 GB | 7.4 GB | **5.4 GB** | 61 / 22 / 15% | 10,071; 3 (352) |
+
+(`bench/pe4-diagnosis/mem-table.md` has every column; "libgraal at most" is memsplit's untracked at the worst
+snapshot; the box's load per run is `mem-hostload.txt`. Round 4 is `runs2.sh mem-before`.)
 
 - **The burst is the run-once giants compiling at the same time.** In the baselines of rounds 1 and 2 (a busy box)
   libgraal's share of RssAnon (memsplit's "untracked") peaked at 0.85-1.0 GB and one isolate's heap after a
   collection at 560 MB, while the classmap, the thunk and `states.php` compiled one after another (minutes 6-11 of
   `m-base-r1`; ~75 MB after them). In round 3 (the box 36% busy) the classmap (223 s) and the thunk (75 s) compiled at
   the same time on two threads in minutes 6-7: two isolates of 1.4-1.7 GB each after a collection, libgraal **3.6 GB**,
-  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. That is #21's 5.8 GB. TBD-BEFORE
+  RssAnon 5.1 GB; minutes later 0.2-0.3 GB again. Round 4's baseline did the same (3.1 GB, the classmap 244 s). That is #21's 5.8 GB, which was `866e156`:
+  on it (round 4's "before" runs) the giants take longer still (the classmap 358 s, `states.php` timing out at 170 s
+  where the merged build fails it as code too large in 25-43 s, the thunk 74-82 s), all three overlap, and libgraal
+  reaches **5.3-5.4 GB**, one isolate 2.7 GB, RssAnon 7.3-8.0 GB; their failed compilations took 352-602 s.
 - **A 2 GB cap was not reached** in rounds 1-2 (an isolate's largest heap 813-826 MB); round 3's baseline shows an
   isolate can reach 1.7 GB, so at 2 GB it would be close.
 - **A 1 GB cap is reached once per run, by the classmap**, which then fails with the `OutOfMemoryError` above
@@ -281,7 +302,11 @@ TBD-MEMTABLE
   at the 1 GB cap (and 263 MB at 256 MB), so the cap is not a hard bound on what an isolate holds.
 - **A 256 MB cap** (`cap256m-long`, the diagnosis stack, 15 minutes) fails all three giants early (11, 36 and 22 s
   instead of 100, 80 and 39 s: 91 s of failed compilation instead of 216 s) but also one ordinary tier-2
-  compilation (`WP_Widget::_register`), and its isolates collect more (338 s of pauses in 15 minutes); TBD-CAP256.
+  compilation (`WP_Widget::_register`), and its isolates collect more (338 s of pauses in 15 minutes). As a memrun
+  (`m-cap256m-r1`, beside round 4's baseline on the same quiet box): RssAnon **1.9 GB against 5.0 GB**, libgraal 0.3
+  GB against 3.1 GB, the giants failing after 22-66 s, but one more ordinary compilation lost
+  (`WC_Frontend_Scripts::get_scripts`, tier 1), and 13.4 pages/s against 14.2 (one round: within the noise, not
+  shown to be free).
 - **One compiler thread** (`engine.CompilerThreads=1`): 3,678-3,953 compilations instead of 9,333-11,549, 38% of
   the compiler's CPU (420-462 s against 1,112-1,213), and the giants only at the end (in round 3 an isolate reached
   1.4 GB in minute 12, libgraal 1.3 GB; in rounds 1-2 never); RssAnon 1.6-3.0 GB against 2.8-5.1 GB. **Its
@@ -326,7 +351,7 @@ confirm it:
 | 4 | **A user function's call without the per-context lookup**: the running context in the frame (or arguments) instead of `PhpContext.get`'s thread-local read, and the function cached per site when the language serves one context | ~20 IR nodes a call (`fastGet` + `functionAt`); 36% of `default-filters.php`'s IR, 40% of `states.php`'s, 34% of `wp_default_scripts`', 5-6% of `get_posts`'; round 3 left it open | −5-10% code in call-heavy functions, less per call | `CompilationTest`'s per-operation costs (round 3's method), the largest compilations' `categories` |
 | 5 | **Holder counts out of the straight line**: `addHolder` / `removeHolder` inline at every assignment, argument and element store (~19-26 IR nodes a site, its rare path a boundary call with an exception edge); a fresh literal's nested arrays could take their count without the tests | 21% of `sanitize`'s IR, 16% of the thunk's, 13% of `get_block_nodes`', 8% of `get_posts`' | −5-15% of array-heavy functions' code | `categories` before/after; Gate 1 (kses, blocks) A/B |
 | 6 | **Report polymorphism only where a copy helps**: no `@ReportPolymorphism` on `StableValueNode` (a per-context value never stabilizes), `@ReportPolymorphism.Exclude` on `AssignNode` and the conversions and tests (`ToBoolean`, `ToLong`, `ToString`, `===`, `instanceof`) | together reported in functions with ~2,700 splits (`AssignNode` 1,021, `===` 537, `ToBoolean` 327, `ToString` 257, `instanceof` 256, `ToLong` 208, `StableValue` 145); `absint` 203 splits, `esc_attr` 158 | splits −20-30% more after #2 | as #2, and Gate 1's escape and slugs (where splitting paid in 2026-10-28's test) |
-| 7 | **Less compile volume overall** (owner's choice of flags; code-level it is #1, #2, #6): one compiler thread compiled 3,678 times instead of 9,654, never the giants, at the same throughput and half the memory (section 3); libgraal's collections paused its isolates for ~200 s in 12 minutes (1,300-1,500 hinted full collections), and an isolate is torn down after 1 s idle and rebuilt 70 times | `m-ct1-*` against `m-base-*`; `libgraal_gc.py` | TBD-CT1-GAIN | interleaved memruns (done here: section 3), then a longer one (30 min) for the late compilations |
+| 7 | **Less compile volume overall** (owner's choice of flags; code-level it is #1, #2, #6): one compiler thread compiled 3,678 times instead of 9,654, never the giants, at the same throughput and half the memory (section 3); libgraal's collections paused its isolates for ~200 s in 12 minutes (1,300-1,500 hinted full collections), and an isolate is torn down after 1 s idle and rebuilt 70 times | `m-ct1-*` against `m-base-*`; `libgraal_gc.py` | as one compiler thread did: the compiler's CPU −60%, memory −40-50%, throughput level or better; capped at 256 MB per isolate, libgraal 0.3 GB instead of 3 GB | interleaved memruns (done here: section 3), then a longer one (30 min) for the late compilations |
 
 Not targets: deoptimization (3% of compile time recompiles, no cycle), performance warnings (none), the slow paths
 (behind boundaries already), Truffle's inlining (the largest functions inline nothing because they are over its
