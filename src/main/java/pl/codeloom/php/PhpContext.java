@@ -79,6 +79,8 @@ public final class PhpContext {
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
+    /** The include sites (IncludeNode) that ran each file in this context, by canonical path. */
+    private final Map<String, Set<Object>> includeSites = new HashMap<>();
     private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
@@ -312,6 +314,15 @@ public final class PhpContext {
     @TruffleBoundary
     public String canonicalPath(String path) {
         return Path.of(path).toAbsolutePath().normalize().toString();
+    }
+
+    /**
+     * Whether an include site ran a file before in this context: a site that runs a file twice in one request (a
+     * template part in a loop) runs it a number of times that depends on the data (RunOnceCode).
+     */
+    @TruffleBoundary
+    public boolean includedBefore(String canonical, Object site) {
+        return !includeSites.computeIfAbsent(canonical, path -> new HashSet<>(2)).add(site);
     }
 
     /** Marks a file as included; false if it already was (include_once / require_once). */

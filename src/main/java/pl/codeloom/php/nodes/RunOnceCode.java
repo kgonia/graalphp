@@ -8,20 +8,22 @@ import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.GotoNodes;
 
 /**
- * Code that runs at most once a request and that compilation can't pay back, so it is never compiled
- * ({@link RootNode#prepareForCompilation}): a file's top level that no request has included twice, and a constant
- * expression's initializer (ThunkRootNode, evaluated once per class and context), when it has no loop and is
- * {@link LargeCode large}.
+ * Code that runs a few times a request at most, a number bounded by the program's text, and that compilation can't
+ * pay back, so it is never compiled ({@link RootNode#prepareForCompilation}): a file's top level that no include
+ * site has run twice in one context (each site runs it at most once a request: Jetpack's class map is required by
+ * two sites, the autoloader's version check and its manifest reader), and a constant expression's initializer
+ * (ThunkRootNode, evaluated once per class and context), when it has no loop and is {@link LargeCode large}.
  * <p>
  * Without a loop every node of the code runs at most once per run, so compiling it saves the interpreter's cost of
- * each node once a request (tens of nanoseconds), against a compilation that costs about a millisecond per node
- * (WordPress's largest functions: 0.7-0.9 ms; straight-line literals and calls more, superlinearly): it would pay
- * back after some ten thousand requests. And large straight-line code is what doesn't compile at all: WooCommerce's
+ * each node a few times a request (tens of nanoseconds), against a compilation that costs about a millisecond per
+ * node (WordPress's largest functions: 0.7-0.9 ms; straight-line literals and calls more, superlinearly): it would
+ * pay back after thousands of requests. And large straight-line code is what doesn't compile at all: WooCommerce's
  * Jetpack class map, a property default of a thousand class constants and its country list (27,000, 6,400 and
  * 19,000 AST nodes) failed after 40-360 s each (a timeout, an oopmap limit, code too large), holding a compiler
  * thread and gigabytes of libgraal's heap (wiki/pe-round4-diagnosis.md), and ran interpreted all the same. Small
- * run-once code compiles in milliseconds and is left to Truffle; code with a loop, or included again in one request
- * (a template part), runs a number of times that depends on the data, and is compiled as any function.
+ * run-once code compiles in milliseconds and is left to Truffle; code with a loop, or run twice by one include site in
+ * one request (a template part in a loop), runs a number of times that depends on the data, and is compiled as any
+ * function.
  */
 public final class RunOnceCode {
     private RunOnceCode() {

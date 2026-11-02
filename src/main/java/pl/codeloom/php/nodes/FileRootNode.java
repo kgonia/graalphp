@@ -28,7 +28,7 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
     }
     /** {@link RunOnceCode#classify}: 0 not yet, 1 compiled as any code, 2 large and without a loop. */
     private volatile byte runOnce;
-    /** An include found the file included already in the context that ran it: it may run more than once a request. */
+    /** An include site ran the file twice in one context: it runs a number of times a request that depends on data. */
     private volatile boolean includedAgain;
 
     private final String path;
@@ -48,7 +48,7 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
         this.body = body;
     }
 
-    /** An include ran the file in a context that had included it already. */
+    /** An include site ran the file again in a context where it had run it (IncludeNode). */
     public void includedAgain() {
         if (!includedAgain) {
             includedAgain = true;
@@ -56,9 +56,9 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
     }
 
     /**
-     * Large top-level code without a loop that no context has included twice runs once a request and isn't worth
-     * compiling ({@link RunOnceCode}); declining it here makes the compilation a retryable bailout, so it is tried
-     * again (and asked again) after as many calls as Truffle's threshold.
+     * Large top-level code without a loop that no include site has run twice in one context runs a number of times a
+     * request bounded by the program's text, and isn't worth compiling ({@link RunOnceCode}); declining it here makes
+     * the compilation a retryable bailout, so it is tried again (and asked again) after Truffle's threshold.
      */
     @Override
     protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {

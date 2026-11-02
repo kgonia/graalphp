@@ -63,12 +63,11 @@ public final class IncludeNode extends ExprNode {
     private CallTarget resolve(Object pathValue) {
         PhpContext context = PhpContext.get(this);
         String canonical = context.canonicalPath(Str.java(Convert.toStr(pathValue)));
-        boolean first = context.markIncluded(canonical);
-        if (!first && once) {
+        if (!context.markIncluded(canonical) && once) {
             return null;
         }
         FileRootNode root = context.loadFile(canonical);
-        if (!first) {
+        if (context.includedBefore(canonical, this)) {
             root.includedAgain();
         }
         return root.getCallTarget();
