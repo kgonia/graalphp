@@ -20,6 +20,7 @@ import pl.codeloom.php.bytecode.MethodSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
+import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
 import pl.codeloom.php.nodes.intrinsics.Intrinsics;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
@@ -957,6 +958,17 @@ public final class BytecodeTranslator {
                 case "AST_ENCAPS_LIST":
                     interpolation(node);
                     break;
+                case "AST_CAST":
+                    cast(node);
+                    break;
+                case "AST_PRINT":
+                    b.beginPrint();
+                    expression(node.get("expr"));
+                    b.endPrint();
+                    break;
+                case "AST_CONST":
+                    globalConstant(node);
+                    break;
                 case "AST_CALL":
                     call(node, false);
                     break;
@@ -1338,6 +1350,39 @@ public final class BytecodeTranslator {
                 b.endInterpolationPart();
             }
             b.endInterpolate();
+        }
+
+        /** `(int) x`... (UnaryNodes.CastNode); `(unset)` no longer parses. */
+        private void cast(Ast node) {
+            switch (node.flags) {
+                case CastNode.TO_LONG -> b.beginCastLong();
+                case CastNode.TO_DOUBLE -> b.beginCastDouble();
+                case CastNode.TO_STRING -> b.beginCastString();
+                case CastNode.TO_BOOL -> b.beginToBool();
+                case CastNode.TO_ARRAY -> b.beginCastArray();
+                case CastNode.TO_OBJECT -> b.beginCastObject();
+                default -> throw new Unsupported("cast " + node.flags, node);
+            }
+            expression(node.get("expr"));
+            switch (node.flags) {
+                case CastNode.TO_LONG -> b.endCastLong();
+                case CastNode.TO_DOUBLE -> b.endCastDouble();
+                case CastNode.TO_STRING -> b.endCastString();
+                case CastNode.TO_BOOL -> b.endToBool();
+                case CastNode.TO_ARRAY -> b.endCastArray();
+                default -> b.endCastObject();
+            }
+        }
+
+        /**
+         * A global constant the translation doesn't fold (Translator.constant's GlobalConstNode: a user's, or a
+         * predefined one in a namespace that may declare its own), looked up when it runs.
+         */
+        private void globalConstant(Ast node) {
+            Ast nameNode = node.node("name");
+            String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
+            b.emitGlobalConstant(resolved[0], language.constantId(resolved[0]),
+                    resolved[1] == null ? -1 : language.constantId(resolved[1]));
         }
 
         // ---- $this and properties ----
@@ -1821,7 +1866,10 @@ public final class BytecodeTranslator {
         private void className(Ast node) {
             Object classNode = node.get("class");
             if (!(classNode instanceof Ast ast) || !ast.is("AST_NAME")) {
-                throw new Unsupported("::class of an expression", node);
+                b.beginObjectClassName();
+                expression(classNode);
+                b.endObjectClassName();
+                return;
             }
             String name = classNameOf(ast);
             switch (Str.lower(name)) {

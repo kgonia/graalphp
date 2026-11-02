@@ -54,6 +54,7 @@ import pl.codeloom.php.nodes.expr.ConstantNodes;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.expr.TestNodes;
+import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
@@ -128,6 +129,9 @@ import pl.codeloom.php.runtime.Str;
 @OperationProxy(value = Proxies.ToBool.class, name = "ToBool")
 @OperationProxy(value = Proxies.ReadElement.class, name = "ReadElement")
 @OperationProxy(value = InterpolationNode.PartNode.class, name = "InterpolationPart")
+@OperationProxy(value = Proxies.CastLong.class, name = "CastLong")
+@OperationProxy(value = Proxies.CastDouble.class, name = "CastDouble")
+@OperationProxy(value = Proxies.CastString.class, name = "CastString")
 @ShortCircuitOperation(name = "And", operator = ShortCircuitOperation.Operator.AND_RETURN_CONVERTED,
         booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Or", operator = ShortCircuitOperation.Operator.OR_RETURN_CONVERTED,
@@ -1479,6 +1483,48 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `$obj::class` (ObjectClassNameNode): a value that isn't an object is a TypeError. */
+    @Operation
+    public static final class ObjectClassName {
+        @Specialization
+        public static TruffleString name(Object value) {
+            return ConstantNodes.objectClassName(value);
+        }
+    }
+
+    /**
+     * A global constant the translation doesn't fold (GlobalConstNode): with one context the value found first stays
+     * (constants can't be redefined); the uncached interpreter looks it up each time. An undefined one is an Error.
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = int.class, name = "id")
+    @ConstantOperand(type = int.class, name = "fallbackId")
+    public static final class GlobalConstant {
+        @Specialization(assumptions = "singleContext()", excludeForUncached = true)
+        public static Object single(String name, int id, int fallbackId,
+                                    @Cached("find(context(), name, id, fallbackId)") Object value) {
+            return value;
+        }
+
+        @Specialization(replaces = "single")
+        public static Object perContext(String name, int id, int fallbackId, @Bind Node node) {
+            return find(PhpContext.get(node), name, id, fallbackId);
+        }
+
+        public static Object find(PhpContext context, String name, int id, int fallbackId) {
+            return ConstantNodes.globalConstant(context, name, id, fallbackId);
+        }
+
+        public static Assumption singleContext() {
+            return PhpLanguage.get(null).singleContext();
+        }
+
+        public static PhpContext context() {
+            return PhpContext.get(null);
+        }
+    }
+
     /** `static::class` (ClassNameNode). */
     @Operation
     public static final class ClassName {
@@ -1910,7 +1956,45 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `(array)` of a value that isn't an array yet (ToOtherNode). */
+    @Operation
+    public static final class CastArray {
+        @Specialization
+        public static PhpArray same(PhpArray value) {
+            return value;
+        }
+
+        @Fallback
+        public static PhpArray other(Object value, @Bind Node node) {
+            return UnaryNodes.ToOtherNode.toArray(node, value);
+        }
+    }
+
+    /** `(object)` (ToOtherNode): an object stays, anything else becomes a stdClass. */
+    @Operation
+    public static final class CastObject {
+        @Specialization
+        public static Object same(PhpObject value) {
+            return value;
+        }
+
+        @Fallback
+        public static Object other(Object value, @Bind Node node) {
+            return UnaryNodes.ToOtherNode.toObject(node, value);
+        }
+    }
+
     // ---- statements and logic ----
+
+    /** `print value` (the tree's PrintNode): echoes it; the value is 1. */
+    @Operation
+    public static final class Print {
+        @Specialization
+        public static long print(Object value, @Bind Node node) {
+            BasicStmts.EchoNode.echo(node, value);
+            return 1L;
+        }
+    }
 
     @Operation
     public static final class Echo {

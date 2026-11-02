@@ -1793,7 +1793,7 @@ public final class Translator {
                     return new ConstNode(Str.of(name));
             }
         }
-        return new ConstantNodes.ClassNameNode(classRef(classNode));
+        return new ConstantNodes.ObjectClassNameNode(expression(classNode));
     }
 
     private ExprNode magicConstant(Ast node) {
