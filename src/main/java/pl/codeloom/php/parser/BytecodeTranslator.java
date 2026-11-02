@@ -248,6 +248,10 @@ public final class BytecodeTranslator {
         private final List<Loop> loops = new ArrayList<>();
         /** In a finally block, how many of loops are outside it: break and continue may not leave it. */
         private int loopsOutsideFinally;
+        /** The labels of the statement lists around the code being emitted, outermost first (goto's targets). */
+        private final List<LabelScope> labelScopes = new ArrayList<>();
+        /** In a finally block, how many of labelScopes are outside it: a goto may not leave it either. */
+        private int labelScopesOutsideFinally;
         /**
          * Values evaluated once into a local, by the node standing for each where it is used: the objects of `?->`s
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
@@ -444,19 +448,14 @@ public final class BytecodeTranslator {
                 statement(list);
                 return;
             }
+            LabelScope scope = labelScope(list);
+            if (scope != null) {
+                labeledStatements(list, scope);
+                return;
+            }
             b.beginBlock();
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
-                    if (statement.is("AST_LABEL")) {
-                        if (skip != null) {
-                            String key = key(statement);
-                            if (skip.contains(key)) {
-                                continue;
-                            }
-                            dispatched.addLast(key);
-                        }
-                        throw new Unsupported("goto label", statement);
-                    }
                     statement(statement);
                 }
             }
@@ -589,6 +588,9 @@ public final class BytecodeTranslator {
                 case "AST_RETURN":
                     returnValue(node.get("expr"), node);
                     break;
+                case "AST_GOTO":
+                    gotoStatement(node);
+                    break;
                 case "AST_UNSET":
                     if (node.node("var").is("AST_PROP")) {
                         unsetProp(node.node("var"));
@@ -648,6 +650,137 @@ public final class BytecodeTranslator {
                 }
             }
             expression(value);
+        }
+
+        /**
+         * `goto label`: a branch to the label in the innermost enclosing statement list naming it. A label in a list
+         * that doesn't enclose the goto (inside an if or a loop) is where the tree's goto can't go either.
+         */
+        private void gotoStatement(Ast node) {
+            String name = (String) node.get("label");
+            for (int i = labelScopes.size() - 1; i >= 0; i--) {
+                LabelScope scope = labelScopes.get(i);
+                Integer index = scope.indexes().get(name);
+                if (index == null) {
+                    continue;
+                }
+                if (i < labelScopesOutsideFinally) {
+                    throw compileError(node, "jump out of a finally block is disallowed");
+                }
+                if (scope.emitted().contains(name)) {
+                    // backward: the list's loop goes round, and its top branches on to the label
+                    b.beginStoreLocal(scope.target());
+                    b.emitLoadConstant((long) index);
+                    b.endStoreLocal();
+                    b.emitBranch(scope.again());
+                } else {
+                    b.emitBranch(scope.labels()[index]);
+                }
+                return;
+            }
+            throw new Unsupported("goto into a statement list around it", node);
+        }
+
+        /** A statement list's goto labels, or null when it has none. */
+        private LabelScope labelScope(Ast list) {
+            Map<String, Integer> indexes = new HashMap<>();
+            boolean backward = false;
+            for (Object child : list.children()) {
+                if (child instanceof Ast statement) {
+                    if (statement.is("AST_LABEL")) {
+                        indexes.put((String) statement.get("name"), indexes.size());
+                    } else if (!indexes.isEmpty()) {
+                        backward |= gotoTo(statement, indexes.keySet());
+                    }
+                }
+            }
+            return indexes.isEmpty() ? null : new LabelScope(indexes, new BytecodeLabel[indexes.size()],
+                    new java.util.HashSet<>(), backward ? b.createLocal() : null, null);
+        }
+
+        /** Whether code has a goto to one of the labels, not counting nested functions and classes. */
+        private boolean gotoTo(Object code, Set<String> labels) {
+            if (!(code instanceof Ast node)) {
+                return false;
+            }
+            switch (node.kind) {
+                case "AST_GOTO":
+                    return labels.contains((String) node.get("label"));
+                case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS":
+                    return false;
+                default:
+                    for (Object child : node.children()) {
+                        if (gotoTo(child, labels)) {
+                            return true;
+                        }
+                    }
+                    Map<String, Object> named = node.namedOrNull();
+                    if (named != null) {
+                        for (Object child : named.values()) {
+                            if (gotoTo(child, labels)) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+            }
+        }
+
+        /**
+         * A statement list with goto labels (GotoNodes.LabeledBlockNode): a goto in it, or in a statement nested in
+         * it, branches to the label's place. The DSL branches only forward, so a list a goto jumps back in is a
+         * loop that runs once: a backward goto sets the label's number and goes round, and the loop's top branches
+         * on to that label.
+         */
+        private void labeledStatements(Ast list, LabelScope plain) {
+            b.beginBlock();
+            BytecodeLabel done = null;
+            if (plain.target() != null) {
+                done = b.createLabel();
+                b.beginStoreLocal(plain.target());
+                b.emitLoadConstant(-1L);
+                b.endStoreLocal();
+                b.beginWhile();
+                b.emitLoadConstant(Boolean.TRUE);
+                b.beginBlock();
+            }
+            LabelScope scope = new LabelScope(plain.indexes(), plain.labels(), plain.emitted(), plain.target(),
+                    plain.target() == null ? null : b.createLabel());
+            for (int i = 0; i < scope.labels().length; i++) {
+                scope.labels()[i] = b.createLabel();
+            }
+            if (scope.target() != null) {
+                for (int i = 0; i < scope.labels().length; i++) {
+                    b.beginIfThen();
+                    b.beginIdentical();
+                    b.emitLoadLocal(scope.target());
+                    b.emitLoadConstant((long) i);
+                    b.endIdentical();
+                    b.emitBranch(scope.labels()[i]);
+                    b.endIfThen();
+                }
+            }
+            labelScopes.add(scope);
+            for (Object child : list.children()) {
+                if (child instanceof Ast statement) {
+                    if (statement.is("AST_LABEL")) {
+                        String name = (String) statement.get("name");
+                        b.emitLabel(scope.labels()[scope.indexes().get(name)]);
+                        scope.emitted().add(name);
+                        continue;
+                    }
+                    statement(statement);
+                }
+            }
+            labelScopes.remove(labelScopes.size() - 1);
+            if (scope.target() != null) {
+                b.emitBranch(done);
+                b.emitLabel(scope.again());
+                b.endBlock();
+                b.endWhile();
+                b.emitLabel(done);
+            }
+            b.endBlock();
         }
 
         private void returnValue(Object value, Ast node) {
@@ -995,16 +1128,25 @@ public final class BytecodeTranslator {
             }
             // the loops in the finally block are its own, wherever it is emitted
             List<Loop> around = new ArrayList<>(loops);
+            List<LabelScope> labelsAround = new ArrayList<>(labelScopes);
             Runnable finallyCode = () -> {
                 List<Loop> inner = new ArrayList<>(loops);
+                List<LabelScope> innerLabels = new ArrayList<>(labelScopes);
                 int outside = loopsOutsideFinally;
+                int labelsOutside = labelScopesOutsideFinally;
                 loops.clear();
                 loops.addAll(around);
                 loopsOutsideFinally = around.size();
+                labelScopes.clear();
+                labelScopes.addAll(labelsAround);
+                labelScopesOutsideFinally = labelsAround.size();
                 statements(finallyBody);
                 loopsOutsideFinally = outside;
+                labelScopesOutsideFinally = labelsOutside;
                 loops.clear();
                 loops.addAll(inner);
+                labelScopes.clear();
+                labelScopes.addAll(innerLabels);
             };
             b.beginTryCatchOtherwise(finallyCode);
             tryCatch(node);
@@ -3288,6 +3430,14 @@ public final class BytecodeTranslator {
 
     /** A loop's labels: break goes after the loop, continue to its next step. */
     private record Loop(BytecodeLabel breakLabel, BytecodeLabel continueLabel) {
+    }
+
+    /**
+     * A statement list's goto labels: their numbers by name, their places, those emitted so far (a goto to one is
+     * backward), and for a list a goto jumps back in, the local holding the label to go on to and the branch round.
+     */
+    private record LabelScope(Map<String, Integer> indexes, BytecodeLabel[] labels, Set<String> emitted,
+                              BytecodeLocal target, BytecodeLabel again) {
     }
 
     // php-ast flag values (Translator's)
