@@ -27,7 +27,6 @@ DONE = re.compile(r'^\[engine\] opt done\s+engine=\d+\s+id=\s*(\d+)\s+(.*?)\s*\|
                   r'\|AST\s+(\d+)\|Inlined\s+(\d+)Y\s+(\d+)N\|IR\s+(\d+)/\s*(\d+)\|CodeSize\s+(\d+)')
 FAILED = re.compile(r'^\[engine\] opt failed\s+engine=\d+\s+id=\s*(\d+)\s+(.*?)\s*\|Tier (\d)\|Time\s+(\d+)\(.*?\|Reason: (.*?)(?:\|UTC|$)')
 EVENT = re.compile(r'^\[engine\] opt (inval\.|deopt)\s+engine=\d+\s+id=\s*(\d+)\s+(.*?)\s*\|.*\|Reason (.*)$')
-POLY = re.compile(r'^\[engine\] \[poly-event\] (.*?)\s{2,}(\S.*?)\s*$')
 SPLIT = re.compile(r'^\[engine\] split\s+\S+\s+(.*?)\s*\|AST\s+(\d+)\|')
 INLINE = re.compile(r'^\[engine\] (Inline start|Inline done|Inlined|Cutoff)\s+(.*?)\s*\|Frequency\s+([\d.,NaN]+)\|'
                     r'Recursion Depth\s+\d+\|IR Nodes\s+(-?\d+)\|.*?\|Depth\s+(\d+)\|')
@@ -104,36 +103,45 @@ def compile_report(path, top):
 
 
 def splits_report(path, top):
-    sources = collections.Counter()          # node class -> polymorphic events
-    splitting = collections.Counter()        # node class -> events that set "needs split"
+    """The polymorphic events come from the compiler's and the request threads interleaved: an event is matched to
+    its target by name, not by order. A target needs a split when a node in it reports polymorphism ("Set needs
+    split to true") or when a callee with this one caller does ("... via parent")."""
+    events = collections.Counter()           # node class -> polymorphic events
+    classes_of = collections.defaultdict(collections.Counter)   # target (base name) -> node class -> events
+    needs = collections.Counter()            # direct / via parent
+    needs_of = collections.defaultdict(collections.Counter)
     outcome = collections.Counter()
-    by_target = collections.defaultdict(collections.Counter)
-    last = {}                                # target -> node class of its last polymorphic event
     split_targets = collections.Counter()
-    split_ast = collections.Counter()
+    split_ast = {}
+    rejected = collections.Counter()
     summary, in_summary = [], False
     for line in lines(path):
-        m = POLY.match(line)
-        if m:
-            what, target = m.groups()
-            if what.startswith('Polymorphic event! Source: '):
-                node = what[len('Polymorphic event! Source: '):].split('@')[0]
-                sources[node] += 1
-                last[target] = node
-            elif what.startswith('Set needs split to true'):
-                node = last.get(target, '?')
-                splitting[node] += 1
-                by_target[base(target)][node] += 1
-                outcome['needs split'] += 1
-            elif what.startswith('Early return'):
-                outcome[re.sub(r'\d+', 'N', what.split(' callCount')[0])] += 1
-            elif what.startswith('Return: '):
-                outcome[what] += 1
+        if line.startswith('[engine] [poly-event]'):
+            body = line[len('[engine] [poly-event]'):].strip()
+            m = re.match(r'Polymorphic event! Source: (\S+?)@[0-9a-f]+\s+(.*\S)', body)
+            if m:
+                node = m.group(1)
+                events[node] += 1
+                classes_of[base(m.group(2))][node] += 1
+                continue
+            m = re.match(r'(Set needs split to true(?: via parent)?|Early return: (?:true|false)|Return: (?:true|false)'
+                         r'|One caller! Analysing parent\.)(?:\s+callCount: \d+, numberOfKnownCallNodes: \d+)?\s+(.*\S)',
+                         body)
+            if m:
+                outcome[m.group(1)] += 1
+                if m.group(1).startswith('Set needs split'):
+                    needs[m.group(1)] += 1
+                    needs_of[base(m.group(2))][m.group(1)] += 1
             continue
         m = SPLIT.match(line)
         if m:
-            split_targets[base(m.group(1))] += 1
-            split_ast[base(m.group(1))] = int(m.group(2))
+            name = m.group(1)
+            t = re.match(r'Target too big: \d+ > \d+ (.*)', name)
+            if t:
+                rejected[base(t.group(1))] += 1
+            else:
+                split_targets[base(name)] += 1
+                split_ast[base(name)] = int(m.group(2))
             continue
         if line.startswith('[engine] Splitting Statistics'):
             in_summary = True
@@ -144,21 +152,36 @@ def splits_report(path, top):
                 in_summary = False
             else:
                 summary.append(line)
-    print(f'polymorphic events: {sum(sources.values())}; outcomes: {dict(outcome.most_common(12))}')
-    print(f'\nnode classes reporting polymorphism ({top}): events, events that made the target need a split')
-    for node, n in sources.most_common(top):
-        print(f'  {n:8d} {splitting[node]:8d}  {node}')
-    print(f'\nnode classes by the splits they asked for ({top}):')
-    total = sum(splitting.values()) or 1
-    for node, n in splitting.most_common(top):
-        print(f'  {n:8d} {100 * n / total:5.1f}%  {node}')
-    print(f'\nsplits (engine.TraceSplitting): {sum(split_targets.values())} of {len(split_targets)} targets')
+    print(f'polymorphic events: {sum(events.values())}; outcomes: {dict(outcome.most_common())}')
+    splits = sum(split_targets.values())
+    print(f'splits made (engine.TraceSplitting): {splits} of {len(split_targets)} functions;'
+          f' refused as too big (over SplittingMaxCalleeSize): {sum(rejected.values())} of {len(rejected)} functions')
+    # a node class is charged with the splits of every function whose own nodes reported it
+    charged = collections.Counter()
+    charged_targets = collections.Counter()
+    for name, n in split_targets.items():
+        for node in classes_of.get(name, {}):
+            charged[node] += n
+            charged_targets[node] += 1
+    no_own = sum(n for name, n in split_targets.items() if name not in classes_of)
+    print(f'\nnode classes reporting polymorphism ({top}): events; split functions whose own nodes reported it, and'
+          f' their splits (a function with several classes counts for each)')
+    for node, n in events.most_common(top):
+        print(f'  {n:7d} {charged_targets[node]:5d} fns {charged[node]:6d} splits  {node}')
+    print(f'  splits of functions none of whose own nodes reported polymorphism (split for a callee, via parent):'
+          f' {no_own} of {splits}')
+    print(f'\nfunctions split most ({top}): splits, AST, needs split direct / via parent, the node classes reporting in it')
     for name, n in split_targets.most_common(top):
-        why = ', '.join(f'{k.split(".")[-1]} {v}' for k, v in by_target[name].most_common(3))
-        print(f'  {n:6d} AST {split_ast[name]:4d} {name}   [{why}]')
+        why = ', '.join(f'{k.split(".")[-1]} {v}' for k, v in classes_of[name].most_common(3)) or '-'
+        nd = needs_of[name]
+        print(f'  {n:6d} AST {split_ast[name]:4d} {nd["Set needs split to true"]:4d}/{nd["Set needs split to true via parent"]:<4d}'
+              f' {name}   [{why}]')
+    print(f'\nrefused splits, most ({min(top, 10)}):')
+    for name, n in rejected.most_common(min(top, 10)):
+        print(f'  {n:6d} {name}')
     if summary:
-        print('\nengine.TraceSplittingSummary at the engine\'s close (first 80 lines):')
-        print('\n'.join(summary[:80]))
+        print('\nengine.TraceSplittingSummary at the engine\'s close (first 60 lines):')
+        print('\n'.join(summary[:60]))
 
 
 def deopts_report(path, top):
