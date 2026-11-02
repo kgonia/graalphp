@@ -1318,10 +1318,8 @@ public final class BytecodeTranslator {
             if (generatorLocal == null) {
                 throw new Unsupported("yield outside a generator", node);
             }
-            b.beginResumed();
-            b.emitLoadLocal(generatorLocal);
-            b.beginYieldValue();
-            b.emitLoadLocal(generatorLocal);
+            b.beginResumed(generatorLocal);
+            b.beginYieldValue(generatorLocal);
             Object key = node.get("key");
             if (key == null) {
                 b.emitLoadConstant(PhpGenerator.SUSPENDED);
@@ -1370,10 +1368,8 @@ public final class BytecodeTranslator {
             if (generatorLocal == null) {
                 throw new Unsupported("yield from outside a generator", node);
             }
-            b.beginResumed();
-            b.emitLoadLocal(generatorLocal);
-            b.beginYieldFrom();
-            b.emitLoadLocal(generatorLocal);
+            b.beginResumed(generatorLocal);
+            b.beginYieldFrom(generatorLocal);
             expression(node.get("expr"));
             b.endYieldFrom();
             b.endResumed();

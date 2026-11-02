@@ -2661,13 +2661,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * `yield`, `yield value`, `yield key => value` (ZEND_YIELD): records the key (null for the next integer key)
      * and the value and suspends; resuming continues here, Resumed giving the yield's result.
      */
-    @Yield(resultOperandIndex = 2)
+    @Yield(resultOperandIndex = 1)
+    @ConstantOperand(type = LocalAccessor.class)
     public static final class YieldValue {
+        /**
+         * The generator comes from its local, not the operand stack: in compiled code a yield copies the operands
+         * below its own into the continuation's frame, and a statement's yield then has none.
+         */
         @Specialization
-        public static Object yield(PhpGenerator generator, Object key, Object value,
-                                   @Bind ContinuationRootNode continuation) {
-            generator.yielded(key == PhpGenerator.SUSPENDED ? null : key, value);
-            generator.suspendAt(continuation);
+        public static Object yield(LocalAccessor generator, Object key, Object value,
+                                   @Bind ContinuationRootNode continuation, @Bind MaterializedFrame frame,
+                                   @Bind BytecodeNode bytecode) {
+            PhpGenerator state = (PhpGenerator) generator.getObject(bytecode, frame);
+            state.yielded(key == PhpGenerator.SUSPENDED ? null : key, value);
+            state.suspendAt(continuation);
             return PhpGenerator.SUSPENDED;
         }
     }
@@ -2676,13 +2683,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * `yield from source` (ZEND_YIELD_FROM): starts delegating and suspends; the generator takes the elements, and
      * resumes the body here once they are done, Resumed giving the yield from's result.
      */
-    @Yield(resultOperandIndex = 1)
+    @Yield
+    @ConstantOperand(type = LocalAccessor.class)
     public static final class YieldFrom {
         @Specialization
-        public static Object yieldFrom(PhpGenerator generator, Object source,
-                                       @Bind ContinuationRootNode continuation, @Bind Node node) {
-            generator.yieldFrom(node, source);
-            generator.suspendAt(continuation);
+        public static Object yieldFrom(LocalAccessor generator, Object source,
+                                       @Bind ContinuationRootNode continuation, @Bind MaterializedFrame frame,
+                                       @Bind BytecodeNode bytecode, @Bind Node node) {
+            PhpGenerator state = (PhpGenerator) generator.getObject(bytecode, frame);
+            state.yieldFrom(node, source);
+            state.suspendAt(continuation);
             return PhpGenerator.DELEGATED;
         }
     }
@@ -2971,10 +2981,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** What a yield or yield from gives once resumed: the sent value, or it throws (throw(), destruction). */
     @Operation
+    @ConstantOperand(type = LocalAccessor.class)
     public static final class Resumed {
         @Specialization
-        public static Object resumed(PhpGenerator generator, Object value) {
-            return generator.resumed(value);
+        public static Object resumed(VirtualFrame frame, LocalAccessor generator, Object value,
+                                     @Bind BytecodeNode bytecode) {
+            return ((PhpGenerator) generator.getObject(bytecode, frame)).resumed(value);
         }
     }
 
