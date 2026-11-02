@@ -1,0 +1,22 @@
+target/p4id/diag/d-base/server.log: 11332 collections in 85 isolate lives (GC(0) lines), 260.1 s of pauses; largest heap before a collection 1875 MB, after one 570 MB
+     6115     70.6 s  Incremental (Hinted GC)
+     3128     50.1 s  Incremental (Collect on allocation)
+     1836    105.6 s  Full (Hinted GC)
+      253     33.9 s  Full (Collect on allocation)
+  minute: collections, pause s, largest heap after one MB
+     0   1702    28.2     147
+     1   1082    20.4     149
+     2    941    18.3      94
+     3    696    15.6     246
+     4    422    11.4     345
+     5    787    15.0     428
+     6    454    17.4      78
+     7    480    18.6     570
+     8    649    19.2     446
+     9    621    15.8      56
+    10    815    16.4      72
+    11    522    14.9      71
+    12    821    16.6      63
+    13    484    15.3      65
+    14    755    14.8      90
+    15    101     2.1     127

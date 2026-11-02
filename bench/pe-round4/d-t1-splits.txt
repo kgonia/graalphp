@@ -1,0 +1,128 @@
+polymorphic events: 2120; outcomes: {'One caller! Analysing parent.': 1389, 'Return: true': 1123, 'Early return: true': 956, 'Return: false': 796, 'Early return: false': 634, 'Set needs split to true via parent': 593, 'Set needs split to true': 530}
+splits made (engine.TraceSplitting): 3395 of 339 functions; refused as too big (over SplittingMaxCalleeSize): 2434 of 327 functions
+
+node classes reporting polymorphism (25): events; split functions whose own nodes reported it, and their splits (a function with several classes counts for each)
+      458    23 fns    119 splits  ConstantNodesFactory.StableValueNodeGen
+      413    32 fns    525 splits  MethodDispatchNodeGen
+      291    40 fns    272 splits  ToBooleanNodeGen
+      278    21 fns    134 splits  CallableDispatchNodeGen
+      249    43 fns    417 splits  CompareNodesFactory.IdenticalNodeGen
+      181    27 fns    214 splits  SubclassTestNodeGen
+       56    15 fns    324 splits  AssignNodesFactory.AssignNodeGen
+       38     4 fns    209 splits  UnaryNodesFactory.ToLongNodeGen
+       28     7 fns    264 splits  UnaryNodesFactory.ToStringNodeGen
+       27    10 fns     43 splits  ForeachNodeFactory.BindNodeGen
+       26     6 fns     62 splits  ElementNodesFactory.ElementReadNodeGen
+       23     6 fns     97 splits  InstantiateNodeGen
+       16     4 fns     51 splits  BuiltinNodesFactory.InArrayNodeGen
+       15     3 fns      5 splits  CompareNodesFactory.LessNodeGen
+        6     1 fns     45 splits  BuiltinNodesFactory.KeyExistsNodeGen
+        4     0 fns      0 splits  CompareNodesFactory.EqualNodeGen
+        4     3 fns      7 splits  UnaryNodesFactory.ToDoubleNodeGen
+        2     1 fns     37 splits  BuiltinNodesFactory.CaseNodeGen
+        2     1 fns      4 splits  ArithmeticNodesFactory.ConcatNodeGen
+        1     0 fns      0 splits  ArithmeticNodesFactory.MulNodeGen
+        1     0 fns      0 splits  BuiltinNodesFactory.SubstrNodeGen
+        1     0 fns      0 splits  BuiltinNodesFactory.TrimNodeGen
+  splits of functions none of whose own nodes reported polymorphism (split for a callee, via parent): 1079 of 3395
+
+functions split most (25): splits, AST, needs split direct / via parent, the node classes reporting in it
+     253 AST  120    1/15   WC_Data::get_prop   [MethodDispatchNodeGen 14, AssignNodeGen 2]
+     204 AST   51    1/17   absint   [ToLongNodeGen 21]
+     158 AST   39    1/2    esc_attr   [ToStringNodeGen 4]
+     115 AST   91    1/0    WC_Data::set_prop   [IdenticalNodeGen 3]
+      94 AST   49    1/0    wp_parse_args   [-]
+      91 AST   36    2/4    Automattic\WooCommerce\Blocks\Registry\SharedType::get   [-]
+      90 AST   56    2/0    Automattic\WooCommerce\Blocks\Registry\Container::get   [-]
+      86 AST   22    1/0    is_wp_error   [SubclassTestNodeGen 3]
+      54 AST   39    1/0    esc_html   [ToStringNodeGen 1]
+      52 AST  142    1/15   wp_get_theme   [StableValueNodeGen 52]
+      48 AST   14    1/3    WC_Product::get_status   [-]
+      47 AST   79    2/2    Automattic\WooCommerce\StoreApi\SchemaController::get   [MethodDispatchNodeGen 10, InstantiateNodeGen 3]
+      45 AST   59    1/7    WP_Object_Cache::_exists   [KeyExistsNodeGen 6, ElementReadNodeGen 3]
+      40 AST   33    1/8    Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value   [CallableDispatchNodeGen 24]
+      40 AST   91    1/2    block_has_support   [IdenticalNodeGen 14]
+      40 AST   97    1/0    wc_get_page_id   [ToBooleanNodeGen 2]
+      40 AST   98    1/4    WC_Session::set   [IdenticalNodeGen 6]
+      39 AST   36    1/7    wp_is_block_theme   [-]
+      37 AST   38    1/0    wc_string_to_bool   [IdenticalNodeGen 2, CaseNodeGen 2]
+      36 AST   14    1/2    WC_Product::get_parent_id   [-]
+      34 AST   56    0/5    WP_Widget_Factory::register   [MethodDispatchNodeGen 8, InstantiateNodeGen 2]
+      33 AST   15    2/0    register_widget   [-]
+      33 AST  103    1/1    wp_parse_url   [ToStringNodeGen 2]
+      33 AST   31    1/8    WC_Product::is_type   [MethodDispatchNodeGen 29]
+      32 AST   51    1/0    wp_should_skip_block_supports_serialization   [InArrayNodeGen 1]
+
+refused splits, most (10):
+     419 get_option
+     224 _wp_specialchars
+      97 get_post
+      91 register_block_type_from_metadata
+      54 wpdb::prepare
+      53 WP_Theme::__construct
+      51 WC_Settings_API::get_option
+      47 WP_HTML_Tag_Processor::set_attribute
+      45 wc_format_decimal
+      42 WP_REST_Controller::get_context_param
+
+engine.TraceSplittingSummary at the engine's close (first 60 lines):
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :     153003
+Split limit (limit for the number of nodes to create through splitting)           :    1026204
+Splits (number of targets created through splitting)                              :       3400
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :     153280
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     685502
+Increase in nodes                                                                 :     22.36%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :       9588
+Percent of split nodes wasted                                                     :      6.26%
+Targets wasted due to splitting                                                   :        213
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS
+WC_Data::get_prop                                                                 :        253
+absint                                                                            :        204
+esc_attr                                                                          :        158
+WC_Data::set_prop                                                                 :        115
+wp_parse_args                                                                     :         95
+Automattic\WooCommerce\Blocks\Registry\SharedType::get                            :         91
+Automattic\WooCommerce\Blocks\Registry\Container::get                             :         90
+is_wp_error                                                                       :         87
+esc_html                                                                          :         54
+wp_get_theme                                                                      :         52
+WC_Product::get_status                                                            :         48
+Automattic\WooCommerce\StoreApi\SchemaController::get                             :         47
+WP_Object_Cache::_exists                                                          :         45
+Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value      :         40
+block_has_support                                                                 :         40
+wc_get_page_id                                                                    :         40
+WC_Session::set                                                                   :         40
+wp_is_block_theme                                                                 :         39
+wc_string_to_bool                                                                 :         37
+WC_Product::get_parent_id                                                         :         36
+WP_Widget_Factory::register                                                       :         34
+wp_parse_url                                                                      :         34
+WC_Product::is_type                                                               :         33
+register_widget                                                                   :         33
+WC_Data_Store::__call                                                             :         32
+wp_should_skip_block_supports_serialization                                       :         32
+WP_Object_Cache::delete                                                           :         30
+has_filter                                                                        :         30
+WC_Product::get_price                                                             :         29
+wp_filter_object_list                                                             :         28
+wp_cache_delete                                                                   :         28
+get_theme_root                                                                    :         28
+wc_get_product                                                                    :         27
+Automattic\WooCommerce\Utilities\NumberUtil::normalize                            :         27
+WP_REST_Controller::get_endpoint_args_for_item_schema                             :         26
+WP_Query::is_singular                                                             :         26
+is_singular                                                                       :         24
+Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::initialize                :         24
+WC_Product::get_stock_status                                                      :         23
+Automattic\WooCommerce\Utilities\NumberUtil::round                                :         21
+WC_Product::is_viewable                                                           :         21
+WC_Product::exists                                                                :         21
+WP_Scripts::add_inline_script                                                     :         20
+get_the_terms                                                                     :         18
+WC_Shipping_Method::get_option                                                    :         18
+WP_HTML_Tag_Processor::get_attribute                                              :         18
+WC_Product::is_purchasable                                                        :         18

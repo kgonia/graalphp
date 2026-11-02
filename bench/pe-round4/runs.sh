@@ -4,10 +4,13 @@
 # classes-t1 (and run-once code not compiled: all three). Every timed run holds the CPU lock of 14-21 (woo.sh load
 # and memrun take it; gate1 here) and a memlock reservation.
 # - gate1: Gate 1's kernels, the four builds interleaved, the order reversed every other round (bench/gate1/ab.sh).
+# A variant (A, B) is a build, or ct1: t1 with -Dpolyglot.engine.CompilerThreads=1 (the owner's question after targets
+# 1-3: one Truffle compiler thread instead of the default).
 # - ab A B ROUNDS: woo.sh load jvm 16 of two builds (300 s warm-up at 16 users half buying, then 120 s at 16 users
 #   every visitor buying), interleaved, the order reversed every round (the first server of a round won 6 of 6 in
-#   the diagnosis whichever build it was); tags A-rN, B-rN.
-# - mem A B ROUNDS: woo.sh memrun jvm 16 (12 min at 16 users half buying, from cold) of two builds, interleaved and
+#   the diagnosis whichever build it was); tags A_B.A-rN, A_B.B-rN.
+# - mem A B ROUNDS: woo.sh memrun jvm 16 (12 min, MEM_SECONDS, at 16 users half buying, from cold; tags MEM_TAG-V-rN,
+#   default m) of two builds, interleaved and
 #   reversed every round, with TraceCompilation and libgraal's PrintGC: compile time by kind, failures, libgraal's
 #   heap, memory.peak (pe4_report.py kinds, libgraal_gc.py, pe4_memtable.py).
 # - diag BUILD TAG MODE: woo.sh diag on its own stack (p4id, CPUs 6-13, its database on 12-13), 16 users half
@@ -25,6 +28,9 @@ hold() { # GB TTL-minutes NOTE: a reservation, or stop
 }
 release() { $MEMLOCK release claude-wordpress-pe4impl-$1 > /dev/null 2>&1 || true; }
 CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
+# A variant is a build (target/classes-BUILD), or ct1: the final build (t1) with one Truffle compiler thread
+classes() { case $1 in ct1) echo target/classes-t1 ;; *) echo target/classes-$1 ;; esac; }
+opts() { case $1 in ct1) echo -Dpolyglot.engine.CompilerThreads=1 ;; *) echo ;; esac; }
 case ${1:-} in
   gate1)
     hold gate1 6 240 "wordpress-pe4impl: Gate 1 A/B of 4 builds on CPUs 14-21"
@@ -38,8 +44,15 @@ case ${1:-} in
     for r in $(seq "$rounds"); do
       if [ $((r % 2)) = 1 ]; then order="$a $b"; else order="$b $a"; fi
       for v in $order; do
-        hold ab 12 30 "wordpress-pe4impl: WooCommerce load A/B $a/$b, $v round $r (JVM server on 14-21)"
-        DEV_CLASSES=target/classes-$v MIXES=1 WARM=300s DURATION=120s woo load jvm 16 $v-r$r 16
+        hold ab 9 30 "wordpress-pe4impl: WooCommerce load A/B $a/$b, $v round $r (JVM server on 14-21)"
+        # AB_LOG=1: each server's compilations logged (TraceCompilation) to target/p4i/abl/TAG/engine.log
+        logopts= mount=
+        if [ -n "${AB_LOG:-}" ]; then
+          mkdir -p target/p4i/abl/${a}_$b.$v-r$r
+          logopts="-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.log.file=/out/engine.log"
+          mount="-v $(pwd -W)/target/p4i/abl/${a}_$b.$v-r$r:/out"
+        fi
+        DEV_CLASSES=$(classes $v) JAVA_OPTS="$(opts $v) $logopts" WC_DOCKER_ARGS="$mount" MIXES=1 WARM=300s           DURATION=120s woo load jvm 16 ${a}_$b.$v-r$r 16
         release ab
       done
     done ;;
@@ -52,8 +65,8 @@ case ${1:-} in
     for r in $(seq "$rounds"); do
       if [ $((r % 2)) = 1 ]; then order="$a $b"; else order="$b $a"; fi
       for v in $order; do
-        hold mem 12 30 "wordpress-pe4impl: WooCommerce memrun $a/$b, $v round $r (JVM server on 14-21)"
-        DEV_CLASSES=target/classes-$v SNAP=60 JAVA_OPTS="$log" woo memrun jvm 16 m-$v-r$r 16 720s
+        hold mem 9 $((${MEM_SECONDS:-720} / 60 + 20)) "wordpress-pe4impl: WooCommerce memrun $a/$b, $v round $r (JVM server on 14-21)"
+        DEV_CLASSES=$(classes $v) SNAP=60 JAVA_OPTS="$log $(opts $v)"           woo memrun jvm 16 ${MEM_TAG:-m}-$v-r$r 16 ${MEM_SECONDS:-720}s
         release mem
       done
     done ;;
@@ -65,10 +78,10 @@ case ${1:-} in
         t+=" -Dpolyglot.engine.TraceSplitting=true -Dpolyglot.engine.SplittingTraceEvents=true"
         t+=" -Dpolyglot.engine.TraceSplittingSummary=true -Dpolyglot.engine.CompilationStatistics=true"
         t+=" -Djdk.graal.internal.PrintGC=true"
-        hold diag 12 40 "wordpress-pe4impl: WooCommerce diagnosis server $3 (CPUs 6-13)"
+        hold diag 10 40 "wordpress-pe4impl: WooCommerce diagnosis server $3 (CPUs 6-13)"
         JAVA_OPTS="$t" woo diag $3 900s ;;
       sampler)
-        hold diag 14 30 "wordpress-pe4impl: WooCommerce sampler server $3 (CPUs 6-13)"
+        hold diag 12 30 "wordpress-pe4impl: WooCommerce sampler server $3 (CPUs 6-13)"
         JAVA_OPTS="-Xmx6g -Dpolyglot.cpusampler=true -Dpolyglot.cpusampler.Delay=240000 -Dpolyglot.cpusampler.ShowTiers=true -Dpolyglot.cpusampler.SummariseThreads=true -Dpolyglot.cpusampler.Output=histogram -Dpolyglot.cpusampler.OutputFile=/out/cpusampler.txt -Dpolyglot.engine.TraceCompilation=true" woo diag $3 600s ;;
       *) echo "diag mode: splits or sampler"; exit 2 ;;
     esac

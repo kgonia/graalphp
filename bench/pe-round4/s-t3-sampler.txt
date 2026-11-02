@@ -1,0 +1,86 @@
+2893 histograms, 1482.9 s of sampled self time; interpreter 5.9%, tier 1 12.3%, tier 2 81.8%
+built-ins (<builtin>) 14.8% of self time
+
+functions by self time (40): ms, share, interpreter / tier 1 / tier 2
+    178730  12.1%    0.0 /   0.0 / 100.0  wpdb::query
+     74210   5.0%    0.0 /   0.0 / 100.0  WP_Hook::apply_filters
+     56800   3.8%    0.0 /   0.1 /  99.9  wpdb::_do_query
+     43630   2.9%    0.0 /   0.0 / 100.0  apply_filters
+     39530   2.7%    0.0 /   0.0 / 100.0  get_option
+     35490   2.4%    0.0 /   0.0 / 100.0  WP_Object_Cache::is_valid_key
+     32940   2.2%    0.0 /  93.1 /   6.9  mysqli_query
+     27010   1.8%    0.0 /   0.0 / 100.0  WP_Hook::add_filter
+     22990   1.6%    0.0 /   0.0 / 100.0  wp_normalize_path
+     20360   1.4%    0.0 /   0.0 / 100.0  translate
+     19630   1.3%    0.0 /   0.0 / 100.0  WP_Post::__construct
+     16530   1.1%    0.0 /   0.0 / 100.0  wp_cache_get
+     15680   1.1%    0.0 /   0.0 / 100.0  array_merge
+     12700   0.9%   50.6 /  49.4 /   0.0  mysqli_real_connect
+     10880   0.7%    0.0 /   0.0 / 100.0  WC_Data::get_hook_prefix
+     10880   0.7%    0.0 /   0.0 / 100.0  file_exists
+     10720   0.7%    0.0 /   0.0 / 100.0  defined
+     10170   0.7%    0.0 /   3.5 /  96.5  Automattic\WooCommerce\Internal\DependencyManagement\RuntimeContainer::instantiate_class_using_reflection
+      9920   0.7%    5.9 /  25.4 /  68.7  WC_Data::set_prop
+      8510   0.6%    0.0 /   0.0 / 100.0  WP_Theme_JSON::sanitize
+      8290   0.6%    0.0 /   0.0 / 100.0  WP_HTML_Tag_Processor::class_name_updates_to_attributes_updates
+      7260   0.5%    0.0 /   0.0 / 100.0  _wp_array_get
+      7090   0.5%    0.0 /   0.0 / 100.0  WP_Block_Type::set_props
+      7020   0.5%    0.0 /   0.0 / 100.0  wp_load_alloptions
+      6910   0.5%    0.0 /   0.0 / 100.0  preg_match
+      6630   0.4%    0.0 /   0.0 / 100.0  wptexturize
+      6560   0.4%    0.0 /   0.0 / 100.0  WP_Theme_JSON::get_block_element_selectors
+      6330   0.4%    0.0 /   0.2 /  99.8  wp_get_global_settings
+      6130   0.4%    0.0 /   0.0 / 100.0  clone
+      6090   0.4%    0.3 /   4.4 /  95.2  WP_Hook::has_filter
+      5830   0.4%    0.0 /   0.0 / 100.0  Automattic\WooCommerce\Internal\Features\FeaturesController::maybe_init_feature_definitions
+      5500   0.4%    0.4 /   0.0 /  99.6  _WP_Dependency::__construct
+      5430   0.4%    0.0 /   0.0 / 100.0  wc_translate_user_roles
+      5400   0.4%    5.6 /   4.8 /  89.6  WP_Object_Cache::_exists
+      5370   0.4%    0.0 /   0.0 / 100.0  set_url_scheme
+      4880   0.3%    0.0 /   0.0 / 100.0  register_block_type_from_metadata
+      4820   0.3%    0.0 /   0.0 / 100.0  abs
+      4760   0.3%    0.0 /   0.0 / 100.0  WP_Block_Type::prepare_attributes_for_render
+      4690   0.3%    0.0 /   0.0 / 100.0  utf8_uri_encode
+      4610   0.3%    0.0 /   0.0 / 100.0  do_action
+
+functions by interpreted self time (40): ms interpreted, share of all, its own share interpreted
+      6420   0.4%   50.6%  mysqli_real_connect  <builtin>~1:0
+      3220   0.2%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/vendor/composer/jetpack_autoload_classmap.php  endor/composer/jetpack_autoload_classmap.php~1-9653:0-474610
+      1030   0.1%   58.9%  WC_Data::get_prop  erce/includes/abstracts/abstract-wc-data.php~953:25548-25605
+       590   0.0%    5.9%  WC_Data::set_prop  erce/includes/abstracts/abstract-wc-data.php~900:24268-24314
+       560   0.0%   60.9%  Automattic\WooCommerce\Blocks\Registry\SharedType::get  ns/woocommerce/src/Blocks/Registry/SharedType.php~26:544-589
+       520   0.0%   39.7%  _get_block_templates_paths  rdpress/wp-includes/block-template-utils.php~296:11256-11311
+       360   0.0%   55.4%  mysqli_select_db  <builtin>~1:0
+       300   0.0%    5.6%  WP_Object_Cache::_exists  ordpress/wp-includes/class-wp-object-cache.php~178:3836-3880
+       300   0.0%   65.2%  /srv/target/gate2/wordpress/wp-includes/deprecated.php  t/gate2/wordpress/wp-includes/deprecated.php~1-6711:0-199182
+       280   0.0%   19.4%  wc_string_to_bool  /woocommerce/includes/wc-formatting-functions.php~27:664-702
+       270   0.0%   69.2%  esc_attr  ate2/wordpress/wp-includes/formatting.php~4826:171017-171044
+       250   0.0%   40.3%  WP_Query::is_singular  /wordpress/wp-includes/class-wp-query.php~4767:154046-154095
+       240   0.0%  100.0%  WC_Settings_API::get_option  ncludes/abstracts/abstract-wc-settings-api.php~299:8090-8147
+       240   0.0%   72.7%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-product-simple.php  oocommerce/includes/class-wc-product-simple.php~1-103:0-2764
+       230   0.0%   44.2%  mysqli_set_charset  <builtin>~1:0
+       220   0.0%   57.9%  absint  target/gate2/wordpress/wp-includes/load.php~1546:44102-44136
+       220   0.0%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-shipping-rate.php  woocommerce/includes/class-wc-shipping-rate.php~1-412:0-9565
+       220   0.0%   48.9%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/CostOfGoodsSold/CogsAwareTrait.php  /src/Internal/CostOfGoodsSold/CogsAwareTrait.php~1-36:0-1083
+       180   0.0%   31.6%  is_wp_error  target/gate2/wordpress/wp-includes/load.php~1910:53933-53964
+       180   0.0%   78.3%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTemplatesRegistry.php  ocommerce/src/Blocks/BlockTemplatesRegistry.php~1-148:0-6335
+       170   0.0%   50.0%  /srv/target/gate2/wordpress/wp-includes/option.php  arget/gate2/wordpress/wp-includes/option.php~1-3364:0-109702
+       170   0.0%   54.8%  /srv/target/gate2/wordpress/wp-includes/class-wp-object-cache.php  ordpress/wp-includes/class-wp-object-cache.php~1-646:0-17564
+       170   0.0%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-product-variable.php  ommerce/includes/class-wc-product-variable.php~1-775:0-27368
+       170   0.0%   81.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/RegisterHooksInterface.php  ocommerce/src/Internal/RegisterHooksInterface.php~1-23:0-503
+       170   0.0%   43.6%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/Domain/Services/CheckoutFieldsStorage.php  locks/Domain/Services/CheckoutFieldsStorage.php~1-209:0-7835
+       160   0.0%   47.1%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/Integrations/IntegrationInterface.php  /src/Blocks/Integrations/IntegrationInterface.php~1-42:0-882
+       160   0.0%   44.4%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/admin/helper/class-wc-helper-options.php  ncludes/admin/helper/class-wc-helper-options.php~1-60:0-1407
+       160   0.0%   88.9%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTemplatesController.php  mmerce/src/Blocks/BlockTemplatesController.php~1-440:0-18679
+       160   0.0%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-breadcrumb.php  s/woocommerce/includes/class-wc-breadcrumb.php~1-433:0-10755
+       150   0.0%   53.6%  /srv/target/gate2/wordpress/wp-includes/post.php  target/gate2/wordpress/wp-includes/post.php~1-9147:0-321811
+       150   0.0%   93.8%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/Utils/BlocksSharedState.php  commerce/src/Blocks/Utils/BlocksSharedState.php~1-241:0-7080
+       150   0.0%   62.5%  /srv/target/gate2/wordpress/wp-includes/class-wp-query.php  te2/wordpress/wp-includes/class-wp-query.php~1-5158:0-164669
+       150   0.0%  100.0%  WP_Query::__construct  /wordpress/wp-includes/class-wp-query.php~4102:136576-136620
+       150   0.0%   51.7%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTypes/AbstractBlock.php  mmerce/src/Blocks/BlockTypes/AbstractBlock.php~1-604:0-18618
+       150   0.0%   75.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTypes/ProductQuery.php  mmerce/src/Blocks/BlockTypes/ProductQuery.php~1-1068:0-30747
+       150   0.0%   93.8%  WC_Product::is_type  /includes/abstracts/abstract-wc-product.php~1676:45727-45761
+       150   0.0%   71.4%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/Traits/ScriptDebug.php  s/woocommerce/src/Internal/Traits/ScriptDebug.php~1-32:0-569
+       140   0.0%   70.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTypes/ProductCollection/QueryBuilder.php  BlockTypes/ProductCollection/QueryBuilder.php~1-1316:0-41713
+       140   0.0%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-product-variation.php  mmerce/includes/class-wc-product-variation.php~1-685:0-20966
+       140   0.0%   63.6%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/StoreApi/Schemas/V1/BatchSchema.php  ocommerce/src/StoreApi/Schemas/V1/BatchSchema.php~1-30:0-426
