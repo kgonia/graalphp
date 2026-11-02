@@ -592,11 +592,11 @@ smoke tests.
 - **Smoke:** every test equals PHP 8.5's in both modes (`tree` and `php.Interpreter=bytecode`), including
   `generators-resume` (issue 004's cases, yields in every expression position, switch, match, foreach by reference
   and list() around a yield) and `generators-api`, which failed on main.
-- **php-src `Zend/tests/generators`** (184 cases): PHPT_GEN_MAIN on main, PHPT_GEN_NOW now; no case passing on main fails.
+- **php-src `Zend/tests/generators`** (184 cases): 101 pass on main (`d2ecac8`), 126 now; no case passing on main fails.
   What still fails: destruction when the last reference goes (issue 005: `finally_ran_on_close`, `run_on_dtor`'s
   order, `gh9750-*`, `yield_from_force_closed`), Fiber (9), WeakReference and MultipleIterator (missing classes),
   final classes, object handles of iterators (foreach over an object takes a handle in php-src), named arguments.
-- **php-src, all cases:** PHPT_FULL.
+- **php-src, all cases** (`tests/phpt/run.sh --reuse-oracle`, 7,341): main 3,180 pass, this branch 3,241 (+61); no case passing on main fails.
 - **WordPress pages:** 19/21 equal PHP's on the JVM (the two oEmbed links), as on main.
 - **`mvn test`** passes, CompilationTest included.
 
