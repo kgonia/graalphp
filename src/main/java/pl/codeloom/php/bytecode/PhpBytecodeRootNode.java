@@ -70,6 +70,7 @@ import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
+import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.nodes.vars.Places;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.RefWrites;
@@ -3274,6 +3275,70 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void uncached(VirtualFrame frame, LocalAccessor variable, String name,
                                     @Bind BytecodeNode bytecode, @Bind Node node) {
             Locals.bindRef(frame, variable, bytecode, PhpContext.get(node).globalRef(name));
+        }
+    }
+
+    /**
+     * A global by name read: a superglobal (`$_GET`, GlobalVarNode.execute) or `$GLOBALS['name']` by a constant
+     * key (GlobalsDimNode): its value, null when it doesn't exist. The site's GlobalRefNode keeps the reference.
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    public static final class GlobalValue {
+        @Specialization(excludeForUncached = true)
+        public static Object cached(String name, @Bind Node node,
+                                    @Cached(value = "create(name)", neverDefault = true) GlobalRefNode global) {
+            PhpRef ref = global.execute(PhpContext.get(node), false);
+            return ref == null ? PhpNull.NULL : ref.get();
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object uncached(String name, @Bind Node node) {
+            PhpRef ref = PhpContext.get(node).findGlobal(name);
+            return ref == null ? PhpNull.NULL : ref.get();
+        }
+    }
+
+    /**
+     * A global by name as a place (GlobalVarNode.makeRef): its reference, made (null) when create says so and the
+     * global doesn't exist; else null for a missing one (an unset of an element, a foreach by reference read it
+     * without creating it).
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = boolean.class, name = "create")
+    public static final class GlobalRef {
+        @Specialization(excludeForUncached = true)
+        public static Object cached(String name, boolean create, @Bind Node node,
+                                    @Cached(value = "create(name)", neverDefault = true) GlobalRefNode global) {
+            PhpRef ref = global.execute(PhpContext.get(node), create);
+            return ref == null ? PhpNull.NULL : ref;
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object uncached(String name, boolean create, @Bind Node node) {
+            PhpContext context = PhpContext.get(node);
+            PhpRef ref = create ? context.globalRef(name) : context.findGlobal(name);
+            return ref == null ? PhpNull.NULL : ref;
+        }
+    }
+
+    /** `unset($_SESSION)` (GlobalVarNode.unset): the global named. */
+    @Operation
+    public static final class UnsetGlobal {
+        @Specialization
+        public static void unset(Object key, @Bind Node node) {
+            PhpContext.get(node).unsetGlobal(GlobalsDimNode.toName(key));
+        }
+    }
+
+    /** `$_SESSION = &place` (GlobalVarNode.bindRef): the reference, then the global named. */
+    @Operation
+    public static final class BindGlobal {
+        @Specialization
+        public static Object bind(PhpRef ref, Object key, @Bind Node node) {
+            PhpContext.get(node).bindGlobal(GlobalsDimNode.toName(key), ref);
+            return ref.get();
         }
     }
 

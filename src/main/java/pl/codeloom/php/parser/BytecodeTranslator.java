@@ -1100,6 +1100,8 @@ public final class BytecodeTranslator {
                 case "AST_VAR":
                     if (isThis(node)) {
                         b.emitReadThis();
+                    } else if (refPlace(node) instanceof RefPlace place) {
+                        place.read();
                     } else {
                         b.emitReadVar(variable(node, "read of"));
                     }
@@ -1372,11 +1374,12 @@ public final class BytecodeTranslator {
          * as a value, with php-src's notice.
          */
         private void yieldedReference(Object value) {
-            if (value instanceof Ast ast && ast.is("AST_VAR")) {
+            if (value instanceof Ast ast && ast.is("AST_VAR") && !PhpContext.SUPERGLOBALS.contains(ast.get("name"))) {
                 b.emitRefVar(variable(ast, "yield by reference of"));
                 return;
             }
-            if (value instanceof Ast ast && (ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP"))) {
+            if (value instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
+                    || ast.is("AST_STATIC_PROP"))) {
                 refOf(ast);
                 return;
             }
@@ -3278,22 +3281,24 @@ public final class BytecodeTranslator {
             b.endArgByRef();
         }
 
-        // ---- static properties: places kept in a reference ----
+        // ---- static properties, superglobals and $GLOBALS: places kept in a reference ----
 
         /**
          * A place whose storage is a reference (Translator.place's StaticPropNode, GlobalVarNode, GlobalsDimNode):
-         * `Cls::$name`, of a class reference (a name, self, parent, static, an expression).
+         * `Cls::$name`, of a class reference (a name, self, parent, static, an expression); or a superglobal.
          */
         private final class RefPlace {
             private final Object classNode;
             private final StaticPropSite site;
+            private final String global;
             /** A class that is an expression, evaluated by prepare (zend_compile_class_ref fetches it at once). */
             private BytecodeLocal classLocal;
             private boolean prepared;
 
-            RefPlace(Object classNode, StaticPropSite site) {
+            RefPlace(Object classNode, StaticPropSite site, String global) {
                 this.classNode = classNode;
                 this.site = site;
+                this.global = global;
             }
 
             /**
@@ -3305,7 +3310,7 @@ public final class BytecodeTranslator {
                     return;
                 }
                 prepared = true;
-                if (!(classNode instanceof Ast name && name.is("AST_NAME"))) {
+                if (site != null && !(classNode instanceof Ast name && name.is("AST_NAME"))) {
                     classLocal = b.createLocal();
                     b.beginStoreLocal(classLocal);
                     classRef(classNode);
@@ -3323,13 +3328,21 @@ public final class BytecodeTranslator {
 
             /** The place's value (execute): a missing global is null, a missing static property an Error. */
             void read() {
-                b.beginReadStaticProp(site);
-                emitClass();
-                b.endReadStaticProp();
+                if (site != null) {
+                    b.beginReadStaticProp(site);
+                    emitClass();
+                    b.endReadStaticProp();
+                } else {
+                    b.emitGlobalValue(global);
+                }
             }
 
             /** The value as isset() reads it (readIfSet): null for a missing static property too. */
             void readIfSet() {
+                if (site == null) {
+                    read();
+                    return;
+                }
                 b.beginStaticPropIfSet(site);
                 emitClass();
                 b.endStaticPropIfSet();
@@ -3337,22 +3350,44 @@ public final class BytecodeTranslator {
 
             /** The place's reference (makeRef); a missing global made (null) when create says so, else null. */
             void ref(boolean create) {
-                b.beginStaticPropRef(site);
-                emitClass();
-                b.endStaticPropRef();
+                if (site != null) {
+                    b.beginStaticPropRef(site);
+                    emitClass();
+                    b.endStaticPropRef();
+                } else {
+                    b.emitGlobalRef(global, create);
+                }
             }
 
             void unset() {
-                b.beginUnsetStaticProp(site);
-                emitClass();
-                b.endUnsetStaticProp();
+                if (site != null) {
+                    b.beginUnsetStaticProp(site);
+                    emitClass();
+                    b.endUnsetStaticProp();
+                    return;
+                }
+                b.beginUnsetGlobal();
+                name();
+                b.endUnsetGlobal();
             }
 
             /** `place = &source` (bindRef): the source's reference, then the place bound to it. */
             void bind(Runnable source) {
-                b.beginBindStaticProp(site);
+                if (site != null) {
+                    b.beginBindStaticProp(site);
+                    source.run();
+                    b.endBindStaticProp();
+                    return;
+                }
+                b.beginBindGlobal();
                 source.run();
-                b.endBindStaticProp();
+                name();
+                b.endBindGlobal();
+            }
+
+            /** A global's name, as UnsetGlobal and BindGlobal take it. */
+            private void name() {
+                b.emitLoadConstant(made(() -> Str.of(global)));
             }
         }
 
@@ -3367,7 +3402,11 @@ public final class BytecodeTranslator {
                         throw new Unsupported("static property by a computed name", node);
                     }
                     StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name)));
-                    return new RefPlace(node.get("class"), site);
+                    return new RefPlace(node.get("class"), site, null);
+                }
+                case "AST_VAR" -> {
+                    return node.get("name") instanceof String name && PhpContext.SUPERGLOBALS.contains(name)
+                            ? new RefPlace(null, null, name) : null;
                 }
                 default -> {
                     return null;
@@ -3389,9 +3428,9 @@ public final class BytecodeTranslator {
             return local;
         }
 
-        /** A plain variable (a CV): no $this, no variable variable. */
+        /** A plain variable (a CV): no $this, $GLOBALS or superglobal, no variable variable. */
         private boolean isVariable(Ast node) {
-            return node.is("AST_VAR") && node.get("name") instanceof String && !isThis(node);
+            return node.is("AST_VAR") && node.get("name") instanceof String name && plainVariable(name);
         }
 
         /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */
