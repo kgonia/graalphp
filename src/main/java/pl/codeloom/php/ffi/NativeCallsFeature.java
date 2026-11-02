@@ -20,6 +20,7 @@ public final class NativeCallsFeature implements Feature {
             "pl.codeloom.php.builtins.CurlNative$Upcalls",
             "pl.codeloom.php.builtins.CurlFunctions$StderrFile$Libc",
             "pl.codeloom.php.builtins.ExecFunctions$Libc",
+            "pl.codeloom.php.builtins.DnsFunctions$Libc",
             "pl.codeloom.php.builtins.Syslog$Libc");
     /** The classes that hold native state (upcall stubs, native memory, a library's initialization): run time. */
     static final List<String> NATIVE_STATE = List.of(

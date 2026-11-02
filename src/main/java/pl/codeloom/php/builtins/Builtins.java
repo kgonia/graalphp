@@ -102,6 +102,7 @@ public final class Builtins {
         FilterFunctions.register(registry);
         ExecFunctions.register(registry);
         MailFunctions.register(registry);
+        DnsFunctions.register(registry);
         // ext/curl is loaded when libcurl is (as an extension php was built without isn't)
         boolean curl = CurlNative.available();
         CurlFunctions.Methods curlMethods = null;
