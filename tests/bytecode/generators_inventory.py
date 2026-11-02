@@ -24,6 +24,16 @@ def construct(reason):
     kind = match.group(1) if match else ""
     if "$this" in reason:
         return "$this"
+    if reason.startswith("anonymous class"):
+        return "anonymous class"
+    if kind == "AST_NAMED_ARG":
+        return "named argument"
+    if reason.startswith("write to a property of an expression"):
+        return "assignment to a property of an expression"
+    if re.match(r"(argument|read of|assignment to) \$(_[A-Z]+|GLOBALS)\b", reason):
+        return "superglobal"
+    if "a place other than a variable" in reason and kind == "AST_VAR":
+        return "variable variable"
     names = {
         "AST_YIELD": "yield", "AST_YIELD_FROM": "yield from", "AST_PROP": "property access",
         "AST_NULLSAFE_PROP": "property access", "AST_STATIC_PROP": "static property",
@@ -67,15 +77,21 @@ def construct(reason):
 
 
 def read(log):
+    # a function is named by its file (scan.php's "file" lines) and its name: php-src's tests reuse names
     on_bytecode, on_tree = [], {}
+    file = ""
     for line in open(log, encoding="utf-8", errors="replace"):
-        if line.startswith("php.bytecode bytecode ") and line.rstrip().endswith(" (generator)"):
-            on_bytecode.append(line[len("php.bytecode bytecode "):].rstrip()[:-len(" (generator)")])
+        if line.startswith("php.bytecode file "):
+            file = line[len("php.bytecode file "):].strip().rsplit("/", 1)[-1]
+        elif line.startswith("php.bytecode bytecode ") and line.rstrip().endswith(" (generator)"):
+            name = line[len("php.bytecode bytecode "):].rstrip()[:-len(" (generator)")]
+            if f"{file}: {name}" not in on_bytecode:
+                on_bytecode.append(f"{file}: {name}")
         elif line.startswith("php.bytecode all "):
-            name, _, reasons = line[len("php.bytecode all "):].strip().partition(": ")
-            parts = [r.strip() for r in reasons.split(" | ") if r.strip()]
-            if "generator" in parts:
-                on_tree[name] = parts
+            name, _, reasons = line[len("php.bytecode all "):].strip().partition(": generator")
+            parts = ["generator"] + [r.strip() for r in reasons.split(" | ") if r.strip()]
+            if reasons or line.rstrip().endswith(": generator"):
+                on_tree[f"{file}: {name}"] = parts
     failed = []
     out = os.path.splitext(log)[0] + ".out"
     if os.path.exists(out):
