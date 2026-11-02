@@ -1,0 +1,66 @@
+3175 histograms, 984.6 s of sampled self time; interpreter 4.3%, tier 1 10.8%, tier 2 85.0%
+built-ins (<builtin>) 18.1% of self time
+
+functions by self time (30): ms, share, interpreter / tier 1 / tier 2
+    108360  11.0%    0.0 /   0.0 / 100.0  wpdb::query
+     60960   6.2%    0.0 /   0.0 / 100.0  defined
+     50690   5.1%    0.0 /   0.0 / 100.0  WP_Hook::apply_filters
+     36230   3.7%    0.0 /   0.0 / 100.0  apply_filters
+     24870   2.5%    0.0 /   0.0 / 100.0  WP_Object_Cache::is_valid_key
+     20260   2.1%    0.0 /   0.0 / 100.0  get_option
+     15750   1.6%    0.0 /   0.0 / 100.0  WP_Hook::add_filter
+     15680   1.6%    0.0 /   0.0 / 100.0  wp_normalize_path
+     13480   1.4%    0.0 /   0.0 / 100.0  translate
+     12890   1.3%    0.0 /   0.0 / 100.0  WP_Post::__construct
+     10550   1.1%   31.8 /  68.2 /   0.0  mysqli_real_connect
+     10020   1.0%    0.0 /  83.6 /  16.4  mysqli_query
+      9770   1.0%    0.0 /   0.0 / 100.0  wp_cache_get
+      9070   0.9%    0.0 /   0.0 / 100.0  array_merge
+      7920   0.8%    0.0 /   0.0 / 100.0  WC_Data::get_hook_prefix
+      7800   0.8%    0.0 /   0.0 / 100.0  Automattic\WooCommerce\Internal\DependencyManagement\RuntimeContainer::instantiate_class_using_reflection
+      7160   0.7%    0.0 /   0.0 / 100.0  file_exists
+      6600   0.7%    0.0 /   0.8 /  99.2  wpdb::get_row
+      6560   0.7%    4.6 /  23.3 /  72.1  WC_Data::set_prop
+      5830   0.6%    0.0 /   0.0 / 100.0  WP_Theme_JSON::sanitize
+      5610   0.6%    0.0 /   0.0 / 100.0  WP_HTML_Tag_Processor::class_name_updates_to_attributes_updates
+      5010   0.5%    0.0 /   0.0 / 100.0  wp_get_global_settings
+      4710   0.5%    0.0 /   0.0 / 100.0  WP_Block_Type::set_props
+      4650   0.5%    0.0 /   0.0 / 100.0  _wp_array_get
+      4540   0.5%    0.0 /   0.0 / 100.0  WP_Theme_JSON::get_block_element_selectors
+      4480   0.5%    0.0 /   0.0 / 100.0  clone
+      4480   0.5%    2.2 /   1.3 /  96.4  WP_Hook::has_filter
+      4440   0.5%    0.0 /   0.0 / 100.0  WP_Object_Cache::get
+      4310   0.4%    0.0 /   0.0 / 100.0  wp_load_alloptions
+      4230   0.4%    0.0 /   0.0 / 100.0  _WP_Dependency::__construct
+
+functions by interpreted self time (30): ms interpreted, share of all, its own share interpreted
+      3350   0.3%   31.8%  mysqli_real_connect  <builtin>~1:0
+      2230   0.2%  100.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/vendor/composer/jetpack_autoload_classmap.php  endor/composer/jetpack_autoload_classmap.php~1-9653:0-474610
+       570   0.1%   66.3%  WC_Data::get_prop  erce/includes/abstracts/abstract-wc-data.php~953:25548-25605
+       300   0.0%    4.6%  WC_Data::set_prop  erce/includes/abstracts/abstract-wc-data.php~900:24268-24314
+       230   0.0%   51.1%  Automattic\WooCommerce\Blocks\Registry\SharedType::get  ns/woocommerce/src/Blocks/Registry/SharedType.php~26:544-589
+       220   0.0%   40.7%  WP_Query::is_singular  /wordpress/wp-includes/class-wp-query.php~4767:154046-154095
+       190   0.0%   38.0%  is_wp_error  target/gate2/wordpress/wp-includes/load.php~1910:53933-53964
+       180   0.0%   41.9%  mysqli_set_charset  <builtin>~1:0
+       160   0.0%   16.5%  _get_block_templates_paths  rdpress/wp-includes/block-template-utils.php~296:11256-11311
+       150   0.0%   55.6%  absint  target/gate2/wordpress/wp-includes/load.php~1546:44102-44136
+       140   0.0%   58.3%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTypes/AbstractBlock.php  mmerce/src/Blocks/BlockTypes/AbstractBlock.php~1-604:0-18618
+       140   0.0%   93.3%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Utilities/I18nUtil.php  t/plugins/woocommerce/src/Utilities/I18nUtil.php~1-66:0-1726
+       140   0.0%   51.9%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/includes/class-wc-order.php  ugins/woocommerce/includes/class-wc-order.php~1-2637:0-80369
+       130   0.0%   34.2%  mysqli_select_db  <builtin>~1:0
+       130   0.0%   15.3%  wc_string_to_bool  /woocommerce/includes/wc-formatting-functions.php~27:664-702
+       120   0.0%   35.3%  wp_parse_args  gate2/wordpress/wp-includes/functions.php~5065:158189-158249
+       120   0.0%   40.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/DataStores/Orders/OrdersTableDataStore.php  l/DataStores/Orders/OrdersTableDataStore.php~1-3743:0-127102
+       120   0.0%   60.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/StoreApi/Utilities/CartController.php  rce/src/StoreApi/Utilities/CartController.php~1-1497:0-49730
+       110   0.0%   73.3%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/BlockTypes/AbstractInnerBlock.php  rce/src/Blocks/BlockTypes/AbstractInnerBlock.php~1-65:0-1784
+       110   0.0%   68.8%  Automattic\WooCommerce\Blocks\Domain\Package::get_url  gins/woocommerce/src/Blocks/Domain/Package.php~112:2716-2763
+       110   0.0%   39.3%  esc_attr  ate2/wordpress/wp-includes/formatting.php~4826:171017-171044
+       110   0.0%   34.4%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/CostOfGoodsSold/CogsAwareTrait.php  /src/Internal/CostOfGoodsSold/CogsAwareTrait.php~1-36:0-1083
+       110   0.0%   37.9%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Blocks/Integrations/IntegrationInterface.php  /src/Blocks/Integrations/IntegrationInterface.php~1-42:0-882
+       110   0.0%   64.7%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/StoreApi/Utilities/OrderAuthorizationTrait.php  c/StoreApi/Utilities/OrderAuthorizationTrait.php~1-86:0-3387
+       110   0.0%   50.0%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Admin/Notes/DeprecatedNotes.php  oocommerce/src/Admin/Notes/DeprecatedNotes.php~1-560:0-14155
+       110   0.0%   28.9%  has_filter  arget/gate2/wordpress/wp-includes/plugin.php~296:10884-10956
+       100   0.0%    3.0%  WP_Object_Cache::_exists  ordpress/wp-includes/class-wp-object-cache.php~178:3836-3880
+       100   0.0%   41.7%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Internal/ShopperLists/Privacy/Privacy.php  e/src/Internal/ShopperLists/Privacy/Privacy.php~1-196:0-5240
+       100   0.0%   43.5%  /srv/target/gate2/wordpress/wp-includes/html-api/class-wp-html-processor.php  ncludes/html-api/class-wp-html-processor.php~1-6647:0-213967
+       100   0.0%   58.8%  /srv/target/gate2/wordpress/wp-content/plugins/woocommerce/src/Enums/PaymentGatewayFeature.php  woocommerce/src/Enums/PaymentGatewayFeature.php~1-151:0-3310
