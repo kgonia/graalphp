@@ -339,6 +339,11 @@ public final class BuiltinNodes {
             } else {
                 end = n;
             }
+            if (start >= end) {
+                // no loop and no store for an empty slice (natively, the Object[] loop's store test failed for
+                // empty slices, where that loop never runs: wiki/partial-evaluation.md, round 2)
+                return new PhpArray();
+            }
             // sized for the slice, except a slice of ints, which stays unboxed; one loop per layout, so the loop
             // tests no layout (Graal's speculation on such tests, hoisted out of the loop, failed natively)
             if (array.holdsLongs()) {

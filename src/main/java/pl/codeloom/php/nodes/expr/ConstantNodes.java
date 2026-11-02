@@ -167,9 +167,14 @@ public final class ConstantNodes {
      * in a namespace, else -1) in context; an Error if it isn't defined.
      */
     public static Object globalConstant(PhpContext context, String name, int id, int fallbackId) {
-        Object value = context.constantAt(id);
-        if (value == null && fallbackId >= 0) {
-            value = context.constantAt(fallbackId);
+        Object value;
+        if (fallbackId < 0) {
+            value = context.requiredConstantAt(id);
+        } else {
+            value = context.constantAt(id);
+            if (value == null) {
+                value = context.constantAt(fallbackId);
+            }
         }
         if (value == null) {
             CompilerDirectives.transferToInterpreter();

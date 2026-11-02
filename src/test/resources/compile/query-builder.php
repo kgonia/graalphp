@@ -4,7 +4,7 @@
 // ??, builds SQL with ., .= and interpolation, and calls implode()/array_map(). Its compiled code per operation
 // is what decides whether such a method fits HotSpot's install limit (640 KB), so it has a budget of IR nodes
 // (see CompilationTest). Generated; each block repeats one pattern with its own key.
-// IR budget: Query::sql 26000
+// IR budget: Query::sql 24000
 final class Query {
     public array $vars = [];
     public array $flags = [];

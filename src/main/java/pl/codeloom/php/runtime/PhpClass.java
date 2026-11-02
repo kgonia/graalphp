@@ -6,6 +6,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -380,29 +381,35 @@ public final class PhpClass {
     }
 
     /**
-     * The language-level identity of this class: equal for the same declarations in every context. Made on first
-     * use without leaving compiled code: each request declares its classes anew, so a transfer to the interpreter
-     * here deoptimized every compiled `new` and static call once per request, and they were compiled again.
+     * The language-level identity of this class: equal for the same declarations in every context. A declared
+     * class has it ({@link #makeKey}, from PhpContext.declareClass), so compiled code reads one field: inline
+     * caches test it at every method call, `new` and static call, and a lazy making's call at each of those
+     * sites was about 15 IR nodes and a call's code. A class not declared yet makes it here, once, in the
+     * interpreter.
      */
     public ClassKey getKey() {
         ClassKey k = key;
-        if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, k == null)) {
-            k = makeKey();
+        if (k == null) {
+            CompilerDirectives.transferToInterpreter();
+            k = makeKey(PhpContext.get(null).getLanguage());
         }
         return k;
     }
 
+    /** Makes the key once the class is complete: its parent, interfaces and traits are set. */
     @TruffleBoundary
-    private ClassKey makeKey() {
-        key = PhpContext.get(null).getLanguage().classKey(new ClassKey.Id(declaration,
-                parent == null ? null : parent.getKey(), keys(interfaces), keys(traits)));
+    public ClassKey makeKey(PhpLanguage language) {
+        if (key == null) {
+            key = language.classKey(new ClassKey.Id(declaration, parent == null ? null : parent.makeKey(language),
+                    keys(language, interfaces), keys(language, traits)));
+        }
         return key;
     }
 
-    private static List<ClassKey> keys(List<PhpClass> classes) {
+    private static List<ClassKey> keys(PhpLanguage language, List<PhpClass> classes) {
         List<ClassKey> keys = new ArrayList<>(classes.size());
         for (PhpClass phpClass : classes) {
-            keys.add(phpClass.getKey());
+            keys.add(phpClass.makeKey(language));
         }
         return List.copyOf(keys);
     }

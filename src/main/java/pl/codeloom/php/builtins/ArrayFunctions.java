@@ -489,10 +489,34 @@ final class ArrayFunctions {
         return result;
     }
 
+    /**
+     * array_merge as php_array_merge_wrapper: the result made at the elements' count; with two arrays of which one
+     * is empty, the other itself when merging would only copy it (a list, or string keys only), as php-src
+     * returns it (shared, so a write through either copies, and with its internal pointer).
+     */
     @TruffleBoundary
     private static PhpArray merge(Object[] a) {
-        PhpArray result = new PhpArray();
-        for (int i = 0; i < Args.count(a); i++) {
+        int arguments = Args.count(a);
+        int count = 0;
+        boolean packed = true;
+        boolean longs = true;
+        for (int i = 0; i < arguments; i++) {
+            PhpArray array = Args.array(a, i, "array_merge");
+            count += array.size();
+            packed &= array.isPacked();
+            longs &= array.holdsLongs() || array.size() == 0;
+        }
+        if (arguments == 2) {
+            PhpArray first = Args.array(a, 0, "array_merge");
+            PhpArray second = Args.array(a, 1, "array_merge");
+            PhpArray only = first.size() == 0 ? second : second.size() == 0 ? first : null;
+            if (only != null && (only.isPacked() || onlyStringKeys(only))) {
+                return only;
+            }
+        }
+        PhpArray result = count == 0 ? new PhpArray() : !packed ? PhpArray.ofHashCapacity(count)
+                : longs ? PhpArray.ofLongCapacity(count) : PhpArray.ofCapacity(count);
+        for (int i = 0; i < arguments; i++) {
             PhpArray array = Args.array(a, i, "array_merge");
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object key = array.keyAt(p);
@@ -504,6 +528,15 @@ final class ArrayFunctions {
             }
         }
         return result;
+    }
+
+    private static boolean onlyStringKeys(PhpArray array) {
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            if (array.keyAt(p) instanceof Long) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @TruffleBoundary

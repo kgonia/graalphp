@@ -68,7 +68,7 @@ public final class Args {
             return array;
         }
         throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " must be of type array, "
-                + (value == null ? "none" : Convert.typeName(value)) + " given");
+                + (value == null ? "none" : valueName(value)) + " given");
     }
 
     /** A by-reference argument. Built-ins declare these parameters by-ref, so callers pass a PhpRef. */
