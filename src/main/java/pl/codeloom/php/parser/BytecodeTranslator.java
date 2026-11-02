@@ -22,6 +22,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Str;
 
@@ -80,6 +81,8 @@ public final class BytecodeTranslator {
     private final String[] captures;
     private final boolean[] captureByRef;
     private final Names names;
+    /** A generator function's body: a call returns the Generator, which runs the body (GeneratorStart). */
+    private final boolean generator;
     /** The body the first run translates, read by the tree translator already; later runs read their own. */
     private Ast firstBody;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
@@ -96,7 +99,8 @@ public final class BytecodeTranslator {
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
                                Ast body, Translator.ClassInfo owner, PhpFunction function, String display,
-                               PhpFunction.Param[] params, String[] captures, boolean[] captureByRef, Names names) {
+                               PhpFunction.Param[] params, String[] captures, boolean[] captureByRef, Names names,
+                               boolean generator) {
         this.language = language;
         this.path = path;
         this.source = source;
@@ -110,18 +114,19 @@ public final class BytecodeTranslator {
         this.captures = captures;
         this.captureByRef = captureByRef;
         this.names = names;
+        this.generator = generator;
     }
 
     /**
-     * The function's call target on bytecode, or null when its body uses something the translator doesn't cover
-     * (generators are left to the caller).
+     * The function's call target on bytecode, or null when its body uses something the translator doesn't cover.
+     * A generator function's (generator) returns the Generator, which runs the body on continuations.
      */
     static RootCallTarget translate(PhpLanguage language, String path, Source source, boolean internal,
                                     Ast declaration, Ast body, Translator.ClassInfo owner, PhpFunction function,
                                     String display, PhpFunction.Param[] params, String[] captures,
-                                    boolean[] captureByRef, Names names) {
+                                    boolean[] captureByRef, Names names, boolean generator) {
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration, body,
-                owner, function, display, params, captures, captureByRef, names);
+                owner, function, display, params, captures, captureByRef, names, generator);
         BytecodeParser<PhpBytecodeRootNodeGen.Builder> parser = translator::parse;
         BytecodeRootNodes<PhpBytecodeRootNode> nodes;
         try {
@@ -129,8 +134,13 @@ public final class BytecodeTranslator {
         } catch (Unsupported unsupported) {
             report("tree     " + display + ": " + unsupported.getMessage());
             if (REPORT_ALL) {
-                report("all      " + display + ": " + String.join(" | ", collect(language, path, source, internal,
-                        declaration, owner, function, display, params, captures, captureByRef, names)));
+                List<String> reasons = new ArrayList<>();
+                if (generator) {
+                    reasons.add("generator");
+                }
+                reasons.addAll(collect(language, path, source, internal, declaration, owner, function, display,
+                        params, captures, captureByRef, names, generator));
+                report("all      " + display + ": " + String.join(" | ", reasons));
             }
             return null;
         }
@@ -144,7 +154,10 @@ public final class BytecodeTranslator {
                 Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
-        report("bytecode " + display);
+        if (generator) {
+            root.initializeGenerator(function.returnsRef(), hasFinally(body == null ? declaration.body() : body));
+        }
+        report("bytecode " + display + (generator ? " (generator)" : ""));
         if (display.equals(DUMP)) {
             root.dumpAtExit();
         }
@@ -161,12 +174,12 @@ public final class BytecodeTranslator {
     private static List<String> collect(PhpLanguage language, String path, Source source, boolean internal,
                                         Ast declaration, Translator.ClassInfo owner, PhpFunction function,
                                         String display, PhpFunction.Param[] params, String[] captures,
-                                        boolean[] captureByRef, Names names) {
+                                        boolean[] captureByRef, Names names, boolean generator) {
         Set<String> skip = new java.util.HashSet<>();
         Set<String> reasons = new LinkedHashSet<>();
         for (int attempt = 0; attempt < COLLECT_LIMIT; attempt++) {
             BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration,
-                    null, owner, function, display, params, captures, captureByRef, names);
+                    null, owner, function, display, params, captures, captureByRef, names, generator);
             translator.skip = skip;
             try {
                 PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse);
@@ -184,22 +197,7 @@ public final class BytecodeTranslator {
         return new ArrayList<>(reasons);
     }
 
-    /**
-     * That a generator stays on the tree (its caller doesn't translate generators), for the report; report=all
-     * also lists what else in its body the translator doesn't cover, the yields included.
-     */
-    static void reportGenerator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
-                                Translator.ClassInfo owner, PhpFunction function, String display,
-                                PhpFunction.Param[] params, String[] captures, boolean[] captureByRef, Names names) {
-        report("tree     " + display + ": generator");
-        if (REPORT_ALL) {
-            List<String> reasons = new ArrayList<>();
-            reasons.add("generator");
-            reasons.addAll(collect(language, path, source, internal, declaration, owner, function, display, params,
-                    captures, captureByRef, names));
-            report("all      " + display + ": " + String.join(" | ", reasons));
-        }
-    }
+
 
     private static void report(String line) {
         if (REPORT) {
@@ -227,6 +225,8 @@ public final class BytecodeTranslator {
         private final Translator constants;
         private final Map<String, BytecodeLocal> variables = new HashMap<>();
         private final List<Loop> loops = new ArrayList<>();
+        /** A generator's local holding its PhpGenerator. */
+        private BytecodeLocal generatorLocal;
         /** The next object of made to take, or to make. */
         private int madeIndex;
         /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
@@ -243,7 +243,7 @@ public final class BytecodeTranslator {
         // ---- the function ----
 
         void root(Ast body) {
-            if (function.returnsRef()) {
+            if (function.returnsRef() && !generator) {
                 throw new Unsupported("function returning by reference", declaration);
             }
             b.beginRoot();
@@ -331,6 +331,10 @@ public final class BytecodeTranslator {
             }
             for (int i = 0; i < captures.length; i++) {
                 b.emitBindCapture(variables.get(captures[i]), i, captureByRef[i]);
+            }
+            if (generator) {
+                generatorLocal = b.createLocal();
+                b.emitGeneratorStart(generatorLocal);
             }
             if (source != null) {
                 b.endSourceSectionUnavailable();
@@ -790,6 +794,12 @@ public final class BytecodeTranslator {
                 case "AST_MATCH":
                     match(node);
                     break;
+                case "AST_YIELD":
+                    yieldValue(node);
+                    break;
+                case "AST_YIELD_FROM":
+                    yieldFrom(node);
+                    break;
                 default:
                     throw new Unsupported("expression", node);
             }
@@ -859,6 +869,70 @@ public final class BytecodeTranslator {
             expression(arm.get("expr"));
             matchArms(arms, index + 1, subject, defaultArm, errorLine);
             b.endConditional();
+        }
+
+        // ---- generators ----
+
+        /**
+         * `yield`, `yield value`, `yield key => value` (zend_compile_yield): the key, then the value; in a generator
+         * yielding by reference, a variable's reference. The result is what the generator is resumed with.
+         */
+        private void yieldValue(Ast node) {
+            if (generatorLocal == null) {
+                throw new Unsupported("yield outside a generator", node);
+            }
+            b.beginResumed();
+            b.emitLoadLocal(generatorLocal);
+            b.beginYieldValue();
+            b.emitLoadLocal(generatorLocal);
+            Object key = node.get("key");
+            if (key == null) {
+                b.emitLoadConstant(PhpGenerator.SUSPENDED);
+            } else {
+                expression(key);
+            }
+            Object value = node.get("value");
+            if (value == null) {
+                b.emitLoadConstant(PhpNull.NULL);
+            } else if (function.returnsRef()) {
+                yieldedReference(value);
+            } else {
+                expression(value);
+            }
+            b.endYieldValue();
+            b.endResumed();
+        }
+
+        /**
+         * What a generator yielding by reference yields (ZEND_YIELD with ZEND_ACC_RETURN_REFERENCE): a variable's
+         * reference; anything else is yielded as a value, with php-src's notice.
+         */
+        private void yieldedReference(Object value) {
+            if (value instanceof Ast ast && ast.is("AST_VAR")) {
+                b.emitRefVar(variable(ast, "yield by reference of"));
+                return;
+            }
+            if (value instanceof Ast ast && (ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP")
+                    || Translator.isCall(ast))) {
+                throw new Unsupported("yield by reference of an element, property or call", ast);
+            }
+            b.beginNotReferenceYielded();
+            expression(value);
+            b.endNotReferenceYielded();
+        }
+
+        /** `yield from source`: the generator takes source's elements; the result is the yield from's value. */
+        private void yieldFrom(Ast node) {
+            if (generatorLocal == null) {
+                throw new Unsupported("yield from outside a generator", node);
+            }
+            b.beginResumed();
+            b.emitLoadLocal(generatorLocal);
+            b.beginYieldFrom();
+            b.emitLoadLocal(generatorLocal);
+            expression(node.get("expr"));
+            b.endYieldFrom();
+            b.endResumed();
         }
 
         /** An array key: a literal one normalized once, as DimNode's constant key. */
@@ -1234,6 +1308,35 @@ public final class BytecodeTranslator {
     // php-ast flag values (Translator's)
     private static final int ARRAY_ELEM_REF = 1;
     private static final int PROMOTED = 7 | 128;
+
+    /** Whether a body has a finally block, outside the functions and classes declared in it. */
+    private static boolean hasFinally(Object node) {
+        if (!(node instanceof Ast ast)) {
+            return false;
+        }
+        switch (ast.kind) {
+            case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
+                return false;
+            case "AST_TRY":
+                if (ast.get("finally") != null) {
+                    return true;
+                }
+                break;
+            default:
+                break;
+        }
+        for (Object child : ast.children()) {
+            if (hasFinally(child)) {
+                return true;
+            }
+        }
+        for (Object child : ast.namedValues()) {
+            if (hasFinally(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** Whether a variable of this name is a local: $this, $GLOBALS and the superglobals are not. */
     private static boolean plainVariable(String name) {

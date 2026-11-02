@@ -720,15 +720,14 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
-        if (language.bytecode() && !generator) {
+        // a generator runs on bytecode whenever its body translates, whichever interpreter is chosen: its
+        // continuations resume it where it stopped, which the tree's resumable statements can't (issue 004)
+        if (language.bytecode() || generator) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
-                    owner, target, display, params, captures, captureByRef, declaredNames);
+                    owner, target, display, params, captures, captureByRef, declaredNames, generator);
             if (bytecode != null) {
                 return bytecode;
             }
-        } else if (language.bytecode()) {
-            BytecodeTranslator.reportGenerator(language, path, source, internal, node, owner, target, display, params,
-                    captures, captureByRef, declaredNames);
         }
         Scope bodyScope = new Scope();
         Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,

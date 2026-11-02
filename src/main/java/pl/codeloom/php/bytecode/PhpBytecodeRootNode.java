@@ -6,6 +6,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
+import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.bytecode.EpilogExceptional;
 import com.oracle.truffle.api.bytecode.EpilogReturn;
 import com.oracle.truffle.api.bytecode.ForceQuickening;
@@ -15,6 +16,7 @@ import com.oracle.truffle.api.bytecode.Operation;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.bytecode.ShortCircuitOperation;
 import com.oracle.truffle.api.bytecode.Variadic;
+import com.oracle.truffle.api.bytecode.Yield;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
@@ -23,6 +25,7 @@ import com.oracle.truffle.api.dsl.TypeSystemReference;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
@@ -55,6 +58,7 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -139,6 +143,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
     @CompilationFinal private String className;
     @CompilationFinal private String scopeName;
+    /** A generator function: `function &gen()` yields references; whether its body has a finally block. */
+    @CompilationFinal private boolean generatorByRef;
+    @CompilationFinal private boolean generatorHasFinally;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -160,6 +167,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.foreachStates = foreachLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
+    }
+
+    /** Makes this a generator function's root (see {@link GeneratorStart}). */
+    public void initializeGenerator(boolean byRef, boolean hasFinally) {
+        this.generatorByRef = byRef;
+        this.generatorHasFinally = hasFinally;
     }
 
     /**
@@ -1018,6 +1031,85 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             state.clear(bytecode, frame);
             position.clear(bytecode, frame);
+        }
+    }
+
+    // ---- generators ----
+
+    /**
+     * A generator function's call, once its parameters are bound (ZEND_GENERATOR_CREATE): the call returns the
+     * Generator, suspended before the body's first statement, and keeps it in a local for the yields.
+     */
+    @Yield
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class GeneratorStart {
+        @Specialization
+        public static Object start(LocalAccessor generator, @Bind ContinuationRootNode continuation,
+                                   @Bind MaterializedFrame frame, @Bind BytecodeNode bytecode,
+                                   @Bind PhpBytecodeRootNode root, @Bind Node node) {
+            PhpGenerator state = new PhpGenerator(continuation, frame, root.generatorByRef,
+                    root.generatorHasFinally);
+            generator.setObject(bytecode, frame, state);
+            return state.newObject(PhpContext.get(node));
+        }
+    }
+
+    /**
+     * `yield`, `yield value`, `yield key => value` (ZEND_YIELD): records the key (null for the next integer key)
+     * and the value and suspends; resuming continues here, Resumed giving the yield's result.
+     */
+    @Yield(resultOperandIndex = 2)
+    public static final class YieldValue {
+        @Specialization
+        public static Object yield(PhpGenerator generator, Object key, Object value,
+                                   @Bind ContinuationRootNode continuation) {
+            generator.yielded(key == PhpGenerator.SUSPENDED ? null : key, value);
+            generator.suspendAt(continuation);
+            return PhpGenerator.SUSPENDED;
+        }
+    }
+
+    /**
+     * `yield from source` (ZEND_YIELD_FROM): starts delegating and suspends; the generator takes the elements, and
+     * resumes the body here once they are done, Resumed giving the yield from's result.
+     */
+    @Yield(resultOperandIndex = 1)
+    public static final class YieldFrom {
+        @Specialization
+        public static Object yieldFrom(PhpGenerator generator, Object source,
+                                       @Bind ContinuationRootNode continuation, @Bind Node node) {
+            generator.yieldFrom(node, source);
+            generator.suspendAt(continuation);
+            return PhpGenerator.DELEGATED;
+        }
+    }
+
+    /** `&$x` as a value: the variable's reference, converting it into one if needed. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class RefVar {
+        @Specialization
+        public static PhpRef ref(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
+            return Locals.makeRef(frame, variable, bytecode);
+        }
+    }
+
+    /** What a generator yielding by reference yields that isn't a variable: the value, with php-src's notice. */
+    @Operation
+    public static final class NotReferenceYielded {
+        @Specialization
+        public static Object value(Object value, @Bind Node node) {
+            CallNode.notice(node, "Only variable references should be yielded by reference");
+            return value;
+        }
+    }
+
+    /** What a yield or yield from gives once resumed: the sent value, or it throws (throw(), destruction). */
+    @Operation
+    public static final class Resumed {
+        @Specialization
+        public static Object resumed(PhpGenerator generator, Object value) {
+            return generator.resumed(value);
         }
     }
 

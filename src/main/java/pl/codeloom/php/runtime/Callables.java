@@ -185,8 +185,9 @@ public final class Callables {
     @TruffleBoundary
     private static Caller caller() {
         return Truffle.getRuntime().iterateFrames(frameInstance -> {
-            RootNode root = frameInstance.getCallTarget() instanceof RootCallTarget target ? target.getRootNode()
+            RootNode running = frameInstance.getCallTarget() instanceof RootCallTarget target ? target.getRootNode()
                     : null;
+            RootNode root = SourceLocation.codeRoot(running);
             if (root instanceof pl.codeloom.php.nodes.call.BuiltinRootNode) {
                 return null;
             }
@@ -196,7 +197,8 @@ public final class Callables {
                     ? body.getScopeName()
                     : root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
                     ? bytecode.getScopeName() : null;
-            return new Caller(frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY).getArguments(), scope);
+            return new Caller(SourceLocation.codeFrame(running,
+                    frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments(), scope);
         });
     }
 

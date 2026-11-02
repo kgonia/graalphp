@@ -112,9 +112,10 @@ public final class Backtrace {
     public static PhpArray here(int options, int limit, int skip) {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
-            levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
-                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
-                    SourceLocation.callingInstruction(frame)));
+            RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            levels.add(new Level(SourceLocation.codeRoot(root),
+                    SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
+                    frame.getCallNode(), SourceLocation.callingInstruction(frame)));
             return null;
         }, skip);
         return build(levels, options, limit);
