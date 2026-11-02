@@ -335,14 +335,31 @@ public final class PhpGenerator {
         if (parent == null) {
             return this;
         }
-        PhpGenerator root = parent;
+        // php-src caches the end of the chain (node.ptr.root): a chain only grows at its end until a link is
+        // removed, which unlinkVersion counts, so a deep chain isn't walked again at every step
+        PhpGenerator root = rootCache != null && rootCacheVersion == unlinkVersion ? rootCache : parent;
         while (root.parent != null) {
             root = root.parent;
         }
+        rootCache = root;
+        rootCacheVersion = unlinkVersion;
         if (root.open) {
             return root;
         }
         return updateCurrent(root, exceptionPending);
+    }
+
+    /** The end of this one's chain when it was last looked up, valid while no link was removed since. */
+    private PhpGenerator rootCache;
+    private int rootCacheVersion;
+    /** Counts the links removed from delegation chains (in any context: it only invalidates caches). */
+    private static int unlinkVersion;
+
+    /** Removes the link from child to the generator it delegates to. */
+    private static void unlink(PhpGenerator child) {
+        child.parent.children.remove(child);
+        child.parent = null;
+        unlinkVersion++;
     }
 
     /** zend_generator_update_current: the end of the chain, oldRoot, has finished. */
@@ -353,8 +370,11 @@ public final class PhpGenerator {
             newRoot = below(newRoot);
         }
         PhpGenerator newRootParent = newRoot.parent;
-        newRootParent.children.remove(newRoot);
-        newRoot.parent = null;
+        unlink(newRoot);
+        if (newRoot != this) {
+            rootCache = newRoot;
+            rootCacheVersion = unlinkVersion;
+        }
         if (!exceptionPending) {
             if (newRootParent.returned == null) {
                 newRoot.pendingThrow = new PhpError("ClosedGeneratorException",
@@ -371,8 +391,14 @@ public final class PhpGenerator {
         return newRoot;
     }
 
-    /** The generator on the chain from this one that delegates to g. */
+    /**
+     * The generator on the chain from this one that delegates to g: its only child, else (several delegate to it)
+     * found by walking from this one, as get_new_root does.
+     */
     private PhpGenerator below(PhpGenerator g) {
+        if (g.children != null && g.children.size() == 1) {
+            return g.children.get(0);
+        }
         PhpGenerator below = this;
         while (below.parent != g) {
             below = below.parent;
@@ -579,8 +605,7 @@ public final class PhpGenerator {
             endValues();
         }
         if (parent != null) {
-            parent.children.remove(this);
-            parent = null;
+            unlink(this);
         }
         if (!open || running || !hasFinally || continuation == start) {
             close();
