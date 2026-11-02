@@ -43,18 +43,32 @@ public final class UnaryNodes {
         @Override
         public Object execute(VirtualFrame frame) {
             Ini ini = PhpContext.get(this).ini();
-            int saved = ini.errorReporting();
-            boolean silenced = (saved & ~ErrorFunctions.E_FATAL_ERRORS) != 0;
-            if (silenced) {
-                ini.setErrorReporting(saved & ErrorFunctions.E_FATAL_ERRORS);
-            }
+            int saved = begin(ini);
             try {
                 return operand.execute(frame);
             } finally {
-                if (silenced && (ini.errorReporting() & ~ErrorFunctions.E_FATAL_ERRORS) == 0) {
-                    ini.setErrorReporting(saved);
-                }
+                end(ini, saved);
             }
+        }
+
+        /** BEGIN_SILENCE: error_reporting keeps only the fatal errors; the value before, for {@link #end}. */
+        public static int begin(Ini ini) {
+            int saved = ini.errorReporting();
+            if (!onlyFatal(saved)) {
+                ini.setErrorReporting(saved & ErrorFunctions.E_FATAL_ERRORS);
+            }
+            return saved;
+        }
+
+        /** END_SILENCE: the value before back, unless the expression set one reporting more than fatal errors. */
+        public static void end(Ini ini, int saved) {
+            if (onlyFatal(ini.errorReporting()) && !onlyFatal(saved)) {
+                ini.setErrorReporting(saved);
+            }
+        }
+
+        private static boolean onlyFatal(int mask) {
+            return (mask & ~ErrorFunctions.E_FATAL_ERRORS) == 0;
         }
     }
 

@@ -1919,6 +1919,27 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 SourceLocation.of(node));
     }
 
+    /**
+     * `@expr`'s start (BEGIN_SILENCE, the tree's SilenceNode): error_reporting keeps only the fatal errors while
+     * the expression runs; the value is error_reporting before, which SilenceEnd takes.
+     */
+    @Operation
+    public static final class SilenceStart {
+        @Specialization
+        public static int start(@Bind Node node) {
+            return UnaryNodes.SilenceNode.begin(PhpContext.get(node).ini());
+        }
+    }
+
+    /** `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before. */
+    @Operation
+    public static final class SilenceEnd {
+        @Specialization
+        public static void end(int saved, @Bind Node node) {
+            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), saved);
+        }
+    }
+
     /** func_num_args(): how many arguments the call passed. */
     @Operation
     public static final class FuncNumArgs {

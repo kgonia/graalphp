@@ -1937,8 +1937,34 @@ public final class BytecodeTranslator {
                     expression(node.get("expr"));
                     b.endNegate();
                 }
+                case 260 -> silence(node.get("expr"));
                 default -> throw new Unsupported("unary operator " + node.flags, node);
             }
+        }
+
+        /**
+         * `@expr` (SilenceNode, BEGIN_SILENCE / END_SILENCE): error_reporting saved into a local and reduced to the
+         * fatal errors, the expression's value into another; the finally restores error_reporting on every way out,
+         * an exception's too (php-src's live range of the saved value).
+         */
+        private void silence(Object operand) {
+            b.beginBlock();
+            BytecodeLocal saved = b.createLocal();
+            BytecodeLocal value = b.createLocal();
+            b.beginStoreLocal(saved);
+            b.emitSilenceStart();
+            b.endStoreLocal();
+            b.beginTryFinally(() -> {
+                b.beginSilenceEnd();
+                b.emitLoadLocal(saved);
+                b.endSilenceEnd();
+            });
+            b.beginStoreLocal(value);
+            expression(operand);
+            b.endStoreLocal();
+            b.endTryFinally();
+            b.emitLoadLocal(value);
+            b.endBlock();
         }
 
         /**
