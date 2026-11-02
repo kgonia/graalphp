@@ -3313,10 +3313,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         return scopeName;
     }
 
-    /** Splitting, as for the tree's functions: a copy per caller profile. */
+    /**
+     * No splitting. On 25.4 a split copy (the generated cloneUninitialized: the bytecode unquickened, the
+     * specialization state inside it kept, the caches made anew) answered differently from the original: on
+     * WordPress, is_wp_error()'s copies answered false for a WP_Error its original answered true for, so wp-login.php
+     * failed; with -Dpolyglot.engine.Splitting=false it didn't. Not reproduced outside WordPress yet. ponytail: a
+     * bytecode function keeps one profile for all its callers, where the tree's functions split.
+     */
     @Override
     public boolean isCloningAllowed() {
-        return true;
+        return false;
     }
 
     @Override
