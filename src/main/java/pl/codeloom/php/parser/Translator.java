@@ -636,7 +636,7 @@ public final class Translator {
     // ---- functions ----
 
     /** Builds a PhpFunction whose body is translated on first call. */
-    private PhpFunction declareFunction(Ast node, ClassInfo owner) {
+    PhpFunction declareFunction(Ast node, ClassInfo owner) {
         String name = owner == null ? names.declared((String) node.get("name")) : (String) node.get("name");
         Names declaredNames = names;
         Ast paramList = node.node("params");
@@ -1023,15 +1023,20 @@ public final class Translator {
 
     /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
     private ExprNode newAnonymousClass(Ast node, Ast classNode) {
+        ClassTemplate template = anonymousClass(classNode);
+        return new DeclareNodes.NewAnonymousClassNode(template,
+                new NewNode(ClassRefNode.named(template.getName()), arguments(node.node("args"))));
+    }
+
+    /** An anonymous class's template, under a name of its own (the bytecode translator's too). */
+    ClassTemplate anonymousClass(Ast classNode) {
         String parent = classNode.get("extends") == null ? "class" : className(classNode.node("extends"));
         String name = parent + "@anonymous\0" + path + ":" + classNode.line + "$"
                 + Integer.toHexString(language.nextAnonymousClass());
-        ClassTemplate template = classTemplate(classNode, name);
-        return new DeclareNodes.NewAnonymousClassNode(template,
-                new NewNode(ClassRefNode.named(name), arguments(node.node("args"))));
+        return classTemplate(classNode, name);
     }
 
-    private ClassTemplate classTemplate(Ast node, String name) {
+    ClassTemplate classTemplate(Ast node, String name) {
         if ((node.flags & CLASS_TRAIT) != 0) {
             return traitTemplate(node, name);
         }

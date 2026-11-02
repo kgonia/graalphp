@@ -22,6 +22,7 @@ import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -326,9 +327,6 @@ public final class BytecodeTranslator {
             Ast paramList = declaration.node("params");
             for (int i = 0; i < params.length; i++) {
                 Ast param = (Ast) paramList.child(i);
-                if ((param.flags & PROMOTED) != 0) {
-                    throw new Unsupported("promoted constructor parameter", param);
-                }
                 BytecodeLocal local = variables.get(params[i].name());
                 if (params[i].variadic()) {
                     b.emitBindVariadic(local, i);
@@ -355,6 +353,16 @@ public final class BytecodeTranslator {
             }
             for (int i = 0; i < captures.length; i++) {
                 b.emitBindCapture(variables.get(captures[i]), i, captureByRef[i]);
+            }
+            // a constructor's promoted parameters, stored before its body runs (Translator's PromoteNodes)
+            if (owner != null && "__construct".equalsIgnoreCase((String) declaration.get("name"))) {
+                for (int i = 0; i < params.length; i++) {
+                    if ((((Ast) paramList.child(i)).flags & PROMOTED) != 0) {
+                        b.beginPromote(Str.sourceKey(params[i].name()));
+                        b.emitReadVar(variables.get(params[i].name()));
+                        b.endPromote();
+                    }
+                }
             }
             if (generator) {
                 generatorLocal = b.createLocal();
@@ -551,6 +559,14 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_STATIC":
                     staticStatement(node);
+                    break;
+                case "AST_FUNC_DECL":
+                    // declared when the statement runs (DeclareFunctionNode); made by the first run
+                    b.emitDeclareFunction((PhpFunction) made(() -> constants.declareFunction(node, null)));
+                    break;
+                case "AST_CLASS":
+                    b.emitDeclareClass((ClassTemplate) made(() -> constants.classTemplate(node,
+                            names.declared((String) node.get("name")))));
                     break;
                 default:
                     expressionStatement(node);
@@ -1798,7 +1814,14 @@ public final class BytecodeTranslator {
                     b.endCoalesce();
                     return;
                 }
-                case 15 -> throw new Unsupported("binary operator " + node.flags, node);
+                case 15 -> {
+                    // `xor` (LogicNodes.XorNode): both operands evaluated, then compared as booleans
+                    b.beginNotIdentical();
+                    condition(node.get("left"));
+                    condition(node.get("right"));
+                    b.endNotIdentical();
+                    return;
+                }
                 case 8 -> {
                     List<Object> parts = concatOperands(node);
                     if (parts.size() >= 3) {
@@ -2915,15 +2938,23 @@ public final class BytecodeTranslator {
          * evaluated by value and dropped (zend_pass_function). The object is the value.
          */
         private void newObject(Ast node) {
+            ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
-                throw new Unsupported("anonymous class", node);
+                // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs
+                anonymous = (ClassTemplate) made(() -> constants.anonymousClass(classNode));
+                b.beginBlock();
+                b.emitDeclareAnonymousClass(anonymous);
             }
             Ast args = node.node("args");
             boolean needsCallee = argumentsNeedCallee(args);
             b.beginConstruct();
             b.beginBindStackValue();
             b.beginInstantiate();
-            classRef(node.get("class"));
+            if (anonymous != null) {
+                b.emitResolveClass(classSite(anonymous.getName()));
+            } else {
+                classRef(node.get("class"));
+            }
             b.endInstantiate();
             StackValue object = b.endBindStackValue();
             StackValue calleeValue = callee(needsCallee, () -> {
@@ -2935,6 +2966,9 @@ public final class BytecodeTranslator {
                 argument(args.child(i), i, calleeValue);
             }
             b.endConstruct();
+            if (anonymous != null) {
+                b.endBlock();
+            }
         }
 
         /**

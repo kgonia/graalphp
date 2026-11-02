@@ -63,6 +63,7 @@ import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
 import pl.codeloom.php.nodes.stmt.BasicStmts;
+import pl.codeloom.php.nodes.stmt.DeclareNodes;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.nodes.stmt.GeneratorRefIteration;
 import pl.codeloom.php.nodes.stmt.TryNode;
@@ -77,6 +78,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassKey;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
@@ -3175,6 +3177,47 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static TruffleString join(@Variadic Object[] parts) {
             return Str.join(null, parts);
+        }
+    }
+
+    /** A function declared in a function's body, when the statement runs (DeclareFunctionNode). */
+    @Operation
+    @ConstantOperand(type = PhpFunction.class)
+    public static final class DeclareFunction {
+        @Specialization
+        public static void declare(PhpFunction function, @Bind Node node) {
+            DeclareNodes.DeclareFunctionNode.declare(PhpContext.get(node), function, false, node);
+        }
+    }
+
+    /** A class declared in a function's body, when the statement runs (DeclareClassNode). */
+    @Operation
+    @ConstantOperand(type = ClassTemplate.class)
+    public static final class DeclareClass {
+        @Specialization
+        public static void declare(ClassTemplate template, @Bind Node node) {
+            DeclareNodes.DeclareClassNode.declare(PhpContext.get(node), template, node);
+        }
+    }
+
+    /** `new class {...}`'s class, declared the first time (NewAnonymousClassNode). */
+    @Operation
+    @ConstantOperand(type = ClassTemplate.class)
+    public static final class DeclareAnonymousClass {
+        @Specialization
+        public static void declare(ClassTemplate template, @Bind Node node) {
+            DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template,
+                    Str.lower(template.getName()));
+        }
+    }
+
+    /** A constructor's promoted parameter stored in its property (PromoteNode). */
+    @Operation
+    @ConstantOperand(type = String.class)
+    public static final class Promote {
+        @Specialization
+        public static void promote(VirtualFrame frame, String name, Object value) {
+            BasicStmts.PromoteNode.store((PhpObject) frame.getArguments()[PhpFunction.ARG_THIS], name, value);
         }
     }
 
