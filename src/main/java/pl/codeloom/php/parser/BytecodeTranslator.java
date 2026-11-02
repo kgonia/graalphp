@@ -954,6 +954,9 @@ public final class BytecodeTranslator {
                 case "AST_ARRAY":
                     arrayLiteral(node);
                     break;
+                case "AST_ENCAPS_LIST":
+                    interpolation(node);
+                    break;
                 case "AST_CALL":
                     call(node, false);
                     break;
@@ -1317,6 +1320,24 @@ public final class BytecodeTranslator {
                 }
             }
             b.endLiteralEnd();
+        }
+
+        /**
+         * `"text {$expr} $var"` and heredoc (InterpolationNode): each part converted to a string as it is evaluated,
+         * a literal part as it is, then one join.
+         */
+        private void interpolation(Ast node) {
+            b.beginInterpolate();
+            for (Object part : node.children()) {
+                if (part instanceof String || part instanceof byte[]) {
+                    constant(part, node);
+                    continue;
+                }
+                b.beginInterpolationPart();
+                expression(part);
+                b.endInterpolationPart();
+            }
+            b.endInterpolate();
         }
 
         // ---- $this and properties ----

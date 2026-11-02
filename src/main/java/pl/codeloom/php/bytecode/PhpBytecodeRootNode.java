@@ -51,6 +51,7 @@ import pl.codeloom.php.nodes.call.StaticCallNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
 import pl.codeloom.php.nodes.expr.ConstantNodes;
+import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.intrinsics.BuiltinNodes;
@@ -126,6 +127,7 @@ import pl.codeloom.php.runtime.Str;
 @OperationProxy(value = Proxies.BitNot.class, name = "BitNot")
 @OperationProxy(value = Proxies.ToBool.class, name = "ToBool")
 @OperationProxy(value = Proxies.ReadElement.class, name = "ReadElement")
+@OperationProxy(value = InterpolationNode.PartNode.class, name = "InterpolationPart")
 @ShortCircuitOperation(name = "And", operator = ShortCircuitOperation.Operator.AND_RETURN_CONVERTED,
         booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Or", operator = ShortCircuitOperation.Operator.OR_RETURN_CONVERTED,
@@ -1891,6 +1893,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 TryNode.setPrevious(PhpContext.get(node), exception, previous);
             }
             throw (AbstractTruffleException) thrown;
+        }
+    }
+
+    // ---- strings ----
+
+    /**
+     * `"text {$expr} $var"` (InterpolationNode): the parts, each converted as it was evaluated (InterpolationPart,
+     * php-src's ROPE_ADD), joined in one call.
+     */
+    @Operation
+    public static final class Interpolate {
+        @Specialization
+        public static TruffleString join(@Variadic Object[] parts) {
+            return Str.join(null, parts);
         }
     }
 
