@@ -353,7 +353,12 @@ public final class PropNode extends LValueNode {
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         String name = name(frame);
-        PhpObject phpObject = target(frame, name, "modify");
+        bindRefOn(frame, object.execute(frame), name, ref);
+    }
+
+    /** bindRef of property name of target, evaluated: an error if it isn't an object. */
+    public void bindRefOn(VirtualFrame frame, Object target, String name, PhpRef ref) {
+        PhpObject phpObject = target(target, name, "modify");
         if (!accessible(frame, phpObject, name)) {
             throw boundToInaccessible(phpObject, name);
         }

@@ -48,6 +48,7 @@ import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.call.InstantiateNode;
 import pl.codeloom.php.nodes.call.MethodCallNode;
 import pl.codeloom.php.nodes.call.StaticCallNode;
+import pl.codeloom.php.nodes.expr.ArrayLiteralNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
 import pl.codeloom.php.nodes.expr.ConstantNodes;
@@ -62,6 +63,7 @@ import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
+import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.nodes.vars.Variables;
@@ -171,6 +173,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** A generator function: `function &gen()` yields references; whether its body has a finally block. */
     @CompilationFinal private boolean generatorByRef;
     @CompilationFinal private boolean generatorHasFinally;
+    /** `function &f()` (no generator): every return gives a PhpRef. */
+    @CompilationFinal private boolean returnsRef;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -192,6 +196,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.foreachStates = foreachLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
+    }
+
+    /** Makes this the root of a function returning by reference. */
+    public void initializeReturnsRef() {
+        this.returnsRef = true;
     }
 
     /** Makes this a generator function's root (see {@link GeneratorStart}). */
@@ -264,6 +273,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             root.releaseVariables(frame, bytecode);
             if (root.returnCoerce == 0) {
                 return value;
+            }
+            if (root.returnsRef) {
+                // a declared scalar type converts the value in the returned reference (FunctionRootNode.coerceRef)
+                PhpRef ref = (PhpRef) value;
+                Object current = ref.get();
+                Object coerced = FunctionRootNode.coerce(current, root.returnCoerce, root.returnNullable,
+                        "return value");
+                if (coerced != current) {
+                    ref.set(coerced);
+                }
+                return ref;
             }
             return FunctionRootNode.coerce(value, root.returnCoerce, root.returnNullable, "return value");
         }
@@ -1318,6 +1338,36 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `&$place` without a key: the reference at the next index. */
+    @Operation
+    public static final class LiteralAppendRef {
+        @Specialization
+        public static PhpArray append(PhpArray array, PhpRef ref) {
+            array.putRef(array.nextIndex(), ref);
+            return array;
+        }
+    }
+
+    /** `key => &$place`: the key, then the reference. */
+    @Operation
+    public static final class LiteralPutRef {
+        @Specialization
+        public static PhpArray put(PhpArray array, Object key, PhpRef ref) {
+            array.putRef(ArrayKey.of(key), ref);
+            return array;
+        }
+    }
+
+    /** `...$source` (ArrayLiteralNode.spread): an array's elements, int keys renumbered, string keys kept. */
+    @Operation
+    public static final class LiteralSpread {
+        @Specialization
+        public static PhpArray spread(PhpArray array, Object source) {
+            ArrayLiteralNode.spread(array, source);
+            return array;
+        }
+    }
+
     @Operation
     @ConstantOperand(type = LiteralSite.class)
     public static final class LiteralEnd {
@@ -1512,6 +1562,58 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             return access.readOn(frame, object, site.name);
         }
+    }
+
+    /**
+     * A nested element `$x[k1]...[kn]` as argument index: its reference (RefNested) when the parameter is by
+     * reference, else its value read down the chain (DimNode.execute).
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class)
+    public static final class SendNested {
+        @Specialization
+        public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
+                                  @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read,
+                                  @Cached InlinedBranchProfile sharedArray,
+                                  @Cached InlinedBranchProfile refArray,
+                                  @Cached InlinedBranchProfile createdArray) {
+            if (!function.isByRef(index)) {
+                return readChain(Variables.value(Locals.stored(frame, variable, bytecode)), keys, read);
+            }
+            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            return elementRef(node, base, keys, false, toKey, read);
+        }
+    }
+
+    /** `$obj->name[k1]...[kn]` as argument index: as SendNested, from the property. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class)
+    public static final class SendPropNested {
+        @Specialization
+        public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
+                                  @Variadic Object[] keys,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access,
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read) {
+            if (!function.isByRef(index)) {
+                return readChain(access.readOn(frame, object, site.name), keys, read);
+            }
+            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, false, toKey, read);
+        }
+    }
+
+    /** base[k1]...[kn] read (DimNode.execute down a chain). */
+    private static Object readChain(Object base, Object[] keys, ElementNodes.ElementReadNode read) {
+        Object value = base;
+        for (Object key : keys) {
+            value = read.execute(value, key);
+        }
+        return value;
     }
 
     /**
@@ -2190,6 +2292,268 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static PhpRef ref(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
             return Locals.makeRef(frame, variable, bytecode);
+        }
+    }
+
+    // ---- references (`=&`, by-reference elements and properties, global, static, return by reference) ----
+
+    /**
+     * `&$x[k1]...[kn]`, `&$x[k]...[]` (DimNode.makeRef down a chain): the containers made writable from the
+     * variable, then the element's reference, made one (null) if it is missing; a container on the way that
+     * isn't an array can't give one.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class RefNested {
+        @Specialization
+        public static PhpRef ref(VirtualFrame frame, LocalAccessor variable, boolean append, @Variadic Object[] keys,
+                                 @Bind BytecodeNode bytecode, @Bind Node node,
+                                 @Cached ElementNodes.ArrayKeyNode toKey,
+                                 @Cached ElementNodes.ElementReadNode read,
+                                 @Cached InlinedBranchProfile sharedArray,
+                                 @Cached InlinedBranchProfile refArray,
+                                 @Cached InlinedBranchProfile createdArray) {
+            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            return elementRef(node, base, keys, append, toKey, read);
+        }
+    }
+
+    /** `&$obj->name[k1]...[kn]`: as RefNested, from the property (PropNode.arrayForWrite). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class RefPropNested {
+        @Specialization
+        public static PhpRef ref(VirtualFrame frame, PropSite site, boolean append, Object object,
+                                 @Variadic Object[] keys,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access,
+                                 @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                 @Cached ElementNodes.ElementReadNode read) {
+            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey, read);
+        }
+    }
+
+    /** The reference of the element keys name from base (made writable), or of a new element (append). */
+    private static PhpRef elementRef(Node node, Object base, Object[] keys, boolean append,
+                                     ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
+        int levels = append ? keys.length : keys.length - 1;
+        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        if (!(container instanceof PhpArray array)) {
+            throw ElementChain.overloaded();
+        }
+        return append ? array.appendRef() : array.refAt(toKey.execute(keys[levels]));
+    }
+
+    /** `&$obj->name` (PropNode.makeRef): the property's reference, which it becomes if it isn't one. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class RefProp {
+        @Specialization
+        public static PhpRef ref(VirtualFrame frame, PropSite site, Object object,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access) {
+            return access.makeRefOn(frame, object, site.name);
+        }
+    }
+
+    /**
+     * `$x = &place` (RefAssignNode on a LocalVarNode, LocalVarNode.bindRef): the variable gives up what it held
+     * and becomes the reference; the value is the reference's.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class BindVar {
+        @Specialization
+        public static Object bind(VirtualFrame frame, LocalAccessor variable, PhpRef ref,
+                                  @Bind BytecodeNode bytecode) {
+            Locals.bindRef(frame, variable, bytecode, ref);
+            return ref.get();
+        }
+    }
+
+    /**
+     * `$x[k1]...[kn] = &place`, `$x[...][] = &place` (DimNode.bindRef): the containers made writable from the
+     * variable, then the element becomes the reference.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class BindNested {
+        @Specialization
+        public static Object bind(VirtualFrame frame, LocalAccessor variable, boolean append, PhpRef ref,
+                                  @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read,
+                                  @Cached InlinedBranchProfile sharedArray,
+                                  @Cached InlinedBranchProfile refArray,
+                                  @Cached InlinedBranchProfile createdArray) {
+            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            bindElement(node, base, keys, append, ref, toKey, read);
+            return ref.get();
+        }
+    }
+
+    /** `$obj->name[k1]...[kn] = &place`: as BindNested, from the property. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    public static final class BindPropNested {
+        @Specialization
+        public static Object bind(VirtualFrame frame, PropSite site, boolean append, PhpRef ref, Object object,
+                                  @Variadic Object[] keys,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access,
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read) {
+            bindElement(node, propertyForWrite(frame, access, object, site.name), keys, append, ref, toKey, read);
+            return ref.get();
+        }
+    }
+
+    private static void bindElement(Node node, Object base, Object[] keys, boolean append, PhpRef ref,
+                                    ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
+        int levels = append ? keys.length : keys.length - 1;
+        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        if (!(container instanceof PhpArray array)) {
+            throw ElementChain.overloaded();
+        }
+        array.putRef(append ? (Object) array.nextIndex() : toKey.execute(keys[levels]), ref);
+    }
+
+    /** `$obj->name = &place` (PropNode.bindRef): the reference, then the object. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class BindProp {
+        @Specialization
+        public static Object bind(VirtualFrame frame, PropSite site, PhpRef ref, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            access.bindRefOn(frame, object, site.name, ref);
+            return ref.get();
+        }
+    }
+
+    /**
+     * `$x = &f()` (CallRefAssignNode): the variable bound to the reference a function returning by reference
+     * returned; a value is assigned, with php-src's notice.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class BindVarToResult {
+        @Specialization
+        public static Object bind(VirtualFrame frame, LocalAccessor variable, Object result,
+                                  @Bind BytecodeNode bytecode, @Bind Node node) {
+            if (result instanceof PhpRef ref) {
+                Locals.bindRef(frame, variable, bytecode, ref);
+                return ref.get();
+            }
+            CallNode.notice(node, CallNode.ASSIGNED_VALUE);
+            Locals.write(frame, variable, bytecode, result);
+            return result;
+        }
+    }
+
+    /** `global $x` (GlobalNode): the variable bound to the global's reference, made (null) if it is missing. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = String.class, name = "name")
+    public static final class Global {
+        @Specialization(excludeForUncached = true)
+        public static void cached(VirtualFrame frame, LocalAccessor variable, String name,
+                                  @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached(value = "create(name)", neverDefault = true) GlobalRefNode global) {
+            Locals.bindRef(frame, variable, bytecode, global.execute(PhpContext.get(node), true));
+        }
+
+        @Specialization(replaces = "cached")
+        public static void uncached(VirtualFrame frame, LocalAccessor variable, String name,
+                                    @Bind BytecodeNode bytecode, @Bind Node node) {
+            Locals.bindRef(frame, variable, bytecode, PhpContext.get(node).globalRef(name));
+        }
+    }
+
+    /**
+     * `static $x = init;` (StaticVarNode): binds the variable to the function's static variable of that name in
+     * this context and answers true; false while it has none, and StaticCreate makes it from the initializer.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = PhpFunction.class)
+    @ConstantOperand(type = String.class, name = "name")
+    public static final class StaticBind {
+        @Specialization
+        public static boolean bind(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
+                                   @Bind BytecodeNode bytecode, @Bind Node node) {
+            PhpRef ref = PhpContext.get(node).findStaticVariable(function, name);
+            if (ref == null) {
+                return false;
+            }
+            Locals.bindRef(frame, variable, bytecode, ref);
+            return true;
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = PhpFunction.class)
+    @ConstantOperand(type = String.class, name = "name")
+    public static final class StaticCreate {
+        @Specialization
+        public static void create(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
+                                  Object initial, @Bind BytecodeNode bytecode, @Bind Node node) {
+            Locals.bindRef(frame, variable, bytecode,
+                    PhpContext.get(node).createStaticVariable(function, name, initial));
+        }
+    }
+
+    /**
+     * What `return value;` gives in a function returning by reference when the value is no place
+     * (ReturnRefValueNode): a call's reference when its callee returned one, else a new reference to the value,
+     * with php-src's notice (none for $this).
+     */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "notice")
+    public static final class ReturnedRef {
+        @Specialization
+        public static PhpRef returned(boolean notice, Object value, @Bind Node node) {
+            if (value instanceof PhpRef ref) {
+                return ref;
+            }
+            if (notice) {
+                CallNode.notice(node, CallNode.RETURNED_VALUE);
+            }
+            return PhpRef.unbound(value);
+        }
+    }
+
+    /**
+     * The end of a function returning by reference (FunctionRootNode.implicitReturnRef): null as a new reference,
+     * with php-src's notice at the closing brace.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "endLine")
+    public static final class ImplicitReturnRef {
+        @Specialization
+        public static PhpRef implicit(int endLine, @Bind PhpBytecodeRootNode root, @Bind Node node) {
+            CallNode.notice(node, CallNode.RETURNED_VALUE, new SourceLocation(root.path, endLine));
+            return PhpRef.unbound(PhpNull.NULL);
+        }
+    }
+
+    /**
+     * A call's result a generator yielding by reference yields (ZEND_YIELD of a call): the reference its callee
+     * returned, else the value with php-src's notice.
+     */
+    @Operation
+    public static final class YieldedRef {
+        @Specialization
+        public static Object yielded(Object result, @Bind Node node) {
+            if (!(result instanceof PhpRef)) {
+                CallNode.notice(node, "Only variable references should be yielded by reference");
+            }
+            return result;
         }
     }
 
