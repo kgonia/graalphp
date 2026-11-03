@@ -642,3 +642,91 @@ DRIVER=bench/generators/run.php AB_OUT=target/ab-gen bench/gate1/ab.sh all 60 6 
 AB_OUT=target/ab-gate1 bench/gate1/ab.sh all 200 6 main gen
 # inventory: tests/bytecode/scan.php over each list, then generators_inventory.py (the header of each says how)
 ```
+
+## The default (2026-11-02, branch `bytecode-default`)
+
+The owner decided: the Bytecode DSL interpreter is the default (`php.Interpreter=bytecode`; `tree` stays as an
+option while functions fall back to it), and the duplication between the two interpreters is cleaned up.
+
+### What the flip met first: compiled code per operation
+`CompilationTest` failed on the flip alone: the bytecode had none of partial evaluation rounds 2 and 3's fixes to the
+tree's code per operation (partial-evaluation.md), so the same PHP compiled to more code. Measured with
+`CompilationTest`'s options on one-construct programs (100 copies of a statement in a method) and on its programs,
+IR nodes after PE, tree / bytecode:
+
+| program | tree | bytecode, flip | bytecode, fixed |
+|---|---|---|---|
+| `$a = $q['k'];` x100 | 8,362 | 44,825 | 8,435 |
+| `$a = $n[1];` x100 | 9,323 | code too large (> 640 KB) | 9,403 |
+| `query-builder.php` `Query::sql` (budget 24,000) | 22,972 | 30,504 | 23,499 |
+| `large-function.php` `Query::sql`, last tier | 50,044 (607 KB) | code too large at tier 1 | 51,544 (550 KB) |
+| `basics.php` | 0 warnings | 2 performance warnings | 0 |
+
+The fixes, each the tree's own:
+- **Variable writes profiled** (`Locals.Writes`, as `LocalVarNode`'s seen bits, `416ae7d`): a write of a value of
+  unknown type compiled a long's, a double's and an Object's store, each with a reference's write and the release of
+  the old value, at every site. The unprofiled static writes are gone.
+- **The variables' release at a return profiled** per variable (as `FunctionRootNode.releaseLocals`, `b9eb18e`).
+- **Element writes and appends** hold an array value only once a write there stored one, and let go of it once per
+  exit, out of line on the exceptional one (as `DimNode.write`, `f5367db`); an `ArrayAccess` object's path only once
+  met.
+- **`a . b . c ...`** is one join (as `ConcatChainNode`, `b2d18f4`), in php-src's order: the first two operands
+  evaluated, then converted, each next one evaluated and converted in turn (`tests/smoke/concat-chain.php`).
+- **A caught exception's object** by class (`PhpException.getThrowable`), not the virtual `toThrowable` PE couldn't
+  inline (the two warnings).
+- **Large bytecode functions** count as `LargeCode` by their instructions, so their string-key reads outside loops
+  take the call-only form. The bytecode's loops are no nodes, so in a large bytecode function the reads in loops
+  take it too.
+- **The first tier without the economy configuration** (`compiler.FirstTierUseEconomy=false`, defaulted by the
+  launchers, `PhpMain.compilerDefaults`, and set by `CompilationTest`): with it, a bytecode function's first-tier
+  code was about a fifth larger than its last tier's (`Query::sql`: 314 against 285 KB; the tree's tiers are equal),
+  and `large-function.php` passed the install limit at tier 1, a permanent bailout. Without it tier 1 makes the
+  last tier's code (552 KB), in about a tenth more compile time there.
+- **What stays larger, inherent to the DSL:** an operation that can throw has its exception edge to the handler with
+  its own bytecode index (`handleException`, `resolveHandler`, `interceptTruffleException` recording the location):
+  about 8 IR nodes per such site, where the tree's exceptions unwind through Java frames.
+
+### What the flip met second: split copies of bytecode roots were wrong
+With bytecode the default, Gate 2's pages went from 19/21 equal to PHP's to 14/21 (`wp-login.php`, the fatal-error
+pages and `post-new.php` failed) and the WooCommerce walk from 51 equal responses and rows to 28: `wp_signon()`
+went on with a `WP_Error`. The pages and the walk had only ever run with the tree (S1-S3 measured bytecode on the
+kernels, the smoke tests and php-src's tests).
+- **Found by halving** (`php.bytecode.only=BITS:VALUE`, a server started per half): every function on the tree but
+  those whose name's hash ends in VALUE, 12 halvings from 1,045 functions on bytecode down to one, `is_wp_error()`.
+- **The cause:** `is_wp_error()` is called from hundreds of sites with objects of many classes; its `instanceof`
+  goes polymorphic (`SubclassTestNode` reports polymorphism), and Truffle splits it, a copy per caller
+  (`TraceSplitting`: `split ... is_wp_error`). The copies answered `false` for the `WP_Error` the original answered
+  `true` for, the same object (`spl_object_id` equal), while an `instanceof` written next to it answered `true`.
+  With `-Dpolyglot.engine.Splitting=false` every answer was right. The generated `cloneUninitialized` unquickens the
+  bytecode but keeps the specialization state inside it (GR-61293 moved it into the bytecode array) and makes the
+  cached nodes anew; a small program with the same shape (many classes, many callers, `tests/smoke`-style) splits
+  and answers right, so the trigger isn't isolated yet. To report upstream with a reproducer once it is.
+- **The fix, for now:** bytecode roots don't split (`isCloningAllowed` false, `faf011f`): Gate 2's pages are 19/21
+  again (the two oEmbed links), the walk equal to the tree's. A bytecode function keeps one profile for all its
+  callers, where the tree's split.
+
+### Splitting, tree against bytecode (2026-11-03)
+`-Dpolyglot.engine.TraceSplittingSummary=true` on 120 s of the WooCommerce load (`woo.sh diag`, 8 users) and of
+Gate 2's visits (`DIAG_SEED=gate2-seed`), CPUs 6-13, the build of `966765a` (bytecode roots don't split, `faf011f`):
+
+| run | splits | nodes made by splitting | top split roots (copies) | top split nodes |
+|---|---|---|---|---|
+| Woo, tree | 6,166 | 263,447 (+39.6 %) | `WC_Data::get_prop` 902, `absint` 208, `WC_Data::set_prop` 193, `esc_attr` 158, `wp_parse_args` 109, `SharedType::get` 94, `Container::get` 93, `is_wp_error` 90 | `MethodCallNode$Dispatch` 1,493, `StableValue` 502, `CallableDispatch` 361, `ToBoolean` 303, `Identical` 262, `SubclassTest` 145 |
+| Woo, bytecode | 50 | 2,844 (+0.5 %) | `WooCommerce::is_rest_api_request` 9, `LegacyProxy::get_instance_of` 6, `map_deep` 4, `wc_set_loop_prop` 3 | `StableValue` 267, `CallableDispatch` 249, `SubclassTest` 86 |
+| Gate 2, tree | 1,108 | 52,346 (+15.6 %) | `WP_REST_Controller::get_additional_fields` 73, `add_additional_fields_schema` 73, `esc_attr` 61, `is_wp_error` 56, `block_has_support` 46, `absint` 45, `WP_HTML_Tag_Processor::next_token` 36 | `MethodCallNode$Dispatch` 213, `ToBoolean` 199, `StableValue` 146, `Identical` 117, `CallableDispatch` 110 |
+| Gate 2, bytecode | 10 | | `map_deep` 4, `WP_Post::__construct` 2, four with 1 | `CallableDispatch` 139, `ToBoolean` 40 |
+
+- **Every split left on bytecode is a function still on the tree** (superglobals, `include`, `@`... at
+  `966765a`) or a built-in's root: bytecode roots don't split (`isCloningAllowed` false). Before `faf011f` they did
+  split on 25.4 (`TraceSplitting` listed `is_wp_error` copies), and the copy didn't behave like a tree split: it
+  answered `instanceof` wrongly (above).
+- **What the tree's splits bought:** the top split roots are small polymorphic helpers called from hundreds of sites
+  (`get_prop`/`set_prop` by key, `absint`, `esc_attr`, `is_wp_error`, the containers' `get`): a copy per caller keeps
+  each caller's `instanceof`, method dispatch and comparisons monomorphic. On bytecode they keep one profile each.
+- **The same 120 s on WooCommerce:** tree 43 orders (0.32/s), 4.3 pages/s, p50 2,982 ms; bytecode 15 orders (0.10/s),
+  1.4 pages/s, p50 10,850 ms; peak RSS 1,549 against 1,949 MB. Neither had settled (compile never settles on Woo,
+  woocommerce-load.md): the tree made 1,792 compilations (1,677 first tier, 267 s of compile threads), bytecode 874
+  (802, 311 s). For the 469 functions both compiled at tier 1, bytecode's compile took 1.52 times as long (median),
+  for 1.10 times the IR and 1.09 times the code; on Gate 2 1.32, 1.10 and 1.08 (480 functions). The compile
+  queue, not the profile, is what this window measured: a bytecode function costs the compiler about half again as
+  much per graph.
