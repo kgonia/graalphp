@@ -61,9 +61,6 @@ final class CoreFunctions {
         r.fn("is_countable", a -> Args.get(a, 0) instanceof PhpArray
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("countable"));
         r.fn("is_callable", (context, a) -> Callables.resolve(context, Args.get(a, 0, PhpNull.NULL)) != null);
-        r.fn("is_finite", a -> Double.isFinite(Convert.toDouble(Args.get(a, 0))));
-        r.fn("is_nan", a -> Double.isNaN(Convert.toDouble(Args.get(a, 0))));
-        r.fn("is_infinite", a -> Double.isInfinite(Convert.toDouble(Args.get(a, 0))));
         r.fn("gettype", a -> Str.of(Convert.typeName(Args.get(a, 0, PhpNull.NULL))));
         r.fn("get_debug_type", a -> Str.of(Convert.debugType(Args.get(a, 0, PhpNull.NULL))));
         r.fn("intval", a -> intval(Args.get(a, 0), Args.lng(a, 1, 10)));
@@ -391,13 +388,61 @@ final class CoreFunctions {
         r.fn("floor", a -> Math.floor(Convert.toDouble(Args.get(a, 0))));
         r.fn("ceil", a -> Math.ceil(Convert.toDouble(Args.get(a, 0))));
         r.fn("round", a -> round(Convert.toNumber(Args.get(a, 0)), Args.lng(a, 1, 0)));
-        r.fn("sqrt", a -> Math.sqrt(Convert.toDouble(Args.get(a, 0))));
-        r.fn("log", a -> Args.has(a, 1) ? Math.log(Convert.toDouble(Args.get(a, 0)))
-                / Math.log(Convert.toDouble(Args.get(a, 1))) : Math.log(Convert.toDouble(Args.get(a, 0))));
-        r.fn("log10", a -> Math.log10(Convert.toDouble(Args.get(a, 0))));
-        r.fn("log2", a -> Math.log(Convert.toDouble(Args.get(a, 0))) / Math.log(2));
-        r.fn("exp", a -> Math.exp(Convert.toDouble(Args.get(a, 0))));
-        r.fn("pi", a -> Math.PI);
+        // math.c: the C library's functions on Z_PARAM_DOUBLE arguments. Math's (HotSpot's intrinsics) round as glibc's
+        // more often than StrictMath's (fdlibm's), which stands in where Math has no intrinsic
+        math(r, "sin", Math::sin);
+        math(r, "cos", Math::cos);
+        math(r, "tan", Math::tan);
+        math(r, "asin", Math::asin);
+        math(r, "acos", Math::acos);
+        math(r, "atan", Math::atan);
+        math(r, "sinh", StrictMath::sinh);
+        math(r, "cosh", StrictMath::cosh);
+        math(r, "tanh", StrictMath::tanh);
+        math(r, "asinh", CoreFunctions::asinh);
+        math(r, "acosh", CoreFunctions::acosh);
+        math(r, "atanh", CoreFunctions::atanh);
+        math(r, "exp", Math::exp);
+        math(r, "expm1", StrictMath::expm1);
+        math(r, "log1p", StrictMath::log1p);
+        math(r, "log10", Math::log10);
+        math(r, "sqrt", Math::sqrt);
+        math(r, "deg2rad", x -> x / 180.0 * Math.PI);
+        math(r, "rad2deg", x -> x / Math.PI * 180);
+        math(r, "is_finite", x -> Double.isFinite(x));
+        math(r, "is_nan", x -> Double.isNaN(x));
+        math(r, "is_infinite", x -> Double.isInfinite(x));
+        math2(r, "atan2", "y", "x", StrictMath::atan2);
+        math2(r, "hypot", "x", "y", StrictMath::hypot);
+        math2(r, "fmod", "num1", "num2", (x, y) -> x % y);
+        // C's pow, where 1 to any power and -1 to an infinite one are 1 (Java's give NaN)
+        math2(r, "fpow", "num", "exponent", (x, y) -> x == 1.0 || x == -1.0 && Double.isInfinite(y) ? 1.0
+                : Math.pow(x, y));
+        r.fn("pi", (context, a) -> {
+            Args.arity(a, "pi", 0, 0);
+            return Math.PI;
+        });
+        r.fn("log", (context, a) -> {
+            Args.arity(a, "log", 1, 2);
+            double num = Args.dbl(context, a, 0, "log", "num");
+            if (!Args.has(a, 1)) {
+                return Math.log(num);
+            }
+            double base = Args.dbl(context, a, 1, "log", "base");
+            if (base == 2.0) {
+                return log2(num);
+            }
+            if (base == 10.0) {
+                return Math.log10(num);
+            }
+            if (base == 1.0) {
+                return Double.NaN;
+            }
+            if (base <= 0.0) {
+                throw new PhpError("ValueError", "log(): Argument #2 ($base) must be greater than 0");
+            }
+            return Math.log(num) / Math.log(base);
+        });
         r.fn("bindec", a -> Long.parseUnsignedLong("0" + Str.java(Args.str(a, 0)).replaceAll("[^01]", ""), 2));
         r.fn("mt_getrandmax", a -> 2147483647L);
         r.fn("getrandmax", a -> 2147483647L);
@@ -418,7 +463,6 @@ final class CoreFunctions {
             Args.arity(a, "fdiv", 2, 2);
             return Args.dbl(context, a, 0, "fdiv", "num1") / Args.dbl(context, a, 1, "fdiv", "num2");
         });
-        r.fn("fmod", a ->Convert.toDouble(Args.get(a, 0)) % Convert.toDouble(Args.get(a, 1)));
         r.fn("dechex", a -> Str.of(Long.toHexString(Args.lng(a, 0, 0))));
         r.fn("hexdec", a -> hexdec(Args.str(a, 0)));
         r.fn("decbin", a -> Str.of(Long.toBinaryString(Args.lng(a, 0, 0))));
@@ -864,4 +908,98 @@ final class CoreFunctions {
         return crc.getValue();
     }
 
+
+    /** A math.c function of one Z_PARAM_DOUBLE $num. */
+    private static void math(Registry r, String name, java.util.function.DoubleFunction<Object> f) {
+        r.fn(name, (context, a) -> {
+            Args.arity(a, name, 1, 1);
+            return f.apply(Args.dbl(context, a, 0, name, "num"));
+        });
+    }
+
+    private static void math2(Registry r, String name, String first, String second,
+                              java.util.function.DoubleBinaryOperator f) {
+        r.fn(name, (context, a) -> {
+            Args.arity(a, name, 2, 2);
+            return f.applyAsDouble(Args.dbl(context, a, 0, name, first), Args.dbl(context, a, 1, name, second));
+        });
+    }
+
+    private static final double LN2 = 6.93147180559945286227e-01;
+
+    /** fdlibm's s_asinh.c (glibc's). */
+    private static double asinh(double x) {
+        double t = Math.abs(x);
+        double w;
+        if (!Double.isFinite(x)) {
+            return x + x;
+        }
+        if (t < 0x1p-28) {
+            return x;
+        }
+        if (t > 0x1p28) {
+            w = Math.log(t) + LN2;
+        } else if (t > 2.0) {
+            w = Math.log(2.0 * t + 1.0 / (StrictMath.sqrt(x * x + 1.0) + t));
+        } else {
+            double t2 = x * x;
+            w = StrictMath.log1p(t + t2 / (1.0 + StrictMath.sqrt(1.0 + t2)));
+        }
+        return x > 0 ? w : -w;
+    }
+
+    /** log2: the exponent, plus the logarithm of the mantissa (scaled into [sqrt(2)/2, sqrt(2)]). */
+    private static double log2(double x) {
+        if (!(x > 0) || Double.isInfinite(x)) {
+            return Math.log(x) / LN2;
+        }
+        int e = Math.getExponent(x);
+        if (e < Double.MIN_EXPONENT) {
+            return log2(x * 0x1p54) - 54;
+        }
+        double m = Math.scalb(x, -e);
+        if (m > 1.4142135623730951) {
+            m /= 2;
+            e++;
+        }
+        return e + Math.log(m) / LN2;
+    }
+
+    /** fdlibm's e_acosh.c. */
+    private static double acosh(double x) {
+        if (x < 1) {
+            return Double.NaN;
+        }
+        if (x >= 0x1p28) {
+            return Double.isFinite(x) ? Math.log(x) + LN2 : x + x;
+        }
+        if (x == 1.0) {
+            return 0.0;
+        }
+        if (x > 2.0) {
+            return Math.log(2.0 * x - 1.0 / (x + StrictMath.sqrt(x * x - 1.0)));
+        }
+        double t = x - 1.0;
+        return StrictMath.log1p(t + StrictMath.sqrt(2.0 * t + t * t));
+    }
+
+    /** fdlibm's e_atanh.c (glibc's). */
+    private static double atanh(double x) {
+        double xa = Math.abs(x);
+        double t;
+        if (xa < 0.5) {
+            if (xa < 0x1p-28) {
+                return x;
+            }
+            t = xa + xa;
+            t = 0.5 * StrictMath.log1p(t + t * xa / (1.0 - xa));
+        } else if (xa < 1.0) {
+            t = 0.5 * StrictMath.log1p((xa + xa) / (1.0 - xa));
+        } else if (xa > 1.0 || Double.isNaN(x)) {
+            return Double.NaN;
+        } else {
+            return x / 0.0;
+        }
+        return Math.copySign(t, x);
+    }
 }
