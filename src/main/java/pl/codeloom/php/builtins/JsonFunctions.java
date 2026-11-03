@@ -51,6 +51,7 @@ final class JsonFunctions {
     private static final int ERROR_UNSUPPORTED_TYPE = 8;
     private static final int ERROR_INVALID_PROPERTY_NAME = 9;
     private static final int ERROR_UTF16 = 10;
+    private static final int ERROR_NON_BACKED_ENUM = 11;
 
     /** Per-context state: json_last_error(). */
     static final class State {
@@ -96,6 +97,7 @@ final class JsonFunctions {
             case ERROR_UNSUPPORTED_TYPE -> "Type is not supported";
             case ERROR_INVALID_PROPERTY_NAME -> "The decoded property name is invalid";
             case ERROR_UTF16 -> "Single unpaired UTF-16 surrogate in unicode escape";
+            case ERROR_NON_BACKED_ENUM -> "Non-backed enums have no default serialization";
             default -> "Unknown error";
         };
     }
@@ -588,8 +590,19 @@ final class JsonFunctions {
             } else if (value instanceof PhpArray array) {
                 return container(array, array, null);
             } else if (value instanceof PhpObject object) {
-                return object.getPhpClass().isSubclassOf("jsonserializable") ? serializable(object)
-                        : container(object, null, object);
+                if (object.getPhpClass().isSubclassOf("jsonserializable")) {
+                    return serializable(object);
+                }
+                if (object.getPhpClass().isEnum()) {
+                    // php_json_encode_serializable_enum
+                    if (object.getPhpClass().backingType() == null) {
+                        error = ERROR_NON_BACKED_ENUM;
+                        out.write('0');
+                        return false;
+                    }
+                    return value(object.getProperty("value"));
+                }
+                return container(object, null, object);
             } else if (value instanceof PhpClosure || value instanceof PhpGenerator) {
                 return container(value, null, null); // an object without properties
             } else {

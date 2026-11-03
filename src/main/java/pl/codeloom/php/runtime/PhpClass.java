@@ -26,20 +26,43 @@ public final class PhpClass {
     /**
      * A declared instance property: its default (or a thunk evaluating the constant expression; null for a typed
      * property without one, which starts uninitialized: not in the object), its visibility, the class that
-     * declared it (lowercase; set when a class adds it), and its type, or null.
+     * declared it (lowercase; set when a class adds it), its php-ast modifiers (READONLY, the set visibilities)
+     * and its type, or null.
      */
     public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass,
-                               PhpType type) {
+                               int modifiers, PhpType type) {
         public static final int PUBLIC = 0;
         public static final int PROTECTED = 1;
         public static final int PRIVATE = 2;
+        /** php-ast's modifier flags. */
+        public static final int READONLY = 128;
+        public static final int PUBLIC_SET = 1024;
+        public static final int PROTECTED_SET = 2048;
+        public static final int PRIVATE_SET = 4096;
 
         public PropertyDecl(String name, Object defaultValue, int visibility) {
-            this(name, defaultValue, visibility, null, null);
+            this(name, defaultValue, visibility, null, 0, null);
         }
 
         public boolean isPublic() {
             return visibility == PUBLIC;
+        }
+
+        public boolean isReadonly() {
+            return (modifiers & READONLY) != 0;
+        }
+
+        /**
+         * Whether writes are restricted to fewer scopes than reads: readonly is protected(set) unless private or
+         * public(set).
+         */
+        public boolean restrictsSet() {
+            return (modifiers & (PROTECTED_SET | PRIVATE_SET)) != 0
+                    || isReadonly() && visibility != PRIVATE && (modifiers & PUBLIC_SET) == 0;
+        }
+
+        PropertyDecl withDefault(Object value, String declaringClass) {
+            return new PropertyDecl(name, value, visibility, declaringClass, modifiers, type);
         }
 
         /** The visibility from php-ast's modifier flags (public 1, protected 2, private 4; none is public). */
@@ -57,10 +80,10 @@ public final class PhpClass {
     public static final int PROPERTY_PRIVATE = 2;
     /** A typed property: its writes are checked against its type, and it may be uninitialized (absent). */
     public static final int PROPERTY_TYPED = 4;
+    /** A readonly or protected(set)/private(set) property: writes check it (PhpObject.checkModify). */
+    public static final int PROPERTY_SET_CHECKED = 8;
     /** A backed property with hooks: every access takes the site's slow path, which calls them. */
-    public static final int PROPERTY_HOOKED = 8;
-    /** A property with a set visibility (private(set), protected(set)): writes take the slow path, which checks it. */
-    public static final int PROPERTY_SET_RESTRICTED = 16;
+    public static final int PROPERTY_HOOKED = 16;
 
     /**
      * A hooked property's hooks (php-src's prop_info->hooks), get and set, null where it has none; virtual when no
@@ -140,8 +163,13 @@ public final class PhpClass {
     private Map<String, Hooks> hooks;
     /** The final properties (declared or inherited), or null for none. */
     private Set<String> finalProperties;
-    /** The properties with a set visibility (PropertyDecl.PROTECTED or PRIVATE) by name, or null for none. */
-    private Map<String, Integer> setVisibilities;
+    /**
+     * An enum's cases in declaration order: name to the backing value (a Thunk until checked, null for a pure
+     * enum's case); null for a class that isn't an enum. Each case is a class constant holding its one object.
+     */
+    private Map<String, Object> cases;
+    /** A backed enum's case names by value (a Long, or a string's property key), once every value is checked. */
+    private Map<Object, String> casesByValue;
 
     @CompilationFinal private PhpFunction constructor;
 
@@ -188,7 +216,6 @@ public final class PhpClass {
             properties.putAll(parent.properties);
             hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
             finalProperties = parent.finalProperties == null ? null : new HashSet<>(parent.finalProperties);
-            setVisibilities = parent.setVisibilities == null ? null : new HashMap<>(parent.setVisibilities);
             constructor = parent.constructor;
         }
     }
@@ -501,7 +528,7 @@ public final class PhpClass {
         if (visibility == PropertyDecl.PUBLIC) {
             restrictedConstants.remove(constantName);
         } else {
-            restrictedConstants.put(constantName, new PropertyDecl(constantName, null, visibility, lowerName, null));
+            restrictedConstants.put(constantName, new PropertyDecl(constantName, null, visibility, lowerName, 0, null));
         }
     }
 
@@ -542,6 +569,75 @@ public final class PhpClass {
         return restrictedConstants.containsKey(constantName);
     }
 
+    /** ZEND_ACC_ENUM. */
+    public boolean isEnum() {
+        return declaration instanceof ClassTemplate template && template.isEnum();
+    }
+
+    /** A backed enum's type ("int" or "string"), else null. */
+    public String backingType() {
+        return declaration instanceof ClassTemplate template ? template.getBackingType() : null;
+    }
+
+    /** An enum case: a class constant whose object is made on first use (zend_enum_new). */
+    public void addCase(String caseName, Object valueOrThunk) {
+        if (cases == null) {
+            cases = new LinkedHashMap<>();
+        }
+        cases.put(caseName, valueOrThunk);
+        addConstant(caseName, (Thunk) () -> newCase(caseName));
+    }
+
+    /** The enum's case names in declaration order. */
+    public Set<String> caseNames() {
+        return cases == null ? Set.of() : cases.keySet();
+    }
+
+    @TruffleBoundary
+    private PhpObject newCase(String caseName) {
+        Map<Object, String> checked = casesByValue();
+        PhpObject object = instantiateInternal();
+        object.initProperty("name", Str.of(caseName));
+        if (checked != null) {
+            object.initProperty("value", cases.get(caseName));
+        }
+        return object;
+    }
+
+    /**
+     * A backed enum's case names by value (zend_enum_build_backed_enum_table): every case's value evaluated and
+     * checked against the backing type and the other cases', each time until all are valid; null for a pure enum.
+     */
+    @TruffleBoundary
+    public Map<Object, String> casesByValue() {
+        String type = backingType();
+        if (type == null || casesByValue != null) {
+            return casesByValue;
+        }
+        Map<Object, String> byValue = new HashMap<>();
+        for (Map.Entry<String, Object> entry : cases == null ? Set.<Map.Entry<String, Object>>of()
+                : cases.entrySet()) {
+            Object value = entry.getValue() instanceof Thunk thunk ? thunk.evaluate() : entry.getValue();
+            if (!(type.equals("int") ? value instanceof Long : value instanceof com.oracle.truffle.api.strings.TruffleString)) {
+                throw new PhpError("TypeError", "Enum case type " + Convert.debugType(value)
+                        + " does not match enum backing type " + type);
+            }
+            entry.setValue(value);
+            String other = byValue.putIfAbsent(caseKey(value), entry.getKey());
+            if (other != null) {
+                throw new PhpError("Duplicate value in enum " + name + " for cases " + other + " and "
+                        + entry.getKey());
+            }
+        }
+        casesByValue = byValue;
+        return byValue;
+    }
+
+    /** A backing value as casesByValue keys it. */
+    public static Object caseKey(Object value) {
+        return value instanceof com.oracle.truffle.api.strings.TruffleString s ? Str.key(s) : value;
+    }
+
     /** A class constant's value, evaluating its initializer on first use; null if the constant doesn't exist. */
     @TruffleBoundary
     public Object getConstant(String constantName) {
@@ -563,7 +659,7 @@ public final class PhpClass {
             restrictedStatics.put(propertyName, new PropertyDecl(propertyName, null, visibility,
                     visibility == PropertyDecl.PROTECTED && inherited != null
                             && inherited.visibility() == PropertyDecl.PROTECTED ? inherited.declaringClass() : lowerName,
-                    null));
+                    0, null));
         }
         if (initial instanceof PhpArray array) {
             // the default holds the array too, so writes to the property copy it first
@@ -649,8 +745,7 @@ public final class PhpClass {
         if (decl.defaultValue() instanceof PhpArray array) {
             array.addHolder();
         }
-        properties.put(decl.name(), decl.declaringClass() != null ? decl
-                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName, decl.type()));
+        properties.put(decl.name(), decl.declaringClass() != null ? decl : decl.withDefault(decl.defaultValue(), lowerName));
     }
 
     /** The property's hooks, or null for a property without (or one the class doesn't declare). */
@@ -689,59 +784,6 @@ public final class PhpClass {
             finalProperties = new HashSet<>();
         }
         finalProperties.add(propertyName);
-    }
-
-    /** Gives a declared property its set visibility from php-ast's modifiers (none: PUBLIC_SET or no modifier). */
-    public void setSetVisibility(String propertyName, int flags) {
-        int visibility = (flags & 4096) != 0 ? PropertyDecl.PRIVATE : (flags & 2048) != 0 ? PropertyDecl.PROTECTED
-                : PropertyDecl.PUBLIC;
-        if (visibility != PropertyDecl.PUBLIC) {
-            if (setVisibilities == null) {
-                setVisibilities = new HashMap<>();
-            }
-            setVisibilities.put(propertyName, visibility);
-        } else if (setVisibilities != null) {
-            setVisibilities.remove(propertyName);
-        }
-    }
-
-    /** The property's set visibility as php-ast's modifier: 4096 private(set), 2048 protected(set), else 0. */
-    public int setVisibilityFlag(String propertyName) {
-        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
-        return visibility == null ? 0 : visibility == PropertyDecl.PRIVATE ? 4096 : 2048;
-    }
-
-    public boolean hasSetVisibilities() {
-        return setVisibilities != null;
-    }
-
-    /** "private" or "protected", the property's set visibility as errors name it. */
-    public String setVisibilityName(String propertyName) {
-        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
-        return visibility != null && visibility == PropertyDecl.PRIVATE ? "private" : "protected";
-    }
-
-    /** zend_asymmetric_property_has_set_access: whether code in scope (a lowercase class, or null) may write it. */
-    @TruffleBoundary
-    public boolean canSetProperty(String propertyName, String scope) {
-        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
-        if (visibility == null) {
-            return true;
-        }
-        if (scope == null) {
-            return false;
-        }
-        String declaring = properties.get(propertyName).declaringClass();
-        if (visibility == PropertyDecl.PRIVATE) {
-            return declaring.equals(scope);
-        }
-        // protected(set): a scope related to the property's prototype, its topmost declaration
-        PhpClass root = this;
-        while (root.parent != null && root.parent.properties.containsKey(propertyName)) {
-            root = root.parent;
-        }
-        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
-        return root.isSubclassOf(scope) || scopeClass != null && scopeClass.isSubclassOf(root.lowerName);
     }
 
     /** A hooked property without a backing value: objects have no slot for it. */
@@ -828,6 +870,16 @@ public final class PhpClass {
     }
 
     /** Whether the class declares or inherits any property, static or not: php-src's properties_info isn't empty. */
+    /** An enum or a readonly class: "Cannot create dynamic property". */
+    public boolean forbidsDynamicProperties() {
+        return declaration instanceof ClassTemplate template
+                && (template.isEnum() || (template.getFlags() & ClassTemplate.READONLY) != 0);
+    }
+
+    public boolean hasStaticProperties() {
+        return !staticProperties.isEmpty();
+    }
+
     public boolean hasPropertyInfo() {
         return !properties.isEmpty() || !staticProperties.isEmpty();
     }
@@ -878,6 +930,12 @@ public final class PhpClass {
             }
         }
         return name;
+    }
+
+    /** A class name as a C string prints it (%s): up to its first NUL, as an anonymous class's name. */
+    public static String printed(String name) {
+        int nul = name.indexOf('\0');
+        return nul < 0 ? name : name.substring(0, nul);
     }
 
     /** A class name (UTF-8 text) as a property key holds it: its bytes as ISO-8859-1 chars. */
@@ -1053,17 +1111,15 @@ public final class PhpClass {
 
     /**
      * The shape flags of a declared property in an object of this class: PROPERTY_PROTECTED, PROPERTY_PRIVATE,
-     * PROPERTY_TYPED, PROPERTY_HOOKED, PROPERTY_SET_RESTRICTED.
+     * PROPERTY_TYPED, PROPERTY_SET_CHECKED, PROPERTY_HOOKED.
      */
     @TruffleBoundary
     public int propertyFlags(PropertyDecl decl) {
         String propertyName = decl.name();
         int flags = (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                 : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
-                ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0);
-        if (setVisibilities != null && setVisibilities.containsKey(propertyName)) {
-            flags |= PROPERTY_SET_RESTRICTED;
-        }
+                ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0)
+                | (decl.isReadonly() || decl.restrictsSet() ? PROPERTY_SET_CHECKED : 0);
         return findHooks(propertyName) != null ? flags | PROPERTY_HOOKED : flags;
     }
 
@@ -1097,8 +1153,7 @@ public final class PhpClass {
                     // checked as evaluated, in strict mode (zend_update_class_constants)
                     value = decl.type().assign(value, true, decl, null);
                 }
-                entry.setValue(new PropertyDecl(entry.getKey(), value, decl.visibility(), decl.declaringClass(),
-                        decl.type()));
+                entry.setValue(decl.withDefault(value, decl.declaringClass()));
             }
             values[i++] = value;
         }

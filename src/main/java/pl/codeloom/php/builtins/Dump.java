@@ -112,6 +112,12 @@ final class Dump {
             dumpEntries(array, level);
             leave(array);
             closeBrace(level);
+        } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
+            ascii(common + "enum(");
+            utf8(object.getPhpClass().getName());
+            ascii("::");
+            out.write((TruffleString) object.getProperty("name"));
+            ascii(")\n");
         } else if (value instanceof PhpObject object) {
             if (!enter(object)) {
                 ascii("*RECURSION*\n");
@@ -303,6 +309,15 @@ final class Dump {
                 spaces(level - 1);
             }
             out.write(')');
+        } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
+            if (level > 1) {
+                out.write('\n');
+                spaces(level - 1);
+            }
+            out.write('\\');
+            utf8(object.getPhpClass().getName());
+            ascii("::");
+            out.write((TruffleString) object.getProperty("name"));
         } else if (value instanceof PhpObject object) {
             if (!enter(object)) {
                 ascii("NULL");
@@ -320,13 +335,18 @@ final class Dump {
                 utf8(object.getPhpClass().getName());
                 ascii("::__set_state(array(\n");
             }
-            // a lazy object initialized, a proxy's instance's properties
-            java.util.List<Object> properties = object.initialized().readableProperties(false);
-            for (int i = 0; i < properties.size(); i += 2) {
+            // a lazy object initialized; a class with hooks has its get hooks called (readableProperties)
+            PhpObject real = object.initialized();
+            Object[] table = real.getPhpClass().hasHooks() ? real.readableProperties(false).toArray()
+                    : real.propertyTable();
+            for (int i = 0; i < table.length; i += 2) {
+                // the name unmangled
+                String key = (String) table[i];
                 spaces(level + 2);
-                exportString(Str.ofKey((String) properties.get(i)));
+                exportString(Str.ofKey(key.startsWith("\0") && key.indexOf('\0', 1) > 0
+                        ? key.substring(key.indexOf('\0', 1) + 1) : key));
                 ascii(" => ");
-                varExport(properties.get(i + 1), level + 2);
+                varExport(table[i + 1], level + 2);
                 ascii(",\n");
             }
             leave(object);
@@ -382,7 +402,8 @@ final class Dump {
             leave(array);
         } else if (value instanceof PhpObject object) {
             utf8(object.getPhpClass().getName());
-            ascii(" Object\n");
+            String backing = object.getPhpClass().backingType();
+            ascii(!object.getPhpClass().isEnum() ? " Object\n" : backing == null ? " Enum\n" : " Enum:" + backing + "\n");
             if (!enter(object)) {
                 ascii(" *RECURSION*");
                 return;

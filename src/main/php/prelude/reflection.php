@@ -723,7 +723,7 @@ class ReflectionClass implements Reflector
 
     public function isEnum(): bool
     {
-        return false;
+        return enum_exists($this->name, false);
     }
 
     public function isAbstract(): bool
@@ -1202,6 +1202,22 @@ class ReflectionProperty implements Reflector
     public function __toString(): string
     {
         TruffleReflection::notImplemented('ReflectionProperty::__toString()');
+    }
+}
+
+class ReflectionEnum extends ReflectionClass
+{
+    public function __construct(object|string $objectOrClass)
+    {
+        parent::__construct($objectOrClass);
+        if (!$this->isEnum()) {
+            throw new ReflectionException("Class \"$this->name\" is not an enum", -1);
+        }
+    }
+
+    public function isBacked(): bool
+    {
+        return is_subclass_of($this->name, BackedEnum::class);
     }
 }
 

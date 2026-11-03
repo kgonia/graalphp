@@ -68,12 +68,6 @@ final class Serialization {
         ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, message, SourceLocation.current());
     }
 
-    /** A class name as a C string prints it (%s): up to its first NUL, as an anonymous class's name. */
-    private static String printed(String name) {
-        int nul = name.indexOf('\0');
-        return nul < 0 ? name : name.substring(0, nul);
-    }
-
     // ---- serialize ----
 
     /**
@@ -339,8 +333,19 @@ final class Serialization {
         private void object(PhpObject object) {
             PhpClass phpClass = object.getPhpClass();
             if (isNotSerializable(phpClass)) {
-                throw new PhpError("Exception", "Serialization of '" + printed(phpClass.getName())
+                throw new PhpError("Exception", "Serialization of '" + PhpClass.printed(phpClass.getName())
                         + "' is not allowed");
+            }
+            if (phpClass.isEnum()) {
+                // E:len:"Class:Case";
+                byte[] text = Str.readBytes(Str.concat(Str.of(phpClass.getName() + ":"),
+                        (TruffleString) object.getProperty("name")));
+                out.writeAscii("E:");
+                out.writeLong(text.length);
+                out.writeAscii(":\"");
+                out.write(text);
+                out.writeAscii("\";");
+                return;
             }
             if (phpClass.findMethod("__serialize") != null) {
                 Object result = callLocked("__serialize", object);
@@ -470,7 +475,7 @@ final class Serialization {
                         || addSleepProperty(chosen, properties, "\0*\0" + name, name)) {
                     continue;
                 }
-                warning(context, "serialize(): \"" + printed(Str.keyText(name))
+                warning(context, "serialize(): \"" + PhpClass.printed(Str.keyText(name))
                         + "\" returned as member variable from __sleep() but does not exist");
             }
             Object[] entries = new Object[chosen.size() * 2];
@@ -499,7 +504,7 @@ final class Serialization {
                 return false;
             }
             if (chosen.containsKey(key)) {
-                warning(context, "serialize(): \"" + printed(Str.keyText(name))
+                warning(context, "serialize(): \"" + PhpClass.printed(Str.keyText(name))
                         + "\" is returned from __sleep() multiple times");
                 return true;
             }
@@ -955,12 +960,17 @@ final class Serialization {
 
         private static void setProperty(PhpObject object, String name, Object value) {
             Object old = object.getProperty(name);
+            if (old == null && object.getPhpClass().forbidsDynamicProperties()
+                    && !object.getPhpClass().isDeclaredProperty(name)) {
+                throw new PhpError("Cannot create dynamic property "
+                        + PhpClass.printed(object.getPhpClass().getName()) + "::$" + Str.keyText(name));
+            }
             if (value instanceof PhpArray array) {
                 array.addHolder();
             } else if (value instanceof PhpRef ref) {
                 ref.bind();
             }
-            object.setProperty(name, value);
+            object.initProperty(name, value);
             if (old instanceof PhpArray array && old != value) {
                 array.removeHolder();
             } else if (old instanceof PhpRef ref) {
@@ -1033,7 +1043,7 @@ final class Serialization {
                 case 'C':
                     return object(container, key, start, type == 'C');
                 case 'E':
-                    return enumCase(start);
+                    return enumCase(container, key, start);
                 case '}':
                     unexpectedEnd();
                     return FAIL;
@@ -1386,7 +1396,7 @@ final class Serialization {
             boolean incomplete = isIncompleteClass(phpClass);
             p = cursor;
             if (isNotSerializable(phpClass)) {
-                throw new PhpError("Exception", "Unserialization of '" + printed(phpClass.getName())
+                throw new PhpError("Exception", "Unserialization of '" + PhpClass.printed(phpClass.getName())
                         + "' is not allowed");
             }
             if (custom) {
@@ -1572,7 +1582,7 @@ final class Serialization {
         }
 
         /** "E:" uiv ":" ["]: an enum case; the runtime has no enums, so the class found is never one. */
-        private int enumCase(int start) {
+        private int enumCase(Object container, Object key, int start) {
             int cursor = quotedToken(start);
             if (cursor < 0) {
                 return FAIL;
@@ -1610,9 +1620,23 @@ final class Serialization {
             byte[] enumName = Arrays.copyOfRange(s, from, colon);
             PhpClass phpClass = autoload(new String(enumName, StandardCharsets.UTF_8));
             TruffleString printedName = Str.of(enumName);
-            warning(context, Str.concat(Str.of("unserialize(): Class '"), Str.concat(printedName,
-                    Str.of(phpClass == null ? "' not found" : "' is not an enum"))));
-            return FAIL;
+            if (phpClass == null || !phpClass.isEnum()) {
+                warning(context, Str.concat(Str.of("unserialize(): Class '"), Str.concat(printedName,
+                        Str.of(phpClass == null ? "' not found" : "' is not an enum"))));
+                return FAIL;
+            }
+            p = cursor + 2;
+            String caseName = new String(s, colon + 1, cursor - colon - 1, StandardCharsets.UTF_8);
+            if (!phpClass.constantNames().contains(caseName)) {
+                warning(context, "unserialize(): Undefined constant " + phpClass.getName() + "::" + caseName);
+                return FAIL;
+            }
+            if (!phpClass.caseNames().contains(caseName)) {
+                warning(context, "unserialize(): " + phpClass.getName() + "::" + caseName + " is not an enum case");
+                return FAIL;
+            }
+            store(container, key, phpClass.getConstant(caseName));
+            return OK;
         }
 
         private void notice(String message) {
@@ -1654,7 +1678,7 @@ final class Serialization {
                 property = key.substring(classLength + 2);
             }
             boolean lookUp = className == null || className.equals("*")
-                    || asciiEqualsIgnoreCase(className, PhpClass.nameKey(printed(phpClass.getName())));
+                    || asciiEqualsIgnoreCase(className, PhpClass.nameKey(PhpClass.printed(phpClass.getName())));
             if (lookUp) {
                 if (phpClass.findProperty(property) != null) {
                     return property;
