@@ -1369,6 +1369,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** The object of `->` or `[]` in a parameter's default (ConstantNodes.ConstantObjectNode.check). */
+    @Operation
+    @ConstantOperand(type = boolean.class)
+    public static final class ConstantObject {
+        @Specialization
+        public static Object check(boolean element, Object value) {
+            return ConstantNodes.ConstantObjectNode.check(value, element);
+        }
+    }
+
     /** `$obj->name` as the object of an unset() of its properties or elements (PropNode.readForUnsetOn). */
     @Operation
     @ConstantOperand(type = PropSite.class)

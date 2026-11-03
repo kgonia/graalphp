@@ -282,6 +282,8 @@ public final class BytecodeTranslator {
         private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
+        /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
+        private boolean constantExpression;
         /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
         private final java.util.ArrayDeque<String> dispatched = new java.util.ArrayDeque<>();
         /** report=all: how many nodes of a kind on a line this run has met, for {@link #key}. */
@@ -417,7 +419,9 @@ public final class BytecodeTranslator {
                     if (constantShaped(defaultValue)) {
                         constant(defaultValue, param);
                     } else {
+                        constantExpression = true;
                         expression(defaultValue);
+                        constantExpression = false;
                     }
                     b.endConditional();
                 }
@@ -1491,7 +1495,7 @@ public final class BytecodeTranslator {
                         break;
                     }
                     b.beginReadElement();
-                    expression(node.get("expr"));
+                    constantObject(node.get("expr"), true);
                     key(node.get("dim"));
                     b.endReadElement();
                     break;
@@ -1523,7 +1527,7 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"));
+                        Ast target = writtenProp(node.node("var"));
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
                         writtenObject(target.get("expr"), BP_VAR_RW);
@@ -1553,7 +1557,7 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"));
+                        Ast target = writtenProp(node.node("var"));
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
                         writtenObject(target.get("expr"), BP_VAR_RW);
                         b.endIncDecProp();
@@ -2659,14 +2663,25 @@ public final class BytecodeTranslator {
         private void readProp(Ast node) {
             if (node.get("prop") instanceof String name) {
                 b.beginReadProp(propSite(node, name));
-                expression(node.get("expr"));
+                constantObject(node.get("expr"), false);
                 b.endReadProp();
                 return;
             }
             b.beginReadPropNamed(propSite(node, null));
-            expression(node.get("expr"));
+            constantObject(node.get("expr"), false);
             propName(node.get("prop"));
             b.endReadPropNamed();
+        }
+
+        /** The object of `->` (element false) or `[]`, checked in a constant expression (ConstantObject). */
+        private void constantObject(Object object, boolean element) {
+            if (!constantExpression || !(object instanceof Ast)) {
+                expression(object);
+                return;
+            }
+            b.beginConstantObject(element);
+            expression(object);
+            b.endConstantObject();
         }
 
         /**
@@ -2720,10 +2735,18 @@ public final class BytecodeTranslator {
             return withParts(target, "expr", object, "prop", prop);
         }
 
+        /** delayedProp of a place written: Translator.onTemporary's compile error first. */
+        private Ast writtenProp(Ast target) {
+            if (Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
+            return delayedProp(target);
+        }
+
         /**
          * The object of a property place as php-src fetches it (zend_delayed_compile_var): a variable, a property,
          * an element or a static property is read as the write runs, after the value, down a chain whose keys and
-         * computed names are evaluated now; a call is evaluated now, anything else is a compile error.
+         * computed names are evaluated now; anything else (a call, `new`) is evaluated now.
          */
         private Object delayedObject(Object object) {
             if (!(object instanceof Ast ast)) {
@@ -2743,9 +2766,6 @@ public final class BytecodeTranslator {
                     return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
                 }
                 default:
-                    if (!Translator.isWritableBase(ast)) {
-                        throw compileError(ast, "Cannot use temporary expression in write context");
-                    }
                     return onceKey(ast);
             }
         }
@@ -2768,7 +2788,7 @@ public final class BytecodeTranslator {
          */
         private void writeProp(Ast target, Object value) {
             b.beginBlock();
-            Ast place = delayedProp(target);
+            Ast place = writtenProp(target);
             if (place.get("prop") instanceof String name) {
                 b.beginWriteProp(propSite(place, name));
                 expression(value);
@@ -2790,7 +2810,7 @@ public final class BytecodeTranslator {
          */
         private void writePropElement(Ast target, Object value) {
             b.beginBlock();
-            Ast property = delayedProp(target.node("expr"));
+            Ast property = writtenProp(target.node("expr"));
             Object dim = target.get("dim");
             if (!(property.get("prop") instanceof String)) {
                 // `$obj->$name[...] = value`: the name, evaluated now unless a variable, converted after the value
@@ -2832,6 +2852,9 @@ public final class BytecodeTranslator {
             if (target.node("expr") != null && deepestNullsafe(target.node("expr")) != null) {
                 // php-src's compile error: ?-> in a write context
                 throw new Unsupported("unset with ?->", target);
+            }
+            if (Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
             }
             Object prop = target.get("prop");
             if (prop instanceof String name) {
@@ -3087,6 +3110,9 @@ public final class BytecodeTranslator {
          */
         private ElementPlace elementPlace(Ast target, String what) {
             List<Object> dims = new ArrayList<>();
+            if (!what.equals("argument") && Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
             Ast base = target;
             // down to the base; `$GLOBALS[name]` is a place of its own (a global), the base of the keys below it
             while (base.is("AST_DIM") && !isGlobals(base.get("expr"))) {

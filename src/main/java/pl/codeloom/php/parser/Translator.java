@@ -156,6 +156,8 @@ public final class Translator {
     private boolean returnsRef;
     /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
     private int hiddenCounter;
+    /** While a constant expression is translated: its `->` and `[]` check their objects (ConstantObjectNode). */
+    private boolean constantExpression;
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
     private final Scope fileSlots = new Scope();
     /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
@@ -356,7 +358,7 @@ public final class Translator {
                 if (isGlobalsElement(node.get("var")) && node.node("var").get("dim") == null) {
                     throw compileError(node.line, "Cannot use [] for unsetting");
                 }
-                return new BasicStmts.UnsetNode(place(node.get("var")));
+                return new BasicStmts.UnsetNode(written(node.get("var")));
             case "AST_THROW":
                 return new BasicStmts.ThrowNode(expression(node.get("expr")));
             case "AST_TRY":
@@ -476,12 +478,25 @@ public final class Translator {
 
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
     /**
-     * The object or array of a place written, read for writing (zend_delayed_compile_var): a variable, a place or a
-     * call; anything else is php-src's compile error.
+     * Whether a place written (assigned, compound-assigned, incremented, unset) stands on a temporary: down its
+     * chain of properties and elements, the base fetched for writing (zend_delayed_compile_var) must be a
+     * variable, a static property or a call, else php-src's "Cannot use temporary expression in write context".
      */
-    static boolean isWritableBase(Object value) {
-        return isCall(value) || value instanceof Ast node && (node.is("AST_VAR") || node.is("AST_DIM")
-                || node.is("AST_PROP") || node.is("AST_NULLSAFE_PROP") || node.is("AST_STATIC_PROP"));
+    static boolean onTemporary(Object place) {
+        Object base = place;
+        while (base instanceof Ast node && (node.is("AST_PROP") || node.is("AST_NULLSAFE_PROP") || node.is("AST_DIM"))) {
+            base = node.get("expr");
+        }
+        return base != place && !isCall(base)
+                && !(base instanceof Ast node && (node.is("AST_VAR") || node.is("AST_STATIC_PROP")));
+    }
+
+    /** place() of a place written: onTemporary's compile error first. */
+    private LValueNode written(Object value) {
+        if (onTemporary(value)) {
+            throw compileError(((Ast) value).line, "Cannot use temporary expression in write context");
+        }
+        return place(value);
     }
 
     static boolean isCall(Object value) {
@@ -623,7 +638,7 @@ public final class Translator {
             }
             String name = names.declared((String) element.get("name"));
             checkConstantExpression(element.get("value"), true, element.line);
-            ExprNode value = expression(element.get("value"));
+            ExprNode value = constantExpression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
         return block(result);
@@ -881,7 +896,7 @@ public final class Translator {
         for (int i = 0; i < params.length; i++) {
             paramSlots[i] = bodyScope.slot(params[i].name());
             Object defaultValue = ((Ast) paramList.child(i)).get("default");
-            defaults[i] = defaultValue == null ? null : body.expression(defaultValue);
+            defaults[i] = defaultValue == null ? null : body.constantExpression(defaultValue);
         }
         int[] captureSlots = new int[captures.length];
         for (int i = 0; i < captures.length; i++) {
@@ -1328,10 +1343,21 @@ public final class Translator {
         return null;
     }
 
+    /** A constant expression's tree (constantExpression set while it is translated). */
+    private ExprNode constantExpression(Object expression) {
+        boolean outer = constantExpression;
+        constantExpression = true;
+        try {
+            return expression(expression);
+        } finally {
+            constantExpression = outer;
+        }
+    }
+
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
         checkConstantExpression(expression, false, 0);
-        ExprNode node = expression(expression);
+        ExprNode node = constantExpression(expression);
         Object value = node.constantValue();
         if (value != null) {
             return value;
@@ -1770,15 +1796,12 @@ public final class Translator {
                     }
                     return new GlobalsDimNode(expression(dim));
                 }
-                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : placeOrExpression(node.get("expr"));
+                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : constantObject(node.get("expr"), true);
                 return element(container, dim == null ? null : expression(dim));
             }
             case "AST_PROP":
             case "AST_NULLSAFE_PROP": {
-                if (!isWritableBase(node.get("expr"))) {
-                    throw compileError(node.line, "Cannot use temporary expression in write context");
-                }
-                ExprNode object = placeOrExpression(node.get("expr"));
+                ExprNode object = constantObject(node.get("expr"), false);
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
                     return new PropNode(object, Str.sourceKey(name), null, lexicalClass(), scopeInFrame());
@@ -1817,6 +1840,13 @@ public final class Translator {
     }
 
     /** $this, a place, or any other expression (as a container of a dimension or property). */
+    /** placeOrExpression of the object of `->` (element false) or `[]`, checked in a constant expression. */
+    private ExprNode constantObject(Object value, boolean element) {
+        ExprNode object = placeOrExpression(value);
+        return constantExpression && object.constantValue() == null
+                ? new ConstantNodes.ConstantObjectNode(object, element) : object;
+    }
+
     private ExprNode placeOrExpression(Object value) {
         if (value instanceof Ast ast && ast.is("AST_VAR") && "this".equals(ast.get("name"))) {
             return new ThisNode();
@@ -1899,7 +1929,7 @@ public final class Translator {
             }
             return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
         }
-        return AssignNodes.AssignNode.create(place(target), expression(node.get("expr")));
+        return AssignNodes.AssignNode.create(written(target), expression(node.get("expr")));
     }
 
     private ExprNode compoundAssignment(Ast node) {
@@ -1917,6 +1947,9 @@ public final class Translator {
      * in order, into a hidden variable, as php-src evaluates the keys once (zend_delayed_compile_dim).
      */
     private ExprNode readWritten(Object var, Function<LValueNode, ExprNode> operation) {
+        if (onTemporary(var)) {
+            throw compileError(((Ast) var).line, "Cannot use temporary expression in write context");
+        }
         List<ExprNode> keys = new ArrayList<>();
         LValueNode target = keysEvaluatedOnce(var, keys);
         ExprNode result = operation.apply(target);
