@@ -127,7 +127,7 @@ final class ReflectionFunctions {
         return value == null ? (Object) Boolean.FALSE : Str.of(value);
     }
 
-    private static ClassTemplate template(PhpClass phpClass) {
+    static ClassTemplate template(PhpClass phpClass) {
         return phpClass.getDeclaration() instanceof ClassTemplate template ? template : null;
     }
 
@@ -219,7 +219,7 @@ final class ReflectionFunctions {
      * The methods in php-src's function table order: the class's own, then those its traits bring, then the
      * inherited ones (parent's, then the interfaces'). Lowercase name to the name the class has the method by.
      */
-    private static Map<String, String> orderedMethods(PhpContext context, PhpClass phpClass) {
+    static Map<String, String> orderedMethods(PhpContext context, PhpClass phpClass) {
         Map<String, String> names = new LinkedHashMap<>();
         ClassTemplate template = template(phpClass);
         if (template == null || template.isTrait()) {
@@ -300,7 +300,7 @@ final class ReflectionFunctions {
      * The class that declares a method: the one its translation names (a trait's method belongs to the class
      * using it), else, for a built-in method, the highest ancestor that has the same function under the name.
      */
-    private static PhpClass declaringClass(PhpClass phpClass, String lower, PhpFunction method) {
+    static PhpClass declaringClass(PhpClass phpClass, String lower, PhpFunction method) {
         String named = method.getClassName();
         PhpClass declaring = phpClass;
         for (PhpClass c = phpClass; c != null; c = c.getParent()) {

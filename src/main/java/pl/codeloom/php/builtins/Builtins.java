@@ -339,12 +339,25 @@ public final class Builtins {
                     }
                     return PhpNull.NULL;
                 }),
+                // unserialize()'s check: a message that isn't a string or a code that isn't an int is unset
+                registry.method("__wakeup", false, arguments -> {
+                    PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
+                    Object message = property(self, "message");
+                    if (message != PhpNull.NULL && !(message instanceof TruffleString)) {
+                        self.removeProperty("message");
+                    }
+                    Object code = property(self, "code");
+                    if (code != PhpNull.NULL && !(code instanceof Long)) {
+                        self.removeProperty("code");
+                    }
+                    return PhpNull.NULL;
+                }),
                 registry.method("getMessage", false, arguments -> property(arguments, "message")),
                 registry.method("getCode", false, arguments -> property(arguments, "code")),
-                registry.method("getPrevious", false, arguments -> property(arguments, "previous")),
                 registry.method("getFile", false, arguments -> property(arguments, "file")),
                 registry.method("getLine", false, arguments -> property(arguments, "line")),
                 registry.method("getTrace", false, arguments -> property(arguments, "trace")),
+                registry.method("getPrevious", false, arguments -> property(arguments, "previous")),
                 registry.method("getTraceAsString", false,
                         arguments -> traceString((PhpObject) arguments[PhpFunction.ARG_THIS])),
                 registry.method("__toString", false,

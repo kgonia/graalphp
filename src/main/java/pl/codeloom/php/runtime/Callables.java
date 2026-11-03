@@ -209,8 +209,12 @@ public final class Callables {
                     ? body.getScopeName()
                     : root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
                     ? bytecode.getScopeName() : null;
-            return new Caller(SourceLocation.codeFrame(running,
-                    frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments(), scope);
+            Object[] arguments = SourceLocation.codeFrame(running,
+                    frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments();
+            // a closure's bound class, an include's class: the scope the code runs in
+            return new Caller(arguments, arguments.length > PhpFunction.ARG_CLOSURE
+                    ? pl.codeloom.php.nodes.vars.PropNode.callingScope(arguments[PhpFunction.ARG_CLOSURE], scope)
+                    : scope);
         });
     }
 

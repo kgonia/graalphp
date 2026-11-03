@@ -20,8 +20,10 @@ import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.zip.CRC32;
 
 /** Types, constants, classes and objects, output, time, math and error handling. */
@@ -177,6 +179,28 @@ final class CoreFunctions {
                     : Str.of(phpClass.getParent().getName());
         });
         r.fn("get_object_vars", a -> objectVars(Args.get(a, 0)));
+        r.fn("get_class_methods", (context, a) -> {
+            Args.arity(a, "get_class_methods", 1, 1);
+            Object target = Args.get(a, 0);
+            PhpClass phpClass = target instanceof PhpObject o ? o.getPhpClass()
+                    : target instanceof PhpClosure ? context.findClass("closure")
+                    : target instanceof TruffleString name ? context.findClassAutoloading(Str.java(name)) : null;
+            if (phpClass == null) {
+                throw new PhpError("TypeError", "get_class_methods(): Argument #1 ($object_or_class) must be an "
+                        + "object or a valid class name, " + Args.valueName(target) + " given");
+            }
+            return classMethods(context, phpClass);
+        });
+        r.fn("get_class_vars", (context, a) -> {
+            Args.arity(a, "get_class_vars", 1, 1);
+            TruffleString name = Convert.toStr(Args.get(a, 0));
+            PhpClass phpClass = context.findClassAutoloading(Str.java(name));
+            if (phpClass == null) {
+                throw new PhpError("TypeError", "get_class_vars(): Argument #1 ($class) must be a valid class name, "
+                        + Str.java(name) + " given");
+            }
+            return classVars(context, phpClass);
+        });
         r.fn("get_mangled_object_vars", a -> {
             Object value = Args.get(a, 0);
             if (value instanceof PhpObject object) {
@@ -586,6 +610,106 @@ final class CoreFunctions {
     @TruffleBoundary
     private static PhpArray objectVars(Object value) {
         return value instanceof PhpObject object ? object.visibleProperties(null) : new PhpArray();
+    }
+
+    /**
+     * get_class_methods(): the names of the methods the calling scope may call, in function table order (a private
+     * one from its class, a protected one from a class related to the one declaring it: zend_check_protected).
+     */
+    @TruffleBoundary
+    private static PhpArray classMethods(PhpContext context, PhpClass phpClass) {
+        PhpClass scope = Callables.callerClass(context, "self");
+        PhpArray result = new PhpArray();
+        for (Map.Entry<String, String> entry : ReflectionFunctions.orderedMethods(context, phpClass).entrySet()) {
+            PhpFunction method = phpClass.findMethod(entry.getKey());
+            if (method == null) {
+                continue;
+            }
+            int modifiers = method.getModifiers();
+            PhpClass declaring = ReflectionFunctions.declaringClass(phpClass, entry.getKey(), method);
+            if (visible(modifiers & PhpFunction.ACC_PROTECTED, modifiers & PhpFunction.ACC_PRIVATE, declaring,
+                    scope)) {
+                result.append(Str.of(entry.getValue()));
+            }
+        }
+        return result;
+    }
+
+    private static boolean visible(int isProtected, int isPrivate, PhpClass declaring, PhpClass scope) {
+        if (isPrivate != 0) {
+            return declaring == scope;
+        }
+        return isProtected == 0 || scope != null && (declaring.isSubclassOf(scope.getLowerName())
+                || scope.isSubclassOf(declaring.getLowerName()));
+    }
+
+    /** A declared property as properties_info has it: visibility, static, and the class it belongs to. */
+    private record PropertyInfo(int visibility, boolean isStatic, PhpClass declaring) {
+    }
+
+    /**
+     * get_class_vars(): the defaults of the properties the calling scope may access, instance ones then static
+     * ones, each in properties_info order.
+     */
+    @TruffleBoundary
+    private static PhpArray classVars(PhpContext context, PhpClass phpClass) {
+        PhpClass scope = Callables.callerClass(context, "self");
+        Map<String, PropertyInfo> infos = new LinkedHashMap<>();
+        propertyInfos(context, phpClass, phpClass, infos);
+        phpClass.declaredDefaults();
+        PhpArray result = new PhpArray();
+        for (boolean statics : new boolean[] {false, true}) {
+            for (Map.Entry<String, PropertyInfo> entry : infos.entrySet()) {
+                PropertyInfo info = entry.getValue();
+                if (info.isStatic() != statics || !visible(info.visibility() & 1, info.visibility() & 2,
+                        info.declaring(), scope)) {
+                    continue;
+                }
+                Object value = statics ? phpClass.getStaticDefault(entry.getKey())
+                        : phpClass.findProperty(entry.getKey()).defaultValue();
+                result.put(ArrayKey.of(Str.of(entry.getKey())), value == null ? PhpNull.NULL : value);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * properties_info's order: the class's own properties (promoted ones where the constructor is), its traits'
+     * (which belong to the class), then the parent's that it doesn't redeclare. A built-in class's, as declared.
+     */
+    private static void propertyInfos(PhpContext context, PhpClass phpClass, PhpClass declaring,
+                                      Map<String, PropertyInfo> infos) {
+        ClassTemplate template = ReflectionFunctions.template(phpClass);
+        if (template == null) {
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                PhpClass owner = decl.declaringClass() == null ? phpClass : context.findClass(decl.declaringClass());
+                infos.putIfAbsent(decl.name(), new PropertyInfo(decl.visibility(), false, owner));
+            }
+            return;
+        }
+        for (ClassTemplate.Member member : template.ownMembers()) {
+            if (member instanceof ClassTemplate.Property property) {
+                infos.putIfAbsent(property.name(), new PropertyInfo(property.visibility(), property.isStatic(),
+                        declaring));
+            } else if (member instanceof ClassTemplate.Method method) {
+                for (PhpClass.PropertyDecl decl : method.promoted()) {
+                    infos.putIfAbsent(decl.name(), new PropertyInfo(decl.visibility(), false, declaring));
+                }
+            }
+        }
+        for (ClassTemplate.Member member : template.ownMembers()) {
+            if (member instanceof ClassTemplate.TraitUse use) {
+                for (String trait : use.traits()) {
+                    PhpClass traitClass = context.findClass(Str.lower(trait));
+                    if (traitClass != null) {
+                        propertyInfos(context, traitClass, declaring, infos);
+                    }
+                }
+            }
+        }
+        if (phpClass.getParent() != null && phpClass == declaring) {
+            propertyInfos(context, phpClass.getParent(), phpClass.getParent(), infos);
+        }
     }
 
     private static int objectId(Object value) {
