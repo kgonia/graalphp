@@ -1801,8 +1801,10 @@ public final class Translator {
             }
             case "AST_PROP":
             case "AST_NULLSAFE_PROP": {
-                ExprNode object = constantObject(node.get("expr"), false);
                 Object prop = node.get("prop");
+                // php-src checks the object after evaluating a computed name, which this order can't do
+                ExprNode object = prop instanceof String ? constantObject(node.get("expr"), false)
+                        : placeOrExpression(node.get("expr"));
                 if (prop instanceof String name) {
                     return new PropNode(object, Str.sourceKey(name), null, lexicalClass(), scopeInFrame());
                 }

@@ -2668,7 +2668,7 @@ public final class BytecodeTranslator {
                 return;
             }
             b.beginReadPropNamed(propSite(node, null));
-            constantObject(node.get("expr"), false);
+            expression(node.get("expr"));
             propName(node.get("prop"));
             b.endReadPropNamed();
         }

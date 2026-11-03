@@ -208,7 +208,7 @@ public final class ClassTemplate {
             phpClass.addInterface(declared);
         }
         // zend_implement_traversable
-        if (!isInterface && implemented.contains("traversable") && !phpClass.isSubclassOf("iterator")
+        if (!isInterface && !isAbstract && implemented.contains("traversable") && !phpClass.isSubclassOf("iterator")
                 && !phpClass.isSubclassOf("iteratoraggregate")) {
             throw linkError(context, (isEnum() ? "Enum " : "Class ") + name
                     + " must implement interface Traversable as part of either Iterator or IteratorAggregate");
