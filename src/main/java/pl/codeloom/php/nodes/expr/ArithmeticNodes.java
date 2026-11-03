@@ -3,7 +3,6 @@ package pl.codeloom.php.nodes.expr;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -222,7 +221,7 @@ public final class ArithmeticNodes {
     public abstract static class ConcatNode extends BinaryNode {
         @Specialization
         public static TruffleString concat(TruffleString a, TruffleString b,
-                                           @Shared @Cached TruffleString.ConcatNode concat) {
+                                           @Cached TruffleString.ConcatNode concat) {
             return concat.execute(a, b, Str.ENC, true);
         }
 
@@ -236,10 +235,8 @@ public final class ArithmeticNodes {
             return Str.join(null, new Object[] {a, b});
         }
 
-        /** With the strings' cache, unused: a split bytecode copy must not take two strings here
-         * (PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static TruffleString concat(Object a, Object b, @Shared @Cached TruffleString.ConcatNode concat) {
+        public static TruffleString concat(Object a, Object b) {
             return Str.concat(Convert.toStr(a), Convert.toStr(b));
         }
     }

@@ -3,7 +3,6 @@ package pl.codeloom.php.nodes.expr;
 import com.oracle.truffle.api.bytecode.ForceQuickening;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.dsl.TypeSystemReference;
@@ -37,8 +36,7 @@ public final class Comparisons {
         }
 
         @Specialization
-        public static boolean strings(TruffleString a, TruffleString b,
-                                      @Shared @Cached TruffleString.EqualNode equal) {
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
             return equal.execute(a, b, Str.ENC);
         }
 
@@ -47,10 +45,8 @@ public final class Comparisons {
             return a == b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
-         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal) {
+        public static boolean other(Object a, Object b) {
             return CompareNodes.IdenticalNode.identical(a, b);
         }
     }
@@ -68,8 +64,7 @@ public final class Comparisons {
         }
 
         @Specialization
-        public static boolean strings(TruffleString a, TruffleString b,
-                                      @Shared @Cached TruffleString.EqualNode equal) {
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal) {
             return !equal.execute(a, b, Str.ENC);
         }
 
@@ -78,10 +73,8 @@ public final class Comparisons {
             return a != b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
-         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal) {
+        public static boolean other(Object a, Object b) {
             return !CompareNodes.IdenticalNode.identical(a, b);
         }
     }
@@ -105,8 +98,8 @@ public final class Comparisons {
         }
 
         @Specialization
-        public static boolean strings(TruffleString a, TruffleString b, @Shared @Cached TruffleString.EqualNode equal,
-                                      @Shared @Cached TruffleString.ReadByteNode readByte) {
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
+                                      @Cached TruffleString.ReadByteNode readByte) {
             return CompareNodes.EqualNode.equalStrings(a, b, equal, readByte);
         }
 
@@ -115,11 +108,8 @@ public final class Comparisons {
             return a == b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
-         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal,
-                                    @Shared @Cached TruffleString.ReadByteNode readByte) {
+        public static boolean other(Object a, Object b) {
             return Convert.looseEquals(a, b);
         }
     }
@@ -143,8 +133,8 @@ public final class Comparisons {
         }
 
         @Specialization
-        public static boolean strings(TruffleString a, TruffleString b, @Shared @Cached TruffleString.EqualNode equal,
-                                      @Shared @Cached TruffleString.ReadByteNode readByte) {
+        public static boolean strings(TruffleString a, TruffleString b, @Cached TruffleString.EqualNode equal,
+                                      @Cached TruffleString.ReadByteNode readByte) {
             return !CompareNodes.EqualNode.equalStrings(a, b, equal, readByte);
         }
 
@@ -153,11 +143,8 @@ public final class Comparisons {
             return a != b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
-         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal,
-                                    @Shared @Cached TruffleString.ReadByteNode readByte) {
+        public static boolean other(Object a, Object b) {
             return !Convert.looseEquals(a, b);
         }
     }

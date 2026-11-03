@@ -935,15 +935,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class IssetElement {
         @Specialization
-        public static boolean array(PhpArray container, Object key,
-                                    @Shared @Cached ElementNodes.ElementReadNode read) {
+        public static boolean array(PhpArray container, Object key, @Cached ElementNodes.ElementReadNode read) {
             return read.execute(container, key) != PhpNull.NULL;
         }
 
-        /** With array's cache, unused: a split copy must not take an array here (see isCloningAllowed). */
         @Fallback
-        public static boolean other(Object container, Object key, @Shared @Cached ElementNodes.ElementReadNode read,
-                                    @Bind Node node) {
+        public static boolean other(Object container, Object key, @Bind Node node) {
             return container != PhpNull.NULL && DimNode.isSetIn(node, container, key);
         }
     }
@@ -1877,9 +1874,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return read.execute(container, key);
         }
 
-        /** With array's and object's cache, unused: a split copy must not take those here (see isCloningAllowed). */
         @Fallback
-        public static Object other(Object container, Object key, @Shared @Cached ElementNodes.ElementReadNode read) {
+        public static Object other(Object container, Object key) {
             return PhpNull.NULL;
         }
     }
@@ -3247,8 +3243,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "lowerName")
     public static final class InstanceOf {
         @Specialization
-        public static boolean object(String lowerName, PhpObject value,
-                                     @Shared @Cached SubclassTestNode subclassTest) {
+        public static boolean object(String lowerName, PhpObject value, @Cached SubclassTestNode subclassTest) {
             return subclassTest.execute(value.getPhpClass(), lowerName);
         }
 
@@ -3257,9 +3252,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return lowerName.equals("closure");
         }
 
-        /** With object's cache, unused: a split copy must not take an object here (see isCloningAllowed). */
         @Fallback
-        public static boolean other(String lowerName, Object value, @Shared @Cached SubclassTestNode subclassTest) {
+        public static boolean other(String lowerName, Object value) {
             return false;
         }
     }
@@ -3502,12 +3496,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return iteration.next(frame, value, key, hasKey, bytecode, node, keyWrites, valueWrites);
         }
 
-        /** With object's caches, unused: a split copy must not take an object here (see isCloningAllowed). */
         @Fallback
         public static boolean done(VirtualFrame frame, LocalAccessor position, LocalAccessor value,
-                                   LocalAccessor key, boolean hasKey, Object state,
-                @Shared("keyWrites") @Cached(neverDefault = true) Locals.Writes keyWrites,
-                @Shared("valueWrites") @Cached(neverDefault = true) Locals.Writes valueWrites) {
+                                   LocalAccessor key, boolean hasKey, Object state) {
             return false;
         }
     }
@@ -3628,11 +3619,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return true;
         }
 
-        /** With array's and generator's cache, unused: a split copy must not take those here (see isCloningAllowed). */
         @Fallback
         public static boolean done(VirtualFrame frame, LocalAccessor value, LocalAccessor key, boolean hasKey,
-                                   Object state,
-                @Shared("keyWrites") @Cached(neverDefault = true) Locals.Writes keyWrites) {
+                                   Object state) {
             return false;
         }
     }
@@ -4364,15 +4353,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * Splitting, as for the tree's functions: a copy per caller profile. The copy (the generated cloneUninitialized)
-     * keeps the original's specialization state, which lives in the bytecode since Truffle 25.1 (GR-61293), and
-     * makes the cached nodes anew: an operation's specialization can be active with its caches null. The fast path
-     * then passes it by, and a @Fallback's guard trusts the state for a specialization that checks only a type
-     * ("active, so it would have taken the value"): `instanceof` answered false for an object of the class
-     * (is_wp_error(), so wp-login.php failed), a string was truthy however empty, an element null, a foreach ran no
-     * step (tests/smoke/split-copies.php). So each @Fallback that follows such specializations takes their caches
-     * too, unused: in a copy it can't run before they exist either, and the copy specializes anew. ponytail: a
-     * workaround in each operation until Truffle's copy resets the state.
+     * Splitting, as for the tree's functions: a copy per caller profile. The released processors 25.1 to 25.4 make
+     * the copy (the generated cloneUninitialized) with the original's specialization state, which lives in the
+     * bytecode since GR-61293, and the cached nodes anew, so a @Fallback guard trusting that state answered wrong
+     * (is_wp_error()'s instanceof false for a WP_Error; tests/smoke/split-copies.php). The patched processor
+     * (truffle-dsl-processor/, GR-79787) clears the state in unquickenBytecode, so the copy specializes anew.
      */
     @Override
     public boolean isCloningAllowed() {

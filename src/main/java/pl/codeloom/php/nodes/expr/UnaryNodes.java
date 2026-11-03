@@ -4,7 +4,6 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
@@ -208,14 +207,12 @@ public final class UnaryNodes {
         }
 
         @Specialization
-        public static TruffleString number(long value, @Shared @Cached TruffleString.FromLongNode fromLong) {
+        public static TruffleString number(long value, @Cached TruffleString.FromLongNode fromLong) {
             return fromLong.execute(value, Str.ENC, true);
         }
 
-        /** With number's cache, unused: a split bytecode copy must not take an int here (see
-         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
-        public static TruffleString other(Object value, @Shared @Cached TruffleString.FromLongNode fromLong) {
+        public static TruffleString other(Object value) {
             return Convert.toStr(value);
         }
     }

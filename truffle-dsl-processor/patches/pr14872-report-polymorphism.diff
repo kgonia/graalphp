@@ -1,0 +1,83 @@
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeDSLNodeGeneratorPlugs.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeDSLNodeGeneratorPlugs.java
+index a667719ca57d9..9cb28ab06fd8b 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeDSLNodeGeneratorPlugs.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeDSLNodeGeneratorPlugs.java
+@@ -402,6 +402,15 @@ public CodeVariableElement createStateField(FlatNodeGenFactory factory, BitSet b
+         return NodeGeneratorPlugs.super.createStateField(factory, bitSet);
+     }
+ 
++    @Override
++    public CodeTree createPolymorphismReportingNode(FlatNodeGenFactory factory, FrameState frameState) {
++        if (instruction.canUseNodeSingleton()) {
++            // Singleton operation nodes are not adopted and cannot find the owning root.
++            return CodeTreeBuilder.singleString("$bytecode");
++        }
++        return NodeGeneratorPlugs.super.createPolymorphismReportingNode(factory, frameState);
++    }
++
+     public CodeTree createStateLoad(FlatNodeGenFactory factory, FrameState frameState, BitSet bitSet) {
+         if (instruction.canInlineState()) {
+             InstructionImmediate imm = instruction.findImmediate(ImmediateKind.STATE_PROFILE, bitSet.getName());
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/FlatNodeGenFactory.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/FlatNodeGenFactory.java
+index 57c9fc9764007..5de824e0802f4 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/FlatNodeGenFactory.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/FlatNodeGenFactory.java
+@@ -3021,11 +3021,14 @@ private Element createCheckForPolymorphicSpecialize(ReportPolymorphismAction rep
+         if (requiresCacheCheck) {
+             executable.addParameter(new CodeVariableElement(getType(int.class), OLD_CACHE_COUNT));
+         }
++        for (VariableElement arg : plugs.additionalArguments()) {
++            executable.addParameter(arg);
++        }
+ 
+         CodeTreeBuilder builder = executable.createBuilder();
+ 
++        builder.tree(multiState.createLoad(frameState, specializationActive, specializationExcluded));
+         if (reportPolymorphismAction.polymorphism) {
+-            builder.tree(multiState.createLoad(frameState, specializationActive, specializationExcluded));
+             for (BitSet s : relevantSets) {
+                 builder.declaration(s.getType(), getSetNewName(s), s.createMaskedReference(frameState, specializationActive, specializationExcluded));
+             }
+@@ -3067,11 +3070,7 @@ private Element createCheckForPolymorphicSpecialize(ReportPolymorphismAction rep
+         }
+         builder.end(); // if
+         builder.startBlock().startStatement();
+-        if (inlined) {
+-            builder.tree(frameState.getValue(INLINED_NODE_INDEX).createReference());
+-        } else {
+-            builder.string("this");
+-        }
++        builder.tree(plugs.createPolymorphismReportingNode(this, frameState));
+         builder.string(".");
+         builder.startCall(REPORT_POLYMORPHIC_SPECIALIZE).end();
+ 
+@@ -3148,6 +3147,7 @@ private void generateCheckNewPolymorphismState(CodeTreeBuilder builder, FrameSta
+         if (requiresCacheCheck(reportPolymorphismAction)) {
+             builder.string(OLD_CACHE_COUNT);
+         }
++        builder.variables(plugs.additionalArguments());
+         builder.end().end().end(); // call, statement, block
+     }
+ 
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/NodeGeneratorPlugs.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/NodeGeneratorPlugs.java
+index d9e13e25b3c32..2f1bd07d1c7c2 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/NodeGeneratorPlugs.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/generator/NodeGeneratorPlugs.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2022, 2024, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2022, 2026, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * The Universal Permissive License (UPL), Version 1.0
+@@ -118,6 +118,10 @@ default CodeTree bindExpressionValue(FrameState frameState, Variable variable) {
+         };
+     }
+ 
++    default CodeTree createPolymorphismReportingNode(FlatNodeGenFactory factory, FrameState frameState) {
++        return factory.createNodeAccess(frameState);
++    }
++
+     default CodeTree createStateLoad(FlatNodeGenFactory factory, FrameState frameState, BitSet bitSet) {
+         return factory.createInlinedAccess(frameState, null, CodeTreeBuilder.singleString("this." + bitSet.getName() + "_"), null);
+     }
