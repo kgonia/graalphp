@@ -189,7 +189,13 @@ public final class PropNode extends LValueNode {
 
     /** zend_should_call_hook's other side: in the property's own hook, on the hook's $this, the backing value. */
     private boolean inOwnHook(Object[] arguments, PhpObject phpObject, String name) {
-        return hookOf != null && hookOf.equals(name) && arguments[PhpFunction.ARG_THIS] == phpObject;
+        if (hookOf == null || !hookOf.equals(name)) {
+            return false;
+        }
+        Object self = arguments[PhpFunction.ARG_THIS];
+        // a hook running on an initialized proxy has its instance's backing value too
+        return self == phpObject || self instanceof PhpObject proxy && proxy.lazy() != null
+                && proxy.lazy().instance() == phpObject;
     }
 
     /** The calling scope, as accessible() finds it. */
@@ -253,7 +259,7 @@ public final class PropNode extends LValueNode {
                 // the backing value of a lazy object: initialized first, a proxy's instance's
                 PhpObject target = phpObject.initializeLazy();
                 if (target != phpObject) {
-                    twin().writeOn(arguments, target, name, value);
+                    target.writeRaw(name, value);
                     return true;
                 }
             }
@@ -633,7 +639,11 @@ public final class PropNode extends LValueNode {
         }
         PhpClass.Hooks hooks = phpObject.getPhpClass().findHooks(name);
         if (hooks != null && phpObject.getPhpClass().canAccessProperty(name, scope(arguments))) {
-            hookedRef(arguments, phpObject, name, hooks);
+            // read_property(BP_VAR_W) gives no place to bind; its own Error is the new one's previous in php-src
+            try {
+                hookedRef(arguments, phpObject, name, hooks);
+            } catch (PhpError ignored) {
+            }
             throw new PhpError("Cannot assign by reference to overloaded object");
         }
         if (!phpObject.getPhpClass().canAccessProperty(name, scope(arguments))) {
