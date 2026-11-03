@@ -183,6 +183,7 @@ public final class ClassTemplate {
                 useTraits(context, phpClass, use, own);
             }
         }
+        Variance.check(context, phpClass);
         return phpClass;
     }
 

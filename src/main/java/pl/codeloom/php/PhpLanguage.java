@@ -233,6 +233,25 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return singleContext;
     }
 
+    /** The files declaring strict_types=1; while there is none, every type check is in coercive mode. */
+    private final Map<String, Boolean> strictFiles = new ConcurrentHashMap<>();
+    private final Assumption noStrictFiles = Truffle.getRuntime().createAssumption("no strict_types file");
+
+    public void declareStrict(String path) {
+        strictFiles.put(path, Boolean.TRUE);
+        noStrictFiles.invalidate();
+    }
+
+    /** Whether the code of the file at path (a SourceLocation's file, a root's path) is in strict mode. */
+    public boolean isStrict(String path) {
+        return !noStrictFiles.isValid() && path != null && strictFiles.containsKey(path);
+    }
+
+    /** Valid while no file declares strict_types=1: a caller's mode needs no stack walk. */
+    public Assumption noStrictFiles() {
+        return noStrictFiles;
+    }
+
     @Override
     protected void initializeMultipleContexts() {
         singleContext.invalidate();

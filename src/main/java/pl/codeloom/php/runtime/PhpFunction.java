@@ -22,11 +22,11 @@ public final class PhpFunction {
     public static final int ARG_FIRST = 3;
 
     /**
-     * A parameter. defaultValue is null for required parameters, else a value or a {@link PhpClass.Thunk}.
-     * coerce is the scalar type the argument is converted to in coercive typing mode ('s', 'i', 'f', 'b'), or 0.
-     * type is the declared type as zend_type_to_string writes it ("?Foo", "int|string|null"), or null.
+     * A parameter. defaultValue is null for required parameters, else how a declaration writes it ("= 'a'").
+     * declared is the type the argument is checked against, or null. type is the declared type as Reflection
+     * writes it ("?Foo", "int|string|null"), or null.
      */
-    public record Param(String name, boolean byRef, boolean variadic, Object defaultValue, char coerce,
+    public record Param(String name, boolean byRef, boolean variadic, Object defaultValue, PhpType declared,
                         boolean nullable, String type) {
     }
 
@@ -120,6 +120,8 @@ public final class PhpFunction {
     private int modifiers;
     /** The declared return type as zend_type_to_string writes it, or null. */
     private String returnType;
+    /** The return type values are checked against (null for none, void, or a generator), set before a call. */
+    private PhpType declaredReturn;
     /** The doc comment before the declaration, or null; and the declaration's last line. */
     private String docComment;
     private int endLine;
@@ -134,6 +136,14 @@ public final class PhpFunction {
 
     public int getModifiers() {
         return modifiers;
+    }
+
+    public void setDeclaredReturn(PhpType type) {
+        this.declaredReturn = type;
+    }
+
+    public PhpType getDeclaredReturn() {
+        return declaredReturn;
     }
 
     public String getReturnType() {
