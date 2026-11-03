@@ -27,10 +27,14 @@ public final class StringFunctions {
 
     static void register(Registry r) {
         r.fn("substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), lengthArg(a, 2)));
-        r.fn("strpos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("stripos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
-        r.fn("strrpos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("strripos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
+        r.fn("strpos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strpos", "offset", "int") : 0, false));
+        r.fn("stripos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "stripos", "offset", "int") : 0, true));
+        r.fn("strrpos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strrpos", "offset", "int") : 0, false));
+        r.fn("strripos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strripos", "offset", "int") : 0, true));
         r.fn("str_contains", a -> indexOf(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1)), 0, false) >= 0);
         r.fn("str_starts_with", a -> startsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
         r.fn("str_ends_with", a -> endsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
@@ -46,9 +50,9 @@ public final class StringFunctions {
         r.fn("lcfirst", a -> caseFirst(Args.str(a, 0), false));
         r.fn("ucwords", a -> ucwords(Args.str(a, 0), Args.str(a, 1, Str.of(" \t\r\n\f\u000b"))));
         r.fn("explode", a -> explode(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, Long.MAX_VALUE)));
-        r.fn("implode", a -> implode(a));
-        r.fn("join", a -> implode(a));
-        r.fn("sprintf", a -> Sprintf.format(a, 0));
+        r.fn("implode", (context, a) -> implode(context, a, "implode"));
+        r.fn("join", (context, a) -> implode(context, a, "join"));
+        r.fn("sprintf", a -> Sprintf.format(a, 0, "sprintf"));
         r.fn("vsprintf", (context, a) -> Sprintf.formatArray(context, a, 0, "vsprintf"));
         r.fn("sscanf", "00*", (context, a) -> {
             Args.arity(a, "sscanf", 2, Integer.MAX_VALUE);
@@ -197,27 +201,28 @@ public final class StringFunctions {
             return (long) Str.length(text);
         });
         r.fn("printf", (context, a) -> {
-            TruffleString text = Sprintf.format(a, 0);
+            TruffleString text = Sprintf.format(a, 0, "printf");
             context.write(text);
             return (long) Str.length(text);
         });
         r.fn("str_pad", a -> strPad(Args.str(a, 0), Args.lng(a, 1, 0), Args.str(a, 2, Str.of(" ")),
                 Args.lng(a, 3, 1)));
         r.fn("str_repeat", a -> repeat(Args.str(a, 0), Args.lng(a, 1, 0)));
-        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr"))
+        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr", "from"))
                 : strtrChars(Args.str(a, 0), Args.str(a, 1), Args.str(a, 2)));
         r.fn("strspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), true));
         r.fn("strcspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), false));
         r.fn("substr_count", a -> substrCount(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3)));
         r.fn("substr_compare", a -> substrCompare(a));
-        r.fn("substr_replace", a -> substrReplace(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0),
-                lengthArg(a, 3)));
-        r.fn("strcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
-        r.fn("strcasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), Integer.MAX_VALUE)));
-        r.fn("strncmp", a -> (long) Integer.signum(compareN(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0))));
-        r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
+        r.fn("substr_replace", (context, a) -> substrReplace(context, a));
+        r.fn("strcmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, false));
+        r.fn("strcasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, true));
+        r.fn("strncmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncmp", Args.lng(a, 2, 0)), false));
+        r.fn("strncasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncasecmp", Args.lng(a, 2, 0)), true));
         r.fn("strnatcmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), false));
         r.fn("strnatcasecmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)),
                 true));
@@ -234,13 +239,24 @@ public final class StringFunctions {
             }
             return Boolean.FALSE;
         });
-        r.fn("chunk_split", a -> {
-            byte[] body = Str.bytes(Args.str(a, 0));
-            int length = (int) Args.lng(a, 1, 76);
-            byte[] end = Str.bytes(Args.str(a, 2, Str.of("\r\n")));
+        r.fn("chunk_split", (context, a) -> {
+            Args.arity(a, "chunk_split", 1, 3);
+            byte[] body = Str.bytes(Args.string(context, a, 0, "chunk_split", "string", false));
+            long length = Args.has(a, 1) ? Args.integer(context, a, 1, "chunk_split", "length", "int") : 76;
+            byte[] end = Args.has(a, 2) ? Str.bytes(Args.string(context, a, 2, "chunk_split", "separator", false))
+                    : new byte[] {'\r', '\n'};
+            if (length <= 0) {
+                throw new PhpError("ValueError", "chunk_split(): Argument #2 ($length) must be greater than 0");
+            }
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            for (int i = 0; i < body.length; i += length) {
-                out.write(body, i, Math.min(length, body.length - i));
+            if (length > body.length) {
+                // the string and the ending, an empty string's too (php-src's BC)
+                out.writeBytes(body);
+                out.writeBytes(end);
+                return Str.of(out.toByteArray());
+            }
+            for (int i = 0; i < body.length; i += (int) length) {
+                out.write(body, i, Math.min((int) length, body.length - i));
                 out.writeBytes(end);
             }
             return Str.of(out.toByteArray());
@@ -292,7 +308,10 @@ public final class StringFunctions {
         r.fn("rawurldecode", a -> urldecode(Args.str(a, 0), false));
         r.fn("urldecode", a -> urldecode(Args.str(a, 0), true));
         r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.readBytes(Args.str(a, 0)))));
-        r.fn("chr", a -> Str.singleByte((int) Math.floorMod(Args.lng(a, 0, 0), 256)));
+        r.fn("chr", (context, a) -> {
+            Args.arity(a, "chr", 1, 1);
+            return Str.singleByte((int) Math.floorMod(Args.integer(context, a, 0, "chr", "codepoint", "int"), 256));
+        });
         r.fn("ord", a -> {
             TruffleString s = Args.str(a, 0);
             return Str.length(s) == 0 ? 0L : (long) Str.byteAt(s, 0);
@@ -370,8 +389,16 @@ public final class StringFunctions {
             conventions.put(ArrayKey.of(Str.of("mon_grouping")), new PhpArray());
             return conventions;
         });
-        r.fn("number_format", a -> numberFormat(Convert.toDouble(Args.get(a, 0)), Args.lng(a, 1, 0),
-                Args.str(a, 2, Str.of(".")), Args.str(a, 3, Str.of(","))));
+        r.fn("number_format", (context, a) -> {
+            Object number = Args.number(context, a, 0, "number_format", "num");
+            long decimals = Args.has(a, 1) ? Args.integer(context, a, 1, "number_format", "decimals", "int") : 0;
+            TruffleString point = Args.has(a, 2) ? Args.string(context, a, 2, "number_format", "decimal_separator",
+                    true) : null;
+            TruffleString separator = Args.has(a, 3) ? Args.string(context, a, 3, "number_format",
+                    "thousands_separator", true) : null;
+            return numberFormat(number, decimals, point == null ? "." : Str.java(point),
+                    separator == null ? "," : Str.java(separator));
+        });
         r.fn("wordwrap", a -> wordwrap(Args.str(a, 0), Args.lng(a, 1, 75), Args.str(a, 2, Str.of("\n")),
                 Args.bool(a, 3, false)));
         r.fn("parse_str", "01", (context, a) -> {
@@ -380,9 +407,17 @@ public final class StringFunctions {
         });
         r.fn("parse_url", a -> UrlFunctions.parseUrl(Args.str(a, 0), Args.lng(a, 1, -1)));
         r.fn("http_build_query", UrlFunctions::httpBuildQuery);
-        r.fn("pack", a -> Pack.pack(a));
-        r.fn("unpack", a -> Pack.unpack(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0)));
-        r.fn("dirname", a -> dirname(Args.str(a, 0), Args.lng(a, 1, 1)));
+        r.fn("pack", (context, a) -> Pack.pack(context, a));
+        r.fn("unpack", (context, a) -> Pack.unpack(context, a));
+        r.fn("dirname", (context, a) -> {
+            Args.arity(a, "dirname", 1, 2);
+            TruffleString path = Args.string(context, a, 0, "dirname", "path", false);
+            long levels = Args.has(a, 1) ? Args.integer(context, a, 1, "dirname", "levels", "int") : 1;
+            if (levels < 1) {
+                throw new PhpError("ValueError", "dirname(): Argument #2 ($levels) must be greater than or equal to 1");
+            }
+            return dirname(path, levels);
+        });
         r.fn("basename", a -> basename(Args.str(a, 0), Args.str(a, 1, Str.EMPTY)));
         r.fn("pathinfo", a -> pathinfo(Args.str(a, 0), Args.lng(a, 1, 15)));
         r.fn("ctype_digit", a -> ctype(Args.get(a, 0), "digit"));
@@ -475,8 +510,7 @@ public final class StringFunctions {
             offset += h.length;
         }
         if (offset < 0 || offset > h.length) {
-            throw new PhpError("ValueError", "strpos(): Argument #3 ($offset) must be contained in argument #1 "
-                    + "($haystack)");
+            throw offsetError(ignoreCase ? "stripos" : "strpos", 3, "offset");
         }
         int index = indexOf(h, Str.readBytes(needle), (int) offset, ignoreCase);
         return index < 0 ? (Object) Boolean.FALSE : (Object) (long) index;
@@ -486,6 +520,9 @@ public final class StringFunctions {
     private static Object strrpos(TruffleString haystack, TruffleString needle, long offset, boolean ignoreCase) {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
+        if (offset > h.length || offset < -h.length) {
+            throw offsetError(ignoreCase ? "strripos" : "strrpos", 3, "offset");
+        }
         int start;
         int limit;
         if (offset >= 0) {
@@ -501,6 +538,12 @@ public final class StringFunctions {
             }
         }
         return Boolean.FALSE;
+    }
+
+    /** zend_argument_value_error's "must be contained in argument #1 ($haystack)". */
+    private static PhpError offsetError(String function, int position, String name) {
+        return new PhpError("ValueError", function + "(): Argument #" + position + " ($" + name + ") must be "
+                + "contained in argument #1 ($haystack)");
     }
 
     private static boolean regionMatches(byte[] h, int at, byte[] n, boolean ignoreCase) {
@@ -761,24 +804,85 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString substrReplace(TruffleString s, TruffleString replacement, long offset,
-                                               Long length) {
+    private static Object substrReplace(PhpContext context, Object[] a) {
+        Args.arity(a, "substr_replace", 3, 4);
+        Object string = Args.arrayOrString(context, a, 0, "substr_replace", "string");
+        Object replace = Args.arrayOrString(context, a, 1, "substr_replace", "replace");
+        Object offset = arrayOrLong(context, a, 2, "offset", "array|int");
+        Object length = Args.has(a, 3) && Args.get(a, 3) != PhpNull.NULL
+                ? arrayOrLong(context, a, 3, "length", "array|int|null") : null;
+        if (string instanceof TruffleString s) {
+            if (offset instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #3 ($offset) cannot be an array when "
+                        + "working on a single string");
+            }
+            if (length instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #4 ($length) cannot be an array when "
+                        + "working on a single string");
+            }
+            TruffleString with = replace instanceof PhpArray r ? (r.size() > 0 ? Convert.toStr(r.valueAt(
+                    r.firstPosition())) : Str.EMPTY) : (TruffleString) replace;
+            return spliced(s, with, (Long) offset, (Long) length);
+        }
+        PhpArray strings = (PhpArray) string;
+        PhpArray result = new PhpArray();
+        int offsets = offset instanceof PhpArray o ? o.firstPosition() : -1;
+        int lengths = length instanceof PhpArray l ? l.firstPosition() : -1;
+        int replaces = replace instanceof PhpArray r ? r.firstPosition() : -1;
+        for (int p = strings.firstPosition(); p >= 0; p = strings.nextPosition(p)) {
+            TruffleString s = Convert.toStr(strings.valueAt(p));
+            long f = 0;
+            if (offset instanceof PhpArray o) {
+                if (offsets >= 0) {
+                    f = Convert.toLong(o.valueAt(offsets));
+                    offsets = o.nextPosition(offsets);
+                }
+            } else {
+                f = (Long) offset;
+            }
+            Long l = null;
+            if (length instanceof PhpArray lengthArray) {
+                if (lengths >= 0) {
+                    l = Convert.toLong(lengthArray.valueAt(lengths));
+                    lengths = lengthArray.nextPosition(lengths);
+                }
+            } else {
+                l = (Long) length;
+            }
+            TruffleString with = (TruffleString) (replace instanceof PhpArray ? Str.EMPTY : replace);
+            if (replace instanceof PhpArray r && replaces >= 0) {
+                with = Convert.toStr(r.valueAt(replaces));
+                replaces = r.nextPosition(replaces);
+            }
+            result.put(strings.keyAt(p), spliced(s, with, f, l));
+        }
+        return result;
+    }
+
+    /** Z_PARAM_ARRAY_HT_OR_LONG(_OR_NULL): the array, or the argument as an int. */
+    private static Object arrayOrLong(PhpContext context, Object[] a, int index, String name, String type) {
+        return Args.get(a, index) instanceof PhpArray array ? array
+                : (Object) Args.integer(context, a, index, "substr_replace", name, type);
+    }
+
+    /** The string with length bytes from offset replaced (substr_replace's clamping; a null length: to the end). */
+    private static TruffleString spliced(TruffleString s, TruffleString replacement, long offset, Long length) {
         byte[] b = Str.readBytes(s);
-        int n = b.length;
-        long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
-        long end;
-        if (length == null) {
-            end = n;
-        } else if (length < 0) {
-            end = Math.max(start, n + length);
-        } else {
-            end = Math.min(n, start + length);
+        long n = Str.length(s);
+        long f = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+        long l = length == null ? n : length;
+        if (l < 0) {
+            l = Math.max(0, n - f + l);
+        }
+        if (l > n - f) {
+            l = n - f;
         }
         byte[] r = Str.readBytes(replacement);
-        byte[] out = new byte[(int) (start + r.length + (n - end))];
-        System.arraycopy(b, 0, out, 0, (int) start);
-        System.arraycopy(r, 0, out, (int) start, r.length);
-        System.arraycopy(b, (int) end, out, (int) start + r.length, (int) (n - end));
+        int rl = Str.length(replacement);
+        byte[] out = new byte[(int) (n - l + rl)];
+        System.arraycopy(b, 0, out, 0, (int) f);
+        System.arraycopy(r, 0, out, (int) f, rl);
+        System.arraycopy(b, (int) (f + l), out, (int) f + rl, (int) (n - f - l));
         return Str.of(out);
     }
 
@@ -954,30 +1058,33 @@ public final class StringFunctions {
         return Str.of(b);
     }
 
-    static int compareIgnoreCase(byte[] a, byte[] b, int limit) {
-        int n = Math.min(Math.min(a.length, b.length), limit);
+    /**
+     * zend_binary_strncmp and zend_binary_strncasecmp on a from offset and b, length bytes at most: the first
+     * differing bytes' difference (glibc's memcmp), else -1, 0 or 1 by the compared lengths.
+     */
+    static int compare(byte[] a, int offset, byte[] b, long length, boolean ignoreCase) {
+        long aLength = Math.min(length, a.length - offset);
+        long bLength = Math.min(length, b.length);
+        int n = (int) Math.min(aLength, bLength);
         for (int i = 0; i < n; i++) {
-            int x = lowerByte(a[i]) & 0xFF;
-            int y = lowerByte(b[i]) & 0xFF;
+            int x = a[offset + i] & 0xFF;
+            int y = b[i] & 0xFF;
+            if (ignoreCase) {
+                x = lowerByte((byte) x) & 0xFF;
+                y = lowerByte((byte) y) & 0xFF;
+            }
             if (x != y) {
                 return x - y;
             }
         }
-        return Math.min(a.length, limit) - Math.min(b.length, limit);
+        return Long.compare(aLength, bLength);
     }
 
-    @TruffleBoundary
-    private static int compareN(TruffleString a, TruffleString b, long n) {
-        byte[] x = Str.readBytes(a);
-        byte[] y = Str.readBytes(b);
-        int limit = (int) Math.min(n, Integer.MAX_VALUE);
-        int m = Math.min(Math.min(x.length, y.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (x[i] != y[i]) {
-                return (x[i] & 0xFF) - (y[i] & 0xFF);
-            }
+    private static long nonNegative(String function, long length) {
+        if (length < 0) {
+            throw new PhpError("ValueError", function + "(): Argument #3 ($length) must be greater than or equal to 0");
         }
-        return Math.min(x.length, limit) - Math.min(y.length, limit);
+        return length;
     }
 
     // ---- splitting and joining ----
@@ -1010,19 +1117,34 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString implode(Object[] a) {
+    private static TruffleString implode(PhpContext context, Object[] a, String function) {
         Object first = Args.get(a, 0);
-        Object second = Args.get(a, 1);
+        Object second = Args.get(a, 1, PhpNull.NULL);
         PhpArray pieces;
         TruffleString glue;
-        if (first instanceof PhpArray array) {
+        if (first instanceof TruffleString s && second instanceof PhpArray array) {
+            glue = s;
             pieces = array;
-            glue = second == null ? Str.EMPTY : Convert.toStr(second);
-        } else if (second instanceof PhpArray array) {
-            pieces = array;
-            glue = Convert.toStr(first);
         } else {
-            throw new PhpError("TypeError", "implode(): Argument #2 ($array) must be of type ?array");
+            Args.arity(a, function, 1, 2);
+            first = Args.arrayOrString(context, a, 0, function, "separator");
+            if (second != PhpNull.NULL && !(second instanceof PhpArray)) {
+                throw Args.typeError(function, 2, "array", "?array", second);
+            }
+            if (second == PhpNull.NULL) {
+                if (!(first instanceof PhpArray array)) {
+                    throw new PhpError("TypeError", function + "(): If argument #1 ($separator) is of type string, "
+                            + "argument #2 ($array) must be of type array, null given");
+                }
+                glue = Str.EMPTY;
+                pieces = array;
+            } else if (first instanceof TruffleString s) {
+                glue = s;
+                pieces = (PhpArray) second;
+            } else {
+                throw new PhpError("TypeError", function + "(): Argument #1 ($separator) must be of type string, "
+                        + "array given");
+            }
         }
         ByteBuilder out = new ByteBuilder();
         boolean firstPiece = true;
@@ -1048,10 +1170,6 @@ public final class StringFunctions {
         }
         byte[] b = Str.readBytes(s);
         PhpArray result = new PhpArray();
-        if (b.length == 0) {
-            result.append(Str.EMPTY);
-            return result;
-        }
         for (int i = 0; i < b.length; i += (int) length) {
             result.append(Str.of(b, i, (int) Math.min(length, b.length - i)));
         }
@@ -1114,10 +1232,23 @@ public final class StringFunctions {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
-            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) cannot be empty");
+            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) must not be empty");
         }
-        int start = (int) (offset < 0 ? h.length + offset : offset);
-        int end = length == null ? h.length : (int) (length < 0 ? h.length + length : start + length);
+        if (offset < 0) {
+            offset += h.length;
+        }
+        if (offset < 0 || offset > h.length) {
+            throw offsetError("substr_count", 3, "offset");
+        }
+        int start = (int) offset;
+        int end = h.length;
+        if (length != null) {
+            long l = length < 0 ? length + (h.length - offset) : length;
+            if (l < 0 || l > h.length - offset) {
+                throw offsetError("substr_count", 4, "length");
+            }
+            end = (int) (start + l);
+        }
         long count = 0;
         int i = indexOf(h, n, start, false);
         while (i >= 0 && i + n.length <= end) {
@@ -1134,6 +1265,12 @@ public final class StringFunctions {
         long offset = Args.lng(a, 2, 0);
         Long length = lengthArg(a, 3);
         boolean ignoreCase = Args.bool(a, 4, false);
+        if (length != null && length <= 0) {
+            if (length == 0) {
+                return 0L;
+            }
+            throw new PhpError("ValueError", "substr_compare(): Argument #4 ($length) must be greater than or equal to 0");
+        }
         if (offset < 0) {
             offset = Math.max(0, main.length + offset);
         }
@@ -1141,18 +1278,8 @@ public final class StringFunctions {
             throw new PhpError("ValueError", "substr_compare(): Argument #3 ($offset) must be contained in argument "
                     + "#1 ($haystack)");
         }
-        int limit = length == null ? Math.max(main.length - (int) offset, other.length) : (int) (long) length;
-        byte[] part = Arrays.copyOfRange(main, (int) offset, main.length);
-        if (ignoreCase) {
-            return (long) Integer.signum(compareIgnoreCase(part, other, limit));
-        }
-        int m = Math.min(Math.min(part.length, other.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (part[i] != other[i]) {
-                return (long) Integer.signum((part[i] & 0xFF) - (other[i] & 0xFF));
-            }
-        }
-        return (long) Integer.signum(Math.min(part.length, limit) - Math.min(other.length, limit));
+        long limit = length == null ? Math.max(main.length - offset, other.length) : length;
+        return (long) compare(main, (int) offset, other, limit, ignoreCase);
     }
 
     // ---- escaping ----
@@ -1387,21 +1514,58 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString numberFormat(double value, long decimals, TruffleString point, TruffleString sep) {
-        java.math.BigDecimal rounded = new java.math.BigDecimal(Double.toString(Math.abs(value)))
-                .setScale((int) Math.max(0, decimals), java.math.RoundingMode.HALF_UP);
-        String plain = rounded.toPlainString();
-        String integer = plain.contains(".") ? plain.substring(0, plain.indexOf('.')) : plain;
-        String fraction = plain.contains(".") ? plain.substring(plain.indexOf('.') + 1) : "";
-        StringBuilder grouped = new StringBuilder();
-        for (int i = 0; i < integer.length(); i++) {
-            if (i > 0 && (integer.length() - i) % 3 == 0) {
-                grouped.append(Str.java(sep));
-            }
-            grouped.append(integer.charAt(i));
+    private static TruffleString numberFormat(Object number, long decimals, String point, String separator) {
+        // a float of 2^52 or more has no fraction: formatted as the int it is (zend's own check)
+        if (number instanceof Double d && Math.abs(d) >= 4503599627370496.0 && d >= -9.223372036854775808E18
+                && d < 9.223372036854775807E18) {
+            number = (long) (double) d;
         }
-        String sign = value < 0 && rounded.signum() != 0 ? "-" : "";
-        return Str.of(sign + grouped + (decimals > 0 ? Str.java(point) + fraction : ""));
+        boolean negative;
+        String digits;
+        String fraction = "";
+        if (number instanceof Long l) {
+            // _php_math_number_format_long: an unsigned magnitude, rounded half up to a negative place
+            negative = l < 0;
+            java.math.BigInteger magnitude = java.math.BigInteger.valueOf(l).abs();
+            if (decimals < 0) {
+                java.math.BigInteger power = java.math.BigInteger.TEN.pow((int) Math.min(-decimals, 20));
+                java.math.BigInteger[] parts = magnitude.divideAndRemainder(power);
+                magnitude = decimals < -19 ? java.math.BigInteger.ZERO : parts[0].multiply(power).add(
+                        parts[1].compareTo(power.shiftRight(1)) >= 0 ? power : java.math.BigInteger.ZERO);
+                negative &= magnitude.signum() != 0;
+            }
+            digits = magnitude.toString();
+            if (decimals > 0) {
+                fraction = "0".repeat((int) decimals);
+            }
+        } else {
+            // _php_math_number_format_ex: rounded half up, then printed as %.*F
+            double d = (Double) number;
+            negative = d < 0;
+            int places = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, decimals));
+            d = CoreFunctions.round(Math.abs(d), places, 1);
+            places = Math.max(0, places);
+            if (!Double.isFinite(d)) {
+                return Str.of(Double.isNaN(d) ? "NAN" : "INF");
+            }
+            negative &= d != 0;
+            String printed = new java.math.BigDecimal(d).setScale(places, java.math.RoundingMode.HALF_EVEN)
+                    .toPlainString();
+            int dot = printed.indexOf('.');
+            digits = dot < 0 ? printed : printed.substring(0, dot);
+            fraction = dot < 0 ? "" : printed.substring(dot + 1);
+        }
+        StringBuilder out = new StringBuilder(negative ? "-" : "");
+        for (int i = 0; i < digits.length(); i++) {
+            if (i > 0 && (digits.length() - i) % 3 == 0) {
+                out.append(separator);
+            }
+            out.append(digits.charAt(i));
+        }
+        if (decimals > 0) {
+            out.append(point).append(fraction);
+        }
+        return Str.of(out.toString());
     }
 
     @TruffleBoundary
@@ -1453,21 +1617,19 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString dirname(TruffleString path, long levels) {
-        if (levels < 1) {
-            throw new PhpError("ValueError", "dirname(): Argument #2 ($levels) must be greater than or equal to 1");
-        }
         byte[] p = Str.bytes(path);
         int length = p.length;
-        int before;
+        int previous;
         do {
-            before = length;
-            length = dirname(p, length);
-        } while (length < before && --levels > 0);
+            previous = length;
+            length = zendDirname(p, length);
+        } while (length < previous && --levels > 0);
+        // zend_dirname writes "/" or "." over the start for the paths it reduces to one
         return Str.of(p, 0, length);
     }
 
-    /** zend_dirname on the first length bytes, in place: the new length. */
-    private static int dirname(byte[] p, int length) {
+    /** zend_dirname (unix): the length of the parent, "/" or "." written at the start when it is one of those. */
+    private static int zendDirname(byte[] p, int length) {
         if (length == 0) {
             return 0;
         }

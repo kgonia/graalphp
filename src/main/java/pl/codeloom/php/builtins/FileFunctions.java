@@ -1104,7 +1104,7 @@ final class FileFunctions {
             Args.arity(a, "fprintf", 2, Integer.MAX_VALUE);
             Stream stream = stream(a, "fprintf");
             Args.string(context, a, 1, "fprintf", "format", false);
-            return printTo(stream, Sprintf.format(a, 1));
+            return printTo(stream, Sprintf.format(a, 1, "fprintf"));
         });
         r.fn("fscanf", "00*", (context, a) -> {
             Args.arity(a, "fscanf", 2, Integer.MAX_VALUE);
@@ -1559,6 +1559,15 @@ final class FileFunctions {
             context.builtinState().openStreams.add(stream);
         }
         return new PhpResource(context.nextResourceId(), "stream", stream);
+    }
+
+    /** sapi/cli's cli_register_file_handles: STDIN, STDOUT and STDERR, resources 1 to 3. */
+    static void defineStdStreams(PhpContext context) {
+        String[] names = {"STDIN", "STDOUT", "STDERR"};
+        for (int fd = 0; fd < 3; fd++) {
+            context.defineConstant(names[fd], new PhpResource(fd + 1, "stream", new StdStream(context, fd,
+                    fd == 0 ? "rb" : "wb", "php://" + names[fd].toLowerCase(java.util.Locale.ROOT))));
+        }
     }
 
     static Stream openStream(PhpContext context, String name, String mode) {

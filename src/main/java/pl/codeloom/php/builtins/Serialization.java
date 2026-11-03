@@ -1445,6 +1445,11 @@ final class Serialization {
             if (callback == null || callback.isEmpty()) {
                 return incompleteClass();
             }
+            if (pl.codeloom.php.runtime.Callables.resolve(context, Str.of(callback)) == null) {
+                // zend_call_function's error for a callable it can't call
+                throw new PhpError("Invalid callback " + callback + ", "
+                        + pl.codeloom.php.runtime.Callables.invalidReason(context, Str.of(callback)));
+            }
             state.lock++;
             try {
                 pl.codeloom.php.runtime.Callables.call(context, Str.of(callback), Str.of(name));

@@ -419,7 +419,10 @@ public final class ErrorFunctions {
         });
         r.fn("trigger_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, E_USER_NOTICE)));
         r.fn("user_error", (context, a) -> triggerError(context, Args.str(a, 0), Args.lng(a, 1, E_USER_NOTICE)));
-        r.fn("error_get_last", (context, a) -> lastError(context.errors()));
+        r.fn("error_get_last", (context, a) -> {
+            Args.arity(a, "error_get_last", 0, 0);
+            return lastError(context.errors());
+        });
         r.fn("error_clear_last", (context, a) -> {
             State state = context.errors();
             state.lastError = null;

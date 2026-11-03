@@ -42,8 +42,21 @@ final class EncodingFunctions {
         r.fn("base64_encode", a -> Str.of(Base64.getEncoder().encode(Str.bytes(Args.str(a, 0)))));
         r.fn("base64_decode", a -> base64Decode(Str.bytes(Args.str(a, 0)), Args.bool(a, 1, false)));
         r.fn("hex2bin", a -> hex2bin(Str.readBytes(Args.str(a, 0))));
-        r.fn("base_convert", a -> baseConvert(Str.java(Convert.toStr(Args.get(a, 0))), Args.lng(a, 1, 10),
-                Args.lng(a, 2, 10)));
+        r.fn("base_convert", (context, a) -> {
+            Args.arity(a, "base_convert", 3, 3);
+            TruffleString number = Args.string(context, a, 0, "base_convert", "num", false);
+            long from = Args.integer(context, a, 1, "base_convert", "from_base", "int");
+            long to = Args.integer(context, a, 2, "base_convert", "to_base", "int");
+            if (from < 2 || from > 36) {
+                throw new PhpError("ValueError", "base_convert(): Argument #2 ($from_base) must be between 2 and 36 "
+                        + "(inclusive)");
+            }
+            if (to < 2 || to > 36) {
+                throw new PhpError("ValueError", "base_convert(): Argument #3 ($to_base) must be between 2 and 36 "
+                        + "(inclusive)");
+            }
+            return toBase(CoreFunctions.baseToNumber(context, number, (int) from), (int) to);
+        });
         r.fn("random_bytes", a -> {
             byte[] bytes = new byte[(int) Args.lng(a, 0, 0)];
             RANDOM.nextBytes(bytes);
@@ -140,21 +153,21 @@ final class EncodingFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString baseConvert(String number, long from, long to) {
-        if (from < 2 || from > 36 || to < 2 || to > 36) {
-            throw new PhpError("ValueError", "base_convert(): Argument #2 ($from_base) must be between 2 and 36 "
-                    + "(inclusive)");
+    /** _php_math_zvaltobase: an int's unsigned digits, a float's (floored) by repeated division. */
+    private static TruffleString toBase(Object number, int base) {
+        if (number instanceof Long l) {
+            return Str.of(Long.toUnsignedString(l, base));
+        }
+        double value = Math.floor((Double) number);
+        if (Double.isInfinite(value)) {
+            throw new PhpError("ValueError", "An infinite value cannot be converted to base " + base);
         }
         StringBuilder digits = new StringBuilder();
-        for (char c : Str.lower(number).toCharArray()) {
-            if (Character.digit(c, (int) from) >= 0) {
-                digits.append(c);
-            }
-        }
-        if (digits.isEmpty()) {
-            return Str.of("0");
-        }
-        return Str.of(new java.math.BigInteger(digits.toString(), (int) from).toString((int) to));
+        do {
+            digits.append(Character.forDigit((int) (value % base), base));
+            value /= base;
+        } while (digits.length() < 1079 && Math.abs(value) >= 1);
+        return Str.of(digits.reverse().toString());
     }
 
     @TruffleBoundary
