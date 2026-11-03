@@ -249,6 +249,14 @@ public final class PropNode extends LValueNode {
                 throw new PhpError((own ? "Must not write to virtual property " : "Property ")
                         + phpObject.getPhpClass().getName() + "::$" + Str.keyText(name) + (own ? "" : " is read-only"));
             }
+            if (phpObject.getProperty(name) == null && phpObject.lazy() != null && !phpObject.isInitializingLazy()) {
+                // the backing value of a lazy object: initialized first, a proxy's instance's
+                PhpObject target = phpObject.initializeLazy();
+                if (target != phpObject) {
+                    twin().writeOn(arguments, target, name, value);
+                    return true;
+                }
+            }
             if (phpObject.getProperty(name) != null) {
                 return false;
             }
@@ -393,7 +401,14 @@ public final class PropNode extends LValueNode {
             return inaccessibleRef(arguments, phpObject, name);
         }
         PhpObject target = lazyTarget(arguments, phpObject, name, "__get");
-        return target == null ? null : twin().makeRefOn(arguments, target, name);
+        if (target != null) {
+            return twin().makeRefOn(arguments, target, name);
+        }
+        // zend_std_get_property_ptr_ptr gives no place when __get may run: read_property's BP_VAR_W calls it
+        if (phpObject.getPhpClass().findMethod("__get") != null && !phpObject.inMagic("__get", name)) {
+            return new PhpRef(missing(arguments, phpObject, name));
+        }
+        return afterMagic(phpObject, name, "__get", instance -> twin().makeRefOn(arguments, instance, name));
     }
 
     /** The hooks of a virtual property, which the object hasn't (hooks()); null for another missing one. */
@@ -687,7 +702,14 @@ public final class PropNode extends LValueNode {
             return inaccessibleArray(arguments, phpObject, name);
         }
         PhpObject target = lazyTarget(arguments, phpObject, name, "__get");
-        return target == null ? MISSING_ARRAY : twin().arrayForWriteOn(arguments, target, name);
+        if (target != null) {
+            return twin().arrayForWriteOn(arguments, target, name);
+        }
+        if (phpObject.getPhpClass().findMethod("__get") != null && !phpObject.inMagic("__get", name)) {
+            return overloadedArray(missing(arguments, phpObject, name));
+        }
+        return phpObject.lazy() == null || phpObject.isInitializingLazy() ? MISSING_ARRAY
+                : afterMagic(phpObject, name, "__get", instance -> twin().arrayForWriteOn(arguments, instance, name));
     }
 
     /** An array write the fast path didn't take: into a hooked property's place (hookedRef), or __get's value. */
@@ -917,10 +939,11 @@ public final class PropNode extends LValueNode {
             return Convert.toBool(magic) ? missing(arguments, phpObject, name) : null;
         }
         PhpClass phpClass = phpObject.getPhpClass();
-        if (phpClass.findMethod("__isset") == null && phpClass.findMethod("__get") != null) {
+        if (phpClass.findMethod("__get") != null && !phpObject.inMagic("__get", name)) {
             return missing(arguments, phpObject, name);
         }
-        return afterMagic(phpObject, name, "__isset", instance -> twin().readIfSetOn(arguments, instance, name));
+        return afterMagic(phpObject, name, phpClass.findMethod("__isset") != null ? "__isset" : "__get",
+                instance -> twin().readIfSetOn(arguments, instance, name));
     }
 
     @Override

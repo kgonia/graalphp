@@ -175,6 +175,10 @@ public final class PhpObject extends DynamicObject {
      */
     @TruffleBoundary
     public Object[] propertyTable() {
+        if (lazy != null && lazy.instance != null) {
+            // an initialized proxy's are its instance's (zend_std_get_properties)
+            return lazy.instance.propertyTable();
+        }
         Object[] names = propertyNames();
         Object[] table = new Object[names.length * 2];
         int i = 0;
