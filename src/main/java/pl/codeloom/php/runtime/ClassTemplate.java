@@ -31,16 +31,16 @@ public final class ClassTemplate {
     public record Method(PhpFunction function, List<PhpClass.PropertyDecl> promoted) implements Member {
     }
 
-    /** A class constant: its value, or a {@link Deferred} initializer. */
-    public record Constant(String name, Object value, int visibility) implements Member {
+    /** A class constant: its value, or a {@link Deferred} initializer; its visibility; its type, or null. */
+    public record Constant(String name, Object value, int visibility, PhpType type) implements Member {
     }
 
     /**
-     * A property: its default value, a {@link Deferred} initializer, or null for a typed one without a default;
-     * its php-ast modifiers and type as PhpClass.PropertyDecl's.
+     * A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its php-ast
+     * modifiers as PhpClass.PropertyDecl's, its type, whether it has hooks.
      */
     public record Property(String name, Object initial, int visibility, boolean isStatic, int modifiers,
-                           String type) implements Member {
+                           PhpType type, boolean hooked) implements Member {
     }
 
     /** An enum case: its backing value, a {@link Deferred} one, or null in a pure enum. */
@@ -194,6 +194,16 @@ public final class ClassTemplate {
     /** This context's class for the declaration: parent and interfaces resolved by name in the context. */
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {
+        String lowerName = Str.lower(name);
+        context.setLinking(lowerName, this);
+        try {
+            return link(context);
+        } finally {
+            context.setLinking(lowerName, null);
+        }
+    }
+
+    private PhpClass link(PhpContext context) {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
@@ -202,7 +212,10 @@ public final class ClassTemplate {
         }
         Set<String> implemented = new HashSet<>();
         for (String iface : interfaces) {
-            PhpClass declared = context.getClass(iface);
+            PhpClass declared = context.findClassAutoloading(iface);
+            if (declared == null) {
+                throw new PhpError("Interface \"" + iface + "\" not found");
+            }
             checkInterface(context, declared);
             if (!implemented.add(declared.getLowerName())) {
                 throw linkError(context, (isEnum() ? "Enum " : isInterface ? "Interface " : "Class ") + name
@@ -223,11 +236,12 @@ public final class ClassTemplate {
             // zend_enum_add_interfaces, zend_enum_register_props and _funcs
             phpClass.addInterface(context.getClass("UnitEnum"));
             phpClass.addProperty(new PhpClass.PropertyDecl("name", null, PhpClass.PropertyDecl.PUBLIC, null,
-                    PhpClass.PropertyDecl.READONLY, "string"));
+                    PhpClass.PropertyDecl.READONLY, builtinType(PhpType.STRING)));
             if (backingType != null) {
                 phpClass.addInterface(context.getClass("BackedEnum"));
                 phpClass.addProperty(new PhpClass.PropertyDecl("value", null, PhpClass.PropertyDecl.PUBLIC, null,
-                        PhpClass.PropertyDecl.READONLY, backingType));
+                        PhpClass.PropertyDecl.READONLY,
+                        builtinType(backingType.equals("int") ? PhpType.INT : PhpType.STRING)));
             }
             for (PhpFunction method : context.getLanguage().builtins().enumMethods()) {
                 if (backingType != null || method.getName().equals("cases")) {
@@ -257,6 +271,11 @@ public final class ClassTemplate {
         if (isEnum()) {
             checkEnum(context, phpClass);
         }
+        // a trait's __toString implements Stringable too (zend_do_bind_traits)
+        if (traitBody == null && phpClass.findMethod("__tostring") != null && !phpClass.isSubclassOf("stringable")) {
+            phpClass.addInterface(context.getClass("Stringable"));
+        }
+        Variance.check(context, phpClass);
         if (!isInterface && !isAbstract && !isTrait()) {
             checkAbstract(context, phpClass);
         }
@@ -280,6 +299,11 @@ public final class ClassTemplate {
         throw linkError(context, isEnum() ? "Enum " + name + " must implement " + count + " abstract method" + s
                 + " (" + list + ")" : "Class " + name + " contains " + count + " abstract method" + s
                 + " and must therefore be declared abstract or implement the remaining method" + s + " (" + list + ")");
+    }
+
+    /** A built-in type without classes (an enum's name and value). */
+    private static PhpType builtinType(int mask) {
+        return new PhpType(mask, new String[0], new String[0][], new String[0]);
     }
 
     /** A compile error of the class's linking (zend_do_inheritance, zend_enum's checks) at its declaration. */
@@ -355,11 +379,18 @@ public final class ClassTemplate {
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
-            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass), constant.visibility());
+            Object value = bind(constant.value(), phpClass);
+            PhpType type = constant.type();
+            if (type != null && value instanceof PhpClass.Thunk thunk) {
+                // zend_update_class_constant: checked when evaluated, in strict mode
+                String what = "class constant " + phpClass.getName().split("\0", 2)[0] + "::" + constant.name();
+                value = (PhpClass.Thunk) () -> type.assignTo(thunk.evaluate(), what);
+            }
+            phpClass.addConstant(constant.name(), value, constant.visibility(), type);
         } else if (member instanceof Property property) {
-            Object initial = bind(property.initial(), phpClass);
+            Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {
-                phpClass.addStaticProperty(property.name(), initial);
+                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial);
             } else {
                 PhpClass.PropertyDecl inherited = phpClass.findProperty(property.name());
                 boolean readonly = (property.modifiers() & PhpClass.PropertyDecl.READONLY) != 0;
@@ -372,6 +403,9 @@ public final class ClassTemplate {
                 }
                 phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
                         property.modifiers(), property.type()));
+                if (property.hooked()) {
+                    phpClass.addHooked(property.name());
+                }
             }
         } else if (member instanceof Case enumCase) {
             phpClass.addCase(enumCase.name(), bind(enumCase.value(), phpClass));

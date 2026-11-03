@@ -6,6 +6,8 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.builtins.Args;
@@ -20,6 +22,8 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpType;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -58,12 +62,6 @@ public final class PropNode extends LValueNode {
      * assignment compiled all of them (about 27 IR nodes a site).
      */
     @CompilationFinal private int seen;
-    /**
-     * The key of classes whose typed property (the constant name) a write here initializes as a plain put with
-     * initFlags: declared, not readonly nor set-restricted, accessible from the lexical scope, no __set (directInit).
-     */
-    @CompilationFinal private ClassKey initKey;
-    @CompilationFinal private int initFlags;
     private static final int SEEN_REF = 1;
     private static final int SEEN_MISSING = 1 << 1;
     private static final int SEEN_NEW_ARRAY = 1 << 2;
@@ -142,6 +140,8 @@ public final class PropNode extends LValueNode {
 
     // ---- visibility ----
 
+    private static final int VISIBILITY = PhpClass.PROPERTY_PROTECTED | PhpClass.PROPERTY_PRIVATE;
+
     /** Whether the calling scope may access the property: public and undeclared ones need no check. */
     private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name) {
         return accessible(frame, phpObject, name, objects.getPropertyFlagsOrDefault(phpObject, name, 0));
@@ -149,7 +149,7 @@ public final class PropNode extends LValueNode {
 
     /** accessible() of a property with these shape flags. */
     private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name, int shapeFlags) {
-        int flags = shapeFlags & (PhpClass.PROPERTY_PROTECTED | PhpClass.PROPERTY_PRIVATE);
+        int flags = shapeFlags & VISIBILITY;
         if (flags == 0 || thisInMethod && flags == PhpClass.PROPERTY_PROTECTED) {
             return true;
         }
@@ -264,14 +264,83 @@ public final class PropNode extends LValueNode {
     private static final Object ABSENT = new Object();
 
     /**
-     * Reading a property that doesn't exist: PhpObject.readMissing, or for a declared one the scope may not access
-     * (a typed one has no slot while uninitialized, so no shape flags) inaccessibleRead.
+     * Reading a property that doesn't exist: an uninitialized typed property's Error (from a scope that may access
+     * it), else __get's result if the class has one, else null.
      */
     private Object missing(VirtualFrame frame, PhpObject phpObject, String name) {
-        if (!phpObject.getPhpClass().canAccessProperty(name, scope(frame))) {
+        return missing(phpObject, name, callingScope(frame, lexicalClass));
+    }
+
+    @TruffleBoundary
+    private Object missing(PhpObject phpObject, String name, String scope) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl == null) {
+            return phpObject.readMissing(this, name);
+        }
+        if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
             return inaccessibleRead(phpObject, name);
         }
-        return phpObject.readMissing(this, name);
+        Object magic = decl == null || phpObject.wasUnset(name) ? phpObject.magicProperty(this, "__get", name)
+                : PhpObject.NO_MAGIC;
+        if (magic == PhpObject.NO_MAGIC && decl != null) {
+            throw new PhpError("Typed property " + PhpType.declaringName(decl) + "::$" + Str.keyText(name)
+                    + " must not be accessed before initialization");
+        }
+        return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
+    }
+
+    /** The declaration of a typed property, or null. */
+    @TruffleBoundary
+    private static PhpClass.PropertyDecl typedDecl(PhpObject phpObject, String name) {
+        PhpClass.PropertyDecl decl = phpObject.getPhpClass().findProperty(name);
+        return decl != null && decl.type() != null ? decl : null;
+    }
+
+    /** Whether the property has a type: its writes are checked (compiled code tests the shape's flag). */
+    private boolean typed(PhpObject phpObject, String name) {
+        return (objects.getPropertyFlagsOrDefault(phpObject, name, 0) & PhpClass.PROPERTY_TYPED) != 0;
+    }
+
+    /** A value for a typed property: converted in the writing code's mode, or the TypeError. */
+    @TruffleBoundary
+    private Object checked(PhpObject phpObject, String name, Object value) {
+        PhpClass.PropertyDecl decl = phpObject.getPhpClass().findProperty(name);
+        return decl.type().assign(PhpRef.deref(value), strict(), decl, this);
+    }
+
+    /** Whether the user code running now is in a strict_types file. */
+    private static boolean strict() {
+        PhpLanguage language = PhpContext.get(null).getLanguage();
+        return !language.noStrictFiles().isValid() && language.isStrict(SourceLocation.current().file());
+    }
+
+    /**
+     * A write to an uninitialized typed property, which skips __set: the converted value stored with the
+     * declaration's flags. False if the property isn't one.
+     */
+    @TruffleBoundary
+    private boolean initialize(PhpObject phpObject, String name, Object value, String scope) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl == null) {
+            return false;
+        }
+        if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
+            throw inaccessible(phpObject, name);
+        }
+        if (phpObject.wasUnset(name)) {
+            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+                return true;
+            }
+            phpObject.setUnset(name, false);
+        }
+        // a readonly or set-restricted property is initialized from a scope that may set it
+        phpObject.checkSetAccess(name, scope, "modify");
+        Object converted = decl.type().assign(PhpRef.deref(value), strict(), decl, this);
+        if (converted instanceof PhpArray array) {
+            array.addHolder();
+        }
+        phpObject.setProperty(name, converted);
+        return true;
     }
 
     @Override
@@ -341,7 +410,12 @@ public final class PropNode extends LValueNode {
     public void writeLong(VirtualFrame frame, long value) {
         String name = name(frame);
         PhpObject phpObject = target(frame, name, "assign");
-        if (!writable(frame, phpObject, name, "modify")) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if ((flags & (PhpClass.PROPERTY_TYPED | PhpClass.PROPERTY_SET_CHECKED)) != 0) {
+            writeOn(frame, phpObject, name, value);
+            return;
+        }
+        if (!accessible(frame, phpObject, name, flags)) {
             inaccessibleWrite(phpObject, name, value);
             return;
         }
@@ -353,7 +427,8 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (missingWritten(frame, phpObject, name, value)) {
+            String scope = callingScope(frame, lexicalClass);
+            if (initialize(phpObject, name, value, scope) || phpObject.writeMissing(this, scope, name, value)) {
                 return;
             }
         }
@@ -366,27 +441,48 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void write(VirtualFrame frame, Object value) {
-        String name = name(frame);
-        writeOn(frame, target(frame, name, "assign"), name, value);
+        assign(frame, value);
     }
 
-    /** `object->name = value`, the object evaluated: an error if it isn't one. */
-    public void writeOn(VirtualFrame frame, Object target, String name, Object value) {
+    /** `$obj->name = value`: the value stored, the assignment's result. */
+    public Object assign(VirtualFrame frame, Object value) {
+        String name = name(frame);
+        return writeOn(frame, target(frame, name, "assign"), name, value);
+    }
+
+    /**
+     * `object->name = value`, the object evaluated: an error if it isn't one. The value stored (a typed
+     * property's converted one), the assignment's result.
+     */
+    public Object writeOn(VirtualFrame frame, Object target, String name, Object value) {
         PhpObject phpObject = target(target, name, "assign");
-        if (!writable(frame, phpObject, name, "modify")) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if (!accessible(frame, phpObject, name, flags)) {
             inaccessibleWrite(phpObject, name, value);
-            return;
+            return value;
+        }
+        // readonly and set visibility before the type (zend_std_write_property)
+        boolean setChecked = (flags & PhpClass.PROPERTY_SET_CHECKED) != 0;
+        if (setChecked) {
+            phpObject.checkModify(name, scope(frame), "modify");
+        }
+        if ((flags & PhpClass.PROPERTY_TYPED) != 0) {
+            value = checked(phpObject, name, value);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
             refWrites.set(ref, value);
-            return;
+            return value;
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (missingWritten(frame, phpObject, name, value)) {
-                return;
+            String scope = callingScope(frame, lexicalClass);
+            if (initialize(phpObject, name, value, scope)) {
+                return PhpRef.deref(objects.getOrDefault(phpObject, name, null));
+            }
+            if (phpObject.writeMissing(this, scope, name, value)) {
+                return value;
             }
         }
         if (value instanceof Long l) {
@@ -401,6 +497,31 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpArray array && old != value) {
             met(SEEN_OLD_ARRAY);
             array.removeHolder();
+        }
+        if (setChecked) {
+            // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)
+            phpObject.unmark("reinit:" + name);
+        }
+        return value;
+    }
+
+    /** {@link #incDecOverflow(PhpObject, String, boolean)} of this site's object and name. */
+    public void incDecOverflow(VirtualFrame frame, boolean increment) {
+        String name = name(frame);
+        incDecOverflow(target(frame, name, "increment/decrement"), name, increment);
+    }
+
+    /**
+     * `$o->p++` stepping a typed int property's PHP_INT_MAX to a float (zend_incdec_typed_prop): the TypeError,
+     * unless the type takes a float.
+     */
+    @TruffleBoundary
+    public static void incDecOverflow(PhpObject phpObject, String name, boolean increment) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl != null && !decl.type().has(PhpType.FLOAT)) {
+            throw new PhpError("TypeError", "Cannot " + (increment ? "increment" : "decrement") + " property "
+                    + PhpType.declaringName(decl) + "::$" + Str.keyText(name) + " of type " + decl.type().text(null)
+                    + " past its " + (increment ? "maximal" : "minimal") + " value");
         }
     }
 
@@ -426,8 +547,8 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpRef ref) {
             return ref;
         }
-        // an uninitialized typed property takes no __get (IS_PROP_UNINIT)
-        if (old == null && !phpObject.isUninitialized(name)) {
+        if (old == null && !(phpObject.isReadonly(name) && phpObject.isUninitialized(name))
+                && !uninitializedRef(phpObject, name)) {
             Object magic = magicForWrite(phpObject, name);
             if (magic != PhpObject.NO_MAGIC) {
                 return magicRef(magic);
@@ -441,8 +562,35 @@ public final class PropNode extends LValueNode {
             array.removeHolder();
         }
         ref.bind();
-        objects.put(phpObject, name, ref);
+        if (old == null) {
+            phpObject.setProperty(name, ref);
+        } else {
+            objects.put(phpObject, name, ref);
+        }
         return ref;
+    }
+
+    /**
+     * A reference to an uninitialized typed property, which skips __get: one that takes null starts as null.
+     * False if the property isn't one (or was unset: __get then answers).
+     */
+    @TruffleBoundary
+    private static boolean uninitializedRef(PhpObject phpObject, String name) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl == null || phpObject.wasUnset(name)) {
+            return false;
+        }
+        if (!decl.type().has(PhpType.NULL)) {
+            throw new PhpError("Cannot access uninitialized non-nullable property " + PhpType.declaringName(decl)
+                    + "::$" + Str.keyText(name) + " by reference");
+        }
+        return true;
+    }
+
+    /** An uninitialized typed property never unset: its accesses skip the magic methods. */
+    @TruffleBoundary
+    private static boolean skipsMagic(PhpObject phpObject, String name) {
+        return typedDecl(phpObject, name) != null && !phpObject.wasUnset(name);
     }
 
     @Override
@@ -497,7 +645,7 @@ public final class PropNode extends LValueNode {
             return overloadedContainer(inaccessibleForWrite(phpObject, name));
         }
         Object old = objects.getOrDefault(phpObject, name, null);
-        if (old == null && !phpObject.isUninitialized(name)) {
+        if (old == null && !skipsMagic(phpObject, name)) {
             Object magic = magicForWrite(phpObject, name);
             if (magic != PhpObject.NO_MAGIC) {
                 return overloadedContainer(magic);
@@ -521,15 +669,32 @@ public final class PropNode extends LValueNode {
             return Places.refArrayForWrite(ref);
         }
         if (old == null || old == PhpNull.NULL || old == Boolean.FALSE) {
+            if (old == null || typed(phpObject, name)) {
+                autoInitialize(phpObject, name);
+            }
             PhpArray created = new PhpArray();
             created.addHolder();
-            objects.put(phpObject, name, created);
+            if (old == null) {
+                phpObject.setProperty(name, created);
+            } else {
+                objects.put(phpObject, name, created);
+            }
             return created;
         }
         if (old instanceof PhpObject) {
             return old;
         }
         throw scalarAsArray();
+    }
+
+    /** `$o->p[] = ...` on a typed property that is null or uninitialized: its type must take an array. */
+    @TruffleBoundary
+    private static void autoInitialize(PhpObject phpObject, String name) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl != null && !decl.type().has(PhpType.ARRAY)) {
+            throw new PhpError("TypeError", "Cannot auto-initialize an array inside property "
+                    + PhpType.declaringName(decl) + "::$" + Str.keyText(name) + " of type " + decl.type().text(null));
+        }
     }
 
     /**
@@ -598,49 +763,35 @@ public final class PropNode extends LValueNode {
             }
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                if (!phpObject.getPhpClass().canAccessProperty(name, scope(frame))) {
+                String scope = scope(frame);
+                if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
                     inaccessibleUnset(phpObject, name);
-                } else if (!phpObject.unsetUninitialized(scope(frame), name)
+                } else if (!unsetUninitialized(phpObject, name, scope)
                         && phpObject.magicProperty(this, "__unset", name) == PhpObject.NO_MAGIC) {
-                    phpObject.unsetMissing(scope(frame), name);
+                    // the standard unset's set visibility (a guarded __unset, or none)
+                    phpObject.checkSetAccess(name, scope, "unset");
                 }
                 return;
             }
             if (old instanceof PhpArray array) {
                 array.removeHolder();
             }
+            boolean typed = typed(phpObject, name);
             objects.removeKey(phpObject, name);
-            phpObject.unsetDeclared(name);
+            if (typed) {
+                phpObject.setUnset(name, true);
+            }
         }
     }
 
-    /**
-     * A write of a property the object doesn't have: false for a dynamic one the caller puts, else done here, an
-     * uninitialized typed one put directly when the site's cache (initKey) covers its class (PhpObject.writeMissing).
-     */
-    private boolean missingWritten(VirtualFrame frame, PhpObject phpObject, String name, Object value) {
-        PhpClass phpClass = phpObject.getPhpClass();
-        if (initKey != null && phpClass.getKey() == initKey) {
-            if (value instanceof PhpArray array) {
-                array.addHolder();
-            }
-            objects.putWithFlags(phpObject, name, value, initFlags);
-            return true;
-        }
-        String scope = scope(frame);
-        if (!phpClass.canAccessProperty(name, scope)) {
-            inaccessibleWrite(phpObject, name, value);
-            return true;
-        }
-        int flags = initKey == null && constantName != null && !scopeInFrame ? phpClass.directInit(name, scope) : -1;
-        if (!phpObject.writeMissing(this, scope, name, value)) {
+    /** unset() of a typed property never initialized: marked unset, bypassing __unset. */
+    @TruffleBoundary
+    private static boolean unsetUninitialized(PhpObject phpObject, String name, String scope) {
+        if (typedDecl(phpObject, name) == null || phpObject.wasUnset(name)) {
             return false;
         }
-        if (flags >= 0) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            initFlags = flags;
-            initKey = phpClass.getKey();
-        }
+        phpObject.checkSetAccess(name, scope, "unset");
+        phpObject.setUnset(name, true);
         return true;
     }
 
@@ -667,7 +818,7 @@ public final class PropNode extends LValueNode {
             }
             Object property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             if (property == null) {
-                return magicIsset(phpObject, name);
+                return (typedDecl(phpObject, name) == null || phpObject.wasUnset(name)) && magicIsset(phpObject, name);
             }
             return property != PhpNull.NULL;
         }
@@ -677,9 +828,6 @@ public final class PropNode extends LValueNode {
     /** isset() of a property that doesn't exist or the scope may not access: __isset's answer if there is one. */
     @TruffleBoundary
     private boolean magicIsset(PhpObject phpObject, String name) {
-        if (phpObject.isUninitialized(name)) {
-            return false;
-        }
         Object magic = phpObject.magicProperty(this, "__isset", name);
         return magic != PhpObject.NO_MAGIC && Convert.toBool(magic);
     }
@@ -700,8 +848,9 @@ public final class PropNode extends LValueNode {
                 property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             }
             if (property == null) {
-                // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value
-                if (!magicIsset(phpObject, name)) {
+                // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value; an uninitialized
+                // typed property is unset
+                if (typedDecl(phpObject, name) != null && !phpObject.wasUnset(name) || !magicIsset(phpObject, name)) {
                     return null;
                 }
                 property = missing(frame, phpObject, name);

@@ -8,6 +8,7 @@ import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
 import com.oracle.truffle.api.RootCallTarget;
@@ -21,6 +22,7 @@ import pl.codeloom.php.nodes.vars.FrameSlots;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -28,6 +30,7 @@ import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -65,8 +68,8 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     @CompilationFinal(dimensions = 1) private final byte[] releasedSlots;
     private static final byte RELEASED_ARRAY = 1;
     private static final byte RELEASED_REF = 2;
-    private final char returnCoerce;
-    private final boolean returnNullable;
+    /** The type the returned value is checked against, or null. */
+    private final PhpType returnType;
     @Child private StmtNode body;
     /** A generator function's body (run by the Generator), or null; its frame slot for the Generator's state. */
     @CompilationFinal private RootCallTarget generatorBody;
@@ -82,7 +85,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
 
     public FunctionRootNode(PhpLanguage language, FrameDescriptor frame, String name, PhpFunction.Param[] params,
                             int[] paramSlots, ExprNode[] defaults, int[] captureSlots, boolean[] captureByRef,
-                            char returnCoerce, boolean returnNullable, StmtNode body, String path, boolean internal,
+                            PhpType returnType, StmtNode body, String path, boolean internal,
                             SourceSection sourceSection) {
         super(language, frame);
         this.sourceSection = sourceSection;
@@ -96,8 +99,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         this.captureByRef = captureByRef;
         this.localCount = frame.getNumberOfSlots();
         this.releasedSlots = new byte[localCount];
-        this.returnCoerce = returnCoerce;
-        this.returnNullable = returnNullable;
+        this.returnType = returnType;
         this.body = body;
     }
 
@@ -132,7 +134,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             frame.setObject(generatorSlot, generator);
             return generator.newObject(PhpContext.get(this));
         }
-        Object result = PhpNull.NULL;
+        Object result = null;
         // the locals are released after the try, not in a finally: javac copies a finally block onto the normal
         // and the exceptional exit, and compiled code got two copies of releaseLocals
         RuntimeException runtimeException = null;
@@ -157,13 +159,103 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         if (error != null) {
             throw error;
         }
-        if (returnCoerce == 0) {
-            return result;
+        if (returnType == null) {
+            return result == null ? PhpNull.NULL : result;
+        }
+        if (result == null) {
+            throw noneReturned(name, returnType, calledClass(arguments));
         }
         if (returnsRef) {
-            return coerceRef((PhpRef) result);
+            PhpRef ref = (PhpRef) result;
+            ref.set(checkReturn(name, returnType, ref.get(), calledClass(arguments), path, null));
+            return ref;
         }
-        return coerce(result, returnCoerce, returnNullable, "return value");
+        return checkReturn(name, returnType, result, calledClass(arguments), path, null);
+    }
+
+    static PhpClass calledClass(Object[] arguments) {
+        return arguments[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
+    }
+
+    /** ZEND_VERIFY_RETURN_TYPE for the value function returns, in the mode of its file (path). */
+    public static Object checkReturn(String function, PhpType type, Object value, PhpClass calledClass,
+                                     String path, Node site) {
+        Object accepted = type.fast(value);
+        return accepted != null ? accepted : returnSlow(function, type, value, calledClass, path, site);
+    }
+
+    @TruffleBoundary
+    public static Object returnSlow(String function, PhpType type, Object value, PhpClass calledClass,
+                                    String path, Node site) {
+        Object accepted = type.slow(value, PhpContext.get(null).getLanguage().isStrict(path), calledClass, site);
+        if (accepted != null) {
+            return accepted;
+        }
+        throw new PhpError("TypeError", returnName(function) + "(): Return value must be of type "
+                + type.text(calledClass) + ", " + PhpType.valueName(value) + " returned");
+    }
+
+    /** zend_verify_return_error's "class::function": an anonymous class's name up to its NUL. */
+    private static String returnName(String function) {
+        int nul = function.indexOf('\0');
+        return nul < 0 ? function : function.substring(0, nul) + function.substring(function.lastIndexOf("::"));
+    }
+
+    /** The end of a function with a return type: a never-returning one must not get there either. */
+    @TruffleBoundary
+    public static PhpError noneReturned(String function, PhpType type, PhpClass calledClass) {
+        if (type.has(PhpType.NEVER)) {
+            return new PhpError("TypeError", returnName(function) + "(): never-returning "
+                    + (function.contains("::") ? "method" : "function") + " must not implicitly return");
+        }
+        return new PhpError("TypeError", returnName(function) + "(): Return value must be of type "
+                + type.text(calledClass) + ", none returned");
+    }
+
+    /**
+     * zend_verify_recv_arg_type for what fast checks leave: in the mode of the calling code (a built-in's
+     * callback in coercive mode), else the TypeError naming the call's place in user code.
+     */
+    @TruffleBoundary
+    public static Object argumentSlow(String function, PhpFunction.Param param, int index, Object value,
+                                      PhpClass calledClass, Node site) {
+        SourceLocation caller = null;
+        boolean strict = false;
+        PhpLanguage language = PhpContext.get(null).getLanguage();
+        if (!language.noStrictFiles().isValid()) {
+            caller = Backtrace.userCaller();
+            strict = caller != null && language.isStrict(caller.file());
+        }
+        Object accepted = param.declared().slow(value, strict, calledClass, site);
+        if (accepted != null) {
+            return accepted;
+        }
+        if (caller == null) {
+            caller = Backtrace.userCaller();
+        }
+        // a variadic parameter's arguments go unnamed (get_function_arg_name)
+        // the active function's name as %s writes it: an anonymous class's method up to its NUL
+        throw new PhpError("TypeError", function.split("\0", 2)[0] + "(): Argument #" + (index + 1)
+                + (param.variadic() ? "" : " ($" + param.name() + ")") + " must be of type "
+                + param.declared().text(calledClass) + ", " + PhpType.valueName(value)
+                + " given" + (caller == null ? "" : ", called in " + caller.file() + " on line " + caller.line()));
+    }
+
+    /** A typed parameter's value: the reference's content for a by-reference one, converted in it. */
+    public static Object checkArgument(String function, PhpFunction.Param param, int index, Object value,
+                                       PhpClass calledClass, Node site) {
+        if (value instanceof PhpRef ref && !param.byRef()) {
+            value = ref.get();
+        } else if (value instanceof PhpRef ref) {
+            Object content = ref.get();
+            Object accepted = param.declared().fast(content);
+            if (accepted != content) {
+                ref.set(accepted != null ? accepted : argumentSlow(function, param, index, content, calledClass, site));
+            }
+            return ref;
+        }
+        Object accepted = param.declared().fast(value);
+        return accepted != null ? accepted : argumentSlow(function, param, index, value, calledClass, site);
     }
 
     /** The end of a function returning by reference: php-src's final ZEND_RETURN_BY_REF of null, with its notice. */
@@ -171,16 +263,6 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     private PhpRef implicitReturnRef() {
         CallNode.notice(this, CallNode.RETURNED_VALUE, new SourceLocation(path, endLine));
         return PhpRef.unbound(PhpNull.NULL);
-    }
-
-    /** A declared scalar return type converts the value in the returned reference, as php-src does. */
-    private PhpRef coerceRef(PhpRef ref) {
-        Object value = ref.get();
-        Object coerced = coerce(value, returnCoerce, returnNullable, "return value");
-        if (coerced != value) {
-            ref.set(coerced);
-        }
-        return ref;
     }
 
     private void bindArguments(VirtualFrame frame, Object[] arguments) {
@@ -210,13 +292,16 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             }
             if (param.byRef()) {
                 PhpRef ref = value instanceof PhpRef passed ? passed : new PhpRef(value);
+                if (param.declared() != null) {
+                    checkArgument(name, param, i, ref, calledClass(arguments), null);
+                }
                 ref.bind();
                 FrameSlots.setObject(frame, slot, ref);
                 continue;
             }
             value = PhpRef.deref(value);
-            if (param.coerce() != 0) {
-                value = coerce(value, param.coerce(), param.nullable(), param.name());
+            if (param.declared() != null) {
+                value = checkArgument(name, param, i, value, calledClass(arguments), null);
             }
             if (value instanceof PhpArray array) {
                 array.addHolder();
@@ -309,70 +394,6 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         if ((releasedSlots[slot] & kind) == 0) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             releasedSlots[slot] |= kind;
-        }
-    }
-
-    /**
-     * Coercive typing mode (no strict_types): scalars convert to the declared scalar type where PHP would.
-     * Values PHP would reject are passed through unchanged; this runtime doesn't raise TypeErrors.
-     */
-    public static Object coerce(Object value, char type, boolean nullable, String what) {
-        boolean scalarType = type == 's' || type == 'i' || type == 'f' || type == 'b';
-        if (!scalarType || value == PhpNull.NULL || type == 's' && value instanceof TruffleString
-                || type == 'i' && value instanceof Long || type == 'f' && value instanceof Double
-                || type == 'b' && value instanceof Boolean) {
-            return value;
-        }
-        return convert(value, type);
-    }
-
-    /** Out of line: the conversions, inlined for every typed parameter, were a large part of compiled callers. */
-    @TruffleBoundary
-    private static Object convert(Object value, char type) {
-        switch (type) {
-            case 's':
-                if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
-                    return Convert.toStr(value);
-                }
-                return value;
-            case 'i':
-                if (value instanceof Double d && d == Math.rint(d) && Double.isFinite(d)) {
-                    return (long) (double) d;
-                }
-                if (value instanceof Boolean b) {
-                    return b ? 1L : 0L;
-                }
-                if (value instanceof TruffleString s) {
-                    Object number = Convert.numericValue(s);
-                    if (number instanceof Long) {
-                        return number;
-                    }
-                    if (number instanceof Double d && d == Math.rint(d)) {
-                        return (long) (double) d;
-                    }
-                }
-                return value;
-            case 'f':
-                if (value instanceof Long l) {
-                    return (double) l;
-                }
-                if (value instanceof Boolean b) {
-                    return b ? 1.0 : 0.0;
-                }
-                if (value instanceof TruffleString s) {
-                    Object number = Convert.numericValue(s);
-                    if (number != null) {
-                        return ((Number) number).doubleValue();
-                    }
-                }
-                return value;
-            case 'b':
-                if (value instanceof Long || value instanceof Double || value instanceof TruffleString) {
-                    return Convert.toBool(value);
-                }
-                return value;
-            default:
-                return value;
         }
     }
 

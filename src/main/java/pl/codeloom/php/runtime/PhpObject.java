@@ -22,9 +22,7 @@ public final class PhpObject extends DynamicObject {
     private Object internal;
     /**
      * The magic property accesses in progress ("__get:name", ...): inside __get('x'), $this->x is the real one.
-     * Also the states of typed properties besides initialized and uninitialized (IS_PROP_UNINIT, which a typed
-     * property this object doesn't have is in): "unset:name" once unset() took one out of it, "reinit:name" while
-     * __clone may set a readonly one again (IS_PROP_REINITABLE).
+     * Also "reinit:name" while __clone may set a readonly property again (IS_PROP_REINITABLE).
      */
     private java.util.Set<String> guards;
 
@@ -183,7 +181,7 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public boolean isUninitialized(String name) {
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
-        return decl != null && decl.type() != null && (guards == null || !guards.contains("unset:" + name))
+        return decl != null && decl.type() != null && !wasUnset(name)
                 && !DynamicObjectLibrary.getUncached().containsKey(this, name);
     }
 
@@ -261,43 +259,26 @@ public final class PhpObject extends DynamicObject {
         return true;
     }
 
-    /** After unset() of a property it had: a typed one is no longer uninitialized, so magic methods apply. */
+    /** The set visibility of a declared property, for a write ("modify") or unset() from the scope. */
     @TruffleBoundary
-    public void unsetDeclared(String name) {
-        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
-        if (decl != null && decl.type() != null) {
-            mark("unset:" + name);
-        }
-    }
-
-    /** unset() of a declared property this object doesn't have and no __unset took: its set visibility. */
-    @TruffleBoundary
-    public void unsetMissing(String scope, String name) {
+    public void checkSetAccess(String name, String scope, String operation) {
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
         if (decl != null) {
-            checkSetAccess(decl, scope, "unset");
+            checkSetAccess(decl, scope, operation);
         }
-    }
-
-    /** unset() of a property this object doesn't have: true when it was uninitialized, which it no longer is. */
-    @TruffleBoundary
-    public boolean unsetUninitialized(String scope, String name) {
-        if (!isUninitialized(name)) {
-            return false;
-        }
-        checkSetAccess(phpClass.findProperty(name), scope, "unset");
-        mark("unset:" + name);
-        return true;
     }
 
     /**
      * A write (operation "modify") or unset ("unset") of a property with PROPERTY_SET_CHECKED from the scope: a
-     * readonly one only while __clone may set it again, then its set visibility.
+     * readonly one only while __clone may set it again (an unset takes that chance; a write takes it once it has
+     * stored, PropNode.writeOn), then its set visibility.
      */
     @TruffleBoundary
     public void checkModify(String name, String scope, String operation) {
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
-        if (decl.isReadonly() && !unmark("reinit:" + name)) {
+        boolean reinitable = operation.equals("modify") ? guards != null && guards.contains("reinit:" + name)
+                : unmark("reinit:" + name);
+        if (decl.isReadonly() && !reinitable) {
             throw new PhpError("Cannot " + operation + " readonly property " + PhpClass.printed(phpClass.declaringClassName(decl))
                     + "::$" + Str.keyText(name));
         }
@@ -400,9 +381,34 @@ public final class PhpObject extends DynamicObject {
         return DynamicObjectLibrary.getUncached().getOrDefault(this, name, null);
     }
 
+    /**
+     * Whether the typed property was unset (php-src clears its IS_PROP_UNINIT): while it stays uninitialized, its
+     * reads and writes go to __get and __set. A hidden key of the class marks it, out of the property table.
+     */
+    @TruffleBoundary
+    public boolean wasUnset(String name) {
+        return DynamicObjectLibrary.getUncached().containsKey(this, phpClass.unsetKey(name));
+    }
+
+    @TruffleBoundary
+    public void setUnset(String name, boolean unset) {
+        if (unset) {
+            DynamicObjectLibrary.getUncached().put(this, phpClass.unsetKey(name), Boolean.TRUE);
+        } else {
+            DynamicObjectLibrary.getUncached().removeKey(this, phpClass.unsetKey(name));
+        }
+    }
+
+    /** Stores the property; an uninitialized typed one gets its declaration's flags. */
     @TruffleBoundary
     public void setProperty(String name, Object value) {
-        DynamicObjectLibrary.getUncached().put(this, name, value);
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl != null && decl.type() != null && !library.containsKey(this, name)) {
+            library.putWithFlags(this, name, value, phpClass.propertyFlags(decl));
+        } else {
+            library.put(this, name, value);
+        }
     }
 
     @TruffleBoundary

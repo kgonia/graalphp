@@ -134,7 +134,7 @@ final class Dump {
                     throw new PhpError("__debuginfo() must return an array");
                 }
                 ascii(common + "object(");
-                utf8(object.getPhpClass().getName());
+                utf8(object.getPhpClass().getName().split("\0", 2)[0]);
                 ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
                 for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
                     spaces(level + 1);
@@ -145,32 +145,30 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
-            // the property table (php_object_property_dump), an uninitialized typed property included
+            // php_var_dump: the property table, with an uninitialized typed property's type in its place
             PhpClass phpClass = object.getPhpClass();
+            Object[] table = object.propertyTable();
             ascii(common + "object(");
-            utf8(phpClass.getName());
-            ascii(")#" + object.id() + " (" + object.propertyTable().length / 2 + ") {\n");
+            utf8(phpClass.getName().split("\0", 2)[0]);
+            ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
+            int t = 0;
             for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
-                Object property = object.getProperty(decl.name());
-                if (property != null || decl.type() != null) {
+                String mangled = phpClass.mangledName(decl.name());
+                if (t < table.length && mangled.equals(table[t])) {
+                    dumpProperty(mangled, table[t + 1], level);
+                    t += 2;
+                } else if (decl.type() != null) {
                     spaces(level + 1);
-                    property(phpClass.mangledName(decl.name()), true);
+                    property(mangled, true);
                     ascii("]=>\n");
-                    if (property == null) {
-                        spaces(level + 1);
-                        ascii("uninitialized(" + decl.type() + ")\n");
-                    } else {
-                        varDump(property, level + 2);
-                    }
+                    spaces(level + 1);
+                    ascii("uninitialized(");
+                    utf8(decl.type().text(null));
+                    ascii(")\n");
                 }
             }
-            for (Object name : object.propertyNames()) {
-                if (!phpClass.isDeclaredProperty((String) name)) {
-                    spaces(level + 1);
-                    property((String) name, true);
-                    ascii("]=>\n");
-                    varDump(object.getProperty((String) name), level + 2);
-                }
+            for (; t < table.length; t += 2) {
+                dumpProperty((String) table[t], table[t + 1], level);
             }
             leave(object);
             closeBrace(level);
@@ -182,6 +180,13 @@ final class Dump {
         } else {
             ascii(common + "UNKNOWN:0\n");
         }
+    }
+
+    private void dumpProperty(String key, Object value, int level) {
+        spaces(level + 1);
+        property(key, true);
+        ascii("]=>\n");
+        varDump(value, level + 2);
     }
 
     /** __debugInfo()'s array as a property table (zend_std_get_debug_info), its keys as strings. */

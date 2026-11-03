@@ -103,6 +103,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
@@ -185,8 +186,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal(dimensions = 1) private PhpFunction.Param[] params;
     /** The local offset of each parameter's variable. */
     @CompilationFinal(dimensions = 1) private int[] parameterLocals;
-    @CompilationFinal private char returnCoerce;
-    @CompilationFinal private boolean returnNullable;
+    /** The type returned values are checked against (CheckReturn), or null. */
+    @CompilationFinal private PhpType returnType;
     /** The PHP variables' locals (offsets 0 to their count - 1; hidden locals follow). */
     @CompilationFinal(dimensions = 1) private LocalAccessor[] variables;
     /** What each variable has held at the function's end so far (FunctionRootNode.releasedSlots). */
@@ -219,7 +220,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** What the translator knows of the function, set once its bytecode is built (a reparse keeps it). */
     public void initialize(String functionName, String file, boolean internalCode, SourceSection section,
-                    PhpFunction.Param[] parameters, int[] parameterOffsets, char coerce, boolean nullable,
+                    PhpFunction.Param[] parameters, int[] parameterOffsets, PhpType returns,
                     LocalAccessor[] variableLocals, LocalAccessor[] foreachLocals, String declaringClass) {
         this.name = functionName;
         this.path = file;
@@ -227,8 +228,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.sourceSection = section;
         this.params = parameters;
         this.parameterLocals = parameterOffsets;
-        this.returnCoerce = coerce;
-        this.returnNullable = nullable;
+        this.returnType = returns;
         this.variables = variableLocals;
         this.releasedVariables = new byte[variableLocals.length];
         this.foreachStates = foreachLocals;
@@ -396,28 +396,107 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     // ---- function entry and exit ----
 
-    /** The value the function returns: the variables are released, then a declared scalar type converts it. */
+    /** The value the function returns: the variables are released. */
     @EpilogReturn
     public static final class ReturnValue {
         @Specialization
         public static Object doReturn(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                       @Bind BytecodeNode bytecode) {
             root.releaseVariables(frame, bytecode);
-            if (root.returnCoerce == 0) {
+            return value;
+        }
+    }
+
+    static PhpClass calledClass(VirtualFrame frame) {
+        return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
+    }
+
+    /**
+     * A typed parameter's argument or default (ZEND_RECV's type check), emitted only for typed parameters: a value
+     * of the type as it is passes, an object by its class's key; anything else is converted or fails out of line
+     * (FunctionRootNode.argumentSlow). A reference is checked and converted in place.
+     */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class CheckParameter {
+        @Specialization
+        public static Object object(VirtualFrame frame, int index, PhpObject value, @Bind PhpBytecodeRootNode root,
+                                    @Bind Node node, @Bind BytecodeNode bytecode, @Cached SubclassTestNode test) {
+            return root.params[index].declared().acceptsObject(value.getPhpClass(), test) ? value
+                    : slow(frame, index, value, root, node, bytecode);
+        }
+
+        @Specialization(guards = "!isObject(value)")
+        public static Object other(VirtualFrame frame, int index, Object value, @Bind PhpBytecodeRootNode root,
+                                   @Bind Node node, @Bind BytecodeNode bytecode) {
+            if (value instanceof PhpRef) {
+                return FunctionRootNode.checkArgument(root.name, root.params[index], index, value,
+                        calledClass(frame), node);
+            }
+            Object accepted = root.params[index].declared().fast(value);
+            return accepted != null ? accepted : slow(frame, index, value, root, node, bytecode);
+        }
+
+        /**
+         * The argument converted or the TypeError: the parameter's variable holds the argument meanwhile, as
+         * php-src's call slot does, so the error's trace shows it (an array, whose holders the binding counts,
+         * stays out).
+         */
+        private static Object slow(VirtualFrame frame, int index, Object value, PhpBytecodeRootNode root, Node node,
+                                   BytecodeNode bytecode) {
+            if (!(value instanceof PhpArray)) {
+                root.variables[root.parameterLocals[index]].setObject(bytecode, frame, value);
+            }
+            return FunctionRootNode.argumentSlow(root.name, root.params[index], index, value, calledClass(frame),
+                    node);
+        }
+
+        static boolean isObject(Object value) {
+            return value instanceof PhpObject;
+        }
+    }
+
+    /**
+     * `return expr;` in a function with a return type (ZEND_VERIFY_RETURN_TYPE), before any finally block runs:
+     * the value, converted in the mode of the function's file, or the TypeError. A returned reference's content.
+     */
+    @Operation
+    public static final class CheckReturn {
+        @Specialization
+        public static Object object(VirtualFrame frame, PhpObject value, @Bind PhpBytecodeRootNode root,
+                                    @Bind Node node, @Cached SubclassTestNode test) {
+            PhpType type = root.returnType;
+            PhpClass phpClass = value.getPhpClass();
+            // static: an object of the called class itself ($this, new static) needs no subclass test
+            if (type.acceptsObject(phpClass, test) || type.has(PhpType.STATIC) && phpClass == calledClass(frame)) {
                 return value;
             }
-            if (root.returnsRef) {
-                // a declared scalar type converts the value in the returned reference (FunctionRootNode.coerceRef)
-                PhpRef ref = (PhpRef) value;
-                Object current = ref.get();
-                Object coerced = FunctionRootNode.coerce(current, root.returnCoerce, root.returnNullable,
-                        "return value");
-                if (coerced != current) {
-                    ref.set(coerced);
-                }
+            return FunctionRootNode.returnSlow(root.name, type, value, calledClass(frame), root.path, node);
+        }
+
+        @Specialization(guards = "!isObject(value)")
+        public static Object other(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
+                                   @Bind Node node) {
+            if (value instanceof PhpRef ref) {
+                ref.set(FunctionRootNode.checkReturn(root.name, root.returnType, ref.get(), calledClass(frame),
+                        root.path, node));
                 return ref;
             }
-            return FunctionRootNode.coerce(value, root.returnCoerce, root.returnNullable, "return value");
+            return FunctionRootNode.checkReturn(root.name, root.returnType, value, calledClass(frame), root.path,
+                    node);
+        }
+
+        static boolean isObject(Object value) {
+            return value instanceof PhpObject;
+        }
+    }
+
+    /** The end of a function with a return type: "none returned", or a never-returning function's TypeError. */
+    @Operation
+    public static final class NoneReturned {
+        @Specialization
+        public static Object fail(VirtualFrame frame, @Bind PhpBytecodeRootNode root) {
+            throw FunctionRootNode.noneReturned(root.name, root.returnType, calledClass(frame));
         }
     }
 
@@ -473,9 +552,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return;
             }
             Object value = PhpRef.deref(argument);
-            if (param.coerce() != 0) {
-                value = FunctionRootNode.coerce(value, param.coerce(), param.nullable(), param.name());
-            }
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
@@ -492,8 +568,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void bind(VirtualFrame frame, LocalAccessor variable, int index,
                                 @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
             Object[] arguments = frame.getArguments();
+            PhpFunction.Param param = root.params[index];
+            if (param.declared() != null) {
+                for (int i = PhpFunction.ARG_FIRST + index; i < arguments.length; i++) {
+                    arguments[i] = FunctionRootNode.checkArgument(root.name, param, i - PhpFunction.ARG_FIRST,
+                            arguments[i], calledClass(frame), bytecode);
+                }
+            }
             variable.setObject(bytecode, frame, FunctionRootNode.collectVariadic(arguments, index,
-                    arguments.length - PhpFunction.ARG_FIRST, root.params[index].byRef()));
+                    arguments.length - PhpFunction.ARG_FIRST, param.byRef()));
         }
     }
 
@@ -1434,8 +1517,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            access.writeOn(frame, object, site.name, value);
-            return value;
+            return access.writeOn(frame, object, site.name, value);
         }
     }
 
@@ -1447,8 +1529,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, String name, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            access.writeOn(frame, object, name, value);
-            return value;
+            return access.writeOn(frame, object, name, value);
         }
     }
 
@@ -1470,8 +1551,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpObject target = propertyTarget(object, site.name, "assign");
             TruffleString left = currentToStr.execute(access.readOn(frame, target, site.name));
             TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
-            access.writeOn(frame, target, site.name, result);
-            return result;
+            return access.writeOn(frame, target, site.name, result);
         }
 
         @Specialization(guards = "op != 8")
@@ -1481,8 +1561,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpObject target = propertyTarget(object, site.name, "assign");
             Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame, target, site.name),
                     operand);
-            access.writeOn(frame, target, site.name, result);
-            return result;
+            return access.writeOn(frame, target, site.name, result);
         }
     }
 
@@ -1511,7 +1590,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
                 throw e;
             }
-            access.writeOn(frame, target, site.name, updated);
+            if (old instanceof Long && updated instanceof Double) {
+                PropNode.incDecOverflow(target, site.name, increment);
+            }
+            updated = access.writeOn(frame, target, site.name, updated);
             return prefix ? updated : old;
         }
     }
