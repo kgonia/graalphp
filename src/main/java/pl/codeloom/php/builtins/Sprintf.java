@@ -2,6 +2,7 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -40,9 +41,14 @@ final class Sprintf {
         return format(Args.str(a, formatIndex), values, formatIndex + 1);
     }
 
-    /** vsprintf: the arguments from an array. */
+    /** vsprintf, vprintf and vfprintf: the format at argument formatIndex, the values in the array after it. */
     @TruffleBoundary
-    static TruffleString formatArray(TruffleString format, PhpArray args) {
+    static TruffleString formatArray(PhpContext context, Object[] a, int formatIndex, String function) {
+        Args.arity(a, function, formatIndex + 2, formatIndex + 2);
+        TruffleString format = Args.string(context, a, formatIndex, function, "format", false);
+        if (!(Args.get(a, formatIndex + 1) instanceof PhpArray args)) {
+            throw Args.typeError(function, formatIndex + 2, "values", "array", Args.get(a, formatIndex + 1));
+        }
         Object[] values = new Object[args.size()];
         int i = 0;
         for (int p = args.firstPosition(); p >= 0; p = args.nextPosition(p)) {

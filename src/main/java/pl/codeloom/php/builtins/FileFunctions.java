@@ -1095,6 +1095,16 @@ final class FileFunctions {
         });
         r.fn("fwrite", a -> write(a, "fwrite"));
         r.fn("fputs", a -> write(a, "fputs"));
+        r.fn("fprintf", (context, a) -> {
+            Args.arity(a, "fprintf", 2, Integer.MAX_VALUE);
+            Stream stream = stream(a, "fprintf");
+            Args.string(context, a, 1, "fprintf", "format", false);
+            return printTo(stream, Sprintf.format(a, 1));
+        });
+        r.fn("vfprintf", (context, a) -> {
+            Args.arity(a, "vfprintf", 3, 3);
+            return printTo(stream(a, "vfprintf"), Sprintf.formatArray(context, a, 1, "vfprintf"));
+        });
         r.fn("fgets", a -> {
             Stream stream = stream(a, "fgets");
             int limit = -1;
@@ -1433,6 +1443,15 @@ final class FileFunctions {
         }
         int written = stream.write(bytes);
         return written < 0 ? (Object) Boolean.FALSE : (Object) (long) written;
+    }
+
+    /** fprintf and vfprintf: the length formatted, whether or not the stream took it. */
+    private static long printTo(Stream stream, TruffleString text) {
+        byte[] bytes = Str.bytes(text);
+        if (bytes.length > 0) {
+            stream.write(bytes);
+        }
+        return bytes.length;
     }
 
     @TruffleBoundary

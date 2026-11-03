@@ -48,7 +48,12 @@ public final class StringFunctions {
         r.fn("implode", a -> implode(a));
         r.fn("join", a -> implode(a));
         r.fn("sprintf", a -> Sprintf.format(a, 0));
-        r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf")));
+        r.fn("vsprintf", (context, a) -> Sprintf.formatArray(context, a, 0, "vsprintf"));
+        r.fn("vprintf", (context, a) -> {
+            TruffleString text = Sprintf.formatArray(context, a, 0, "vprintf");
+            context.write(text);
+            return (long) Str.length(text);
+        });
         r.fn("printf", (context, a) -> {
             TruffleString text = Sprintf.format(a, 0);
             context.write(text);

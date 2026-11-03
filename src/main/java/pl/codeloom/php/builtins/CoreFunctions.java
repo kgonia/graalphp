@@ -390,7 +390,11 @@ final class CoreFunctions {
             }
             return dividend / divisor;
         });
-        r.fn("fmod", a -> Convert.toDouble(Args.get(a, 0)) % Convert.toDouble(Args.get(a, 1)));
+        r.fn("fdiv", (context, a) -> {
+            Args.arity(a, "fdiv", 2, 2);
+            return Args.dbl(context, a, 0, "fdiv", "num1") / Args.dbl(context, a, 1, "fdiv", "num2");
+        });
+        r.fn("fmod", a ->Convert.toDouble(Args.get(a, 0)) % Convert.toDouble(Args.get(a, 1)));
         r.fn("dechex", a -> Str.of(Long.toHexString(Args.lng(a, 0, 0))));
         r.fn("hexdec", a -> hexdec(Args.str(a, 0)));
         r.fn("decbin", a -> Str.of(Long.toBinaryString(Args.lng(a, 0, 0))));
