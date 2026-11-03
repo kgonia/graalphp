@@ -245,6 +245,23 @@ public final class PhpObject extends DynamicObject {
     }
 
     /**
+     * foreach's walk over the properties code in scope may access: the name at index of those met so far, null past
+     * the last. At the end the ones added meanwhile are appended, as php-src walks the live property table.
+     */
+    @TruffleBoundary
+    public String visiblePropertyAt(List<String> names, int index, String scope) {
+        if (index == names.size()) {
+            java.util.Set<String> seen = new java.util.HashSet<>(names);
+            for (String name : visiblePropertyNames(scope)) {
+                if (seen.add(name)) {
+                    names.add(name);
+                }
+            }
+        }
+        return index < names.size() ? names.get(index) : null;
+    }
+
+    /**
      * The properties of an object whose class has hooks, as zho_build_properties lists them: the declared ones in
      * declaration order (a virtual one with a get hook too), then the dynamic ones.
      */

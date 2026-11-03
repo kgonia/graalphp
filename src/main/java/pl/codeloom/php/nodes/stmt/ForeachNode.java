@@ -342,9 +342,10 @@ public final class ForeachNode extends StmtNode {
         }
         // the properties the scope may access; their values as they are when the loop reaches them, as php-src
         // walks the object's property table (one unset meanwhile is skipped)
-        String[] properties = visiblePropertyNames(object, PropNode.callingScope(frame, lexicalClass));
-        for (int i = 0; i < properties.length; i++) {
-            String property = properties[i];
+        String scope = PropNode.callingScope(frame, lexicalClass);
+        java.util.List<String> properties = object.visiblePropertyNames(scope);
+        String property;
+        for (int i = 0; (property = object.visiblePropertyAt(properties, i, scope)) != null; i++) {
             Object value = object.visibleValue(property);
             if (value == null) {
                 continue;
@@ -357,11 +358,6 @@ public final class ForeachNode extends StmtNode {
         }
     }
 
-    /** The names as an array: a JDK list's iterator is no code for partial evaluation. */
-    @TruffleBoundary
-    private static String[] visiblePropertyNames(PhpObject object, String scope) {
-        return object.visiblePropertyNames(scope).toArray(new String[0]);
-    }
 
     /** An iteration step: the Iterator's method, or the Generator's own operation for it. */
     private Object step(PhpObject object, String method) {

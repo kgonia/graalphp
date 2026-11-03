@@ -21,8 +21,8 @@ import java.util.List;
 public final class GeneratorRefIteration {
     private final PhpGenerator generator;
     /**
-     * A plain object's walk (generator null): the object, the calling scope, its properties so far (one added during
-     * the loop is visited too, as php-src walks the live table), the current one's reference.
+     * A plain object's walk (generator null): the object, the calling scope, its properties met so far
+     * (PhpObject.visiblePropertyAt), the current one's reference.
      */
     private final PhpObject object;
     private final String scope;
@@ -66,20 +66,12 @@ public final class GeneratorRefIteration {
     public boolean advance(Node site) {
         if (generator == null) {
             current = null;
-            while (current == null) {
-                if (index == properties.size()) {
-                    for (String name : object.visiblePropertyNames(scope)) {
-                        if (!properties.contains(name)) {
-                            properties.add(name);
-                        }
-                    }
-                    if (index == properties.size()) {
-                        return false;
-                    }
-                }
-                current = object.propertyRef(properties.get(index++));
+            String name;
+            while (current == null && (name = object.visiblePropertyAt(properties, index, scope)) != null) {
+                index++;
+                current = object.propertyRef(name);
             }
-            return true;
+            return current != null;
         }
         return (Boolean) Backtrace.callFrom(site, () -> {
             if (started) {

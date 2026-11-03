@@ -23,13 +23,15 @@ final class ObjectIteration {
     private final PhpObject iterator;
     private final PhpObject object;
     private final List<String> properties;
+    private final String scope;
     private boolean started;
     private int index;
 
-    private ObjectIteration(PhpObject iterator, PhpObject object, List<String> properties) {
+    private ObjectIteration(PhpObject iterator, PhpObject object, List<String> properties, String scope) {
         this.iterator = iterator;
         this.object = object;
         this.properties = properties;
+        this.scope = scope;
     }
 
     /** The iteration of subject for code whose calling scope is scope: an Iterator is rewound here. */
@@ -38,9 +40,9 @@ final class ObjectIteration {
         PhpObject object = ForeachNode.unwrapAggregates(site, subject).initialized();
         if (object.getPhpClass().isSubclassOf("iterator")) {
             ForeachNode.step(site, object, "rewind");
-            return new ObjectIteration(object, null, null);
+            return new ObjectIteration(object, null, null, null);
         }
-        return new ObjectIteration(null, object, object.visiblePropertyNames(scope));
+        return new ObjectIteration(null, object, object.visiblePropertyNames(scope), scope);
     }
 
     /** Binds the next element's key (hasKey) and value; false at the end. */
@@ -75,8 +77,8 @@ final class ObjectIteration {
     /** The next property still set, as its key and value; null past the last. */
     @TruffleBoundary
     private Object[] nextProperty() {
-        while (index < properties.size()) {
-            String name = properties.get(index++);
+        String name;
+        while ((name = object.visiblePropertyAt(properties, index++, scope)) != null) {
             Object current = object.visibleValue(name);
             if (current != null) {
                 return new Object[] {Str.ofKey(name), current};
