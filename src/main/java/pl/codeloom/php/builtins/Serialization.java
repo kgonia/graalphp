@@ -927,6 +927,13 @@ final class Serialization {
                 return FAIL;
             }
             String property = propertyFor(frame.phpClass, Str.key(name));
+            PhpClass.Hooks hooks = property == null ? null : frame.phpClass.findHooks(property);
+            if (hooks != null && hooks.virtual()) {
+                warning(context, "unserialize(): Cannot unserialize value for virtual property "
+                        + frame.phpClass.declaringClassName(frame.phpClass.findProperty(property)) + "::$"
+                        + Str.keyText(property));
+                return FAIL;
+            }
             return property == null ? FAIL : value(frame.object, property);
         }
 

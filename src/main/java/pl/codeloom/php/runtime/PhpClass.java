@@ -465,7 +465,7 @@ public final class PhpClass {
     }
 
     /** The name, as written, of the class declaring the property: this class or an ancestor. */
-    private String declaringClassName(PropertyDecl decl) {
+    public String declaringClassName(PropertyDecl decl) {
         for (PhpClass c = this; c != null; c = c.parent) {
             if (c.lowerName.equals(decl.declaringClass())) {
                 return c.name;
