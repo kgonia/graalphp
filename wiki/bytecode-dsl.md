@@ -697,13 +697,33 @@ kernels, the smoke tests and php-src's tests).
   goes polymorphic (`SubclassTestNode` reports polymorphism), and Truffle splits it, a copy per caller
   (`TraceSplitting`: `split ... is_wp_error`). The copies answered `false` for the `WP_Error` the original answered
   `true` for, the same object (`spl_object_id` equal), while an `instanceof` written next to it answered `true`.
-  With `-Dpolyglot.engine.Splitting=false` every answer was right. The generated `cloneUninitialized` unquickens the
-  bytecode but keeps the specialization state inside it (GR-61293 moved it into the bytecode array) and makes the
-  cached nodes anew; a small program with the same shape (many classes, many callers, `tests/smoke`-style) splits
-  and answers right, so the trigger isn't isolated yet. To report upstream with a reproducer once it is.
-- **The fix, for now:** bytecode roots don't split (`isCloningAllowed` false, `faf011f`): Gate 2's pages are 19/21
-  again (the two oEmbed links), the walk equal to the tree's. A bytecode function keeps one profile for all its
-  callers, where the tree's split.
+  With `-Dpolyglot.engine.Splitting=false` every answer was right.
+- **Why (Truffle's, 25.1 to 25.4):** the generated `cloneUninitialized` copies the bytecode with `unquickenBytecode`,
+  which rewrites quickened instructions but leaves the specialization state that GR-61293 moved into the bytecode,
+  and makes the cached nodes anew. In the copy `InstanceOf`'s state says `object` (a `PhpObject`, with the cached
+  `SubclassTestNode`) and the `@Fallback` (`false`) are active, while the cache is null. The fast path passes
+  `object` by (`if (s0_ != null)`), and the fallback's guard trusts the state of a specialization that checks only
+  a type: `!(object active) && value instanceof PhpObject` is false, so the fallback takes the `WP_Error`. The
+  trigger needs the original to have met both before the split: an object and a non-object
+  (`is_wp_error(false)`), which the earlier small program never passed. Fixed upstream by
+  [GR-79787](https://github.com/oracle/graal/commit/9a8b5489c55f2391200ea328d347a01f4b12df1b) (2026-09-23, not in a
+  release: `unquickenBytecode` clears the state bitsets); the standalone reproducer is
+  `truffle-bytecode-clone-state-repro` (25.0.4 right, 25.1.3 and 25.4.4.1.1 wrong, the 25.6.0-dev snapshot right
+  unless quickening is off).
+- **Every operation of that shape:** a scan of the generated code for fallback guards that trust a specialization
+  with caches found 13 operations. Wrong answers: `instanceof`, a string's truthiness (`ToBool`: `""` and `"0"`
+  true), `$a['key']` and `$s[1]` (`ReadElement`: null), `list()` (null), `isset($a[k])` (false), foreach over an
+  object and by reference (no step). Only slower (a generic fallback): `===`, `!==`, `==`, `!=`, `.`, `(string)`.
+  `tests/smoke/split-copies.php` has one test per wrong shape, from the shape's original to its copies.
+- **The workaround (`6b0988a`):** each such `@Fallback` takes those specializations' caches as `@Shared` parameters,
+  unused. The fallback's fast path then checks them too, so in a copy it falls through to `executeAndSpecialize`,
+  which makes the caches and specializes anew. Bytecode roots split again (`isCloningAllowed` true). To drop once a
+  release has GR-79787. With it Gate 2's pages are 19/21 (the two oEmbed links, as before), the WooCommerce walk
+  51/51 equal to the tree's, the smoke tests pass.
+- **Open:** `CompilationTest`'s `large-function.php` fails in `mvn test` when `PhpBytecodeRootNodeTest` runs before
+  it and bytecode roots may split: `Query::sql`'s first tier is "code is too large" (HotSpot's install limit). Alone,
+  or with splitting off, it compiles (552,894 bytes of code at the first tier: already at the limit). No split
+  happens in that run (`TraceSplitting` prints none); the cause isn't found yet.
 
 ### Splitting, tree against bytecode (2026-11-03)
 `-Dpolyglot.engine.TraceSplittingSummary=true` on 120 s of the WooCommerce load (`woo.sh diag`, 8 users) and of
@@ -715,6 +735,22 @@ Gate 2's visits (`DIAG_SEED=gate2-seed`), CPUs 6-13, the build of `966765a` (byt
 | Woo, bytecode | 50 | 2,844 (+0.5 %) | `WooCommerce::is_rest_api_request` 9, `LegacyProxy::get_instance_of` 6, `map_deep` 4, `wc_set_loop_prop` 3 | `StableValue` 267, `CallableDispatch` 249, `SubclassTest` 86 |
 | Gate 2, tree | 1,108 | 52,346 (+15.6 %) | `WP_REST_Controller::get_additional_fields` 73, `add_additional_fields_schema` 73, `esc_attr` 61, `is_wp_error` 56, `block_has_support` 46, `absint` 45, `WP_HTML_Tag_Processor::next_token` 36 | `MethodCallNode$Dispatch` 213, `ToBoolean` 199, `StableValue` 146, `Identical` 117, `CallableDispatch` 110 |
 | Gate 2, bytecode | 10 | | `map_deep` 4, `WP_Post::__construct` 2, four with 1 | `CallableDispatch` 139, `ToBoolean` 40 |
+
+With bytecode roots splitting again (`6b0988a`, branch `bc-split-fix`, the same diagnosis, CPUs 6-13; the Woo
+bytecode run beside a `mvn test`, so its orders aren't a measure):
+
+| run | splits | nodes made by splitting | top split roots (copies) | top split nodes |
+|---|---|---|---|---|
+| Woo, tree | 6,057 | 258,687 (+38.9 %) | `WC_Data::get_prop` 898, `absint` 208, `WC_Data::set_prop` 179, `esc_attr` 158, `wp_parse_args` 109 | |
+| Woo, bytecode | 5,805 | 270,062 (+51.1 %) | `add_filter` 1,978, `WP_Hook::add_filter` 1,963, `add_action` 1,339, `is_wp_error` 92, `SchemaController::get` 46 | `CallableDispatch` 226, `SubclassTest` 100, `ElementRead` 59, `StableValue` 33, `Instantiate` 26 |
+| Gate 2, bytecode | 1,471 | 68,243 (+26.9 %) | `add_filter` 523, `WP_Hook::add_filter` 513, `add_action` 297, `is_wp_error` 56 | `CallableDispatch` 131, `ElementRead` 29, `SubclassTest` 22 |
+
+- **Bytecode splits other roots than the tree:** a bytecode operation reports polymorphism only through a cached
+  child node that does (`SubclassTestNode`, `CallableDispatchNode`, `ElementReadNode`...; Proxies.java), not the
+  tree's `MethodCallNode$Dispatch`, `ToBoolean` or `Identical`. So `get_prop`/`set_prop` don't split, and the hook
+  registrations, whose callables differ per caller, do.
+
+Before (`966765a`):
 
 - **Every split left on bytecode is a function still on the tree** (superglobals, `include`, `@`... at
   `966765a`) or a built-in's root: bytecode roots don't split (`isCloningAllowed` false). Before `faf011f` they did
