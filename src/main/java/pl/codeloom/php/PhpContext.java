@@ -71,12 +71,18 @@ public final class PhpContext {
     private final Set<String> autoloading = new HashSet<>();
     /** The declared classes by their lowercase name's language-level id (null: not declared here). */
     private PhpClass[] classSlots = new PhpClass[256];
-    /** The defined constants by name, in definition order (get_defined_constants). */
+    /**
+     * The defined constants by {@link PhpLanguage#constantKey key}, in definition order (get_defined_constants).
+     */
     private final Map<String, Object> constants = new java.util.LinkedHashMap<>();
+    /** The names as defined of the constants whose key differs (a namespace not in lowercase), by key. */
+    private final Map<String, String> constantNames = new HashMap<>();
     /** The defined constants by their name's language-level id (null: not defined here). */
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
+    /** The include sites (IncludeNode) that ran each file in this context, by canonical path. */
+    private final Map<String, Set<Object>> includeSites = new HashMap<>();
     private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
@@ -312,6 +318,15 @@ public final class PhpContext {
         return Path.of(path).toAbsolutePath().normalize().toString();
     }
 
+    /**
+     * Whether an include site ran a file before in this context: a site that runs a file twice in one request (a
+     * template part in a loop) runs it a number of times that depends on the data (RunOnceCode).
+     */
+    @TruffleBoundary
+    public boolean includedBefore(String canonical, Object site) {
+        return !includeSites.computeIfAbsent(canonical, path -> new HashSet<>(2)).add(site);
+    }
+
     /** Marks a file as included; false if it already was (include_once / require_once). */
     @TruffleBoundary
     public boolean markIncluded(String canonical) {
@@ -526,18 +541,25 @@ public final class PhpContext {
         return id < slots.length ? slots[id] : null;
     }
 
-    /** A global constant's value, or null if undefined. true, false and null are folded by the translator. */
+    /**
+     * A global constant's value, or null if undefined: the name without a leading backslash, its namespace in any
+     * case. true, false and null are folded by the translator.
+     */
     @TruffleBoundary
     public Object findConstant(String name) {
-        return constants.get(name);
+        return constants.get(PhpLanguage.constantKey(name));
     }
 
     @TruffleBoundary
     public boolean defineConstant(String name, Object value) {
-        if (constants.putIfAbsent(name, value) != null) {
+        String key = PhpLanguage.constantKey(name);
+        if (constants.putIfAbsent(key, value) != null) {
             return false;
         }
-        int id = language.constantId(name);
+        if (!key.equals(name)) {
+            constantNames.put(key, name);
+        }
+        int id = language.constantId(key);
         if (id >= constantSlots.length) {
             constantSlots = Arrays.copyOf(constantSlots, grown(constantSlots.length, id));
         }
@@ -753,7 +775,8 @@ public final class PhpContext {
     public PhpArray constantsArray() {
         PhpArray array = new PhpArray();
         for (Map.Entry<String, Object> constant : constants.entrySet()) {
-            array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(constant.getKey())), constant.getValue());
+            String name = constantNames.getOrDefault(constant.getKey(), constant.getKey());
+            array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(name)), constant.getValue());
         }
         return array;
     }

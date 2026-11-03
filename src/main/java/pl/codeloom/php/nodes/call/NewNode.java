@@ -1,24 +1,23 @@
 package pl.codeloom.php.nodes.call;
 
-import com.oracle.truffle.api.dsl.ReportPolymorphism;
-import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.DirectCallNode;
-import com.oracle.truffle.api.nodes.IndirectCallNode;
-import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
-import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 
-/** `new Cls(args)`: instantiate, then call the constructor (inline-cached on the class), if there is one. */
+/**
+ * `new Cls(args)`: instantiate, then call the constructor (inline-cached on the constructor), if there is one.
+ */
 public final class NewNode extends ExprNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
-    @Child private Construct construct = NewNodeFactory.ConstructNodeGen.create();
+    /**
+     * The constructor called per constructor, not per class: the classes a site instantiates that inherit one
+     * constructor share its call. The constructor is the class's own field, so no lookup is cached.
+     */
+    @Child private MethodDispatchNode construct = MethodDispatchNode.create();
     @Child private InstantiateNode instantiate = InstantiateNode.create();
 
     public NewNode(ClassRefNode classRef, ArgumentsNode args) {
@@ -30,34 +29,13 @@ public final class NewNode extends ExprNode {
     public Object execute(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
         PhpObject object = instantiate.execute(phpClass);
-        if (phpClass.getConstructor() != null) {
-            construct.execute(frame, phpClass, object, args);
+        PhpFunction constructor = phpClass.getConstructor();
+        if (constructor != null) {
+            construct.execute(frame, constructor, object, phpClass, args);
         } else if (args.count() > 0) {
             // ZEND_NEW without a constructor: the arguments go to zend_pass_function, evaluated and dropped
             args.values(frame);
         }
         return object;
-    }
-
-    /** Calls a class's constructor on a new object. */
-    @ReportPolymorphism
-    public abstract static class Construct extends Node {
-        public abstract void execute(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args);
-
-        /** Keyed on the class's language-level identity: the same cache entry serves every context. */
-        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
-        protected void cached(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args,
-                              @Cached("phpClass.getKey()") ClassKey cachedKey,
-                              @Cached("phpClass.getConstructor()") PhpFunction constructor,
-                              @Cached("create(constructor.getCallTarget())") DirectCallNode call) {
-            call.call(args.build(frame, constructor, object, phpClass, null));
-        }
-
-        @Specialization(replaces = "cached")
-        protected void generic(VirtualFrame frame, PhpClass phpClass, PhpObject object, ArgumentsNode args,
-                               @Cached IndirectCallNode call) {
-            PhpFunction constructor = phpClass.getConstructor();
-            call.call(constructor.getCallTarget(), args.build(frame, constructor, object, phpClass, null));
-        }
     }
 }

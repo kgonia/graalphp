@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -86,7 +87,8 @@ final class CoreFunctions {
 
         // ---- constants, functions, classes ----
         r.fn("define", (context, a) -> context.defineConstant(Str.java(Args.str(a, 0)), Args.get(a, 1)));
-        r.fn("defined", (context, a) -> context.findConstant(Str.java(Args.str(a, 0))) != null);
+        // a literal name without a namespace or class is compiled in place (ConstantNodes.DefinedNode)
+        r.fn("defined", (context, a) -> isDefined(context, Str.java(Args.str(a, 0))));
         r.fn("constant", (context, a) -> {
             String name = Str.java(Args.str(a, 0));
             int separator = name.indexOf("::");
@@ -416,6 +418,41 @@ final class CoreFunctions {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * defined(): zend_get_constant_ex(name, the caller's scope, ZEND_FETCH_CLASS_SILENT) != NULL. "A::B" is a class
+     * constant, its class autoloaded and its value evaluated; a namespaced name's namespace is caseless; true, false
+     * and null are defined in any case. A literal name without a namespace or class doesn't come here.
+     */
+    @TruffleBoundary
+    private static boolean isDefined(PhpContext context, String constantName) {
+        String name = constantName.startsWith("\\") ? constantName.substring(1) : constantName;
+        int colon = name.lastIndexOf(':');
+        if (colon > 1 && name.charAt(colon - 1) == ':') {
+            String className = name.substring(0, colon - 1);
+            String lower = Str.lower(className);
+            PhpClass phpClass;
+            if (lower.equals("self") || lower.equals("parent") || lower.equals("static")) {
+                phpClass = Callables.callerClass(context, lower);
+                if (phpClass == null) {
+                    PhpClass self = lower.equals("parent") ? Callables.callerClass(context, "self") : null;
+                    throw new PhpError(self != null ? "Cannot access \"parent\" when current class scope has no parent"
+                            : "Cannot access \"" + lower + "\" when no class scope is active");
+                }
+            } else {
+                phpClass = context.findClassAutoloading(className);
+            }
+            // a trait's constants are reached through the classes that use it only (zend_get_class_constant_ex)
+            return phpClass != null && !(phpClass.getDeclaration() instanceof ClassTemplate template
+                    && template.isTrait()) && phpClass.getConstant(name.substring(colon + 1)) != null;
+        }
+        if (context.findConstant(name) != null) {
+            return true;
+        }
+        // zend_get_special_const, for a name without a namespace
+        String lower = Str.lower(name);
+        return lower.equals("true") || lower.equals("false") || lower.equals("null");
     }
 
     @TruffleBoundary

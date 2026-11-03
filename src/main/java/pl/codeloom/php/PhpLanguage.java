@@ -215,9 +215,18 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return classKeys.computeIfAbsent(id, ClassKey::new);
     }
 
-    /** The id of a constant name (case-sensitive); a context keeps its constants by id. */
+    /** The id of a constant name (by its {@link #constantKey}); a context keeps its constants by id. */
     public int constantId(String name) {
-        return constantIds.id(name);
+        return constantIds.id(constantKey(name));
+    }
+
+    /**
+     * The key php-src keeps a global constant under (zend_register_constant): the name is case-sensitive, its
+     * namespace isn't, so the namespace is in lowercase. A name never starts with a backslash here.
+     */
+    public static String constantKey(String name) {
+        int slash = name.lastIndexOf('\\');
+        return slash < 0 ? name : Str.lower(name.substring(0, slash)) + name.substring(slash);
     }
 
     public Assumption singleContext() {
