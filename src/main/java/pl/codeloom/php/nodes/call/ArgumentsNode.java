@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.FileVarNode;
@@ -158,9 +159,10 @@ public final class ArgumentsNode extends Node {
     }
 
     @TruffleBoundary
-    private static void addSpread(List<Object> values, Object value) {
+    public static void addSpread(List<Object> values, Object value) {
         if (!(value instanceof PhpArray array)) {
-            throw new PhpError("Only arrays and Traversables can be unpacked");
+            throw new PhpError("TypeError", "Only arrays and Traversables can be unpacked, " + Args.valueName(value)
+                    + " given");
         }
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             values.add(array.valueAt(p));
@@ -173,7 +175,7 @@ public final class ArgumentsNode extends Node {
     }
 
     /** Whether one of count arguments from position on lands on a by-reference parameter. */
-    private static boolean takesRef(PhpFunction callee, int position, int count) {
+    public static boolean takesRef(PhpFunction callee, int position, int count) {
         for (int i = 0; i < count; i++) {
             if (callee.isByRef(position + i)) {
                 return true;
@@ -188,7 +190,7 @@ public final class ArgumentsNode extends Node {
      * place.
      */
     @TruffleBoundary
-    private static void addSpreadRefs(List<Object> values, PhpArray array, PhpFunction callee, int position,
+    public static void addSpreadRefs(List<Object> values, PhpArray array, PhpFunction callee, int position,
                                       boolean variable) {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             if (!callee.isByRef(position++)) {

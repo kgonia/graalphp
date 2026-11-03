@@ -51,6 +51,7 @@ import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.nodes.call.CallableDispatchNode;
+import pl.codeloom.php.nodes.call.FrameArgNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.call.InstantiateNode;
 import pl.codeloom.php.nodes.call.MethodCallNode;
@@ -1543,24 +1544,44 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access,
                                    @Cached ElementNodes.ElementWriteNode write, @Bind Node node) {
-            PhpArray held = value instanceof PhpArray array ? array : null;
-            if (held != null) {
-                held.addHolder();
-            }
-            try {
-                PhpArray array = access.arrayForWriteOn(frame, object, site.name);
-                if (array == null) {
-                    DimNode.writeToObject(node, access.readOn(frame, object, site.name), key, value);
-                } else {
-                    write.execute(array, key, value);
-                }
-            } finally {
-                if (held != null) {
-                    held.removeHolder();
-                }
-            }
-            return value;
+            return writePropertyElement(frame, access, object, site.name, key, value, write, node);
         }
+    }
+
+    /** `$obj->$name[key] = value`: as WritePropElement, the name computed (PropName) before the value. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class WritePropElementNamed {
+        @Specialization
+        public static Object write(VirtualFrame frame, PropSite site, Object value, String name, Object object,
+                                   Object key,
+                                   @Cached(value = "site.create()", uncached = "site.uncached()",
+                                           neverDefault = true) PropNode access,
+                                   @Cached ElementNodes.ElementWriteNode write, @Bind Node node) {
+            return writePropertyElement(frame, access, object, name, key, value, write, node);
+        }
+    }
+
+    private static Object writePropertyElement(VirtualFrame frame, PropNode access, Object object, String name,
+                                               Object key, Object value, ElementNodes.ElementWriteNode write,
+                                               Node node) {
+        PhpArray held = value instanceof PhpArray array ? array : null;
+        if (held != null) {
+            held.addHolder();
+        }
+        try {
+            PhpArray array = access.arrayForWriteOn(frame, object, name);
+            if (array == null) {
+                DimNode.writeToObject(node, access.readOn(frame, object, name), key, value);
+            } else {
+                write.execute(array, key, value);
+            }
+        } finally {
+            if (held != null) {
+                held.removeHolder();
+            }
+        }
+        return value;
     }
 
     /** `$obj->name[] = value`. */
@@ -1571,23 +1592,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object append(VirtualFrame frame, PropSite site, Object value, Object object,
                                     @Cached(value = "site.create()", uncached = "site.uncached()",
                                             neverDefault = true) PropNode access, @Bind Node node) {
-            PhpArray held = value instanceof PhpArray array ? array : null;
-            if (held != null) {
-                held.addHolder();
-            }
-            try {
-                PhpArray array = access.arrayForWriteOn(frame, object, site.name);
-                if (array == null) {
-                    DimNode.writeToObject(node, access.readOn(frame, object, site.name), PhpNull.NULL, value);
-                } else {
-                    array.append(value);
-                }
-            } finally {
-                if (held != null) {
-                    held.removeHolder();
-                }
-            }
-            return value;
+            return appendToProperty(frame, access, object, site.name, value, node);
         }
     }
 
@@ -1740,6 +1745,39 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** The uncached interpreter's profile of writes through a reference, which it never compiles: one for all. */
     private static final RefWrites UNCACHED_REF_WRITES = RefWrites.create();
+
+    /** `$obj->$name[] = value`: as AppendPropElement, the name computed (PropName) before the value. */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class AppendPropElementNamed {
+        @Specialization
+        public static Object append(VirtualFrame frame, PropSite site, Object value, String name, Object object,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access, @Bind Node node) {
+            return appendToProperty(frame, access, object, name, value, node);
+        }
+    }
+
+    private static Object appendToProperty(VirtualFrame frame, PropNode access, Object object, String name,
+                                           Object value, Node node) {
+        PhpArray held = value instanceof PhpArray array ? array : null;
+        if (held != null) {
+            held.addHolder();
+        }
+        try {
+            PhpArray array = access.arrayForWriteOn(frame, object, name);
+            if (array == null) {
+                DimNode.writeToObject(node, access.readOn(frame, object, name), PhpNull.NULL, value);
+            } else {
+                array.append(value);
+            }
+        } finally {
+            if (held != null) {
+                held.removeHolder();
+            }
+        }
+        return value;
+    }
 
     /**
      * An array literal (ArrayLiteralNode): LiteralStart makes the array, each LiteralAppend or LiteralPut inserts
@@ -2009,27 +2047,49 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `$obj->$name` as argument index: as SendProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class)
+    public static final class SendPropNamed {
+        @Specialization
+        public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
+                                  String name,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            if (function.isByRef(index)) {
+                return access.makeRefOn(frame, object, name);
+            }
+            return access.readOn(frame, object, name);
+        }
+    }
+
     /**
      * A nested element `$x[k1]...[kn]` as argument index: its reference (RefNested) when the parameter is by
-     * reference, else its value read down the chain (DimNode.execute).
+     * reference, else its value read down the chain (DimNode.execute). append: `$x[...][]`, whose reference is a
+     * new element's; read, the tree's Error.
      */
     @Operation
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
+    @ConstantOperand(type = boolean.class, name = "append")
     public static final class SendNested {
         @Specialization
-        public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
-                                  @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
-                                  @Cached ElementNodes.ArrayKeyNode toKey,
+        public static Object send(VirtualFrame frame, LocalAccessor variable, int index, boolean append,
+                                  PhpFunction function, @Variadic Object[] keys, @Bind BytecodeNode bytecode,
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                   @Cached ElementNodes.ElementReadNode read,
                                   @Cached InlinedBranchProfile sharedArray,
                                   @Cached InlinedBranchProfile refArray,
                                   @Cached InlinedBranchProfile createdArray) {
             if (!function.isByRef(index)) {
+                if (append) {
+                    throw appendRead();
+                }
                 return readChain(Variables.value(Locals.stored(frame, variable, bytecode)), keys, read);
             }
             Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
-            return elementRef(node, base, keys, false, toKey, read);
+            return elementRef(node, base, keys, append, toKey, read);
         }
     }
 
@@ -2037,19 +2097,75 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = PropSite.class)
     @ConstantOperand(type = int.class)
+    @ConstantOperand(type = boolean.class, name = "append")
     public static final class SendPropNested {
         @Specialization
-        public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
-                                  @Variadic Object[] keys,
+        public static Object send(VirtualFrame frame, PropSite site, int index, boolean append, PhpFunction function,
+                                  Object object, @Variadic Object[] keys,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access,
                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                   @Cached ElementNodes.ElementReadNode read) {
             if (!function.isByRef(index)) {
+                if (append) {
+                    throw appendRead();
+                }
                 return readChain(access.readOn(frame, object, site.name), keys, read);
             }
-            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, false, toKey, read);
+            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey, read);
         }
+    }
+
+    /**
+     * An element of a temporary value as argument index, `f()[k1]...[kn]` (FETCH_DIM_FUNC_ARG on it): read down
+     * the chain; for a by-reference parameter, a call's array is separated (ZEND_SEPARATE: a copy, null an empty
+     * array; a returned reference stays one) and the element's reference taken in it; php-src's Error for writing
+     * to any other temporary (a constant, a literal, `new`).
+     */
+    @Operation
+    @ConstantOperand(type = int.class)
+    @ConstantOperand(type = boolean.class, name = "append")
+    @ConstantOperand(type = boolean.class, name = "call")
+    public static final class SendTemporary {
+        @Specialization
+        public static Object send(int index, boolean append, boolean call, PhpFunction function, Object base,
+                                  @Variadic Object[] keys, @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached ElementNodes.ElementReadNode read) {
+            if (!function.isByRef(index)) {
+                if (append) {
+                    throw appendRead();
+                }
+                return readChain(PhpRef.deref(base), keys, read);
+            }
+            if (!call) {
+                throw temporaryWrite();
+            }
+            return elementRef(node, separated(base), keys, append, toKey, read);
+        }
+    }
+
+    @TruffleBoundary
+    private static Object separated(Object value) {
+        if (value instanceof PhpRef ref) {
+            // the reference a function returning by reference gave is written through: ZEND_SEPARATE drops only
+            // a reference nothing else holds
+            PhpArray array = Places.refArrayForWrite(ref);
+            return array != null ? array : ref.get();
+        }
+        if (value instanceof PhpArray array) {
+            return array.copy();
+        }
+        return value == PhpNull.NULL ? new PhpArray() : value;
+    }
+
+    @TruffleBoundary
+    private static PhpError appendRead() {
+        return new PhpError("Cannot use [] for reading");
+    }
+
+    @TruffleBoundary
+    private static PhpError temporaryWrite() {
+        return new PhpError("Cannot use temporary expression in write context");
     }
 
     /** base[k1]...[kn] read (DimNode.execute down a chain). */
@@ -2090,6 +2206,95 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 CallNode.notice(node, CallNode.PASSED_VALUE);
             }
             return result;
+        }
+    }
+
+    // ---- calls unpacking arguments (ArgumentsNode.buildWithSpread) ----
+
+    /**
+     * The arguments of a call with `...`: SpreadStart makes the list, each SpreadAdd adds an argument sent as any
+     * (php-src allows only unpacking after the first unpacked one, so their positions are constants), each
+     * SpreadValue or SpreadVar the elements of an unpacked array; the call (CallSpread, CallMethodSpread...) takes
+     * the list. `f($a, ...$b)` is CallSpread(f, SpreadVar(SpreadAdd(SpreadStart, $a), f)).
+     */
+    @Operation
+    public static final class SpreadStart {
+        @Specialization
+        public static SpreadArguments start() {
+            return new SpreadArguments();
+        }
+    }
+
+    @Operation
+    public static final class SpreadAdd {
+        @Specialization
+        public static SpreadArguments add(SpreadArguments list, Object value) {
+            list.add(value);
+            return list;
+        }
+    }
+
+    /**
+     * `...value`: the elements of an array, each by reference where it lands on a by-reference parameter of the
+     * function (as it is: a temporary array's elements aren't made references); php-src's Error for a value that
+     * isn't an array.
+     */
+    @Operation
+    public static final class SpreadValue {
+        @Specialization
+        public static SpreadArguments spread(SpreadArguments list, PhpFunction function, Object value) {
+            int position = list.size();
+            if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
+                ArgumentsNode.addSpreadRefs(list.values(), array, function, position, false);
+            } else {
+                ArgumentsNode.addSpread(list.values(), value);
+            }
+            return list;
+        }
+    }
+
+    /**
+     * `...$x`: as SpreadValue, but the variable's array is separated first when an element lands on a by-reference
+     * parameter, and the elements passed by reference become references in it.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class SpreadVar {
+        @Specialization
+        public static SpreadArguments spread(VirtualFrame frame, LocalAccessor variable, SpreadArguments list,
+                                             PhpFunction function, @Bind BytecodeNode bytecode, @Bind Node node,
+                                             @Cached InlinedBranchProfile sharedArray,
+                                             @Cached InlinedBranchProfile refArray,
+                                             @Cached InlinedBranchProfile createdArray) {
+            Object value = Variables.value(Locals.stored(frame, variable, bytecode));
+            int position = list.size();
+            if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
+                PhpArray writable = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
+                        createdArray);
+                ArgumentsNode.addSpreadRefs(list.values(), writable, function, position, true);
+            } else {
+                ArgumentsNode.addSpread(list.values(), value);
+            }
+            return list;
+        }
+    }
+
+    /** `name(...)` with unpacked arguments: as Call and CallRef (keepRef), the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallSpread {
+        @Specialization(guards = "function == cachedFunction", limit = "1")
+        public static Object direct(CallInfo call, boolean keepRef, PhpFunction function, SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return result(callNode.call(arguments.frameArguments()), keepRef);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(CallInfo call, boolean keepRef, PhpFunction function,
+                                      SpreadArguments arguments, @Cached IndirectCallNode callNode) {
+            return result(callNode.call(function.getCallTarget(), arguments.frameArguments()), keepRef);
         }
     }
 
@@ -2151,6 +2356,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached IndirectCallNode callNode) {
             return result(callNode.call(target.function().getCallTarget(), targetArguments(target, arguments)),
                     keepRef);
+        }
+    }
+
+    /** `$f(...)` with unpacked arguments (SpreadStart): as CallValue, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallValueSpread {
+        @Specialization(guards = "target.function() == cachedFunction", limit = "4")
+        public static Object direct(boolean keepRef, Callables.Target target, PhpFunction function,
+                                    SpreadArguments arguments,
+                                    @Cached("target.function()") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return CallValue.direct(keepRef, target, function, arguments.frameArguments(), cachedFunction, callNode);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(boolean keepRef, Callables.Target target, PhpFunction function,
+                                      SpreadArguments arguments, @Cached IndirectCallNode callNode) {
+            return CallValue.indirect(keepRef, target, function, arguments.frameArguments(), callNode);
         }
     }
 
@@ -2245,6 +2469,39 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         return list;
     }
 
+    /**
+     * func_get_arg($position) (FrameArgNode): a declared parameter's variable as it holds it now (null when
+     * unset), an extra argument as passed; php-src's ValueError for a position outside the arguments passed.
+     */
+    @Operation
+    public static final class FuncGetArg {
+        @Specialization
+        public static Object arg(VirtualFrame frame, Object position, @Bind PhpBytecodeRootNode root,
+                                 @Bind BytecodeNode bytecode) {
+            return root.passedArgument(frame, bytecode, Convert.toLong(position));
+        }
+    }
+
+    /** func_get_arg()'s value (see FuncGetArg); the loop over the parameters is over constants. */
+    @ExplodeLoop
+    Object passedArgument(VirtualFrame frame, BytecodeNode bytecode, long offset) {
+        if (offset < 0) {
+            throw FrameArgNode.negativeOffset();
+        }
+        Object[] arguments = frame.getArguments();
+        if (offset >= arguments.length - PhpFunction.ARG_FIRST) {
+            throw FrameArgNode.offsetPastArguments();
+        }
+        // the variadic parameter's arguments are extra ones (php-src's num_args leaves it out)
+        int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1 : params.length;
+        for (int i = 0; i < declared; i++) {
+            if (i == offset) {
+                return Variables.value(Locals.stored(frame, variables[parameterLocals[i]], bytecode));
+            }
+        }
+        return PhpRef.deref(arguments[PhpFunction.ARG_FIRST + (int) offset]);
+    }
+
     /** php-src's E_DEPRECATED at this instruction's line. */
     @Operation
     @ConstantOperand(type = String.class, name = "message")
@@ -2259,6 +2516,27 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     private static void deprecation(Node node, String message) {
         ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_DEPRECATED, Str.of(message),
                 SourceLocation.of(node));
+    }
+
+    /**
+     * `@expr`'s start (BEGIN_SILENCE, the tree's SilenceNode): error_reporting keeps only the fatal errors while
+     * the expression runs; the value is error_reporting before, which SilenceEnd takes.
+     */
+    @Operation
+    public static final class SilenceStart {
+        @Specialization
+        public static int start(@Bind Node node) {
+            return UnaryNodes.SilenceNode.begin(PhpContext.get(node).ini());
+        }
+    }
+
+    /** `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before. */
+    @Operation
+    public static final class SilenceEnd {
+        @Specialization
+        public static void end(int saved, @Bind Node node) {
+            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), saved);
+        }
     }
 
     /** func_num_args(): how many arguments the call passed. */
@@ -2619,6 +2897,38 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `$obj->name(...)` with unpacked arguments (SpreadStart): as CallMethod, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallMethodSpread {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                    SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            return CallMethod.direct(site, keepRef, receiver, function, arguments.frameArguments(), cachedFunction,
+                    callNode);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                      SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
+            return CallMethod.indirect(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object byValue(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+                                     SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode,
+                                     @Bind Node node) {
+            return CallMethod.byValue(site, keepRef, receiver, function, arguments.frameArguments(), callNode, node);
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
     /** A call's arguments, without the frame's first slots. */
     private static Object[] values(Object[] arguments) {
         Object[] values = new Object[arguments.length - PhpFunction.ARG_FIRST];
@@ -2733,6 +3043,44 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return callerStatic;
             }
             return phpClass;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `Cls::name(...)` with unpacked arguments (SpreadStart): as CallStatic, the frame arguments from the list. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallStaticSpread {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                    PhpFunction function, SpreadArguments arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.direct(frame, site, keepRef, phpClass, function, arguments.frameArguments(),
+                    cachedFunction, callNode, subclassTest);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                      PhpFunction function, SpreadArguments arguments,
+                                      @Shared @Cached IndirectCallNode callNode,
+                                      @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.indirect(frame, site, keepRef, phpClass, function, arguments.frameArguments(),
+                    callNode, subclassTest);
+        }
+
+        @Specialization(guards = "isByValue(function)")
+        public static Object magic(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
+                                   PhpFunction function, SpreadArguments arguments,
+                                   @Shared @Cached IndirectCallNode callNode,
+                                   @Shared @Cached SubclassTestNode subclassTest) {
+            return CallStatic.magic(frame, site, keepRef, phpClass, function, arguments.frameArguments(), callNode,
+                    subclassTest);
         }
 
         public static boolean isByValue(PhpFunction function) {
@@ -2964,6 +3312,33 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "isByValue(constructor)")
         public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
                                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments) {
+            return object;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `new Cls(...)` with unpacked arguments (SpreadStart): as Construct, the frame arguments from the list. */
+    @Operation
+    public static final class ConstructSpread {
+        @Specialization(guards = {"!isByValue(constructor)", "constructor == cachedConstructor"}, limit = "4")
+        public static PhpObject direct(PhpObject object, PhpFunction constructor, SpreadArguments arguments,
+                                       @Cached("constructor") PhpFunction cachedConstructor,
+                                       @Cached("create(cachedConstructor.getCallTarget())") DirectCallNode callNode) {
+            return Construct.direct(object, constructor, arguments.frameArguments(), cachedConstructor, callNode);
+        }
+
+        @Specialization(guards = "!isByValue(constructor)", replaces = "direct")
+        public static PhpObject indirect(PhpObject object, PhpFunction constructor, SpreadArguments arguments,
+                                         @Cached IndirectCallNode callNode) {
+            return Construct.indirect(object, constructor, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "isByValue(constructor)")
+        public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
+                                                   SpreadArguments arguments) {
             return object;
         }
 
@@ -3392,6 +3767,18 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access) {
             return access.makeRefOn(frame, object, site.name);
+        }
+    }
+
+    /** `&$obj->$name`: as RefProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class RefPropNamed {
+        @Specialization
+        public static PhpRef ref(VirtualFrame frame, PropSite site, Object object, String name,
+                                 @Cached(value = "site.create()", uncached = "site.uncached()",
+                                         neverDefault = true) PropNode access) {
+            return access.makeRefOn(frame, object, name);
         }
     }
 
