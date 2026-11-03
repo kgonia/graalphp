@@ -124,6 +124,11 @@ public final class Builtins {
                 curlMethods);
     }
 
+    /** The CLI SAPI's STDIN, STDOUT and STDERR. */
+    public static void defineStdStreams(PhpContext context) {
+        FileFunctions.defineStdStreams(context);
+    }
+
     public static void install(PhpContext context, Table table) {
         for (Map.Entry<String, Object> constant : table.constants.entrySet()) {
             context.defineConstant(constant.getKey(), constant.getValue());
