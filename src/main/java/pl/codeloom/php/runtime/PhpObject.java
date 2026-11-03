@@ -285,6 +285,38 @@ public final class PhpObject extends DynamicObject {
         return pairs;
     }
 
+    /**
+     * A property as foreach by reference takes it (zho_declared_it_fetch_current): made a reference in place; a
+     * hooked one's by-reference get hook's reference, another hooked one the Error; null for one unset, or a
+     * virtual one without a get hook.
+     */
+    @TruffleBoundary
+    public PhpRef propertyRef(String name) {
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        if (hooks != null) {
+            if (hooks.get() == null && hooks.virtual()) {
+                return null;
+            }
+            if (hooks.get() == null || !hooks.get().returnsRef()) {
+                throw new PhpError("Cannot create reference to property " + phpClass.getName() + "::$"
+                        + Str.keyText(name));
+            }
+            Object value = hooks.get().invokeRef(this, phpClass);
+            return value instanceof PhpRef ref ? ref : new PhpRef(value);
+        }
+        Object old = getProperty(name);
+        if (old == null || old instanceof PhpRef) {
+            return (PhpRef) old;
+        }
+        PhpRef ref = new PhpRef(old);
+        if (old instanceof PhpArray array) {
+            array.removeHolder();
+        }
+        ref.bind();
+        DynamicObjectLibrary.getUncached().put(this, name, ref);
+        return ref;
+    }
+
     /** The lazy state: null for an object that isn't lazy, an initialized ghost included. */
     public Lazy lazy() {
         return lazy;

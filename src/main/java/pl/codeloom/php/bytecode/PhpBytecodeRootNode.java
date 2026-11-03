@@ -3591,13 +3591,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class ForeachRefStart {
         @Specialization
         public static void start(VirtualFrame frame, LocalAccessor state, Object subject,
-                                 @Bind BytecodeNode bytecode, @Bind Node node) {
+                                 @Bind BytecodeNode bytecode, @Bind Node node, @Bind PhpBytecodeRootNode root) {
             Object value = subject instanceof PhpRef ref ? ref.get() : subject;
             if (value instanceof PhpArray) {
                 PhpRef ref = subject instanceof PhpRef held ? held : PhpRef.unbound(value);
                 state.setObject(bytecode, frame, RefIteration.start(PhpContext.get(node), ref));
             } else if (value instanceof PhpObject object) {
-                state.setObject(bytecode, frame, GeneratorRefIteration.start(node, object));
+                state.setObject(bytecode, frame, GeneratorRefIteration.start(node, object,
+                        PropNode.callingScope(frame, root.scopeName)));
             } else {
                 ForeachNode.notIterable(node, value);
                 state.setObject(bytecode, frame, PhpNull.NULL);

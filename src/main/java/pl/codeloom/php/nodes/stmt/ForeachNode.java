@@ -306,7 +306,8 @@ public final class ForeachNode extends StmtNode {
      * the key is written.
      */
     private void iterateObjectByRef(VirtualFrame frame, PhpObject subject) {
-        GeneratorRefIteration iteration = GeneratorRefIteration.start(this, subject);
+        GeneratorRefIteration iteration = GeneratorRefIteration.start(this, subject,
+                PropNode.callingScope(frame, lexicalClass));
         while (iteration.advance(this)) {
             bind.bindRef(frame, iteration.currentRef(this));
             if (bind.hasKey()) {

@@ -8,27 +8,46 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Str;
+
+import java.util.List;
 
 /**
  * foreach by reference over a Generator of a function yielding by reference (zend_generator_get_iterator with
- * by_ref): each step takes the reference the generator yielded. php-src iterates no other object by reference
- * here: an Iterator is an Error (zend_user_it_get_iterator); a plain object's properties aren't supported. The
+ * by_ref): each step takes the reference the generator yielded; or over a plain object's properties the scope may
+ * access, each made a reference (PhpObject.propertyRef). An Iterator is an Error (zend_user_it_get_iterator). The
  * generator's steps are made from the loop's statement or instruction, as traces show them.
  */
 public final class GeneratorRefIteration {
     private final PhpGenerator generator;
+    /**
+     * A plain object's walk (generator null): the object, the calling scope, its properties so far (one added during
+     * the loop is visited too, as php-src walks the live table), the current one's reference.
+     */
+    private final PhpObject object;
+    private final String scope;
+    private final List<String> properties;
+    private int index;
+    private PhpRef current;
     private boolean started;
 
-    private GeneratorRefIteration(PhpGenerator generator) {
+    private GeneratorRefIteration(PhpGenerator generator, PhpObject object, String scope, List<String> properties) {
         this.generator = generator;
+        this.object = object;
+        this.scope = scope;
+        this.properties = properties;
     }
 
-    /** The iteration of subject (an IteratorAggregate's iterator): a generator not yielding by reference throws. */
+    /**
+     * The iteration of subject (an IteratorAggregate's iterator) for code in scope: a generator not yielding by
+     * reference throws.
+     */
     @TruffleBoundary
-    public static GeneratorRefIteration start(Node site, PhpObject subject) {
+    public static GeneratorRefIteration start(Node site, PhpObject subject, String scope) {
         PhpClass phpClass = subject.getPhpClass();
         if (!phpClass.isSubclassOf("iterator") && !phpClass.isSubclassOf("iteratoraggregate")) {
-            throw new PhpError("foreach by reference over an object is not supported");
+            PhpObject object = subject.initialized();
+            return new GeneratorRefIteration(null, object, scope, object.visiblePropertyNames(scope));
         }
         PhpObject object = ForeachNode.unwrapAggregates(site, subject);
         if (!(object.getInternal() instanceof PhpGenerator generator)) {
@@ -39,12 +58,29 @@ public final class GeneratorRefIteration {
             generator.rewind();
             return null;
         });
-        return new GeneratorRefIteration(generator);
+        return new GeneratorRefIteration(generator, null, null, null);
     }
 
     /** Moves to the next element (after the first step): false at the end. */
     @TruffleBoundary
     public boolean advance(Node site) {
+        if (generator == null) {
+            current = null;
+            while (current == null) {
+                if (index == properties.size()) {
+                    for (String name : object.visiblePropertyNames(scope)) {
+                        if (!properties.contains(name)) {
+                            properties.add(name);
+                        }
+                    }
+                    if (index == properties.size()) {
+                        return false;
+                    }
+                }
+                current = object.propertyRef(properties.get(index++));
+            }
+            return true;
+        }
         return (Boolean) Backtrace.callFrom(site, () -> {
             if (started) {
                 generator.next();
@@ -57,12 +93,18 @@ public final class GeneratorRefIteration {
     /** The current element's reference: a value the generator yielded with a notice becomes one. */
     @TruffleBoundary
     public PhpRef currentRef(Node site) {
+        if (generator == null) {
+            return this.current;
+        }
         Object current = Backtrace.callFrom(site, generator::currentRef);
         return current instanceof PhpRef ref ? ref : new PhpRef(current);
     }
 
     @TruffleBoundary
     public Object key(Node site) {
+        if (generator == null) {
+            return Str.ofKey(properties.get(index - 1));
+        }
         return Backtrace.callFrom(site, generator::key);
     }
 }
