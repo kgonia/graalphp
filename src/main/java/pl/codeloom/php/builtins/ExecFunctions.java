@@ -44,6 +44,21 @@ final class ExecFunctions {
     }
 
     static void register(Registry r) {
+        r.fn("exec", "011", (context, a) -> exec(context, a, "exec", 0));
+        r.fn("system", "01", (context, a) -> exec(context, a, "system", 1));
+        r.fn("passthru", "01", (context, a) -> exec(context, a, "passthru", 3));
+        r.fn("shell_exec", (context, a) -> {
+            Args.arity(a, "shell_exec", 1, 1);
+            byte[] command = command(context, a, "shell_exec");
+            Object[] result = popen(context, command);
+            if (result == null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("shell_exec(): Unable to execute '"
+                        + new String(command, StandardCharsets.UTF_8) + "'"), SourceLocation.current());
+                return Boolean.FALSE;
+            }
+            byte[] output = (byte[]) result[0];
+            return output.length > 0 ? Str.of(output) : PhpNull.NULL;
+        });
         r.fn("proc_open", "001", (context, a) -> ProcOpen.open(context, a));
         r.fn("proc_close", (context, a) -> {
             Args.arity(a, "proc_close", 1, 1);
@@ -347,7 +362,7 @@ final class ExecFunctions {
                 }
                 int readEnd = fds.getAtIndex(ValueLayout.JAVA_INT, 0);
                 int writeEnd = fds.getAtIndex(ValueLayout.JAVA_INT, 1);
-                int pid = spawn(arena, command, environment, cwd, readEnd);
+                int pid = spawn(arena, command, environment, cwd, readEnd, 0);
                 int ignored = (int) Libc.CLOSE.invokeExact(readEnd);
                 if (pid < 0) {
                     ignored = (int) Libc.CLOSE.invokeExact(writeEnd);
@@ -367,18 +382,18 @@ final class ExecFunctions {
         }
 
         /**
-         * posix_spawn(_PATH_BSHELL, {"sh", "-c", "--", command}) with the pipe's read end as stdin, as glibc 2.41's
-         * popen; the child's signal mask is emptied (a JVM thread's isn't php's). The pid, or -1.
+         * posix_spawn(_PATH_BSHELL, {"sh", "-c", "--", command}) with the pipe's end as stdin or stdout (target), as
+         * glibc 2.41's popen; the child's signal mask is emptied (a JVM thread's isn't php's). The pid, or -1.
          */
         private static int spawn(Arena arena, byte[] command, Map<String, String> environment, String cwd,
-                                 int readEnd) throws Throwable {
+                                 int childEnd, int target) throws Throwable {
             MemorySegment actions = arena.allocate(256, 16);
             MemorySegment attributes = arena.allocate(1024, 16);
             MemorySegment signals = arena.allocate(256, 16);
             int ignored = (int) Libc.FILE_ACTIONS_INIT.invokeExact(actions);
             ignored = (int) Libc.SPAWNATTR_INIT.invokeExact(attributes);
             try {
-                if ((int) Libc.FILE_ACTIONS_ADDDUP2.invokeExact(actions, readEnd, 0) != 0) {
+                if ((int) Libc.FILE_ACTIONS_ADDDUP2.invokeExact(actions, childEnd, target) != 0) {
                     return -1;
                 }
                 // a context's working directory, when it isn't the process's own (a server's request in its
@@ -404,6 +419,40 @@ final class ExecFunctions {
             } finally {
                 ignored = (int) Libc.FILE_ACTIONS_DESTROY.invokeExact(actions);
                 ignored = (int) Libc.SPAWNATTR_DESTROY.invokeExact(attributes);
+            }
+        }
+
+        /** popen(command, "r") read to the end, then pclose: the output and the wait status, or null. */
+        static Object[] readFrom(byte[] command, Map<String, String> environment, String cwd) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment fds = arena.allocate(ValueLayout.JAVA_INT, 2);
+                if ((int) Libc.PIPE2.invokeExact(fds, O_CLOEXEC) != 0) {
+                    return null;
+                }
+                int readEnd = fds.getAtIndex(ValueLayout.JAVA_INT, 0);
+                int writeEnd = fds.getAtIndex(ValueLayout.JAVA_INT, 1);
+                int pid = spawn(arena, command, environment, cwd, writeEnd, 1);
+                int ignored = (int) Libc.CLOSE.invokeExact(writeEnd);
+                if (pid < 0) {
+                    ignored = (int) Libc.CLOSE.invokeExact(readEnd);
+                    return null;
+                }
+                ProcOpen.PipeStream pipe = new ProcOpen.PipeStream(readEnd, "r");
+                ByteBuilder output = new ByteBuilder();
+                byte[] chunk = new byte[8192];
+                for (int n; (n = pipe.rawRead(chunk, 0, chunk.length)) > 0; ) {
+                    output.write(chunk, 0, n);
+                }
+                pipe.rawClose();
+                MemorySegment status = arena.allocate(ValueLayout.JAVA_INT);
+                MemorySegment state = arena.allocate(Libc.CAPTURED);
+                int waited;
+                do {
+                    waited = (int) Libc.WAITPID.invokeExact(state, pid, status, 0);
+                } while (waited == -1 && (int) Libc.ERRNO.get(state, 0L) == EINTR);
+                return new Object[]{output.toByteArray(), waited == -1 ? -1 : status.get(ValueLayout.JAVA_INT, 0)};
+            } catch (Throwable t) {
+                throw new IllegalStateException("popen failed", t);
             }
         }
 
@@ -470,6 +519,96 @@ final class ExecFunctions {
             }
             return array;
         }
+    }
+
+    /** Z_PARAM_PATH_STR and a non-empty command. */
+    private static byte[] command(PhpContext context, Object[] a, String function) {
+        byte[] command = Str.bytes(Args.string(context, a, 0, function, "command", false));
+        if (indexOf(command, (byte) 0, 0) >= 0) {
+            throw new PhpError("ValueError", function + "(): Argument #1 ($command) must not contain any null bytes");
+        }
+        if (command.length == 0) {
+            throw new PhpError("ValueError", function + "(): Argument #1 ($command) must not be empty");
+        }
+        return command;
+    }
+
+    /** popen(command, "r") read to its end and pclose()d: the output and the wait status; null if not started. */
+    private static Object[] popen(PhpContext context, byte[] command) {
+        if (context.response() == null) {
+            context.flush();
+        }
+        return Spawn.readFrom(command, RuntimeFunctions.environment(context),
+                context.getEnv().getCurrentWorkingDirectory().getPath());
+    }
+
+    private static boolean isSpace(byte b) {
+        return b == ' ' || b >= '\t' && b <= '\r';
+    }
+
+    /**
+     * php_exec_ex and php_exec: mode 0 exec (the last line), 1 system (the lines written), 3 passthru (the output
+     * written); exec with &$output appends each line, its trailing whitespace stripped; the result code is
+     * pclose's (the exit status, or the wait status of a child a signal ended).
+     */
+    @TruffleBoundary
+    private static Object exec(PhpContext context, Object[] a, String function, int mode) {
+        Args.arity(a, function, 1, mode == 0 ? 3 : 2);
+        byte[] command = command(context, a, function);
+        PhpArray lines = null;
+        if (mode == 0 && Args.has(a, 1)) {
+            pl.codeloom.php.runtime.PhpRef ref = Args.ref(a, 1);
+            if (ref.get() instanceof PhpArray existing) {
+                lines = existing.isShared() ? existing.copy() : existing;
+            } else {
+                lines = new PhpArray();
+            }
+            ref.set(lines);
+            mode = 2;
+        }
+        Object[] result = popen(context, command);
+        Object returned;
+        int status;
+        if (result == null) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(): Unable to fork ["
+                    + new String(command, StandardCharsets.UTF_8) + "]"), SourceLocation.current());
+            returned = Boolean.FALSE;
+            status = -1;
+        } else {
+            byte[] output = (byte[]) result[0];
+            int wstatus = (Integer) result[1];
+            status = (wstatus & 0x7F) == 0 ? (wstatus >> 8) & 0xFF : wstatus;
+            if (mode == 3) {
+                context.write(Str.of(output));
+                returned = PhpNull.NULL;
+            } else {
+                int last = 0;
+                int lastLength = 0;
+                for (int start = 0; start < output.length; ) {
+                    int end = indexOf(output, (byte) '\n', start);
+                    end = end < 0 ? output.length : end + 1;
+                    int length = end - start;
+                    if (mode == 1) {
+                        context.write(Str.of(output, start, length));
+                    }
+                    while (length > 0 && isSpace(output[start + length - 1])) {
+                        length--;
+                    }
+                    if (mode == 2) {
+                        lines.append(Str.of(output, start, length));
+                    }
+                    last = start;
+                    lastLength = length;
+                    start = end;
+                }
+                returned = Str.of(output, last, lastLength);
+            }
+        }
+        int codeArgument = mode == 1 || mode == 3 ? 1 : 2;
+        if (Args.has(a, codeArgument)) {
+            Args.ref(a, codeArgument).set((long) status);
+        }
+        return returned;
     }
 
     /** proc_open.c on Linux (its posix_spawn path): the descriptors, the child, the "process" resource. */
