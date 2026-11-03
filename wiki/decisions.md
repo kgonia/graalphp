@@ -218,7 +218,8 @@ counting only destructible classes) is acceptable. The runtime counts the PHP ho
 - **Code depends on it:** WordPress's `WP_HTML_Processor` releases its bookmarks from `WP_HTML_Token::__destruct`
   and stops after 10,000 tokens without it. Buffers flushed and locks or transactions released in destructors are
   common in plugins. PeachPie, which ignores destructors, broke Laravel's job queue that way.
-- **No cheaper exact scheme exists:** three independent analyses (Codex gpt-6-astra, Fable, Opus) found none.
+- **No cheaper exact scheme exists:** two independent analyses (Codex gpt-6-astra, Fable) found none; a third
+  (Opus) is pending.
   Every container must be counted from its creation, because any of them can later receive a destructible object
   ([destructors.md](destructors.md)). HHVM kept eager refcounting for the same reason.
 - **The cost is measured before it is accepted:** a counting-only prototype first, against thresholds.

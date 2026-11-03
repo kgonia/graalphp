@@ -1,9 +1,9 @@
 # Destructors exactly as php-src (D17)
 
 Issue [005](../issues/005-destructors.md) holds php-src's rules and the first options (A–E). This page records the
-2026-11-03 analysis that followed the owner's decision against any deviation. Three independent analyses, given the
-same brief and no hypothesis, reached the same conclusion: Codex CLI (gpt-6-astra, xhigh), Fable (xhigh) and Opus
-(xhigh).
+2026-11-03 analysis that followed the owner's decision against any deviation. Independent analyses, given the same
+brief and no hypothesis: Codex CLI (gpt-6-astra, xhigh) and Fable (xhigh) reached the same conclusion; Opus (xhigh)
+is pending and will be added here.
 
 ## What has to be reproduced
 Beyond issue 005's three moments (refcount zero, cycle collector, shutdown), these were probed on PHP 8.5
