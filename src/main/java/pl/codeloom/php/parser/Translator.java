@@ -63,6 +63,7 @@ import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.StaticPropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
+import pl.codeloom.php.nodes.vars.VariableVariableNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
@@ -1308,6 +1309,12 @@ public final class Translator {
                     return isThis(tested) ? new ThisNode.IsSetNode()
                             : new TestNodes.IssetNode(new LValueNode[]{place(tested)});
                 }
+                if (scope == null && tested instanceof Ast variable && variable.is("AST_VAR")
+                        && !(variable.get("name") instanceof String)) {
+                    // ZEND_ISSET_ISEMPTY_VAR: a lookup, which doesn't fall back to $this
+                    return new TestNodes.EmptyNode(new VariableVariableNode(expression(variable.get("name")),
+                            VariableVariableNode.ISSET));
+                }
                 return isThis(tested) ? new LogicNodes.NotNode(new ThisNode.IsSetNode())
                         : new TestNodes.EmptyNode(expression(tested));
             }
@@ -1585,7 +1592,11 @@ public final class Translator {
         switch (node.kind) {
             case "AST_VAR": {
                 if (!(node.get("name") instanceof String name)) {
-                    throw unsupported(node, "variable variable");
+                    // ponytail: a function's $$name runs on bytecode (BytecodeScope); the tree keeps a file's
+                    if (scope != null) {
+                        throw unsupported(node, "variable variable");
+                    }
+                    return new VariableVariableNode(expression(node.get("name")), VariableVariableNode.IS);
                 }
                 if (name.equals("this")) {
                     throw unsupported(node, "assignment to $this");
