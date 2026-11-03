@@ -1407,3 +1407,90 @@ Correctness on the fixed build: `mvn clean package` passes, the smoke tests 141/
 by-value and by-reference arguments, compiled and then not; it passes on the tree too), Gate 2's pages 19/21 equal
 to PHP's (the two oEmbed links, as before), php-src's `.phpt` 3,397 of 7,341 as on `dsl-processor-patched` (the same
 cases fail).
+
+## Bytecode only: what moves, and how (2026-11-03, branch `bytecode-only`, roadmap step 2)
+
+D16: the bytecode becomes the only interpreter. This is the inventory taken before the port (on #35's
+`fix-compile-functions`, `32af202`), the design, and how each `throw new Unsupported` in `BytecodeTranslator`
+ends.
+
+### What still runs on the tree, and how it maps
+| tree | what it does | on bytecode |
+|---|---|---|
+| `FileRootNode` | a file's top level: the prologue (hoisted functions, the early-bound classes of #35's `EarlyClassNode`, a delayed one's `bound` slot), then the body; `return` gives include its value, else `1` | a `PhpBytecodeRootNode` made by `BytecodeTranslator` in file mode, eagerly when the file is loaded, as now: the hoisted declarations first, then the statements; `Return` of the value, else `1` |
+| `FileVarNode` | a top-level variable is a global by name (`GlobalRefNode`, a constant reference per globals version), or the including call's variable when the file runs in a function's `IncludeScope` (frame argument `ARG_CLOSURE`) | a `RefPlace` of a new kind, the file's variable by name: read, reference (made or not), unset, bind; the same `GlobalRefNode` cache, the `IncludeScope` check first. Every path that takes a superglobal (`$_GET`) as a place takes it, so no variable is a local in a file root |
+| namespaces, `use` | `Names` changes as statements come, braced namespaces and blocks flattened at the top level | the run keeps its `Names` and changes it in the same order; every run (a reparse) starts again from the global namespace |
+| labels at the top level (#35) | the file is a labeled block | the flattened top-level statements as one labeled list |
+| `const X = v;`, `declare`, `strict_types`, `JumpChecks.file` | statement; nop; per path; checked at translation | an operation defining the constant (the value a constant expression); nop; unchanged |
+| inline HTML, `__halt_compiler()` | echo; not covered | echo; a no-op at the top level |
+| `RunOnceCode` (#26) | `prepareForCompilation` refuses a loop-free root of 3,000+ nodes no include site has run twice | the same rule on the bytecode root: "loop" is whether the translator emitted a loop, a foreach or a goto label (the same on every run); "large" is `isLarge()`, the instructions `LargeCode` already counts |
+| include sites (#26) | `IncludeNode.resolve(site, includeSite, ...)`, `includedAgain()` on the root | unchanged; the root type becomes the bytecode root; a file's include is an `Include` instruction with its `IncludeSite` constant, as in functions |
+| `DefinedNode` (#26) | `defined('NAME')` in place where `zend_compile_func_defined` makes `ZEND_DEFINED` | an operation `Defined` with the name's id: the same test, the same `found` once while one context runs |
+| `ThunkRootNode` | a class constant, property default or enum case value that doesn't fold, evaluated per class on first use with the class as `static`; `RunOnceCode` | a bytecode root of one constant expression (`self` the declaring class), with the same run-once rule; `MethodCallNode.scope`'s case for it moves to the root |
+| folding (`ConstNode`) | the tree's translation folds literals, `true`/`false`/`null`, predefined constants, magic constants, `-` of a number, concatenations of literals, constant arrays, `X::class` | `Translator.fold`, the same rules without nodes; `BytecodeTranslator.constantValue` and the declarations (`constantOrDeferred`, closures' `static` initials, `match`) call it |
+| `eval` | not covered on either | the string parsed by `ZendParser`, translated as a file root named `FILE(LINE) : eval()'d code`, run in the calling scope as an include; `return` gives its value, else `null`; a parse error is a `ParseError` there. Not cached, as php-src |
+
+Top-level constructs that bytecode functions lack: `global $x` at the top level (binds the file's variable to the
+global), `static $x` at the top level (php-src allows it; the tree didn't), `$this` (the frame's, as in a
+function), `func_get_args()` (php-src's Error), `compact`/`extract`/`get_defined_vars`/`$$name` (the file's scope:
+the `IncludeScope` or the globals, as the tree's `VariableVariableNode` and `ExtractNode` do without slots).
+
+**Memory.** The DSL keeps a root's parser to run it again for source sections or instrumentation. A file root's
+parser keeps no tree: it reads the file's top level again from what the functions' `AstBody`s keep anyway (the
+export's bytes, or the script's text), so a reparse costs no memory and gives the same tree.
+
+### The `Unsupported` sites (49), each and how it ends
+php-src's behaviour from PHP 8.5.12 (the reference container).
+
+| site | php-src | ends as |
+|---|---|---|
+| `compileError` in report=all runs | (report machinery) | deleted with the report and the halving (`php.bytecode.only`) |
+| no source text for lines | lines always | a `Source` of empty lines, for lines only |
+| goto into a statement list around it | allowed into a try or catch block; into a loop or switch, into or out of finally: compile errors (#35's `JumpChecks`) | implemented for try/catch |
+| foreach key into list() | "Cannot use list as key element" | compile error |
+| foreach by reference into list() | `&[...]` doesn't parse | dead |
+| foreach key into list() or by reference | "Cannot use list as key element", "Key element cannot be a reference" | compile errors |
+| expression (default) | backticks are `shell_exec()` with a deprecation | implemented; no other kind reaches it |
+| yield / yield from outside a generator | "The "yield" expression can only be used inside a function" (top level) | compile error |
+| assignment target (default) | `$this =`: "Cannot re-assign $this" | compile error; other targets don't parse |
+| capture of `$this` / an auto-global | "Cannot use $this as lexical variable", "Cannot use auto-global as lexical variable" | compile errors at the enclosing code |
+| reference to (default, two) | "Cannot assign reference to non referenceable value", "Can't use function return value in write context" | compile errors |
+| reference to the result of (default) | only calls reach it | dead |
+| reference to a call's result assigned to an element or property | allowed: binds to a returned reference, else the notice "Only variables should be assigned by reference" and the value | implemented |
+| reference to (not a place) | `&$GLOBALS`: "Cannot acquire reference to $GLOBALS"; `&$this`: Error "Using $this when not in object context" | compile error / runtime Error |
+| reference assigned to (default) | `$this = &`: "Cannot re-assign $this" | compile error |
+| global by a computed name | `global $$n` allowed | implemented (the scope's variable by name) |
+| reference in list() | allowed (`[&$a, $b] = $arr`, in foreach too) | implemented |
+| binary / unary operator (default, three) | every flag is covered | dead |
+| empty array element | "Cannot use empty array elements in arrays" | compile error |
+| reference to (array literal) | "Cannot assign reference to non referenceable value" / "Can't use function return value in write context" | compile errors |
+| cast (default) | `(void)` (8.5): evaluates and drops | implemented |
+| ?-> in a write context | "Can't use nullsafe operator in write context", "Cannot take reference of a nullsafe chain" | compile errors |
+| write / unset of a property by a computed name | allowed (`$o->$n .= x`, `$o->$n++`, `$o->{$e}[] =`, `&$o->$n`, `unset($o->{e})`) | implemented |
+| `[]` as the object of a property written | `$a[]->x = 1`: appends null, then Error "Attempt to assign property "x" on null" | implemented |
+| isset of (default) | `isset(f())`: compile error with the hint | compile error |
+| `??=` target (default) | `$this ??=`: "Cannot re-assign $this" | compile error |
+| `[]` inside a place read, compound / increment of `[]` | `$a[] .= x`, `$a[]++`, `$a[][0] += 1` allowed (a null appended, then the operation) | implemented |
+| an element of an expression | `f()[0] = 1` allowed (written into the temporary: an `ArrayAccess` result gets `offsetSet`); `$this[k] = v` on an `ArrayAccess` $this | implemented |
+| get_class() / get_called_class() outside a class | Errors "get_class() without arguments must be called from within a class", "get_called_class() must be called from within a class" | the built-in's call |
+| get_defined_vars() | the scope's variables (references kept), the globals at the top level | implemented |
+| eval | see above | implemented |
+| named arguments (two sites) | allowed | **left**: issue 017, Truffle PHP has no named arguments (the owner's decision); a runtime error as today |
+| self / parent / static outside a class | top level: Error "Cannot use "self" in the global scope"; in a class without a parent: compile error | as php-src |
+| instanceof static / parent | allowed | implemented |
+| argument `[]` of a reference place | `f(A::$a[])`, `f($GLOBALS['x'][])` by reference: appends | implemented |
+| static property by a computed name | `A::$$n`, `A::${'x'}` allowed | implemented |
+| `[]` of $GLOBALS | "Cannot append to $GLOBALS", "Cannot use [] for reading" | compile errors |
+| `[]` inside a temporary's argument | php-src's errors for `[]` read | compile errors |
+| `variable()`: not a variable / not a local | `foreach (... as $this)`, `catch (E $this)`: "Cannot re-assign $this"; `global $this`: "Cannot use $this as global variable"; `static $this`: "Cannot use $this as static variable"; superglobals as foreach or catch targets allowed | compile errors; superglobal targets through their `RefPlace` |
+| the tree's translation failing (`constantValue`) | | gone with `Translator.fold` |
+| default value (not constant-shaped) | | dead: the callers check first |
+
+### What goes
+`Translator`'s body translation (statements and expressions into nodes), the tree's roots (`FileRootNode`,
+`ThunkRootNode`, `FunctionRootNode`'s execution, `GeneratorNodes.BodyRootNode`), every node the bytecode neither
+proxies nor calls, the `php.Interpreter` option and `language.bytecode()`, the report and halving properties, and
+the tests and scripts that run both interpreters. `Translator` keeps the declarations (functions, classes,
+parameters, types, closures' parts, constant expressions' checks) and php-src's compile errors there. The shared
+runtime stays: the operator nodes the bytecode proxies (`@OperationProxy`) and the static helpers it calls, left in
+what remains of their classes (the shortest diff).
