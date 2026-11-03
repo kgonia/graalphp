@@ -951,7 +951,9 @@ public final class Translator {
             }
             used.remove("this");
             for (String name : used) {
-                if (enclosingVariable.test(name)) {
+                // find_implicit_binds: auto-globals ($GLOBALS, the superglobals) are no captures
+                if (enclosingVariable.test(name) && !name.equals("GLOBALS")
+                        && !PhpContext.SUPERGLOBALS.contains(name)) {
                     captureNames.add(name);
                     captureRefs.add(false);
                 }

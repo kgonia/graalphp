@@ -27,8 +27,9 @@ public final class GlobalsDimNode extends LValueNode {
         return toName(key.execute(frame));
     }
 
+    /** The global variable a key names (the bytecode's $GLOBALS[key] instructions convert it so too). */
     @TruffleBoundary
-    private static String toName(Object value) {
+    public static String toName(Object value) {
         return Str.java(Convert.toStr(value));
     }
 

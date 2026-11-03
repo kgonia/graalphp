@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -24,16 +25,34 @@ public final class StaticPropNode extends LValueNode {
     public StaticPropNode(ClassRefNode classRef, String name) {
         this.classRef = classRef;
         this.name = name;
-        this.lookup = StaticPropNodeFactory.LookupNodeGen.create(name);
+        this.lookup = Lookup.create(name);
     }
 
     private PhpRef ref(VirtualFrame frame) {
-        PhpRef ref = lookup.execute(classRef.resolve(frame));
+        PhpClass phpClass = classRef.resolve(frame);
+        return declared(lookup.execute(phpClass), phpClass, name);
+    }
+
+    /** The class's reference for the property (Lookup's), or php-src's Error when the class has none. */
+    public static PhpRef declared(PhpRef ref, PhpClass phpClass, String name) {
         if (ref == null) {
             CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Access to undeclared static property " + classRef.getName() + "::$" + Str.keyText(name));
+            throw new PhpError("Access to undeclared static property " + phpClass.getName() + "::$"
+                    + Str.keyText(name));
         }
         return ref;
+    }
+
+    /** ZEND_UNSET_STATIC_PROP: a static property can't be unset, declared or not. */
+    @TruffleBoundary
+    public static PhpError unsetError(PhpClass phpClass, String name) {
+        return new PhpError("Attempt to unset static property " + phpClass.getName() + "::$" + Str.keyText(name));
+    }
+
+    /** `Cls::$name = &place`, which this runtime doesn't support (the class's reference can't be replaced yet). */
+    @TruffleBoundary
+    public static PhpError bindError() {
+        return new PhpError("Binding a static property by reference is not supported");
     }
 
     @Override
@@ -54,7 +73,7 @@ public final class StaticPropNode extends LValueNode {
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Binding a static property by reference is not supported");
+        throw bindError();
     }
 
     @Override
@@ -64,8 +83,9 @@ public final class StaticPropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
+        PhpClass phpClass = classRef.resolve(frame);
         CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Attempt to unset static property " + classRef.getName() + "::$" + Str.keyText(name));
+        throw unsetError(phpClass, name);
     }
 
     @Override
@@ -84,7 +104,7 @@ public final class StaticPropNode extends LValueNode {
      * it is declared and its initializers are evaluated on first access, so while the language serves one context
      * a site keeps the reference it found per class as a compile-time constant.
      */
-    abstract static class Lookup extends Node {
+    public abstract static class Lookup extends Node {
         static final int LIMIT = 3;
 
         protected final String name;
@@ -93,7 +113,12 @@ public final class StaticPropNode extends LValueNode {
             this.name = name;
         }
 
-        abstract PhpRef execute(PhpClass phpClass);
+        /** A site's own lookup (the bytecode's static property instructions keep one each). */
+        public static Lookup create(String name) {
+            return StaticPropNodeFactory.LookupNodeGen.create(name);
+        }
+
+        public abstract PhpRef execute(PhpClass phpClass);
 
         @Specialization(guards = "phpClass == cachedClass", limit = "LIMIT", assumptions = "singleContext()")
         protected PhpRef cached(PhpClass phpClass,
