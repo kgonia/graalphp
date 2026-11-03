@@ -47,7 +47,8 @@ public final class Comparisons {
             return a == b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (PhpBytecodeRootNode#isCloningAllowed). */
+        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
+         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
         public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal) {
             return CompareNodes.IdenticalNode.identical(a, b);
@@ -77,7 +78,8 @@ public final class Comparisons {
             return a != b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (PhpBytecodeRootNode#isCloningAllowed). */
+        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
+         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
         public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal) {
             return !CompareNodes.IdenticalNode.identical(a, b);
@@ -113,7 +115,8 @@ public final class Comparisons {
             return a == b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (PhpBytecodeRootNode#isCloningAllowed). */
+        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
+         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
         public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal,
                                     @Shared @Cached TruffleString.ReadByteNode readByte) {
@@ -150,7 +153,8 @@ public final class Comparisons {
             return a != b;
         }
 
-        /** With strings' cache, unused: a split bytecode copy must not take two strings here (PhpBytecodeRootNode#isCloningAllowed). */
+        /** With strings' cache, unused: a split bytecode copy must not take two strings here (see
+         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
         public static boolean other(Object a, Object b, @Shared @Cached TruffleString.EqualNode equal,
                                     @Shared @Cached TruffleString.ReadByteNode readByte) {
