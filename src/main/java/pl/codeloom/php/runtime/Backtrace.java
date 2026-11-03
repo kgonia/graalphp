@@ -113,6 +113,14 @@ public final class Backtrace {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
             RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            if (root instanceof PhpGenerator.LinkedFrame) {
+                // the generators of a yield from chain, unfolded
+                for (Object[] linked : PhpGenerator.linkedLevels(
+                        frame.getFrame(FrameInstance.FrameAccess.READ_ONLY).getArguments())) {
+                    levels.add(new Level((RootNode) linked[0], (Frame) linked[1], null, (BytecodeLocation) linked[2]));
+                }
+                return null;
+            }
             levels.add(new Level(SourceLocation.codeRoot(root),
                     SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
                     frame.getCallNode(), SourceLocation.callingInstruction(frame)));
@@ -130,9 +138,10 @@ public final class Backtrace {
     public static SourceLocation userCaller() {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
-            levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
-                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
-                    SourceLocation.callingInstruction(frame)));
+            RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            levels.add(new Level(SourceLocation.codeRoot(root),
+                    SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
+                    frame.getCallNode(), SourceLocation.callingInstruction(frame)));
             return levels.size() < 4 ? null : levels;
         });
         int caller = isFrameless(levels, 1) ? 2 : 1;
@@ -229,7 +238,8 @@ public final class Backtrace {
     }
 
     /** Adds function, class, object (with PROVIDE_OBJECT), type and args (unless IGNORE_ARGS) to an entry. */
-    public static void describeCall(PhpArray entry, String function, String className, PhpObject self, int options,
+    /** self: the $this (an object or a Closure), or null for a static call. */
+    public static void describeCall(PhpArray entry, String function, String className, Object self, int options,
                                     PhpArray args) {
         entry.put(FUNCTION, Str.of(function));
         if (className != null) {

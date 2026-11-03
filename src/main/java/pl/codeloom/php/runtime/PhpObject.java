@@ -590,9 +590,34 @@ public final class PhpObject extends DynamicObject {
         return DynamicObjectLibrary.getUncached().getOrDefault(this, name, null);
     }
 
+    /**
+     * Whether the typed property was unset (php-src clears its IS_PROP_UNINIT): while it stays uninitialized, its
+     * reads and writes go to __get and __set. A hidden key of the class marks it, out of the property table.
+     */
+    @TruffleBoundary
+    public boolean wasUnset(String name) {
+        return DynamicObjectLibrary.getUncached().containsKey(this, phpClass.unsetKey(name));
+    }
+
+    @TruffleBoundary
+    public void setUnset(String name, boolean unset) {
+        if (unset) {
+            DynamicObjectLibrary.getUncached().put(this, phpClass.unsetKey(name), Boolean.TRUE);
+        } else {
+            DynamicObjectLibrary.getUncached().removeKey(this, phpClass.unsetKey(name));
+        }
+    }
+
+    /** Stores the property; an uninitialized typed one gets its declaration's flags. */
     @TruffleBoundary
     public void setProperty(String name, Object value) {
-        DynamicObjectLibrary.getUncached().put(this, name, value);
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl != null && decl.type() != null && !library.containsKey(this, name)) {
+            library.putWithFlags(this, name, value, phpClass.propertyFlags(decl));
+        } else {
+            library.put(this, name, value);
+        }
     }
 
     /**

@@ -23,15 +23,16 @@ public final class StaticPropNode extends LValueNode {
     @Child private Lookup lookup;
     private final String name;
 
-    public StaticPropNode(ClassRefNode classRef, String name) {
+    /** lexicalClass: the class the code is written in (lowercase) or null; scopeInFrame as PropNode's. */
+    public StaticPropNode(ClassRefNode classRef, String name, String lexicalClass, boolean scopeInFrame) {
         this.classRef = classRef;
         this.name = name;
-        this.lookup = Lookup.create(name);
+        this.lookup = Lookup.create(name, lexicalClass, scopeInFrame);
     }
 
     private PhpRef ref(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
-        return declared(lookup.execute(phpClass), phpClass, name);
+        return declared(lookup.execute(frame, phpClass, false), phpClass, name);
     }
 
     /** The class's reference for the property (Lookup's), or php-src's Error when the class has none. */
@@ -91,7 +92,7 @@ public final class StaticPropNode extends LValueNode {
 
     @Override
     public boolean isSet(VirtualFrame frame) {
-        PhpRef ref = lookup.execute(classRef.resolve(frame));
+        PhpRef ref = lookup.execute(frame, classRef.resolve(frame), true);
         return ref != null && ref.get() != PhpNull.NULL;
     }
 
@@ -103,35 +104,50 @@ public final class StaticPropNode extends LValueNode {
     /**
      * The class's reference for the property, or null if it has none. A class's static properties are made when
      * it is declared and its initializers are evaluated on first access, so while the language serves one context
-     * a site keeps the reference it found per class as a compile-time constant.
+     * a site keeps the reference it found per class as a compile-time constant, and whether its code may access it:
+     * a public property, or a non-public one from the lexical class, needs no check per access.
      */
     public abstract static class Lookup extends Node {
         static final int LIMIT = 3;
 
         protected final String name;
+        protected final String lexicalClass;
+        protected final boolean scopeInFrame;
 
-        Lookup(String name) {
+        Lookup(String name, String lexicalClass, boolean scopeInFrame) {
             this.name = name;
+            this.lexicalClass = lexicalClass;
+            this.scopeInFrame = scopeInFrame;
         }
 
         /** A site's own lookup (the bytecode's static property instructions keep one each). */
-        public static Lookup create(String name) {
-            return StaticPropNodeFactory.LookupNodeGen.create(name);
+        public static Lookup create(String name, String lexicalClass, boolean scopeInFrame) {
+            return StaticPropNodeFactory.LookupNodeGen.create(name, lexicalClass, scopeInFrame);
         }
 
-        public abstract PhpRef execute(PhpClass phpClass);
+        /**
+         * The reference, null for a class without the property; one the calling scope may not access is php-src's
+         * Error, or null when quiet (isset(), empty(), `??`: BP_VAR_IS).
+         */
+        public abstract PhpRef execute(VirtualFrame frame, PhpClass phpClass, boolean quiet);
 
         @Specialization(guards = "phpClass == cachedClass", limit = "LIMIT",
                 assumptions = {"singleContext()", "staticPropertyRefs()"})
-        protected PhpRef cached(PhpClass phpClass,
+        protected PhpRef cached(VirtualFrame frame, PhpClass phpClass, boolean quiet,
                                 @Cached("phpClass") PhpClass cachedClass,
-                                @Cached("cachedClass.getStaticProperty(name)") PhpRef ref) {
-            return ref;
+                                @Cached("cachedClass.getStaticProperty(name)") PhpRef ref,
+                                @Cached("allowed(cachedClass)") boolean allowed) {
+            return allowed ? ref : checked(frame, phpClass, ref, name, lexicalClass, scopeInFrame, quiet);
         }
 
         @Specialization(replaces = "cached")
-        protected PhpRef uncached(PhpClass phpClass) {
-            return phpClass.getStaticProperty(name);
+        protected PhpRef uncached(VirtualFrame frame, PhpClass phpClass, boolean quiet) {
+            return checked(frame, phpClass, phpClass.getStaticProperty(name), name, lexicalClass, scopeInFrame, quiet);
+        }
+
+        /** Whether every access from here may use the property: a public one, or the lexical class may. */
+        protected boolean allowed(PhpClass phpClass) {
+            return !phpClass.isRestrictedStatic(name) || !scopeInFrame && phpClass.canAccessStatic(name, lexicalClass);
         }
 
         protected Assumption singleContext() {
@@ -141,5 +157,19 @@ public final class StaticPropNode extends LValueNode {
         protected Assumption staticPropertyRefs() {
             return PhpLanguage.get(this).staticPropertyRefs();
         }
+    }
+
+    /** The reference if the calling scope may access it (Lookup's check, and the uncached interpreter's). */
+    public static PhpRef checked(VirtualFrame frame, PhpClass phpClass, PhpRef ref, String name, String lexicalClass,
+                                 boolean scopeInFrame, boolean quiet) {
+        if (ref == null || !phpClass.isRestrictedStatic(name) || phpClass.canAccessStatic(name,
+                scopeInFrame ? PropNode.callingScope(frame, lexicalClass) : lexicalClass)) {
+            return ref;
+        }
+        if (quiet) {
+            return null;
+        }
+        CompilerDirectives.transferToInterpreter();
+        throw phpClass.inaccessibleStatic(name);
     }
 }

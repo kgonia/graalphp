@@ -37,6 +37,8 @@ import pl.codeloom.php.nodes.expr.IncludeNode;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.LogicNodes;
 import pl.codeloom.php.nodes.expr.MatchNode;
+import pl.codeloom.php.nodes.expr.TemporaryNode;
+import pl.codeloom.php.parser.zend.ZendParser;
 import pl.codeloom.php.nodes.expr.TestNodes;
 import pl.codeloom.php.nodes.expr.ThrowExprNode;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
@@ -74,14 +76,17 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.Phases;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -117,11 +122,12 @@ public final class Translator {
     private static final int EXEC_INCLUDE_ONCE = 4;
     private static final int EXEC_REQUIRE = 8;
     private static final int EXEC_REQUIRE_ONCE = 16;
+    private static final int BINARY_PIPE = 261;
     /** How PHP 8.4 names a closure: {closure:the enclosing function or file:its line}. */
     private static final String CLOSURE_PREFIX = "{closure:";
 
     /** The class whose members are being translated, for self::, parent:: and __CLASS__. */
-    record ClassInfo(String name, String parentName) {
+    record ClassInfo(String name, String parentName, boolean isTrait) {
     }
 
     /** A function's local variables: name to frame slot. */
@@ -162,6 +168,8 @@ public final class Translator {
     private Names names;
     /** In a class's members: the class's php-ast flags (interface, trait...). */
     private int classFlags;
+    /** The lines of the file's arrow functions right of a `|>` without parentheses; read when first needed. */
+    private Set<Integer> unparenthesizedArrowLines;
 
     /** internal: the file is the prelude's, which stands for php-src's internal code (RootNode.isInternal). */
     public Translator(PhpLanguage language, String path, Source source, boolean internal) {
@@ -237,6 +245,7 @@ public final class Translator {
                 case "AST_USE":
                     for (Object element : statement.children()) {
                         Ast use = (Ast) element;
+                        checkUse(statement.flags, use, (String) use.get("name"));
                         names = names.use(statement.flags, (String) use.get("name"), (String) use.get("alias"));
                     }
                     break;
@@ -246,6 +255,7 @@ public final class Translator {
                     for (Object element : uses.children()) {
                         Ast use = (Ast) element;
                         int kind = use.flags != 0 ? use.flags : uses.flags;
+                        checkUse(kind, use, prefix + "\\" + use.get("name"));
                         names = names.use(kind, prefix + "\\" + use.get("name"), (String) use.get("alias"));
                     }
                     break;
@@ -256,7 +266,54 @@ public final class Translator {
         }
     }
 
+    /** zend_compile_use: a class can't be imported under a reserved name. */
+    private void checkUse(int kind, Ast use, String name) {
+        String alias = use.get("alias") instanceof String a ? a : name.substring(name.lastIndexOf('\\') + 1);
+        if (kind == 1 && RESERVED_CLASS_NAMES.contains(Str.lower(alias))) {
+            throw compileError(use.line, "Cannot use " + name + " as " + alias + " because '" + alias
+                    + "' is a special class name");
+        }
+    }
+
+    /** The file's strict_types declarations in their place (translateFile). */
+    private final Set<Ast> topDeclares = Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /** A declare statement's strict_types element, or null. */
+    private static Ast strictTypes(Ast declare) {
+        for (Object child : declare.node("declares").children()) {
+            if ("strict_types".equalsIgnoreCase((String) ((Ast) child).get("name"))) {
+                return (Ast) child;
+            }
+        }
+        return null;
+    }
+
     public FileRootNode translateFile(Ast file) {
+        // zend_compile_declare's strict_types: first in the file (after other declares), no block, 0 or 1
+        boolean first = true;
+        for (Object child : file.children()) {
+            if (child instanceof Ast statement && statement.is("AST_DECLARE")) {
+                if (strictTypes(statement) != null) {
+                    if (!first) {
+                        throw compileError(statement.line,
+                                "strict_types declaration must be the very first statement in the script");
+                    }
+                    if (statement.node("stmts") != null) {
+                        throw compileError(statement.line, "strict_types declaration must not use block mode");
+                    }
+                    Object value = strictTypes(statement).get("value");
+                    if (!Long.valueOf(0).equals(value) && !Long.valueOf(1).equals(value)) {
+                        throw compileError(statement.line, "strict_types declaration must have 0 or 1 as its value");
+                    }
+                    if (Long.valueOf(1).equals(value)) {
+                        language.declareStrict(path);
+                    }
+                    topDeclares.add(statement);
+                }
+            } else if (child != null) {
+                first = false;
+            }
+        }
         List<StmtNode> prologue = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();
         fileStatements(file, prologue, body);
@@ -372,6 +429,10 @@ public final class Translator {
             case "AST_CONST_DECL":
                 return constDeclaration(node);
             case "AST_DECLARE":
+                if (strictTypes(node) != null && !topDeclares.contains(node)) {
+                    throw compileError(node.line,
+                            "strict_types declaration must be the very first statement in the script");
+                }
                 return new BasicStmts.NopNode();
             case "AST_INLINE_HTML":
                 return new BasicStmts.EchoNode(new ConstNode(literal(node.get("value"))));
@@ -465,7 +526,11 @@ public final class Translator {
         if (!returnsRef) {
             return new BasicStmts.ReturnNode(expr == null ? null : expression(expr));
         }
-        if (expr instanceof Ast ast && isPlace(ast) && !isThis(ast) && !isGlobals(ast)) {
+        if (expr instanceof Ast ast && (isPlace(ast) || ast.is("AST_NULLSAFE_PROP")) && !isThis(ast)
+                && !isGlobals(ast)) {
+            if (deepestNullsafe(ast) != null) {
+                throw compileError(ast.line, "Cannot take reference of a nullsafe chain");
+            }
             return new BasicStmts.ReturnRefNode(place(ast));
         }
         return new BasicStmts.ReturnRefValueNode(expr == null ? null : expression(expr), !isThis(expr));
@@ -621,6 +686,7 @@ public final class Translator {
                 continue; // #[attributes] on the declaration
             }
             String name = names.declared((String) element.get("name"));
+            constantExpression(element.get("value"));
             ExprNode value = expression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
@@ -652,7 +718,7 @@ public final class Translator {
         String name = owner == null ? names.declared((String) node.get("name")) : (String) node.get("name");
         Names declaredNames = names;
         Ast paramList = node.node("params");
-        PhpFunction.Param[] params = params(paramList);
+        PhpFunction.Param[] params = params(node);
         int flags = node.flags;
         boolean isStatic = (flags & MODIFIER_STATIC) != 0;
         boolean isPublic = (flags & 7) == 0 || (flags & MODIFIER_PUBLIC) != 0;
@@ -678,23 +744,106 @@ public final class Translator {
                 modifiers |= PhpFunction.ACC_ABSTRACT;
             }
         }
+        Ast returnType = node.node("returnType");
+        self[0].setDeclaredReturn(returnType == null ? null : builtType(returnType, false));
         self[0].setDeclaration(modifiers, typeString(node.node("returnType"), false),
                 node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        PhpType declared = self[0].getDeclaredReturn();
+        if (declared != null && declared.has(PhpType.VOID | PhpType.NEVER) && node.get("stmts") != null) {
+            checkReturns(node.body(), declared, owner != null);
+        }
         return self[0];
     }
 
-    private PhpFunction.Param[] params(Ast paramList) {
-        PhpFunction.Param[] params = new PhpFunction.Param[paramList.size()];
-        for (int i = 0; i < params.length; i++) {
-            Ast param = (Ast) paramList.child(i);
-            Ast type = param.node("type");
-            Object defaultValue = param.get("default") == null ? null : param.get("default");
-            boolean nullable = isNullable(type) || isNullConstant(defaultValue);
-            params[i] = new PhpFunction.Param((String) param.get("name"), (param.flags & PARAM_REF) != 0,
-                    (param.flags & PARAM_VARIADIC) != 0, defaultValue == null ? null : (Object) Boolean.TRUE,
-                    coerceType(type), nullable, typeString(type, isNullConstant(defaultValue)));
+    /**
+     * zend_compile_return's errors in a void or never function, and its being a generator: php-src finds them
+     * compiling the file, so a void or never function's body (otherwise read when first called) is read here.
+     */
+    private void checkReturns(Ast body, PhpType type, boolean method) {
+        String kind = method ? "method" : "function";
+        List<Ast> returns = new ArrayList<>();
+        collect(body, Set.of("AST_RETURN"), returns);
+        for (Ast found : returns) {
+            if (type.has(PhpType.NEVER)) {
+                throw compileError(found.line, "A never-returning " + kind + " must not return");
+            }
+            if (found.get("expr") != null) {
+                throw compileError(found.line, "A void " + kind + " must not return a value"
+                        + (isNullConstant(found.get("expr"))
+                        ? " (did you mean \"return;\" instead of \"return null;\"?)" : ""));
+            }
         }
-        return params;
+        generatorReturn(body, type);
+    }
+
+    /** zend_mark_function_as_generator: a generator's return type must take a Generator. */
+    private void generatorReturn(Ast body, PhpType type) {
+        List<Ast> yields = new ArrayList<>();
+        collect(body, Set.of("AST_YIELD", "AST_YIELD_FROM"), yields);
+        if (yields.isEmpty() || type.has(PhpType.OBJECT)) {
+            return;
+        }
+        for (String name : type.classNames()) {
+            String lower = Str.lower(name);
+            if (lower.equals("traversable") || lower.equals("iterator") || lower.equals("generator")) {
+                return;
+            }
+        }
+        throw compileError(yields.get(0).line, "Generator return type must be a supertype of Generator, "
+                + type.text(null) + " given");
+    }
+
+    /** The nodes of the kinds in the code, outside the functions and classes nested in it, in order. */
+    private static void collect(Object value, Set<String> kinds, List<Ast> found) {
+        if (!(value instanceof Ast node)) {
+            return;
+        }
+        if (kinds.contains(node.kind)) {
+            found.add(node);
+        }
+        switch (node.kind) {
+            case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
+                return;
+            default:
+                break;
+        }
+        for (Object child : node.children()) {
+            collect(child, kinds, found);
+        }
+        for (Object child : node.namedValues()) {
+            collect(child, kinds, found);
+        }
+    }
+
+    /** A declaration's parameters; its types' compile errors, the return type's too, come here. */
+    private PhpFunction.Param[] params(Ast declaration) {
+        closureTypes = declaration.is("AST_CLOSURE") || declaration.is("AST_ARROW_FUNC");
+        try {
+            declaredType(declaration.node("returnType"), false);
+            Ast paramList = declaration.node("params");
+            PhpFunction.Param[] params = new PhpFunction.Param[paramList.size()];
+            for (int i = 0; i < params.length; i++) {
+                Ast param = (Ast) paramList.child(i);
+                Ast type = param.node("type");
+                Object defaultValue = param.get("default") == null ? null : param.get("default");
+                boolean nullable = isNullable(type) || isNullConstant(defaultValue);
+                PhpType declared = declaredType(type, isNullConstant(defaultValue));
+                if (declared != null && declared.has(PhpType.VOID | PhpType.NEVER)) {
+                    throw compileError(type.line, (declared.has(PhpType.VOID) ? "void" : "never")
+                            + " cannot be used as a parameter type");
+                }
+                if (declared != null) {
+                    validDefault(declared, literalBit(defaultValue), param.line,
+                            "default value for parameter $" + param.get("name"));
+                }
+                params[i] = new PhpFunction.Param((String) param.get("name"), (param.flags & PARAM_REF) != 0,
+                        (param.flags & PARAM_VARIADIC) != 0, defaultValue == null ? null : defaultText(defaultValue),
+                        declared, nullable, typeString(type, isNullConstant(defaultValue)));
+            }
+            return params;
+        } finally {
+            closureTypes = false;
+        }
     }
 
     // the type bits, in zend_type_to_string's order of the built-in types
@@ -815,33 +964,305 @@ public final class Translator {
         return type != null && type.is("AST_NULLABLE_TYPE");
     }
 
-    private static boolean isNullConstant(Object value) {
+    static boolean isNullConstant(Object value) {
         return value instanceof Ast ast && ast.is("AST_CONST") && "null".equalsIgnoreCase(ast.node("name") == null
                 ? null : (String) ast.node("name").get("name"));
     }
 
-    /** The scalar type a declared type coerces to: 's', 'i', 'f', 'b', or 0 for anything else. */
-    static char coerceType(Ast type) {
+    /**
+     * The type values are checked against (zend_compile_typename), or null for none: self and parent resolved
+     * against the declaring class, iterable as Traversable|array. impliedNull: a null default makes it nullable.
+     */
+    PhpType declaredType(Ast type, boolean impliedNull) {
         if (type == null) {
-            return 0;
+            return null;
         }
-        if (type.is("AST_NULLABLE_TYPE")) {
-            return coerceType(type.node("type"));
+        validateType(type);
+        return builtType(type, impliedNull);
+    }
+
+    private PhpType builtType(Ast type, boolean impliedNull) {
+        List<String> text = new ArrayList<>();
+        List<String> classes = new ArrayList<>();
+        List<String[]> intersections = new ArrayList<>();
+        int mask = typeBits(type, text, classes, intersections) | (impliedNull ? PhpType.NULL : 0);
+        if (type.is("AST_TYPE_INTERSECTION")) {
+            // a pure intersection is written without brackets
+            text.set(0, text.get(0).substring(1, text.get(0).length() - 1));
         }
-        if (!type.is("AST_TYPE")) {
-            return 0;
+        return new PhpType(mask, classes.toArray(new String[0]), intersections.toArray(new String[0][]),
+                text.toArray(new String[0]));
+    }
+
+    /** In a closure's declaration, whose class scope is known only when it runs (zend_is_scope_known). */
+    private boolean closureTypes;
+
+    /** zend_compile_typename's compile errors: redundant and misplaced types, self and parent with no class. */
+    private void validateType(Ast type) {
+        boolean nullable = type.is("AST_NULLABLE_TYPE");
+        Ast inner = nullable ? type.node("type") : type;
+        List<Ast> parts = new ArrayList<>();
+        if (inner.is("AST_TYPE_UNION")) {
+            for (Object child : inner.children()) {
+                parts.add((Ast) child);
+            }
+        } else {
+            parts.add(inner);
         }
-        switch (type.flags) {
-            case 6:
-                return 's';
-            case 4:
-                return 'i';
-            case 5:
-                return 'f';
-            case 18:
-                return 'b';
-            default:
+        int mask = 0;
+        List<String> names = new ArrayList<>();
+        List<String[]> intersections = new ArrayList<>();
+        boolean classType = false;
+        for (Ast part : parts) {
+            if (part.is("AST_TYPE_INTERSECTION")) {
+                String[] members = intersectionMembers(part);
+                for (String name : names) {
+                    redundantIntersection(part, members, new String[] {name}, name);
+                }
+                for (String[] other : intersections) {
+                    redundantIntersection(part, members, other, String.join("&", other));
+                    redundantIntersection(part, other, members, String.join("&", members));
+                }
+                intersections.add(members);
+                classType = true;
+                continue;
+            }
+            int bits = typeBits(part, new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+            if (parts.size() > 1 && (bits & PhpType.MIXED) == PhpType.MIXED) {
+                throw compileError(part.line, "Type mixed can only be used as a standalone type");
+            }
+            if ((mask & bits) != 0) {
+                throw compileError(part.line, "Duplicate type " + maskText(mask & bits) + " is redundant");
+            }
+            if ((mask & PhpType.TRUE) != 0 && bits == PhpType.FALSE || (mask & PhpType.FALSE) != 0
+                    && bits == PhpType.TRUE) {
+                throw compileError(part.line, "Type contains both true and false, bool must be used instead");
+            }
+            mask |= bits;
+            String name = part.is("AST_TYPE") ? part.flags == 13 ? "Traversable" : null : className(part);
+            if (!part.is("AST_TYPE")) {
+                checkTypeName(part, name);
+                checkClassScope(part, name);
+                classType = true;
+                // duplicates compare resolved names: self|self is "Duplicate type Foo"
+                name = resolvedClassName(part);
+            }
+            if (name != null) {
+                for (String seen : names) {
+                    if (seen.equalsIgnoreCase(name)) {
+                        throw compileError(part.line, "Duplicate type " + name + " is redundant");
+                    }
+                }
+                for (String[] intersection : intersections) {
+                    redundantIntersection(part, intersection, new String[] {name}, name);
+                }
+                names.add(name);
+            }
+        }
+        if (nullable && (mask & PhpType.MIXED) == PhpType.MIXED) {
+            throw compileError(type.line, "Type mixed cannot be marked as nullable since mixed already includes null");
+        }
+        if (nullable && (mask & PhpType.VOID) != 0) {
+            throw compileError(type.line, "Void can only be used as a standalone type");
+        }
+        if (nullable && (mask & PhpType.NULL) != 0) {
+            throw compileError(type.line, "null cannot be marked as nullable");
+        }
+        if ((mask & PhpType.OBJECT) != 0 && (classType || (mask & PhpType.STATIC) != 0)) {
+            throw compileError(type.line, "Type " + builtType(type, false).text(null)
+                    + " contains both object and a class type, which is redundant");
+        }
+        if ((mask & PhpType.VOID) != 0 && (mask != PhpType.VOID || !names.isEmpty() || !intersections.isEmpty())) {
+            throw compileError(type.line, "Void can only be used as a standalone type");
+        }
+        if ((mask & PhpType.NEVER) != 0 && (mask != PhpType.NEVER || !names.isEmpty()
+                || !intersections.isEmpty())) {
+            throw compileError(type.line, "never can only be used as a standalone type");
+        }
+        if ((mask & PhpType.STATIC) != 0 && classInfo == null && !closureTypes) {
+            throw compileError(type.line, "Cannot use \"static\" when no class scope is active");
+        }
+    }
+
+    private String[] intersectionMembers(Ast intersection) {
+        List<String> members = new ArrayList<>();
+        for (Object child : intersection.children()) {
+            Ast part = (Ast) child;
+            if (part.is("AST_TYPE")) {
+                String text = part.flags == 13 ? "Traversable|array"
+                        : maskText(typeBits(part, new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
+                throw compileError(part.line, "Type " + text + " cannot be part of an intersection type");
+            }
+            String name = className(part);
+            // self and parent only where they resolve at compile time (zend_is_scope_known)
+            if ((name.equalsIgnoreCase("self") || name.equalsIgnoreCase("parent"))
+                    && (classInfo == null || classInfo.isTrait() || closureTypes)) {
+                throw compileError(part.line, "Type " + name + " cannot be part of an intersection type");
+            }
+            for (String seen : members) {
+                if (seen.equalsIgnoreCase(name)) {
+                    throw compileError(part.line, "Duplicate type " + name + " is redundant");
+                }
+            }
+            members.add(name);
+        }
+        return members.toArray(new String[0]);
+    }
+
+    /** "Type A&B is redundant as it is more restrictive than type A": wider's classes all in narrower. */
+    private void redundantIntersection(Ast at, String[] narrower, String[] wider, String widerText) {
+        for (String name : wider) {
+            boolean found = false;
+            for (String member : narrower) {
+                found |= member.equalsIgnoreCase(name);
+            }
+            if (!found) {
+                return;
+            }
+        }
+        throw compileError(at.line, "Type " + String.join("&", narrower) + (narrower.length == wider.length
+                ? " is redundant with type " : " is redundant as it is more restrictive than type ") + widerText);
+    }
+
+    /** zend_compile_single_typename's name checks: built-in types unqualified, no reserved class name. */
+    private void checkTypeName(Ast part, String resolved) {
+        String raw = Str.lower((String) part.get("name"));
+        if (part.flags != NAME_NOT_FQ && BUILTIN_TYPE_NAMES.contains(raw)) {
+            throw compileError(part.line, "Type declaration '" + raw + "' must be unqualified");
+        }
+        if (part.flags == NAME_FQ && (raw.equals("self") || raw.equals("parent") || raw.equals("static"))) {
+            throw compileError(part.line, "'\\" + part.get("name") + "' is an invalid class name");
+        }
+        String last = Str.lower(resolved.substring(resolved.lastIndexOf('\\') + 1));
+        if (resolved.indexOf('\\') >= 0 && RESERVED_CLASS_NAMES.contains(last)) {
+            throw compileError(part.line, "Cannot use \"" + resolved + "\" as a type name as it is reserved");
+        }
+    }
+
+    private static final int NAME_FQ = 0;
+    private static final int NAME_NOT_FQ = 1;
+    /** zend_lookup_builtin_type_by_name's names, and static. */
+    private static final Set<String> BUILTIN_TYPE_NAMES = Set.of("null", "true", "false", "int", "float", "string",
+            "bool", "void", "never", "iterable", "object", "mixed", "static");
+
+    /** zend_ensure_valid_class_fetch_type: self and parent need a class, where the scope is known. */
+    private void checkClassScope(Ast at, String name) {
+        boolean self = name.equalsIgnoreCase("self");
+        if (!self && !name.equalsIgnoreCase("parent") || closureTypes) {
+            return;
+        }
+        if (classInfo == null) {
+            throw compileError(at.line, "Cannot use \"" + Str.lower(name) + "\" when no class scope is active");
+        }
+        if (!self && classInfo.parentName() == null && !classInfo.isTrait()) {
+            throw compileError(at.line, "Cannot use \"parent\" when current class scope has no parent");
+        }
+    }
+
+    private static String maskText(int mask) {
+        return new PhpType(mask, new String[0], new String[0][], new String[0]).text(null);
+    }
+
+    private int typeBits(Ast type, List<String> text, List<String> classes, List<String[]> intersections) {
+        switch (type.kind) {
+            case "AST_NULLABLE_TYPE":
+                return PhpType.NULL | typeBits(type.node("type"), text, classes, intersections);
+            case "AST_TYPE_UNION": {
+                int mask = 0;
+                for (Object child : type.children()) {
+                    mask |= typeBits((Ast) child, text, classes, intersections);
+                }
+                return mask;
+            }
+            case "AST_TYPE_INTERSECTION": {
+                List<String> parts = new ArrayList<>();
+                for (Object child : type.children()) {
+                    parts.add(resolvedClassName((Ast) child));
+                }
+                text.add("(" + String.join("&", parts) + ")");
+                intersections.add(parts.toArray(new String[0]));
                 return 0;
+            }
+            case "AST_TYPE":
+                switch (type.flags) {
+                    case 1: return PhpType.NULL;
+                    case 2: return PhpType.FALSE;
+                    case 3: return PhpType.TRUE;
+                    case 4: return PhpType.INT;
+                    case 5: return PhpType.FLOAT;
+                    case 6: return PhpType.STRING;
+                    case 7: return PhpType.ARRAY;
+                    case 8: return PhpType.OBJECT;
+                    case 12: return PhpType.CALLABLE;
+                    case 13:
+                        text.add("Traversable");
+                        classes.add("Traversable");
+                        return PhpType.ARRAY;
+                    case 14: return PhpType.VOID;
+                    case 15: return PhpType.STATIC;
+                    case 16: return PhpType.MIXED;
+                    case 17: return PhpType.NEVER;
+                    case 18: return PhpType.BOOL;
+                    default: return 0;
+                }
+            default: {
+                String name = resolvedClassName(type);
+                text.add(name);
+                classes.add(name);
+                return 0;
+            }
+        }
+    }
+
+    /** A class name in a type: self and parent as the declaring class's names. */
+    private String resolvedClassName(Ast type) {
+        String name = className(type);
+        if (classInfo != null && name.equalsIgnoreCase("self")) {
+            return classInfo.name();
+        }
+        if (classInfo != null && classInfo.parentName() != null && name.equalsIgnoreCase("parent")) {
+            return classInfo.parentName();
+        }
+        return name;
+    }
+
+    /** A function's return type as its returns are checked: none for void (always null) and generators. */
+    static PhpType checkedReturn(PhpFunction function, boolean generator) {
+        PhpType type = function.getDeclaredReturn();
+        return type == null || type.has(PhpType.VOID) || generator ? null : type;
+    }
+
+    /**
+     * A parameter's default as zend_get_function_declaration writes it: a literal, a string's first 10 bytes,
+     * [] or [...], a constant's name, else <expression>.
+     */
+    private static String defaultText(Object value) {
+        if (value instanceof Long || value instanceof Double) {
+            return Convert.toStr(value).toString();
+        }
+        if (value instanceof String || value instanceof byte[]) {
+            String text = value instanceof String s ? s
+                    : new String((byte[]) value, java.nio.charset.StandardCharsets.ISO_8859_1);
+            return "'" + (text.length() > 10 ? text.substring(0, 10) + "..." : text) + "'";
+        }
+        Ast ast = (Ast) value;
+        switch (ast.kind) {
+            case "AST_CONST": {
+                String name = (String) ast.node("name").get("name");
+                String lower = Str.lower(name);
+                return lower.equals("null") || lower.equals("true") || lower.equals("false") ? lower : name;
+            }
+            case "AST_ARRAY":
+                return ast.size() == 0 ? "[]" : "[...]";
+            case "AST_CLASS_CONST":
+                return ast.node("class").get("name") + "::" + ast.get("const");
+            case "AST_UNARY_OP":
+                if (ast.get("expr") instanceof Long || ast.get("expr") instanceof Double) {
+                    return (ast.flags == 262 ? "-" : "") + defaultText(ast.get("expr"));
+                }
+                return "<expression>";
+            default:
+                return "<expression>";
         }
     }
 
@@ -862,6 +1283,9 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
+        if (generator && target.getDeclaredReturn() != null) {
+            generatorReturn(stmts, target.getDeclaredReturn());
+        }
         if (language.bytecode()) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
                     owner, target, display, params, captures, captureByRef, declaredNames, generator);
@@ -908,11 +1332,10 @@ public final class Translator {
                 statements = new BasicStmts.BlockNode(promoted.toArray(new StmtNode[0]));
             }
         }
-        Ast returnType = node.node("returnType");
         FrameDescriptor descriptor = bodyScope.frame.build();
         if (generator) {
             FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
-                    defaults, captureSlots, captureByRef, (char) 0, false, new BasicStmts.NopNode(), path, internal,
+                    defaults, captureSlots, captureByRef, null, new BasicStmts.NopNode(), path, internal,
                     lineSection(node.line));
             root.setScope(owner == null ? null : owner.name());
             root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, root)
@@ -920,8 +1343,8 @@ public final class Translator {
             return root.getCallTarget();
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
-                paramSlots, defaults, captureSlots, captureByRef, coerceType(returnType), isNullable(returnType),
-                statements, path, internal, lineSection(node.line));
+                paramSlots, defaults, captureSlots, captureByRef, checkedReturn(target, false), statements, path,
+                internal, lineSection(node.line));
         root.setScope(owner == null ? null : owner.name());
         if (body.returnsRef) {
             root.setReturnsRef(node.endLine);
@@ -950,7 +1373,7 @@ public final class Translator {
 
     ClosureParts closureParts(Ast node, Predicate<String> enclosingVariable) {
         boolean arrow = node.is("AST_ARROW_FUNC");
-        PhpFunction.Param[] params = params(node.node("params"));
+        PhpFunction.Param[] params = params(node);
         // read for the captures and $this here, and again when the closure is first called
         Ast stmts = node.body();
         List<String> captureNames = new ArrayList<>();
@@ -995,12 +1418,49 @@ public final class Translator {
                 () -> timedBody(Phases.CLOSURE, () -> translateBody(node, owner, self[0], name, params, names, byRef,
                         declaredNames)));
         self[0].setDeclaredAt(declaredAt(node));
+        Ast returnType = node.node("returnType");
+        self[0].setDeclaredReturn(returnType == null ? null : builtType(returnType, false));
         self[0].setDeclaration(0, typeString(node.node("returnType"), false),
                 node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        PhpType declared = self[0].getDeclaredReturn();
+        if (declared != null && declared.has(PhpType.VOID | PhpType.NEVER) && !arrow) {
+            checkReturns(stmts, declared, false);
+        }
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
+        List<String> variables = new ArrayList<>(List.of(names));
+        List<Object> initials = new ArrayList<>();
+        staticVariables(stmts, variables, initials);
+        self[0].setClosureVariables(variables.toArray(new String[0]), initials.toArray());
         return new ClosureParts(self[0], names, byRef, (node.flags & MODIFIER_STATIC) != 0);
+    }
+
+    /**
+     * The `static` variables a closure's body declares (not its nested functions' and classes'), after its `use`
+     * ones, and their initial values where php-src evaluates them at compile time (a constant expression).
+     */
+    private void staticVariables(Object node, List<String> names, List<Object> initials) {
+        if (!(node instanceof Ast ast) || ast.is("AST_CLOSURE") || ast.is("AST_ARROW_FUNC") || ast.is("AST_FUNC_DECL")
+                || ast.is("AST_CLASS")) {
+            return;
+        }
+        if (ast.is("AST_STATIC") && ast.node("var") != null && ast.node("var").get("name") instanceof String name) {
+            if (!names.contains(name)) {
+                names.add(name);
+                Object initial = ast.get("default");
+                initials.add(initial instanceof Ast expr && !(expr.is("AST_ARRAY") || expr.is("AST_CONST")
+                        || expr.is("AST_UNARY_OP") || expr.is("AST_BINARY_OP")) ? null
+                        : expression(initial).constantValue());
+            }
+            return;
+        }
+        for (Object child : ast.children()) {
+            staticVariables(child, names, initials);
+        }
+        for (Object child : ast.namedValues()) {
+            staticVariables(child, names, initials);
+        }
     }
 
     /** Variable names used in an arrow function body (including nested arrow functions, which capture too). */
@@ -1050,7 +1510,15 @@ public final class Translator {
         return classTemplate(classNode, name);
     }
 
+    /** zend_reserved_class_names. */
+    private static final Set<String> RESERVED_CLASS_NAMES = Set.of("bool", "false", "float", "int", "null",
+            "parent", "self", "static", "string", "true", "void", "never", "iterable", "object", "mixed");
+
     ClassTemplate classTemplate(Ast node, String name) {
+        String unqualified = Str.lower(name.substring(name.lastIndexOf('\\') + 1));
+        if (node.get("name") != null && RESERVED_CLASS_NAMES.contains(unqualified)) {
+            throw compileError(node.line, "Cannot use \"" + node.get("name") + "\" as a class name as it is reserved");
+        }
         if ((node.flags & CLASS_TRAIT) != 0) {
             return traitTemplate(node, name);
         }
@@ -1063,7 +1531,7 @@ public final class Translator {
         }
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
-        ClassInfo info = new ClassInfo(name, parentName);
+        ClassInfo info = new ClassInfo(name, parentName, false);
         Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
         inClass.classFlags = node.flags;
         List<ClassTemplate.Member> members = new ArrayList<>();
@@ -1075,6 +1543,13 @@ public final class Translator {
         } catch (PhpError error) {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
             unsupported = error.getMessage();
+        }
+        // add_stringable_interface: declaring __toString implements Stringable
+        for (ClassTemplate.Member member : members) {
+            if (member instanceof ClassTemplate.Method method && method.function().getName().equalsIgnoreCase(
+                    "__tostring") && interfaces.stream().noneMatch("Stringable"::equalsIgnoreCase)) {
+                interfaces.add("Stringable");
+            }
         }
         ClassTemplate template = new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members,
                 unsupported);
@@ -1088,7 +1563,7 @@ public final class Translator {
         Ast statements = node.node("stmts");
         Names declaredNames = names;
         ClassTemplate.TraitBody body = (className, parentName) -> {
-            ClassInfo info = new ClassInfo(className, parentName);
+            ClassInfo info = new ClassInfo(className, parentName, true);
             Translator inClass = new Translator(language, path, source, internal, info, "", null, null,
                     declaredNames);
             inClass.classFlags = CLASS_TRAIT;
@@ -1138,15 +1613,20 @@ public final class Translator {
         switch (member.kind) {
             case "AST_METHOD": {
                 PhpFunction method = declareFunction(member, info);
+                magicReturnType(member, className, method.getName());
                 List<ClassTemplate.Property> promoted = new ArrayList<>();
                 if (method.getName().equalsIgnoreCase("__construct")) {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
                         if (isPromoted(param)) {
                             String name = (String) param.get("name");
+                            String propertyName = Str.sourceKey(name);
                             checkSetVisibility(param.flags, param.node("type"), className, name, param.line);
-                            promoted.add(new ClassTemplate.Property(Str.sourceKey(name), PhpNull.NULL,
-                                    PhpClass.PropertyDecl.visibilityOf(param.flags), false, param.flags,
+                            // a hooked property stays untyped: its variance and state are its hooks'
+                            PhpType type = param.get("hooks") != null ? null
+                                    : propertyType(param.node("type"), className, propertyName);
+                            promoted.add(new ClassTemplate.Property(propertyName, type == null ? PhpNull.NULL : null,
+                                    PhpClass.PropertyDecl.visibilityOf(param.flags), false, type, param.flags,
                                     propertyHooks(param.node("hooks"), name, param.node("type"), param.flags, false,
                                             className, info, param.line), false));
                         }
@@ -1159,9 +1639,19 @@ public final class Translator {
             case "AST_CLASS_CONST_GROUP": {
                 for (Object child : member.node("const").children()) {
                     Ast element = (Ast) child;
-                    members.add(new ClassTemplate.Constant((String) element.get("name"),
-                            constantOrDeferred(element.get("value")),
-                            PhpClass.PropertyDecl.visibilityOf(member.flags)));
+                    String constantName = (String) element.get("name");
+                    String what = "class constant " + className + "::" + constantName;
+                    PhpType type = declaredType(member.node("type"), false);
+                    if (type != null && !type.isMixed() && type.has(PhpType.CALLABLE | PhpType.VOID | PhpType.NEVER)) {
+                        throw compileError(member.line, "Class constant " + className + "::" + constantName
+                                + " cannot have type " + type.text(null));
+                    }
+                    Object value = constantOrDeferred(element.get("value"));
+                    if (type != null && !(value instanceof ClassTemplate.Deferred)) {
+                        value = validDefault(type, value, member.line, "value for " + what);
+                    }
+                    members.add(new ClassTemplate.Constant(constantName, value,
+                            PhpClass.PropertyDecl.visibilityOf(member.flags), type));
                 }
                 break;
             }
@@ -1190,9 +1680,16 @@ public final class Translator {
                     checkSetVisibility(flags, member.node("type"), className, (String) element.get("name"),
                             element.line);
                     String propertyName = Str.sourceKey((String) element.get("name"));
-                    Object initial = element.get("default") == null ? PhpNull.NULL
+                    // a hooked property stays untyped: its variance and state are its hooks'
+                    boolean hooked = element.get("hooks") != null;
+                    PhpType type = hooked ? null : propertyType(member.node("type"), className, propertyName);
+                    Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, flags,
+                    if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {
+                        initial = validDefault(type, initial, member.line, "default value for property " + className
+                                + "::$" + Str.keyText(propertyName));
+                    }
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type, flags,
                             propertyHooks(element.node("hooks"), (String) element.get("name"), member.node("type"),
                                     flags, isStatic, className, info, element.line),
                             element.get("default") != null));
@@ -1463,14 +1960,156 @@ public final class Translator {
         return false;
     }
 
+    /** A property's type (zend_compile_prop_decl): no void, never or callable. */
+    private PhpType propertyType(Ast ast, String className, String propertyName) {
+        PhpType type = declaredType(ast, false);
+        if (type != null && type.has(PhpType.VOID | PhpType.NEVER | PhpType.CALLABLE)) {
+            throw compileError(ast.line, "Property " + className + "::$" + Str.keyText(propertyName)
+                    + " cannot have type " + type.text(null));
+        }
+        return type;
+    }
+
+    /**
+     * zend_is_valid_default_value: a constant default must be of the type (an int is one of a float, as a float);
+     * what names it: "default value for property C::$p", "value for class constant C::X"...
+     */
+    private Object validDefault(PhpType type, Object value, int line, String what) {
+        int bit = value instanceof Long ? PhpType.INT : value instanceof Double ? PhpType.FLOAT
+                : value instanceof TruffleString ? PhpType.STRING : value instanceof Boolean b
+                ? (b ? PhpType.TRUE : PhpType.FALSE) : value == PhpNull.NULL ? PhpType.NULL
+                : value instanceof PhpArray ? PhpType.ARRAY : 0;
+        validDefault(type, bit, line, what);
+        return bit == PhpType.INT && !type.has(PhpType.INT) ? (Object) (double) (long) (Long) value : value;
+    }
+
+    private void validDefault(PhpType type, int bit, int line, String what) {
+        if (bit == 0 || type.has(bit) || bit == PhpType.INT && type.has(PhpType.FLOAT)) {
+            return;
+        }
+        if (bit == PhpType.NULL && !type.isIntersection() && what.startsWith("default value for property")) {
+            throw compileError(line, "Default value for property of type " + type.text(null)
+                    + " may not be null. Use the nullable type " + type.withNull().text(null)
+                    + " to allow null default value");
+        }
+        String name = bit == PhpType.INT ? "int" : bit == PhpType.FLOAT ? "float" : bit == PhpType.STRING ? "string"
+                : bit == PhpType.ARRAY ? "array" : bit == PhpType.NULL ? "null" : "bool";
+        throw compileError(line, "Cannot use " + name + " as " + what + " of type " + type.text(null));
+    }
+
+    /** The type bit of a parameter's default as written, if it is a literal (0 for an expression to evaluate). */
+    private static int literalBit(Object value) {
+        if (value instanceof Long) {
+            return PhpType.INT;
+        }
+        if (value instanceof Double) {
+            return PhpType.FLOAT;
+        }
+        if (value instanceof String || value instanceof byte[]) {
+            return PhpType.STRING;
+        }
+        if (value instanceof Ast ast && ast.is("AST_CONST") && ast.node("name") != null) {
+            String name = Str.lower((String) ast.node("name").get("name"));
+            return name.equals("true") ? PhpType.TRUE : name.equals("false") ? PhpType.FALSE : 0;
+        }
+        if (value instanceof Ast ast && ast.is("AST_ARRAY") && ast.size() == 0) {
+            return PhpType.ARRAY;
+        }
+        if (value instanceof Ast ast && ast.is("AST_UNARY_OP") && (ast.get("expr") instanceof Long
+                || ast.get("expr") instanceof Double)) {
+            return literalBit(ast.get("expr"));
+        }
+        return 0;
+    }
+
+    /** zend_check_magic_method_return_type: a magic method's declared return type must be php-src's. */
+    private void magicReturnType(Ast method, String className, String name) {
+        Ast type = method.node("returnType");
+        if (type == null) {
+            return;
+        }
+        String lower = Str.lower(name);
+        if (lower.equals("__construct") || lower.equals("__destruct")) {
+            throw compileError(method.line, "Method " + className + "::" + name + "() cannot declare a return type");
+        }
+        int required = switch (lower) {
+            case "__clone", "__set", "__unset", "__wakeup", "__unserialize" -> PhpType.VOID;
+            case "__isset" -> PhpType.BOOL;
+            case "__tostring" -> PhpType.STRING;
+            case "__debuginfo" -> PhpType.ARRAY | PhpType.NULL;
+            case "__serialize", "__sleep" -> PhpType.ARRAY;
+            case "__set_state" -> PhpType.OBJECT;
+            default -> 0;
+        };
+        PhpType declared = builtType(type, false);
+        if (required == 0 || declared.has(PhpType.NEVER)) {
+            return;
+        }
+        int extra = declared.mask & ~required;
+        boolean complex = declared.hasClasses() || (extra & PhpType.STATIC) != 0;
+        if ((extra & ~PhpType.STATIC) != 0 || complex && required != PhpType.OBJECT) {
+            throw compileError(method.line, className + "::" + name + "(): Return type must be "
+                    + maskText(required) + " when declared");
+        }
+    }
+
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
+        constantExpression(expression);
         ExprNode node = expression(expression);
         Object value = node.constantValue();
         if (value != null) {
             return value;
         }
         return new ThunkRootNode(language, node);
+    }
+
+    /**
+     * zend_compile_const_expr's compile errors for what PHP 8.5 allows of calls and closures in a constant
+     * expression: a static closure without use(), and `f(...)` or `Cls::m(...)` of names.
+     */
+    private void constantExpression(Object value) {
+        if (!(value instanceof Ast ast)) {
+            return;
+        }
+        switch (ast.kind) {
+            case "AST_CLOSURE" -> {
+                if ((ast.flags & MODIFIER_STATIC) == 0) {
+                    throw compileError(ast.line, "Closures in constant expressions must be static");
+                }
+                if (ast.get("uses") != null) {
+                    throw compileError(ast.line, "Cannot use(...) variables in constant expression");
+                }
+                return;
+            }
+            case "AST_CALL", "AST_STATIC_CALL" -> {
+                if (!isCallableConvert(ast)) {
+                    throw compileError(ast.line, "Constant expression contains invalid operations");
+                }
+                boolean call = ast.is("AST_CALL");
+                if (!(ast.get(call ? "expr" : "class") instanceof Ast name) || !name.is("AST_NAME")) {
+                    throw compileError(ast.line, call ? "Cannot use dynamic function name in constant expression"
+                            : "Cannot use dynamic class name in constant expression");
+                }
+                if (!call && !(ast.get("method") instanceof String)) {
+                    throw compileError(ast.line, "Cannot use dynamic method name in constant expression");
+                }
+                if (!call && className(name).equalsIgnoreCase("static")) {
+                    throw compileError(ast.line, "\"static\" is not allowed in compile-time constants");
+                }
+                return;
+            }
+            case "AST_METHOD_CALL", "AST_NULLSAFE_METHOD_CALL", "AST_ARROW_FUNC" ->
+                    throw compileError(ast.line, "Constant expression contains invalid operations");
+            default -> {
+            }
+        }
+        for (Object child : ast.children()) {
+            constantExpression(child);
+        }
+        for (Object child : ast.namedValues()) {
+            constantExpression(child);
+        }
     }
 
     /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
@@ -1486,9 +2125,11 @@ public final class Translator {
         String name = className(ast);
         switch (Str.lower(name)) {
             case "self":
-                return ClassRefNode.named(requireClass(ast).name());
+                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.SELF)
+                        : ClassRefNode.named(requireClass(ast).name());
             case "parent":
-                return ClassRefNode.named(requireClass(ast).parentName());
+                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.PARENT)
+                        : ClassRefNode.named(requireClass(ast).parentName());
             case "static":
                 return ClassRefNode.lateStatic(classInfo == null ? null : classInfo.name());
             default:
@@ -1537,7 +2178,13 @@ public final class Translator {
             return new ConstNode(PhpNull.NULL);
         }
         Ast node = (Ast) value;
+        Ast nullsafe = deepestNullsafe(node);
+        if (nullsafe != null) {
+            return nullsafeChain(node, nullsafe, false);
+        }
         switch (node.kind) {
+            case "TEMPORARY":
+                return new TemporaryNode.Read(node.flags);
             case "AST_VAR":
             case "AST_DIM":
             case "AST_PROP":
@@ -1566,6 +2213,9 @@ public final class Translator {
                 return assignment(node);
             case "AST_ASSIGN_REF": {
                 LValueNode target = place(node.get("var"));
+                if (deepestNullsafe(node.get("expr")) != null) {
+                    throw compileError(node.line, "Cannot take reference of a nullsafe chain");
+                }
                 if (isCall(node.get("expr"))) {
                     return new AssignNodes.CallRefAssignNode(target, expression(node.get("expr")));
                 }
@@ -1603,11 +2253,18 @@ public final class Translator {
                     throw compileError(node.line, "Cannot use [] for reading");
                 }
                 if (node.is("AST_ISSET")) {
+                    if (deepestNullsafe(tested) != null) {
+                        if (isCall(tested)) {
+                            throw compileError(node.line, "Cannot use isset() on the result of an expression"
+                                    + " (you can use \"null !== expression\" instead)");
+                        }
+                        return new TestNodes.IssetNode(new LValueNode[]{(LValueNode) quiet(tested)});
+                    }
                     return isThis(tested) ? new ThisNode.IsSetNode()
                             : new TestNodes.IssetNode(new LValueNode[]{place(tested)});
                 }
                 return isThis(tested) ? new LogicNodes.NotNode(new ThisNode.IsSetNode())
-                        : new TestNodes.EmptyNode(expression(tested));
+                        : new TestNodes.EmptyNode(quiet(tested));
             }
             case "AST_CAST":
                 return UnaryNodes.CastNode.create(expression(node.get("expr")), node.flags);
@@ -1671,6 +2328,9 @@ public final class Translator {
                 return new GeneratorNodes.YieldFromNode(expression(node.get("expr")), hiddenSlot("yield"),
                         hiddenSlot("source"), hiddenSlot("position"), generatorSlot);
             case "AST_NEW":
+                if (isCallableConvert(node)) {
+                    throw compileError(node.line, "Cannot create Closure for new expression");
+                }
                 if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                     return newAnonymousClass(node, classNode);
                 }
@@ -1884,10 +2544,91 @@ public final class Translator {
         return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
     }
 
+    // ---- `?->` chains ----
+
+    /** The child of a chain's link its object comes from: a static member's class, else the expression. */
+    private static String chainLink(Ast link) {
+        return link.is("AST_STATIC_PROP") || link.is("AST_STATIC_CALL") ? "class" : "expr";
+    }
+
+    /**
+     * The deepest `?->` on a chain's object path (zend_ast_is_short_circuited: elements, properties, method calls
+     * and static members), which is evaluated first; null for a node that isn't such a chain or has none.
+     */
+    static Ast deepestNullsafe(Object value) {
+        Ast found = null;
+        for (Object link = value; link instanceof Ast ast; link = ast.get(chainLink(ast))) {
+            switch (ast.kind) {
+                case "AST_NULLSAFE_PROP", "AST_NULLSAFE_METHOD_CALL" -> found = ast;
+                case "AST_PROP", "AST_METHOD_CALL", "AST_DIM", "AST_STATIC_PROP", "AST_STATIC_CALL" -> {
+                }
+                default -> {
+                    return found;
+                }
+            }
+        }
+        return found;
+    }
+
+    /** A `->m(...)` the `?->` short-circuits (zend_compile_method_call's compile error), or null. */
+    static Ast convertInChain(Ast node, Ast nullsafe) {
+        for (Ast link = node; ; link = link.node(chainLink(link))) {
+            if ((link.is("AST_METHOD_CALL") || link.is("AST_NULLSAFE_METHOD_CALL")) && isCallableConvert(link)) {
+                return link;
+            }
+            if (link == nullsafe) {
+                return null;
+            }
+        }
+    }
+
+    /** A copy of the chain from node down to nullsafe, which becomes a plain access to object. */
+    static Ast withObject(Ast node, Ast nullsafe, Ast object) {
+        Map<String, Object> parts = new LinkedHashMap<>(node.namedOrNull());
+        String kind = node.kind;
+        if (node == nullsafe) {
+            parts.put("expr", object);
+            kind = node.is("AST_NULLSAFE_PROP") ? "AST_PROP" : "AST_METHOD_CALL";
+        } else {
+            parts.put(chainLink(node), withObject(node.node(chainLink(node)), nullsafe, object));
+        }
+        return new Ast(kind, node.flags, node.line, node.endLine, null, parts);
+    }
+
+    /**
+     * A chain read with a `?->` (ZEND_JMP_NULL): its object evaluated into a hidden slot, the rest of the chain on
+     * it, the `?->` as `->` (with further `?->`s of its own); quiet in isset(), empty() and `??` (BP_VAR_IS).
+     */
+    private ExprNode nullsafeChain(Ast node, Ast nullsafe, boolean quiet) {
+        if (convertInChain(node, nullsafe) instanceof Ast convert) {
+            throw compileError(convert.line, "Cannot combine nullsafe operator with Closure creation");
+        }
+        ExprNode object = expression(nullsafe.get("expr"));
+        int slot = hiddenSlot("nullsafe");
+        Ast chain = withObject(node, nullsafe, temporary(slot, node));
+        return quiet ? new TemporaryNode.IfSet(object, quiet(chain), slot)
+                : new TemporaryNode(object, expression(chain), slot, true);
+    }
+
+    /** A node standing for the value a TemporaryNode keeps in a hidden slot. */
+    private static Ast temporary(int slot, Ast at) {
+        return new Ast("TEMPORARY", slot, at.line, at.endLine, null, null);
+    }
+
+    /** An operand isset(), empty() or `??` reads quietly: a `?->` chain's parts too. */
+    private ExprNode quiet(Object value) {
+        Ast nullsafe = deepestNullsafe(value);
+        return nullsafe != null ? nullsafeChain((Ast) value, nullsafe, true) : expression(value);
+    }
+
     // ---- places ----
 
     LValueNode place(Object value) {
         Ast node = (Ast) value;
+        if (deepestNullsafe(node) != null) {
+            // zend_ensure_writable_variable
+            throw compileError(node.line, "Can't use nullsafe operator in write context");
+        }
         switch (node.kind) {
             case "AST_VAR": {
                 if (!(node.get("name") instanceof String name)) {
@@ -1915,8 +2656,7 @@ public final class Translator {
                 ExprNode container = isThis(node.get("expr")) ? new ThisNode() : placeOrExpression(node.get("expr"));
                 return element(container, dim == null ? null : expression(dim));
             }
-            case "AST_PROP":
-            case "AST_NULLSAFE_PROP": {
+            case "AST_PROP": {
                 ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
@@ -1928,7 +2668,8 @@ public final class Translator {
                 if (!(node.get("prop") instanceof String name)) {
                     throw unsupported(node, "dynamic static property name");
                 }
-                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name));
+                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name), lexicalClass(),
+                        scopeInFrame());
             }
             default:
                 throw unsupported(node, "assignment target");
@@ -1973,6 +2714,11 @@ public final class Translator {
         return classInfo == null ? null : Str.lower(classInfo.name());
     }
 
+    /** Whether the code is a closure's: self and parent are its bound scope's, found when it runs. */
+    private boolean inClosure() {
+        return function != null && function.getName().startsWith(CLOSURE_PREFIX);
+    }
+
     /** Whether the calling scope comes from the frame: in a closure or a file's top-level code. */
     private boolean scopeInFrame() {
         return scope == null || function != null && function.getName().startsWith(CLOSURE_PREFIX);
@@ -1992,7 +2738,7 @@ public final class Translator {
     }
 
     /** zend_propagate_list_refs: whether an element of the list, or of a list in it, is taken by reference. */
-    private static boolean listHasRefs(Ast list) {
+    static boolean listHasRefs(Ast list) {
         boolean refs = false;
         for (Object child : list.children()) {
             if (child instanceof Ast element) {
@@ -2022,6 +2768,10 @@ public final class Translator {
             if (target.is("AST_ARRAY")) {
                 nested[i] = listTarget(target);
             } else {
+                if (deepestNullsafe(target) != null) {
+                    // zend_verify_list_assign_target
+                    throw compileError(target.line, "Assignments can only happen to writable values");
+                }
                 targets[i] = place(target);
             }
         }
@@ -2035,6 +2785,9 @@ public final class Translator {
             if (listHasRefs(target) && !(node.get("expr") instanceof Ast value
                     && (isPlace(value) || value.is("AST_NULLSAFE_PROP") || isCall(value)))) {
                 throw compileError(node.line, "Cannot assign reference to non referenceable value");
+            }
+            if (listHasRefs(target) && deepestNullsafe(node.get("expr")) != null) {
+                throw compileError(node.line, "Cannot take reference of a nullsafe chain");
             }
             return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
         }
@@ -2096,7 +2849,16 @@ public final class Translator {
     // ---- operators ----
 
     private ExprNode binary(Ast node) {
-        ExprNode left = expression(node.get("left"));
+        if (node.flags == BINARY_PIPE) {
+            Object right = node.get("right");
+            if (right instanceof Ast arrow && arrow.is("AST_ARROW_FUNC") && unparenthesizedArrow(arrow)) {
+                throw compileError(node.line, "Arrow functions on the right hand side of |> must be parenthesized");
+            }
+            ExprNode operand = expression(node.get("left"));
+            int slot = hiddenSlot("pipe");
+            return new TemporaryNode(operand, expression(pipeCall(node, temporary(slot, node))), slot, false);
+        }
+        ExprNode left = node.flags == 260 ? quiet(node.get("left")) : expression(node.get("left"));
         ExprNode right = expression(node.get("right"));
         switch (node.flags) {
             case 1:
@@ -2276,8 +3038,11 @@ public final class Translator {
                 return new ConstNode(Str.of(Path.of(path).getParent().toString()));
             case 349:
                 return new ConstNode(Str.of(classInfo == null ? "" : classInfo.name()));
-            case 351:
-                return new ConstNode(Str.of(functionName));
+            case 351: {
+                // a closure's __METHOD__ is its name, without its scope's class
+                int closure = functionName.indexOf(CLOSURE_PREFIX);
+                return new ConstNode(Str.of(closure > 0 ? functionName.substring(closure) : functionName));
+            }
             case 352: {
                 String name = functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
                         : functionName;
@@ -2371,13 +3136,50 @@ public final class Translator {
             } else if (arg instanceof Ast ast && ast.is("AST_CALLABLE_CONVERT")) {
                 throw unsupported(ast, "first-class callable syntax");
             } else if (arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
-                    || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")) && !isGlobals(ast)) {
+                    || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")) && !isGlobals(ast)
+                    && deepestNullsafe(ast) == null) {
                 args[i] = place(arg);
             } else {
                 args[i] = expression(arg);
             }
         }
         return new ArgumentsNode(args, spread, calls);
+    }
+
+    /**
+     * `operand |> callable` as php-src compiles it (zend_compile_pipe), the operand a value evaluated before:
+     * `f(...)` (but assert's), `A::m(...)` and `$o->m(...)` become their call with the operand as the argument;
+     * any other callable is evaluated and called with it.
+     */
+    static Ast pipeCall(Ast pipe, Ast operand) {
+        Object right = pipe.get("right");
+        List<Object> list = new ArrayList<>();
+        list.add(operand);
+        Ast args = new Ast("AST_ARG_LIST", 0, pipe.line, pipe.endLine, list, null);
+        Map<String, Object> parts;
+        if (right instanceof Ast call && isCallableConvert(call) && (call.is("AST_STATIC_CALL")
+                || call.is("AST_METHOD_CALL") || call.is("AST_CALL") && !"assert".equalsIgnoreCase(call.text("expr")))) {
+            parts = new LinkedHashMap<>(call.namedOrNull());
+            parts.put("args", args);
+            return new Ast(call.kind, call.flags, call.line, call.endLine, null, parts);
+        }
+        parts = new LinkedHashMap<>();
+        parts.put("expr", right);
+        parts.put("args", args);
+        int line = right instanceof Ast ast ? ast.line : pipe.line;
+        return new Ast("AST_CALL", 0, line, line, null, parts);
+    }
+
+    /**
+     * Whether an arrow function right of a `|>` isn't parenthesized (zend_compile_pipe's compile error): php-ast
+     * doesn't export ZEND_PARENTHESIZED_ARROW_FUNC, so the file's tokens are scanned for `|>` before `fn`.
+     */
+    boolean unparenthesizedArrow(Ast arrow) {
+        if (unparenthesizedArrowLines == null) {
+            unparenthesizedArrowLines = source == null ? Set.of() : ZendParser.unparenthesizedPipeArrows(
+                    source.getCharacters().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return unparenthesizedArrowLines.contains(arrow.line);
     }
 
     /** `f(...)`: the call's arguments are the first-class callable marker, not a list. */
@@ -2388,6 +3190,10 @@ public final class Translator {
     private ExprNode call(Ast node) {
         Ast callee = node.node("expr");
         Ast args = node.node("args");
+        if (callee == null) {
+            // a value called, as `|>` calls its callable (pipeCall)
+            return new CallableCallNode(expression(node.get("expr")), arguments(args), null, null, true);
+        }
         // a string callee naming a method, 'A::m'(), calls it as the value would be called
         boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
         ExprNode value = method ? new ConstNode(Str.of((String) callee.get("name"))) : null;
@@ -2622,7 +3428,8 @@ public final class Translator {
             }
             if (Intrinsics.byRef(lowerName, i)) {
                 if (!(arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
-                        || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")))) {
+                        || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name"))
+                        && deepestNullsafe(ast) == null)) {
                     return null;
                 }
                 nodes[i] = place(arg);

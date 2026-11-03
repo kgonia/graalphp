@@ -24,6 +24,7 @@ import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.bytecode.StaticPropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
+import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ClassTemplate;
@@ -32,6 +33,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -176,9 +178,8 @@ public final class BytecodeTranslator {
         for (int i = 0; i < params.length; i++) {
             parameterLocals[i] = i;
         }
-        Ast returnType = declaration.node("returnType");
         root.initialize(display, path, internal, translator.functionSection(), params, parameterLocals,
-                Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
+                Translator.checkedReturn(function, generator), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
@@ -331,6 +332,7 @@ public final class BytecodeTranslator {
                     throw compileError(declaration, "Cannot re-assign auto-global variable " + name);
                 }
             }
+            Set<String> bound = new java.util.HashSet<>();
             for (String capture : captures) {
                 if (capture.equals("this")) {
                     throw compileError(declaration, "Cannot use $this as lexical variable");
@@ -338,7 +340,12 @@ public final class BytecodeTranslator {
                 if (!plainVariable(capture)) {
                     throw compileError(declaration, "Cannot use auto-global as lexical variable");
                 }
-                names.add(capture);
+                if (!bound.add(capture)) {
+                    throw compileError(declaration, "Cannot use variable $" + capture + " twice");
+                }
+                if (!names.add(capture)) {
+                    throw compileError(declaration, "Cannot use lexical variable $" + capture + " as a parameter name");
+                }
             }
             collectVariables(body, names);
             List<LocalAccessor> locals = new ArrayList<>();
@@ -374,7 +381,12 @@ public final class BytecodeTranslator {
                 statements(body);
             }
             b.beginReturn();
-            if (returnsRef()) {
+            if (Translator.checkedReturn(function, generator) != null) {
+                // the TypeError is at the closing brace
+                beginLine(declaration.endLine);
+                b.emitNoneReturned();
+                endLine(declaration.endLine);
+            } else if (returnsRef()) {
                 b.emitImplicitReturnRef(declaration.endLine);
             } else {
                 b.emitLoadConstant(PhpNull.NULL);
@@ -397,10 +409,16 @@ public final class BytecodeTranslator {
                 Ast param = (Ast) paramList.child(i);
                 BytecodeLocal local = variables.get(params[i].name());
                 if (params[i].variadic()) {
+                    beginLine(declaration.line);
                     b.emitBindVariadic(local, i);
+                    endLine(declaration.line);
                     continue;
                 }
                 b.beginBindParameter(local, i);
+                if (params[i].declared() != null) {
+                    beginLine(declaration.line);
+                    b.beginCheckParameter(i);
+                }
                 Object defaultValue = param.get("default");
                 if (defaultValue == null) {
                     b.emitArgument(i);
@@ -416,6 +434,10 @@ public final class BytecodeTranslator {
                         expression(defaultValue);
                     }
                     b.endConditional();
+                }
+                if (params[i].declared() != null) {
+                    b.endCheckParameter();
+                    endLine(declaration.line);
                 }
                 b.endBindParameter();
             }
@@ -564,6 +586,7 @@ public final class BytecodeTranslator {
         }
 
         private void statementBody(Ast node) {
+            refuseNullsafeWrite(node);
             switch (node.kind) {
                 case "AST_ECHO":
                     b.beginEcho();
@@ -903,7 +926,30 @@ public final class BytecodeTranslator {
         }
 
         private void returnValue(Object value, Ast node) {
+            Ast declared = declaration.node("returnType");
+            if (declared != null && !generator) {
+                // zend_emit_return_type_check's compile errors
+                String kind = owner != null ? "method" : "function";
+                boolean isVoid = declared.is("AST_TYPE") && declared.flags == 14;
+                if (isVoid && value != null) {
+                    throw compileError(node, "A void " + kind + " must not return a value"
+                            + (Translator.isNullConstant(value)
+                            ? " (did you mean \"return;\" instead of \"return null;\"?)" : ""));
+                }
+                if (declared.is("AST_TYPE") && declared.flags == 17) {
+                    throw compileError(node, "A never-returning " + kind + " must not return");
+                }
+                if (value == null && !isVoid) {
+                    throw compileError(node, "A " + kind + " with return type must return a value"
+                            + (function.getDeclaredReturn().has(PhpType.NULL)
+                            ? " (did you mean \"return null;\" instead of \"return;\"?)" : ""));
+                }
+            }
             b.beginReturn();
+            boolean typed = Translator.checkedReturn(function, generator) != null;
+            if (typed) {
+                b.beginCheckReturn();
+            }
             if (returnsRef()) {
                 // zend_compile_return in a function returning by reference (Translator.returnStatement): a place
                 // gives its reference, a call the reference its callee returned, anything else its value
@@ -924,6 +970,9 @@ public final class BytecodeTranslator {
                 b.emitLoadConstant(PhpNull.NULL);
             } else {
                 expression(value);
+            }
+            if (typed) {
+                b.endCheckReturn();
             }
             b.endReturn();
         }
@@ -1446,11 +1495,12 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast node = (Ast) value;
-            Ast nullsafe = deepestNullsafe(node);
+            Ast nullsafe = Translator.deepestNullsafe(node);
             if (nullsafe != null) {
-                nullsafeChain(node, nullsafe);
+                nullsafeChain(node, nullsafe, false);
                 return;
             }
+            refuseNullsafeWrite(node);
             switch (node.kind) {
                 case "BYTECODE_OBJECT":
                     b.emitLoadLocal(nullsafeObjects.get(node));
@@ -1865,7 +1915,10 @@ public final class BytecodeTranslator {
                 }
             }
             b.beginMakeClosure(parts.function(), parts.byRef(), parts.isStatic());
-            if (owner == null) {
+            if (inClosure()) {
+                // a closure declared in a closure gets its scope, which bindTo may have changed
+                b.emitClosureScope(ClassRefNode.SCOPE);
+            } else if (owner == null) {
                 b.emitLoadConstant(PhpNull.NULL);
             } else {
                 b.emitResolveClass(classSite(owner.name()));
@@ -2220,6 +2273,23 @@ public final class BytecodeTranslator {
 
         private void binary(Ast node) {
             switch (node.flags) {
+                case 261 -> {
+                    // `|>` (Translator.pipeCall): the operand into a local, then the call with it
+                    if (node.get("right") instanceof Ast arrow && arrow.is("AST_ARROW_FUNC")
+                            && constants.unparenthesizedArrow(arrow)) {
+                        throw compileError(node, "Arrow functions on the right hand side of |> must be parenthesized");
+                    }
+                    b.beginBlock();
+                    BytecodeLocal operand = b.createLocal();
+                    b.beginStoreLocal(operand);
+                    expression(node.get("left"));
+                    b.endStoreLocal();
+                    Ast operandNode = new Ast("BYTECODE_OBJECT", 0, node.line, node.endLine, null, null);
+                    nullsafeObjects.put(operandNode, operand);
+                    expression(Translator.pipeCall(node, operandNode));
+                    b.endBlock();
+                    return;
+                }
                 case 259 -> {
                     b.beginAnd();
                     expression(node.get("left"));
@@ -2600,35 +2670,23 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The deepest `?->` on a chain's object path (php-src's short-circuited chain of properties, method calls and
-         * elements), which is evaluated first; null for a node that isn't such a chain or has none.
-         */
-        private Ast deepestNullsafe(Ast node) {
-            Ast found = null;
-            for (Ast link = node; link != null; ) {
-                switch (link.kind) {
-                    case "AST_NULLSAFE_PROP", "AST_NULLSAFE_METHOD_CALL" -> found = link;
-                    case "AST_PROP", "AST_METHOD_CALL", "AST_DIM" -> {
-                    }
-                    default -> {
-                        return found;
-                    }
-                }
-                link = link.get("expr") instanceof Ast inner ? inner : null;
-            }
-            return found;
-        }
-
-        /**
          * A chain read with a `?->` (ZEND_JMP_NULL): its object is evaluated into a local; null short-circuits the
          * rest of the chain, its value null, else the rest runs on the object, the `?->` as `->` (with further
          * `?->`s of its own). The object's expression is the chain up to it, which short-circuits the same way.
+         * quiet: in isset(), empty() and `??` (BP_VAR_IS), the object and the rest read as isset() reads them.
          */
-        private void nullsafeChain(Ast node, Ast nullsafe) {
+        private void nullsafeChain(Ast node, Ast nullsafe, boolean quiet) {
+            if (Translator.convertInChain(node, nullsafe) instanceof Ast convert) {
+                throw compileError(convert, "Cannot combine nullsafe operator with Closure creation");
+            }
             b.beginBlock();
             BytecodeLocal object = b.createLocal();
             b.beginStoreLocal(object);
-            expression(nullsafe.get("expr"));
+            if (quiet) {
+                readIfSet(nullsafe.get("expr"));
+            } else {
+                expression(nullsafe.get("expr"));
+            }
             b.endStoreLocal();
             b.beginConditional();
             b.beginIsNull();
@@ -2637,22 +2695,53 @@ public final class BytecodeTranslator {
             b.emitLoadConstant(PhpNull.NULL);
             Ast objectNode = new Ast("BYTECODE_OBJECT", 0, nullsafe.line, nullsafe.endLine, null, null);
             nullsafeObjects.put(objectNode, object);
-            expression(withObject(node, nullsafe, objectNode));
+            Ast chain = Translator.withObject(node, nullsafe, objectNode);
+            if (quiet) {
+                readIfSet(chain);
+            } else {
+                expression(chain);
+            }
             b.endConditional();
             b.endBlock();
         }
 
-        /** A copy of the chain from node down to nullsafe, which becomes a plain access to object. */
-        private Ast withObject(Ast node, Ast nullsafe, Ast object) {
-            Map<String, Object> parts = new java.util.LinkedHashMap<>(node.namedOrNull());
-            String kind = node.kind;
-            if (node == nullsafe) {
-                parts.put("expr", object);
-                kind = node.is("AST_NULLSAFE_PROP") ? "AST_PROP" : "AST_METHOD_CALL";
-            } else {
-                parts.put("expr", withObject(node.node("expr"), nullsafe, object));
+        /**
+         * A write or a reference through `?->` (php-src's compile errors, which the tree raises): the function
+         * stays on the tree.
+         */
+        private void refuseNullsafeWrite(Ast node) {
+            boolean refused = switch (node.kind) {
+                case "AST_ASSIGN" -> nullsafeTarget(node.get("var")) || node.node("var").is("AST_ARRAY")
+                        && Translator.listHasRefs(node.node("var"))
+                        && Translator.deepestNullsafe(node.get("expr")) != null;
+                case "AST_ASSIGN_REF" -> nullsafeTarget(node.get("var"))
+                        || Translator.deepestNullsafe(node.get("expr")) != null;
+                case "AST_ASSIGN_OP", "AST_PRE_INC", "AST_PRE_DEC", "AST_POST_INC", "AST_POST_DEC", "AST_UNSET" ->
+                        nullsafeTarget(node.get("var"));
+                case "AST_FOREACH" -> nullsafeTarget(node.get("value")) || nullsafeTarget(node.get("key"));
+                case "AST_RETURN" -> function.returnsRef() && !generator && !Translator.isCall(node.get("expr"))
+                        && Translator.deepestNullsafe(node.get("expr")) != null;
+                default -> false;
+            };
+            if (refused) {
+                throw new Unsupported("?-> in a write context", node);
             }
-            return new Ast(kind, node.flags, node.line, node.endLine, null, parts);
+        }
+
+        /** A written place, or a list's, with a `?->` on its chain. */
+        private static boolean nullsafeTarget(Object target) {
+            if (target instanceof Ast list && list.is("AST_ARRAY")) {
+                for (Object element : list.children()) {
+                    if (element instanceof Ast elem && nullsafeTarget(elem.get("value"))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (target instanceof Ast ref && ref.is("AST_REF")) {
+                return nullsafeTarget(ref.get("var"));
+            }
+            return Translator.deepestNullsafe(target) != null;
         }
 
         /** `$obj->name`, `$obj->$name` (PropNode.execute): the object, then the name. */
@@ -2693,7 +2782,7 @@ public final class BytecodeTranslator {
          * Emits into the block the caller opened. `?->` on the way is php-src's compile error.
          */
         private Ast delayedProp(Ast target) {
-            if (deepestNullsafe(target) != null) {
+            if (Translator.deepestNullsafe(target) != null) {
                 throw compileError(target, "Can't use nullsafe operator in write context");
             }
             Object object = delayedObject(target.get("expr"));
@@ -2807,10 +2896,6 @@ public final class BytecodeTranslator {
 
         /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
         private void unsetProp(Ast target) {
-            if (target.node("expr") != null && deepestNullsafe(target.node("expr")) != null) {
-                // php-src's compile error: ?-> in a write context
-                throw new Unsupported("unset with ?->", target);
-            }
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
@@ -2840,6 +2925,16 @@ public final class BytecodeTranslator {
             if (isGlobals(tested)) {
                 // zend_compile_isset_or_empty: $GLOBALS is set
                 b.emitLoadConstant(Boolean.TRUE);
+                return;
+            }
+            if (Translator.deepestNullsafe(tested) != null) {
+                if (Translator.isCall(tested)) {
+                    throw compileError((Ast) tested, "Cannot use isset() on the result of an expression"
+                            + " (you can use \"null !== expression\" instead)");
+                }
+                b.beginIsSetValue();
+                readIfSet(tested);
+                b.endIsSetValue();
                 return;
             }
             if (refPlace(tested) instanceof RefPlace place) {
@@ -2908,6 +3003,11 @@ public final class BytecodeTranslator {
          * (PropNode.readIfSet); anything else (a call, $this) is evaluated as a value.
          */
         private void readIfSet(Object place) {
+            Ast nullsafe = Translator.deepestNullsafe(place);
+            if (nullsafe != null) {
+                nullsafeChain((Ast) place, nullsafe, true);
+                return;
+            }
             if (place instanceof Ast ast && !isThis(ast)) {
                 switch (ast.kind) {
                     case "AST_DIM" -> {
@@ -2942,7 +3042,6 @@ public final class BytecodeTranslator {
                         refPlace(ast).readIfSet();
                         return;
                     }
-                    case "AST_NULLSAFE_PROP" -> throw new Unsupported("isset of", ast);
                     default -> {
                     }
                 }
@@ -3273,6 +3372,11 @@ public final class BytecodeTranslator {
         private void call(Ast node, boolean byRefContext) {
             Ast callee = node.node("expr");
             Ast args = node.node("args");
+            if (callee == null) {
+                // a value called, as `|>` calls its callable (Translator.pipeCall)
+                callValue(node, node.get("expr"), byRefContext);
+                return;
+            }
             // a string callee naming a method, 'A::m'(), calls it as the value would be called
             boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
             Object callable = method ? made(() -> Str.of((String) callee.get("name"))) : callee;
@@ -3852,6 +3956,9 @@ public final class BytecodeTranslator {
          * evaluated by value and dropped (zend_pass_function). The object is the value.
          */
         private void newObject(Ast node) {
+            if (Translator.isCallableConvert(node)) {
+                throw compileError(node, "Cannot create Closure for new expression");
+            }
             ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                 // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs
@@ -3897,10 +4004,6 @@ public final class BytecodeTranslator {
          * names), static's late-static-binding class, or an expression's (an object's class or a name).
          */
         private void classRef(Object classNode) {
-            if (classNode instanceof Ast chain && deepestNullsafe(chain) != null) {
-                // the class of a static call is part of the chain ?-> short-circuits
-                throw new Unsupported("class of a ?-> chain", chain);
-            }
             if (!(classNode instanceof Ast ast) || !ast.is("AST_NAME")) {
                 b.beginClassOf();
                 expression(classNode);
@@ -3909,8 +4012,20 @@ public final class BytecodeTranslator {
             }
             String name = classNameOf(ast);
             switch (Str.lower(name)) {
-                case "self" -> b.emitResolveClass(classSite(enclosingClass(ast).name()));
-                case "parent" -> b.emitResolveClass(classSite(parentClass(ast)));
+                case "self" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.SELF);
+                    } else {
+                        b.emitResolveClass(classSite(enclosingClass(ast).name()));
+                    }
+                }
+                case "parent" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.PARENT);
+                    } else {
+                        b.emitResolveClass(classSite(parentClass(ast)));
+                    }
+                }
                 // outside a class, a closure's called class is the scope it is bound to, if any
                 case "static" -> b.emitResolveLateStatic(owner == null ? (ClassSite) made(ClassSite::noScope)
                         : classSite(owner.name()));
@@ -3924,6 +4039,11 @@ public final class BytecodeTranslator {
 
         private ClassSite classSite(String name) {
             return (ClassSite) made(() -> new ClassSite(name, language.classId(Str.lower(name))));
+        }
+
+        /** Whether the function is a closure: self and parent are its bound scope's, found when it runs. */
+        private boolean inClosure() {
+            return function.getName().startsWith(CLOSURE_PREFIX);
         }
 
         /** The class the code is written in, for self and static (the tree's requireClass). */
@@ -3951,7 +4071,8 @@ public final class BytecodeTranslator {
             }
             Object classNode = node.get("class");
             boolean cacheable = classNode instanceof Ast named && named.is("AST_NAME")
-                    && !classNameOf(named).equalsIgnoreCase("static");
+                    && !classNameOf(named).equalsIgnoreCase("static")
+                    && !(inClosure() && Str.lower(classNameOf(named)).matches("self|parent"));
             b.beginClassConstant(constantName, cacheable);
             classRef(classNode);
             b.endClassConstant();
@@ -3968,12 +4089,28 @@ public final class BytecodeTranslator {
             }
             String name = classNameOf(ast);
             switch (Str.lower(name)) {
-                case "self" -> b.emitLoadConstant(made(() -> Str.of(enclosingClass(ast).name())));
-                case "parent" -> b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
+                case "self" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.SELF_NAME);
+                    } else {
+                        b.emitLoadConstant(made(() -> Str.of(enclosingClass(ast).name())));
+                    }
+                }
+                case "parent" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.PARENT_NAME);
+                    } else {
+                        b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
+                    }
+                }
                 case "static" -> {
-                    b.beginClassName();
-                    b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
-                    b.endClassName();
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.STATIC_NAME);
+                    } else {
+                        b.beginClassName();
+                        b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
+                        b.endClassName();
+                    }
                 }
                 default -> b.emitLoadConstant(made(() -> Str.of(name)));
             }
@@ -4021,16 +4158,29 @@ public final class BytecodeTranslator {
             if (!(arg instanceof Ast ast) || isGlobals(ast)) {
                 return true;
             }
-            if (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP")) {
+            if (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP")
+                    || ast.is("BYTECODE_OBJECT") || Translator.deepestNullsafe(ast) != null) {
                 return false;
             }
             return Translator.isCall(ast) ? constants.compiledInPlace(ast) : !Translator.isVarResult(ast);
         }
 
         private void argument(Object arg, int index, StackValue callee) {
-            if (arg instanceof Ast chain && deepestNullsafe(chain) != null) {
-                // by value, or php-src's error for a by-reference parameter
-                throw new Unsupported("argument with ?->", chain);
+            if (arg instanceof Ast chain && (chain.is("BYTECODE_OBJECT") || Translator.deepestNullsafe(chain) != null)) {
+                // a `?->` chain, or the operand of `|>`: a call's result (SEND_VAR_NO_REF), else a value, which a
+                // by-reference parameter refuses (SEND_VAL_EX)
+                if (Translator.isCall(chain)) {
+                    b.beginSendCall(index);
+                    b.emitLoadStackValue(callee);
+                    expression(chain);
+                    b.endSendCall();
+                } else {
+                    b.beginSendValue(index);
+                    b.emitLoadStackValue(callee);
+                    expression(chain);
+                    b.endSendValue();
+                }
+                return;
             }
             if (plainArgument(arg)) {
                 expression(arg);
@@ -4294,7 +4444,9 @@ public final class BytecodeTranslator {
                     if (!(node.get("prop") instanceof String name)) {
                         throw new Unsupported("static property by a computed name", node);
                     }
-                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name)));
+                    boolean scopeInFrame = function.getName().startsWith(CLOSURE_PREFIX);
+                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name),
+                            owner == null ? null : Str.lower(owner.name()), scopeInFrame));
                     return new RefPlace(node.get("class"), site, null, null);
                 }
                 case "AST_VAR" -> {

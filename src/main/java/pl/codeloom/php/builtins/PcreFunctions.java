@@ -158,6 +158,8 @@ public final class PcreFunctions {
         private byte[][] subjects = new byte[8][];
         private MemorySegment[] buffers = new MemorySegment[8];
         private int[] users = new int[8];
+        /** Whether a match from offset 0 has found the entry's subject valid UTF-8 (php-src's IS_STR_VALID_UTF8). */
+        private boolean[] valid = new boolean[8];
         private int next;
 
         /** The entry holding the subject's native copy (copied in unless already there); release it after use. */
@@ -179,6 +181,7 @@ public final class PcreFunctions {
             MemorySegment.copy(subject, 0, buffers[slot], ValueLayout.JAVA_BYTE, 0, subject.length);
             subjects[slot] = subject;
             users[slot] = 1;
+            valid[slot] = false;
             return slot;
         }
 
@@ -219,6 +222,7 @@ public final class PcreFunctions {
             subjects = Arrays.copyOf(subjects, slot * 2);
             buffers = Arrays.copyOf(buffers, slot * 2);
             users = Arrays.copyOf(users, slot * 2);
+            valid = Arrays.copyOf(valid, slot * 2);
             next = slot + 1;
             return slot;
         }
@@ -260,15 +264,21 @@ public final class PcreFunctions {
                 PcreRecorder.match(regex, regex.pattern, regex.options, regex.jit, subject, subject.length, start,
                         options);
             }
+            int rc;
             if (!NativeClock.ENABLED) {
-                return Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
                         matchContext);
+            } else {
+                long t0 = System.nanoTime();
+                rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                        matchContext);
+                long t1 = System.nanoTime();
+                NativeClock.add(t1 - t0, System.nanoTime() - t1);
             }
-            long t0 = System.nanoTime();
-            int rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
-                    matchContext);
-            long t1 = System.nanoTime();
-            NativeClock.add(t1 - t0, System.nanoTime() - t1);
+            // PCRE2 checked the UTF-8 from offset 0 to the end and found no error: the whole subject is valid
+            if (start == 0 && (options & NO_UTF_CHECK) == 0 && (rc >= 0 || rc == ERROR_NOMATCH) && subjectSlot >= 0) {
+                subjects.valid[subjectSlot] = true;
+            }
             return rc;
         }
 
@@ -285,9 +295,14 @@ public final class PcreFunctions {
             return value == -1 ? -1 : (int) value;
         }
 
-        /** The match options for the first match on this subject: let PCRE2 validate UTF-8 once. */
-        int firstOptions() {
-            return regex.utf ? 0 : NO_UTF_CHECK;
+        /**
+         * The options for a call's first match: a /u pattern lets PCRE2 check the UTF-8, unless the subject is known
+         * valid and start isn't inside a character (php-src's is_known_valid_utf8). Later matches don't check.
+         */
+        int firstOptions(long start) {
+            boolean known = regex.utf && subjectSlot >= 0 && subjects.valid[subjectSlot] && (start < subject.length
+                    ? (subject[(int) start] & 0xC0) != 0x80 : start == subject.length);
+            return regex.utf && !known ? 0 : NO_UTF_CHECK;
         }
 
         /** calc_unit_len: one byte, or one UTF-8 character in /u mode. */
@@ -664,7 +679,7 @@ public final class PcreFunctions {
         long matched = 0;
         try (Matcher m = new Matcher(this, regex, subject)) {
             long start = offset;
-            int rc = m.match(start, m.firstOptions());
+            int rc = m.match(start, m.firstOptions(start));
             while (true) {
                 if (rc >= 0) {
                     matched++;
@@ -817,7 +832,7 @@ public final class PcreFunctions {
         try (Matcher m = new Matcher(this, regex, subject)) {
             int lastEnd = 0;
             long start = 0;
-            int rc = m.match(start, m.firstOptions());
+            int rc = m.match(start, m.firstOptions(0));
             while (true) {
                 if (rc >= 0 && limit > 0) {
                     if (out == null) {
@@ -980,7 +995,7 @@ public final class PcreFunctions {
         int lastMatch = 0;
         try (Matcher m = new Matcher(this, regex, subject)) {
             long start = 0;
-            int options = m.firstOptions();
+            int options = m.firstOptions(0);
             boolean retried = false;
             int rc = 0;
             while (limit == -1 || limit > 1) {
@@ -1082,7 +1097,7 @@ public final class PcreFunctions {
             Object value = input.valueAt(p);
             int rc;
             try (Matcher m = new Matcher(this, regex, Str.readBytes(Convert.toStr(value)))) {
-                rc = m.match(0, m.firstOptions());
+                rc = m.match(0, m.firstOptions(0));
             }
             if (rc < 0 && rc != ERROR_NOMATCH) {
                 execError(rc);

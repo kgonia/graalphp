@@ -30,18 +30,18 @@ public final class ClassTemplate {
     public record Method(PhpFunction function, List<Property> promoted) implements Member {
     }
 
-    /** A class constant: its value, or a {@link Deferred} initializer. */
-    public record Constant(String name, Object value, int visibility) implements Member {
+    /** A class constant: its value, or a {@link Deferred} initializer; its visibility; its type, or null. */
+    public record Constant(String name, Object value, int visibility, PhpType type) implements Member {
     }
 
     /**
-     * A property: its default value, or a {@link Deferred} initializer; its php-ast modifier flags, its hooks as
-     * declared (null for none), and whether it has a default written.
+     * A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its type, its
+     * php-ast modifier flags, its hooks as declared (null for none), and whether it has a default written.
      */
-    public record Property(String name, Object initial, int visibility, boolean isStatic, int flags,
+    public record Property(String name, Object initial, int visibility, boolean isStatic, PhpType type, int flags,
                            PhpClass.Hooks hooks, boolean hasDefault) implements Member {
         public Property(String name, Object initial, int visibility, boolean isStatic) {
-            this(name, initial, visibility, isStatic, 0, null, false);
+            this(name, initial, visibility, isStatic, null, 0, null, false);
         }
     }
 
@@ -175,11 +175,25 @@ public final class ClassTemplate {
     /** This context's class for the declaration: parent and interfaces resolved by name in the context. */
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {
+        String lowerName = Str.lower(name);
+        context.setLinking(lowerName, this);
+        try {
+            return link(context);
+        } finally {
+            context.setLinking(lowerName, null);
+        }
+    }
+
+    private PhpClass link(PhpContext context) {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
         for (String iface : interfaces) {
-            phpClass.addInterface(context.getClass(iface));
+            PhpClass found = context.findClassAutoloading(iface);
+            if (found == null) {
+                throw new PhpError("Interface \"" + iface + "\" not found");
+            }
+            phpClass.addInterface(found);
         }
         if (unsupported != null) {
             throw new PhpError(unsupported);
@@ -200,6 +214,11 @@ public final class ClassTemplate {
         for (PhpClass iface : phpClass.directInterfaces()) {
             inheritInterfaceProperties(context, phpClass, iface);
         }
+        // a trait's __toString implements Stringable too (zend_do_bind_traits)
+        if (traitBody == null && phpClass.findMethod("__tostring") != null && !phpClass.isSubclassOf("stringable")) {
+            phpClass.addInterface(context.getClass("Stringable"));
+        }
+        Variance.check(context, phpClass);
         if (!isInterface && !isAbstract && traitBody == null && declaredAt != null) {
             verifyAbstract(context, phpClass);
         }
@@ -213,14 +232,23 @@ public final class ClassTemplate {
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
-            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass), constant.visibility());
+            Object value = bind(constant.value(), phpClass);
+            PhpType type = constant.type();
+            if (type != null && value instanceof PhpClass.Thunk thunk) {
+                // zend_update_class_constant: checked when evaluated, in strict mode
+                String what = "class constant " + phpClass.getName().split("\0", 2)[0] + "::" + constant.name();
+                value = (PhpClass.Thunk) () -> type.assignTo(thunk.evaluate(), what);
+            }
+            phpClass.addConstant(constant.name(), value, constant.visibility(), type);
         } else if (member instanceof Property property) {
-            Object initial = bind(property.initial(), phpClass);
+            Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {
-                phpClass.addStaticProperty(property.name(), initial);
+                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial,
+                        property.visibility());
             } else {
                 inheritHooks(phpClass, property);
-                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility()));
+                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
+                        property.type()));
                 phpClass.setSetVisibility(property.name(), property.flags());
             }
         }

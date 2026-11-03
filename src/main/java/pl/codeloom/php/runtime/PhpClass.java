@@ -9,6 +9,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 
 import java.util.ArrayList;
+import com.oracle.truffle.api.object.HiddenKey;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -23,16 +24,18 @@ import java.util.Set;
  */
 public final class PhpClass {
     /**
-     * A declared instance property: its default (or a thunk evaluating the constant expression), its visibility,
-     * and the class that declared it (lowercase; set when a class adds it).
+     * A declared instance property: its default (or a thunk evaluating the constant expression; null for a typed
+     * property without one, which starts uninitialized: not in the object), its visibility, the class that
+     * declared it (lowercase; set when a class adds it), and its type, or null.
      */
-    public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass) {
+    public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass,
+                               PhpType type) {
         public static final int PUBLIC = 0;
         public static final int PROTECTED = 1;
         public static final int PRIVATE = 2;
 
         public PropertyDecl(String name, Object defaultValue, int visibility) {
-            this(name, defaultValue, visibility, null);
+            this(name, defaultValue, visibility, null, null);
         }
 
         public boolean isPublic() {
@@ -52,10 +55,12 @@ public final class PhpClass {
      */
     public static final int PROPERTY_PROTECTED = 1;
     public static final int PROPERTY_PRIVATE = 2;
+    /** A typed property: its writes are checked against its type, and it may be uninitialized (absent). */
+    public static final int PROPERTY_TYPED = 4;
     /** A backed property with hooks: every access takes the site's slow path, which calls them. */
-    public static final int PROPERTY_HOOKED = 4;
+    public static final int PROPERTY_HOOKED = 8;
     /** A property with a set visibility (private(set), protected(set)): writes take the slow path, which checks it. */
-    public static final int PROPERTY_SET_RESTRICTED = 8;
+    public static final int PROPERTY_SET_RESTRICTED = 16;
 
     /**
      * A hooked property's hooks (php-src's prop_info->hooks), get and set, null where it has none; virtual when no
@@ -72,12 +77,45 @@ public final class PhpClass {
     private final Set<String> ancestors = new HashSet<>();
     private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
+    /** The constants' types and declaring classes. */
+    private final Map<String, ConstantType> constantTypes = new HashMap<>();
+
+    /** A class constant's type (null when it has none), the class that declared it, whether it is private. */
+    public record ConstantType(PhpType type, PhpClass declaringClass, boolean isPrivate) {
+    }
+
+    /** The hidden keys marking an object's unset typed properties (PhpObject.wasUnset), by property name. */
+    private Map<String, HiddenKey> unsetKeys;
+
+    @TruffleBoundary
+    public HiddenKey unsetKey(String propertyName) {
+        if (unsetKeys == null) {
+            unsetKeys = new HashMap<>();
+        }
+        return unsetKeys.computeIfAbsent(propertyName, HiddenKey::new);
+    }
+
+    /** Whether the property has hooks, declared or inherited (Variance doesn't check their types yet). */
+    public boolean isHooked(String propertyName) {
+        return findHooks(propertyName) != null;
+    }
+
+    public ConstantType constantType(String constantName) {
+        return constantTypes.get(constantName);
+    }
+
+    /** The constant types by name, inherited ones included; read only. */
+    public Map<String, ConstantType> constantTypes() {
+        return java.util.Collections.unmodifiableMap(constantTypes);
+    }
     /**
      * The constants that aren't public: their visibility (PropertyDecl's) and the class that declared them
      * (lowercase), which zend_verify_const_access checks against.
      */
     private final Map<String, PropertyDecl> restrictedConstants = new HashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
+    /** The non-public static properties, declared or inherited: their visibility and declaring class. */
+    private final Map<String, PropertyDecl> restrictedStatics = new HashMap<>();
     private final Map<String, Object> staticDefaults = new HashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
@@ -135,6 +173,7 @@ public final class PhpClass {
             ancestors.addAll(parent.ancestors);
             methods.putAll(parent.methods);
             constants.putAll(parent.constants);
+            constantTypes.putAll(parent.constantTypes);
             for (Map.Entry<String, PropertyDecl> restricted : parent.restrictedConstants.entrySet()) {
                 // a private constant isn't inherited (do_inherit_constant_check)
                 if (restricted.getValue().visibility() == PropertyDecl.PRIVATE) {
@@ -144,6 +183,7 @@ public final class PhpClass {
                 }
             }
             staticProperties.putAll(parent.staticProperties);
+            restrictedStatics.putAll(parent.restrictedStatics);
             staticDefaults.putAll(parent.staticDefaults);
             properties.putAll(parent.properties);
             hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
@@ -451,16 +491,17 @@ public final class PhpClass {
     }
 
     public void addConstant(String constantName, Object valueOrThunk) {
-        addConstant(constantName, valueOrThunk, PropertyDecl.PUBLIC);
+        addConstant(constantName, valueOrThunk, PropertyDecl.PUBLIC, null);
     }
 
-    /** A constant this class declares, with its visibility (PropertyDecl's). */
-    public void addConstant(String constantName, Object valueOrThunk, int visibility) {
+    /** A constant this class declares, with its visibility (PropertyDecl's) and type (or null). */
+    public void addConstant(String constantName, Object valueOrThunk, int visibility, PhpType type) {
+        constantTypes.put(constantName, new ConstantType(type, this, visibility == PropertyDecl.PRIVATE));
         constants.put(constantName, valueOrThunk);
         if (visibility == PropertyDecl.PUBLIC) {
             restrictedConstants.remove(constantName);
         } else {
-            restrictedConstants.put(constantName, new PropertyDecl(constantName, null, visibility, lowerName));
+            restrictedConstants.put(constantName, new PropertyDecl(constantName, null, visibility, lowerName, null));
         }
     }
 
@@ -512,15 +553,56 @@ public final class PhpClass {
         return value;
     }
 
-    public void addStaticProperty(String propertyName, Object initial) {
+    /** visibility: PropertyDecl's; a protected one keeps the class that first declared it (its prototype's). */
+    public void addStaticProperty(String propertyName, Object initial, int visibility) {
         PhpRef ref = new PhpRef(initial);
         ref.bind();
         staticProperties.put(propertyName, ref);
+        PropertyDecl inherited = restrictedStatics.remove(propertyName);
+        if (visibility != PropertyDecl.PUBLIC) {
+            restrictedStatics.put(propertyName, new PropertyDecl(propertyName, null, visibility,
+                    visibility == PropertyDecl.PROTECTED && inherited != null
+                            && inherited.visibility() == PropertyDecl.PROTECTED ? inherited.declaringClass() : lowerName,
+                    null));
+        }
         if (initial instanceof PhpArray array) {
             // the default holds the array too, so writes to the property copy it first
             array.addHolder();
         }
         staticDefaults.put(propertyName, initial);
+    }
+
+    /** Whether the static property is private or protected. */
+    @TruffleBoundary
+    public boolean isRestrictedStatic(String propertyName) {
+        return restrictedStatics.containsKey(propertyName);
+    }
+
+    /**
+     * Whether code in the scope (a class's lowercase name, or null) may access the static property
+     * (zend_std_get_static_property_with_info): a private one from its class, a protected one from a class related to
+     * the one that first declared it (is_protected_compatible_scope).
+     */
+    @TruffleBoundary
+    public boolean canAccessStatic(String propertyName, String scope) {
+        PropertyDecl decl = restrictedStatics.get(propertyName);
+        if (decl == null || decl.declaringClass().equals(scope)) {
+            return true;
+        }
+        if (scope == null || decl.visibility() == PropertyDecl.PRIVATE) {
+            return false;
+        }
+        PhpClass declaring = PhpContext.get(null).findClass(decl.declaringClass());
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return declaring != null && declaring.isSubclassOf(scope)
+                || scopeClass != null && scopeClass.isSubclassOf(decl.declaringClass());
+    }
+
+    /** zend_bad_property_access for a static property. */
+    @TruffleBoundary
+    public PhpError inaccessibleStatic(String propertyName) {
+        return new PhpError("Cannot access " + (restrictedStatics.get(propertyName).visibility() == PropertyDecl.PRIVATE
+                ? "private" : "protected") + " property " + name + "::$" + Str.keyText(propertyName));
     }
 
     /** A static property's declared default (default_static_members_table), whatever it holds now. */
@@ -568,7 +650,7 @@ public final class PhpClass {
             array.addHolder();
         }
         properties.put(decl.name(), decl.declaringClass() != null ? decl
-                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName));
+                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName, decl.type()));
     }
 
     /** The property's hooks, or null for a property without (or one the class doesn't declare). */
@@ -872,6 +954,9 @@ public final class PhpClass {
         int[] flags = declaredFlags();
         for (int i = 0; i < names.length; i++) {
             Object value = defaults[i];
+            if (value == null) {
+                continue;
+            }
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
@@ -956,28 +1041,37 @@ public final class PhpClass {
     /** The properties' shape flags (PROPERTY_PROTECTED, PROPERTY_PRIVATE) in an object of this class. */
     @TruffleBoundary
     public int[] declaredFlags() {
-        String[] names = declaredNames();
-        int[] flags = new int[names.length];
-        for (int i = 0; i < names.length; i++) {
-            flags[i] = propertyFlags(names[i]);
+        int[] flags = new int[declaredNames().length];
+        int i = 0;
+        for (PropertyDecl decl : properties.values()) {
+            if (!isVirtual(decl.name())) {
+                flags[i++] = propertyFlags(decl);
+            }
         }
         return flags;
     }
 
-    /** A declared property's flags in an object's shape (PROPERTY_PROTECTED, PROPERTY_PRIVATE, PROPERTY_HOOKED). */
+    /**
+     * The shape flags of a declared property in an object of this class: PROPERTY_PROTECTED, PROPERTY_PRIVATE,
+     * PROPERTY_TYPED, PROPERTY_HOOKED, PROPERTY_SET_RESTRICTED.
+     */
     @TruffleBoundary
-    public int propertyFlags(String propertyName) {
-        PropertyDecl decl = properties.get(propertyName);
-        if (decl == null) {
-            return 0;
-        }
-        int flags = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+    public int propertyFlags(PropertyDecl decl) {
+        String propertyName = decl.name();
+        int flags = (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                 : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
-                ? PROPERTY_PRIVATE : 0;
+                ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0);
         if (setVisibilities != null && setVisibilities.containsKey(propertyName)) {
             flags |= PROPERTY_SET_RESTRICTED;
         }
         return findHooks(propertyName) != null ? flags | PROPERTY_HOOKED : flags;
+    }
+
+    /** propertyFlags of the declared property named propertyName, 0 for an undeclared one. */
+    @TruffleBoundary
+    public int propertyFlags(String propertyName) {
+        PropertyDecl decl = properties.get(propertyName);
+        return decl == null ? 0 : propertyFlags(decl);
     }
 
     /**
@@ -998,8 +1092,13 @@ public final class PhpClass {
                 if (value instanceof PhpArray array) {
                     array.addHolder();
                 }
-                entry.setValue(new PropertyDecl(entry.getKey(), value, entry.getValue().visibility(),
-                        entry.getValue().declaringClass()));
+                PropertyDecl decl = entry.getValue();
+                if (decl.type() != null) {
+                    // checked as evaluated, in strict mode (zend_update_class_constants)
+                    value = decl.type().assign(value, true, decl, null);
+                }
+                entry.setValue(new PropertyDecl(entry.getKey(), value, decl.visibility(), decl.declaringClass(),
+                        decl.type()));
             }
             values[i++] = value;
         }
