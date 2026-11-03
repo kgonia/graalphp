@@ -958,6 +958,8 @@ public final class Translator {
                 checkTypeName(part, name);
                 checkClassScope(part, name);
                 classType = true;
+                // duplicates compare resolved names: self|self is "Duplicate type Foo"
+                name = resolvedClassName(part);
             }
             if (name != null) {
                 for (String seen : names) {
@@ -1032,8 +1034,8 @@ public final class Translator {
                 return;
             }
         }
-        throw compileError(at.line, "Type " + String.join("&", narrower)
-                + " is redundant as it is more restrictive than type " + widerText);
+        throw compileError(at.line, "Type " + String.join("&", narrower) + (narrower.length == wider.length
+                ? " is redundant with type " : " is redundant as it is more restrictive than type ") + widerText);
     }
 
     /** zend_compile_single_typename's name checks: built-in types unqualified, no reserved class name. */

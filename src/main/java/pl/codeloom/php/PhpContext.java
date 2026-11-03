@@ -520,7 +520,12 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void declareClass(PhpClass phpClass) {
-        if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
+        PhpClass previous = classes.putIfAbsent(phpClass.getLowerName(), phpClass);
+        if (previous == phpClass) {
+            // declared while it was linked (Variance's delayed autoloads)
+            return;
+        }
+        if (previous != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
         phpClass.setContextAliases(classAliases);

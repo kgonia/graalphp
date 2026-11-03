@@ -57,6 +57,10 @@ final class Variance {
         if (delayed.isEmpty()) {
             return;
         }
+        // the class is nearly linked: declared, so a class the autoloads declare may extend it
+        if (context.findClass(phpClass.getLowerName()) == null) {
+            context.declareClass(phpClass);
+        }
         for (String name : List.copyOf(unresolved)) {
             context.findClassAutoloading(name);
         }
@@ -81,7 +85,8 @@ final class Variance {
             if (parentDecl.type() == null) {
                 if (decl.type() != null) {
                     throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Type of " + name
-                            + " must not be defined (as in class " + parent.getName() + ")"), declaredAt(phpClass), 0);
+                            + " must be omitted to match the parent definition in class " + parent.getName()),
+                            declaredAt(phpClass), 0);
                 }
                 continue;
             }
