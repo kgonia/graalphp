@@ -726,7 +726,71 @@ public final class Translator {
         self[0].setDeclaredReturn(returnType == null ? null : builtType(returnType, false));
         self[0].setDeclaration(modifiers, typeString(node.node("returnType"), false),
                 node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        PhpType declared = self[0].getDeclaredReturn();
+        if (declared != null && declared.has(PhpType.VOID | PhpType.NEVER) && node.get("stmts") != null) {
+            checkReturns(node.body(), declared, owner != null);
+        }
         return self[0];
+    }
+
+    /**
+     * zend_compile_return's errors in a void or never function, and its being a generator: php-src finds them
+     * compiling the file, so a void or never function's body (otherwise read when first called) is read here.
+     */
+    private void checkReturns(Ast body, PhpType type, boolean method) {
+        String kind = method ? "method" : "function";
+        List<Ast> returns = new ArrayList<>();
+        collect(body, Set.of("AST_RETURN"), returns);
+        for (Ast found : returns) {
+            if (type.has(PhpType.NEVER)) {
+                throw compileError(found.line, "A never-returning " + kind + " must not return");
+            }
+            if (found.get("expr") != null) {
+                throw compileError(found.line, "A void " + kind + " must not return a value"
+                        + (isNullConstant(found.get("expr"))
+                        ? " (did you mean \"return;\" instead of \"return null;\"?)" : ""));
+            }
+        }
+        generatorReturn(body, type);
+    }
+
+    /** zend_mark_function_as_generator: a generator's return type must take a Generator. */
+    private void generatorReturn(Ast body, PhpType type) {
+        List<Ast> yields = new ArrayList<>();
+        collect(body, Set.of("AST_YIELD", "AST_YIELD_FROM"), yields);
+        if (yields.isEmpty() || type.has(PhpType.OBJECT)) {
+            return;
+        }
+        for (String name : type.classNames()) {
+            String lower = Str.lower(name);
+            if (lower.equals("traversable") || lower.equals("iterator") || lower.equals("generator")) {
+                return;
+            }
+        }
+        throw compileError(yields.get(0).line, "Generator return type must be a supertype of Generator, "
+                + type.text(null) + " given");
+    }
+
+    /** The nodes of the kinds in the code, outside the functions and classes nested in it, in order. */
+    private static void collect(Object value, Set<String> kinds, List<Ast> found) {
+        if (!(value instanceof Ast node)) {
+            return;
+        }
+        if (kinds.contains(node.kind)) {
+            found.add(node);
+        }
+        switch (node.kind) {
+            case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS", "AST_METHOD":
+                return;
+            default:
+                break;
+        }
+        for (Object child : node.children()) {
+            collect(child, kinds, found);
+        }
+        for (Object child : node.namedValues()) {
+            collect(child, kinds, found);
+        }
     }
 
     /** A declaration's parameters; its types' compile errors, the return type's too, come here. */
@@ -1197,6 +1261,9 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
+        if (generator && target.getDeclaredReturn() != null) {
+            generatorReturn(stmts, target.getDeclaredReturn());
+        }
         if (language.bytecode()) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
                     owner, target, display, params, captures, captureByRef, declaredNames, generator);
@@ -1333,6 +1400,10 @@ public final class Translator {
         self[0].setDeclaredReturn(returnType == null ? null : builtType(returnType, false));
         self[0].setDeclaration(0, typeString(node.node("returnType"), false),
                 node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        PhpType declared = self[0].getDeclaredReturn();
+        if (declared != null && declared.has(PhpType.VOID | PhpType.NEVER) && !arrow) {
+            checkReturns(stmts, declared, false);
+        }
         Set<String> bodyVariables = new HashSet<>();
         collectVariables(stmts, bodyVariables);
         self[0].setUsesThis(bodyVariables.contains("this"));
