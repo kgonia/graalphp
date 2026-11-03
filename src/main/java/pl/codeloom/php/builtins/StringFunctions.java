@@ -65,12 +65,14 @@ public final class StringFunctions {
         r.fn("substr_compare", a -> substrCompare(a));
         r.fn("substr_replace", a -> substrReplace(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0),
                 lengthArg(a, 3)));
-        r.fn("strcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
-        r.fn("strcasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), Integer.MAX_VALUE)));
-        r.fn("strncmp", a -> (long) Integer.signum(compareN(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0))));
-        r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
+        r.fn("strcmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, false));
+        r.fn("strcasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, true));
+        r.fn("strncmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncmp", Args.lng(a, 2, 0)), false));
+        r.fn("strncasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncasecmp", Args.lng(a, 2, 0)), true));
         r.fn("strnatcmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), false));
         r.fn("strnatcasecmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)),
                 true));
@@ -750,30 +752,33 @@ public final class StringFunctions {
         return Str.of(b);
     }
 
-    static int compareIgnoreCase(byte[] a, byte[] b, int limit) {
-        int n = Math.min(Math.min(a.length, b.length), limit);
+    /**
+     * zend_binary_strncmp and zend_binary_strncasecmp on a from offset and b, length bytes at most: the first
+     * differing bytes' difference (glibc's memcmp), else -1, 0 or 1 by the compared lengths.
+     */
+    static int compare(byte[] a, int offset, byte[] b, long length, boolean ignoreCase) {
+        long aLength = Math.min(length, a.length - offset);
+        long bLength = Math.min(length, b.length);
+        int n = (int) Math.min(aLength, bLength);
         for (int i = 0; i < n; i++) {
-            int x = lowerByte(a[i]) & 0xFF;
-            int y = lowerByte(b[i]) & 0xFF;
+            int x = a[offset + i] & 0xFF;
+            int y = b[i] & 0xFF;
+            if (ignoreCase) {
+                x = lowerByte((byte) x) & 0xFF;
+                y = lowerByte((byte) y) & 0xFF;
+            }
             if (x != y) {
                 return x - y;
             }
         }
-        return Math.min(a.length, limit) - Math.min(b.length, limit);
+        return Long.compare(aLength, bLength);
     }
 
-    @TruffleBoundary
-    private static int compareN(TruffleString a, TruffleString b, long n) {
-        byte[] x = Str.readBytes(a);
-        byte[] y = Str.readBytes(b);
-        int limit = (int) Math.min(n, Integer.MAX_VALUE);
-        int m = Math.min(Math.min(x.length, y.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (x[i] != y[i]) {
-                return (x[i] & 0xFF) - (y[i] & 0xFF);
-            }
+    private static long nonNegative(String function, long length) {
+        if (length < 0) {
+            throw new PhpError("ValueError", function + "(): Argument #3 ($length) must be greater than or equal to 0");
         }
-        return Math.min(x.length, limit) - Math.min(y.length, limit);
+        return length;
     }
 
     // ---- splitting and joining ----
@@ -930,6 +935,12 @@ public final class StringFunctions {
         long offset = Args.lng(a, 2, 0);
         Long length = lengthArg(a, 3);
         boolean ignoreCase = Args.bool(a, 4, false);
+        if (length != null && length <= 0) {
+            if (length == 0) {
+                return 0L;
+            }
+            throw new PhpError("ValueError", "substr_compare(): Argument #4 ($length) must be greater than or equal to 0");
+        }
         if (offset < 0) {
             offset = Math.max(0, main.length + offset);
         }
@@ -937,18 +948,8 @@ public final class StringFunctions {
             throw new PhpError("ValueError", "substr_compare(): Argument #3 ($offset) must be contained in argument "
                     + "#1 ($haystack)");
         }
-        int limit = length == null ? Math.max(main.length - (int) offset, other.length) : (int) (long) length;
-        byte[] part = Arrays.copyOfRange(main, (int) offset, main.length);
-        if (ignoreCase) {
-            return (long) Integer.signum(compareIgnoreCase(part, other, limit));
-        }
-        int m = Math.min(Math.min(part.length, other.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (part[i] != other[i]) {
-                return (long) Integer.signum((part[i] & 0xFF) - (other[i] & 0xFF));
-            }
-        }
-        return (long) Integer.signum(Math.min(part.length, limit) - Math.min(other.length, limit));
+        long limit = length == null ? Math.max(main.length - offset, other.length) : length;
+        return (long) compare(main, (int) offset, other, limit, ignoreCase);
     }
 
     // ---- escaping ----
