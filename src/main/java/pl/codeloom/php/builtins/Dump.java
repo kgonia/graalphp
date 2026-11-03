@@ -155,16 +155,23 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
-            Object[] names = object.propertyNames();
+            // the property table, its non-public names as "name":"Class":private and "name":protected
+            Object[] table = object.propertyTable();
             ascii(common + "object(");
             utf8(object.getPhpClass().getName());
-            ascii(")#" + object.id() + " (" + names.length + ") {\n");
-            for (Object name : names) {
+            ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
+            for (int i = 0; i < table.length; i += 2) {
+                String name = (String) table[i];
+                int end = name.startsWith("\0") ? name.indexOf('\0', 1) : -1;
                 spaces(level + 1);
                 ascii("[\"");
-                out.write(Str.ofKey((String) name));
-                ascii("\"]=>\n");
-                varDump(object.getProperty((String) name), level + 2);
+                out.write(Str.ofKey(end < 0 ? name : name.substring(end + 1)));
+                ascii(end < 0 ? "\"]=>\n" : name.charAt(1) == '*' && end == 2 ? "\":protected]=>\n" : "\":\"");
+                if (end > 0 && !(name.charAt(1) == '*' && end == 2)) {
+                    out.write(Str.ofKey(name.substring(1, end)));
+                    ascii("\":private]=>\n");
+                }
+                varDump(table[i + 1], level + 2);
             }
             leave(object);
             closeBrace(level);
@@ -254,12 +261,12 @@ final class Dump {
                 ascii("::__set_state(array(\n");
             }
             // a lazy object initialized, a proxy's instance's properties
-            PhpObject real = object.initialized();
-            for (Object name : real.propertyNames()) {
+            java.util.List<Object> properties = object.initialized().readableProperties(false);
+            for (int i = 0; i < properties.size(); i += 2) {
                 spaces(level + 2);
-                exportString(Str.ofKey((String) name));
+                exportString(Str.ofKey((String) properties.get(i)));
                 ascii(" => ");
-                varExport(real.getProperty((String) name), level + 2);
+                varExport(properties.get(i + 1), level + 2);
                 ascii(",\n");
             }
             leave(object);

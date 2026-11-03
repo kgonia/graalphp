@@ -547,20 +547,13 @@ final class JsonFunctions {
             }
         }
 
-        void object(PhpObject lazy) {
-            PhpObject object = lazy.initialized();
+        void object(PhpObject object) {
             if (object.getPhpClass().isSubclassOf("jsonserializable")) {
                 value(object.callMethod("jsonserialize"));
                 return;
             }
-            Object[] names = object.propertyNames();
-            int visible = 0;
-            for (Object name : names) {
-                if (object.getPhpClass().isPublicProperty((String) name)) {
-                    visible++;
-                }
-            }
-            if (visible == 0) {
+            java.util.List<Object> properties = object.initialized().readableProperties(true);
+            if (properties.isEmpty()) {
                 ascii("{}");
                 return;
             }
@@ -568,18 +561,13 @@ final class JsonFunctions {
                 throw new JsonError(ERROR_DEPTH);
             }
             out.write('{');
-            boolean first = true;
-            for (Object name : names) {
-                if (!object.getPhpClass().isPublicProperty((String) name)) {
-                    continue;
-                }
-                if (!first) {
+            for (int i = 0; i < properties.size(); i += 2) {
+                if (i > 0) {
                     out.write(',');
                 }
-                first = false;
                 newline();
-                key(Str.ofKey((String) name));
-                value(object.getProperty((String) name));
+                key(Str.ofKey((String) properties.get(i)));
+                value(properties.get(i + 1));
             }
             depth--;
             newline();
