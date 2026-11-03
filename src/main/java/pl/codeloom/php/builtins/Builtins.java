@@ -188,7 +188,8 @@ public final class Builtins {
                 {"PATHINFO_FILENAME", 8L}, {"PHP_ROUND_HALF_UP", 1L}, {"PHP_ROUND_HALF_DOWN", 2L},
                 {"PHP_ROUND_HALF_EVEN", 3L}, {"PHP_ROUND_HALF_ODD", 4L},
                 {"MB_CASE_UPPER", 0L}, {"MB_CASE_LOWER", 1L}, {"MB_CASE_TITLE", 2L},
-                {"LC_CTYPE", 0L}, {"LC_ALL", 6L},
+                {"LC_CTYPE", 0L}, {"LC_NUMERIC", 1L}, {"LC_TIME", 2L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L},
+                {"LC_MESSAGES", 5L}, {"LC_ALL", 6L},
                 {"PHP_SAPI", Str.of("cli")}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
                 {"PHP_MAXPATHLEN", 4096L}, {"PHP_DEBUG", 0L}, {"PHP_ZTS", 0L}, {"PHP_EXTRA_VERSION", Str.EMPTY},
                 {"PHP_FLOAT_DIG", 15L}, {"M_E", Math.E}, {"M_SQRT2", Math.sqrt(2)},
@@ -233,6 +234,7 @@ public final class Builtins {
         }
         SocketFunctions.constants(constants);
         FilterFunctions.constants(constants);
+        StringFunctions.langinfoConstants(constants);
         return Collections.unmodifiableMap(constants);
     }
 

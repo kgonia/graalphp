@@ -23,6 +23,11 @@ public final class BuiltinState {
     final Serialization.State serialization = new Serialization.State();
     /** PG(have_called_openlog): php_syslog opens the log once a request. */
     boolean calledOpenlog;
+    /**
+     * setlocale()'s locale per glibc category (LC_CTYPE 0 to LC_IDENTIFICATION 12; LC_ALL 6 unused): LC_CTYPE is
+     * C.UTF-8 from startup (zend_reset_lc_ctype_locale), the others C.
+     */
+    final String[] locales = {"C.UTF-8", "C", "C", "C", "C", "C", "", "C", "C", "C", "C", "C", "C"};
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;

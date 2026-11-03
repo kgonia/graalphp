@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /** ext/standard string functions, on bytes as php-src does (no locale: ASCII-only case mapping, as PHP 8.2+). */
 public final class StringFunctions {
@@ -260,6 +261,63 @@ public final class StringFunctions {
         });
         // the C locale's conventions: php-src sets only LC_CTYPE from the environment at startup, and setlocale()
         // isn't there to change LC_NUMERIC or LC_MONETARY (CHAR_MAX, 127, for the unspecified numbers)
+        r.fn("setlocale", (context, a) -> {
+            Args.arity(a, "setlocale", 2, Integer.MAX_VALUE);
+            long category = Args.integer(context, a, 0, "setlocale", "category", "int");
+            for (int i = 1; i < Args.count(a); i++) {
+                Object locale = Args.get(a, i);
+                if (!(locale instanceof PhpArray || locale == PhpNull.NULL || locale instanceof TruffleString
+                        || locale instanceof Long || locale instanceof Double || locale instanceof Boolean)) {
+                    throw new PhpError("TypeError", "setlocale(): Argument #" + (i + 1) + (i == 1 ? " ($locales)" : "")
+                            + " must be of type array|string|null, " + Args.valueName(locale) + " given");
+                }
+            }
+            String[] locales = context.builtinState().locales;
+            for (int i = 1; i < Args.count(a); i++) {
+                Object locale = Args.get(a, i);
+                Object[] tries = locale instanceof PhpArray list ? list.entries() : new Object[]{null, locale};
+                for (int j = 1; j < tries.length; j += 2) {
+                    Object name = tries[j] == PhpNull.NULL ? Str.EMPTY : tries[j];
+                    String result = setlocale(context, locales, category, Str.java(Convert.toStr(name)));
+                    if (result != null) {
+                        return Str.of(result);
+                    }
+                }
+            }
+            return Boolean.FALSE;
+        });
+        r.fn("nl_langinfo", (context, a) -> {
+            Args.arity(a, "nl_langinfo", 1, 1);
+            long item = Args.integer(context, a, 0, "nl_langinfo", "item", "int");
+            String value = LANGINFO.get(item);
+            if (value == null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("nl_langinfo(): Item '" + item
+                        + "' is not valid"), SourceLocation.current());
+                return Boolean.FALSE;
+            }
+            String[] locales = context.builtinState().locales;
+            boolean utf8 = !locales[(int) (item >> 16)].equals("C");
+            if (item == 14) {
+                value = utf8 ? "UTF-8" : value;
+            } else if (utf8 && item >= 262151 && item <= 262158) {
+                // glibc's C.UTF-8 reads these chars as strings, running on into the next fields
+                value = "\u00ff".repeat((int) (262159 - item)) + "-";
+            }
+            return Str.of(value.getBytes(StandardCharsets.ISO_8859_1));
+        });
+        r.fn("strcoll", (context, a) -> {
+            Args.arity(a, "strcoll", 2, 2);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "strcoll", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "strcoll", "string2", false));
+            // the C and C.UTF-8 locales collate as strcmp: the bytes up to the first NUL
+            for (int i = 0; ; i++) {
+                int c1 = at(s1, i);
+                int c2 = at(s2, i);
+                if (c1 != c2 || c1 == 0) {
+                    return (long) (c1 - c2);
+                }
+            }
+        });
         r.fn("localeconv", a -> {
             PhpArray conventions = new PhpArray();
             for (String key : new String[] {"decimal_point", "thousands_sep", "int_curr_symbol", "currency_symbol",
@@ -1357,56 +1415,90 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString dirname(TruffleString path, long levels) {
-        String p = Str.java(path);
-        for (long i = 0; i < levels; i++) {
-            int end = p.length();
-            while (end > 1 && p.charAt(end - 1) == '/') {
+        if (levels < 1) {
+            throw new PhpError("ValueError", "dirname(): Argument #2 ($levels) must be greater than or equal to 1");
+        }
+        byte[] p = Str.bytes(path);
+        int length = p.length;
+        int before;
+        do {
+            before = length;
+            length = dirname(p, length);
+        } while (length < before && --levels > 0);
+        return Str.of(p, 0, length);
+    }
+
+    /** zend_dirname on the first length bytes, in place: the new length. */
+    private static int dirname(byte[] p, int length) {
+        if (length == 0) {
+            return 0;
+        }
+        int end = length - 1;
+        while (end >= 0 && p[end] == '/') {
+            end--;
+        }
+        if (end >= 0) {
+            while (end >= 0 && p[end] != '/') {
                 end--;
             }
-            int slash = p.lastIndexOf('/', end - 1);
-            if (slash < 0) {
-                return Str.of(".");
+            if (end < 0) {
+                p[0] = '.';
+                return 1;
             }
-            while (slash > 0 && p.charAt(slash - 1) == '/') {
-                slash--;
+            while (end >= 0 && p[end] == '/') {
+                end--;
             }
-            p = slash == 0 ? "/" : p.substring(0, slash);
         }
-        return Str.of(p);
+        if (end < 0) {
+            p[0] = '/';
+            return 1;
+        }
+        return end + 1;
     }
 
     @TruffleBoundary
     private static TruffleString basename(TruffleString path, TruffleString suffix) {
-        String p = Str.java(path);
-        while (p.length() > 1 && p.endsWith("/")) {
-            p = p.substring(0, p.length() - 1);
+        // php_basename in an ASCII-compatible locale (C, C.UTF-8): bytes
+        byte[] p = Str.readBytes(path);
+        int end = p.length - 1;
+        while (end >= 0 && p[end] == '/') {
+            end--;
         }
-        String base = p.substring(p.lastIndexOf('/') + 1);
-        String s = Str.java(suffix);
-        if (!s.isEmpty() && base.endsWith(s) && !base.equals(s)) {
-            base = base.substring(0, base.length() - s.length());
+        int start = end++;
+        while (start > 0 && p[start - 1] != '/') {
+            start--;
         }
-        return Str.of(base);
+        if (end <= 0) {
+            return Str.EMPTY;
+        }
+        byte[] x = Str.readBytes(suffix);
+        if (x.length < end - start && Arrays.equals(p, end - x.length, end, x, 0, x.length)) {
+            end -= x.length;
+        }
+        return Str.of(p, start, end - start);
     }
 
     @TruffleBoundary
     private static Object pathinfo(TruffleString path, long options) {
-        String p = Str.java(path);
         PhpArray info = new PhpArray();
-        int slash = p.lastIndexOf('/');
-        if ((options & 1) != 0 && slash >= 0) {
-            info.put(Str.of("dirname"), dirname(path, 1));
+        TruffleString dirname = (options & 1) != 0 ? dirname(path, 1) : Str.EMPTY;
+        if (Str.length(dirname) > 0) {
+            info.put(Str.of("dirname"), dirname);
         }
-        String base = Str.java(basename(path, Str.EMPTY));
+        TruffleString base = basename(path, Str.EMPTY);
         if ((options & 2) != 0) {
-            info.put(Str.of("basename"), Str.of(base));
+            info.put(Str.of("basename"), base);
         }
-        int dot = base.lastIndexOf('.');
+        byte[] b = Str.readBytes(base);
+        int dot = b.length - 1;
+        while (dot >= 0 && b[dot] != '.') {
+            dot--;
+        }
         if ((options & 4) != 0 && dot >= 0) {
-            info.put(Str.of("extension"), Str.of(base.substring(dot + 1)));
+            info.put(Str.of("extension"), Str.of(b, dot + 1, b.length - dot - 1));
         }
         if ((options & 8) != 0) {
-            info.put(Str.of("filename"), Str.of(dot >= 0 ? base.substring(0, dot) : base));
+            info.put(Str.of("filename"), dot >= 0 ? Str.of(b, 0, dot) : base);
         }
         if (options != 15) {
             Object only = info.firstPosition() >= 0 ? info.valueAt(info.firstPosition()) : Str.EMPTY;
@@ -1909,5 +2001,112 @@ public final class StringFunctions {
             p++;
         }
         return format == 0 ? (Object) count : words;
+    }
+
+    private static final String[] LOCALE_CATEGORIES = {"LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
+        "LC_MONETARY", "LC_MESSAGES", null, "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT",
+        "LC_IDENTIFICATION"};
+
+    /**
+     * try_setlocale_str on glibc with the locales the reference image has (C, POSIX, C.UTF-8): the locale's name,
+     * "0" querying it; null if the category or the locale doesn't exist.
+     */
+    private static String setlocale(PhpContext context, String[] locales, long category, String name) {
+        if (!name.equals("0") && name.length() >= 255) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING,
+                    Str.of("setlocale(): Specified locale name is too long"), SourceLocation.current());
+            return null;
+        }
+        if (category < 0 || category >= locales.length) {
+            return null;
+        }
+        int cat = (int) category;
+        if (!name.equals("0")) {
+            String[] chosen = new String[locales.length];
+            for (int c = 0; c < locales.length; c++) {
+                if (c == 6 || cat != 6 && c != cat) {
+                    continue;
+                }
+                String wanted = name;
+                if (wanted.isEmpty()) {
+                    // the environment: LC_ALL, then the category's variable, then LANG
+                    Map<String, String> environment = context.getEnv().getEnvironment();
+                    for (String variable : new String[]{"LC_ALL", LOCALE_CATEGORIES[c], "LANG"}) {
+                        String value = environment.get(variable);
+                        if (value != null && !value.isEmpty()) {
+                            wanted = value;
+                            break;
+                        }
+                    }
+                    wanted = wanted.isEmpty() ? "C" : wanted;
+                }
+                if (wanted.equals("POSIX") || wanted.equals("C")) {
+                    chosen[c] = "C";
+                } else if (wanted.matches("C\\.(?i:utf-?8)")) {
+                    chosen[c] = wanted;
+                } else {
+                    return null;
+                }
+            }
+            for (int c = 0; c < locales.length; c++) {
+                if (chosen[c] != null) {
+                    locales[c] = chosen[c];
+                }
+            }
+        }
+        if (cat != 6) {
+            return locales[cat];
+        }
+        boolean same = true;
+        StringBuilder composite = new StringBuilder();
+        for (int c = 0; c < locales.length; c++) {
+            if (c != 6) {
+                same &= locales[c].equals(locales[0]);
+                composite.append(c == 0 ? "" : ";").append(LOCALE_CATEGORIES[c]).append('=').append(locales[c]);
+            }
+        }
+        return same ? locales[0] : composite.toString();
+    }
+
+    /** nl_langinfo()'s items (glibc's: the category in the high 16 bits) and their values in the C locale. */
+    private static final Map<Long, String> LANGINFO = new java.util.HashMap<>();
+    private static final Map<String, Long> LANGINFO_NAMES = new java.util.LinkedHashMap<>();
+
+    static {
+        String[] days = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        String[] months = {"January", "February", "March", "April", "May", "June", "July", "August", "September",
+            "October", "November", "December"};
+        for (int i = 0; i < 7; i++) {
+            langinfo("ABDAY_" + (i + 1), 131072 + i, days[i].substring(0, 3));
+            langinfo("DAY_" + (i + 1), 131079 + i, days[i]);
+        }
+        for (int i = 0; i < 12; i++) {
+            langinfo("ABMON_" + (i + 1), 131086 + i, months[i].substring(0, 3));
+            langinfo("MON_" + (i + 1), 131098 + i, months[i]);
+        }
+        Object[] rest = {"AM_STR", 131110, "AM", "PM_STR", 131111, "PM", "D_T_FMT", 131112, "%a %b %e %H:%M:%S %Y",
+            "D_FMT", 131113, "%m/%d/%y", "T_FMT", 131114, "%H:%M:%S", "T_FMT_AMPM", 131115, "%I:%M:%S %p",
+            "ERA", 131116, "", "ERA_YEAR", 131117, "", "ERA_D_T_FMT", 131120, "", "ERA_D_FMT", 131118, "",
+            "ERA_T_FMT", 131121, "", "ALT_DIGITS", 131119, "", "INT_CURR_SYMBOL", 262144, "",
+            "CURRENCY_SYMBOL", 262145, "", "CRNCYSTR", 262159, "-", "MON_DECIMAL_POINT", 262146, "",
+            "MON_THOUSANDS_SEP", 262147, "", "MON_GROUPING", 262148, "", "POSITIVE_SIGN", 262149, "",
+            "NEGATIVE_SIGN", 262150, "", "INT_FRAC_DIGITS", 262151, "\u00ff", "FRAC_DIGITS", 262152, "\u00ff",
+            "P_CS_PRECEDES", 262153, "\u00ff", "P_SEP_BY_SPACE", 262154, "\u00ff", "N_CS_PRECEDES", 262155, "\u00ff",
+            "N_SEP_BY_SPACE", 262156, "\u00ff", "P_SIGN_POSN", 262157, "\u00ff", "N_SIGN_POSN", 262158, "\u00ff",
+            "DECIMAL_POINT", 65536, ".", "RADIXCHAR", 65536, ".", "THOUSANDS_SEP", 65537, "", "THOUSEP", 65537, "",
+            "GROUPING", 65538, "", "YESEXPR", 327680, "^[yY]", "NOEXPR", 327681, "^[nN]", "YESSTR", 327682, "",
+            "NOSTR", 327683, "", "CODESET", 14, "ANSI_X3.4-1968"};
+        for (int i = 0; i < rest.length; i += 3) {
+            langinfo((String) rest[i], (Integer) rest[i + 1], (String) rest[i + 2]);
+        }
+    }
+
+    private static void langinfo(String name, long item, String value) {
+        LANGINFO.put(item, value);
+        LANGINFO_NAMES.put(name, item);
+    }
+
+    static void langinfoConstants(Map<String, Object> constants) {
+        constants.putAll(LANGINFO_NAMES);
     }
 }
