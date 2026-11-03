@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -139,16 +140,28 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
-            Object[] names = object.propertyNames();
+            // php_var_dump: the property table, with an uninitialized typed property's type in its place
+            PhpClass phpClass = object.getPhpClass();
+            Object[] table = object.propertyTable();
             ascii(common + "object(");
-            utf8(object.getPhpClass().getName());
-            ascii(")#" + object.id() + " (" + names.length + ") {\n");
-            for (Object name : names) {
-                spaces(level + 1);
-                ascii("[\"");
-                out.write(Str.ofKey((String) name));
-                ascii("\"]=>\n");
-                varDump(object.getProperty((String) name), level + 2);
+            utf8(phpClass.getName());
+            ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
+            int t = 0;
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                String mangled = phpClass.mangledName(decl.name());
+                if (t < table.length && mangled.equals(table[t])) {
+                    dumpProperty(mangled, table[t + 1], level);
+                    t += 2;
+                } else if (decl.type() != null) {
+                    dumpPropertyKey(mangled, level);
+                    spaces(level + 1);
+                    ascii("uninitialized(");
+                    utf8(decl.type().text(null));
+                    ascii(")\n");
+                }
+            }
+            for (; t < table.length; t += 2) {
+                dumpProperty((String) table[t], table[t + 1], level);
             }
             leave(object);
             closeBrace(level);
@@ -159,6 +172,28 @@ final class Dump {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
         } else {
             ascii(common + "UNKNOWN:0\n");
+        }
+    }
+
+    private void dumpProperty(String mangled, Object value, int level) {
+        dumpPropertyKey(mangled, level);
+        varDump(value, level + 2);
+    }
+
+    /** php_object_property_dump's key: ["name"], ["name":protected] or ["name":"Class":private]. */
+    private void dumpPropertyKey(String mangled, int level) {
+        spaces(level + 1);
+        ascii("[\"");
+        int end = mangled.startsWith("\0") ? mangled.indexOf('\0', 1) : -1;
+        out.write(Str.ofKey(end < 0 ? mangled : mangled.substring(end + 1)));
+        if (end < 0) {
+            ascii("\"]=>\n");
+        } else if (mangled.charAt(1) == '*') {
+            ascii("\":protected]=>\n");
+        } else {
+            ascii("\":\"");
+            out.write(Str.ofKey(mangled.substring(1, end)));
+            ascii("\":private]=>\n");
         }
     }
 

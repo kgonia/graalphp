@@ -33,8 +33,9 @@ public final class ClassTemplate {
     public record Constant(String name, Object value) implements Member {
     }
 
-    /** A property: its default value, or a {@link Deferred} initializer. */
-    public record Property(String name, Object initial, int visibility, boolean isStatic) implements Member {
+    /** A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its type. */
+    public record Property(String name, Object initial, int visibility, boolean isStatic, PhpType type)
+            implements Member {
     }
 
     /**
@@ -210,11 +211,12 @@ public final class ClassTemplate {
         } else if (member instanceof Constant constant) {
             phpClass.addConstant(constant.name(), bind(constant.value(), phpClass));
         } else if (member instanceof Property property) {
-            Object initial = bind(property.initial(), phpClass);
+            Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {
-                phpClass.addStaticProperty(property.name(), initial);
+                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial);
             } else {
-                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility()));
+                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
+                        property.type()));
             }
         }
     }

@@ -32,6 +32,9 @@ final class Variance {
         PhpClass parent = phpClass.getParent();
         List<PhpFunction[]> delayed = new ArrayList<>();
         Set<String> unresolved = new LinkedHashSet<>();
+        if (parent != null) {
+            properties(context, phpClass, parent, unresolved);
+        }
         for (Map.Entry<String, PhpFunction> entry : phpClass.methods().entrySet()) {
             PhpFunction child = entry.getValue();
             if (parent != null && phpClass.getName().equalsIgnoreCase(child.getClassName())) {
@@ -63,6 +66,37 @@ final class Variance {
                 fail(context, pair[0], pair[1], status == UNRESOLVED ? unresolved.iterator().next() : null);
             }
         }
+    }
+
+    /** do_inherit_property: a redeclared property keeps the parent's type (property_types_compatible). */
+    private static void properties(PhpContext context, PhpClass phpClass, PhpClass parent, Set<String> unresolved) {
+        for (PhpClass.PropertyDecl parentDecl : parent.getProperties()) {
+            PhpClass.PropertyDecl decl = phpClass.findProperty(parentDecl.name());
+            if (decl == parentDecl || decl == null || !phpClass.getLowerName().equals(decl.declaringClass())
+                    || parentDecl.visibility() == PhpClass.PropertyDecl.PRIVATE) {
+                continue;
+            }
+            String name = phpClass.getName() + "::$" + Str.keyText(decl.name());
+            if (parentDecl.type() == null) {
+                if (decl.type() != null) {
+                    throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Type of " + name
+                            + " must not be defined (as in class " + parent.getName() + ")"), declaredAt(phpClass), 0);
+                }
+                continue;
+            }
+            int status = decl.type() == null ? ERROR : parentDecl.type().text(null).equals(decl.type().text(null))
+                    ? SUCCESS : Math.max(covariant(context, phpClass, decl.type(), parentDecl.type(), unresolved),
+                    covariant(context, phpClass, parentDecl.type(), decl.type(), unresolved));
+            if (status != SUCCESS) {
+                throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Type of " + name
+                        + " must be " + parentDecl.type().text(null) + " (as in class "
+                        + PhpType.declaringName(parentDecl) + ")"), declaredAt(phpClass), 0);
+            }
+        }
+    }
+
+    private static SourceLocation declaredAt(PhpClass phpClass) {
+        return phpClass.getDeclaration() instanceof ClassTemplate template ? template.getDeclaredAt() : null;
     }
 
     private static void check(PhpContext context, PhpClass linking, PhpFunction child, PhpFunction proto,

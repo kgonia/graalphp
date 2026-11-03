@@ -1413,8 +1413,10 @@ public final class Translator {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
-                            promoted.add(new PhpClass.PropertyDecl(Str.sourceKey((String) param.get("name")),
-                                    PhpNull.NULL, PhpClass.PropertyDecl.visibilityOf(param.flags)));
+                            String propertyName = Str.sourceKey((String) param.get("name"));
+                            PhpType type = propertyType(param.node("type"), className, propertyName);
+                            promoted.add(new PhpClass.PropertyDecl(propertyName, type == null ? PhpNull.NULL : null,
+                                    PhpClass.PropertyDecl.visibilityOf(param.flags), null, type));
                         }
                     }
                 }
@@ -1436,9 +1438,14 @@ public final class Translator {
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
-                    Object initial = element.get("default") == null ? PhpNull.NULL
+                    PhpType type = propertyType(member.node("type"), className, propertyName);
+                    Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic));
+                    if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {
+                        initial = validDefault(type, initial, member.line, "property " + className + "::$"
+                                + Str.keyText(propertyName));
+                    }
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type));
                 }
                 break;
             }
@@ -1448,6 +1455,42 @@ public final class Translator {
             default:
                 throw unsupported(member, "class member");
         }
+    }
+
+    /** A property's type (zend_compile_prop_decl): no void, never or callable. */
+    private PhpType propertyType(Ast ast, String className, String propertyName) {
+        PhpType type = declaredType(ast, false);
+        if (type != null && type.has(PhpType.VOID | PhpType.NEVER | PhpType.CALLABLE)) {
+            throw compileError(ast.line, "Property " + className + "::$" + Str.keyText(propertyName)
+                    + " cannot have type " + type.text(null));
+        }
+        return type;
+    }
+
+    /**
+     * zend_is_valid_default_value: a constant default must be of the type (an int is one of a float, as a float);
+     * what names "property C::$p" or "parameter $p".
+     */
+    private Object validDefault(PhpType type, Object value, int line, String what) {
+        int bit = value instanceof Long ? PhpType.INT : value instanceof Double ? PhpType.FLOAT
+                : value instanceof TruffleString ? PhpType.STRING : value instanceof Boolean b
+                ? (b ? PhpType.TRUE : PhpType.FALSE) : value == PhpNull.NULL ? PhpType.NULL
+                : value instanceof PhpArray ? PhpType.ARRAY : 0;
+        if (type.has(bit)) {
+            return value;
+        }
+        if (bit == PhpType.INT && type.has(PhpType.FLOAT)) {
+            return (double) (long) (Long) value;
+        }
+        if (bit == PhpType.NULL && !type.isIntersection() && what.startsWith("property")) {
+            throw compileError(line, "Default value for property of type " + type.text(null)
+                    + " may not be null. Use the nullable type " + type.withNull().text(null)
+                    + " to allow null default value");
+        }
+        String name = bit == PhpType.INT ? "int" : bit == PhpType.FLOAT ? "float" : bit == PhpType.STRING ? "string"
+                : bit == PhpType.ARRAY ? "array" : bit == PhpType.NULL ? "null" : "bool";
+        throw compileError(line, "Cannot use " + name + " as default value for " + what + " of type "
+                + type.text(null));
     }
 
     /** zend_check_magic_method_return_type: a magic method's declared return type must be php-src's. */

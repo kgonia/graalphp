@@ -23,16 +23,18 @@ import java.util.Set;
  */
 public final class PhpClass {
     /**
-     * A declared instance property: its default (or a thunk evaluating the constant expression), its visibility,
-     * and the class that declared it (lowercase; set when a class adds it).
+     * A declared instance property: its default (or a thunk evaluating the constant expression; null for a typed
+     * property without one, which starts uninitialized: not in the object), its visibility, the class that
+     * declared it (lowercase; set when a class adds it), and its type, or null.
      */
-    public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass) {
+    public record PropertyDecl(String name, Object defaultValue, int visibility, String declaringClass,
+                               PhpType type) {
         public static final int PUBLIC = 0;
         public static final int PROTECTED = 1;
         public static final int PRIVATE = 2;
 
         public PropertyDecl(String name, Object defaultValue, int visibility) {
-            this(name, defaultValue, visibility, null);
+            this(name, defaultValue, visibility, null, null);
         }
 
         public boolean isPublic() {
@@ -52,6 +54,8 @@ public final class PhpClass {
      */
     public static final int PROPERTY_PROTECTED = 1;
     public static final int PROPERTY_PRIVATE = 2;
+    /** A typed property: its writes are checked against its type, and it may be uninitialized (absent). */
+    public static final int PROPERTY_TYPED = 4;
 
     private final String name;
     private final String lowerName;
@@ -282,7 +286,7 @@ public final class PhpClass {
             array.addHolder();
         }
         properties.put(decl.name(), decl.declaringClass() != null ? decl
-                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName));
+                : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName, decl.type()));
     }
 
     /** The declared (or inherited) instance property, or null for an undeclared one. */
@@ -489,6 +493,9 @@ public final class PhpClass {
         int[] flags = declaredFlags();
         for (int i = 0; i < names.length; i++) {
             Object value = defaults[i];
+            if (value == null) {
+                continue;
+            }
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
@@ -570,9 +577,9 @@ public final class PhpClass {
         int[] flags = new int[properties.size()];
         int i = 0;
         for (PropertyDecl decl : properties.values()) {
-            flags[i++] = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+            flags[i++] = (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                     : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
-                    ? PROPERTY_PRIVATE : 0;
+                    ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0);
         }
         return flags;
     }
@@ -592,8 +599,13 @@ public final class PhpClass {
                 if (value instanceof PhpArray array) {
                     array.addHolder();
                 }
-                entry.setValue(new PropertyDecl(entry.getKey(), value, entry.getValue().visibility(),
-                        entry.getValue().declaringClass()));
+                PropertyDecl decl = entry.getValue();
+                if (decl.type() != null) {
+                    // checked as evaluated, in strict mode (zend_update_class_constants)
+                    value = decl.type().assign(value, true, decl);
+                }
+                entry.setValue(new PropertyDecl(entry.getKey(), value, decl.visibility(), decl.declaringClass(),
+                        decl.type()));
             }
             values[i++] = value;
         }

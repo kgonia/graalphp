@@ -96,6 +96,10 @@ public abstract class InstantiateNode extends Node {
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
             byte kind = kinds == null ? DefaultKinds.GENERIC : kinds.kind(i, value);
+            if (kind == DefaultKinds.ABSENT || kind == DefaultKinds.GENERIC && value == null) {
+                // an uninitialized typed property
+                continue;
+            }
             if ((kind == DefaultKinds.ARRAY || kind == DefaultKinds.GENERIC) && value instanceof PhpArray array) {
                 array.addHolder();
             }
@@ -122,6 +126,7 @@ public abstract class InstantiateNode extends Node {
         private static final byte LONG = 1;
         private static final byte ARRAY = 2;
         private static final byte OTHER = 3;
+        private static final byte ABSENT = 4;
         private static final byte GENERIC = 0;
 
         @CompilationFinal(dimensions = 1) private final byte[] kinds;
@@ -134,7 +139,7 @@ public abstract class InstantiateNode extends Node {
         }
 
         private static byte kindOf(Object value) {
-            return value instanceof Long ? LONG : value instanceof PhpArray ? ARRAY : OTHER;
+            return value instanceof Long ? LONG : value instanceof PhpArray ? ARRAY : value == null ? ABSENT : OTHER;
         }
 
         /** The kind recorded for default i, which value is of (else it is GENERIC from now on). */

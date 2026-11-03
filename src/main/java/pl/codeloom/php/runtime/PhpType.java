@@ -56,6 +56,11 @@ public final class PhpType {
         this.classText = classText;
     }
 
+    /** The type with null added (?T). */
+    public PhpType withNull() {
+        return new PhpType(mask | NULL, names, intersections, classText);
+    }
+
     /** The union's single classes, as written. */
     public String[] classNames() {
         return names;
@@ -252,6 +257,27 @@ public final class PhpType {
                     site == null ? SourceLocation.current() : SourceLocation.of(site));
         }
         return l;
+    }
+
+    /**
+     * zend_verify_property_type: the value as the property takes it (converted in coercive mode), or the
+     * TypeError.
+     */
+    @TruffleBoundary
+    public Object assign(Object value, boolean strict, PhpClass.PropertyDecl decl) {
+        Object accepted = slow(value, strict, null, null);
+        if (accepted == null) {
+            throw new PhpError("TypeError", "Cannot assign " + valueName(value) + " to property "
+                    + declaringName(decl) + "::$" + Str.keyText(decl.name()) + " of type " + text(null));
+        }
+        return accepted;
+    }
+
+    /** The name of the class that declared the property, as written. */
+    @TruffleBoundary
+    public static String declaringName(PhpClass.PropertyDecl decl) {
+        PhpClass declaring = PhpContext.get(null).findClass(decl.declaringClass());
+        return declaring != null ? declaring.getName() : decl.declaringClass();
     }
 
     /** zend_type_to_string_resolved: static as the called class (if any), null as ?T for a single type. */
