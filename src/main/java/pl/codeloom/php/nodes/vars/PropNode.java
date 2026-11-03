@@ -320,28 +320,51 @@ public final class PropNode extends LValueNode {
             twin().writeOn(arguments, target, name, value);
             return true;
         }
-        return phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC;
+        return phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC
+                || afterMagic(phpObject, name, "__set", instance -> {
+                    twin().writeOn(arguments, instance, name, value);
+                    return true;
+                }) != null;
     }
 
     /**
-     * The object a lazy one forwards an access to a property it hasn't to (zend_lazy_object_init): itself
-     * initialized, a proxy's real instance. Null when the access goes on as on any object: it isn't lazy (or is
-     * being initialized), or the class's magic method takes a property the scope may not access or an undeclared
-     * one first; a declared one the scope may not access is the Error.
+     * The object a lazy one forwards an access to a property it hasn't to before its magic method
+     * (zend_std_read_property...): for a declared one, itself initialized or a proxy's instance; on an initialized
+     * proxy, the instance whose magic method for the property runs. Null when the access goes on as on any object;
+     * a declared property the scope may not access is the Error, unless the class has the magic method.
      */
     private PhpObject lazyTarget(Object[] arguments, PhpObject phpObject, String name, String magic) {
-        if (phpObject.lazy() == null || phpObject.isInitializingLazy() || phpObject.getProperty(name) != null) {
+        PhpObject.Lazy lazy = phpObject.lazy();
+        if (lazy == null || phpObject.isInitializingLazy() || phpObject.getProperty(name) != null) {
             return null;
         }
         PhpClass phpClass = phpObject.getPhpClass();
-        boolean declared = phpClass.isDeclaredProperty(name);
-        if (declared && !phpClass.canAccessProperty(name, scope(arguments))) {
-            if (phpClass.findMethod(magic) == null) {
-                throw inaccessible(phpObject, name);
+        if (phpClass.isDeclaredProperty(name) && phpClass.findHooks(name) == null) {
+            if (!phpClass.canAccessProperty(name, scope(arguments))) {
+                if (phpClass.findMethod(magic) == null) {
+                    throw inaccessible(phpObject, name);
+                }
+                return null;
             }
+            return phpObject.initializeLazy();
+        }
+        PhpObject instance = lazy.instance();
+        return instance != null && instance.inMagic(magic, name) ? instance : null;
+    }
+
+    /**
+     * A lazy object's access its magic method didn't take (it has none, or its guard is set): made on the object
+     * initialized, with that guard set there when the class has the method (zend_std_*_property's lazy_init); null
+     * for an object that isn't lazy.
+     */
+    private <T> T afterMagic(PhpObject phpObject, String name, String magic,
+                             java.util.function.Function<PhpObject, T> access) {
+        if (phpObject.lazy() == null || phpObject.isInitializingLazy()) {
             return null;
         }
-        return !declared && phpClass.findMethod(magic) != null ? null : phpObject.initializeLazy();
+        PhpObject instance = phpObject.initializeLazy();
+        return phpObject.getPhpClass().findMethod(magic) == null ? access.apply(instance)
+                : instance.guarded(magic, name, () -> access.apply(instance));
     }
 
     /** The access made again on a lazy object's target (lazyTarget), from runtime code: the uncached twin's. */
@@ -423,7 +446,11 @@ public final class PropNode extends LValueNode {
             return twin().readOn(arguments, target, name);
         }
         Object magic = phpObject.magicProperty(this, "__get", name);
-        return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
+        if (magic != PhpObject.NO_MAGIC) {
+            return magic;
+        }
+        Object forwarded = afterMagic(phpObject, name, "__get", instance -> twin().readOn(arguments, instance, name));
+        return forwarded == null ? PhpNull.NULL : forwarded;
     }
 
     @Override
@@ -773,7 +800,12 @@ public final class PropNode extends LValueNode {
             twin().unsetOn(arguments, target, name);
             return;
         }
-        phpObject.magicProperty(this, "__unset", name);
+        if (phpObject.magicProperty(this, "__unset", name) == PhpObject.NO_MAGIC) {
+            afterMagic(phpObject, name, "__unset", instance -> {
+                twin().unsetOn(arguments, instance, name);
+                return true;
+            });
+        }
     }
 
     private static PhpError cannotUnsetHooked(PhpObject phpObject, String name) {
@@ -810,12 +842,19 @@ public final class PropNode extends LValueNode {
      */
     @TruffleBoundary
     private boolean slowIsset(Object[] arguments, PhpObject phpObject, String name) {
+        Object hooked = hookedIfSet(arguments, phpObject, name);
+        if (hooked != null) {
+            return hooked != PhpNull.NULL;
+        }
         PhpObject target = lazyTarget(arguments, phpObject, name, "__isset");
         if (target != null) {
             return twin().isSetOn(arguments, target, name);
         }
-        Object hooked = hookedIfSet(arguments, phpObject, name);
-        return hooked != null ? hooked != PhpNull.NULL : magicIsset(phpObject, name);
+        Object magic = phpObject.magicProperty(this, "__isset", name);
+        if (magic != PhpObject.NO_MAGIC) {
+            return Convert.toBool(magic);
+        }
+        return afterMagic(phpObject, name, "__isset", instance -> twin().isSetOn(arguments, instance, name)) == Boolean.TRUE;
     }
 
     /** A hooked property's value as isset() reads it (zend_std_has_property's hooked case); null for another. */
@@ -863,16 +902,25 @@ public final class PropNode extends LValueNode {
     /** readIfSet's slow path: a hooked property's value, else __isset decides and __get gives it; null when unset. */
     @TruffleBoundary
     private Object readIfSetSlow(Object[] arguments, PhpObject phpObject, String name) {
-        PhpObject target = lazyTarget(arguments, phpObject, name, "__isset");
-        if (target != null) {
-            return twin().readIfSetOn(arguments, target, name);
-        }
         Object hooked = hookedIfSet(arguments, phpObject, name);
         if (hooked != null) {
             return hooked;
         }
-        // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value
-        return magicIsset(phpObject, name) ? missing(arguments, phpObject, name) : null;
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__isset");
+        if (target != null) {
+            return twin().readIfSetOn(arguments, target, name);
+        }
+        // isset($o->x[...]) / $o->x ?? ... (read_property's BP_VAR_IS): __isset decides, then __get gives the value;
+        // without __isset, __get's
+        Object magic = phpObject.magicProperty(this, "__isset", name);
+        if (magic != PhpObject.NO_MAGIC) {
+            return Convert.toBool(magic) ? missing(arguments, phpObject, name) : null;
+        }
+        PhpClass phpClass = phpObject.getPhpClass();
+        if (phpClass.findMethod("__isset") == null && phpClass.findMethod("__get") != null) {
+            return missing(arguments, phpObject, name);
+        }
+        return afterMagic(phpObject, name, "__isset", instance -> twin().readIfSetOn(arguments, instance, name));
     }
 
     @Override

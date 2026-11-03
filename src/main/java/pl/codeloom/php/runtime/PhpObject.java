@@ -102,6 +102,32 @@ public final class PhpObject extends DynamicObject {
         }
     }
 
+    /** Whether the magic method (lower case) for the property is running on this object: its guard is set. */
+    @TruffleBoundary
+    public boolean inMagic(String lowerMethod, String name) {
+        return magicGuards != null && magicGuards.contains(lowerMethod + ":" + name);
+    }
+
+    /**
+     * The access with the magic method's guard for the property set, as php-src sets the guard a lazy object's
+     * access had on the instance it forwards that access to.
+     */
+    @TruffleBoundary
+    public <T> T guarded(String lowerMethod, String name, java.util.function.Supplier<T> access) {
+        String guard = lowerMethod + ":" + name;
+        if (magicGuards == null) {
+            magicGuards = new java.util.HashSet<>();
+        }
+        boolean added = magicGuards.add(guard);
+        try {
+            return access.get();
+        } finally {
+            if (added) {
+                magicGuards.remove(guard);
+            }
+        }
+    }
+
     /** magicProperty for a node's access: the node is where traces show the call made. */
     @TruffleBoundary
     public Object magicProperty(Node site, String lowerMethod, String name, Object... args) {
@@ -232,6 +258,27 @@ public final class PhpObject extends DynamicObject {
             }
         }
         return names.toArray();
+    }
+
+    /**
+     * The properties var_export() and json_encode() (publicOnly) read, as name, value pairs: a class with hooks
+     * has its get hooks called (zend_hooked_object_build_properties), the others' values as they are.
+     */
+    @TruffleBoundary
+    public List<Object> readableProperties(boolean publicOnly) {
+        boolean hooked = phpClass.hasHooks();
+        List<Object> pairs = new ArrayList<>();
+        for (Object name : hooked ? hookedPropertyNames() : propertyNames()) {
+            if (publicOnly && !phpClass.isPublicProperty((String) name)) {
+                continue;
+            }
+            Object value = hooked ? visibleValue((String) name) : getProperty((String) name);
+            if (value != null) {
+                pairs.add(name);
+                pairs.add(value);
+            }
+        }
+        return pairs;
     }
 
     /** The lazy state: null for an object that isn't lazy, an initialized ghost included. */
