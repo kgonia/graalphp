@@ -107,13 +107,16 @@ public final class Translator {
     private static final int MODIFIER_ABSTRACT = 64;
     private static final int PARAM_REF = 8;
     private static final int PARAM_VARIADIC = 16;
-    /** Visibility or readonly on a constructor parameter: a promoted property. */
-    private static final int PROMOTED = 7 | 128;
+    /** Visibility, readonly or a set visibility on a constructor parameter: a promoted property. */
+    private static final int PROMOTED = 7 | 128 | 1024 | 2048 | 4096;
     private static final int FUNC_RETURNS_REF = 4096;
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
     private static final int CLASS_ABSTRACT = 64;
     private static final int CLASS_ENUM = 268435456;
+    private static final int MODIFIER_READONLY = 128;
+    /** A property's modifiers PhpClass.PropertyDecl keeps: readonly and the set visibilities. */
+    private static final int PROPERTY_MODIFIERS = MODIFIER_READONLY | 1024 | 2048 | 4096;
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
     private static final int ARRAY_SYNTAX_LIST = 1;
@@ -161,6 +164,8 @@ public final class Translator {
     private boolean returnsRef;
     /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
     private int hiddenCounter;
+    /** While a constant expression is translated: its `->` and `[]` check their objects (ConstantObjectNode). */
+    private boolean constantExpression;
     /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
     private final Scope fileSlots = new Scope();
     /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
@@ -501,7 +506,7 @@ public final class Translator {
                 if (isGlobalsElement(node.get("var")) && node.node("var").get("dim") == null) {
                     throw compileError(node.line, "Cannot use [] for unsetting");
                 }
-                return new BasicStmts.UnsetNode(place(node.get("var")));
+                return new BasicStmts.UnsetNode(written(node.get("var")));
             case "AST_THROW":
                 return new BasicStmts.ThrowNode(expression(node.get("expr")));
             case "AST_TRY":
@@ -628,6 +633,28 @@ public final class Translator {
     }
 
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
+    /**
+     * Whether a place written (assigned, compound-assigned, incremented, unset) stands on a temporary: down its
+     * chain of properties and elements, the base fetched for writing (zend_delayed_compile_var) must be a
+     * variable, a static property or a call, else php-src's "Cannot use temporary expression in write context".
+     */
+    static boolean onTemporary(Object place) {
+        Object base = place;
+        while (base instanceof Ast node && (node.is("AST_PROP") || node.is("AST_NULLSAFE_PROP") || node.is("AST_DIM"))) {
+            base = node.get("expr");
+        }
+        return base != place && !isCall(base)
+                && !(base instanceof Ast node && (node.is("AST_VAR") || node.is("AST_STATIC_PROP")));
+    }
+
+    /** place() of a place written: onTemporary's compile error first. */
+    private LValueNode written(Object value) {
+        if (onTemporary(value)) {
+            throw compileError(((Ast) value).line, "Cannot use temporary expression in write context");
+        }
+        return place(value);
+    }
+
     static boolean isCall(Object value) {
         return value instanceof Ast node && (node.is("AST_CALL") || node.is("AST_METHOD_CALL")
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
@@ -772,8 +799,8 @@ public final class Translator {
                 continue; // #[attributes] on the declaration
             }
             String name = names.declared((String) element.get("name"));
-            constantExpression(element.get("value"));
-            ExprNode value = expression(element.get("value"));
+            checkConstantExpression(element.get("value"), true, element.line);
+            ExprNode value = constantExpression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
         return block(result);
@@ -910,6 +937,7 @@ public final class Translator {
             PhpFunction.Param[] params = new PhpFunction.Param[paramList.size()];
             for (int i = 0; i < params.length; i++) {
                 Ast param = (Ast) paramList.child(i);
+                checkConstantExpression(param.get("default"), true, param.line);
                 Ast type = param.node("type");
                 Object defaultValue = param.get("default") == null ? null : param.get("default");
                 boolean nullable = isNullable(type) || isNullConstant(defaultValue);
@@ -1388,7 +1416,7 @@ public final class Translator {
         for (int i = 0; i < params.length; i++) {
             paramSlots[i] = bodyScope.slot(params[i].name());
             Object defaultValue = ((Ast) paramList.child(i)).get("default");
-            defaults[i] = defaultValue == null ? null : body.expression(defaultValue);
+            defaults[i] = defaultValue == null ? null : body.constantExpression(defaultValue);
         }
         int[] captureSlots = new int[captures.length];
         for (int i = 0; i < captures.length; i++) {
@@ -1618,13 +1646,24 @@ public final class Translator {
         }
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
+        String backingType = null;
+        if ((node.flags & ClassTemplate.ENUM) != 0 && node.node("type") != null) {
+            backingType = typeString(node.node("type"), false);
+            if (!backingType.equals("int") && !backingType.equals("string")) {
+                throw compileError(node.line, "Enum backing type must be int or string, " + backingType + " given");
+            }
+        }
+        if ((node.flags & ClassTemplate.READONLY) != 0 && hasAttribute(node, "AllowDynamicProperties")) {
+            throw compileError(node.line, "Cannot apply #[\\AllowDynamicProperties] to readonly class "
+                    + name.split("\0")[0]);
+        }
         ClassInfo info = new ClassInfo(name, parentName, false);
         Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
         try {
             for (Object child : node.node("stmts").children()) {
-                inClass.addMember(members, (Ast) child, name, info);
+                inClass.addMember(members, (Ast) child, name, info, node.flags, backingType);
             }
         } catch (PhpError error) {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
@@ -1641,7 +1680,23 @@ public final class Translator {
                 unsupported);
         template.setDeclaredAt(declaredAt(node));
         template.setDeclaration(node.flags, node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        template.setBackingType(backingType);
         return template;
+    }
+
+    /** Whether the declaration has an attribute of the class (by its resolved name, case-insensitively). */
+    private boolean hasAttribute(Ast node, String className) {
+        if (node.node("attributes") == null) {
+            return false;
+        }
+        for (Object group : node.node("attributes").children()) {
+            for (Object attribute : ((Ast) group).children()) {
+                if (className(((Ast) attribute).node("class")).equalsIgnoreCase(className)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** A trait: its members are translated for each class that uses it, on that class's first declaration. */
@@ -1654,7 +1709,7 @@ public final class Translator {
                     declaredNames);
             List<ClassTemplate.Member> members = new ArrayList<>();
             for (Object child : statements.children()) {
-                inClass.addMember(members, (Ast) child, className, info);
+                inClass.addMember(members, (Ast) child, className, info, 0, null);
             }
             return members;
         };
@@ -1694,9 +1749,25 @@ public final class Translator {
         return new ClassTemplate.TraitUse(traits, aliases, exclusions);
     }
 
-    private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info) {
+    /**
+     * A class member; classFlags and backingType are the class's (php-ast's flags; an enum's "int" or "string"),
+     * 0 and null for a trait's.
+     */
+    private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info,
+                           int classFlags, String backingType) {
+        boolean isEnum = (classFlags & ClassTemplate.ENUM) != 0;
+        int readonlyClass = (classFlags & ClassTemplate.READONLY) != 0 ? MODIFIER_READONLY : 0;
         switch (member.kind) {
             case "AST_METHOD": {
+                String methodName = (String) member.get("name");
+                if (isEnum && (member.flags & MODIFIER_ABSTRACT) != 0) {
+                    throw compileError(member.line, "Enum method " + className + "::" + methodName
+                            + "() must not be abstract");
+                }
+                if (isEnum && (methodName.equalsIgnoreCase("cases") || backingType != null
+                        && (methodName.equalsIgnoreCase("from") || methodName.equalsIgnoreCase("tryFrom")))) {
+                    throw compileError(member.line, "Cannot redeclare " + className + "::" + methodName + "()");
+                }
                 PhpFunction method = declareFunction(member, info);
                 magicReturnType(member, className, method.getName());
                 List<PhpClass.PropertyDecl> promoted = new ArrayList<>();
@@ -1705,9 +1776,14 @@ public final class Translator {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
                             String propertyName = Str.sourceKey((String) param.get("name"));
+                            int modifiers = param.flags & PROPERTY_MODIFIERS | readonlyClass;
                             PhpType type = propertyType(param.node("type"), className, propertyName);
+                            if ((modifiers & MODIFIER_READONLY) != 0 && type == null) {
+                                throw compileError(param.line, "Readonly property " + className + "::$"
+                                        + param.get("name") + " must have type");
+                            }
                             promoted.add(new PhpClass.PropertyDecl(propertyName, type == null ? PhpNull.NULL : null,
-                                    PhpClass.PropertyDecl.visibilityOf(param.flags), null, type));
+                                    PhpClass.PropertyDecl.visibilityOf(param.flags), null, modifiers, type));
                         }
                     }
                 }
@@ -1735,8 +1811,12 @@ public final class Translator {
                 break;
             }
             case "AST_PROP_GROUP": {
+                if (isEnum) {
+                    throw compileError(member.line, "Enum " + className + " cannot include properties");
+                }
                 boolean isStatic = (member.flags & MODIFIER_STATIC) != 0;
                 int visibility = PhpClass.PropertyDecl.visibilityOf(member.flags);
+                int modifiers = member.flags & PROPERTY_MODIFIERS | readonlyClass;
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
@@ -1744,15 +1824,46 @@ public final class Translator {
                     // hooks'
                     boolean hooked = element.get("hooks") != null;
                     PhpType type = hooked ? null : propertyType(member.node("type"), className, propertyName);
+                    if ((modifiers & MODIFIER_READONLY) != 0) {
+                        // zend_compile_prop_decl's readonly checks
+                        String what = "Readonly property " + className + "::$" + element.get("name");
+                        if (member.node("type") == null) {
+                            throw compileError(element.line, what + " must have type");
+                        }
+                        if (element.get("default") != null) {
+                            throw compileError(element.line, what + " cannot have default value");
+                        }
+                        if (isStatic) {
+                            throw compileError(element.line, "Static property " + className + "::$"
+                                    + element.get("name") + " cannot be readonly");
+                        }
+                    }
                     Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
                     if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {
                         initial = validDefault(type, initial, member.line, "default value for property " + className
                                 + "::$" + Str.keyText(propertyName));
                     }
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type,
-                            hooked));
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, modifiers,
+                            type, hooked));
                 }
+                break;
+            }
+            case "AST_ENUM_CASE": {
+                String caseName = (String) member.get("name");
+                if (!isEnum) {
+                    throw compileError(member.line, "Case can only be used in enums");
+                }
+                if (backingType == null && member.get("expr") != null) {
+                    throw compileError(member.line, "Case " + caseName + " of non-backed enum " + className
+                            + " must not have a value");
+                }
+                if (backingType != null && member.get("expr") == null) {
+                    throw compileError(member.line, "Case " + caseName + " of backed enum " + className
+                            + " must have a value");
+                }
+                members.add(new ClassTemplate.Case(caseName,
+                        member.get("expr") == null ? null : constantOrDeferred(member.get("expr"))));
                 break;
             }
             case "AST_USE_TRAIT":
@@ -1760,6 +1871,88 @@ public final class Translator {
                 break;
             default:
                 throw unsupported(member, "class member");
+        }
+    }
+
+    /**
+     * zend_compile_const_expr's checks: only zend_is_allowed_in_const_expr's kinds, `new` where the context takes
+     * it (not in a class constant or property default), no object cast, only static closures, calls only as first
+     * class callables.
+     */
+    private void checkConstantExpression(Object expression, boolean newAllowed, int line) {
+        String error = constantExpressionError(expression, newAllowed);
+        if (error != null) {
+            throw compileError(expression instanceof Ast ast ? ast.line : line, error);
+        }
+    }
+
+    private String constantExpressionError(Object expression, boolean newAllowed) {
+        if (!(expression instanceof Ast ast)) {
+            return null;
+        }
+        switch (ast.kind) {
+            case "AST_CLOSURE":
+                return (ast.flags & MODIFIER_STATIC) == 0 ? "Closures in constant expressions must be static"
+                        : ast.get("uses") != null ? "Cannot use(...) variables in constant expression" : null;
+            case "AST_NEW":
+                if (!newAllowed) {
+                    return "New expressions are not supported in this context";
+                }
+                break;
+            case "AST_CAST":
+                if (ast.flags == TYPE_OBJECT) {
+                    return "Object casts are not supported in this context";
+                }
+                break;
+            case "AST_CALL", "AST_STATIC_CALL": {
+                if (!isCallableConvert(ast)) {
+                    return "Constant expression contains invalid operations";
+                }
+                boolean call = ast.is("AST_CALL");
+                if (!(ast.get(call ? "expr" : "class") instanceof Ast name) || !name.is("AST_NAME")) {
+                    return call ? "Cannot use dynamic function name in constant expression"
+                            : "Cannot use dynamic class name in constant expression";
+                }
+                if (!call && !(ast.get("method") instanceof String)) {
+                    return "Cannot use dynamic method name in constant expression";
+                }
+                if (!call && className(name).equalsIgnoreCase("static")) {
+                    return "\"static\" is not allowed in compile-time constants";
+                }
+                break;
+            }
+            case "AST_NAME", "AST_BINARY_OP", "AST_GREATER", "AST_GREATER_EQUAL", "AST_AND", "AST_OR",
+                 "AST_UNARY_OP", "AST_UNARY_PLUS", "AST_UNARY_MINUS", "AST_CONDITIONAL", "AST_DIM", "AST_ARRAY",
+                 "AST_ARRAY_ELEM", "AST_UNPACK", "AST_CONST", "AST_CLASS_CONST", "AST_CLASS_NAME", "AST_MAGIC_CONST",
+                 "AST_COALESCE", "AST_ARG_LIST", "AST_NAMED_ARG", "AST_PROP", "AST_NULLSAFE_PROP",
+                 "AST_CALLABLE_CONVERT":
+                break;
+            default:
+                return "Constant expression contains invalid operations";
+        }
+        for (Object child : ast.children()) {
+            String error = constantExpressionError(child, newAllowed);
+            if (error != null) {
+                return error;
+            }
+        }
+        for (Object child : ast.namedValues()) {
+            String error = constantExpressionError(child, newAllowed);
+            if (error != null) {
+                return error;
+            }
+        }
+        return null;
+    }
+
+    /** A constant expression's tree (constantExpression set while it is translated). */
+    private ExprNode constantExpression(Object expression) {
+        boolean outer = constantExpression;
+        constantExpression = true;
+        try {
+            return expression(expression);
+        } finally {
+            constantExpression = outer;
         }
     }
 
@@ -1858,61 +2051,13 @@ public final class Translator {
 
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
-        constantExpression(expression);
-        ExprNode node = expression(expression);
+        checkConstantExpression(expression, false, 0);
+        ExprNode node = constantExpression(expression);
         Object value = node.constantValue();
         if (value != null) {
             return value;
         }
         return new ThunkRootNode(language, node);
-    }
-
-    /**
-     * zend_compile_const_expr's compile errors for what PHP 8.5 allows of calls and closures in a constant
-     * expression: a static closure without use(), and `f(...)` or `Cls::m(...)` of names.
-     */
-    private void constantExpression(Object value) {
-        if (!(value instanceof Ast ast)) {
-            return;
-        }
-        switch (ast.kind) {
-            case "AST_CLOSURE" -> {
-                if ((ast.flags & MODIFIER_STATIC) == 0) {
-                    throw compileError(ast.line, "Closures in constant expressions must be static");
-                }
-                if (ast.get("uses") != null) {
-                    throw compileError(ast.line, "Cannot use(...) variables in constant expression");
-                }
-                return;
-            }
-            case "AST_CALL", "AST_STATIC_CALL" -> {
-                if (!isCallableConvert(ast)) {
-                    throw compileError(ast.line, "Constant expression contains invalid operations");
-                }
-                boolean call = ast.is("AST_CALL");
-                if (!(ast.get(call ? "expr" : "class") instanceof Ast name) || !name.is("AST_NAME")) {
-                    throw compileError(ast.line, call ? "Cannot use dynamic function name in constant expression"
-                            : "Cannot use dynamic class name in constant expression");
-                }
-                if (!call && !(ast.get("method") instanceof String)) {
-                    throw compileError(ast.line, "Cannot use dynamic method name in constant expression");
-                }
-                if (!call && className(name).equalsIgnoreCase("static")) {
-                    throw compileError(ast.line, "\"static\" is not allowed in compile-time constants");
-                }
-                return;
-            }
-            case "AST_METHOD_CALL", "AST_NULLSAFE_METHOD_CALL", "AST_ARROW_FUNC" ->
-                    throw compileError(ast.line, "Constant expression contains invalid operations");
-            default -> {
-            }
-        }
-        for (Object child : ast.children()) {
-            constantExpression(child);
-        }
-        for (Object child : ast.namedValues()) {
-            constantExpression(child);
-        }
     }
 
     /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
@@ -2463,12 +2608,14 @@ public final class Translator {
                     }
                     return new GlobalsDimNode(expression(dim));
                 }
-                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : placeOrExpression(node.get("expr"));
+                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : constantObject(node.get("expr"), true);
                 return element(container, dim == null ? null : expression(dim));
             }
             case "AST_PROP": {
-                ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
+                // php-src checks the object after evaluating a computed name, which this order can't do
+                ExprNode object = prop instanceof String ? constantObject(node.get("expr"), false)
+                        : placeOrExpression(node.get("expr"));
                 if (prop instanceof String name) {
                     return new PropNode(object, Str.sourceKey(name), null, lexicalClass(), scopeInFrame());
                 }
@@ -2512,6 +2659,13 @@ public final class Translator {
     }
 
     /** $this, a place, or any other expression (as a container of a dimension or property). */
+    /** placeOrExpression of the object of `->` (element false) or `[]`, checked in a constant expression. */
+    private ExprNode constantObject(Object value, boolean element) {
+        ExprNode object = placeOrExpression(value);
+        return constantExpression && object.constantValue() == null
+                ? new ConstantNodes.ConstantObjectNode(object, element) : object;
+    }
+
     private ExprNode placeOrExpression(Object value) {
         if (value instanceof Ast ast && ast.is("AST_VAR") && "this".equals(ast.get("name"))) {
             return new ThisNode();
@@ -2617,7 +2771,7 @@ public final class Translator {
             }
             return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
         }
-        return AssignNodes.AssignNode.create(place(target), expression(node.get("expr")));
+        return AssignNodes.AssignNode.create(written(target), expression(node.get("expr")));
     }
 
     private ExprNode compoundAssignment(Ast node) {
@@ -2635,6 +2789,9 @@ public final class Translator {
      * in order, into a hidden variable, as php-src evaluates the keys once (zend_delayed_compile_dim).
      */
     private ExprNode readWritten(Object var, Function<LValueNode, ExprNode> operation) {
+        if (onTemporary(var)) {
+            throw compileError(((Ast) var).line, "Cannot use temporary expression in write context");
+        }
         List<ExprNode> keys = new ArrayList<>();
         LValueNode target = keysEvaluatedOnce(var, keys);
         ExprNode result = operation.apply(target);

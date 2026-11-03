@@ -57,19 +57,27 @@ public final class Builtins {
         private final List<PhpFunction> generatorMethods;
         private final List<PhpFunction> closureMethods;
         private final List<PhpFunction> weakReferenceMethods;
+        private final List<PhpFunction> enumMethods;
         /** CURLFile's and CURLStringFile's methods; null when libcurl isn't there (no curl extension). */
         private final CurlFunctions.Methods curlMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
                       List<PhpFunction> generatorMethods, List<PhpFunction> closureMethods,
-                      List<PhpFunction> weakReferenceMethods, CurlFunctions.Methods curlMethods) {
+                      List<PhpFunction> weakReferenceMethods, List<PhpFunction> enumMethods,
+                      CurlFunctions.Methods curlMethods) {
             this.weakReferenceMethods = weakReferenceMethods;
+            this.enumMethods = enumMethods;
             this.constants = constants;
             this.functions = functions;
             this.throwableMethods = throwableMethods;
             this.generatorMethods = generatorMethods;
             this.closureMethods = closureMethods;
             this.curlMethods = curlMethods;
+        }
+
+        /** Every enum's cases(), and a backed one's from() and tryFrom() (zend_enum_register_funcs). */
+        public List<PhpFunction> enumMethods() {
+            return enumMethods;
         }
 
         /** A predefined constant's value, or null: the same in every context, so the translator folds it. */
@@ -121,7 +129,7 @@ public final class Builtins {
         }
         return new Table(constants(curl), List.copyOf(registry.functions()), throwableMethods(registry),
                 generatorMethods(registry), ClosureMethods.methods(registry), WeakReferences.methods(registry),
-                curlMethods);
+                enumMethods(registry), curlMethods);
     }
 
     /** The CLI SAPI's STDIN, STDOUT and STDERR. */
@@ -258,6 +266,7 @@ public final class Builtins {
         PhpClass stringable = declare(context, "Stringable", null, true);
         PhpClass throwable = declare(context, "Throwable", null, true);
         throwable.addInterface(stringable);
+        declare(context, "BackedEnum", null, true).addInterface(declare(context, "UnitEnum", null, true));
         declare(context, "stdClass", null, false);
         PhpClass generator = new PhpClass("Generator", null, false, false, context.getLanguage().rootShape(),
                 "Generator");
@@ -332,6 +341,42 @@ public final class Builtins {
             phpClass.addMethod(method);
         }
         context.declareClass(phpClass);
+    }
+
+    private static List<PhpFunction> enumMethods(Registry registry) {
+        return List.of(
+                registry.method("UnitEnum", "cases", true, a -> {
+                    PhpClass phpClass = (PhpClass) a[PhpFunction.ARG_STATIC];
+                    Args.arity(a, phpClass.getName() + "::cases", 0, 0);
+                    PhpArray cases = new PhpArray();
+                    for (String name : phpClass.caseNames()) {
+                        cases.append(phpClass.getConstant(name));
+                    }
+                    return cases;
+                }),
+                registry.method("BackedEnum", "from", true, a -> enumFrom(a, false)),
+                registry.method("BackedEnum", "tryFrom", true, a -> enumFrom(a, true)));
+    }
+
+    /** zend_enum_from_base: the case of a backing value; for one no case has, a ValueError, or null for tryFrom. */
+    private static Object enumFrom(Object[] a, boolean tryFrom) {
+        PhpClass phpClass = (PhpClass) a[PhpFunction.ARG_STATIC];
+        String function = phpClass.getName() + (tryFrom ? "::tryFrom" : "::from");
+        Args.arity(a, function, 1, 1);
+        PhpContext context = PhpContext.get(null);
+        boolean isInt = phpClass.backingType().equals("int");
+        Object value = Args.get(a, 0);
+        Object key = isInt ? (Object) Args.integer(context, a, 0, function, "value", "int")
+                : value instanceof Long ? Convert.toStr(value) : Args.string(context, a, 0, function, "value", false);
+        String name = phpClass.casesByValue().get(PhpClass.caseKey(key));
+        if (name != null) {
+            return phpClass.getConstant(name);
+        }
+        if (tryFrom) {
+            return PhpNull.NULL;
+        }
+        throw new PhpError("ValueError", (isInt ? key.toString() : "\"" + Str.java((TruffleString) key) + "\"")
+                + " is not a valid backing value for enum " + phpClass.getName());
     }
 
     private static List<PhpFunction> throwableMethods(Registry registry) {

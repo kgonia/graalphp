@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.stmt;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.profiles.BranchProfile;
@@ -301,7 +302,10 @@ public final class BasicStmts {
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
-            self.setProperty(name, value);
+            // an uninitialized (readonly) property is put with its flags
+            if (!DynamicObjectLibrary.getUncached().putIfPresent(self, name, value)) {
+                self.initProperty(name, value);
+            }
         }
     }
 }

@@ -422,6 +422,8 @@ final class ReflectionFunctions {
         for (ClassTemplate.Member member : template.ownMembers()) {
             if (member instanceof ClassTemplate.Constant constant && !names.contains(constant.name())) {
                 names.add(constant.name());
+            } else if (member instanceof ClassTemplate.Case enumCase) {
+                names.add(enumCase.name());
             }
         }
         List<PhpClass> inherited = new ArrayList<>();

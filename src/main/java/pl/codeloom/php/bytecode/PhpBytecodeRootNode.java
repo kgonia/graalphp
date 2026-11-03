@@ -1416,7 +1416,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                  @Cached ElementNodes.ElementIfSetNode read) {
-            Object container = ElementChain.read(access.readOn(frame, object, site.name), keys, read);
+            Object container = ElementChain.read(access.readForUnsetOn(frame, object, site.name), keys, read);
             Object key = ElementChain.removed(node, container, keys, toKey);
             if (key != null) {
                 ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey);
@@ -1619,6 +1619,44 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * `$obj->name` as the object of a write to its properties or elements, rw for a compound assignment
+     * (PropNode.readForWriteOn).
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class)
+    public static final class ReadPropForWrite {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, boolean rw, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readForWriteOn(frame, object, site.name, rw);
+        }
+    }
+
+    /** The object of `->` or `[]` in a parameter's default (ConstantNodes.ConstantObjectNode.check). */
+    @Operation
+    @ConstantOperand(type = boolean.class)
+    public static final class ConstantObject {
+        @Specialization
+        public static Object check(boolean element, Object value) {
+            return ConstantNodes.ConstantObjectNode.check(value, element);
+        }
+    }
+
+    /** `$obj->name` as the object of an unset() of its properties or elements (PropNode.readForUnsetOn). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropForUnset {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readForUnsetOn(frame, object, site.name);
+        }
+    }
+
     /** `$obj->$name`: the object, then the name (PropName). */
     @Operation
     @ConstantOperand(type = PropSite.class)
@@ -1705,7 +1743,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                           neverDefault = true) PropNode access, @Bind Node node) {
             PhpObject target = propertyTarget(object, site.name, "increment/decrement");
             Object old = access.readOn(frame, target, site.name);
-            Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            Object updated;
+            try {
+                updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            } catch (PhpError e) {
+                // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
+                if (target.isReadonly(site.name)) {
+                    access.writeOn(frame, target, site.name, old);
+                }
+                throw e;
+            }
             if (old instanceof Long && updated instanceof Double) {
                 PropNode.incDecOverflow(target, site.name, increment);
             }

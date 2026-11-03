@@ -257,7 +257,8 @@ public final class DimNode extends LValueNode {
     /** The containers are read as isset() reads them (FETCH_DIM_UNSET): quietly. */
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
+        Object value = container instanceof PropNode property ? property.readForUnset(frame)
+                : container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray current) {
             Object k = normalizedKey(frame);
             if (current.containsKey(k)) {

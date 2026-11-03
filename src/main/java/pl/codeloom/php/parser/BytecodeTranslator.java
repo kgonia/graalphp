@@ -69,6 +69,10 @@ public final class BytecodeTranslator {
     private static final boolean REPORT = REPORT_ALL || REPORT_MODE.equals("true");
     /** How many translations {@link #collect} tries for one function before it gives up. */
     private static final int COLLECT_LIMIT = 500;
+    /** php-src's fetch types of a written property's object (writtenObject). */
+    private static final int BP_VAR_W = 1;
+    private static final int BP_VAR_RW = 2;
+    private static final int BP_VAR_UNSET = 5;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
     /**
@@ -289,6 +293,8 @@ public final class BytecodeTranslator {
         private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
+        /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
+        private boolean constantExpression;
         /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
         private final java.util.ArrayDeque<String> dispatched = new java.util.ArrayDeque<>();
         /** report=all: how many nodes of a kind on a line this run has met, for {@link #key}. */
@@ -445,7 +451,9 @@ public final class BytecodeTranslator {
                     if (constantShaped(defaultValue)) {
                         constant(defaultValue, param);
                     } else {
+                        constantExpression = true;
                         expression(defaultValue);
+                        constantExpression = false;
                     }
                     b.endConditional();
                 }
@@ -1318,7 +1326,7 @@ public final class BytecodeTranslator {
                     b.beginBlock();
                     Ast property = delayedProp(ast, VariableVariableNode.W);
                     b.beginForeachRefProp(writtenPropSite(property));
-                    expression(property.get("expr"));
+                    writtenObject(property.get("expr"), BP_VAR_W);
                     b.endForeachRefProp();
                     b.endBlock();
                     return;
@@ -1556,7 +1564,7 @@ public final class BytecodeTranslator {
                         break;
                     }
                     b.beginReadElement();
-                    expression(node.get("expr"));
+                    constantObject(node.get("expr"), true);
                     key(node.get("dim"));
                     b.endReadElement();
                     break;
@@ -1588,10 +1596,10 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"), VariableVariableNode.RW);
+                        Ast target = writtenProp(node.node("var"), VariableVariableNode.RW);
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
-                        expression(target.get("expr"));
+                        writtenObject(target.get("expr"), BP_VAR_RW);
                         b.endCompoundProp();
                         b.endBlock();
                         break;
@@ -1618,9 +1626,9 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"), VariableVariableNode.RW);
+                        Ast target = writtenProp(node.node("var"), VariableVariableNode.RW);
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
-                        expression(target.get("expr"));
+                        writtenObject(target.get("expr"), BP_VAR_RW);
                         b.endIncDecProp();
                         b.endBlock();
                         break;
@@ -2010,11 +2018,11 @@ public final class BytecodeTranslator {
                     Ast property = delayedProp(place, VariableVariableNode.W);
                     if (property.get("prop") instanceof String name) {
                         b.beginRefProp(propSite(property, name));
-                        expression(property.get("expr"));
+                        writtenObject(property.get("expr"), BP_VAR_W);
                         b.endRefProp();
                     } else {
                         b.beginRefPropNamed(propSite(property, null));
-                        expression(property.get("expr"));
+                        writtenObject(property.get("expr"), BP_VAR_W);
                         propName(property.get("prop"));
                         b.endRefPropNamed();
                     }
@@ -2100,7 +2108,7 @@ public final class BytecodeTranslator {
                     Ast property = delayedProp(target, VariableVariableNode.W);
                     b.beginBindProp(writtenPropSite(property));
                     refOf(place);
-                    expression(property.get("expr"));
+                    writtenObject(property.get("expr"), BP_VAR_W);
                     b.endBindProp();
                     b.endBlock();
                 }
@@ -2841,7 +2849,7 @@ public final class BytecodeTranslator {
         private void readProp(Ast node) {
             if (node.get("prop") instanceof String name) {
                 b.beginReadProp(propSite(node, name));
-                expression(node.get("expr"));
+                constantObject(node.get("expr"), false);
                 b.endReadProp();
                 return;
             }
@@ -2849,6 +2857,41 @@ public final class BytecodeTranslator {
             expression(node.get("expr"));
             propName(node.get("prop"));
             b.endReadPropNamed();
+        }
+
+        /** The object of `->` (element false) or `[]`, checked in a constant expression (ConstantObject). */
+        private void constantObject(Object object, boolean element) {
+            if (!constantExpression || !(object instanceof Ast)) {
+                expression(object);
+                return;
+            }
+            b.beginConstantObject(element);
+            expression(object);
+            b.endConstantObject();
+        }
+
+        /**
+         * The object of a write to one of its properties or elements, fetched as php-src fetches it down the chain:
+         * a property for writing (BP_VAR_W), for a compound assignment (BP_VAR_RW) or for unset() (BP_VAR_UNSET),
+         * PropNode.readForWriteOn and readForUnsetOn; anything else is evaluated.
+         */
+        private void writtenObject(Object object, int fetch) {
+            if (!(object instanceof Ast node && node.is("AST_PROP") && node.get("prop") instanceof String name)) {
+                // a variable or an element under unset() quietly (BP_VAR_UNSET)
+                if (fetch == BP_VAR_UNSET) {
+                    readIfSet(object);
+                } else {
+                    expression(object);
+                }
+            } else if (fetch == BP_VAR_UNSET) {
+                b.beginReadPropForUnset(propSite(node, name));
+                writtenObject(node.get("expr"), fetch);
+                b.endReadPropForUnset();
+            } else {
+                b.beginReadPropForWrite(propSite(node, name), fetch == BP_VAR_RW);
+                writtenObject(node.get("expr"), fetch);
+                b.endReadPropForWrite();
+            }
         }
 
         private void propName(Object prop) {
@@ -2897,6 +2940,14 @@ public final class BytecodeTranslator {
             }
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
             return withParts(target, "expr", object, "prop", prop);
+        }
+
+        /** delayedProp of a place written: Translator.onTemporary's compile error first. */
+        private Ast writtenProp(Ast target, int fetch) {
+            if (Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
+            return delayedProp(target, fetch);
         }
 
         /**
@@ -2948,17 +2999,17 @@ public final class BytecodeTranslator {
          */
         private void writeProp(Ast target, Object value) {
             b.beginBlock();
-            Ast place = delayedProp(target, VariableVariableNode.W);
+            Ast place = writtenProp(target, VariableVariableNode.W);
             if (place.get("prop") instanceof String name) {
                 b.beginWriteProp(propSite(place, name));
                 expression(value);
-                expression(place.get("expr"));
+                writtenObject(place.get("expr"), BP_VAR_W);
                 b.endWriteProp();
             } else {
                 b.beginWritePropNamed(propSite(place, null));
                 expression(value);
                 propName(place.get("prop"));
-                expression(place.get("expr"));
+                writtenObject(place.get("expr"), BP_VAR_W);
                 b.endWritePropNamed();
             }
             b.endBlock();
@@ -2970,7 +3021,7 @@ public final class BytecodeTranslator {
          */
         private void writePropElement(Ast target, Object value) {
             b.beginBlock();
-            Ast property = delayedProp(target.node("expr"), VariableVariableNode.W);
+            Ast property = writtenProp(target.node("expr"), VariableVariableNode.W);
             Object dim = target.get("dim");
             if (!(property.get("prop") instanceof String)) {
                 // `$obj->$name[...] = value`: the name, evaluated now unless a variable, converted after the value
@@ -2978,13 +3029,13 @@ public final class BytecodeTranslator {
                     b.beginAppendPropElementNamed(propSite(property, null));
                     expression(value);
                     propName(property.get("prop"));
-                    expression(property.get("expr"));
+                    writtenObject(property.get("expr"), BP_VAR_W);
                     b.endAppendPropElementNamed();
                 } else {
                     b.beginWritePropElementNamed(propSite(property, null));
                     expression(value);
                     propName(property.get("prop"));
-                    expression(property.get("expr"));
+                    writtenObject(property.get("expr"), BP_VAR_W);
                     key(dim);
                     b.endWritePropElementNamed();
                 }
@@ -2995,12 +3046,12 @@ public final class BytecodeTranslator {
             if (dim == null) {
                 b.beginAppendPropElement(site);
                 expression(value);
-                expression(property.get("expr"));
+                writtenObject(property.get("expr"), BP_VAR_W);
                 b.endAppendPropElement();
             } else {
                 b.beginWritePropElement(site);
                 expression(value);
-                expression(property.get("expr"));
+                writtenObject(property.get("expr"), BP_VAR_W);
                 key(dim);
                 b.endWritePropElement();
             }
@@ -3012,6 +3063,9 @@ public final class BytecodeTranslator {
          * (a constant or a variable).
          */
         private void unsetProp(Ast target) {
+            if (Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
             if (isVariableVariable(target.get("expr"))) {
                 target = withParts(target, "expr", new Ast("AST_VAR", VariableVariableNode.UNSET, target.line,
                         target.endLine, null, Map.of("name", target.node("expr").get("name"))), "prop",
@@ -3020,7 +3074,7 @@ public final class BytecodeTranslator {
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
-                readIfSet(target.get("expr"));
+                writtenObject(target.get("expr"), BP_VAR_UNSET);
                 b.endUnsetProp();
                 return;
             }
@@ -3028,7 +3082,7 @@ public final class BytecodeTranslator {
                 throw new Unsupported("unset of a property by a computed name", target);
             }
             b.beginUnsetPropNamed(propSite(target, null));
-            readIfSet(target.get("expr"));
+            writtenObject(target.get("expr"), BP_VAR_UNSET);
             propName(prop);
             b.endUnsetPropNamed();
         }
@@ -3228,7 +3282,7 @@ public final class BytecodeTranslator {
                     b.endReadPropIfSet();
                     b.beginWriteProp(propSite(place, name));
                     expression(value);
-                    expression(place.get("expr"));
+                    writtenObject(place.get("expr"), BP_VAR_W);
                     b.endWriteProp();
                 } else {
                     b.beginReadPropIfSetNamed(propSite(place, null));
@@ -3238,7 +3292,7 @@ public final class BytecodeTranslator {
                     b.beginWritePropNamed(propSite(place, null));
                     expression(value);
                     propName(place.get("prop"));
-                    expression(place.get("expr"));
+                    writtenObject(place.get("expr"), BP_VAR_W);
                     b.endWritePropNamed();
                 }
                 b.endCoalesce();
@@ -3299,6 +3353,9 @@ public final class BytecodeTranslator {
          */
         private ElementPlace elementPlace(Ast target, String what) {
             List<Object> dims = new ArrayList<>();
+            if (!what.equals("argument") && Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
             Ast base = target;
             // down to the base; `$GLOBALS[name]` is a place of its own (a global), the base of the keys below it
             while (base.is("AST_DIM") && !isGlobals(base.get("expr"))) {
@@ -3388,7 +3445,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginWritePropNested(place.site(), append);
                 expression(value);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), BP_VAR_W);
                 emitKeys(keys);
                 b.endWritePropNested();
             }
@@ -3440,7 +3497,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginCompoundPropNested(place.site(), op);
                 expression(value);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), BP_VAR_RW);
                 emitKeys(keys);
                 b.endCompoundPropNested();
             }
@@ -3467,7 +3524,7 @@ public final class BytecodeTranslator {
                 b.endIncDecNested();
             } else {
                 b.beginIncDecPropNested(place.site(), increment, prefix);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), BP_VAR_RW);
                 emitKeys(keys);
                 b.endIncDecPropNested();
             }
@@ -3494,7 +3551,7 @@ public final class BytecodeTranslator {
                 b.endUnsetNested();
             } else {
                 b.beginUnsetPropNested(place.site());
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), BP_VAR_UNSET);
                 emitKeys(keys);
                 b.endUnsetPropNested();
             }
@@ -4407,7 +4464,7 @@ public final class BytecodeTranslator {
                 } else {
                     b.beginSendPropNested(place.site(), index, append);
                     b.emitLoadStackValue(callee);
-                    expression(place.property().get("expr"));
+                    writtenObject(place.property().get("expr"), BP_VAR_W);
                     emitKeys(keys);
                     b.endSendPropNested();
                 }
@@ -4860,7 +4917,7 @@ public final class BytecodeTranslator {
     private static final int EXEC_INCLUDE_ONCE = 4;
     private static final int EXEC_REQUIRE = 8;
     private static final int EXEC_REQUIRE_ONCE = 16;
-    private static final int PROMOTED = 7 | 128;
+    private static final int PROMOTED = 7 | 128 | 1024 | 2048 | 4096;
 
     /** Whether a body has a finally block, outside the functions and classes declared in it. */
     private static boolean hasFinally(Object node) {
