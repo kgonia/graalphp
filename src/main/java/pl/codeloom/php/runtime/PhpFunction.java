@@ -210,11 +210,17 @@ public final class PhpFunction {
     /** A call from runtime code (not a call node): no inline caching. The result is a value. */
     @TruffleBoundary
     public Object invoke(Object thisObject, PhpClass staticClass, Object... args) {
+        return PhpRef.deref(invokeRef(thisObject, staticClass, args));
+    }
+
+    /** invoke, the result as the function returned it: a reference from a function returning by reference. */
+    @TruffleBoundary
+    public Object invokeRef(Object thisObject, PhpClass staticClass, Object... args) {
         Object[] arguments = new Object[ARG_FIRST + args.length];
         arguments[ARG_THIS] = thisObject;
         arguments[ARG_STATIC] = staticClass;
         System.arraycopy(args, 0, arguments, ARG_FIRST, args.length);
-        return PhpRef.deref(getCallTarget().call(arguments));
+        return getCallTarget().call(arguments);
     }
 
     public String displayName() {

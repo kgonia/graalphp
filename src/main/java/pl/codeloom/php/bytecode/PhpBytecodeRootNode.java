@@ -1321,8 +1321,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
     private static Object propertyForWrite(VirtualFrame frame, PropNode access, Object object, String name) {
-        PhpArray array = access.arrayForWriteOn(frame, object, name);
-        return array != null ? array : access.readOn(frame, object, name);
+        return access.containerForWriteOn(frame, object, name);
     }
 
     /**
@@ -2075,14 +2074,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpArray array = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
                     createdArray);
             if (array == null) {
-                throw overloadedElement();
+                return DimNode.overloadedRef(node, Variables.value(Locals.stored(frame, variable, bytecode)), key);
             }
             return array.refAt(toKey.execute(key));
-        }
-
-        @TruffleBoundary
-        private static PhpError overloadedElement() {
-            return new PhpError("Indirect modification of overloaded element");
         }
     }
 
@@ -3962,10 +3956,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The reference of the element keys name from base (made writable), or of a new element (append). */
     private static PhpRef elementRef(Node node, Object base, Object[] keys, boolean append,
                                      ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
-        int levels = append ? keys.length : keys.length - 1;
-        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        int levels = keys.length - 1;
+        Object container = ElementChain.forWrite(node, base, keys, append ? keys.length : levels, toKey, read);
         if (!(container instanceof PhpArray array)) {
-            throw ElementChain.overloaded();
+            return DimNode.overloadedRef(node, container, append ? PhpNull.NULL : keys[levels]);
         }
         return append ? array.appendRef() : array.refAt(toKey.execute(keys[levels]));
     }
