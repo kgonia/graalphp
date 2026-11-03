@@ -49,6 +49,12 @@ public final class StringFunctions {
         r.fn("join", a -> implode(a));
         r.fn("sprintf", a -> Sprintf.format(a, 0));
         r.fn("vsprintf", (context, a) -> Sprintf.formatArray(context, a, 0, "vsprintf"));
+        r.fn("sscanf", "00*", (context, a) -> {
+            Args.arity(a, "sscanf", 2, Integer.MAX_VALUE);
+            TruffleString string = Args.string(context, a, 0, "sscanf", "string", false);
+            TruffleString format = Args.string(context, a, 1, "sscanf", "format", false);
+            return Scanf.scan(Str.readBytes(string), Str.readBytes(format), a, 2);
+        });
         r.fn("vprintf", (context, a) -> {
             TruffleString text = Sprintf.formatArray(context, a, 0, "vprintf");
             context.write(text);

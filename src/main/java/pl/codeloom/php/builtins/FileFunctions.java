@@ -1101,6 +1101,16 @@ final class FileFunctions {
             Args.string(context, a, 1, "fprintf", "format", false);
             return printTo(stream, Sprintf.format(a, 1));
         });
+        r.fn("fscanf", "00*", (context, a) -> {
+            Args.arity(a, "fscanf", 2, Integer.MAX_VALUE);
+            PhpResource resource = resource(a, 0, "fscanf", "stream", false);
+            TruffleString format = Args.string(context, a, 1, "fscanf", "format", false);
+            if (resource.isClosed() || !(resource.getHandle() instanceof Stream stream)) {
+                throw new PhpError("TypeError", "fscanf(): supplied resource is not a valid File-Handle resource");
+            }
+            byte[] line = stream.readLine(-1);
+            return line == null ? Boolean.FALSE : Scanf.scan(line, Str.readBytes(format), a, 2);
+        });
         r.fn("vfprintf", (context, a) -> {
             Args.arity(a, "vfprintf", 3, 3);
             return printTo(stream(a, "vfprintf"), Sprintf.formatArray(context, a, 1, "vfprintf"));
