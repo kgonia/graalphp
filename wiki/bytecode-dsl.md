@@ -774,3 +774,46 @@ variables by name, bc-scope) is what `$$name` needs.
 **Still the tree's whatever the corpus:** a file's top-level code (`FileRootNode`: the globals by name, the hoisted
 declarations, `return` from an include), constant expressions evaluated on first use (`ThunkRootNode`: class
 constants, property defaults), and `eval`. The tree can't be deleted before these move.
+
+### The flip measured (2026-11-03, CPUs 14-21, interleaved, the order reversed every round)
+One build for both, `38f8f31` (target/classes-bd2), `php.Interpreter=tree` against the default.
+
+**Gate 1** (`bench/gate1/ab.sh all 200 6`): time per iteration, ms, medians of 6 rounds; the ratio is bytecode's time
+over the tree's (IQR). A third variant is the tree without its in-place built-ins (`Intrinsics`, a property in a
+build made only for this): how much of the gap the bytecode's calls of those built-ins could explain.
+
+| kernel | tree | bytecode | bytecode / tree | tree without intrinsics / tree |
+|---|---|---|---|---|
+| hooks | 13.05 | 15.83 | 1.24 (1.04-1.42) | 1.16 (1.12-1.35) |
+| escape | 1.60 | 2.24 | 1.43 (1.11-1.73) | 1.05 (0.98-1.06) |
+| slugs | 1.37 | 1.83 | 1.24 (1.13-1.96) | 1.02 (0.88-1.03) |
+| wpautop | 4.71 | 5.67 | 1.17 (1.01-1.66) | 1.09 (1.04-1.16) |
+| wptexturize | 3.42 | 3.76 | 1.09 (1.02-1.39) | 1.05 (0.99-1.31) |
+| blocks | 5.79 | 6.58 | 1.19 (1.11-1.29) | 1.05 (1.04-1.09) |
+| kses | 23.54 | 32.06 | 1.30 (1.27-1.45) | 1.26 (1.13-1.32) |
+| peak memory | 1,257 MB | 1,542 MB | 1.23 | 1.14 |
+
+At the flip itself (`c1fa98a`, bytecode roots still splitting, a busier host): hooks 1.27, escape 1.58, slugs 1.20,
+wpautop 1.15, wptexturize 1.51, blocks 1.01, kses 1.18, memory 1.18. The intrinsics account for most of hooks' and
+kses' gap and about half of wpautop's; not for escape's, slugs' and blocks'.
+
+**Cold code** (`bench/cold`, 4 files run once, 10 rounds, `Parser=java`): bytecode 32.22 against the tree's 39.78,
+0.80 (0.76-0.90); peak memory 328 against 451 MB, 0.73.
+
+**Gate 2** (`native.sh measure 3 200 1`, 200 visits, medians of 3 rounds):
+
+| | tree | bytecode |
+|---|---|---|
+| start to the cold home page | 4.75 s | 6.19 s |
+| cold visit: wait / CPU | 5.82 s / 31.9 CPU-s | 8.91 s / 51.3 CPU-s |
+| warm wait per visit (last 50) | 0.537 s | 0.579 s (1.08) |
+| warm CPU per visit (last 50) | 1.42 CPU-s | 2.32 CPU-s (1.63) |
+| memory.peak after the cold visit / warm | 868 / 1,331 MB | 1,083 / 1,967 MB (1.48) |
+
+Correctness on the same build: Gate 2's pages 19/21 equal to PHP's on both (the two oEmbed links), the WooCommerce
+walk 51 equal responses and rows of 51, tree against bytecode.
+
+The pattern: cold code runs faster on bytecode (the uncached interpreter, smaller), the first visits slower and
+the compiled steady state about a fifth slower, with more memory. The compiler is the cost: a bytecode function's
+compile takes 1.3-1.5 times the tree's for 1.1 times the graph (the splitting section), and on Gate 2 the warm
+visits still spend 1.63 times the CPU, compile threads included.
