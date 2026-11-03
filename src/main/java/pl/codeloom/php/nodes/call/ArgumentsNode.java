@@ -88,14 +88,15 @@ public final class ArgumentsNode extends Node {
             return place.makeRef(frame);
         }
         if (calls[i]) {
-            return refArgument(frame, args[i]);
+            return callee.isPreferRef() ? args[i].execute(frame) : refArgument(frame, args[i]);
         }
         if (args[i] instanceof AssignNodes.RefAssignNode assign) {
             return assign.executeRef(frame);
         }
         Object value = args[i].execute(frame);
         // ponytail: `$x = &f()` as an argument is sent as its value, unchecked
-        if (!(args[i] instanceof ThisNode) && !(args[i] instanceof AssignNodes.CallRefAssignNode)) {
+        if (!callee.isPreferRef() && !(args[i] instanceof ThisNode)
+                && !(args[i] instanceof AssignNodes.CallRefAssignNode)) {
             throw CallNode.cannotPassByRef(callee, position);
         }
         return value;

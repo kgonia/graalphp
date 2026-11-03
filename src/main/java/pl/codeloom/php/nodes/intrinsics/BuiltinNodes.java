@@ -413,6 +413,13 @@ public final class BuiltinNodes {
      * loop's array walk and string appends, inlined, cost about 170 IR nodes per call site.
      */
     public abstract static class ImplodeNode extends BuiltinNode {
+        /** implode or join: the name the fallback's errors give. */
+        private final String name;
+
+        protected ImplodeNode(String name) {
+            this.name = name;
+        }
+
         @Specialization
         protected TruffleString join(TruffleString glue, PhpArray pieces) {
             return joinPieces(this, glue, pieces);
@@ -431,7 +438,7 @@ public final class BuiltinNodes {
 
         @Fallback
         protected Object other(Object glue, Object pieces) {
-            return callFull("implode", glue, pieces);
+            return callFull(name, glue, pieces);
         }
     }
 

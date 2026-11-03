@@ -12,6 +12,8 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpResource;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -27,23 +29,22 @@ final class ArrayFunctions {
     private ArrayFunctions() {
     }
 
-    /** A key/value pair taken out of an array for sorting. */
-    private record Entry(Object key, Object value) {
-    }
-
     static void register(Registry r) {
         r.fn("array_keys", a -> keys(Args.array(a, 0, "array_keys"), Args.has(a, 1) ? Args.get(a, 1) : null,
                 Args.bool(a, 2, false)));
         r.fn("array_values", a -> values(Args.array(a, 0, "array_values")));
         r.fn("array_merge", a -> merge(a));
-        r.fn("array_map", (context, a) -> map(context, a));
+        r.fn("array_map", (context, a) -> {
+            Args.arity(a, "array_map", 2, Integer.MAX_VALUE);
+            return map(context, a);
+        });
         r.fn("array_filter", (context, a) -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
         r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
         r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
-        r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array"), Args.bool(a, 2, false)) != null);
+        r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array", "haystack"), Args.bool(a, 2, false)) != null);
         r.fn("array_search", a -> {
-            Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search"), Args.bool(a, 2, false));
+            Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search", "haystack"), Args.bool(a, 2, false));
             return key == null ? Boolean.FALSE : key;
         });
         r.fn("array_slice", a -> slice(Args.array(a, 0, "array_slice"), Args.lng(a, 1, 0),
@@ -64,14 +65,19 @@ final class ArrayFunctions {
             return result;
         });
         r.fn("array_fill_keys", a -> {
-            PhpArray keys = Args.array(a, 0, "array_fill_keys");
+            PhpArray keys = Args.array(a, 0, "array_fill_keys", "keys");
             PhpArray result = new PhpArray();
             for (int p = keys.firstPosition(); p >= 0; p = keys.nextPosition(p)) {
-                result.put(ArrayKey.of(keys.valueAt(p)), Args.get(a, 1));
+                result.put(stringKey(keys.valueAt(p)), Args.get(a, 1));
             }
             return result;
         });
-        r.fn("array_column", a -> column(Args.array(a, 0, "array_column"), Args.get(a, 1), Args.get(a, 2)));
+        r.fn("array_column", (context, a) -> {
+            Args.arity(a, "array_column", 2, 3);
+            PhpArray rows = Args.array(a, 0, "array_column");
+            return column(context, rows, stringOrLong(context, a, 1, "column_key"),
+                    Args.has(a, 2) ? stringOrLong(context, a, 2, "index_key") : null);
+        });
         r.fn("array_pop", "1", a -> pop(Args.ref(a, 0)));
         r.fn("array_push", "1", a -> {
             PhpArray array = writable(Args.ref(a, 0), "array_push");
@@ -120,14 +126,20 @@ final class ArrayFunctions {
             PhpArray array = Args.array(a, 0, "array_flip");
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                result.put(ArrayKey.of(array.valueAt(p)), array.keyAt(p));
+                Object value = array.valueAt(p);
+                if (value instanceof Long || value instanceof TruffleString) {
+                    result.put(ArrayKey.of(value), array.keyAt(p));
+                } else {
+                    ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING, Str.of("array_flip(): Can "
+                            + "only flip string and integer values, entry skipped"), SourceLocation.current());
+                }
             }
             return result;
         });
         r.fn("array_reverse", a -> reverse(Args.array(a, 0, "array_reverse"), Args.bool(a, 1, false)));
         r.fn("array_combine", a -> {
-            PhpArray keys = Args.array(a, 0, "array_combine");
-            PhpArray values = Args.array(a, 1, "array_combine");
+            PhpArray keys = Args.array(a, 0, "array_combine", "keys");
+            PhpArray values = Args.array(a, 1, "array_combine", "values");
             if (keys.size() != values.size()) {
                 throw new PhpError("ValueError", "array_combine(): Argument #1 ($keys) and argument #2 ($values) "
                         + "must have the same number of elements");
@@ -135,7 +147,7 @@ final class ArrayFunctions {
             PhpArray result = new PhpArray();
             int q = values.firstPosition();
             for (int p = keys.firstPosition(); p >= 0; p = keys.nextPosition(p)) {
-                result.put(ArrayKey.of(keys.valueAt(p)), values.valueAt(q));
+                result.put(stringKey(keys.valueAt(p)), values.valueAt(q));
                 q = values.nextPosition(q);
             }
             return result;
@@ -162,25 +174,25 @@ final class ArrayFunctions {
             }
             return result;
         });
-        r.fn("array_sum", a -> {
-            Object total = 0L;
-            PhpArray array = Args.array(a, 0, "array_sum");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                total = pl.codeloom.php.runtime.Operators.add(null, total, Convert.toNumber(array.valueAt(p)));
-            }
-            return total;
-        });
+        r.fn("array_sum", (context, a) -> binop(context, a, "array_sum", true));
         r.fn("array_count_values", a -> {
             PhpArray array = Args.array(a, 0, "array_count_values");
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object key = ArrayKey.of(array.valueAt(p));
+                Object value = array.valueAt(p);
+                if (!(value instanceof Long || value instanceof TruffleString)) {
+                    ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING, Str.of("array_count_values(): "
+                            + "Can only count string and integer values, entry skipped"), SourceLocation.current());
+                    continue;
+                }
+                Object key = ArrayKey.of(value);
                 Object current = result.get(key);
                 result.put(key, current == null ? 1L : (Long) current + 1);
             }
             return result;
         });
         r.fn("array_walk", "1", (context, a) -> {
+            Args.arity(a, "array_walk", 2, 3);
             PhpArray array = writable(Args.ref(a, 0), "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
@@ -205,6 +217,7 @@ final class ArrayFunctions {
             return carry;
         });
         r.fn("array_walk_recursive", "1", (context, a) -> {
+            Args.arity(a, "array_walk_recursive", 2, 3);
             PhpArray array = writable(Args.ref(a, 0), "array_walk_recursive");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));
@@ -216,23 +229,34 @@ final class ArrayFunctions {
         r.fn("array_merge_recursive", a -> {
             PhpArray result = new PhpArray();
             for (int i = 0; i < Args.count(a); i++) {
-                mergeRecursive(result, Args.array(a, i, "array_merge_recursive"));
+                mergeRecursive(result, Args.array(a, i, "array_merge_recursive", null));
             }
             return result;
         });
         r.fn("array_change_key_case", a -> changeKeyCase(Args.array(a, 0, "array_change_key_case"),
                 Args.lng(a, 1, 0) == 1));
         r.fn("array_chunk", a -> chunk(Args.array(a, 0, "array_chunk"), Args.lng(a, 1, 0), Args.bool(a, 2, false)));
-        r.fn("array_product", a -> {
-            PhpArray array = Args.array(a, 0, "array_product");
-            Object product = 1L;
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                product = Operators.mul(null, product, Convert.toNumber(array.valueAt(p)));
-            }
-            return product;
-        });
+        r.fn("array_product", (context, a) -> binop(context, a, "array_product", false));
         r.fn("array_diff_assoc", a -> diffAssoc(a, true));
         r.fn("array_intersect_assoc", a -> diffAssoc(a, false));
+        r.fn("array_udiff", (context, a) -> sortedUserDiff(context, a, "array_udiff", true, true, false, true,
+                false));
+        r.fn("array_uintersect", (context, a) -> sortedUserDiff(context, a, "array_uintersect", false, true, false,
+                true, false));
+        r.fn("array_diff_ukey", (context, a) -> sortedUserDiff(context, a, "array_diff_ukey", true, false, false,
+                false, true));
+        r.fn("array_intersect_ukey", (context, a) -> sortedUserDiff(context, a, "array_intersect_ukey", false, false,
+                false, false, true));
+        r.fn("array_diff_uassoc", (context, a) -> sortedUserDiff(context, a, "array_diff_uassoc", true, false, true,
+                false, true));
+        r.fn("array_intersect_uassoc", (context, a) -> sortedUserDiff(context, a, "array_intersect_uassoc", false,
+                false, true, false, true));
+        r.fn("array_udiff_uassoc", (context, a) -> sortedUserDiff(context, a, "array_udiff_uassoc", true, false,
+                true, true, true));
+        r.fn("array_uintersect_uassoc", (context, a) -> sortedUserDiff(context, a, "array_uintersect_uassoc", false,
+                false, true, true, true));
+        r.fn("array_udiff_assoc", (context, a) -> keyedUserDiff(context, a, "array_udiff_assoc", true));
+        r.fn("array_uintersect_assoc", (context, a) -> keyedUserDiff(context, a, "array_uintersect_assoc", false));
         r.fn("array_rand", a -> rand(Args.array(a, 0, "array_rand"), Args.lng(a, 1, 1)));
         r.fn("shuffle", "1", a -> {
             PhpRef ref = Args.ref(a, 0);
@@ -248,15 +272,18 @@ final class ArrayFunctions {
         r.fn("iterator_to_array", a -> iteratorToArray(Args.get(a, 0), Args.bool(a, 1, true)));
 
         // ---- sorting ----
-        r.fn("sort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, false));
-        r.fn("rsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, false));
-        r.fn("usort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, false));
-        r.fn("asort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, true));
-        r.fn("arsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, true));
-        r.fn("uasort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, true));
-        r.fn("ksort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, false, true));
-        r.fn("krsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, true, true));
-        r.fn("uksort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), true, false, true));
+        r.fn("sort", "1", (context, a) -> sort(context, a, false, false, false, false));
+        r.fn("rsort", "1", (context, a) -> sort(context, a, false, false, true, false));
+        r.fn("usort", "1", (context, a) -> sort(context, a, true, false, false, false));
+        r.fn("asort", "1", (context, a) -> sort(context, a, false, false, false, true));
+        r.fn("arsort", "1", (context, a) -> sort(context, a, false, false, true, true));
+        r.fn("uasort", "1", (context, a) -> sort(context, a, true, false, false, true));
+        r.fn("ksort", "1", (context, a) -> sort(context, a, false, true, false, true));
+        r.fn("krsort", "1", (context, a) -> sort(context, a, false, true, true, true));
+        r.fn("uksort", "1", (context, a) -> sort(context, a, true, true, false, true));
+        r.fn("natsort", "1", (context, a) -> natsort(context, a, "natsort"));
+        r.fn("natcasesort", "1", (context, a) -> natsort(context, a, "natcasesort"));
+        r.fn("array_multisort", "2*", (context, a) -> multisort(a));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));
@@ -319,9 +346,9 @@ final class ArrayFunctions {
             Object value = source.valueAt(p);
             Object current = key instanceof Long ? null : target.get(key);
             if (key instanceof Long) {
-                target.append(value);
+                target.appendCopied(source.copiedAt(p));
             } else if (current == null) {
-                target.put(key, value);
+                target.putCopied(key, source.copiedAt(p));
             } else {
                 PhpArray merged = current instanceof PhpArray existing ? existing.copy() : PhpArray.list(current);
                 if (value instanceof PhpArray nested) {
@@ -329,7 +356,8 @@ final class ArrayFunctions {
                 } else {
                     merged.append(value);
                 }
-                target.put(key, merged);
+                // a reference there is replaced by the array, not written through (ZVAL_UNREF or ZVAL_DUP)
+                target.replace(key, merged);
             }
         }
     }
@@ -368,9 +396,9 @@ final class ArrayFunctions {
                 result.append(chunk);
             }
             if (preserveKeys) {
-                chunk.put(array.keyAt(p), array.valueAt(p));
+                chunk.putCopied(array.keyAt(p), array.copiedAt(p));
             } else {
-                chunk.append(array.valueAt(p));
+                chunk.appendCopied(array.copiedAt(p));
             }
         }
         return result;
@@ -394,7 +422,7 @@ final class ArrayFunctions {
                 inAny |= found;
             }
             if (diff ? !inAny : inAll) {
-                result.put(key, first.valueAt(p));
+                result.putCopied(key, first.copiedAt(p));
             }
         }
         return result;
@@ -466,7 +494,7 @@ final class ArrayFunctions {
 
     private static void appendAll(PhpArray target, PhpArray source) {
         for (int p = source.firstPosition(); p >= 0; p = source.nextPosition(p)) {
-            target.append(source.valueAt(p));
+            target.appendCopied(source.copiedAt(p));
         }
     }
 
@@ -501,13 +529,13 @@ final class ArrayFunctions {
         boolean packed = true;
         boolean longs = true;
         for (int i = 0; i < arguments; i++) {
-            PhpArray array = Args.array(a, i, "array_merge");
+            PhpArray array = Args.array(a, i, "array_merge", null);
             count += array.size();
             packed &= array.isPacked();
             longs &= array.holdsLongs() || array.size() == 0;
         }
         if (arguments == 2) {
-            PhpArray first = Args.array(a, 0, "array_merge");
+            PhpArray first = Args.array(a, 0, "array_merge", null);
             PhpArray second = Args.array(a, 1, "array_merge");
             PhpArray only = first.size() == 0 ? second : second.size() == 0 ? first : null;
             if (only != null && (only.isPacked() || onlyStringKeys(only))) {
@@ -517,13 +545,13 @@ final class ArrayFunctions {
         PhpArray result = count == 0 ? new PhpArray() : !packed ? PhpArray.ofHashCapacity(count)
                 : longs ? PhpArray.ofLongCapacity(count) : PhpArray.ofCapacity(count);
         for (int i = 0; i < arguments; i++) {
-            PhpArray array = Args.array(a, i, "array_merge");
+            PhpArray array = Args.array(a, i, "array_merge", null);
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object key = array.keyAt(p);
                 if (key instanceof Long) {
-                    result.append(array.valueAt(p));
+                    result.appendCopied(array.copiedAt(p));
                 } else {
-                    result.put(key, array.valueAt(p));
+                    result.putCopied(key, array.copiedAt(p));
                 }
             }
         }
@@ -545,7 +573,11 @@ final class ArrayFunctions {
                 : Callables.parameter(context, Args.get(a, 0), new Callables.Parameter("array_map", 1, true));
         int arrays = Args.count(a) - 1;
         if (arrays == 1) {
-            PhpArray array = Args.array(a, 1, "array_map");
+            PhpArray array = Args.array(a, 1, "array_map", "array");
+            if (callback == null) {
+                // the array itself (ZVAL_COPY), its references and internal pointer included
+                return array;
+            }
             PhpArray result = PhpArray.ofCapacity(array.size());
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = callback == null ? array.valueAt(p) : callback.call(array.valueAt(p));
@@ -557,7 +589,7 @@ final class ArrayFunctions {
         int[] positions = new int[arrays];
         int longest = 0;
         for (int i = 0; i < arrays; i++) {
-            inputs[i] = Args.array(a, i + 1, "array_map");
+            inputs[i] = Args.array(a, i + 1, "array_map", i == 0 ? "array" : null);
             positions[i] = inputs[i].firstPosition();
             longest = Math.max(longest, inputs[i].size());
         }
@@ -566,13 +598,21 @@ final class ArrayFunctions {
             Object[] values = new Object[arrays];
             for (int i = 0; i < arrays; i++) {
                 if (positions[i] >= 0) {
-                    values[i] = inputs[i].valueAt(positions[i]);
+                    values[i] = callback == null ? inputs[i].copiedAt(positions[i]) : inputs[i].valueAt(positions[i]);
                     positions[i] = inputs[i].nextPosition(positions[i]);
                 } else {
                     values[i] = PhpNull.NULL;
                 }
             }
-            result.append(callback == null ? PhpArray.list(values) : callback.call(values));
+            if (callback == null) {
+                PhpArray zipped = PhpArray.ofCapacity(arrays);
+                for (Object value : values) {
+                    zipped.appendCopied(value);
+                }
+                result.append(zipped);
+            } else {
+                result.append(callback.call(values));
+            }
         }
         return result;
     }
@@ -596,7 +636,7 @@ final class ArrayFunctions {
                 keep = Convert.toBool(callback.call(value));
             }
             if (keep) {
-                result.put(key, value);
+                result.putCopied(key, array.copiedAt(p));
             }
         }
         return result;
@@ -640,9 +680,9 @@ final class ArrayFunctions {
             }
             Object key = array.keyAt(p);
             if (key instanceof Long && !preserveKeys) {
-                result.append(array.valueAt(p));
+                result.appendCopied(array.copiedAt(p));
             } else {
-                result.put(key, array.valueAt(p));
+                result.putCopied(key, array.copiedAt(p));
             }
         }
         return result;
@@ -703,7 +743,7 @@ final class ArrayFunctions {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object value = array.valueAt(p);
             if (seen.add(Convert.toStr(value))) {
-                result.put(array.keyAt(p), value);
+                result.putCopied(array.keyAt(p), array.copiedAt(p));
             }
         }
         return result;
@@ -757,38 +797,105 @@ final class ArrayFunctions {
         return result;
     }
 
+    /**
+     * php_array_binop for array_sum and array_product: each entry added or multiplied in, but an array or an object
+     * skipped with a warning, a resource taken as its id and a non-numeric string as 0 (both warned, for BC).
+     */
     @TruffleBoundary
-    private static PhpArray column(PhpArray rows, Object columnKey, Object indexKey) {
+    private static Object binop(PhpContext context, Object[] a, String function, boolean add) {
+        Args.arity(a, function, 1, 1);
+        PhpArray array = Args.array(a, 0, function);
+        Object total = add ? 0L : 1L;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            Object entry = array.valueAt(p);
+            Object operand = entry;
+            if (entry instanceof PhpResource resource) {
+                operand = (long) resource.getId();
+            } else if (entry instanceof TruffleString s && Convert.parseNumber(Str.readBytes(s), true) == null) {
+                operand = 0L;
+            } else if (!(entry instanceof PhpArray || entry instanceof PhpObject
+                    || entry instanceof pl.codeloom.php.runtime.PhpClosure)) {
+                total = add ? Operators.add(null, total, entry) : Operators.mul(null, total, entry);
+                continue;
+            }
+            if (operand != entry) {
+                total = add ? Operators.add(null, total, operand) : Operators.mul(null, total, operand);
+            }
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(): " + (add ? "Addition"
+                    : "Multiplication") + " is not supported on type " + Operators.zvalTypeName(entry)),
+                    SourceLocation.current());
+        }
+        return total;
+    }
+
+    @TruffleBoundary
+    private static PhpArray column(PhpContext context, PhpArray rows, Object columnKey, Object indexKey) {
         PhpArray result = new PhpArray();
         for (int p = rows.firstPosition(); p >= 0; p = rows.nextPosition(p)) {
             Object row = rows.valueAt(p);
-            Object value;
-            if (columnKey == null || columnKey == PhpNull.NULL) {
-                value = row;
-            } else {
-                value = field(row, columnKey);
-                if (value == null) {
-                    continue;
-                }
+            Object value = columnKey == null ? row : field(row, columnKey);
+            if (value == null) {
+                continue;
             }
-            Object index = indexKey == null || indexKey == PhpNull.NULL ? null : field(row, indexKey);
+            Object index = indexKey == null ? null : field(row, indexKey);
             if (index == null) {
                 result.append(value);
             } else {
-                result.put(ArrayKey.of(index), value);
+                result.put(zvalKey(context, index), value);
             }
         }
         return result;
     }
 
+    /** Z_PARAM_STR_OR_LONG_OR_NULL: a TruffleString, a Long, or null. */
+    private static Object stringOrLong(PhpContext context, Object[] a, int index, String name) {
+        Object value = Args.get(a, index, PhpNull.NULL);
+        if (value == PhpNull.NULL || value instanceof Long || value instanceof TruffleString) {
+            return value == PhpNull.NULL ? null : value;
+        }
+        if (value instanceof Double || value instanceof Boolean) {
+            return Args.integer(context, a, index, "array_column", name, "string|int|null");
+        }
+        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
+            return object.toPhpString();
+        }
+        throw Args.typeError("array_column", index + 1, name, "string|int|null", value);
+    }
+
+    /** array_column_fetch_prop: an array's element, or an object's property that exists or __isset says is set. */
     private static Object field(Object row, Object key) {
         if (row instanceof PhpArray array) {
             return array.get(ArrayKey.of(key));
         }
         if (row instanceof PhpObject object) {
-            return PhpRef.deref(object.getProperty(Str.key(Convert.toStr(key))));
+            String name = Str.key(Convert.toStr(key));
+            boolean visible = object.getProperty(name) != null && object.getPhpClass().canAccessProperty(name, null);
+            if (!visible) {
+                Object isset = object.magicProperty("__isset", name);
+                if (isset == PhpObject.NO_MAGIC || !Convert.toBool(PhpRef.deref(isset))) {
+                    return null;
+                }
+                Object value = object.magicProperty("__get", name);
+                return value == PhpObject.NO_MAGIC ? null : PhpRef.deref(value);
+            }
+            return PhpRef.deref(object.getProperty(name));
         }
         return null;
+    }
+
+    /** array_set_zval_key's key: a resource as its id (warned), else as an array offset. */
+    private static Object zvalKey(PhpContext context, Object key) {
+        if (key instanceof PhpResource resource) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Resource ID#" + resource.getId()
+                    + " used as offset, casting to integer (" + resource.getId() + ")"), SourceLocation.current());
+            return (long) resource.getId();
+        }
+        return ArrayKey.of(key);
+    }
+
+    /** An int key, else the value as a string key (zval_get_string, then zend_symtable_update). */
+    private static Object stringKey(Object key) {
+        return key instanceof Long ? key : ArrayKey.of(Convert.toStr(key));
     }
 
     @TruffleBoundary
@@ -943,45 +1050,672 @@ final class ArrayFunctions {
         return result;
     }
 
+    private static final long SORT_REGULAR = 0;
+    private static final long SORT_NUMERIC = 1;
+    private static final long SORT_STRING = 2;
+    private static final long SORT_DESC = 3;
+    private static final long SORT_ASC = 4;
+    private static final long SORT_LOCALE_STRING = 5;
+    private static final long SORT_NATURAL = 6;
+    private static final long SORT_FLAG_CASE = 8;
+
+    /** A bucket being sorted: its key, raw value and original position (Z_EXTRA, for the stable fallback). */
+    private record Sorted(Object key, Object value, int order) {
+    }
+
+    /**
+     * sort, rsort, asort, arsort, ksort, krsort and the u* variants: zend_hash_sort with php_get_data_compare_func's
+     * or php_get_key_compare_func's comparison, or the callback's (php_array_user_compare), ties in their original
+     * order (RETURN_STABLE_SORT), through zend_sort so the comparisons happen in php-src's order.
+     */
     @TruffleBoundary
-    private static Object sort(PhpContext context, PhpRef ref, Object callback, boolean byKey, boolean reverse,
+    private static Object sort(PhpContext context, Object[] a, boolean user, boolean byKey, boolean reverse,
                                boolean keepKeys) {
-        String name = callback != null ? (byKey ? "uksort" : keepKeys ? "uasort" : "usort")
+        String name = user ? (byKey ? "uksort" : keepKeys ? "uasort" : "usort")
                 : (reverse ? (byKey ? "krsort" : keepKeys ? "arsort" : "rsort")
                 : (byKey ? "ksort" : keepKeys ? "asort" : "sort"));
+        Args.arity(a, name, user ? 2 : 1, 2);
+        PhpRef ref = Args.ref(a, 0);
         if (!(ref.get() instanceof PhpArray array)) {
-            throw new PhpError("TypeError", name + "(): Argument #1 ($array) must be of type array, "
-                    + Convert.debugType(ref.get()) + " given");
+            throw Args.typeError(name, 1, "array", "array", ref.get());
         }
-        List<Entry> entries = new ArrayList<>(array.size());
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            entries.add(new Entry(array.keyAt(p), array.rawAt(p)));
-        }
-        Comparator<Entry> order;
-        if (callback != null) {
-            Callables.Target compare = Callables.parameter(context, callback, new Callables.Parameter(name, 2, false));
-            order = (x, y) -> (int) Math.signum(Convert.toDouble(Convert.toNumber(compare.call(
-                    byKey ? x.key() : PhpRef.deref(x.value()), byKey ? y.key() : PhpRef.deref(y.value())))));
-        } else if (byKey) {
-            order = (x, y) -> Convert.compare(x.key(), y.key());
+        Comparator<Sorted> compare;
+        if (user) {
+            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+                    new Callables.Parameter(name, 2, false));
+            if (array.size() == 0) {
+                return true;
+            }
+            boolean[] deprecated = {false};
+            compare = (x, y) -> {
+                Object first = byKey ? x.key() : PhpRef.deref(x.value());
+                Object second = byKey ? y.key() : PhpRef.deref(y.value());
+                Object result = PhpRef.deref(callback.call(first, second));
+                if (result instanceof Boolean b) {
+                    if (!deprecated[0]) {
+                        deprecated[0] = true;
+                        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + "(): Returning bool "
+                                + "from comparison function is deprecated, return an integer less than, equal to, "
+                                + "or greater than zero"), SourceLocation.current());
+                    }
+                    if (!b) {
+                        // retried with the operands swapped
+                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.call(second, first))));
+                    }
+                }
+                return Long.signum(Convert.toLong(result));
+            };
         } else {
-            order = (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
+            long flags = Args.has(a, 1) ? Args.integer(context, a, 1, name, "flags", "int") : 0;
+            Comparator<Sorted> base = byKey ? keyCompare(flags) : dataCompare(flags);
+            compare = reverse ? (x, y) -> -base.compare(x, y) : base;
         }
-        if (reverse) {
-            order = order.reversed();
+        sortBuckets(ref, array, compare, keepKeys);
+        return true;
+    }
+
+    /** natsort and natcasesort: php_natsort, zend_hash_sort with php_array_natural_compare, the keys kept. */
+    @TruffleBoundary
+    private static Object natsort(PhpContext context, Object[] a, String name) {
+        Args.arity(a, name, 1, 1);
+        PhpRef ref = Args.ref(a, 0);
+        if (!(ref.get() instanceof PhpArray array)) {
+            throw Args.typeError(name, 1, "array", "array", ref.get());
         }
-        entries.sort(order);
-        PhpArray result = PhpArray.ofCapacity(entries.size());
-        for (Entry entry : entries) {
-            Object key = keepKeys ? entry.key() : (Object) result.nextIndex();
-            if (entry.value() instanceof PhpRef r) {
+        sortBuckets(ref, array, dataCompare(SORT_NATURAL | (name.equals("natcasesort") ? SORT_FLAG_CASE : 0)), true);
+        return true;
+    }
+
+    /** zend_hash_sort: the buckets sorted, ties in their original order, renumbered unless keepKeys. */
+    private static void sortBuckets(PhpRef ref, PhpArray array, Comparator<Sorted> unstable, boolean keepKeys) {
+        Sorted[] buckets = buckets(array);
+        int n = buckets.length;
+        zendSort(buckets, 0, n, (x, y) -> {
+            int result = unstable.compare(x, y);
+            return result != 0 ? result : Integer.compare(x.order(), y.order());
+        });
+        PhpArray result = PhpArray.ofCapacity(n);
+        for (Sorted bucket : buckets) {
+            Object key = keepKeys ? bucket.key() : (Object) result.nextIndex();
+            if (bucket.value() instanceof PhpRef r) {
                 result.putRef(key, r);
             } else {
-                result.put(key, entry.value());
+                result.put(key, bucket.value());
             }
         }
+        if (keepKeys) {
+            result.setNextIndex(array.nextIndex());
+        }
         ref.set(result);
+    }
+
+    /** The array's buckets in order, with their positions. */
+    private static Sorted[] buckets(PhpArray array) {
+        Sorted[] buckets = new Sorted[array.size()];
+        int n = 0;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            buckets[n] = new Sorted(array.keyAt(p), array.rawAt(p), n);
+            n++;
+        }
+        return buckets;
+    }
+
+    /**
+     * php_array_user_compare_unstable (and its key twin): the callback's result as zval_get_long, its sign; a
+     * false is retried with the operands swapped, a bool deprecated once per call of the built-in.
+     */
+    private static int userCompare(PhpContext context, String name, Callables.Target callback, Object first,
+                                   Object second, boolean[] deprecated) {
+        Object result = callback.call(first, second);
+        if (result instanceof Boolean b) {
+            if (!deprecated[0]) {
+                deprecated[0] = true;
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + "(): Returning bool from "
+                        + "comparison function is deprecated, return an integer less than, equal to, or greater than "
+                        + "zero"), SourceLocation.current());
+            }
+            if (!b) {
+                return -Long.signum(Convert.toLong(callback.call(second, first)));
+            }
+        }
+        return Long.signum(Convert.toLong(result));
+    }
+
+    /** An array argument of the diff and intersect functions, whose others are variadic and unnamed. */
+    private static PhpArray arrayArgument(Object[] a, int index, String name) {
+        Object value = Args.get(a, index);
+        if (value instanceof PhpArray array) {
+            return array;
+        }
+        throw new PhpError("TypeError", name + "(): Argument #" + (index + 1) + (index == 0 ? " ($array)" : "")
+                + " must be of type array, " + Args.valueName(value) + " given");
+    }
+
+    /**
+     * php_array_diff_key and php_array_intersect_key with a data callback (array_udiff_assoc,
+     * array_uintersect_assoc): the first array's entries whose key is in (none of / all) the others with a value
+     * the callback finds equal (zval_user_compare).
+     */
+    @TruffleBoundary
+    private static PhpArray keyedUserDiff(PhpContext context, Object[] a, String name, boolean diff) {
+        Args.arity(a, name, 2, Integer.MAX_VALUE);
+        int count = Args.count(a) - 1;
+        Callables.Target callback = Callables.parameter(context, Args.get(a, count),
+                new Callables.Parameter(name, count + 1, false, null));
+        PhpArray[] arrays = new PhpArray[count];
+        for (int i = 0; i < count; i++) {
+            arrays[i] = arrayArgument(a, i, name);
+        }
+        PhpArray result = new PhpArray();
+        for (int p = arrays[0].firstPosition(); p >= 0; p = arrays[0].nextPosition(p)) {
+            Object key = arrays[0].keyAt(p);
+            Object value = arrays[0].valueAt(p);
+            boolean ok = true;
+            for (int i = 1; i < count && ok; i++) {
+                Object data = arrays[i].get(key);
+                boolean equal = data != null
+                        && Long.signum(Convert.toLong(callback.call(value, PhpRef.deref(data)))) == 0;
+                ok = diff ? !equal : equal;
+            }
+            if (ok) {
+                result.put(key, value);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * php_array_diff and php_array_intersect, for the forms with callbacks (array_udiff, array_diff_ukey,
+     * array_diff_uassoc, array_udiff_uassoc and their intersect twins): each array sorted by zend_sort, without
+     * the stable fallback, then the lists walked together. byValue compares values (array_udiff), else keys
+     * first, and with assoc the values of equal keys too. The comparisons go to the "current" callback as
+     * php-src's BG(user_compare_fci), which these functions switch between the two callbacks as php-src does.
+     */
+    @TruffleBoundary
+    private static PhpArray sortedUserDiff(PhpContext context, Object[] a, String name, boolean diff,
+                                           boolean byValue, boolean assoc, boolean userData, boolean userKey) {
+        int callbacks = (userData ? 1 : 0) + (userKey ? 1 : 0);
+        Args.arity(a, name, 1 + callbacks, Integer.MAX_VALUE);
+        int count = Args.count(a) - callbacks;
+        Callables.Target first = Callables.parameter(context, Args.get(a, count),
+                new Callables.Parameter(name, count + 1, false, null));
+        Callables.Target second = callbacks == 2 ? Callables.parameter(context, Args.get(a, count + 1),
+                new Callables.Parameter(name, count + 2, false, null)) : null;
+        Callables.Target dataCallback = userData ? first : null;
+        Callables.Target keyCallback = userKey ? (userData ? second : first) : null;
+        Callables.Target[] active = {byValue ? dataCallback : keyCallback};
+        boolean[] deprecated = {false};
+        Comparator<Sorted> data = userData
+                ? (x, y) -> userCompare(context, name, active[0], PhpRef.deref(x.value()), PhpRef.deref(y.value()),
+                        deprecated)
+                : (x, y) -> Str.compare(Convert.toStr(PhpRef.deref(x.value())), Convert.toStr(PhpRef.deref(y.value())));
+        Comparator<Sorted> key = userKey
+                ? (x, y) -> userCompare(context, name, active[0], x.key(), y.key(), deprecated)
+                : (x, y) -> Str.compare(Convert.toStr(x.key()), Convert.toStr(y.key()));
+        Sorted[][] lists = new Sorted[count][];
+        for (int i = 0; i < count; i++) {
+            lists[i] = buckets(arrayArgument(a, i, name));
+            if (lists[i].length > 1) {
+                zendSort(lists[i], 0, lists[i].length, byValue ? data : key);
+            }
+        }
+        PhpArray result = ((PhpArray) Args.get(a, 0)).copy();
+        Sorted[] list = lists[0];
+        int[] ptrs = new int[count];
+        int c = 0;
+        walk:
+        while (ptrs[0] < list.length) {
+            if (!byValue && userKey) {
+                active[0] = keyCallback;
+            }
+            int i;
+            if (diff) {
+                c = 1;
+                for (i = 1; i < count; i++) {
+                    Sorted[] other = lists[i];
+                    int ptr = ptrs[i];
+                    if (byValue) {
+                        while (ptrs[i] < other.length && 0 < (c = data.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                    } else {
+                        while (ptr < other.length && 0 != (c = key.compare(list[ptrs[0]], other[ptr]))) {
+                            ptr++;
+                        }
+                    }
+                    if (c == 0) {
+                        if (byValue) {
+                            if (ptrs[i] < other.length) {
+                                ptrs[i]++;
+                            }
+                            break;
+                        } else if (assoc) {
+                            if (ptr < other.length) {
+                                if (userData) {
+                                    active[0] = dataCallback;
+                                }
+                                if (data.compare(list[ptrs[0]], other[ptr]) != 0) {
+                                    c = -1;
+                                    if (userKey) {
+                                        active[0] = keyCallback;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                for (i = 1; i < count; i++) {
+                    Sorted[] other = lists[i];
+                    if (byValue) {
+                        while (ptrs[i] < other.length && 0 < (c = data.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                    } else {
+                        while (ptrs[i] < other.length && 0 < (c = key.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                        if (c == 0 && ptrs[i] < other.length && assoc) {
+                            if (userData) {
+                                active[0] = dataCallback;
+                            }
+                            if (data.compare(list[ptrs[0]], other[ptrs[i]]) != 0) {
+                                c = 1;
+                                if (userKey) {
+                                    active[0] = keyCallback;
+                                }
+                            }
+                        }
+                    }
+                    if (ptrs[i] >= other.length) {
+                        // the rest of the first list is missing from this array
+                        while (ptrs[0] < list.length) {
+                            result.remove(list[ptrs[0]++].key());
+                        }
+                        break walk;
+                    }
+                    if (c != 0) {
+                        break;
+                    }
+                    ptrs[i]++;
+                }
+                if (c != 0) {
+                    // not in every array: drop it, and with values the entries ordered before the other's
+                    while (true) {
+                        result.remove(list[ptrs[0]].key());
+                        if (++ptrs[0] >= list.length) {
+                            break walk;
+                        }
+                        if (!byValue || 0 <= data.compare(list[ptrs[0]], lists[i][ptrs[i]])) {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+            if (diff && c == 0) {
+                // in another array: drop it and the entries equal to it
+                while (true) {
+                    result.remove(list[ptrs[0]].key());
+                    if (++ptrs[0] >= list.length) {
+                        break walk;
+                    }
+                    if (!byValue || data.compare(list[ptrs[0] - 1], list[ptrs[0]]) != 0) {
+                        break;
+                    }
+                }
+            } else {
+                // kept: skip the entries equal to it
+                while (true) {
+                    if (++ptrs[0] >= list.length) {
+                        break walk;
+                    }
+                    if (!byValue || data.compare(list[ptrs[0] - 1], list[ptrs[0]]) != 0) {
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * array_multisort(): the arrays sorted together row by row, as SQL's ORDER BY, each in the order and type of
+     * the flags after it; string keys stay, int keys are renumbered.
+     */
+    @TruffleBoundary
+    private static Object multisort(Object[] a) {
+        Args.arity(a, "array_multisort", 1, Integer.MAX_VALUE);
+        List<PhpRef> arrays = new ArrayList<>();
+        List<Comparator<Sorted>> orders = new ArrayList<>();
+        boolean orderAllowed = false;
+        boolean typeAllowed = false;
+        long order = SORT_ASC;
+        long type = SORT_REGULAR;
+        for (int i = 0; i < Args.count(a); i++) {
+            Object arg = Args.get(a, i);
+            String argument = "array_multisort(): Argument #" + (i + 1) + (i == 0 ? " ($array)" : "");
+            if (arg instanceof PhpArray) {
+                if (i > 0) {
+                    orders.add(multisortOrder(type, order));
+                    order = SORT_ASC;
+                    type = SORT_REGULAR;
+                }
+                arrays.add(Args.ref(a, i));
+                orderAllowed = true;
+                typeAllowed = true;
+            } else if (arg instanceof Long flag) {
+                long kind = flag & ~SORT_FLAG_CASE;
+                boolean isOrder = kind == SORT_ASC || kind == SORT_DESC;
+                if (!isOrder && kind != SORT_REGULAR && kind != SORT_NUMERIC && kind != SORT_STRING
+                        && kind != SORT_NATURAL && kind != SORT_LOCALE_STRING) {
+                    throw new PhpError("ValueError", argument + " must be a valid sort flag");
+                }
+                if (isOrder ? !orderAllowed : !typeAllowed) {
+                    throw new PhpError("TypeError", argument
+                            + " must be an array or a sort flag that has not already been specified");
+                }
+                if (isOrder) {
+                    order = flag == SORT_DESC ? SORT_DESC : SORT_ASC;
+                    orderAllowed = false;
+                } else {
+                    type = flag;
+                    typeAllowed = false;
+                }
+            } else {
+                throw new PhpError("TypeError", argument + " must be an array or a sort flag");
+            }
+        }
+        int size = ((PhpArray) arrays.get(0).get()).size();
+        for (PhpRef ref : arrays) {
+            if (((PhpArray) ref.get()).size() != size) {
+                throw new PhpError("ValueError", "Array sizes are inconsistent");
+            }
+        }
+        if (size == 0) {
+            return true;
+        }
+        orders.add(multisortOrder(type, order));
+        int columns = arrays.size();
+        Sorted[][] rows = new Sorted[size][columns];
+        for (int i = 0; i < columns; i++) {
+            Sorted[] column = buckets((PhpArray) arrays.get(i).get());
+            for (int k = 0; k < size; k++) {
+                rows[k][i] = column[k];
+            }
+        }
+        // php_multisort_compare: the columns in turn, then the first column's original order
+        zendSort(rows, 0, size, (x, y) -> {
+            for (int i = 0; i < columns; i++) {
+                int result = orders.get(i).compare(x[i], y[i]);
+                if (result != 0) {
+                    return result > 0 ? 1 : -1;
+                }
+            }
+            return Integer.compare(x[0].order(), y[0].order());
+        });
+        for (int i = 0; i < columns; i++) {
+            PhpArray result = PhpArray.ofCapacity(size);
+            for (Sorted[] row : rows) {
+                Object key = row[i].key() instanceof Long ? (Object) result.nextIndex() : row[i].key();
+                if (row[i].value() instanceof PhpRef r) {
+                    result.putRef(key, r);
+                } else {
+                    result.put(key, row[i].value());
+                }
+            }
+            result.setNextIndex(size);
+            arrays.get(i).set(result);
+        }
         return true;
+    }
+
+    /** php_get_data_compare_func_unstable for an array_multisort column, reversed for SORT_DESC. */
+    private static Comparator<Sorted> multisortOrder(long type, long order) {
+        Comparator<Sorted> compare = dataCompare(type);
+        return order == SORT_DESC ? (x, y) -> -compare.compare(x, y) : compare;
+    }
+
+    /** php_get_data_compare_func's comparisons (unstable, ascending). */
+    private static Comparator<Sorted> dataCompare(long flags) {
+        boolean fold = (flags & 8) != 0;
+        return switch ((int) (flags & ~8L)) {
+            case 1 -> (x, y) -> threeWay(Convert.toDouble(PhpRef.deref(x.value())),
+                    Convert.toDouble(PhpRef.deref(y.value())));
+            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(PhpRef.deref(x.value())),
+                    Convert.toStr(PhpRef.deref(y.value())), fold && (flags & 7) == 2);
+            case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(PhpRef.deref(x.value()))),
+                    Str.bytes(Convert.toStr(PhpRef.deref(y.value()))), fold);
+            default -> (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
+        };
+    }
+
+    /** php_get_key_compare_func's comparisons (unstable, ascending). */
+    private static Comparator<Sorted> keyCompare(long flags) {
+        boolean fold = (flags & 8) != 0;
+        return switch ((int) (flags & ~8L)) {
+            case 1 -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
+                    : threeWay(keyDouble(x.key()), keyDouble(y.key()));
+            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(x.key()), Convert.toStr(y.key()), fold && (flags & 7) == 2);
+            case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(x.key())),
+                    Str.bytes(Convert.toStr(y.key())), fold);
+            default -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
+                    : Convert.compare(x.key(), y.key());
+        };
+    }
+
+    /** zend_strtod of a string key, an int key as a double. */
+    private static double keyDouble(Object key) {
+        return key instanceof Long l ? (double) l : Convert.toDouble(Convert.parseNumber(Str.readBytes(
+                (TruffleString) key), true) instanceof Object number ? number : 0L);
+    }
+
+    /** ZEND_THREEWAY_COMPARE. */
+    private static int threeWay(double a, double b) {
+        return a == b ? 0 : a < b ? -1 : 1;
+    }
+
+    /** zend_binary_strcmp, or zend_binary_strcasecmp_l (ASCII case folded, the C locale's). */
+    private static int stringCompare(TruffleString a, TruffleString b, boolean fold) {
+        byte[] x = Str.readBytes(a);
+        byte[] y = Str.readBytes(b);
+        int lx = Str.length(a);
+        int ly = Str.length(b);
+        for (int i = 0; i < Math.min(lx, ly); i++) {
+            int c = x[i] & 0xFF;
+            int d = y[i] & 0xFF;
+            if (fold) {
+                c = c >= 'A' && c <= 'Z' ? c + 32 : c;
+                d = d >= 'A' && d <= 'Z' ? d + 32 : d;
+            }
+            if (c != d) {
+                return c - d;
+            }
+        }
+        return Integer.compare(lx, ly);
+    }
+
+    // ---- zend_sort (Zend/zend_sort.c): insertion sort up to 16 elements, else a pivoted partition ----
+
+    private static <T> void swap(T[] a, int i, int j) {
+        T t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+    }
+
+    private static <T> void sort3(T[] a, int i, int j, int k, Comparator<T> cmp) {
+        if (!(cmp.compare(a[i], a[j]) > 0)) {
+            if (!(cmp.compare(a[j], a[k]) > 0)) {
+                return;
+            }
+            swap(a, j, k);
+            if (cmp.compare(a[i], a[j]) > 0) {
+                swap(a, i, j);
+            }
+            return;
+        }
+        if (!(cmp.compare(a[k], a[j]) > 0)) {
+            swap(a, i, k);
+            return;
+        }
+        swap(a, i, j);
+        if (cmp.compare(a[j], a[k]) > 0) {
+            swap(a, j, k);
+        }
+    }
+
+    private static <T> void sort4(T[] a, int i, int j, int k, int l, Comparator<T> cmp) {
+        sort3(a, i, j, k, cmp);
+        if (cmp.compare(a[k], a[l]) > 0) {
+            swap(a, k, l);
+            if (cmp.compare(a[j], a[k]) > 0) {
+                swap(a, j, k);
+                if (cmp.compare(a[i], a[j]) > 0) {
+                    swap(a, i, j);
+                }
+            }
+        }
+    }
+
+    private static <T> void sort5(T[] a, int i, int j, int k, int l, int m, Comparator<T> cmp) {
+        sort4(a, i, j, k, l, cmp);
+        if (cmp.compare(a[l], a[m]) > 0) {
+            swap(a, l, m);
+            if (cmp.compare(a[k], a[l]) > 0) {
+                swap(a, k, l);
+                if (cmp.compare(a[j], a[k]) > 0) {
+                    swap(a, j, k);
+                    if (cmp.compare(a[i], a[j]) > 0) {
+                        swap(a, i, j);
+                    }
+                }
+            }
+        }
+    }
+
+    /** zend_insert_sort; elements move by successive swaps, as php-src's swp calls. */
+    private static <T> void insertSort(T[] a, int start, int n, Comparator<T> cmp) {
+        switch (n) {
+            case 0, 1 -> {
+            }
+            case 2 -> {
+                if (cmp.compare(a[start], a[start + 1]) > 0) {
+                    swap(a, start, start + 1);
+                }
+            }
+            case 3 -> sort3(a, start, start + 1, start + 2, cmp);
+            case 4 -> sort4(a, start, start + 1, start + 2, start + 3, cmp);
+            case 5 -> sort5(a, start, start + 1, start + 2, start + 3, start + 4, cmp);
+            default -> {
+                int end = start + n;
+                int sentry = start + 6;
+                for (int i = start + 1; i < sentry; i++) {
+                    int j = i - 1;
+                    if (!(cmp.compare(a[j], a[i]) > 0)) {
+                        continue;
+                    }
+                    while (j != start) {
+                        j--;
+                        if (!(cmp.compare(a[j], a[i]) > 0)) {
+                            j++;
+                            break;
+                        }
+                    }
+                    for (int k = i; k > j; k--) {
+                        swap(a, k, k - 1);
+                    }
+                }
+                for (int i = sentry; i < end; i++) {
+                    int j = i - 1;
+                    if (!(cmp.compare(a[j], a[i]) > 0)) {
+                        continue;
+                    }
+                    while (true) {
+                        j -= 2;
+                        if (!(cmp.compare(a[j], a[i]) > 0)) {
+                            j++;
+                            if (!(cmp.compare(a[j], a[i]) > 0)) {
+                                j++;
+                            }
+                            break;
+                        }
+                        if (j == start) {
+                            break;
+                        }
+                        if (j == start + 1) {
+                            j--;
+                            if (cmp.compare(a[i], a[j]) > 0) {
+                                j++;
+                            }
+                            break;
+                        }
+                    }
+                    for (int k = i; k > j; k--) {
+                        swap(a, k, k - 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /** zend_sort. */
+    private static <T> void zendSort(T[] a, int start, int n, Comparator<T> cmp) {
+        while (true) {
+            if (n <= 16) {
+                insertSort(a, start, n, cmp);
+                return;
+            }
+            int end = start + n;
+            int offset = n >> 1;
+            int pivot = start + offset;
+            if ((n >> 10) != 0) {
+                int delta = offset >> 1;
+                sort5(a, start, start + delta, pivot, pivot + delta, end - 1, cmp);
+            } else {
+                sort3(a, start, pivot, end - 1, cmp);
+            }
+            swap(a, start + 1, pivot);
+            pivot = start + 1;
+            int i = pivot + 1;
+            int j = end - 1;
+            partition:
+            while (true) {
+                while (cmp.compare(a[pivot], a[i]) > 0) {
+                    i++;
+                    if (i == j) {
+                        break partition;
+                    }
+                }
+                j--;
+                if (j == i) {
+                    break;
+                }
+                while (cmp.compare(a[j], a[pivot]) > 0) {
+                    j--;
+                    if (j == i) {
+                        break partition;
+                    }
+                }
+                swap(a, i, j);
+                i++;
+                if (i == j) {
+                    break;
+                }
+            }
+            swap(a, pivot, i - 1);
+            if ((i - 1) - start < end - i) {
+                zendSort(a, start, i - start - 1, cmp);
+                n = end - i;
+                start = i;
+            } else {
+                zendSort(a, i, end - i, cmp);
+                n = i - start - 1;
+            }
+        }
     }
 
     private static Object current(Object value) {

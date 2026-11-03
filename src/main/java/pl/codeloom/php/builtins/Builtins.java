@@ -124,6 +124,11 @@ public final class Builtins {
                 curlMethods);
     }
 
+    /** The CLI SAPI's STDIN, STDOUT and STDERR. */
+    public static void defineStdStreams(PhpContext context) {
+        FileFunctions.defineStdStreams(context);
+    }
+
     public static void install(PhpContext context, Table table) {
         for (Map.Entry<String, Object> constant : table.constants.entrySet()) {
             context.defineConstant(constant.getKey(), constant.getValue());
@@ -179,6 +184,7 @@ public final class Builtins {
                 {"JSON_ERROR_NONE", 0L}, {"JSON_ERROR_DEPTH", 1L}, {"JSON_ERROR_SYNTAX", 4L},
                 {"JSON_ERROR_UTF8", 5L},
                 {"SORT_REGULAR", 0L}, {"SORT_NUMERIC", 1L}, {"SORT_STRING", 2L}, {"SORT_LOCALE_STRING", 5L},
+                {"INI_SCANNER_NORMAL", 0L}, {"INI_SCANNER_RAW", 1L}, {"INI_SCANNER_TYPED", 2L},
                 {"SORT_NATURAL", 6L}, {"SORT_FLAG_CASE", 8L}, {"SORT_ASC", 4L}, {"SORT_DESC", 3L},
                 {"COUNT_NORMAL", 0L}, {"COUNT_RECURSIVE", 1L},
                 {"ARRAY_FILTER_USE_BOTH", 1L}, {"ARRAY_FILTER_USE_KEY", 2L},
@@ -187,7 +193,9 @@ public final class Builtins {
                 {"PATHINFO_FILENAME", 8L}, {"PHP_ROUND_HALF_UP", 1L}, {"PHP_ROUND_HALF_DOWN", 2L},
                 {"PHP_ROUND_HALF_EVEN", 3L}, {"PHP_ROUND_HALF_ODD", 4L},
                 {"MB_CASE_UPPER", 0L}, {"MB_CASE_LOWER", 1L}, {"MB_CASE_TITLE", 2L},
-                {"LC_CTYPE", 0L}, {"LC_ALL", 6L},
+                {"CONNECTION_ABORTED", 1L}, {"CONNECTION_NORMAL", 0L}, {"CONNECTION_TIMEOUT", 2L},
+                {"LC_CTYPE", 0L}, {"LC_NUMERIC", 1L}, {"LC_TIME", 2L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L},
+                {"LC_MESSAGES", 5L}, {"LC_ALL", 6L},
                 {"PHP_SAPI", Str.of("cli")}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
                 {"PHP_MAXPATHLEN", 4096L}, {"PHP_DEBUG", 0L}, {"PHP_ZTS", 0L}, {"PHP_EXTRA_VERSION", Str.EMPTY},
                 {"PHP_FLOAT_DIG", 15L}, {"M_E", Math.E}, {"M_SQRT2", Math.sqrt(2)},
@@ -215,6 +223,7 @@ public final class Builtins {
                 {"PREG_BAD_UTF8_ERROR", 4L}, {"PREG_BAD_UTF8_OFFSET_ERROR", 5L}, {"PREG_JIT_STACKLIMIT_ERROR", 6L},
                 {"JSON_ERROR_CTRL_CHAR", 3L}, {"JSON_ERROR_STATE_MISMATCH", 2L}, {"JSON_ERROR_RECURSION", 6L},
                 {"JSON_ERROR_INF_OR_NAN", 7L}, {"JSON_ERROR_UNSUPPORTED_TYPE", 8L},
+                {"JSON_ERROR_INVALID_PROPERTY_NAME", 9L}, {"JSON_ERROR_UTF16", 10L}, {"JSON_ERROR_NON_BACKED_ENUM", 11L},
                 {"MB_CASE_FOLD", 3L}, {"MB_CASE_UPPER_SIMPLE", 4L}, {"MB_CASE_LOWER_SIMPLE", 5L},
                 {"MB_CASE_TITLE_SIMPLE", 6L}, {"MB_CASE_FOLD_SIMPLE", 7L},
                 {"LC_NUMERIC", 1L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L}, {"LC_TIME", 2L}, {"LC_MESSAGES", 5L},
@@ -232,6 +241,7 @@ public final class Builtins {
         }
         SocketFunctions.constants(constants);
         FilterFunctions.constants(constants);
+        StringFunctions.langinfoConstants(constants);
         return Collections.unmodifiableMap(constants);
     }
 
@@ -336,6 +346,19 @@ public final class Builtins {
                     }
                     if (Args.has(arguments, 2)) {
                         self.setProperty("previous", Args.get(arguments, 2));
+                    }
+                    return PhpNull.NULL;
+                }),
+                // unserialize()'s check: a message that isn't a string or a code that isn't an int is unset
+                registry.method("Exception", "__wakeup", false, arguments -> {
+                    PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
+                    Object message = property(self, "message");
+                    if (message != PhpNull.NULL && !(message instanceof TruffleString)) {
+                        self.removeProperty("message");
+                    }
+                    Object code = property(self, "code");
+                    if (code != PhpNull.NULL && !(code instanceof Long)) {
+                        self.removeProperty("code");
                     }
                     return PhpNull.NULL;
                 }),

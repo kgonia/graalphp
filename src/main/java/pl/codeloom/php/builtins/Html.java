@@ -97,7 +97,7 @@ final class Html {
     }
 
     /** A decoder for one string: get_next_char with its cursor and status. */
-    private static final class Reader {
+    static final class Reader {
         final byte[] str;
         final int length;
         final int charset;
@@ -895,5 +895,16 @@ final class Html {
         System.arraycopy(name, 0, value, 1, name.length);
         value[value.length - 1] = ';';
         result.put(ArrayKey.of(Str.of(key)), Str.of(value));
+    }
+
+    /** php_utf8_decode (utf8_decode()): Latin-1, '?' for an invalid sequence or a character above U+00FF. */
+    static TruffleString utf8Decode(byte[] s) {
+        Reader reader = new Reader(s, s.length, HtmlTables.CS_UTF_8);
+        ByteBuilder out = new ByteBuilder(s.length);
+        while (reader.pos < s.length) {
+            int c = reader.next();
+            out.write(reader.failure || c > 0xFF ? '?' : c);
+        }
+        return Str.of(out.toByteArray());
     }
 }

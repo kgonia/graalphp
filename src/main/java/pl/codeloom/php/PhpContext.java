@@ -110,6 +110,9 @@ public final class PhpContext {
         this.javaParser = parser(env.getOptions().get(PhpLanguage.Parser));
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
         Builtins.install(this, language.builtins(debug));
+        if (!cgi) {
+            Builtins.defineStdStreams(this);
+        }
         internalFunctions = functions.size();
         internalClasses = classes.size();
         PhpArray argv = new PhpArray();

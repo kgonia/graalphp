@@ -684,6 +684,11 @@ public final class PhpArray implements TruffleObject {
         return nextIndex;
     }
 
+    /** array_multisort's rebuilt hash: the next append's key is the element count, whatever the keys. */
+    public void setNextIndex(long index) {
+        nextIndex = index;
+    }
+
     /**
      * array_pop(): removes and returns the last element (dereferenced), PhpNull when empty; the internal pointer
      * goes back to the start and a popped trailing int key is reused by the next append. Packed arrays pop inline.
@@ -876,6 +881,37 @@ public final class PhpArray implements TruffleObject {
 
     public Object keyAt(int position) {
         return store instanceof Hash hash ? hash.key(position) : (Object) (long) position;
+    }
+
+    /**
+     * The element at the position as a copy of this array holds it (zend_hash_copy's Z_TRY_ADDREF): a reference
+     * held elsewhere too stays one, else its value.
+     */
+    public Object copiedAt(int position) {
+        Object raw = rawAt(position);
+        return raw instanceof PhpRef ref ? ref.copyElement(this, holders > 0) : raw;
+    }
+
+    /** put, or putRef for a reference copiedAt kept. */
+    public void putCopied(Object key, Object element) {
+        if (element instanceof PhpRef ref) {
+            putRef(key, ref);
+        } else {
+            put(key, element);
+        }
+    }
+
+    /** append, or a reference copiedAt kept at the next index. */
+    public void appendCopied(Object element) {
+        if (element instanceof PhpRef ref) {
+            long key = nextIndex;
+            putRef(key, ref);
+            if (nextIndex <= key) {
+                nextIndex = key + 1;
+            }
+        } else {
+            append(element);
+        }
     }
 
     public Object rawAt(int position) {

@@ -1,0 +1,60 @@
+diag g2-C/engine.log
+splits 825 of 121 roots; copies compiled 335 (41%), inlined somewhere 0 (0%), neither 490 (59%); polymorphic again 72 (9%)
+compilations 2827, 751 s; of copies 335 targets, 46 s (6%); inlining traces 0
+refused splits: {'Target too big': 587}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| WP_REST_Controller::get_context_param | - | 0/0 | 60 | 40 (0) | 0 | 20 | 0 | <Unknown> 60 |
+| is_wp_error | SubclassTestNode 2 | 1/0 | 58 | 14 (0) | 0 | 44 | 0 | <Unknown> 58 |
+| esc_attr | CastString_Node 1 | 1/0 | 57 | 8 (0) | 0 | 49 | 1 (CastString_Node) | <Unknown> 52, wp-includes/block-patterns/navigation-overlay.php 1 |
+| absint | - | 1/0 | 38 | 17 (0) | 0 | 21 | 0 | <Unknown> 38 |
+| get_post_type_object | ToBool_Node 1 | 1/0 | 36 | 10 (0) | 0 | 26 | 1 (ToBool_Node) | <Unknown> 36 |
+| wp_filter_object_list | ToBool_Node 1 | 1/0 | 25 | 9 (0) | 0 | 16 | 2 (ToBool_Node) | <Unknown> 25 |
+| _wp_get_current_user | ToBool_Node 1 | 0/1 | 24 | 7 (0) | 0 | 17 | 2 (ToBool_Node) | <Unknown> 24 |
+| wp_normalize_path | CastString_Node 1 | 1/0 | 24 | 20 (3) | 0 | 4 | 1 (CastString_Node) | <Unknown> 24 |
+| wp_get_current_user | - | 0/0 | 23 | 7 (0) | 0 | 16 | 0 | <Unknown> 23 |
+| WP_REST_Controller::get_endpoint_args_for_item_schema | - | 0/0 | 23 | 0 (0) | 0 | 23 | 0 | <Unknown> 23 |
+| WP_Widget_Factory::register | InstantiateNode 2 | 1/0 | 19 | 15 (0) | 0 | 4 | 1 (InstantiateNode) | <Unknown> 19 |
+| register_widget | - | 0/0 | 18 | 16 (0) | 0 | 2 | 0 | <Unknown> 18 |
+| WP_REST_Controller::get_collection_params | - | 0/0 | 17 | 1 (0) | 0 | 16 | 0 | <Unknown> 17 |
+| is_user_logged_in | - | 0/0 | 14 | 1 (0) | 0 | 13 | 0 | <Unknown> 14 |
+| get_post_types | - | 0/0 | 13 | 3 (0) | 0 | 10 | 0 | <Unknown> 13 |
+| WP_Block::refresh_parsed_block_dependents | ToBool_Node 1 | 1/0 | 13 | 6 (0) | 0 | 7 | 3 (ToBool_Node) | <Unknown> 13 |
+| WP_Query::__construct | ToBool_Node 1 | 1/0 | 12 | 5 (0) | 0 | 7 | 0 | <Unknown> 11, wp-settings.php 1 |
+| wp_style_engine_get_styles | ToBool_Node 1 | 1/0 | 12 | 7 (0) | 0 | 5 | 0 | <Unknown> 12 |
+| WP_Block::refresh_context_dependents | ToBool_Node 1 | 1/0 | 12 | 5 (1) | 0 | 7 | 7 (ToBool_Node) | <Unknown> 12 |
+| WP_Block::__construct | - | 0/0 | 10 | 4 (0) | 0 | 6 | 0 | <Unknown> 10 |
+| WP_Styles::add_inline_style | ToBool_Node 1 | 1/0 | 10 | 4 (0) | 0 | 6 | 1 (ToBool_Node) | <Unknown> 10 |
+| wpdb::placeholder_escape | ToBool_Node 4 | 4/0 | 9 | 6 (0) | 0 | 3 | 3 (ToBool_Node) | <Unknown> 9 |
+| get_taxonomies | - | 0/0 | 8 | 3 (0) | 0 | 5 | 0 | <Unknown> 8 |
+| wp_add_inline_style | - | 0/0 | 8 | 3 (0) | 0 | 5 | 0 | <Unknown> 8 |
+| WP_Post_Type::get_rest_controller | ToBool_Node 1 | 1/0 | 8 | 2 (0) | 0 | 6 | 1 (InstantiateNode) | <Unknown> 8 |
+| WP_REST_Request::get_parameter_order | ToBool_Node 1 | 1/0 | 8 | 4 (0) | 0 | 4 | 5 (ToBool_Node) | <Unknown> 8 |
+| wp_next_scheduled | ToBool_Node 1 | 0/0 | 7 | 5 (0) | 0 | 2 | 0 | <Unknown> 7 |
+| wp_parse_url | CastString_Node 1 | 1/0 | 7 | 6 (0) | 0 | 1 | 1 (CastString_Node) | <Unknown> 7 |
+| WpOrg\Requests\Hooks::dispatch | ToBool_Node 1 | 1/0 | 7 | 0 (0) | 0 | 7 | 1 (ToBool_Node) | <Unknown> 7 |
+| map_deep | CallableDispatchNode 1 | 1/0 | 7 | 6 (0) | 0 | 1 | 0 | <Unknown> 7 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| for a callee | 45 | 322 | 137 (43%) | 0 | 185 | 0 |
+| ToBool_Node | 59 | 312 | 118 (38%) | 0 | 194 | 59 |
+| CastString_Node | 3 | 88 | 34 (39%) | 0 | 54 | 3 |
+| SubclassTestNode | 7 | 71 | 21 (30%) | 0 | 50 | 5 |
+| InstantiateNode | 1 | 19 | 15 (79%) | 0 | 4 | 1 |
+| CallableDispatchNode | 6 | 13 | 10 (77%) | 0 | 3 | 4 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :      35723
+Split limit (limit for the number of nodes to create through splitting)           :     379744
+Splits (number of targets created through splitting)                              :        826
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :      35723
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     253719
+Increase in nodes                                                                 :     14.08%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :          0
+Percent of split nodes wasted                                                     :      0.00%
+Targets wasted due to splitting                                                   :          0
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS

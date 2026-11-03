@@ -200,8 +200,11 @@ public final class ElementNodes {
      * an offset out of a string's range reads "" after "Uninitialized string offset"; another scalar reads null
      * after "Trying to access array offset on"; an object that isn't an ArrayAccess is an Error. isset() and `??`
      * read with {@link ElementIfSetNode}. The key comes as written: arrays normalize it, the others take it as is.
+     * It reports no polymorphism: its specializations are the container's storage and the key's kind, a guard
+     * each, which a copy per caller would save. WP_Hook::add_filter's `isset($this->callbacks[$priority])` meets an
+     * empty array, then a hash, so add_filter and add_action were split per caller (5,300 copies on WooCommerce,
+     * 97% never compiled, wiki/bytecode-dsl.md "Which splits pay"), as ArrayKeyNode's second key did on the tree.
      */
-    @ReportPolymorphism
     @GenerateUncached
     @OperationProxy.Proxyable(allowUncached = true)
     public abstract static class ElementReadNode extends Node {

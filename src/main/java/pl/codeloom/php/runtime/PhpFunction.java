@@ -41,6 +41,11 @@ public final class PhpFunction {
     private final String name;
     @CompilationFinal(dimensions = 1) private final Param[] params;
     private final boolean returnsRef;
+    /**
+     * ZEND_SEND_PREFER_REF (a built-in's array_multisort, extract): its by-reference parameters take a variable by
+     * reference and any other argument as a value, without php-src's Error or notice.
+     */
+    private boolean preferRef;
     private final boolean isStatic;
     private final boolean isPublic;
     private final boolean isAbstract;
@@ -195,6 +200,14 @@ public final class PhpFunction {
 
     public void setBuiltin(Builtin builtin) {
         this.builtin = builtin;
+    }
+
+    public boolean isPreferRef() {
+        return preferRef;
+    }
+
+    public void setPreferRef() {
+        preferRef = true;
     }
 
     /**

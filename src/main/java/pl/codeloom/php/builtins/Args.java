@@ -62,13 +62,19 @@ public final class Args {
         return value == null ? missing : Convert.toBool(value);
     }
 
+    /** An array parameter; the first is named $array, as nearly everywhere in php-src, the others are variadic. */
     public static PhpArray array(Object[] arguments, int index, String function) {
+        return array(arguments, index, function, index == 0 ? "array" : null);
+    }
+
+    /** An array parameter of the name (null for a variadic one, which php-src's messages don't name). */
+    public static PhpArray array(Object[] arguments, int index, String function, String name) {
         Object value = get(arguments, index);
         if (value instanceof PhpArray array) {
             return array;
         }
-        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " must be of type array, "
-                + (value == null ? "none" : valueName(value)) + " given");
+        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + (name == null ? "" : " ($" + name
+                + ")") + " must be of type array, " + (value == null ? "none" : valueName(value)) + " given");
     }
 
     /** A by-reference argument. Built-ins declare these parameters by-ref, so callers pass a PhpRef. */
@@ -133,6 +139,44 @@ public final class Args {
         throw typeError(function, index + 1, name, nullable ? "?string" : "string", value);
     }
 
+    /** Z_PARAM_NUMBER in coercive mode (zend_parse_arg_number_slow): a Long or a Double. */
+    public static Object number(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Long || value instanceof Double) {
+            return value;
+        }
+        if (value instanceof TruffleString s && Convert.numericValue(s) instanceof Object number) {
+            return number;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "int|float");
+            return 0L;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1L : 0L;
+        }
+        throw typeError(function, index + 1, name, "int|float", value);
+    }
+
+    /** Z_PARAM_ARRAY_HT_OR_STR in coercive mode: the array, or the argument as a string. */
+    public static Object arrayOrString(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = PhpRef.deref(Args.get(a, index, PhpNull.NULL));
+        if (value instanceof PhpArray || value instanceof TruffleString) {
+            return value;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "array|string");
+            return Str.EMPTY;
+        }
+        if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
+            return Convert.toStr(value);
+        }
+        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
+            return object.toPhpString();
+        }
+        throw typeError(function, index + 1, name, "array|string", value);
+    }
+
     /** The deprecation of null for a scalar parameter that doesn't allow it (8.1). */
     public static void deprecateNull(PhpContext context, String function, int index, String name, String type) {
         ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(function + "(): Passing null to parameter #"
@@ -185,6 +229,28 @@ public final class Args {
             ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(message), SourceLocation.current());
         }
         return l;
+    }
+
+    /** Z_PARAM_DOUBLE in coercive mode. */
+    public static double dbl(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Double d) {
+            return d;
+        }
+        if (value instanceof Long l) {
+            return l;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "float");
+            return 0;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1 : 0;
+        }
+        if (value instanceof TruffleString s && Convert.numericValue(s) instanceof Number n) {
+            return n.doubleValue();
+        }
+        throw typeError(function, index + 1, name, "float", value);
     }
 
     /** Z_PARAM_BOOL in coercive mode (zend_parse_arg_bool_weak). */

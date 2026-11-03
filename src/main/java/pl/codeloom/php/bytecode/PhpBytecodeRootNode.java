@@ -2435,7 +2435,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class SendValue {
         @Specialization
         public static Object send(int index, PhpFunction function, Object value) {
-            if (function.isByRef(index)) {
+            if (function.isByRef(index) && !function.isPreferRef()) {
                 throw CallNode.cannotPassByRef(function, index);
             }
             return value;
@@ -2449,6 +2449,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object send(int index, PhpFunction function, Object result, @Bind Node node) {
             if (!function.isByRef(index)) {
                 return PhpRef.deref(result);
+            }
+            if (function.isPreferRef()) {
+                return PhpRef.deref(result); // SEND_VAR_NO_REF_EX sends a value to a prefer-ref parameter
             }
             if (!(result instanceof PhpRef)) {
                 CallNode.notice(node, CallNode.PASSED_VALUE);
