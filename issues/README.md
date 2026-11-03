@@ -32,3 +32,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [026](026-error-exception-constructor.md) | ErrorException ignores its severity, filename and line arguments | Open |
 | [027](027-undefined-property-warning.md) | A read of a missing property doesn't warn "Undefined property" | Open |
 | [028](028-autoload-invalid-name.md) | Autoloaders run for an empty or invalid class name | Fixed |
+| [029](029-reflection-attribute.md) | Attributes can't be read: no ReflectionAttribute | Open |
