@@ -20,3 +20,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Fixed |
 | [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Open: a decision |
 | [018](018-unpack-traversable.md) | Unpacking a Traversable fails | Fixed |
+| [019](019-extract-refs.md) | extract() with EXTR_REFS binds values | Fixed |

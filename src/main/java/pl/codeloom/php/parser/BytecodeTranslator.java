@@ -3468,8 +3468,14 @@ public final class BytecodeTranslator {
                     }
                     useCallScope();
                     b.beginExtract();
+                    boolean byRef = constants.extractTakesRef(args);
                     for (Object arg : args.children()) {
-                        expression(arg);
+                        if (byRef) {
+                            refOf((Ast) arg);
+                            byRef = false;
+                        } else {
+                            expression(arg);
+                        }
                     }
                     b.endExtract();
                     return true;

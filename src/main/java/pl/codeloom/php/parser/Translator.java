@@ -2273,6 +2273,9 @@ public final class Translator {
                 if (scope != null && scope.includeScopeSlot < 0) {
                     scope.includeScopeSlot = hiddenSlot("includeScope");
                 }
+                if (extractTakesRef(args)) {
+                    extractArgs[0] = place(args.child(0));
+                }
                 return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
                         extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots,
                         scope == null ? -1 : scope.includeScopeSlot, lexicalClass());
@@ -2290,6 +2293,24 @@ public final class Translator {
                 break;
         }
         return intrinsic(Str.lower(name), args, special);
+    }
+
+    /**
+     * Whether extract()'s array goes by reference: its parameter prefers one (ZEND_SEND_PREFER_REF), which a
+     * variable or other place takes, and only EXTR_REFS uses (php_extract_ref_*): unless the flags are a constant
+     * without it, a place is passed by reference.
+     */
+    boolean extractTakesRef(Ast args) {
+        if (args.size() < 2 || !(args.child(0) instanceof Ast array) || !(array.is("AST_DIM") || array.is("AST_PROP")
+                || array.is("AST_STATIC_PROP") || array.is("AST_VAR") && array.get("name") instanceof String name
+                && !name.equals("this"))) {
+            return false;
+        }
+        Object flags = args.child(1);
+        if (flags instanceof Ast ast && (ast.is("AST_CONST") || ast.is("AST_BINARY_OP"))) {
+            flags = expression(ast).constantValue();
+        }
+        return !(flags instanceof Long value) || (value & ExtractNode.REFS) != 0;
     }
 
     /**
