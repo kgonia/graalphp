@@ -563,9 +563,9 @@ public final class PropNode extends LValueNode {
         PhpObject phpObject = target(target, name, "modify");
         if (!accessible(arguments, phpObject, name) || objects.getOrDefault(phpObject, name, null) == null
                 && (phpObject.getPhpClass().hasHooks() || phpObject.lazy() != null)) {
-            PhpObject target = boundToHooked(arguments, phpObject, name);
-            if (target != null) {
-                twin().bindRefOn(arguments, target, name, ref);
+            PhpObject forwarded = boundToHooked(arguments, phpObject, name);
+            if (forwarded != null) {
+                twin().bindRefOn(arguments, forwarded, name, ref);
                 return;
             }
         }
