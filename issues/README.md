@@ -29,3 +29,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [025](025-array-key-conversion-notices.md) | Converting a null, float or resource array key doesn't deprecate or warn | Open |
 | [026](026-error-exception-constructor.md) | ErrorException ignores its severity, filename and line arguments | Open |
 | [027](027-undefined-property-warning.md) | A read of a missing property doesn't warn "Undefined property" | Open |
+| [028](028-autoload-invalid-name.md) | Autoloaders run for an empty or invalid class name | Fixed |

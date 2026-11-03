@@ -482,7 +482,8 @@ public final class PhpContext {
         String className = stripSlash(name);
         String lowerName = Str.lower(className);
         PhpClass phpClass = findClass(lowerName);
-        if (phpClass != null || autoloaders.isEmpty() || !autoloading.add(lowerName)) {
+        if (phpClass != null || autoloaders.isEmpty() || !validClassName(className)
+                || !autoloading.add(lowerName)) {
             return phpClass;
         }
         try {
@@ -497,6 +498,18 @@ public final class PhpContext {
         } finally {
             autoloading.remove(lowerName);
         }
+    }
+
+    /** zend_is_valid_class_name, non-empty: what php-src passes to an autoloader (0-9, a-z, A-Z, _, a backslash, 0x80-0xff). */
+    private static boolean validClassName(String name) {
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '\\'
+                    || c >= 0x80)) {
+                return false;
+            }
+        }
+        return !name.isEmpty();
     }
 
     private static String stripSlash(String name) {
