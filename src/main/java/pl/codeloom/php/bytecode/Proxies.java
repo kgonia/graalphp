@@ -11,7 +11,7 @@ import pl.codeloom.php.nodes.vars.ElementNodes;
 /**
  * The tree's nodes as the bytecode interpreter proxies them: each a subclass with the node's specializations
  * (inherited, one copy) that leaves polymorphism reporting out. The tree's nodes report polymorphism (ExprNode,
- * ToBooleanNode, ElementReadNode), and from Truffle 25.1 on, a proxied node that does generates code that doesn't
+ * ToBooleanNode), and from Truffle 25.1 on, a proxied node that does generates code that doesn't
  * compile: the specialization state moved into the bytecode array, and the generated checkForPolymorphicSpecialize
  * reads it without the array in scope (GR-61293; reported as https://github.com/oracle/graal/issues/14871, reproducer
  * https://github.com/kgonia/truffle-bytecode-reportpolymorphism-repro; plain {@code @Operation}s hit it too). An
@@ -109,7 +109,6 @@ final class Proxies {
     }
 
     @OperationProxy.Proxyable(allowUncached = true)
-    @ReportPolymorphism.Exclude
     public abstract static class ReadElement extends ElementNodes.ElementReadNode {
     }
 
