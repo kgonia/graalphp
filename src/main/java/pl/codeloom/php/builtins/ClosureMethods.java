@@ -259,7 +259,10 @@ final class ClosureMethods {
         if (closure.getBoundThis() != null) {
             info.put(Str.of("this"), closure.getBoundThis());
         }
-        PhpFunction.Param[] params = function.getParams();
+        // a closure of a method __call stands in for has the trampoline's parameter, `...$arguments`
+        PhpFunction.Param[] params = closure.getMagicName() != null
+                ? new PhpFunction.Param[] {new PhpFunction.Param("arguments", false, true, null, (char) 0, false, null)}
+                : function.getParams();
         if (params.length > 0 && function.getBuiltin() == null) {
             int required = 0;
             for (int i = 0; i < params.length; i++) {

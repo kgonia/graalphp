@@ -2845,6 +2845,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** self, parent, their ::class, or the scope a nested closure gets, in a closure (ClassRefNode.closureScope). */
+    @Operation
+    @ConstantOperand(type = int.class, name = "mode")
+    public static final class ClosureScope {
+        @Specialization
+        public static Object scope(VirtualFrame frame, int mode) {
+            return ClassRefNode.closureScope(frame, mode);
+        }
+    }
+
     // ---- methods, classes and objects (MethodCallNode, StaticCallNode, NewNode, ClassRefNode) ----
 
     /**

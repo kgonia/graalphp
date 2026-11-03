@@ -24,6 +24,7 @@ import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.bytecode.StaticPropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
+import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ClassTemplate;
@@ -1873,7 +1874,10 @@ public final class BytecodeTranslator {
                 }
             }
             b.beginMakeClosure(parts.function(), parts.byRef(), parts.isStatic());
-            if (owner == null) {
+            if (inClosure()) {
+                // a closure declared in a closure gets its scope, which bindTo may have changed
+                b.emitClosureScope(ClassRefNode.SCOPE);
+            } else if (owner == null) {
                 b.emitLoadConstant(PhpNull.NULL);
             } else {
                 b.emitResolveClass(classSite(owner.name()));
@@ -3898,8 +3902,20 @@ public final class BytecodeTranslator {
             }
             String name = classNameOf(ast);
             switch (Str.lower(name)) {
-                case "self" -> b.emitResolveClass(classSite(enclosingClass(ast).name()));
-                case "parent" -> b.emitResolveClass(classSite(parentClass(ast)));
+                case "self" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.SELF);
+                    } else {
+                        b.emitResolveClass(classSite(enclosingClass(ast).name()));
+                    }
+                }
+                case "parent" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.PARENT);
+                    } else {
+                        b.emitResolveClass(classSite(parentClass(ast)));
+                    }
+                }
                 // outside a class, a closure's called class is the scope it is bound to, if any
                 case "static" -> b.emitResolveLateStatic(owner == null ? (ClassSite) made(ClassSite::noScope)
                         : classSite(owner.name()));
@@ -3913,6 +3929,11 @@ public final class BytecodeTranslator {
 
         private ClassSite classSite(String name) {
             return (ClassSite) made(() -> new ClassSite(name, language.classId(Str.lower(name))));
+        }
+
+        /** Whether the function is a closure: self and parent are its bound scope's, found when it runs. */
+        private boolean inClosure() {
+            return function.getName().startsWith(CLOSURE_PREFIX);
         }
 
         /** The class the code is written in, for self and static (the tree's requireClass). */
@@ -3940,7 +3961,8 @@ public final class BytecodeTranslator {
             }
             Object classNode = node.get("class");
             boolean cacheable = classNode instanceof Ast named && named.is("AST_NAME")
-                    && !classNameOf(named).equalsIgnoreCase("static");
+                    && !classNameOf(named).equalsIgnoreCase("static")
+                    && !(inClosure() && Str.lower(classNameOf(named)).matches("self|parent"));
             b.beginClassConstant(constantName, cacheable);
             classRef(classNode);
             b.endClassConstant();
@@ -3957,12 +3979,28 @@ public final class BytecodeTranslator {
             }
             String name = classNameOf(ast);
             switch (Str.lower(name)) {
-                case "self" -> b.emitLoadConstant(made(() -> Str.of(enclosingClass(ast).name())));
-                case "parent" -> b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
+                case "self" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.SELF_NAME);
+                    } else {
+                        b.emitLoadConstant(made(() -> Str.of(enclosingClass(ast).name())));
+                    }
+                }
+                case "parent" -> {
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.PARENT_NAME);
+                    } else {
+                        b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
+                    }
+                }
                 case "static" -> {
-                    b.beginClassName();
-                    b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
-                    b.endClassName();
+                    if (inClosure()) {
+                        b.emitClosureScope(ClassRefNode.STATIC_NAME);
+                    } else {
+                        b.beginClassName();
+                        b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
+                        b.endClassName();
+                    }
                 }
                 default -> b.emitLoadConstant(made(() -> Str.of(name)));
             }

@@ -1229,9 +1229,11 @@ public final class Translator {
         String name = className(ast);
         switch (Str.lower(name)) {
             case "self":
-                return ClassRefNode.named(requireClass(ast).name());
+                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.SELF)
+                        : ClassRefNode.named(requireClass(ast).name());
             case "parent":
-                return ClassRefNode.named(requireClass(ast).parentName());
+                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.PARENT)
+                        : ClassRefNode.named(requireClass(ast).parentName());
             case "static":
                 return ClassRefNode.lateStatic(classInfo == null ? null : classInfo.name());
             default:
@@ -1806,6 +1808,11 @@ public final class Translator {
     /** The class (lowercase) the code being translated is written in, or null outside classes. */
     private String lexicalClass() {
         return classInfo == null ? null : Str.lower(classInfo.name());
+    }
+
+    /** Whether the code is a closure's: self and parent are its bound scope's, found when it runs. */
+    private boolean inClosure() {
+        return function != null && function.getName().startsWith(CLOSURE_PREFIX);
     }
 
     /** Whether the calling scope comes from the frame: in a closure or a file's top-level code. */
