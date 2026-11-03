@@ -163,7 +163,7 @@ public final class Intrinsics {
                 return n == 1 ? BuiltinNodesFactory.ArrayKeysNodeGen.create(args, compiledSpecially) : null;
             case "implode":
             case "join":
-                return n == 2 ? BuiltinNodesFactory.ImplodeNodeGen.create(args, compiledSpecially) : null;
+                return n == 2 ? BuiltinNodesFactory.ImplodeNodeGen.create(lowerName, args, compiledSpecially) : null;
             case "explode":
                 return n == 2 || n == 3
                         ? BuiltinNodesFactory.ExplodeNodeGen.create(
