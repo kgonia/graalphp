@@ -59,6 +59,31 @@ final class ExecFunctions {
             byte[] output = (byte[]) result[0];
             return output.length > 0 ? Str.of(output) : PhpNull.NULL;
         });
+        // microtime.c's getrusage: RUSAGE_SELF, or RUSAGE_CHILDREN for 1
+        r.fn("getrusage", (context, a) -> {
+            Args.arity(a, "getrusage", 0, 1);
+            long who = Args.has(a, 0) ? Args.integer(context, a, 0, "getrusage", "mode", "int") : 0;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment usage = arena.allocate(144, 8); // struct rusage: two timevals, 14 longs
+                if ((int) Libc.GETRUSAGE.invokeExact(who == 1 ? -1 : 0, usage) == -1) {
+                    return Boolean.FALSE;
+                }
+                PhpArray result = new PhpArray();
+                String[] names = {"ru_oublock", "ru_inblock", "ru_msgsnd", "ru_msgrcv", "ru_maxrss", "ru_ixrss",
+                    "ru_idrss", "ru_minflt", "ru_majflt", "ru_nsignals", "ru_nvcsw", "ru_nivcsw", "ru_nswap"};
+                int[] fields = {9, 8, 10, 11, 1, 2, 3, 5, 6, 12, 13, 14, 7}; // after the timevals, from ru_maxrss=1
+                for (int i = 0; i < names.length; i++) {
+                    result.put(FileFunctions.key(names[i]), usage.get(ValueLayout.JAVA_LONG, 32 + (fields[i] - 1) * 8L));
+                }
+                result.put(FileFunctions.key("ru_utime.tv_usec"), usage.get(ValueLayout.JAVA_LONG, 8));
+                result.put(FileFunctions.key("ru_utime.tv_sec"), usage.get(ValueLayout.JAVA_LONG, 0));
+                result.put(FileFunctions.key("ru_stime.tv_usec"), usage.get(ValueLayout.JAVA_LONG, 24));
+                result.put(FileFunctions.key("ru_stime.tv_sec"), usage.get(ValueLayout.JAVA_LONG, 16));
+                return result;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        });
         r.fn("proc_open", "001", (context, a) -> ProcOpen.open(context, a));
         r.fn("proc_close", (context, a) -> {
             Args.arity(a, "proc_close", 1, 1);
@@ -1159,6 +1184,7 @@ final class ExecFunctions {
         static final MethodHandle OPEN = NativeLibrary.LIBC.downcall("open", FunctionDescriptor.of(INT, PTR, INT,
                 INT), Linker.Option.firstVariadicArg(2), Linker.Option.captureCallState("errno"));
         static final MethodHandle DUP = libc("dup", INT, INT);
+        static final MethodHandle GETRUSAGE = libc("getrusage", INT, INT, PTR);
         static final MethodHandle FCNTL = NativeLibrary.LIBC.downcall("fcntl", FunctionDescriptor.of(INT, INT, INT,
                 INT), Linker.Option.firstVariadicArg(2));
         static final MethodHandle KILL = libc("kill", INT, INT, INT);

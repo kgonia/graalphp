@@ -62,6 +62,15 @@ final class RuntimeFunctions {
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
+        // PG(connection_status): CONNECTION_NORMAL, the CLI's (a request's connection isn't watched)
+        r.fn("connection_status", (context, a) -> {
+            Args.arity(a, "connection_status", 0, 0);
+            return 0L;
+        });
+        r.fn("connection_aborted", (context, a) -> {
+            Args.arity(a, "connection_aborted", 0, 0);
+            return 0L;
+        });
         r.fn("flush", (context, a) -> {
             context.flush();
             return PhpNull.NULL;

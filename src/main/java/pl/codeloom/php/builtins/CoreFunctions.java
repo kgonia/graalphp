@@ -71,6 +71,7 @@ final class CoreFunctions {
         r.fn("get_debug_type", a -> Str.of(Convert.debugType(Args.get(a, 0, PhpNull.NULL))));
         r.fn("intval", a -> intval(Args.get(a, 0), Args.lng(a, 1, 10)));
         r.fn("floatval", a -> Convert.toDouble(Args.get(a, 0)));
+        r.fn("doubleval", a -> Convert.toDouble(Args.get(a, 0)));
         r.fn("strval", a -> Convert.toStr(Args.get(a, 0)));
         r.fn("boolval", a -> Convert.toBool(Args.get(a, 0)));
         r.fn("settype", "1", a -> {

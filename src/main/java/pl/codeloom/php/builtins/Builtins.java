@@ -188,6 +188,7 @@ public final class Builtins {
                 {"PATHINFO_FILENAME", 8L}, {"PHP_ROUND_HALF_UP", 1L}, {"PHP_ROUND_HALF_DOWN", 2L},
                 {"PHP_ROUND_HALF_EVEN", 3L}, {"PHP_ROUND_HALF_ODD", 4L},
                 {"MB_CASE_UPPER", 0L}, {"MB_CASE_LOWER", 1L}, {"MB_CASE_TITLE", 2L},
+                {"CONNECTION_ABORTED", 1L}, {"CONNECTION_NORMAL", 0L}, {"CONNECTION_TIMEOUT", 2L},
                 {"LC_CTYPE", 0L}, {"LC_NUMERIC", 1L}, {"LC_TIME", 2L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L},
                 {"LC_MESSAGES", 5L}, {"LC_ALL", 6L},
                 {"PHP_SAPI", Str.of("cli")}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
