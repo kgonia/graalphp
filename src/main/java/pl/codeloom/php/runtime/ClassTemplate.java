@@ -29,8 +29,8 @@ public final class ClassTemplate {
     public record Method(PhpFunction function, List<PhpClass.PropertyDecl> promoted) implements Member {
     }
 
-    /** A class constant: its value, or a {@link Deferred} initializer. */
-    public record Constant(String name, Object value) implements Member {
+    /** A class constant: its value, or a {@link Deferred} initializer; its type, or null; whether it is private. */
+    public record Constant(String name, Object value, PhpType type, boolean isPrivate) implements Member {
     }
 
     /** A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its type. */
@@ -213,7 +213,14 @@ public final class ClassTemplate {
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
-            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass));
+            Object value = bind(constant.value(), phpClass);
+            PhpType type = constant.type();
+            if (type != null && value instanceof PhpClass.Thunk thunk) {
+                // zend_update_class_constant: checked when evaluated, in strict mode
+                String what = "class constant " + phpClass.getName().split("\0", 2)[0] + "::" + constant.name();
+                value = (PhpClass.Thunk) () -> type.assignTo(thunk.evaluate(), what);
+            }
+            phpClass.addConstant(constant.name(), value, type, constant.isPrivate());
         } else if (member instanceof Property property) {
             Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {

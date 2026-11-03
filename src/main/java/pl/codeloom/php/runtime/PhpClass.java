@@ -65,6 +65,21 @@ public final class PhpClass {
     private final Set<String> ancestors = new HashSet<>();
     private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
+    /** The constants' types and declaring classes. */
+    private final Map<String, ConstantType> constantTypes = new HashMap<>();
+
+    /** A class constant's type (null when it has none), the class that declared it, whether it is private. */
+    public record ConstantType(PhpType type, PhpClass declaringClass, boolean isPrivate) {
+    }
+
+    public ConstantType constantType(String constantName) {
+        return constantTypes.get(constantName);
+    }
+
+    /** The constant types by name, inherited ones included; read only. */
+    public Map<String, ConstantType> constantTypes() {
+        return java.util.Collections.unmodifiableMap(constantTypes);
+    }
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
@@ -116,6 +131,7 @@ public final class PhpClass {
             ancestors.addAll(parent.ancestors);
             methods.putAll(parent.methods);
             constants.putAll(parent.constants);
+            constantTypes.putAll(parent.constantTypes);
             staticProperties.putAll(parent.staticProperties);
             properties.putAll(parent.properties);
             constructor = parent.constructor;
@@ -251,6 +267,12 @@ public final class PhpClass {
     }
 
     public void addConstant(String constantName, Object valueOrThunk) {
+        addConstant(constantName, valueOrThunk, null, false);
+    }
+
+    /** A declared constant with its type (or null), which a redeclaration in a subclass must keep. */
+    public void addConstant(String constantName, Object valueOrThunk, PhpType type, boolean isPrivate) {
+        constantTypes.put(constantName, new ConstantType(type, this, isPrivate));
         constants.put(constantName, valueOrThunk);
     }
 

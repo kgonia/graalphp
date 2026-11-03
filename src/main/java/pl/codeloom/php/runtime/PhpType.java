@@ -273,6 +273,17 @@ public final class PhpType {
         return accepted;
     }
 
+    /** A class constant's value checked in strict mode: what is "class constant C::X". */
+    @TruffleBoundary
+    public Object assignTo(Object value, String what) {
+        Object accepted = slow(value, true, null, null);
+        if (accepted == null) {
+            throw new PhpError("TypeError", "Cannot assign " + valueName(value) + " to " + what + " of type "
+                    + text(null));
+        }
+        return accepted;
+    }
+
     /** The name of the class that declared the property, as written. */
     @TruffleBoundary
     public static String declaringName(PhpClass.PropertyDecl decl) {

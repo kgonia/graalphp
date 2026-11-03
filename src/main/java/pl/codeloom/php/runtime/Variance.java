@@ -34,6 +34,7 @@ final class Variance {
         Set<String> unresolved = new LinkedHashSet<>();
         if (parent != null) {
             properties(context, phpClass, parent, unresolved);
+            constants(context, phpClass, parent, unresolved);
         }
         for (Map.Entry<String, PhpFunction> entry : phpClass.methods().entrySet()) {
             PhpFunction child = entry.getValue();
@@ -91,6 +92,25 @@ final class Variance {
                 throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Type of " + name
                         + " must be " + parentDecl.type().text(null) + " (as in class "
                         + PhpType.declaringName(parentDecl) + ")"), declaredAt(phpClass), 0);
+            }
+        }
+    }
+
+    /** do_inherit_constant_check: a redeclared typed constant's type is covariant (class_constant_types_compatible). */
+    private static void constants(PhpContext context, PhpClass phpClass, PhpClass parent, Set<String> unresolved) {
+        for (Map.Entry<String, PhpClass.ConstantType> entry : parent.constantTypes().entrySet()) {
+            PhpClass.ConstantType parentType = entry.getValue();
+            PhpClass.ConstantType own = phpClass.constantType(entry.getKey());
+            if (parentType.type() == null || parentType.isPrivate() || own == parentType || own == null
+                    || own.declaringClass() != phpClass) {
+                continue;
+            }
+            if (own.type() == null || covariant(context, phpClass, own.type(), parentType.type(), unresolved)
+                    != SUCCESS) {
+                throw ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of("Type of "
+                        + phpClass.getName() + "::" + entry.getKey() + " must be compatible with "
+                        + parentType.declaringClass().getName() + "::" + entry.getKey() + " of type "
+                        + parentType.type().text(null)), declaredAt(phpClass), 0);
             }
         }
     }

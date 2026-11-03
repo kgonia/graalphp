@@ -747,7 +747,8 @@ public final class Translator {
                             + " cannot be used as a parameter type");
                 }
                 if (declared != null) {
-                    validDefault(declared, literalBit(defaultValue), param.line, "parameter $" + param.get("name"));
+                    validDefault(declared, literalBit(defaultValue), param.line,
+                            "default value for parameter $" + param.get("name"));
                 }
                 params[i] = new PhpFunction.Param((String) param.get("name"), (param.flags & PARAM_REF) != 0,
                         (param.flags & PARAM_VARIADIC) != 0, defaultValue == null ? null : defaultText(defaultValue),
@@ -1498,8 +1499,18 @@ public final class Translator {
             case "AST_CLASS_CONST_GROUP": {
                 for (Object child : member.node("const").children()) {
                     Ast element = (Ast) child;
-                    members.add(new ClassTemplate.Constant((String) element.get("name"),
-                            constantOrDeferred(element.get("value"))));
+                    String constantName = (String) element.get("name");
+                    String what = "class constant " + className + "::" + constantName;
+                    PhpType type = declaredType(member.node("type"), false);
+                    if (type != null && !type.isMixed() && type.has(PhpType.CALLABLE | PhpType.VOID | PhpType.NEVER)) {
+                        throw compileError(member.line, "Class constant " + className + "::" + constantName
+                                + " cannot have type " + type.text(null));
+                    }
+                    Object value = constantOrDeferred(element.get("value"));
+                    if (type != null && !(value instanceof ClassTemplate.Deferred)) {
+                        value = validDefault(type, value, member.line, "value for " + what);
+                    }
+                    members.add(new ClassTemplate.Constant(constantName, value, type, (member.flags & 4) != 0));
                 }
                 break;
             }
@@ -1515,8 +1526,8 @@ public final class Translator {
                     Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
                     if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {
-                        initial = validDefault(type, initial, member.line, "property " + className + "::$"
-                                + Str.keyText(propertyName));
+                        initial = validDefault(type, initial, member.line, "default value for property " + className
+                                + "::$" + Str.keyText(propertyName));
                     }
                     members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type));
                 }
@@ -1542,7 +1553,7 @@ public final class Translator {
 
     /**
      * zend_is_valid_default_value: a constant default must be of the type (an int is one of a float, as a float);
-     * what names "property C::$p" or "parameter $p".
+     * what names it: "default value for property C::$p", "value for class constant C::X"...
      */
     private Object validDefault(PhpType type, Object value, int line, String what) {
         int bit = value instanceof Long ? PhpType.INT : value instanceof Double ? PhpType.FLOAT
@@ -1557,15 +1568,14 @@ public final class Translator {
         if (bit == 0 || type.has(bit) || bit == PhpType.INT && type.has(PhpType.FLOAT)) {
             return;
         }
-        if (bit == PhpType.NULL && !type.isIntersection() && what.startsWith("property")) {
+        if (bit == PhpType.NULL && !type.isIntersection() && what.startsWith("default value for property")) {
             throw compileError(line, "Default value for property of type " + type.text(null)
                     + " may not be null. Use the nullable type " + type.withNull().text(null)
                     + " to allow null default value");
         }
         String name = bit == PhpType.INT ? "int" : bit == PhpType.FLOAT ? "float" : bit == PhpType.STRING ? "string"
                 : bit == PhpType.ARRAY ? "array" : bit == PhpType.NULL ? "null" : "bool";
-        throw compileError(line, "Cannot use " + name + " as default value for " + what + " of type "
-                + type.text(null));
+        throw compileError(line, "Cannot use " + name + " as " + what + " of type " + type.text(null));
     }
 
     /** The type bit of a parameter's default as written, if it is a literal (0 for an expression to evaluate). */
