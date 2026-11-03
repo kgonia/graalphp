@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /** ext/standard string functions, on bytes as php-src does (no locale: ASCII-only case mapping, as PHP 8.2+). */
 public final class StringFunctions {
@@ -26,10 +27,14 @@ public final class StringFunctions {
 
     static void register(Registry r) {
         r.fn("substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), lengthArg(a, 2)));
-        r.fn("strpos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("stripos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
-        r.fn("strrpos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("strripos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
+        r.fn("strpos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strpos", "offset", "int") : 0, false));
+        r.fn("stripos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "stripos", "offset", "int") : 0, true));
+        r.fn("strrpos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strrpos", "offset", "int") : 0, false));
+        r.fn("strripos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strripos", "offset", "int") : 0, true));
         r.fn("str_contains", a -> indexOf(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1)), 0, false) >= 0);
         r.fn("str_starts_with", a -> startsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
         r.fn("str_ends_with", a -> endsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
@@ -45,32 +50,179 @@ public final class StringFunctions {
         r.fn("lcfirst", a -> caseFirst(Args.str(a, 0), false));
         r.fn("ucwords", a -> ucwords(Args.str(a, 0), Args.str(a, 1, Str.of(" \t\r\n\f\u000b"))));
         r.fn("explode", a -> explode(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, Long.MAX_VALUE)));
-        r.fn("implode", a -> implode(a));
-        r.fn("join", a -> implode(a));
-        r.fn("sprintf", a -> Sprintf.format(a, 0));
-        r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf")));
+        r.fn("implode", (context, a) -> implode(context, a, "implode"));
+        r.fn("join", (context, a) -> implode(context, a, "join"));
+        r.fn("sprintf", a -> Sprintf.format(a, 0, "sprintf"));
+        r.fn("vsprintf", (context, a) -> Sprintf.formatArray(context, a, 0, "vsprintf"));
+        r.fn("sscanf", "00*", (context, a) -> {
+            Args.arity(a, "sscanf", 2, Integer.MAX_VALUE);
+            TruffleString string = Args.string(context, a, 0, "sscanf", "string", false);
+            TruffleString format = Args.string(context, a, 1, "sscanf", "format", false);
+            return Scanf.scan(Str.readBytes(string), Str.readBytes(format), a, 2);
+        });
+        r.fn("str_getcsv", (context, a) -> {
+            Args.arity(a, "str_getcsv", 1, 4);
+            byte[] string = Str.readBytes(Args.string(context, a, 0, "str_getcsv", "string", false));
+            int delimiter = csvChar(context, a, 1, "separator", ',');
+            int enclosure = csvChar(context, a, 2, "enclosure", '"');
+            int escape;
+            if (Args.has(a, 3)) {
+                byte[] e = Str.readBytes(Args.string(context, a, 3, "str_getcsv", "escape", false));
+                if (e.length > 1) {
+                    throw new PhpError("ValueError", "str_getcsv(): Argument #4 ($escape) must be empty or a single "
+                            + "character");
+                }
+                escape = e.length == 0 ? -1 : e[0] & 0xFF;
+            } else {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("str_getcsv(): the $escape "
+                        + "parameter must be provided as its default value will change"), SourceLocation.current());
+                escape = '\\';
+            }
+            PhpArray values = csv(string, (byte) delimiter, (byte) enclosure, escape,
+                    !context.builtinState().locales[0].equals("C"));
+            return values != null ? values : PhpArray.list(PhpNull.NULL);
+        });
+        r.fn("hebrev", (context, a) -> {
+            Args.arity(a, "hebrev", 1, 2);
+            byte[] string = Str.readBytes(Args.string(context, a, 0, "hebrev", "string", false));
+            long max = Args.has(a, 1) ? Args.integer(context, a, 1, "hebrev", "max_chars_per_line", "int") : 0;
+            return string.length == 0 ? Str.EMPTY : Str.of(hebrev(string, max));
+        });
+        r.fn("levenshtein", (context, a) -> {
+            Args.arity(a, "levenshtein", 2, 5);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "levenshtein", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "levenshtein", "string2", false));
+            long ins = Args.has(a, 2) ? Args.integer(context, a, 2, "levenshtein", "insertion_cost", "int") : 1;
+            long rep = Args.has(a, 3) ? Args.integer(context, a, 3, "levenshtein", "replacement_cost", "int") : 1;
+            long del = Args.has(a, 4) ? Args.integer(context, a, 4, "levenshtein", "deletion_cost", "int") : 1;
+            return levenshtein(s1, s2, ins, rep, del);
+        });
+        r.fn("similar_text", "001", (context, a) -> {
+            Args.arity(a, "similar_text", 2, 3);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "similar_text", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "similar_text", "string2", false));
+            long sim = s1.length + s2.length == 0 ? 0 : similar(s1, 0, s1.length, s2, 0, s2.length);
+            if (Args.has(a, 2)) {
+                Args.ref(a, 2).set(s1.length + s2.length == 0 ? 0.0 : sim * 200.0 / (s1.length + s2.length));
+            }
+            return sim;
+        });
+        r.fn("metaphone", (context, a) -> {
+            Args.arity(a, "metaphone", 1, 2);
+            byte[] word = Str.readBytes(Args.string(context, a, 0, "metaphone", "string", false));
+            long max = Args.has(a, 1) ? Args.integer(context, a, 1, "metaphone", "max_phonemes", "int") : 0;
+            if (max < 0) {
+                throw new PhpError("ValueError", "metaphone(): Argument #2 ($max_phonemes) must be greater than or "
+                        + "equal to 0");
+            }
+            return metaphone(word, max);
+        });
+        string(r, "soundex", StringFunctions::soundex);
+        string(r, "quoted_printable_encode", StringFunctions::quotedPrintableEncode);
+        string(r, "quoted_printable_decode", StringFunctions::quotedPrintableDecode);
+        string(r, "convert_uuencode", StringFunctions::uuencode);
+        string(r, "convert_uudecode", StringFunctions::uudecode);
+        string(r, "str_rot13", s -> {
+            for (int i = 0; i < s.length; i++) {
+                int c = s[i] | 0x20;
+                if (c >= 'a' && c <= 'z') {
+                    s[i] = (byte) (s[i] + (c <= 'm' ? 13 : -13));
+                }
+            }
+            return Str.of(s);
+        });
+        string(r, "str_shuffle", s -> {
+            java.util.Random random = java.util.concurrent.ThreadLocalRandom.current();
+            for (int left = s.length - 1; left > 0; left--) {
+                int j = random.nextInt(left + 1);
+                byte t = s[left];
+                s[left] = s[j];
+                s[j] = t;
+            }
+            return Str.of(s);
+        });
+        r.fn("utf8_encode", (context, a) -> {
+            deprecated(context, "utf8_encode", "8.2, visit the php.net documentation for various alternatives");
+            Args.arity(a, "utf8_encode", 1, 1);
+            ByteBuilder out = new ByteBuilder();
+            for (byte b : Str.readBytes(Args.string(context, a, 0, "utf8_encode", "string", false))) {
+                if (b >= 0) {
+                    out.write(b);
+                } else {
+                    out.write(0xC0 | (b & 0xFF) >> 6);
+                    out.write(0x80 | b & 0x3F);
+                }
+            }
+            return Str.of(out.toByteArray());
+        });
+        r.fn("utf8_decode", (context, a) -> {
+            deprecated(context, "utf8_decode", "8.2, visit the php.net documentation for various alternatives");
+            Args.arity(a, "utf8_decode", 1, 1);
+            return Html.utf8Decode(Str.readBytes(Args.string(context, a, 0, "utf8_decode", "string", false)));
+        });
+        r.fn("count_chars", (context, a) -> {
+            Args.arity(a, "count_chars", 1, 2);
+            byte[] s = Str.readBytes(Args.string(context, a, 0, "count_chars", "string", false));
+            long mode = Args.has(a, 1) ? Args.integer(context, a, 1, "count_chars", "mode", "int") : 0;
+            if (mode < 0 || mode > 4) {
+                throw new PhpError("ValueError", "count_chars(): Argument #2 ($mode) must be between 0 and 4 "
+                        + "(inclusive)");
+            }
+            long[] counts = new long[256];
+            for (byte b : s) {
+                counts[b & 0xFF]++;
+            }
+            PhpArray result = new PhpArray();
+            ByteBuilder chars = new ByteBuilder();
+            for (int c = 0; c < 256; c++) {
+                if (mode == 0 || mode == 1 && counts[c] != 0 || mode == 2 && counts[c] == 0) {
+                    result.put((long) c, counts[c]);
+                } else if (mode == 3 && counts[c] != 0 || mode == 4 && counts[c] == 0) {
+                    chars.write(c);
+                }
+            }
+            return mode < 3 ? result : Str.of(chars.toByteArray());
+        });
+        r.fn("str_word_count", (context, a) -> {
+            Args.arity(a, "str_word_count", 1, 3);
+            byte[] s = Str.readBytes(Args.string(context, a, 0, "str_word_count", "string", false));
+            long format = Args.has(a, 1) ? Args.integer(context, a, 1, "str_word_count", "format", "int") : 0;
+            TruffleString list = Args.has(a, 2) ? Args.string(context, a, 2, "str_word_count", "characters", true)
+                    : null;
+            if (format < 0 || format > 2) {
+                throw new PhpError("ValueError", "str_word_count(): Argument #2 ($format) must be a valid format "
+                        + "value");
+            }
+            return wordCount(s, format, list == null ? null : charMask(Str.readBytes(list), "str_word_count"));
+        });
+        r.fn("vprintf", (context, a) -> {
+            TruffleString text = Sprintf.formatArray(context, a, 0, "vprintf");
+            context.write(text);
+            return (long) Str.length(text);
+        });
         r.fn("printf", (context, a) -> {
-            TruffleString text = Sprintf.format(a, 0);
+            TruffleString text = Sprintf.format(a, 0, "printf");
             context.write(text);
             return (long) Str.length(text);
         });
         r.fn("str_pad", a -> strPad(Args.str(a, 0), Args.lng(a, 1, 0), Args.str(a, 2, Str.of(" ")),
                 Args.lng(a, 3, 1)));
         r.fn("str_repeat", a -> repeat(Args.str(a, 0), Args.lng(a, 1, 0)));
-        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr"))
+        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr", "from"))
                 : strtrChars(Args.str(a, 0), Args.str(a, 1), Args.str(a, 2)));
         r.fn("strspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), true));
         r.fn("strcspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), false));
         r.fn("substr_count", a -> substrCount(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3)));
         r.fn("substr_compare", a -> substrCompare(a));
-        r.fn("substr_replace", a -> substrReplace(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0),
-                lengthArg(a, 3)));
-        r.fn("strcmp", a -> (long) Integer.signum(Str.compare(Args.str(a, 0), Args.str(a, 1))));
-        r.fn("strcasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), Integer.MAX_VALUE)));
-        r.fn("strncmp", a -> (long) Integer.signum(compareN(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0))));
-        r.fn("strncasecmp", a -> (long) Integer.signum(compareIgnoreCase(Str.readBytes(Args.str(a, 0)),
-                Str.readBytes(Args.str(a, 1)), (int) Math.min(Integer.MAX_VALUE, Args.lng(a, 2, 0)))));
+        r.fn("substr_replace", (context, a) -> substrReplace(context, a));
+        r.fn("strcmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, false));
+        r.fn("strcasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                Long.MAX_VALUE, true));
+        r.fn("strncmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncmp", Args.lng(a, 2, 0)), false));
+        r.fn("strncasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
+                nonNegative("strncasecmp", Args.lng(a, 2, 0)), true));
         r.fn("strnatcmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)), false));
         r.fn("strnatcasecmp", a -> (long) naturalCompare(Str.bytes(Args.str(a, 0)), Str.bytes(Args.str(a, 1)),
                 true));
@@ -87,13 +239,24 @@ public final class StringFunctions {
             }
             return Boolean.FALSE;
         });
-        r.fn("chunk_split", a -> {
-            byte[] body = Str.bytes(Args.str(a, 0));
-            int length = (int) Args.lng(a, 1, 76);
-            byte[] end = Str.bytes(Args.str(a, 2, Str.of("\r\n")));
+        r.fn("chunk_split", (context, a) -> {
+            Args.arity(a, "chunk_split", 1, 3);
+            byte[] body = Str.bytes(Args.string(context, a, 0, "chunk_split", "string", false));
+            long length = Args.has(a, 1) ? Args.integer(context, a, 1, "chunk_split", "length", "int") : 76;
+            byte[] end = Args.has(a, 2) ? Str.bytes(Args.string(context, a, 2, "chunk_split", "separator", false))
+                    : new byte[] {'\r', '\n'};
+            if (length <= 0) {
+                throw new PhpError("ValueError", "chunk_split(): Argument #2 ($length) must be greater than 0");
+            }
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            for (int i = 0; i < body.length; i += length) {
-                out.write(body, i, Math.min(length, body.length - i));
+            if (length > body.length) {
+                // the string and the ending, an empty string's too (php-src's BC)
+                out.writeBytes(body);
+                out.writeBytes(end);
+                return Str.of(out.toByteArray());
+            }
+            for (int i = 0; i < body.length; i += (int) length) {
+                out.write(body, i, Math.min((int) length, body.length - i));
                 out.writeBytes(end);
             }
             return Str.of(out.toByteArray());
@@ -145,13 +308,73 @@ public final class StringFunctions {
         r.fn("rawurldecode", a -> urldecode(Args.str(a, 0), false));
         r.fn("urldecode", a -> urldecode(Args.str(a, 0), true));
         r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.readBytes(Args.str(a, 0)))));
-        r.fn("chr", a -> Str.singleByte((int) Math.floorMod(Args.lng(a, 0, 0), 256)));
+        r.fn("chr", (context, a) -> {
+            Args.arity(a, "chr", 1, 1);
+            return Str.singleByte((int) Math.floorMod(Args.integer(context, a, 0, "chr", "codepoint", "int"), 256));
+        });
         r.fn("ord", a -> {
             TruffleString s = Args.str(a, 0);
             return Str.length(s) == 0 ? 0L : (long) Str.byteAt(s, 0);
         });
         // the C locale's conventions: php-src sets only LC_CTYPE from the environment at startup, and setlocale()
         // isn't there to change LC_NUMERIC or LC_MONETARY (CHAR_MAX, 127, for the unspecified numbers)
+        r.fn("setlocale", (context, a) -> {
+            Args.arity(a, "setlocale", 2, Integer.MAX_VALUE);
+            long category = Args.integer(context, a, 0, "setlocale", "category", "int");
+            for (int i = 1; i < Args.count(a); i++) {
+                Object locale = Args.get(a, i);
+                if (!(locale instanceof PhpArray || locale == PhpNull.NULL || locale instanceof TruffleString
+                        || locale instanceof Long || locale instanceof Double || locale instanceof Boolean)) {
+                    throw new PhpError("TypeError", "setlocale(): Argument #" + (i + 1) + (i == 1 ? " ($locales)" : "")
+                            + " must be of type array|string|null, " + Args.valueName(locale) + " given");
+                }
+            }
+            String[] locales = context.builtinState().locales;
+            for (int i = 1; i < Args.count(a); i++) {
+                Object locale = Args.get(a, i);
+                Object[] tries = locale instanceof PhpArray list ? list.entries() : new Object[]{null, locale};
+                for (int j = 1; j < tries.length; j += 2) {
+                    Object name = tries[j] == PhpNull.NULL ? Str.EMPTY : tries[j];
+                    String result = setlocale(context, locales, category, Str.java(Convert.toStr(name)));
+                    if (result != null) {
+                        return Str.of(result);
+                    }
+                }
+            }
+            return Boolean.FALSE;
+        });
+        r.fn("nl_langinfo", (context, a) -> {
+            Args.arity(a, "nl_langinfo", 1, 1);
+            long item = Args.integer(context, a, 0, "nl_langinfo", "item", "int");
+            String value = LANGINFO.get(item);
+            if (value == null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("nl_langinfo(): Item '" + item
+                        + "' is not valid"), SourceLocation.current());
+                return Boolean.FALSE;
+            }
+            String[] locales = context.builtinState().locales;
+            boolean utf8 = !locales[(int) (item >> 16)].equals("C");
+            if (item == 14) {
+                value = utf8 ? "UTF-8" : value;
+            } else if (utf8 && item >= 262151 && item <= 262158) {
+                // glibc's C.UTF-8 reads these chars as strings, running on into the next fields
+                value = "\u00ff".repeat((int) (262159 - item)) + "-";
+            }
+            return Str.of(value.getBytes(StandardCharsets.ISO_8859_1));
+        });
+        r.fn("strcoll", (context, a) -> {
+            Args.arity(a, "strcoll", 2, 2);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "strcoll", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "strcoll", "string2", false));
+            // the C and C.UTF-8 locales collate as strcmp: the bytes up to the first NUL
+            for (int i = 0; ; i++) {
+                int c1 = at(s1, i);
+                int c2 = at(s2, i);
+                if (c1 != c2 || c1 == 0) {
+                    return (long) (c1 - c2);
+                }
+            }
+        });
         r.fn("localeconv", a -> {
             PhpArray conventions = new PhpArray();
             for (String key : new String[] {"decimal_point", "thousands_sep", "int_curr_symbol", "currency_symbol",
@@ -166,8 +389,16 @@ public final class StringFunctions {
             conventions.put(ArrayKey.of(Str.of("mon_grouping")), new PhpArray());
             return conventions;
         });
-        r.fn("number_format", a -> numberFormat(Convert.toDouble(Args.get(a, 0)), Args.lng(a, 1, 0),
-                Args.str(a, 2, Str.of(".")), Args.str(a, 3, Str.of(","))));
+        r.fn("number_format", (context, a) -> {
+            Object number = Args.number(context, a, 0, "number_format", "num");
+            long decimals = Args.has(a, 1) ? Args.integer(context, a, 1, "number_format", "decimals", "int") : 0;
+            TruffleString point = Args.has(a, 2) ? Args.string(context, a, 2, "number_format", "decimal_separator",
+                    true) : null;
+            TruffleString separator = Args.has(a, 3) ? Args.string(context, a, 3, "number_format",
+                    "thousands_separator", true) : null;
+            return numberFormat(number, decimals, point == null ? "." : Str.java(point),
+                    separator == null ? "," : Str.java(separator));
+        });
         r.fn("wordwrap", a -> wordwrap(Args.str(a, 0), Args.lng(a, 1, 75), Args.str(a, 2, Str.of("\n")),
                 Args.bool(a, 3, false)));
         r.fn("parse_str", "01", (context, a) -> {
@@ -176,9 +407,17 @@ public final class StringFunctions {
         });
         r.fn("parse_url", a -> UrlFunctions.parseUrl(Args.str(a, 0), Args.lng(a, 1, -1)));
         r.fn("http_build_query", UrlFunctions::httpBuildQuery);
-        r.fn("pack", a -> Pack.pack(a));
-        r.fn("unpack", a -> Pack.unpack(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0)));
-        r.fn("dirname", a -> dirname(Args.str(a, 0), Args.lng(a, 1, 1)));
+        r.fn("pack", (context, a) -> Pack.pack(context, a));
+        r.fn("unpack", (context, a) -> Pack.unpack(context, a));
+        r.fn("dirname", (context, a) -> {
+            Args.arity(a, "dirname", 1, 2);
+            TruffleString path = Args.string(context, a, 0, "dirname", "path", false);
+            long levels = Args.has(a, 1) ? Args.integer(context, a, 1, "dirname", "levels", "int") : 1;
+            if (levels < 1) {
+                throw new PhpError("ValueError", "dirname(): Argument #2 ($levels) must be greater than or equal to 1");
+            }
+            return dirname(path, levels);
+        });
         r.fn("basename", a -> basename(Args.str(a, 0), Args.str(a, 1, Str.EMPTY)));
         r.fn("pathinfo", a -> pathinfo(Args.str(a, 0), Args.lng(a, 1, 15)));
         r.fn("ctype_digit", a -> ctype(Args.get(a, 0), "digit"));
@@ -271,8 +510,7 @@ public final class StringFunctions {
             offset += h.length;
         }
         if (offset < 0 || offset > h.length) {
-            throw new PhpError("ValueError", "strpos(): Argument #3 ($offset) must be contained in argument #1 "
-                    + "($haystack)");
+            throw offsetError(ignoreCase ? "stripos" : "strpos", 3, "offset");
         }
         int index = indexOf(h, Str.readBytes(needle), (int) offset, ignoreCase);
         return index < 0 ? (Object) Boolean.FALSE : (Object) (long) index;
@@ -282,6 +520,9 @@ public final class StringFunctions {
     private static Object strrpos(TruffleString haystack, TruffleString needle, long offset, boolean ignoreCase) {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
+        if (offset > h.length || offset < -h.length) {
+            throw offsetError(ignoreCase ? "strripos" : "strrpos", 3, "offset");
+        }
         int start;
         int limit;
         if (offset >= 0) {
@@ -297,6 +538,12 @@ public final class StringFunctions {
             }
         }
         return Boolean.FALSE;
+    }
+
+    /** zend_argument_value_error's "must be contained in argument #1 ($haystack)". */
+    private static PhpError offsetError(String function, int position, String name) {
+        return new PhpError("ValueError", function + "(): Argument #" + position + " ($" + name + ") must be "
+                + "contained in argument #1 ($haystack)");
     }
 
     private static boolean regionMatches(byte[] h, int at, byte[] n, boolean ignoreCase) {
@@ -557,24 +804,85 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString substrReplace(TruffleString s, TruffleString replacement, long offset,
-                                               Long length) {
+    private static Object substrReplace(PhpContext context, Object[] a) {
+        Args.arity(a, "substr_replace", 3, 4);
+        Object string = Args.arrayOrString(context, a, 0, "substr_replace", "string");
+        Object replace = Args.arrayOrString(context, a, 1, "substr_replace", "replace");
+        Object offset = arrayOrLong(context, a, 2, "offset", "array|int");
+        Object length = Args.has(a, 3) && Args.get(a, 3) != PhpNull.NULL
+                ? arrayOrLong(context, a, 3, "length", "array|int|null") : null;
+        if (string instanceof TruffleString s) {
+            if (offset instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #3 ($offset) cannot be an array when "
+                        + "working on a single string");
+            }
+            if (length instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #4 ($length) cannot be an array when "
+                        + "working on a single string");
+            }
+            TruffleString with = replace instanceof PhpArray r ? (r.size() > 0 ? Convert.toStr(r.valueAt(
+                    r.firstPosition())) : Str.EMPTY) : (TruffleString) replace;
+            return spliced(s, with, (Long) offset, (Long) length);
+        }
+        PhpArray strings = (PhpArray) string;
+        PhpArray result = new PhpArray();
+        int offsets = offset instanceof PhpArray o ? o.firstPosition() : -1;
+        int lengths = length instanceof PhpArray l ? l.firstPosition() : -1;
+        int replaces = replace instanceof PhpArray r ? r.firstPosition() : -1;
+        for (int p = strings.firstPosition(); p >= 0; p = strings.nextPosition(p)) {
+            TruffleString s = Convert.toStr(strings.valueAt(p));
+            long f = 0;
+            if (offset instanceof PhpArray o) {
+                if (offsets >= 0) {
+                    f = Convert.toLong(o.valueAt(offsets));
+                    offsets = o.nextPosition(offsets);
+                }
+            } else {
+                f = (Long) offset;
+            }
+            Long l = null;
+            if (length instanceof PhpArray lengthArray) {
+                if (lengths >= 0) {
+                    l = Convert.toLong(lengthArray.valueAt(lengths));
+                    lengths = lengthArray.nextPosition(lengths);
+                }
+            } else {
+                l = (Long) length;
+            }
+            TruffleString with = (TruffleString) (replace instanceof PhpArray ? Str.EMPTY : replace);
+            if (replace instanceof PhpArray r && replaces >= 0) {
+                with = Convert.toStr(r.valueAt(replaces));
+                replaces = r.nextPosition(replaces);
+            }
+            result.put(strings.keyAt(p), spliced(s, with, f, l));
+        }
+        return result;
+    }
+
+    /** Z_PARAM_ARRAY_HT_OR_LONG(_OR_NULL): the array, or the argument as an int. */
+    private static Object arrayOrLong(PhpContext context, Object[] a, int index, String name, String type) {
+        return Args.get(a, index) instanceof PhpArray array ? array
+                : (Object) Args.integer(context, a, index, "substr_replace", name, type);
+    }
+
+    /** The string with length bytes from offset replaced (substr_replace's clamping; a null length: to the end). */
+    private static TruffleString spliced(TruffleString s, TruffleString replacement, long offset, Long length) {
         byte[] b = Str.readBytes(s);
-        int n = b.length;
-        long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
-        long end;
-        if (length == null) {
-            end = n;
-        } else if (length < 0) {
-            end = Math.max(start, n + length);
-        } else {
-            end = Math.min(n, start + length);
+        long n = Str.length(s);
+        long f = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+        long l = length == null ? n : length;
+        if (l < 0) {
+            l = Math.max(0, n - f + l);
+        }
+        if (l > n - f) {
+            l = n - f;
         }
         byte[] r = Str.readBytes(replacement);
-        byte[] out = new byte[(int) (start + r.length + (n - end))];
-        System.arraycopy(b, 0, out, 0, (int) start);
-        System.arraycopy(r, 0, out, (int) start, r.length);
-        System.arraycopy(b, (int) end, out, (int) start + r.length, (int) (n - end));
+        int rl = Str.length(replacement);
+        byte[] out = new byte[(int) (n - l + rl)];
+        System.arraycopy(b, 0, out, 0, (int) f);
+        System.arraycopy(r, 0, out, (int) f, rl);
+        System.arraycopy(b, (int) (f + l), out, (int) f + rl, (int) (n - f - l));
         return Str.of(out);
     }
 
@@ -750,30 +1058,33 @@ public final class StringFunctions {
         return Str.of(b);
     }
 
-    static int compareIgnoreCase(byte[] a, byte[] b, int limit) {
-        int n = Math.min(Math.min(a.length, b.length), limit);
+    /**
+     * zend_binary_strncmp and zend_binary_strncasecmp on a from offset and b, length bytes at most: the first
+     * differing bytes' difference (glibc's memcmp), else -1, 0 or 1 by the compared lengths.
+     */
+    static int compare(byte[] a, int offset, byte[] b, long length, boolean ignoreCase) {
+        long aLength = Math.min(length, a.length - offset);
+        long bLength = Math.min(length, b.length);
+        int n = (int) Math.min(aLength, bLength);
         for (int i = 0; i < n; i++) {
-            int x = lowerByte(a[i]) & 0xFF;
-            int y = lowerByte(b[i]) & 0xFF;
+            int x = a[offset + i] & 0xFF;
+            int y = b[i] & 0xFF;
+            if (ignoreCase) {
+                x = lowerByte((byte) x) & 0xFF;
+                y = lowerByte((byte) y) & 0xFF;
+            }
             if (x != y) {
                 return x - y;
             }
         }
-        return Math.min(a.length, limit) - Math.min(b.length, limit);
+        return Long.compare(aLength, bLength);
     }
 
-    @TruffleBoundary
-    private static int compareN(TruffleString a, TruffleString b, long n) {
-        byte[] x = Str.readBytes(a);
-        byte[] y = Str.readBytes(b);
-        int limit = (int) Math.min(n, Integer.MAX_VALUE);
-        int m = Math.min(Math.min(x.length, y.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (x[i] != y[i]) {
-                return (x[i] & 0xFF) - (y[i] & 0xFF);
-            }
+    private static long nonNegative(String function, long length) {
+        if (length < 0) {
+            throw new PhpError("ValueError", function + "(): Argument #3 ($length) must be greater than or equal to 0");
         }
-        return Math.min(x.length, limit) - Math.min(y.length, limit);
+        return length;
     }
 
     // ---- splitting and joining ----
@@ -806,19 +1117,34 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString implode(Object[] a) {
+    private static TruffleString implode(PhpContext context, Object[] a, String function) {
         Object first = Args.get(a, 0);
-        Object second = Args.get(a, 1);
+        Object second = Args.get(a, 1, PhpNull.NULL);
         PhpArray pieces;
         TruffleString glue;
-        if (first instanceof PhpArray array) {
+        if (first instanceof TruffleString s && second instanceof PhpArray array) {
+            glue = s;
             pieces = array;
-            glue = second == null ? Str.EMPTY : Convert.toStr(second);
-        } else if (second instanceof PhpArray array) {
-            pieces = array;
-            glue = Convert.toStr(first);
         } else {
-            throw new PhpError("TypeError", "implode(): Argument #2 ($array) must be of type ?array");
+            Args.arity(a, function, 1, 2);
+            first = Args.arrayOrString(context, a, 0, function, "separator");
+            if (second != PhpNull.NULL && !(second instanceof PhpArray)) {
+                throw Args.typeError(function, 2, "array", "?array", second);
+            }
+            if (second == PhpNull.NULL) {
+                if (!(first instanceof PhpArray array)) {
+                    throw new PhpError("TypeError", function + "(): If argument #1 ($separator) is of type string, "
+                            + "argument #2 ($array) must be of type array, null given");
+                }
+                glue = Str.EMPTY;
+                pieces = array;
+            } else if (first instanceof TruffleString s) {
+                glue = s;
+                pieces = (PhpArray) second;
+            } else {
+                throw new PhpError("TypeError", function + "(): Argument #1 ($separator) must be of type string, "
+                        + "array given");
+            }
         }
         ByteBuilder out = new ByteBuilder();
         boolean firstPiece = true;
@@ -844,10 +1170,6 @@ public final class StringFunctions {
         }
         byte[] b = Str.readBytes(s);
         PhpArray result = new PhpArray();
-        if (b.length == 0) {
-            result.append(Str.EMPTY);
-            return result;
-        }
         for (int i = 0; i < b.length; i += (int) length) {
             result.append(Str.of(b, i, (int) Math.min(length, b.length - i)));
         }
@@ -910,10 +1232,23 @@ public final class StringFunctions {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
-            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) cannot be empty");
+            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) must not be empty");
         }
-        int start = (int) (offset < 0 ? h.length + offset : offset);
-        int end = length == null ? h.length : (int) (length < 0 ? h.length + length : start + length);
+        if (offset < 0) {
+            offset += h.length;
+        }
+        if (offset < 0 || offset > h.length) {
+            throw offsetError("substr_count", 3, "offset");
+        }
+        int start = (int) offset;
+        int end = h.length;
+        if (length != null) {
+            long l = length < 0 ? length + (h.length - offset) : length;
+            if (l < 0 || l > h.length - offset) {
+                throw offsetError("substr_count", 4, "length");
+            }
+            end = (int) (start + l);
+        }
         long count = 0;
         int i = indexOf(h, n, start, false);
         while (i >= 0 && i + n.length <= end) {
@@ -930,6 +1265,12 @@ public final class StringFunctions {
         long offset = Args.lng(a, 2, 0);
         Long length = lengthArg(a, 3);
         boolean ignoreCase = Args.bool(a, 4, false);
+        if (length != null && length <= 0) {
+            if (length == 0) {
+                return 0L;
+            }
+            throw new PhpError("ValueError", "substr_compare(): Argument #4 ($length) must be greater than or equal to 0");
+        }
         if (offset < 0) {
             offset = Math.max(0, main.length + offset);
         }
@@ -937,18 +1278,8 @@ public final class StringFunctions {
             throw new PhpError("ValueError", "substr_compare(): Argument #3 ($offset) must be contained in argument "
                     + "#1 ($haystack)");
         }
-        int limit = length == null ? Math.max(main.length - (int) offset, other.length) : (int) (long) length;
-        byte[] part = Arrays.copyOfRange(main, (int) offset, main.length);
-        if (ignoreCase) {
-            return (long) Integer.signum(compareIgnoreCase(part, other, limit));
-        }
-        int m = Math.min(Math.min(part.length, other.length), limit);
-        for (int i = 0; i < m; i++) {
-            if (part[i] != other[i]) {
-                return (long) Integer.signum((part[i] & 0xFF) - (other[i] & 0xFF));
-            }
-        }
-        return (long) Integer.signum(Math.min(part.length, limit) - Math.min(other.length, limit));
+        long limit = length == null ? Math.max(main.length - offset, other.length) : length;
+        return (long) compare(main, (int) offset, other, limit, ignoreCase);
     }
 
     // ---- escaping ----
@@ -1183,21 +1514,58 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString numberFormat(double value, long decimals, TruffleString point, TruffleString sep) {
-        java.math.BigDecimal rounded = new java.math.BigDecimal(Double.toString(Math.abs(value)))
-                .setScale((int) Math.max(0, decimals), java.math.RoundingMode.HALF_UP);
-        String plain = rounded.toPlainString();
-        String integer = plain.contains(".") ? plain.substring(0, plain.indexOf('.')) : plain;
-        String fraction = plain.contains(".") ? plain.substring(plain.indexOf('.') + 1) : "";
-        StringBuilder grouped = new StringBuilder();
-        for (int i = 0; i < integer.length(); i++) {
-            if (i > 0 && (integer.length() - i) % 3 == 0) {
-                grouped.append(Str.java(sep));
-            }
-            grouped.append(integer.charAt(i));
+    private static TruffleString numberFormat(Object number, long decimals, String point, String separator) {
+        // a float of 2^52 or more has no fraction: formatted as the int it is (zend's own check)
+        if (number instanceof Double d && Math.abs(d) >= 4503599627370496.0 && d >= -9.223372036854775808E18
+                && d < 9.223372036854775807E18) {
+            number = (long) (double) d;
         }
-        String sign = value < 0 && rounded.signum() != 0 ? "-" : "";
-        return Str.of(sign + grouped + (decimals > 0 ? Str.java(point) + fraction : ""));
+        boolean negative;
+        String digits;
+        String fraction = "";
+        if (number instanceof Long l) {
+            // _php_math_number_format_long: an unsigned magnitude, rounded half up to a negative place
+            negative = l < 0;
+            java.math.BigInteger magnitude = java.math.BigInteger.valueOf(l).abs();
+            if (decimals < 0) {
+                java.math.BigInteger power = java.math.BigInteger.TEN.pow((int) Math.min(-decimals, 20));
+                java.math.BigInteger[] parts = magnitude.divideAndRemainder(power);
+                magnitude = decimals < -19 ? java.math.BigInteger.ZERO : parts[0].multiply(power).add(
+                        parts[1].compareTo(power.shiftRight(1)) >= 0 ? power : java.math.BigInteger.ZERO);
+                negative &= magnitude.signum() != 0;
+            }
+            digits = magnitude.toString();
+            if (decimals > 0) {
+                fraction = "0".repeat((int) decimals);
+            }
+        } else {
+            // _php_math_number_format_ex: rounded half up, then printed as %.*F
+            double d = (Double) number;
+            negative = d < 0;
+            int places = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, decimals));
+            d = CoreFunctions.round(Math.abs(d), places, 1);
+            places = Math.max(0, places);
+            if (!Double.isFinite(d)) {
+                return Str.of(Double.isNaN(d) ? "NAN" : "INF");
+            }
+            negative &= d != 0;
+            String printed = new java.math.BigDecimal(d).setScale(places, java.math.RoundingMode.HALF_EVEN)
+                    .toPlainString();
+            int dot = printed.indexOf('.');
+            digits = dot < 0 ? printed : printed.substring(0, dot);
+            fraction = dot < 0 ? "" : printed.substring(dot + 1);
+        }
+        StringBuilder out = new StringBuilder(negative ? "-" : "");
+        for (int i = 0; i < digits.length(); i++) {
+            if (i > 0 && (digits.length() - i) % 3 == 0) {
+                out.append(separator);
+            }
+            out.append(digits.charAt(i));
+        }
+        if (decimals > 0) {
+            out.append(point).append(fraction);
+        }
+        return Str.of(out.toString());
     }
 
     @TruffleBoundary
@@ -1249,56 +1617,88 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString dirname(TruffleString path, long levels) {
-        String p = Str.java(path);
-        for (long i = 0; i < levels; i++) {
-            int end = p.length();
-            while (end > 1 && p.charAt(end - 1) == '/') {
+        byte[] p = Str.bytes(path);
+        int length = p.length;
+        int previous;
+        do {
+            previous = length;
+            length = zendDirname(p, length);
+        } while (length < previous && --levels > 0);
+        // zend_dirname writes "/" or "." over the start for the paths it reduces to one
+        return Str.of(p, 0, length);
+    }
+
+    /** zend_dirname (unix): the length of the parent, "/" or "." written at the start when it is one of those. */
+    private static int zendDirname(byte[] p, int length) {
+        if (length == 0) {
+            return 0;
+        }
+        int end = length - 1;
+        while (end >= 0 && p[end] == '/') {
+            end--;
+        }
+        if (end >= 0) {
+            while (end >= 0 && p[end] != '/') {
                 end--;
             }
-            int slash = p.lastIndexOf('/', end - 1);
-            if (slash < 0) {
-                return Str.of(".");
+            if (end < 0) {
+                p[0] = '.';
+                return 1;
             }
-            while (slash > 0 && p.charAt(slash - 1) == '/') {
-                slash--;
+            while (end >= 0 && p[end] == '/') {
+                end--;
             }
-            p = slash == 0 ? "/" : p.substring(0, slash);
         }
-        return Str.of(p);
+        if (end < 0) {
+            p[0] = '/';
+            return 1;
+        }
+        return end + 1;
     }
 
     @TruffleBoundary
     private static TruffleString basename(TruffleString path, TruffleString suffix) {
-        String p = Str.java(path);
-        while (p.length() > 1 && p.endsWith("/")) {
-            p = p.substring(0, p.length() - 1);
+        // php_basename in an ASCII-compatible locale (C, C.UTF-8): bytes
+        byte[] p = Str.readBytes(path);
+        int end = p.length - 1;
+        while (end >= 0 && p[end] == '/') {
+            end--;
         }
-        String base = p.substring(p.lastIndexOf('/') + 1);
-        String s = Str.java(suffix);
-        if (!s.isEmpty() && base.endsWith(s) && !base.equals(s)) {
-            base = base.substring(0, base.length() - s.length());
+        int start = end++;
+        while (start > 0 && p[start - 1] != '/') {
+            start--;
         }
-        return Str.of(base);
+        if (end <= 0) {
+            return Str.EMPTY;
+        }
+        byte[] x = Str.readBytes(suffix);
+        if (x.length < end - start && Arrays.equals(p, end - x.length, end, x, 0, x.length)) {
+            end -= x.length;
+        }
+        return Str.of(p, start, end - start);
     }
 
     @TruffleBoundary
     private static Object pathinfo(TruffleString path, long options) {
-        String p = Str.java(path);
         PhpArray info = new PhpArray();
-        int slash = p.lastIndexOf('/');
-        if ((options & 1) != 0 && slash >= 0) {
-            info.put(Str.of("dirname"), dirname(path, 1));
+        TruffleString dirname = (options & 1) != 0 ? dirname(path, 1) : Str.EMPTY;
+        if (Str.length(dirname) > 0) {
+            info.put(Str.of("dirname"), dirname);
         }
-        String base = Str.java(basename(path, Str.EMPTY));
+        TruffleString base = basename(path, Str.EMPTY);
         if ((options & 2) != 0) {
-            info.put(Str.of("basename"), Str.of(base));
+            info.put(Str.of("basename"), base);
         }
-        int dot = base.lastIndexOf('.');
+        byte[] b = Str.readBytes(base);
+        int dot = b.length - 1;
+        while (dot >= 0 && b[dot] != '.') {
+            dot--;
+        }
         if ((options & 4) != 0 && dot >= 0) {
-            info.put(Str.of("extension"), Str.of(base.substring(dot + 1)));
+            info.put(Str.of("extension"), Str.of(b, dot + 1, b.length - dot - 1));
         }
         if ((options & 8) != 0) {
-            info.put(Str.of("filename"), Str.of(dot >= 0 ? base.substring(0, dot) : base));
+            info.put(Str.of("filename"), dot >= 0 ? Str.of(b, 0, dot) : base);
         }
         if (options != 15) {
             Object only = info.firstPosition() >= 0 ? info.valueAt(info.firstPosition()) : Str.EMPTY;
@@ -1496,5 +1896,878 @@ public final class StringFunctions {
             }
         }
         return false;
+    }
+
+    /** A function of one string, $string (Z_PARAM_STR), given its bytes (a copy the function may change). */
+    private static void string(Registry r, String name, java.util.function.Function<byte[], Object> body) {
+        r.fn(name, (context, a) -> {
+            Args.arity(a, name, 1, 1);
+            return body.apply(Str.bytes(Args.string(context, a, 0, name, "string", false)));
+        });
+    }
+
+    /** zend_deprecated_function for a function declared #[\Deprecated(since, message)]. */
+    private static void deprecated(PhpContext context, String function, String sinceAndMessage) {
+        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Function " + function
+                + "() is deprecated since " + sinceAndMessage), SourceLocation.current());
+    }
+
+    /** levenshtein.c's reference_levdist. */
+    private static long levenshtein(byte[] s1, byte[] s2, long ins, long rep, long del) {
+        if (s1.length == 0) {
+            return s2.length * ins;
+        }
+        if (s2.length == 0) {
+            return s1.length * del;
+        }
+        if (s1.length < s2.length && ins == rep && rep == del) {
+            byte[] t = s1;
+            s1 = s2;
+            s2 = t;
+        }
+        long[] p1 = new long[s2.length + 1];
+        long[] p2 = new long[s2.length + 1];
+        for (int i2 = 0; i2 <= s2.length; i2++) {
+            p1[i2] = i2 * ins;
+        }
+        for (byte c : s1) {
+            p2[0] = p1[0] + del;
+            for (int i2 = 0; i2 < s2.length; i2++) {
+                long c0 = p1[i2] + (c == s2[i2] ? 0 : rep);
+                c0 = Math.min(c0, p1[i2 + 1] + del);
+                p2[i2 + 1] = Math.min(c0, p2[i2] + ins);
+            }
+            long[] t = p1;
+            p1 = p2;
+            p2 = t;
+        }
+        return p1[s2.length];
+    }
+
+    /** php_similar_char: the longest common substring, then the same left and right of it. */
+    private static long similar(byte[] t1, int from1, int len1, byte[] t2, int from2, int len2) {
+        int max = 0;
+        int count = 0;
+        int pos1 = 0;
+        int pos2 = 0;
+        for (int p = 0; p < len1; p++) {
+            for (int q = 0; q < len2; q++) {
+                int l = 0;
+                while (p + l < len1 && q + l < len2 && t1[from1 + p + l] == t2[from2 + q + l]) {
+                    l++;
+                }
+                if (l > max) {
+                    max = l;
+                    count++;
+                    pos1 = p;
+                    pos2 = q;
+                }
+            }
+        }
+        long sum = max;
+        if (sum > 0) {
+            if (pos1 > 0 && pos2 > 0 && count > 1) {
+                sum += similar(t1, from1, pos1, t2, from2, pos2);
+            }
+            if (pos1 + max < len1 && pos2 + max < len2) {
+                sum += similar(t1, from1 + pos1 + max, len1 - pos1 - max, t2, from2 + pos2 + max, len2 - pos2 - max);
+            }
+        }
+        return sum;
+    }
+
+    /** soundex.c: Knuth's soundex, of the ASCII letters. */
+    private static Object soundex(byte[] s) {
+        String table = "01230120022455012623010202";
+        byte[] out = {'0', '0', '0', '0'};
+        int small = 0;
+        int last = -1;
+        for (int i = 0; i < s.length && small < 4; i++) {
+            int code = s[i] >= 'a' && s[i] <= 'z' ? s[i] - 32 : s[i];
+            if (code >= 'A' && code <= 'Z') {
+                int digit = table.charAt(code - 'A') == '0' ? 0 : table.charAt(code - 'A');
+                if (small == 0) {
+                    out[small++] = (byte) code;
+                    last = digit;
+                } else if (digit != last) {
+                    if (digit != 0) {
+                        out[small++] = (byte) digit;
+                    }
+                    last = digit;
+                }
+            }
+        }
+        return Str.of(out);
+    }
+
+    /** php_quot_print_encode: lines of at most 75, CRLF kept, a multibyte sequence's encoding on one line. */
+    private static Object quotedPrintableEncode(byte[] s) {
+        ByteBuilder d = new ByteBuilder(s.length * 3);
+        long lp = 0;
+        for (int i = 0; i < s.length; i++) {
+            int c = s[i] & 0xFF;
+            if (c == '\r' && at(s, i + 1) == '\n' && i + 1 < s.length) {
+                d.write('\r');
+                d.write('\n');
+                i++;
+                lp = 0;
+            } else if (c < 0x20 || c == 0x7f || c >= 0x80 || c == '=' || c == ' ' && at(s, i + 1) == '\r') {
+                if ((lp += 3) > 75 && c <= 0x7f || c > 0x7f && c <= 0xdf && lp + 3 > 75
+                        || c > 0xdf && c <= 0xef && lp + 6 > 75 || c > 0xef && c <= 0xf4 && lp + 9 > 75) {
+                    d.writeAscii("=\r\n");
+                    lp = 3;
+                }
+                d.write('=');
+                d.write("0123456789ABCDEF".charAt(c >> 4));
+                d.write("0123456789ABCDEF".charAt(c & 0xf));
+            } else {
+                if (++lp > 75) {
+                    d.writeAscii("=\r\n");
+                    lp = 1;
+                }
+                d.write(c);
+            }
+        }
+        return Str.of(d.toByteArray());
+    }
+
+    /** quoted_printable_decode: =XX, and soft line breaks (= then spaces or tabs then a line end); to a NUL. */
+    private static Object quotedPrintableDecode(byte[] s) {
+        ByteBuilder out = new ByteBuilder(s.length);
+        int i = 0;
+        while (at(s, i) != 0) {
+            if (at(s, i) == '=' && Character.digit(at(s, i + 1), 16) >= 0 && Character.digit(at(s, i + 2), 16) >= 0
+                    && at(s, i + 1) < 128 && at(s, i + 2) < 128) {
+                out.write(Character.digit(at(s, i + 1), 16) << 4 | Character.digit(at(s, i + 2), 16));
+                i += 3;
+            } else if (at(s, i) == '=') {
+                int k = 1;
+                while (at(s, i + k) == ' ' || at(s, i + k) == '\t') {
+                    k++;
+                }
+                if (at(s, i + k) == 0) {
+                    i += k;
+                } else if (at(s, i + k) == '\r' && at(s, i + k + 1) == '\n') {
+                    i += k + 2;
+                } else if (at(s, i + k) == '\r' || at(s, i + k) == '\n') {
+                    i += k + 1;
+                } else {
+                    out.write(s[i++]);
+                }
+            } else {
+                out.write(s[i++]);
+            }
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /** PHP_UU_ENC. */
+    private static int uu(int c) {
+        return c != 0 ? (c & 077) + ' ' : '`';
+    }
+
+    /** php_uuencode: lines of 45 bytes. */
+    private static Object uuencode(byte[] src) {
+        ByteBuilder p = new ByteBuilder(src.length * 3 / 2 + 46);
+        int len = 45;
+        int s = 0;
+        int e = src.length;
+        while (s + 3 < e) {
+            int ee = s + len;
+            if (ee > e) {
+                ee = e;
+                len = ee - s;
+                if (len % 3 != 0) {
+                    ee = s + len / 3 * 3;
+                }
+            }
+            p.write(uu(len));
+            while (s < ee) {
+                p.write(uu(at(src, s) >> 2));
+                p.write(uu(at(src, s) << 4 & 060 | at(src, s + 1) >> 4 & 017));
+                p.write(uu(at(src, s + 1) << 2 & 074 | at(src, s + 2) >> 6 & 03));
+                p.write(uu(at(src, s + 2) & 077));
+                s += 3;
+            }
+            if (len == 45) {
+                p.write('\n');
+            }
+        }
+        if (s < e) {
+            if (len == 45) {
+                p.write(uu(e - s));
+                len = 0;
+            }
+            p.write(uu(at(src, s) >> 2));
+            p.write(uu(at(src, s) << 4 & 060 | at(src, s + 1) >> 4 & 017));
+            p.write(e - s > 1 ? uu(at(src, s + 1) << 2 & 074 | at(src, s + 2) >> 6 & 03) : uu(0));
+            p.write(e - s > 2 ? uu(at(src, s + 2) & 077) : uu(0));
+        }
+        if (len < 45) {
+            p.write('\n');
+        }
+        p.write(uu(0));
+        p.write('\n');
+        return Str.of(p.toByteArray());
+    }
+
+    /** PHP_UU_DEC. */
+    private static int unuu(byte[] s, int i) {
+        return at(s, i) - ' ' & 077;
+    }
+
+    /** php_uudecode; false, with a warning, for a string that isn't uuencoded. */
+    private static Object uudecode(byte[] src) {
+        ByteBuilder p = new ByteBuilder(src.length);
+        int totalLen = 0;
+        int s = 0;
+        int e = src.length;
+        boolean valid = src.length > 0;
+        while (valid && s < e) {
+            int len = unuu(src, s++);
+            if (len == 0) {
+                break;
+            }
+            totalLen += len;
+            int ee = s + (len == 45 ? 60 : (int) Math.floor(len * 1.33));
+            if (len > src.length || ee > e) {
+                valid = false;
+                break;
+            }
+            while (s < ee) {
+                if (s + 4 > e) {
+                    valid = false;
+                    break;
+                }
+                p.write(unuu(src, s) << 2 | unuu(src, s + 1) >> 4);
+                p.write(unuu(src, s + 1) << 4 | unuu(src, s + 2) >> 2);
+                p.write(unuu(src, s + 2) << 6 | unuu(src, s + 3));
+                s += 4;
+            }
+            if (len < 45) {
+                break;
+            }
+            s++;
+        }
+        if (!valid) {
+            ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING,
+                    Str.of("convert_uudecode(): Argument #1 ($data) is not a valid uuencoded string"),
+                    SourceLocation.current());
+            return Boolean.FALSE;
+        }
+        if (totalLen > p.size()) {
+            p.write(unuu(src, s) << 2 | unuu(src, s + 1) >> 4);
+            if (totalLen > 1) {
+                p.write(unuu(src, s + 1) << 4 | unuu(src, s + 2) >> 2);
+                if (totalLen > 2) {
+                    p.write(unuu(src, s + 2) << 6 | unuu(src, s + 3));
+                }
+            }
+        }
+        byte[] out = p.toByteArray();
+        return Str.of(out.length > totalLen ? Arrays.copyOf(out, totalLen) : out);
+    }
+
+    /** str_word_count: words of letters (C locale), ' and - (neither first, nor - last), and the given bytes. */
+    private static Object wordCount(byte[] s, long format, boolean[] mask) {
+        PhpArray words = new PhpArray();
+        if (s.length == 0) {
+            return format == 0 ? (Object) 0L : words;
+        }
+        int p = 0;
+        int e = s.length;
+        if (s[0] == '\'' && (mask == null || !mask['\'']) || s[0] == '-' && (mask == null || !mask['-'])) {
+            p++;
+        }
+        if (s[e - 1] == '-' && (mask == null || !mask['-'])) {
+            e--;
+        }
+        long count = 0;
+        while (p < e) {
+            int start = p;
+            while (p < e && ((s[p] | 0x20) >= 'a' && (s[p] | 0x20) <= 'z' || mask != null && mask[s[p] & 0xFF]
+                    || s[p] == '\'' || s[p] == '-')) {
+                p++;
+            }
+            if (p > start) {
+                if (format == 1) {
+                    words.append(Str.of(s, start, p - start));
+                } else if (format == 2) {
+                    words.put((long) start, Str.of(s, start, p - start));
+                } else {
+                    count++;
+                }
+            }
+            p++;
+        }
+        return format == 0 ? (Object) count : words;
+    }
+
+    private static final String[] LOCALE_CATEGORIES = {"LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
+        "LC_MONETARY", "LC_MESSAGES", null, "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT",
+        "LC_IDENTIFICATION"};
+
+    /**
+     * try_setlocale_str on glibc with the locales the reference image has (C, POSIX, C.UTF-8): the locale's name,
+     * "0" querying it; null if the category or the locale doesn't exist.
+     */
+    private static String setlocale(PhpContext context, String[] locales, long category, String name) {
+        if (!name.equals("0") && name.length() >= 255) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING,
+                    Str.of("setlocale(): Specified locale name is too long"), SourceLocation.current());
+            return null;
+        }
+        if (category < 0 || category >= locales.length) {
+            return null;
+        }
+        int cat = (int) category;
+        if (!name.equals("0")) {
+            String[] chosen = new String[locales.length];
+            for (int c = 0; c < locales.length; c++) {
+                if (c == 6 || cat != 6 && c != cat) {
+                    continue;
+                }
+                String wanted = name;
+                if (wanted.isEmpty()) {
+                    // the environment: LC_ALL, then the category's variable, then LANG
+                    Map<String, String> environment = RuntimeFunctions.environment(context);
+                    for (String variable : new String[]{"LC_ALL", LOCALE_CATEGORIES[c], "LANG"}) {
+                        String value = environment.get(variable);
+                        if (value != null && !value.isEmpty()) {
+                            wanted = value;
+                            break;
+                        }
+                    }
+                    wanted = wanted.isEmpty() ? "C" : wanted;
+                }
+                if (wanted.equals("POSIX") || wanted.equals("C")) {
+                    chosen[c] = "C";
+                } else if (wanted.matches("C\\.(?i:utf-?8)")) {
+                    chosen[c] = wanted;
+                } else {
+                    return null;
+                }
+            }
+            for (int c = 0; c < locales.length; c++) {
+                if (chosen[c] != null) {
+                    locales[c] = chosen[c];
+                }
+            }
+        }
+        if (cat != 6) {
+            return locales[cat];
+        }
+        boolean same = true;
+        StringBuilder composite = new StringBuilder();
+        for (int c = 0; c < locales.length; c++) {
+            if (c != 6) {
+                same &= locales[c].equals(locales[0]);
+                composite.append(c == 0 ? "" : ";").append(LOCALE_CATEGORIES[c]).append('=').append(locales[c]);
+            }
+        }
+        return same ? locales[0] : composite.toString();
+    }
+
+    /** nl_langinfo()'s items (glibc's: the category in the high 16 bits) and their values in the C locale. */
+    private static final Map<Long, String> LANGINFO = new java.util.HashMap<>();
+    private static final Map<String, Long> LANGINFO_NAMES = new java.util.LinkedHashMap<>();
+
+    static {
+        String[] days = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        String[] months = {"January", "February", "March", "April", "May", "June", "July", "August", "September",
+            "October", "November", "December"};
+        for (int i = 0; i < 7; i++) {
+            langinfo("ABDAY_" + (i + 1), 131072 + i, days[i].substring(0, 3));
+            langinfo("DAY_" + (i + 1), 131079 + i, days[i]);
+        }
+        for (int i = 0; i < 12; i++) {
+            langinfo("ABMON_" + (i + 1), 131086 + i, months[i].substring(0, 3));
+            langinfo("MON_" + (i + 1), 131098 + i, months[i]);
+        }
+        Object[] rest = {"AM_STR", 131110, "AM", "PM_STR", 131111, "PM", "D_T_FMT", 131112, "%a %b %e %H:%M:%S %Y",
+            "D_FMT", 131113, "%m/%d/%y", "T_FMT", 131114, "%H:%M:%S", "T_FMT_AMPM", 131115, "%I:%M:%S %p",
+            "ERA", 131116, "", "ERA_YEAR", 131117, "", "ERA_D_T_FMT", 131120, "", "ERA_D_FMT", 131118, "",
+            "ERA_T_FMT", 131121, "", "ALT_DIGITS", 131119, "", "INT_CURR_SYMBOL", 262144, "",
+            "CURRENCY_SYMBOL", 262145, "", "CRNCYSTR", 262159, "-", "MON_DECIMAL_POINT", 262146, "",
+            "MON_THOUSANDS_SEP", 262147, "", "MON_GROUPING", 262148, "", "POSITIVE_SIGN", 262149, "",
+            "NEGATIVE_SIGN", 262150, "", "INT_FRAC_DIGITS", 262151, "\u00ff", "FRAC_DIGITS", 262152, "\u00ff",
+            "P_CS_PRECEDES", 262153, "\u00ff", "P_SEP_BY_SPACE", 262154, "\u00ff", "N_CS_PRECEDES", 262155, "\u00ff",
+            "N_SEP_BY_SPACE", 262156, "\u00ff", "P_SIGN_POSN", 262157, "\u00ff", "N_SIGN_POSN", 262158, "\u00ff",
+            "DECIMAL_POINT", 65536, ".", "RADIXCHAR", 65536, ".", "THOUSANDS_SEP", 65537, "", "THOUSEP", 65537, "",
+            "GROUPING", 65538, "", "YESEXPR", 327680, "^[yY]", "NOEXPR", 327681, "^[nN]", "YESSTR", 327682, "",
+            "NOSTR", 327683, "", "CODESET", 14, "ANSI_X3.4-1968"};
+        for (int i = 0; i < rest.length; i += 3) {
+            langinfo((String) rest[i], (Integer) rest[i + 1], (String) rest[i + 2]);
+        }
+    }
+
+    private static void langinfo(String name, long item, String value) {
+        LANGINFO.put(item, value);
+        LANGINFO_NAMES.put(name, item);
+    }
+
+    static void langinfoConstants(Map<String, Object> constants) {
+        constants.putAll(LANGINFO_NAMES);
+    }
+
+    /** metaphone.c's letter classes: 1 vowel (AEIOU), 2 FJMNR, 4 CGPST (affect H), 8 EIY (soften), 16 BDH. */
+    private static final byte[] METAPHONE_CODES = {1, 16, 4, 16, 9, 2, 4, 16, 9, 2, 0, 2, 2, 2, 1, 4, 0, 2, 4, 4, 1, 0,
+        0, 0, 8, 0};
+
+    private static int encode(int c) {
+        return c >= 'A' && c <= 'Z' ? METAPHONE_CODES[c - 'A'] : 0;
+    }
+
+    private static boolean isAlpha(int c) {
+        return (c | 0x20) >= 'a' && (c | 0x20) <= 'z';
+    }
+
+    private static int upper(int c) {
+        return c >= 'a' && c <= 'z' ? c - 32 : c;
+    }
+
+    /** metaphone.c (Michael G Schwern's), traditional: the word as a C string, to its first NUL. */
+    private static TruffleString metaphone(byte[] word, long max) {
+        int length = 0;
+        while (length < word.length && word[length] != 0) {
+            length++;
+        }
+        byte[] w = Arrays.copyOf(word, length + 3); // NULs after the end, as C reads them
+        ByteBuilder out = new ByteBuilder(length);
+        int i = 0;
+        while (!isAlpha(w[i])) {
+            if (w[i] == 0) {
+                return Str.EMPTY;
+            }
+            i++;
+        }
+        int next = upper(w[i + 1]);
+        switch (upper(w[i])) {
+            case 'A' -> {
+                out.write(next == 'E' ? 'E' : 'A');
+                i += next == 'E' ? 2 : 1;
+            }
+            case 'G', 'K', 'P' -> {
+                if (next == 'N') {
+                    out.write('N');
+                    i += 2;
+                }
+            }
+            case 'W' -> {
+                if (next == 'R') {
+                    out.write('R');
+                    i += 2;
+                } else if (next == 'H' || (encode(next) & 1) != 0) {
+                    out.write('W');
+                    i += 2;
+                }
+            }
+            case 'X' -> {
+                out.write('S');
+                i++;
+            }
+            case 'E', 'I', 'O', 'U' -> {
+                out.write(upper(w[i]));
+                i++;
+            }
+            default -> {
+            }
+        }
+        for (; w[i] != 0 && (max == 0 || out.size() < max); i++) {
+            int c = w[i];
+            if (!isAlpha(c)) {
+                continue;
+            }
+            c = upper(c);
+            int prev = i >= 1 ? upper(w[i - 1]) : 0;
+            if (c == prev && c != 'C') {
+                continue;
+            }
+            next = upper(w[i + 1]);
+            int afterNext = w[i + 1] != 0 ? upper(w[i + 2]) : 0;
+            int skip = 0;
+            switch (c) {
+                case 'B' -> {
+                    if (prev != 'M') {
+                        out.write('B');
+                    }
+                }
+                case 'C' -> {
+                    if ((encode(next) & 8) != 0) {
+                        if (next == 'I' && afterNext == 'A') {
+                            out.write('X');
+                        } else if (prev != 'S') {
+                            out.write('S');
+                        }
+                    } else if (next == 'H') {
+                        out.write('X');
+                        skip++;
+                    } else {
+                        out.write('K');
+                    }
+                }
+                case 'D' -> {
+                    if (next == 'G' && (encode(afterNext) & 8) != 0) {
+                        out.write('J');
+                        skip++;
+                    } else {
+                        out.write('T');
+                    }
+                }
+                case 'G' -> {
+                    if (next == 'H') {
+                        if (!((encode(i >= 3 ? upper(w[i - 3]) : 0) & 16) != 0 || (i >= 4 ? upper(w[i - 4]) : 0) == 'H')) {
+                            out.write('F');
+                            skip++;
+                        }
+                    } else if (next == 'N') {
+                        if (!(!isAlpha(afterNext) || afterNext == 'E' && lookahead(w, i, 3) == 'D')) {
+                            out.write('K');
+                        }
+                    } else if ((encode(next) & 8) != 0 && prev != 'G') {
+                        out.write('J');
+                    } else {
+                        out.write('K');
+                    }
+                }
+                case 'H' -> {
+                    if ((encode(next) & 1) != 0 && (encode(prev) & 4) == 0) {
+                        out.write('H');
+                    }
+                }
+                case 'K' -> {
+                    if (prev != 'C') {
+                        out.write('K');
+                    }
+                }
+                case 'P' -> out.write(next == 'H' ? 'F' : 'P');
+                case 'Q' -> out.write('K');
+                case 'S' -> {
+                    if (next == 'I' && (afterNext == 'O' || afterNext == 'A')) {
+                        out.write('X');
+                    } else if (next == 'H') {
+                        out.write('X');
+                        skip++;
+                    } else {
+                        out.write('S');
+                    }
+                }
+                case 'T' -> {
+                    if (next == 'I' && (afterNext == 'O' || afterNext == 'A')) {
+                        out.write('X');
+                    } else if (next == 'H') {
+                        out.write('0');
+                        skip++;
+                    } else if (!(next == 'C' && afterNext == 'H')) {
+                        out.write('T');
+                    }
+                }
+                case 'V' -> out.write('F');
+                case 'W', 'Y' -> {
+                    if ((encode(next) & 1) != 0) {
+                        out.write(c);
+                    }
+                }
+                case 'X' -> {
+                    out.write('K');
+                    out.write('S');
+                }
+                case 'Z' -> out.write('S');
+                case 'F', 'J', 'L', 'M', 'N', 'R' -> out.write(c);
+                default -> {
+                }
+            }
+            i += skip;
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /** Lookahead: the letter how_far on, or the NUL before it. */
+    private static int lookahead(byte[] w, int from, int howFar) {
+        int i = 0;
+        while (w[from + i] != 0 && i < howFar) {
+            i++;
+        }
+        return upper(w[from + i]);
+    }
+
+    /** str_getcsv's separator and enclosure: one byte. */
+    private static int csvChar(PhpContext context, Object[] a, int index, String name, int missing) {
+        if (!Args.has(a, index)) {
+            return missing;
+        }
+        byte[] c = Str.readBytes(Args.string(context, a, index, "str_getcsv", name, false));
+        if (c.length != 1) {
+            throw new PhpError("ValueError", "str_getcsv(): Argument #" + (index + 1) + " ($" + name
+                    + ") must be a single character");
+        }
+        return c[0] & 0xFF;
+    }
+
+    /** php_mblen as php_fgetcsv calls it: 1 for a NUL, the character's length in a UTF-8 LC_CTYPE. */
+    private static int csvLength(byte[] s, int i, int limit, boolean utf8) {
+        return i >= limit ? 0 : s[i] == 0 || !utf8 ? 1 : ExecFunctions.mblen(s, i, limit);
+    }
+
+    /** php_fgetcsv_lookup_trailing_spaces: where a final \r\n, \r or \n of s[from, from + length) begins. */
+    private static int csvTrailing(byte[] s, int from, int length, boolean utf8) {
+        int last0 = 0;
+        int last1 = 0;
+        int p = from;
+        int end = from + length;
+        while (p < end) {
+            int n = csvLength(s, p, end, utf8);
+            if (n == 0) {
+                break;
+            }
+            if (n < 0) {
+                n = 1;
+            } else {
+                last0 = last1;
+                last1 = s[p] & 0xFF;
+            }
+            p += n;
+        }
+        if (last1 == '\n' && last0 == '\r') {
+            return p - 2;
+        }
+        return last1 == '\n' || last1 == '\r' ? p - 1 : p;
+    }
+
+    /** php_fgetcsv on a string (str_getcsv: no stream to read more lines from); null for a blank line. */
+    private static PhpArray csv(byte[] string, byte delimiter, byte enclosure, int escape, boolean utf8) {
+        byte[] buf = Arrays.copyOf(string, string.length + 1); // the NUL after the string, which C reads
+        int limit = csvTrailing(buf, 0, string.length, utf8);
+        int lineEnd = limit;
+        int lineEndLength = string.length - limit;
+        PhpArray values = new PhpArray();
+        boolean firstField = true;
+        int bptr = 0;
+        int inc;
+        do {
+            ByteBuilder temp = new ByteBuilder();
+            inc = csvLength(buf, bptr, limit, utf8);
+            if (inc == 1) {
+                int tmp = bptr;
+                while (at(buf, tmp) != (delimiter & 0xFF) && isSpace(at(buf, tmp))) {
+                    tmp++;
+                }
+                if (at(buf, tmp) == (enclosure & 0xFF) && tmp < limit) {
+                    bptr = tmp;
+                }
+            }
+            if (firstField && bptr == lineEnd) {
+                return null;
+            }
+            firstField = false;
+            int hunk;
+            int compEnd;
+            if (inc != 0 && at(buf, bptr) == (enclosure & 0xFF)) {
+                int state = 0;
+                bptr++;
+                hunk = bptr;
+                enclosed:
+                while (true) {
+                    if (inc == 0) {
+                        if (state == 2) {
+                            temp.write(buf, hunk, bptr - hunk - 1);
+                            hunk = bptr;
+                            break;
+                        }
+                        if (state == 1) {
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                        }
+                        if (hunk != lineEnd) {
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                        }
+                        temp.write(buf, lineEnd, lineEndLength);
+                        if (bptr > limit) {
+                            if (hunk == bptr) {
+                                hunk--;
+                            }
+                            bptr--;
+                        }
+                        break;
+                    } else if (inc < 0 || inc == 1) {
+                        if (state == 1) {
+                            bptr++;
+                            state = 0;
+                        } else if (state == 2) {
+                            if (at(buf, bptr) != (enclosure & 0xFF)) {
+                                temp.write(buf, hunk, bptr - hunk - 1);
+                                hunk = bptr;
+                                break enclosed;
+                            }
+                            temp.write(buf, hunk, bptr - hunk);
+                            bptr++;
+                            hunk = bptr;
+                            state = 0;
+                        } else {
+                            if (at(buf, bptr) == (enclosure & 0xFF)) {
+                                state = 2;
+                            } else if (escape >= 0 && at(buf, bptr) == escape) {
+                                state = 1;
+                            }
+                            bptr++;
+                        }
+                    } else {
+                        if (state == 2) {
+                            temp.write(buf, hunk, bptr - hunk - 1);
+                            hunk = bptr;
+                            break;
+                        } else if (state == 1) {
+                            bptr += inc;
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                            state = 0;
+                        } else {
+                            bptr += inc;
+                        }
+                    }
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                // the delimiter
+                while (inc != 0) {
+                    if (inc < 0) {
+                        inc = 1;
+                    }
+                    if (inc == 1 && at(buf, bptr) == (delimiter & 0xFF)) {
+                        break;
+                    }
+                    bptr += inc;
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                temp.write(buf, hunk, bptr - hunk);
+                bptr += inc;
+                compEnd = temp.size();
+            } else {
+                hunk = bptr;
+                while (inc != 0) {
+                    if (inc < 0) {
+                        inc = 1;
+                    }
+                    if (inc == 1 && at(buf, bptr) == (delimiter & 0xFF)) {
+                        break;
+                    }
+                    bptr += inc;
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                temp.write(buf, hunk, bptr - hunk);
+                byte[] field = temp.toByteArray();
+                compEnd = csvTrailing(field, 0, field.length, utf8);
+                if (at(buf, bptr) == (delimiter & 0xFF)) {
+                    bptr++;
+                }
+            }
+            values.append(Str.of(Arrays.copyOf(temp.toByteArray(), compEnd)));
+        } while (inc > 0);
+        return values;
+    }
+
+    private static boolean isHebrew(int c) {
+        return c >= 224 && c <= 250;
+    }
+
+    private static boolean isBlank(int c) {
+        return c == ' ' || c == '\t';
+    }
+
+    private static boolean isNewline(int c) {
+        return c == '\n' || c == '\r';
+    }
+
+    /** ispunct() in the C locale. */
+    private static boolean isPunct(int c) {
+        return c > ' ' && c < 127 && !(c >= '0' && c <= '9') && !((c | 0x20) >= 'a' && (c | 0x20) <= 'z');
+    }
+
+    /** string.c's hebrev: the Hebrew blocks reversed (brackets mirrored), then the lines broken at max chars. */
+    private static byte[] hebrev(byte[] string, long max) {
+        int n = string.length;
+        byte[] str = Arrays.copyOf(string, n + 1);
+        byte[] heb = new byte[n + 1];
+        int target = n - 1;
+        boolean hebrew = isHebrew(str[0] & 0xFF);
+        int start = 0;
+        int end = 0;
+        do {
+            if (hebrew) {
+                while ((isHebrew(str[end + 1] & 0xFF) || isBlank(str[end + 1]) || isPunct(str[end + 1] & 0xFF)
+                        || str[end + 1] == '\n') && end < n - 1) {
+                    end++;
+                }
+                for (int i = start + 1; i <= end + 1; i++) {
+                    int c = str[i - 1];
+                    int mirrored = "()[]{}<>\\/".indexOf(c);
+                    heb[target--] = (byte) (mirrored < 0 ? c : ")(][}{></\\".charAt(mirrored));
+                }
+            } else {
+                while (!isHebrew(str[end + 1] & 0xFF) && str[end + 1] != '\n' && end < n - 1) {
+                    end++;
+                }
+                while ((isBlank(str[end]) || isPunct(str[end] & 0xFF)) && str[end] != '/' && str[end] != '-'
+                        && end > start) {
+                    end--;
+                }
+                for (int i = end + 1; i >= start + 1; i--) {
+                    heb[target--] = str[i - 1];
+                }
+            }
+            hebrew = !hebrew;
+            start = end + 1;
+        } while (end < n - 1);
+        ByteBuilder broken = new ByteBuilder(n);
+        int begin = n - 1;
+        end = n - 1;
+        while (true) {
+            long count = 0;
+            while ((max == 0 || max > 0 && count < max) && begin > 0) {
+                count++;
+                begin--;
+                if (isNewline(heb[begin])) {
+                    while (begin > 0 && isNewline(heb[begin - 1])) {
+                        begin--;
+                        count++;
+                    }
+                    break;
+                }
+            }
+            if (max >= 0 && count == max) {
+                long newCount = count;
+                int newBegin = begin;
+                while (newCount > 0) {
+                    if (isBlank(heb[newBegin]) || isNewline(heb[newBegin])) {
+                        break;
+                    }
+                    newBegin++;
+                    newCount--;
+                }
+                if (newCount > 0) {
+                    begin = newBegin;
+                }
+            }
+            int origBegin = begin;
+            if (isBlank(heb[begin])) {
+                heb[begin] = '\n';
+            }
+            while (begin <= end && isNewline(heb[begin])) {
+                begin++;
+            }
+            for (int i = begin; i <= end; i++) {
+                broken.write(heb[i]);
+            }
+            for (int i = origBegin; i <= end && isNewline(heb[i]); i++) {
+                broken.write(heb[i]);
+            }
+            begin = origBegin;
+            if (begin == 0) {
+                break;
+            }
+            begin--;
+            end = begin;
+        }
+        return broken.toByteArray();
     }
 }

@@ -230,8 +230,12 @@ public final class Callables {
                     ? body.getScopeName()
                     : root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
                     ? bytecode.getScopeName() : null;
-            return new Caller(SourceLocation.codeFrame(running,
-                    frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments(), scope);
+            Object[] arguments = SourceLocation.codeFrame(running,
+                    frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments();
+            // a closure's bound class, an include's class: the scope the code runs in
+            return new Caller(arguments, arguments.length > PhpFunction.ARG_CLOSURE
+                    ? pl.codeloom.php.nodes.vars.PropNode.callingScope(arguments[PhpFunction.ARG_CLOSURE], scope)
+                    : scope);
         });
     }
 
@@ -257,8 +261,12 @@ public final class Callables {
     /**
      * A built-in's callable parameter, which php-src checks before the built-in runs (Z_PARAM_FUNC): a value
      * that isn't callable is a TypeError naming it, "usort(): Argument #2 ($callback) must be a valid callback".
+     * The name is null for a callback in a variadic list (array_udiff()'s), which has none of its own.
      */
-    public record Parameter(String function, int position, boolean nullable) {
+    public record Parameter(String function, int position, boolean nullable, String name) {
+        public Parameter(String function, int position, boolean nullable) {
+            this(function, position, nullable, "callback");
+        }
     }
 
     /** The target of a direct call `$f()` from scope (lowercase, or null), or the Error php-src raises for it. */
@@ -283,7 +291,7 @@ public final class Callables {
                 throw new PhpError(invalidReason(context, callable));
             }
             throw new PhpError("TypeError", parameter.function() + "(): Argument #" + parameter.position()
-                    + " ($callback) must be a valid callback" + (parameter.nullable() ? " or null" : "") + ", "
+                    + (parameter.name() == null ? "" : " ($" + parameter.name() + ")") + " must be a valid callback" + (parameter.nullable() ? " or null" : "") + ", "
                     + invalidReason(context, callable));
         }
         return target;

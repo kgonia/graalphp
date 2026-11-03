@@ -128,11 +128,11 @@ final class StreamContext {
             StreamContext created = alloc(context);
             Object options = PhpRef.deref(Args.get(a, 0, PhpNull.NULL));
             if (options != PhpNull.NULL) {
-                created.setOptions(Args.array(a, 0, "stream_context_create"));
+                created.setOptions(Args.array(a, 0, "stream_context_create", "options"));
             }
             Object params = PhpRef.deref(Args.get(a, 1, PhpNull.NULL));
             if (params != PhpNull.NULL) {
-                created.setParams(Args.array(a, 1, "stream_context_create"));
+                created.setParams(Args.array(a, 1, "stream_context_create", "params"));
             }
             return created.resource;
         });
@@ -141,18 +141,18 @@ final class StreamContext {
         r.fn("stream_context_set_option", (context, a) -> setOption(context, a));
         r.fn("stream_context_set_options", (context, a) -> {
             StreamContext target = decode(context, a, "stream_context_set_options");
-            target.setOptions(Args.array(a, 1, "stream_context_set_options"));
+            target.setOptions(Args.array(a, 1, "stream_context_set_options", "options"));
             return Boolean.TRUE;
         });
         r.fn("stream_context_get_default", (context, a) -> {
             StreamContext target = defaultContext(context, false);
             if (PhpRef.deref(Args.get(a, 0, PhpNull.NULL)) != PhpNull.NULL) {
-                target.setOptions(Args.array(a, 0, "stream_context_get_default"));
+                target.setOptions(Args.array(a, 0, "stream_context_get_default", "options"));
             }
             return target.resource;
         });
         r.fn("stream_context_set_default", (context, a) -> {
-            PhpArray options = Args.array(a, 0, "stream_context_set_default");
+            PhpArray options = Args.array(a, 0, "stream_context_set_default", "options");
             StreamContext target = defaultContext(context, false);
             target.setOptions(options);
             return target.resource;
