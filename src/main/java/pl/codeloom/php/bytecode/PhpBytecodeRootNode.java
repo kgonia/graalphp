@@ -2009,7 +2009,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
     public static final class SendVar {
-        @Specialization
+        /**
+         * The callee the site sees (nearly always one): whether its parameter is by reference is a constant, as
+         * the tree's direct call builds its arguments for the function it cached (FunctionCallNode.Dispatch).
+         */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
+                                    @Bind BytecodeNode bytecode, @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, variable, index, cachedFunction, bytecode);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
                                   @Bind BytecodeNode bytecode) {
             if (function.isByRef(index)) {
