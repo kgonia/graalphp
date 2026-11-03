@@ -19,7 +19,10 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.LargeCode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -218,8 +221,13 @@ public final class ElementNodes {
             return PhpRef.deref(object.callMethod(node, "offsetget", key));
         }
 
+        /** A scalar or null reads as null (php-src's warning); an object that isn't ArrayAccess is an error. */
         @Fallback
         public static Object other(Object container, Object key) {
+            if (container instanceof PhpObject || container instanceof PhpClosure) {
+                CompilerDirectives.transferToInterpreter();
+                throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(container) + " as array");
+            }
             return PhpNull.NULL;
         }
     }
