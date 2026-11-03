@@ -12,7 +12,7 @@ import pl.codeloom.php.builtins.BuiltinState;
 import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Ini;
-import pl.codeloom.php.nodes.FileRootNode;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
@@ -286,7 +286,7 @@ public final class PhpContext {
      * parsed, and it is the file's changes that count ({@link SourceFiles}).
      */
     @TruffleBoundary
-    public FileRootNode loadFile(String path) {
+    public RootNode loadFile(String path) {
         String canonical = canonicalPath(path);
         if (javaParser) {
             return SourceFiles.load(this, path, canonical);
@@ -299,7 +299,7 @@ public final class PhpContext {
         }
     }
 
-    private FileRootNode loadExport(String path, String canonical) {
+    private RootNode loadExport(String path, String canonical) {
         Path relative = sourceRoot.relativize(Path.of(canonical));
         Path json = astRoot.resolve(relative.toString() + ".json");
         TruffleFile file = env.getPublicTruffleFile(json.toString());
@@ -314,11 +314,13 @@ public final class PhpContext {
         return language.file(canonical, modified, size, () -> translate(path, canonical, file, json));
     }
 
-    private FileRootNode translate(String path, String canonical, TruffleFile file, Path json) {
+    private RootNode translate(String path, String canonical, TruffleFile file, Path json) {
         Ast ast;
+        byte[] export;
         int outer = Phases.enter(Phases.PARSE);
         try (InputStream in = file.newInputStream()) {
-            ast = AstReader.read(in);
+            export = in.readAllBytes();
+            ast = AstReader.read(export);
         } catch (IOException e) {
             throw noExport(path, json);
         } finally {
@@ -326,7 +328,8 @@ public final class PhpContext {
         }
         outer = Phases.enter(Phases.FILE_TRANSLATE);
         try {
-            return new Translator(language, canonical, phpSource(canonical), false).translateFile(ast);
+            return new Translator(language, canonical, phpSource(canonical), false).translateFile(ast,
+                    () -> AstReader.read(export));
         } finally {
             Phases.exit(outer);
         }

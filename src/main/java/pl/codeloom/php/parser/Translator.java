@@ -10,10 +10,10 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.FileRootNode;
+import pl.codeloom.php.bytecode.DefinedSite;
+import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.StmtNode;
-import pl.codeloom.php.nodes.ThunkRootNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
 import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
@@ -285,7 +285,7 @@ public final class Translator {
     }
 
     /** zend_compile_use: a class can't be imported under a reserved name. */
-    private void checkUse(int kind, Ast use, String name) {
+    void checkUse(int kind, Ast use, String name) {
         String alias = use.get("alias") instanceof String a ? a : name.substring(name.lastIndexOf('\\') + 1);
         if (kind == 1 && RESERVED_CLASS_NAMES.contains(Str.lower(alias))) {
             throw compileError(use.line, "Cannot use " + name + " as " + alias + " because '" + alias
@@ -297,7 +297,7 @@ public final class Translator {
     private final Set<Ast> topDeclares = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** A declare statement's strict_types element, or null. */
-    private static Ast strictTypes(Ast declare) {
+    static Ast strictTypes(Ast declare) {
         for (Object child : declare.node("declares").children()) {
             if ("strict_types".equalsIgnoreCase((String) ((Ast) child).get("name"))) {
                 return (Ast) child;
@@ -306,7 +306,20 @@ public final class Translator {
         return null;
     }
 
-    public FileRootNode translateFile(Ast file) {
+    /**
+     * A file's top level on bytecode (BytecodeTranslator.translateFile), after php-src's checks of the whole file:
+     * strict_types, and the jumps of every op_array (JumpChecks). reread gives the file's tree again.
+     */
+    public PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread) {
+        return translateFile(file, reread, false);
+    }
+
+    /** eval'd code (SourceFiles.eval): a file's top level whose value without `return` is null. */
+    public PhpBytecodeRootNode translateEval(Ast file, Supplier<Ast> reread) {
+        return translateFile(file, reread, true);
+    }
+
+    private PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread, boolean eval) {
         // zend_compile_declare's strict_types: first in the file (after other declares), no block, 0 or 1
         boolean first = true;
         for (Object child : file.children()) {
@@ -339,18 +352,7 @@ public final class Translator {
                 throw compileError(failure.line, failure.getMessage());
             }
         }
-        List<StmtNode> prologue = new ArrayList<>();
-        List<StmtNode> classes = new ArrayList<>();
-        List<StmtNode> body = new ArrayList<>();
-        fileStatements(file, prologue, classes, body);
-        // the classes the compile linked, then those bound if their parent is declared by then (EarlyClassNode)
-        classes.sort(java.util.Comparator.comparing(early -> ((DeclareNodes.EarlyClassNode) early).isDelayed()));
-        prologue.addAll(classes);
-        StmtNode code = fileLabels.isEmpty() ? block(body) : new GotoNodes.LabeledBlockNode(
-                body.toArray(new StmtNode[0]), fileLabels.toArray(new String[0]),
-                fileLabelTargets.stream().mapToInt(Integer::intValue).toArray());
-        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), code,
-                source == null ? null : source.createSection(0, source.getLength()));
+        return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval);
     }
 
     /** The goto labels of a file's top level, braced namespaces and blocks in it included, and their places. */
@@ -370,30 +372,54 @@ public final class Translator {
      */
     private void topLevelClass(Ast node, List<StmtNode> classes, List<StmtNode> body) {
         ClassTemplate template = classTemplate(node, names.declared((String) node.get("name")));
-        String lower = Str.lower(template.getName());
-        String parent = template.getParentName();
-        int boundSlot = -1;
-        if (template.getInterfaceNames().isEmpty() && !usesTrait(node) && (node.flags & CLASS_ENUM) == 0) {
-            if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
-                    && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
-                linkedClasses.add(lower);
-                if (parent == null) {
-                    classes.add(new DeclareNodes.EarlyClassNode(template, -1, false));
-                    return;
-                }
-                // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
-                // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
-                boundSlot = hiddenSlot("bound");
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, false));
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
-            } else if (parent != null) {
-                boundSlot = hiddenSlot("bound");
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
-            }
+        int binding = earlyBinding(node, template, linkedClasses);
+        int boundSlot = binding >= BOUND_LINKED ? hiddenSlot("bound") : -1;
+        if (binding == LINKED) {
+            classes.add(new DeclareNodes.EarlyClassNode(template, -1, false));
+            return;
+        }
+        if (binding == BOUND_LINKED) {
+            classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, false));
+        }
+        if (binding >= BOUND_LINKED) {
+            classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
         }
         StmtNode declaration = new DeclareNodes.DeclareClassNode(template, boundSlot);
         declaration.setLine(node.line);
         body.add(declaration);
+    }
+
+    /** {@link #earlyBinding}: declared by its statement only. */
+    static final int STATEMENT = 0;
+    /** Linked by the compile, bound when the file is loaded; no statement. */
+    static final int LINKED = 1;
+    /** Linked if its parent's checks pass then, else bound late if its parent is declared, else by its statement. */
+    static final int BOUND_LINKED = 2;
+    /** Bound late if its parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its statement. */
+    static final int BOUND_DELAYED = 3;
+
+    /**
+     * How a top-level class is bound, as php-src with opcache (the reference's CLI has it) binds it. The compile links
+     * one that implements no interface and uses no trait (zend_compile_class_decl) if it has no parent or one linked
+     * then: a built-in or a class linked earlier in this file (linkedClasses, ZEND_COMPILE_IGNORE_OTHER_FILES), and
+     * if the name isn't a built-in's; it is bound when the file is loaded, and has no statement. Such a class with
+     * another parent is bound at the load if the parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its
+     * statement. Every other class is declared by its statement.
+     */
+    int earlyBinding(Ast node, ClassTemplate template, Set<String> linkedClasses) {
+        String lower = Str.lower(template.getName());
+        String parent = template.getParentName();
+        if (!template.getInterfaceNames().isEmpty() || usesTrait(node) || (node.flags & CLASS_ENUM) != 0) {
+            return STATEMENT;
+        }
+        if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
+                && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
+            linkedClasses.add(lower);
+            // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
+            // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
+            return parent == null ? LINKED : BOUND_LINKED;
+        }
+        return parent != null ? BOUND_DELAYED : STATEMENT;
     }
 
     private static boolean usesTrait(Ast node) {
@@ -1570,7 +1596,7 @@ public final class Translator {
                 Object initial = ast.get("default");
                 initials.add(initial instanceof Ast expr && !(expr.is("AST_ARRAY") || expr.is("AST_CONST")
                         || expr.is("AST_UNARY_OP") || expr.is("AST_BINARY_OP")) ? null
-                        : expression(initial).constantValue());
+                        : fold(initial));
             }
             return;
         }
@@ -2167,7 +2193,7 @@ public final class Translator {
      * it (not in a class constant or property default), no object cast, only static closures, calls only as first
      * class callables.
      */
-    private void checkConstantExpression(Object expression, boolean newAllowed, int line) {
+    void checkConstantExpression(Object expression, boolean newAllowed, int line) {
         String error = constantExpressionError(expression, newAllowed);
         if (error != null) {
             throw compileError(expression instanceof Ast ast ? ast.line : line, error);
@@ -2337,15 +2363,178 @@ public final class Translator {
         }
     }
 
+    /**
+     * The value an expression has at compile time, or null when it has none (it is evaluated where it is used):
+     * literals; true, false and null; a predefined constant whose name can't mean a namespace's own; magic
+     * constants; `-` of a number; a concatenation whose parts all fold (null, false and "" dropping out, as
+     * zend_compile_binary_op's); a constant array (frozen: every place that stores it copies before writing, like
+     * php-src's immutable arrays); `Name::class`, self's and parent's.
+     */
+    Object fold(Object value) {
+        if (value instanceof String || value instanceof byte[]) {
+            return literal(value);
+        }
+        if (value instanceof Long || value instanceof Double) {
+            return value;
+        }
+        if (value == null) {
+            return PhpNull.NULL;
+        }
+        Ast node = (Ast) value;
+        switch (node.kind) {
+            case "AST_CONST": {
+                Ast nameNode = node.node("name");
+                String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
+                // true, false and null are global; a namespace can't declare them
+                String name = resolved[1] != null ? resolved[1] : resolved[0];
+                switch (Str.lower(name)) {
+                    case "true":
+                        return Boolean.TRUE;
+                    case "false":
+                        return Boolean.FALSE;
+                    case "null":
+                        return PhpNull.NULL;
+                    default:
+                        break;
+                }
+                if (language.builtins().deprecation(name) != null || resolved[1] != null) {
+                    return null;
+                }
+                return language.builtins().constant(name);
+            }
+            case "AST_MAGIC_CONST":
+                return magicValue(node);
+            case "AST_UNARY_OP": {
+                Object operand = node.flags == 262 ? fold(node.get("expr")) : null;
+                if (operand instanceof Long l && l != Long.MIN_VALUE) {
+                    return -l;
+                }
+                return operand instanceof Double d ? -d : null;
+            }
+            case "AST_BINARY_OP": {
+                if (node.flags != 8) {
+                    return null;
+                }
+                StringBuilder parts = new StringBuilder();
+                return foldConcat(node, parts) ? language.intern(Str.of(parts.toString())) : null;
+            }
+            case "AST_ARRAY":
+                return foldArray(node);
+            case "AST_CLASS_CONST":
+                if (!((String) node.get("const")).equalsIgnoreCase("class")) {
+                    return null;
+                }
+                return foldClassName(node);
+            case "AST_CLASS_NAME":
+                return foldClassName(node);
+            default:
+                return null;
+        }
+    }
+
+    /** A concatenation's parts (concatParts) appended to text; false when one doesn't fold to a scalar. */
+    private boolean foldConcat(Object operand, StringBuilder text) {
+        if (operand instanceof Ast ast && ast.is("AST_CAST") && ast.flags == UnaryNodes.CastNode.TO_STRING) {
+            return foldConcat(ast.get("expr"), text);
+        }
+        if (operand instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            return foldConcat(ast.get("left"), text) && foldConcat(ast.get("right"), text);
+        }
+        if (operand instanceof Ast ast && ast.is("AST_ENCAPS_LIST") && interpolated(ast).size() == 1) {
+            return foldConcat(interpolated(ast).get(0), text);
+        }
+        Object value = fold(operand);
+        if (value == null || value instanceof PhpArray) {
+            return false;
+        }
+        text.append(Str.java(Convert.toStr(value)));
+        return true;
+    }
+
+    /** A constant array literal's value, frozen; null when an element isn't constant. */
+    private Object foldArray(Ast node) {
+        int count = node.size();
+        Object[] keys = new Object[count];
+        Object[] values = new Object[count];
+        boolean ints = true;
+        for (int i = 0; i < count; i++) {
+            if (!(node.child(i) instanceof Ast element) || element.is("AST_UNPACK")
+                    || (element.flags & ARRAY_ELEM_REF) != 0) {
+                return null;
+            }
+            keys[i] = element.get("key") == null ? null : fold(element.get("key"));
+            values[i] = fold(element.get("value"));
+            if (values[i] == null || element.get("key") != null && keys[i] == null) {
+                return null;
+            }
+            ints &= values[i] instanceof Long;
+        }
+        // an int list starts in the int strategy; anything else is sized for its elements
+        PhpArray array = ints ? new PhpArray() : PhpArray.ofCapacity(count);
+        for (int i = 0; i < count; i++) {
+            if (keys[i] == null) {
+                array.append(values[i]);
+            } else {
+                array.put(ArrayKey.of(keys[i]), values[i]);
+            }
+        }
+        array.freeze();
+        return array;
+    }
+
+    /** `Name::class` as written, self's and parent's; null for static's and an expression's. */
+    private Object foldClassName(Ast node) {
+        if (!(node.get("class") instanceof Ast ast) || !ast.is("AST_NAME")) {
+            return null;
+        }
+        String name = className(ast);
+        return switch (Str.lower(name)) {
+            case "self" -> Str.of(requireClass(node).name());
+            case "parent" -> Str.of(requireClass(node).parentName());
+            case "static" -> null;
+            default -> Str.of(name);
+        };
+    }
+
+    /** A magic constant's value (zend_try_ct_eval_magic_const). */
+    private Object magicValue(Ast node) {
+        switch (node.flags) {
+            case 346:
+                return (long) node.line;
+            case 347:
+                return Str.of(path);
+            case 348:
+                return Str.of(Path.of(path).getParent().toString());
+            case 349:
+                return Str.of(classInfo == null ? "" : classInfo.name());
+            case 351: {
+                // a closure's __METHOD__ is its name, without its scope's class
+                int closure = functionName.indexOf(CLOSURE_PREFIX);
+                return Str.of(closure > 0 ? functionName.substring(closure) : functionName);
+            }
+            case 352:
+                return Str.of(functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
+                        : functionName);
+            case 353: {
+                // __PROPERTY__: in a property hook ("$name::get"), the property's name
+                String hook = function == null ? "" : function.getName();
+                return Str.of(hook.startsWith("$") ? hook.substring(1, hook.lastIndexOf("::")) : "");
+            }
+            case 354:
+                return Str.of(names.namespace());
+            default:
+                throw unsupported(node, "magic constant " + node.flags);
+        }
+    }
+
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
         checkConstantExpression(expression, false, 0);
-        ExprNode node = constantExpression(expression);
-        Object value = node.constantValue();
+        Object value = fold(expression);
         if (value != null) {
             return value;
         }
-        return new ThunkRootNode(language, node);
+        return new BytecodeTranslator.Thunk(language, path, source, internal, (Ast) expression, classInfo, names);
     }
 
     /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
@@ -2682,7 +2871,7 @@ public final class Translator {
             return value instanceof Long || value instanceof Double ? value : null;
         }
         return switch (node.kind) {
-            case "AST_CONST", "AST_UNARY_OP", "AST_MAGIC_CONST" -> expression(node).constantValue();
+            case "AST_CONST", "AST_UNARY_OP", "AST_MAGIC_CONST" -> fold(node);
             case "AST_BINARY_OP" -> foldedArithmetic(node);
             default -> null;
         };
@@ -3766,6 +3955,20 @@ public final class Translator {
             return new ConstNode(Boolean.TRUE);
         }
         return new ConstantNodes.DefinedNode(language.constantId(name));
+    }
+
+    /**
+     * defined('NAME') compiled in place on bytecode (ZEND_DEFINED, the call compiledSpecially): true for a name
+     * zend_try_ct_eval_const knows at compile time, else the DefinedSite testing the name.
+     */
+    Object definedSite(Ast args) {
+        String name = definedName(args.child(0));
+        String lower = Str.lower(name);
+        if (lower.equals("true") || lower.equals("false") || lower.equals("null")
+                || language.builtins().constant(name) != null) {
+            return Boolean.TRUE;
+        }
+        return new DefinedSite(language.constantId(name));
     }
 
     /** zend_compile_func_sprintf's test: the number of %s and %d in a format of only those (and %%), else -1. */

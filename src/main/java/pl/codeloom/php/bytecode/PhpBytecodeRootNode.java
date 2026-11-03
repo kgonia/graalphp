@@ -40,6 +40,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.SourceFiles;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.PhpTypes;
@@ -78,6 +79,7 @@ import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
+import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.nodes.vars.ObjectVarsNode;
 import pl.codeloom.php.nodes.vars.Places;
@@ -217,6 +219,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private LocalAccessor scopeLocal;
     /** A generator function's frame in a `yield from` chain ({@link PhpGenerator.LinkedFrame}), made at first use. */
     private CallTarget linkedFrame;
+    /**
+     * A file's top level (or eval'd code): its variables are the scope's by name (the including call's
+     * {@link IncludeScope} in the frame, else the globals), its calling scope the frame's.
+     */
+    @CompilationFinal private boolean file;
+    /** A constant expression's root (BytecodeTranslator.Thunk): its scope is the class it is bound to. */
+    @CompilationFinal private boolean thunk;
+    /** A file's top level has a loop, a foreach or a goto label (RunOnceCode). */
+    private boolean fileLoops;
+    /** {@link RunOnceCode}: 0 not asked yet, 1 compiled as any code, 2 large and without a loop. */
+    private volatile byte runOnce;
+    /** An include site ran the file twice in one context: it runs a number of times a request that depends on data. */
+    private volatile boolean includedAgain;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -246,7 +261,55 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * class the function is declared in.
      */
     public String callingScope(VirtualFrame frame) {
-        return closure ? PropNode.callingScope(frame, scopeName) : scopeName;
+        if (thunk) {
+            // a constant expression is evaluated in its class's scope, the class it was bound to
+            return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass owner ? owner.getLowerName() : null;
+        }
+        return closure || file ? PropNode.callingScope(frame, scopeName) : scopeName;
+    }
+
+    /** Makes this a constant expression's root (BytecodeTranslator.Thunk). */
+    public void initializeThunk() {
+        this.thunk = true;
+    }
+
+    /** Makes this a file's top level (FileRootNode); loops: whether it has a loop, a foreach or a goto label. */
+    public void initializeFile(boolean loops) {
+        this.file = true;
+        this.fileLoops = loops;
+    }
+
+    public boolean isFile() {
+        return file;
+    }
+
+    /** An include site ran the file again in a context where it had run it (IncludeNode.resolve). */
+    public void includedAgain() {
+        if (!includedAgain) {
+            includedAgain = true;
+        }
+    }
+
+    /**
+     * Large top-level code without a loop that no include site has run twice in one context runs a number of times a
+     * request bounded by the program's text, and isn't worth compiling ({@link RunOnceCode}); declining it here makes
+     * the compilation a retryable bailout, so it is tried again (and asked again) after Truffle's threshold.
+     */
+    @Override
+    protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {
+        if (thunk) {
+            // an initializer runs once per class and context
+            return !isLarge();
+        }
+        if (!file || includedAgain) {
+            return true;
+        }
+        byte kind = runOnce;
+        if (kind == 0) {
+            kind = !fileLoops && isLarge() ? (byte) 2 : (byte) 1;
+            runOnce = kind;
+        }
+        return kind != 2;
     }
 
     public boolean isClosure() {
@@ -292,7 +355,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * The call's variables by name: made at the call's first include or extract() (IncludeScope.forCall), with the
      * calling scope the included code has (a closure's bound class, else the function's).
      */
-    BytecodeScope callScope(VirtualFrame frame, BytecodeNode bytecode) {
+    IncludeScope callScope(VirtualFrame frame, BytecodeNode bytecode) {
+        if (file) {
+            return IncludeScope.of(frame);
+        }
         BytecodeScope scope = existingScope(frame, bytecode);
         if (scope != null) {
             return scope.at(bytecode);
@@ -305,6 +371,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @TruffleBoundary
     private BytecodeScope newScope(MaterializedFrame frame, BytecodeNode bytecode, String classScope) {
         return new BytecodeScope(this, frame, bytecode, classScope);
+    }
+
+    /** The variables by name compact() reads: a file's scope, or the call's if an include or extract() made it. */
+    IncludeScope namedScope(VirtualFrame frame, BytecodeNode bytecode) {
+        return file ? IncludeScope.of(frame) : existingScope(frame, bytecode);
     }
 
     /** The call's variables by name if an include or extract() has made them, else null. */
@@ -2966,6 +3037,31 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
+     * eval(code) (zend_include_or_eval's ZEND_EVAL): the code compiled anew (SourceFiles.eval) and run in the
+     * calling scope, as an include's file; this instruction is its caller in traces.
+     */
+    @Operation
+    @ConstantOperand(type = IncludeSite.class)
+    public static final class Eval {
+        @Specialization
+        public static Object eval(VirtualFrame frame, IncludeSite site, Object code, @Bind PhpBytecodeRootNode root,
+                                  @Bind BytecodeNode bytecode, @Bind Node node) {
+            CallTarget file = compileEval(node, code);
+            if (file == null) {
+                return Boolean.FALSE;
+            }
+            return IncludeNode.run(node, file, frame.getArguments(), root.callScope(frame, bytecode));
+        }
+    }
+
+    @TruffleBoundary
+    private static CallTarget compileEval(Node node, Object code) {
+        RootNode file = SourceFiles.eval(PhpContext.get(node), SourceLocation.of(node),
+                Convert.toStr(node, PhpRef.deref(code)));
+        return file == null ? null : file.getCallTarget();
+    }
+
+    /**
      * extract($array, $flags, $prefix) (ExtractNode): the array's entries become the call's variables, a name
      * the function doesn't name one of the call's other variables (BytecodeScope).
      */
@@ -2973,12 +3069,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class Extract {
         @Specialization
         public static long extract(VirtualFrame frame, @Variadic Object[] arguments,
-                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                   @Bind Node node) {
             if (arguments.length == 0 || arguments.length > 3) {
                 throw extractArity(arguments.length);
             }
             return ExtractNode.extract(arguments[0], arguments.length > 1 ? arguments[1] : null,
-                    arguments.length > 2 ? arguments[2] : null, root.callScope(frame, bytecode), null);
+                    arguments.length > 2 ? arguments[2] : null, root.callScope(frame, bytecode),
+                    PhpContext.get(node));
         }
     }
 
@@ -3028,7 +3126,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static PhpArray add(VirtualFrame frame, TruffleString key, PhpArray result,
                                    @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode, @Bind Node node) {
-            compactEntries(result, new Object[] {key}, null, root, root.existingScope(frame, bytecode),
+            compactEntries(result, new Object[] {key}, null, root, root.namedScope(frame, bytecode),
                     frame.getArguments()[PhpFunction.ARG_THIS], bytecode, node);
             return result;
         }
@@ -3042,10 +3140,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                        @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
                                        @Bind Node node) {
             PhpArray result = new PhpArray();
-            compactEntries(result, names, frame.materialize(), root, root.existingScope(frame, bytecode),
+            compactEntries(result, names, frame.materialize(), root, root.namedScope(frame, bytecode),
                     frame.getArguments()[PhpFunction.ARG_THIS], bytecode, node);
             return result;
         }
+    }
+
+    private static Object globalValue(Node node, String name) {
+        PhpRef ref = PhpContext.get(node).findGlobal(name);
+        return ref == null ? null : ref.get();
     }
 
     @TruffleBoundary
@@ -3061,7 +3164,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      */
     @TruffleBoundary
     private static void compactEntries(PhpArray result, Object[] entries, MaterializedFrame frame,
-                                       PhpBytecodeRootNode root, BytecodeScope scope, Object thisObject,
+                                       PhpBytecodeRootNode root, IncludeScope scope, Object thisObject,
                                        BytecodeNode bytecode, Node node) {
         if (entries.length == 0) {
             throw new PhpError("ArgumentCountError", "compact() expects at least 1 argument, 0 given");
@@ -3072,7 +3175,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     private static void compactEntry(PhpArray result, Object entry, int position, MaterializedFrame frame,
-                                     PhpBytecodeRootNode root, BytecodeScope scope, Object thisObject,
+                                     PhpBytecodeRootNode root, IncludeScope scope, Object thisObject,
                                      BytecodeNode bytecode, Node node) {
         Object value = PhpRef.deref(entry);
         if (value instanceof PhpArray names) {
@@ -3094,7 +3197,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object stored = Locals.stored(frame, variable, bytecode);
             found = stored == null ? null : Variables.value(stored);
         } else {
-            found = scope == null ? null : scope.get(variableName);
+            found = scope != null ? scope.get(variableName) : root.file ? globalValue(node, variableName) : null;
         }
         if (found != null) {
             result.put(ArrayKey.of(name), found);
@@ -4832,13 +4935,52 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** A function declared in a function's body, when the statement runs (DeclareFunctionNode). */
+    /**
+     * A function declared (DeclareFunctionNode): in a body when the statement runs, at a file's top level before the
+     * file runs (compileTime, as php-src binds it when it compiles the file).
+     */
     @Operation
     @ConstantOperand(type = PhpFunction.class)
+    @ConstantOperand(type = boolean.class, name = "compileTime")
     public static final class DeclareFunction {
         @Specialization
-        public static void declare(PhpFunction function, @Bind Node node) {
-            DeclareNodes.DeclareFunctionNode.declare(PhpContext.get(node), function, false, node);
+        public static void declare(PhpFunction function, boolean compileTime, @Bind Node node) {
+            DeclareNodes.DeclareFunctionNode.declare(PhpContext.get(node), function, compileTime, node);
+        }
+    }
+
+    /**
+     * A top-level class bound before its file runs (EarlyClassNode): true when it was bound; late, only if its name
+     * is free and its parent declared by now.
+     */
+    @Operation
+    @ConstantOperand(type = ClassTemplate.class)
+    @ConstantOperand(type = boolean.class, name = "late")
+    public static final class EarlyClass {
+        @Specialization
+        public static boolean bind(ClassTemplate template, boolean late, @Bind Node node) {
+            return DeclareNodes.EarlyClassNode.bind(PhpContext.get(node), template, late, node);
+        }
+    }
+
+    /** `const NAME = value;` at a file's top level (Translator's DefineNode): the value. */
+    @Operation
+    @ConstantOperand(type = String.class)
+    public static final class DefineConstant {
+        @Specialization
+        public static Object define(String name, Object value, @Bind Node node) {
+            PhpContext.get(node).defineConstant(name, value);
+            return value;
+        }
+    }
+
+    /** `defined('NAME')` in place (DefinedSite, ZEND_DEFINED). */
+    @Operation
+    @ConstantOperand(type = DefinedSite.class)
+    public static final class Defined {
+        @Specialization
+        public static boolean defined(DefinedSite site) {
+            return site.test();
         }
     }
 
@@ -4966,6 +5108,18 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
+        if (thunk) {
+            return false;
+        }
+        if (file) {
+            // an included file is listed as its include; the script itself is {main}, and the prelude's aren't
+            String kind = site == null ? null : site.includeKind();
+            if (kind == null) {
+                return false;
+            }
+            Backtrace.describeInclude(entry, kind, path, options);
+            return true;
+        }
         BytecodeNode bytecode = getBytecodeNode();
         FunctionRootNode.describeCall(name, className, params, frame.getArguments(),
                 i -> bytecode.getLocalValue(0, frame, parameterLocals[i]), entry, options);

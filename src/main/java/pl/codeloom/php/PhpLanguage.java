@@ -17,7 +17,7 @@ import org.graalvm.options.OptionMap;
 import org.graalvm.options.OptionStability;
 import org.graalvm.options.OptionValues;
 import pl.codeloom.php.builtins.Builtins;
-import pl.codeloom.php.nodes.FileRootNode;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.nodes.ScriptRootNode;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.NameIds;
@@ -95,12 +95,12 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     /** A translation and the AST export version (modification time and size) it was made from. */
     /** A file's translation for one version of its AST export, made once by the first context to need it. */
-    private record CachedFile(FutureTask<FileRootNode> translation, long modified, long size) {
+    private record CachedFile(FutureTask<RootNode> translation, long modified, long size) {
         boolean isFor(long otherModified, long otherSize) {
             return modified == otherModified && size == otherSize;
         }
 
-        FileRootNode root() {
+        RootNode root() {
             try {
                 return translation.get();
             } catch (ExecutionException e) {
@@ -272,7 +272,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      * that version: once, also when contexts race (the others wait for it), and outside the map's lock, so
      * translating one file doesn't hold up others. A failed translation isn't kept.
      */
-    public FileRootNode file(String canonical, long modified, long size, Supplier<FileRootNode> translate) {
+    public RootNode file(String canonical, long modified, long size, Supplier<RootNode> translate) {
         CachedFile cached = files.get(canonical);
         if (cached == null || !cached.isFor(modified, size)) {
             CachedFile fresh = new CachedFile(new FutureTask<>(translate::get), modified, size);
@@ -329,7 +329,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     }
 
     /** A prelude file's translation, shared by every context. */
-    public FileRootNode preludeRoot(String file) {
+    public RootNode preludeRoot(String file) {
         return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));
     }
 

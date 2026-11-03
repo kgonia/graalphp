@@ -7,7 +7,8 @@ import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.FileRootNode;
+import com.oracle.truffle.api.nodes.RootNode;
+import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -72,9 +73,9 @@ public final class IncludeNode extends ExprNode {
         if (!context.markIncluded(canonical) && once) {
             return null;
         }
-        FileRootNode root = context.loadFile(canonical);
-        if (context.includedBefore(canonical, includeSite)) {
-            root.includedAgain();
+        RootNode root = context.loadFile(canonical);
+        if (context.includedBefore(canonical, includeSite) && root instanceof PhpBytecodeRootNode file) {
+            file.includedAgain();
         }
         return root.getCallTarget();
     }

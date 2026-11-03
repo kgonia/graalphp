@@ -275,7 +275,8 @@ public final class Backtrace {
      * innermost include, which the code at the file's top level is in, has no argument; IGNORE_ARGS doesn't apply.
      */
     public static void describeInclude(PhpArray entry, String kind, String path, int options) {
-        if ((options & INCLUDED_FILE_KNOWN) != 0) {
+        // eval has no argument (zend_fetch_debug_backtrace's build_filename_arg 0)
+        if ((options & INCLUDED_FILE_KNOWN) != 0 && !kind.equals("eval")) {
             entry.put(ARGS, PhpArray.list(Str.of(path)));
         }
         entry.put(FUNCTION, Str.of(kind));
