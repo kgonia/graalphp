@@ -16,6 +16,7 @@ import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
@@ -69,6 +70,21 @@ public final class PhpContext {
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
     private final List<Object> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
+    /** The classes being declared (instantiated, not yet in the class table), by lowercase name. */
+    private final Map<String, ClassTemplate> linking = new HashMap<>();
+
+    /** A class being declared: its template, found by inheritance checks (ZEND_FETCH_CLASS_ALLOW_UNLINKED). */
+    public ClassTemplate linkingClass(String lowerName) {
+        return linking.get(lowerName);
+    }
+
+    public void setLinking(String lowerName, ClassTemplate template) {
+        if (template == null) {
+            linking.remove(lowerName);
+        } else {
+            linking.put(lowerName, template);
+        }
+    }
     /** The declared classes by their lowercase name's language-level id (null: not declared here). */
     private PhpClass[] classSlots = new PhpClass[256];
     /**

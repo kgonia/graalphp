@@ -1341,6 +1341,13 @@ public final class Translator {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
             unsupported = error.getMessage();
         }
+        // add_stringable_interface: declaring __toString implements Stringable
+        for (ClassTemplate.Member member : members) {
+            if (member instanceof ClassTemplate.Method method && method.function().getName().equalsIgnoreCase(
+                    "__tostring") && interfaces.stream().noneMatch("Stringable"::equalsIgnoreCase)) {
+                interfaces.add("Stringable");
+            }
+        }
         ClassTemplate template = new ClassTemplate(name, parentName, interfaces, isInterface, isAbstract, members,
                 unsupported);
         template.setDeclaredAt(declaredAt(node));

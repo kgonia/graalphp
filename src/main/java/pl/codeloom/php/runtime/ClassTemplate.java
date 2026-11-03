@@ -161,6 +161,16 @@ public final class ClassTemplate {
     /** This context's class for the declaration: parent and interfaces resolved by name in the context. */
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {
+        String lowerName = Str.lower(name);
+        context.setLinking(lowerName, this);
+        try {
+            return link(context);
+        } finally {
+            context.setLinking(lowerName, null);
+        }
+    }
+
+    private PhpClass link(PhpContext context) {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
@@ -182,6 +192,10 @@ public final class ClassTemplate {
             if (member instanceof TraitUse use) {
                 useTraits(context, phpClass, use, own);
             }
+        }
+        // a trait's __toString implements Stringable too (zend_do_bind_traits)
+        if (traitBody == null && phpClass.findMethod("__tostring") != null && !phpClass.isSubclassOf("stringable")) {
+            phpClass.addInterface(context.getClass("Stringable"));
         }
         Variance.check(context, phpClass);
         return phpClass;
