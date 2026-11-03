@@ -88,12 +88,15 @@ public final class Args {
     /** zend_wrong_parameters_count_error: an ArgumentCountError unless min..max arguments were passed. */
     public static void arity(Object[] a, String function, int min, int max) {
         int count = count(a);
-        if (count >= min && count <= max) {
-            return;
+        if (count < min || count > max) {
+            throw wrongCount(function, min, max, count);
         }
+    }
+
+    public static PhpError wrongCount(String function, int min, int max, int count) {
         String bound = min == max ? "exactly" : count < min ? "at least" : "at most";
         int expected = count < min ? min : max;
-        throw new PhpError("ArgumentCountError", function + "() expects " + bound + " " + expected + " argument"
+        return new PhpError("ArgumentCountError", function + "() expects " + bound + " " + expected + " argument"
                 + (expected == 1 ? "" : "s") + ", " + count + " given");
     }
 

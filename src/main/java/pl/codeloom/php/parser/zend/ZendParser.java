@@ -6,6 +6,7 @@
 package pl.codeloom.php.parser.zend;
 
 import pl.codeloom.php.parser.Ast;
+import pl.codeloom.php.parser.JumpChecks;
 import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageParser;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageScanner;
@@ -114,7 +115,7 @@ public final class ZendParser {
         CG.short_tags = shortTags;
         ZendScannerBase scanner = new ZendLanguageScanner(CG, script);
         ZendAst ast = parse(CG, scanner, new ZendLexer(CG, scanner));
-        Bodies bodies = text == null ? null : new Bodies(text, script, 0, scanner.brace_ends, shortTags);
+        Bodies bodies = text == null ? null : new Bodies(text, script, 0, scanner.brace_ends, shortTags, true);
         Result result = new Result((Ast) PhpAst.convert(ast, 0, bodies), List.copyOf(CG.diagnostics));
         if (bodies != null) {
             Phases.bodiesLeft(bodies.leftChars);
@@ -130,10 +131,14 @@ public final class ZendParser {
         private final int charBase;
         private final Map<Integer, Integer> braceEnds;
         private final boolean shortTags;
+        /** The file's parse, which checks each body's jumps as php-src's compile does (JumpChecks). */
+        private final boolean check;
         /** The characters of the bodies left so far (Phases). */
         long leftChars;
 
-        Bodies(ScriptText text, byte[] bytes, int charBase, Map<Integer, Integer> braceEnds, boolean shortTags) {
+        Bodies(ScriptText text, byte[] bytes, int charBase, Map<Integer, Integer> braceEnds, boolean shortTags,
+               boolean check) {
+            this.check = check;
             this.text = text;
             this.offsets = text.new Offsets(bytes);
             this.charBase = charBase;
@@ -149,6 +154,14 @@ public final class ZendParser {
             Integer close = braceEnds.get(list.braceOffset);
             if (close == null) {
                 return null;
+            }
+            if (check) {
+                // the body as a tree, nested bodies too, while its php-src tree is at hand: one that fails is kept
+                // so, for the file's translation to report its error where php-src's compile reaches it
+                Object converted = PhpAst.convertBody(decl.kind, stmts, firstDeclId, null);
+                if (!JumpChecks.passes((Ast) converted)) {
+                    return converted;
+                }
             }
             int from = charBase + offsets.charOffset(list.braceOffset);
             int to = charBase + offsets.charOffset(close + 1);
@@ -181,7 +194,7 @@ public final class ZendParser {
                     + line + "): " + e.getMessage(), e);
         }
         ZendAst function = ((ZendAstList) declared).child[0];
-        Bodies bodies = new Bodies(text, body, charFrom, scanner.brace_ends, shortTags);
+        Bodies bodies = new Bodies(text, body, charFrom, scanner.brace_ends, shortTags, false);
         return (Ast) PhpAst.convertBody(declKind, function.child[2], firstDeclId, bodies);
     }
 }

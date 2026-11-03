@@ -33,34 +33,29 @@ public final class CallableConvertNodes {
         return new PhpClosure(function, self, scope, NO_CAPTURES, magicName);
     }
 
-    /** `f(...)`: the function the name resolves to, the namespaced one first. */
+    /** `f(...)`: the function the name resolves to, the namespaced one first, as a call finds it. */
     public static final class FunctionNode extends ExprNode {
         private final String displayName;
         private final int id;
         private final int fallbackId;
+        private final int site;
 
-        public FunctionNode(String displayName, int id, int fallbackId) {
+        public FunctionNode(String displayName, int id, int fallbackId, int site) {
             this.displayName = displayName;
             this.id = id;
             this.fallbackId = fallbackId;
+            this.site = site;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return convert(PhpContext.get(this), displayName, id, fallbackId);
+            return convert(PhpContext.get(this), displayName, id, fallbackId, site);
         }
 
-        /** The closure of the function named displayName (its name id, the global one's or -1) in context. */
+        /** The closure of the function displayName names (its name id, the global one's or -1, its site's number). */
         @TruffleBoundary
-        public static Object convert(PhpContext context, String displayName, int id, int fallbackId) {
-            PhpFunction function = context.functionAt(id);
-            if (function == null && fallbackId >= 0) {
-                function = context.functionAt(fallbackId);
-            }
-            if (function == null) {
-                throw new PhpError("Call to undefined function " + displayName + "()");
-            }
-            return closure(function, null, null, null);
+        public static Object convert(PhpContext context, String displayName, int id, int fallbackId, int site) {
+            return closure(FunctionCallNode.find(context, displayName, id, fallbackId, site), null, null, null);
         }
     }
 

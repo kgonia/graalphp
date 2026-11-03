@@ -6,7 +6,8 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Str;
 
 /**
- * `a . b . c ...`, three or more operands: one join, where a `.` per pair made a call and an intermediate string each
+ * `a . b . c ...`, three or more operands, or a two-part interpolation (FAST_CONCAT): one join, where a `.` per pair
+ * made a call and an intermediate string each
  * (SQL and include paths built in pieces: ABSPATH . WPINC . '/x.php'). Operands are evaluated and converted as
  * php-src's chain of ZEND_CONCAT does it: the first two are evaluated, then converted; each next one is evaluated
  * and converted in turn.
@@ -16,7 +17,7 @@ public final class ConcatChainNode extends ExprNode {
     @Children private final InterpolationNode.PartNode[] strings;
 
     public ConcatChainNode(ExprNode[] parts) {
-        assert parts.length >= 3;
+        assert parts.length >= 2;
         this.parts = parts;
         this.strings = new InterpolationNode.PartNode[parts.length];
         for (int i = 0; i < parts.length; i++) {

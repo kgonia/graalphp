@@ -5,6 +5,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
+import pl.codeloom.php.nodes.vars.ElementNodesFactory;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -32,9 +33,10 @@ final class ElementChain {
      * The container one level down for a write (DimNode.arrayForWrite): an array's element made a writable array
      * (copied if shared, created if unset or null), or the object it holds; an ArrayAccess object's offsetGet(),
      * which may not give an array; any other value as the tree reads it (an error for an object that isn't one).
+     * For a read-modify-write (update: FETCH_DIM_RW) a missing element warns before it is created.
      */
     static Object forWrite(Node node, Object container, Object key, ElementNodes.ArrayKeyNode toKey,
-                           ElementNodes.ElementReadNode read) {
+                           boolean update) {
         if (container instanceof PhpArray array) {
             if (key == APPEND) {
                 PhpArray created = new PhpArray();
@@ -42,6 +44,9 @@ final class ElementChain {
                 return created;
             }
             Object normalized = toKey.execute(key);
+            if (update && !array.containsKey(normalized)) {
+                ElementNodes.ElementReadNode.undefinedKey(node, normalized);
+            }
             PhpArray nested = array.arrayForWrite(normalized);
             if (nested != null) {
                 return nested;
@@ -56,15 +61,29 @@ final class ElementChain {
         if (container instanceof PhpObject object && object.isArrayAccess()) {
             return DimNode.overloadedForWrite(node, object, offset);
         }
-        return read.execute(container, offset);
+        return readQuietly(container, offset);
+    }
+
+    /** A value that is no container read as one, as isset() does: a string's offset, else null. */
+    @TruffleBoundary
+    private static Object readQuietly(Object container, Object offset) {
+        return ElementNodesFactory.ElementIfSetNodeGen.getUncached().execute(container, offset);
     }
 
     /** Down every key but the last (or every key, before an append) of keys, from base. */
-    static Object forWrite(Node node, Object base, Object[] keys, int count, ElementNodes.ArrayKeyNode toKey,
-                           ElementNodes.ElementReadNode read) {
+    static Object forWrite(Node node, Object base, Object[] keys, int count, ElementNodes.ArrayKeyNode toKey) {
         Object container = base;
         for (int i = 0; i < count; i++) {
-            container = forWrite(node, container, keys[i], toKey, read);
+            container = forWrite(node, container, keys[i], toKey, false);
+        }
+        return container;
+    }
+
+    /** forWrite for a read-modify-write (`$a[k1][k2] .= v`, `$a[k1][k2]++`): a missing container warns. */
+    static Object forUpdate(Node node, Object base, Object[] keys, int count, ElementNodes.ArrayKeyNode toKey) {
+        Object container = base;
+        for (int i = 0; i < count; i++) {
+            container = forWrite(node, container, keys[i], toKey, true);
         }
         return container;
     }
@@ -85,7 +104,7 @@ final class ElementChain {
     }
 
     /** The container of an unset's element (DimNode.unset reads the chain): base read down every key but the last. */
-    static Object read(Object base, Object[] keys, ElementNodes.ElementReadNode read) {
+    static Object read(Object base, Object[] keys, ElementNodes.ElementIfSetNode read) {
         Object container = base;
         for (int i = 0; i < keys.length - 1; i++) {
             container = read.execute(container, keys[i]);
@@ -111,9 +130,8 @@ final class ElementChain {
     }
 
     /** Removes the element normalized from the chain made writable from base (DimNode.unset's arrayForWrite). */
-    static void remove(Node node, Object base, Object[] keys, Object normalized, ElementNodes.ArrayKeyNode toKey,
-                       ElementNodes.ElementReadNode read) {
-        if (forWrite(node, base, keys, keys.length - 1, toKey, read) instanceof PhpArray array) {
+    static void remove(Node node, Object base, Object[] keys, Object normalized, ElementNodes.ArrayKeyNode toKey) {
+        if (forWrite(node, base, keys, keys.length - 1, toKey) instanceof PhpArray array) {
             array.remove(normalized);
         }
     }

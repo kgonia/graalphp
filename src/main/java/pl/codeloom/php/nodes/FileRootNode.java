@@ -6,8 +6,10 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.nodes.stmt.GotoNodes;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.SourceLocation;
 
 /**
@@ -85,6 +87,11 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
             body.execute(frame);
         } catch (ControlFlow.Return ret) {
             return ret.value;
+        } catch (GotoNodes.Jump jump) {
+            // ponytail: the tree's goto unwinds only to a label in a statement list around it, and the file's
+            // labels are checked (JumpChecks), so this one is in an if, a try or a catch, where php-src jumps in;
+            // the tree goes when top-level code moves to bytecode
+            throw new PhpError("Unsupported goto into a statement at a file's top level");
         }
         return 1L;
     }

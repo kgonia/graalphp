@@ -10,6 +10,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
+import pl.codeloom.php.nodes.vars.ElementNodes.ElementIfSetNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
@@ -31,6 +32,8 @@ public final class DimNode extends LValueNode {
     @Child private ExprNode container;
     @Child private ExprNode key;
     @Child private ElementReadNode read = ElementNodesFactory.ElementReadNodeGen.create();
+    /** isset()'s and `??`'s read, quiet (FETCH_DIM_IS). */
+    @Child private ElementIfSetNode lookup = ElementNodesFactory.ElementIfSetNodeGen.create();
     @Child private ElementWriteNode writeElement = ElementNodesFactory.ElementWriteNodeGen.create();
     @Child private ArrayKeyNode toKey = ElementNodesFactory.ArrayKeyNodeGen.create();
     private final Object constantKey;
@@ -251,9 +254,11 @@ public final class DimNode extends LValueNode {
         return nested;
     }
 
+    /** The containers are read as isset() reads them (FETCH_DIM_UNSET): quietly. */
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = container instanceof PropNode property ? property.readForUnset(frame) : container.execute(frame);
+        Object value = container instanceof PropNode property ? property.readForUnset(frame)
+                : container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray current) {
             Object k = normalizedKey(frame);
             if (current.containsKey(k)) {
@@ -265,13 +270,23 @@ public final class DimNode extends LValueNode {
         }
     }
 
+    ExprNode container() {
+        return container;
+    }
+
+    /** The element of value as FETCH_DIM_W fetches it for a property write: an unset key quietly null, offsetGet() alone. */
+    Object writtenIn(VirtualFrame frame, Object value) {
+        Object offset = rawKey(frame);
+        return value == null ? PhpNull.NULL : lookup.execute(value, offset);
+    }
+
     /** The key is evaluated whatever the container holds, as php-src evaluates it before ISSET_ISEMPTY_DIM_OBJ. */
     @Override
     public boolean isSet(VirtualFrame frame) {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            return read.execute(array, offset) != PhpNull.NULL;
+            return lookup.execute(array, offset) != PhpNull.NULL;
         }
         if (value == null || value == PhpNull.NULL) {
             return false;
@@ -310,14 +325,14 @@ public final class DimNode extends LValueNode {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            Object element = read.execute(array, offset);
+            Object element = lookup.execute(array, offset);
             return element == PhpNull.NULL ? null : element;
         }
         if (value == null || value == PhpNull.NULL) {
             return null;
         }
         notArray.enter();
-        return isSetIn(this, value, offset) ? read.execute(value, offset) : null;
+        return isSetIn(this, value, offset) ? lookup.execute(value, offset) : null;
     }
 
     @Override

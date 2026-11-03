@@ -65,6 +65,7 @@ import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.StaticPropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
+import pl.codeloom.php.nodes.vars.VariableVariableNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
@@ -114,6 +115,7 @@ public final class Translator {
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
     private static final int CLASS_ABSTRACT = 64;
+    private static final int CLASS_ENUM = 268435456;
     private static final int CLASS_READONLY = 65536;
     /** A property's modifiers PhpClass.PropertyDecl keeps: readonly and the set visibilities. */
     private static final int PROPERTY_MODIFIERS = MODIFIER_READONLY | 1024 | 2048 | 4096;
@@ -224,10 +226,12 @@ public final class Translator {
     // ---- files ----
 
     /**
-     * A file's top-level statements: function declarations are hoisted into the prologue, namespace and use
-     * statements change how the following names resolve, and a braced namespace's statements come in place.
+     * A file's top-level statements: function declarations are hoisted into the prologue, and the classes php-src
+     * binds before the file runs into classes (see {@link #topLevelClass}); namespace and use statements change
+     * how the following names resolve, and a braced namespace's or block's statements come in place, at the top
+     * level still (zend_compile_top_stmt).
      */
-    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> body) {
+    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> classes, List<StmtNode> body) {
         for (Object child : list.children()) {
             if (!(child instanceof Ast statement)) {
                 continue;
@@ -239,10 +243,20 @@ public final class Translator {
                     prologue.add(declaration);
                     break;
                 }
+                case "AST_CLASS":
+                    topLevelClass(statement, classes, body);
+                    break;
+                case "AST_LABEL":
+                    fileLabels.add((String) statement.get("name"));
+                    fileLabelTargets.add(body.size());
+                    break;
+                case "AST_STMT_LIST":
+                    fileStatements(statement, prologue, classes, body);
+                    break;
                 case "AST_NAMESPACE":
                     names = Names.namespace((String) statement.get("name"));
                     if (statement.get("stmts") != null) {
-                        fileStatements(statement.node("stmts"), prologue, body);
+                        fileStatements(statement.node("stmts"), prologue, classes, body);
                         names = Names.GLOBAL;
                     }
                     break;
@@ -318,11 +332,88 @@ public final class Translator {
                 first = false;
             }
         }
+        if (!internal) {
+            try {
+                JumpChecks.file(file);
+            } catch (JumpChecks.Failure failure) {
+                throw compileError(failure.line, failure.getMessage());
+            }
+        }
         List<StmtNode> prologue = new ArrayList<>();
+        List<StmtNode> classes = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();
-        fileStatements(file, prologue, body);
-        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), block(body),
+        fileStatements(file, prologue, classes, body);
+        // the classes the compile linked, then those bound if their parent is declared by then (EarlyClassNode)
+        classes.sort(java.util.Comparator.comparing(early -> ((DeclareNodes.EarlyClassNode) early).isDelayed()));
+        prologue.addAll(classes);
+        StmtNode code = fileLabels.isEmpty() ? block(body) : new GotoNodes.LabeledBlockNode(
+                body.toArray(new StmtNode[0]), fileLabels.toArray(new String[0]),
+                fileLabelTargets.stream().mapToInt(Integer::intValue).toArray());
+        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), code,
                 source == null ? null : source.createSection(0, source.getLength()));
+    }
+
+    /** The goto labels of a file's top level, braced namespaces and blocks in it included, and their places. */
+    private final List<String> fileLabels = new ArrayList<>();
+    private final List<Integer> fileLabelTargets = new ArrayList<>();
+
+    /** The names of the classes this file's compile has linked so far (lowercase), for {@link #topLevelClass}. */
+    private final Set<String> linkedClasses = new HashSet<>();
+
+    /**
+     * A top-level class, bound as php-src with opcache (the reference's CLI has it) binds it. The compile links one
+     * that implements no interface and uses no trait (zend_compile_class_decl) if it has no parent or one linked
+     * then: a built-in or a class linked earlier in this file (ZEND_COMPILE_IGNORE_OTHER_FILES), and if the name
+     * isn't a built-in's; it is bound when the file is loaded, and has no statement. Such a class with another
+     * parent is bound at the load if the parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its
+     * statement. Every other class is declared by its statement.
+     */
+    private void topLevelClass(Ast node, List<StmtNode> classes, List<StmtNode> body) {
+        ClassTemplate template = classTemplate(node, names.declared((String) node.get("name")));
+        String lower = Str.lower(template.getName());
+        String parent = template.getParentName();
+        int boundSlot = -1;
+        if (template.getInterfaceNames().isEmpty() && !usesTrait(node) && (node.flags & CLASS_ENUM) == 0) {
+            if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
+                    && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
+                linkedClasses.add(lower);
+                if (parent == null) {
+                    classes.add(new DeclareNodes.EarlyClassNode(template, -1, false));
+                    return;
+                }
+                // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
+                // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
+                boundSlot = hiddenSlot("bound");
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, false));
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
+            } else if (parent != null) {
+                boundSlot = hiddenSlot("bound");
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
+            }
+        }
+        StmtNode declaration = new DeclareNodes.DeclareClassNode(template, boundSlot);
+        declaration.setLine(node.line);
+        body.add(declaration);
+    }
+
+    private static boolean usesTrait(Ast node) {
+        for (Object member : node.node("stmts").children()) {
+            if (member instanceof Ast ast && ast.is("AST_USE_TRAIT")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A built-in class (php-src's internal ones, which every compile sees), not one a script declared. */
+    private boolean isInternalClass(String name) {
+        String lower = Str.lower(name);
+        if (language.preludeFile(lower) != null) {
+            return true;
+        }
+        PhpClass phpClass = PhpContext.get(null).findClass(lower);
+        return phpClass != null && !(phpClass.getDeclaration() instanceof ClassTemplate template
+                && template.getDeclaredAt() != null);
     }
 
     /** Where a function or class is declared: null in internal code, as php-src's internal ones have no file. */
@@ -1386,7 +1477,8 @@ public final class Translator {
             captureNodes[i] = variable(parts.captures()[i]);
         }
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
-        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(), scopeRef);
+        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(),
+                node.is("AST_ARROW_FUNC"), scopeRef);
     }
 
     /**
@@ -1519,7 +1611,7 @@ public final class Translator {
     // ---- classes ----
 
     private StmtNode classDeclaration(Ast node) {
-        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))));
+        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))), -1);
     }
 
     /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
@@ -2407,6 +2499,12 @@ public final class Translator {
                     return isThis(tested) ? new ThisNode.IsSetNode()
                             : new TestNodes.IssetNode(new LValueNode[]{place(tested)});
                 }
+                if (scope == null && tested instanceof Ast variable && variable.is("AST_VAR")
+                        && !(variable.get("name") instanceof String)) {
+                    // ZEND_ISSET_ISEMPTY_VAR: a lookup, which doesn't fall back to $this
+                    return new TestNodes.EmptyNode(new VariableVariableNode(expression(variable.get("name")),
+                            VariableVariableNode.ISSET));
+                }
                 return isThis(tested) ? new LogicNodes.NotNode(new ThisNode.IsSetNode())
                         : new TestNodes.EmptyNode(quiet(tested));
             }
@@ -2776,7 +2874,11 @@ public final class Translator {
         switch (node.kind) {
             case "AST_VAR": {
                 if (!(node.get("name") instanceof String name)) {
-                    throw unsupported(node, "variable variable");
+                    // ponytail: a function's $$name runs on bytecode (BytecodeScope); the tree keeps a file's
+                    if (scope != null) {
+                        throw unsupported(node, "variable variable");
+                    }
+                    return new VariableVariableNode(expression(node.get("name")), VariableVariableNode.IS);
                 }
                 if (name.equals("this")) {
                     throw unsupported(node, "assignment to $this");
@@ -2822,13 +2924,18 @@ public final class Translator {
         }
     }
 
-    /** An element of an array (key null for `[]`), its key normalized once when it is a constant. */
+    /**
+     * An element of an array (key null for `[]`), its key normalized once when it is a constant string or int, as
+     * php-src's compiler does (zend_handle_numeric_dim); a float, bool or null key converts where it is used, which
+     * warns for a string offset.
+     */
     private static DimNode element(ExprNode container, ExprNode key) {
         if (key == null) {
             return new DimNode(container, null, null);
         }
         Object constant = key.constantValue();
-        Object normalized = constant == null || constant instanceof PhpArray ? null : ArrayKey.of(constant);
+        Object normalized = constant instanceof TruffleString || constant instanceof Long ? ArrayKey.of(constant)
+                : null;
         return new DimNode(container, key, normalized);
     }
 
@@ -2860,6 +2967,17 @@ public final class Translator {
     /** A frame slot for a node's own state, in the function's frame or the file's; no PHP variable can name it. */
     private int hiddenSlot(String purpose) {
         return (scope != null ? scope : fileSlots).slot("\0" + purpose + hiddenCounter++);
+    }
+
+    /**
+     * The site numbers (PhpLanguage.nextFallbackSite) of the calls by an unqualified name in a namespace: one per
+     * name in the code translated, as opcache shares one runtime cache slot between the INIT_NS_FCALL_BY_NAMEs of
+     * an op_array that name the same function (compact_literals).
+     */
+    private final Map<String, Integer> fallbackSites = new HashMap<>();
+
+    private int fallbackSite(String lowerName) {
+        return fallbackSites.computeIfAbsent(lowerName, name -> language.nextFallbackSite());
     }
 
     /** The class (lowercase) the code being translated is written in, or null outside classes. */
@@ -3014,6 +3132,9 @@ public final class Translator {
             int slot = hiddenSlot("pipe");
             return new TemporaryNode(operand, expression(pipeCall(node, temporary(slot, node))), slot, false);
         }
+        if (node.flags == 8) {
+            return concatNode(concatParts(node));
+        }
         ExprNode left = node.flags == 260 ? quiet(node.get("left")) : expression(node.get("left"));
         ExprNode right = expression(node.get("right"));
         switch (node.flags) {
@@ -3029,8 +3150,6 @@ public final class Translator {
                 return ArithmeticNodesFactory.ModNodeGen.create(left, right);
             case 12:
                 return ArithmeticNodesFactory.PowNodeGen.create(left, right);
-            case 8:
-                return foldConcat(left, right);
             case 9:
                 return ArithmeticNodesFactory.BitOrNodeGen.create(left, right);
             case 10:
@@ -3073,29 +3192,98 @@ public final class Translator {
     }
 
     /**
-     * Concatenation of two literals folds to a literal (common in long split strings); a chain of three or more
-     * operands is one ConcatChainNode. concatParts keeps each concatenation's operands, so the next `.` extends it.
+     * The operands of `a . b . c ...` as the reference's opcache leaves them (its block pass): a left operand that
+     * is a concatenation extends the chain; an empty literal ('', null, false) is dropped (CONCAT(X, '') becomes
+     * CAST(X)); an operand cast to a string ((string) x, "$x", a concatenation left with one operand) is the value
+     * itself, which the concatenation converts (CONCAT(CAST(X), Y) becomes CONCAT(X, Y)).
      */
-    private ExprNode foldConcat(ExprNode left, ExprNode right) {
-        if (left.constantValue() instanceof TruffleString a && right.constantValue() instanceof TruffleString b) {
-            return new ConstNode(language.intern(Str.concat(a, b)));
-        }
-        List<ExprNode> leftParts = concatParts.get(left);
+    private List<ExprNode> concatParts(Ast node) {
         List<ExprNode> parts = new ArrayList<>();
-        if (leftParts != null) {
-            parts.addAll(leftParts);
+        Object left = node.get("left");
+        if (left instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            parts.addAll(concatParts(ast));
         } else {
-            parts.add(left);
+            addConcatPart(parts, left);
         }
-        parts.add(right);
-        ExprNode concat = parts.size() == 2 ? ArithmeticNodesFactory.ConcatNodeGen.create(left, right)
-                : new ConcatChainNode(parts.toArray(new ExprNode[0]));
-        concatParts.put(concat, parts);
-        return concat;
+        addConcatPart(parts, node.get("right"));
+        return parts;
     }
 
-    /** The operands of the concatenations made so far (foldConcat), by node identity. */
-    private final Map<ExprNode, List<ExprNode>> concatParts = new IdentityHashMap<>();
+    private void addConcatPart(List<ExprNode> parts, Object operand) {
+        if (operand instanceof Ast ast && ast.is("AST_CAST") && ast.flags == UnaryNodes.CastNode.TO_STRING) {
+            addConcatPart(parts, ast.get("expr"));
+            return;
+        }
+        if (operand instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            List<ExprNode> nested = concatParts(ast);
+            if (nested.size() <= 1) {
+                parts.addAll(nested);
+            } else {
+                parts.add(concatNode(nested));
+            }
+            return;
+        }
+        if (operand instanceof Ast ast && ast.is("AST_ENCAPS_LIST") && interpolated(ast).size() == 1) {
+            addConcatPart(parts, interpolated(ast).get(0));
+            return;
+        }
+        ExprNode part = expression(operand);
+        Object value = part.constantValue();
+        if (value == PhpNull.NULL || value == Boolean.FALSE || (value instanceof TruffleString s && s.isEmpty())) {
+            return;
+        }
+        parts.add(part);
+    }
+
+    /**
+     * A concatenation of its parts (concatParts), adjacent literals joined: none is "", one converts as a cast,
+     * two are a ConcatNode, more one ConcatChainNode (a join, where a `.` per pair made a string each).
+     */
+    private ExprNode concatNode(List<ExprNode> operands) {
+        List<ExprNode> parts = new ArrayList<>();
+        for (ExprNode operand : operands) {
+            ExprNode last = parts.isEmpty() ? null : parts.get(parts.size() - 1);
+            if (last != null && literal(last) && literal(operand)) {
+                parts.set(parts.size() - 1, new ConstNode(language.intern(Str.concat(
+                        Convert.toStr(last.constantValue()), Convert.toStr(operand.constantValue())))));
+            } else {
+                parts.add(operand);
+            }
+        }
+        return switch (parts.size()) {
+            case 0 -> new ConstNode(language.intern(Str.EMPTY));
+            case 1 -> literal(parts.get(0)) ? new ConstNode(language.intern(Convert.toStr(parts.get(0)
+                    .constantValue()))) : UnaryNodes.CastNode.create(parts.get(0), UnaryNodes.CastNode.TO_STRING);
+            case 2 -> ArithmeticNodesFactory.ConcatNodeGen.create(parts.get(0), parts.get(1));
+            default -> new ConcatChainNode(parts.toArray(new ExprNode[0]));
+        };
+    }
+
+    /** A constant php-src's compiler converts to a string in a concatenation (not an array). */
+    private static boolean literal(ExprNode node) {
+        Object value = node.constantValue();
+        return value != null && !(value instanceof PhpArray);
+    }
+
+    /**
+     * Whether an interpolation's parts are two expressions, whose FAST_CONCAT evaluates both before converting
+     * either; with a literal part, converting each as it is evaluated (a rope's order) is the same.
+     */
+    static boolean twoExpressions(List<Object> parts) {
+        return parts.size() == 2 && parts.get(0) instanceof Ast && parts.get(1) instanceof Ast;
+    }
+
+    /** The parts of an interpolated string that php-src's rope keeps: all but empty literals. */
+    static List<Object> interpolated(Ast node) {
+        List<Object> parts = new ArrayList<>();
+        for (Object part : node.children()) {
+            if (!(part instanceof String text && text.isEmpty()) && !(part instanceof byte[] bytes
+                    && bytes.length == 0)) {
+                parts.add(part);
+            }
+        }
+        return parts;
+    }
 
     private ExprNode unary(Ast node) {
         ExprNode operand = expression(node.get("expr"));
@@ -3266,10 +3454,23 @@ public final class Translator {
         return new ArrayLiteralNode(keys, values, kinds);
     }
 
+    /**
+     * `"text {$expr} $var"` as php-src compiles it (zend_compile_encaps_list, zend_compile_rope_finalize): one part
+     * is a cast, two are a concatenation (FAST_CONCAT: both evaluated, then converted), more a rope, which converts
+     * each part as it is evaluated.
+     */
     private ExprNode interpolation(Ast node) {
-        ExprNode[] parts = new ExprNode[node.size()];
+        List<Object> kept = interpolated(node);
+        if (kept.size() == 1) {
+            return UnaryNodes.CastNode.create(expression(kept.get(0)), UnaryNodes.CastNode.TO_STRING);
+        }
+        if (twoExpressions(kept)) {
+            // joined as a chain is (ConcatChainNode's order is FAST_CONCAT's for two)
+            return new ConcatChainNode(new ExprNode[] {expression(kept.get(0)), expression(kept.get(1))});
+        }
+        ExprNode[] parts = new ExprNode[kept.size()];
         for (int i = 0; i < parts.length; i++) {
-            parts[i] = expression(node.child(i));
+            parts[i] = expression(kept.get(i));
         }
         return new InterpolationNode(parts);
     }
@@ -3359,7 +3560,8 @@ public final class Translator {
             }
             String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
             return new CallableConvertNodes.FunctionNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
+                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])),
+                    resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])));
         }
         if (!callee.is("AST_NAME") || method) {
             return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null, true);
@@ -3367,6 +3569,25 @@ public final class Translator {
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)
         String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
+        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
+        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
+        if (special && Str.lower(resolved[0]).equals("defined")) {
+            return defined(definedName(args.child(0)));
+        }
+        ExprNode inPlace = name.isEmpty() ? null : inPlace(node, name, resolved, args, special);
+        if (inPlace != null && resolved[1] == null) {
+            return inPlace;
+        }
+        int id = language.functionId(Str.lower(resolved[0]));
+        int fallbackId = resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1]));
+        int site = resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0]));
+        ExprNode call = new FunctionCallNode(resolved[0], id, fallbackId, site, arguments(args), special);
+        // a built-in compiled in place for an unqualified name in a namespace, while the call falls back to it
+        return inPlace == null ? call : new FunctionCallNode.FallbackNode(inPlace, call, id, fallbackId, site);
+    }
+
+    /** A call of a built-in compiled in place (name: the global name), or null for a call. */
+    private ExprNode inPlace(Ast node, String name, String[] resolved, Ast args, boolean special) {
         switch (Str.lower(name)) {
             case "func_get_args":
                 return new FrameArgsNode(false);
@@ -3411,6 +3632,9 @@ public final class Translator {
                 }
                 break;
             case "compact": {
+                if (args.size() == 0) {
+                    break;
+                }
                 List<String> variableNames = new ArrayList<>();
                 if (compactNames(args, variableNames)) {
                     TruffleString[] keys = new TruffleString[variableNames.size()];
@@ -3425,11 +3649,14 @@ public final class Translator {
             }
             case "extract": {
                 ExprNode[] extractArgs = expressionList(args);
-                if (extractArgs.length == 0) {
+                if (extractArgs.length == 0 || extractArgs.length > 3) {
                     break;
                 }
                 if (scope != null && scope.includeScopeSlot < 0) {
                     scope.includeScopeSlot = hiddenSlot("includeScope");
+                }
+                if (extractTakesRef(args)) {
+                    extractArgs[0] = place(args.child(0));
                 }
                 return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
                         extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots,
@@ -3447,17 +3674,25 @@ public final class Translator {
             default:
                 break;
         }
-        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
-        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
-        if (special && Str.lower(resolved[0]).equals("defined")) {
-            return defined(definedName(args.child(0)));
+        return intrinsic(Str.lower(name), args, special);
+    }
+
+    /**
+     * Whether extract()'s array goes by reference: its parameter prefers one (ZEND_SEND_PREFER_REF), which a
+     * variable or other place takes, and only EXTR_REFS uses (php_extract_ref_*): unless the flags are a constant
+     * without it, a place is passed by reference ($GLOBALS is a value, ZEND_FETCH_GLOBALS).
+     */
+    boolean extractTakesRef(Ast args) {
+        if (args.size() < 2 || !(args.child(0) instanceof Ast array) || !(array.is("AST_DIM") || array.is("AST_PROP")
+                || array.is("AST_STATIC_PROP") || array.is("AST_VAR") && array.get("name") instanceof String name
+                && !name.equals("this") && !name.equals("GLOBALS"))) {
+            return false;
         }
-        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args, special);
-        if (intrinsic != null) {
-            return intrinsic;
+        Object flags = args.child(1);
+        if (flags instanceof Ast ast && (ast.is("AST_CONST") || ast.is("AST_BINARY_OP"))) {
+            flags = expression(ast).constantValue();
         }
-        return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args), special);
+        return !(flags instanceof Long value) || (value & ExtractNode.REFS) != 0;
     }
 
     /**

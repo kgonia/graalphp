@@ -306,6 +306,13 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return literal != null ? literal : Str.ofKey(key);
     }
 
+    private final AtomicInteger fallbackSites = new AtomicInteger();
+
+    /** A number for a call by an unqualified name in a namespace, for the function it finds (PhpContext). */
+    public int nextFallbackSite() {
+        return fallbackSites.getAndIncrement();
+    }
+
     /** The next anonymous class number (class@anonymous names). */
     public int nextAnonymousClass() {
         return anonymousClasses.getAndIncrement();

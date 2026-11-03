@@ -1,11 +1,17 @@
 package pl.codeloom.php.nodes.vars;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * A variable in the global scope (top-level code of any file). Globals live in the context's symbol table as
@@ -16,6 +22,7 @@ public final class GlobalVarNode extends LValueNode {
     private final String name;
     @Child private GlobalRefNode lookup;
     private final RefWrites writes = RefWrites.create();
+    private final BranchProfile missing = BranchProfile.create();
 
     public GlobalVarNode(String name) {
         this.name = name;
@@ -32,10 +39,29 @@ public final class GlobalVarNode extends LValueNode {
         return lookup.execute(PhpContext.get(this), true);
     }
 
+    /** A superglobal's value; null after "Undefined global variable" (ZEND_FETCH_R, ZEND_FETCH_GLOBAL) if missing. */
     @Override
     public Object execute(VirtualFrame frame) {
         PhpRef ref = find();
-        return ref == null ? PhpNull.NULL : ref.get();
+        if (ref == null) {
+            missing.enter();
+            undefined(this, "Undefined global variable $" + name);
+            return PhpNull.NULL;
+        }
+        return ref.get();
+    }
+
+    /** The global's value, or Java null if there's no such global. */
+    Object valueOrNull() {
+        PhpRef ref = find();
+        return ref == null ? null : ref.get();
+    }
+
+    /** A warning at the node's statement: an undefined variable read. */
+    @TruffleBoundary
+    static void undefined(Node site, String message) {
+        ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING, Str.of(message),
+                SourceLocation.of(site));
     }
 
     @Override

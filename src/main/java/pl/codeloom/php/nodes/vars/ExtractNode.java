@@ -6,6 +6,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -21,10 +22,12 @@ import java.util.regex.Pattern;
  * mentions goes to the call's table of other variables ({@link IncludeScope}), where a file the call includes
  * finds it (WooCommerce's wc_get_template extracts a template's arguments, then includes it). At the top level
  * the variables are globals, or those of the call the file is included from. Each mode as php-src's
- * php_extract_* (a variable the function names but that is unset is in php-src's symbol table, undefined).
- * EXTR_REFS binds values, not references.
+ * php_extract_* (a variable the function names but that is unset is in php-src's symbol table, undefined). With
+ * EXTR_REFS each variable is bound to its entry, made a reference in the array (php_extract_ref_*).
  */
 public final class ExtractNode extends ExprNode {
+    /** EXTR_REFS. */
+    public static final long REFS = 256;
     private static final Pattern NAME = Pattern.compile("[a-zA-Z_\\x80-\\xff][a-zA-Z0-9_\\x80-\\xff]*");
     private static final long OVERWRITE = 0;
     private static final long SKIP = 1;
@@ -55,7 +58,8 @@ public final class ExtractNode extends ExprNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Object source = array.execute(frame);
+        // a place when EXTR_REFS may be given (Translator.extractTakesRef): its reference
+        Object source = array instanceof LValueNode place ? place.makeRef(frame) : array.execute(frame);
         Object flagsValue = flags == null ? null : flags.execute(frame);
         Object prefixValue = prefix == null ? null : prefix.execute(frame);
         IncludeScope included = slots == null ? IncludeScope.of(frame)
@@ -64,22 +68,26 @@ public final class ExtractNode extends ExprNode {
     }
 
     /**
-     * The call, its arguments evaluated (flags and prefix null when not given), checked as php-src's PHP_FUNCTION
-     * (extract) checks them: into included, a function call's variables or the scope a file was included into, else
-     * into the globals (context). Also a function's extract() on bytecode.
+     * The call, its arguments evaluated (flags and prefix null when not given; the array a reference when the
+     * translator passed a place by reference), checked as php-src's PHP_FUNCTION (extract) checks them: into
+     * included, a function call's variables or the scope a file was included into, else into the globals (context).
+     * Also a function's extract() on bytecode.
      */
     @TruffleBoundary
     public static long extract(Object source, Object flags, Object prefix, IncludeScope included,
                                PhpContext context) {
-        if (!(source instanceof PhpArray values)) {
-            throw Args.typeError("extract", 1, "array", "array", source);
+        if (!(PhpRef.deref(source) instanceof PhpArray array)) {
+            throw Args.typeError("extract", 1, "array", "array", PhpRef.deref(source));
         }
         Object[] arguments = new Object[PhpFunction.ARG_FIRST + 3];
         arguments[PhpFunction.ARG_FIRST + 1] = flags;
         arguments[PhpFunction.ARG_FIRST + 2] = prefix;
         PhpContext running = PhpContext.get(null);
-        long mode = flags == null ? OVERWRITE
-                : Args.integer(running, arguments, 1, "extract", "flags", "int") & 0xff;
+        long given = flags == null ? OVERWRITE : Args.integer(running, arguments, 1, "extract", "flags", "int");
+        boolean refs = (given & REFS) != 0;
+        // SEPARATE_ARRAY: the variable's own array, whose entries become references; a temporary's copy
+        PhpArray values = !refs ? array : source instanceof PhpRef ref ? ref.arrayForWrite() : array.copy();
+        long mode = given & 0xff;
         String prefixText = prefix == null ? null
                 : Str.java(Args.string(running, arguments, 2, "extract", "prefix", false));
         if (mode < OVERWRITE || mode > IF_EXISTS) {
@@ -92,11 +100,11 @@ public final class ExtractNode extends ExprNode {
         if (prefixText != null && !prefixText.isEmpty() && !valid(prefixText)) {
             throw new PhpError("ValueError", "extract(): Argument #3 ($prefix) must be a valid identifier");
         }
-        return extract(values, mode, prefixText, included, context);
+        return extract(values, mode, refs, prefixText, included, context);
     }
 
-    /** php-src's php_extract_* by mode: each entry's variable (or none), assigned in order, counted. */
-    private static long extract(PhpArray values, long mode, String prefix, IncludeScope included,
+    /** php-src's php_extract_* by mode: each entry's variable (or none), assigned (bound: refs) in order, counted. */
+    private static long extract(PhpArray values, long mode, boolean refs, String prefix, IncludeScope included,
                                 PhpContext context) {
         long count = 0;
         for (int p = values.firstPosition(); p >= 0; p = values.nextPosition(p)) {
@@ -105,6 +113,16 @@ public final class ExtractNode extends ExprNode {
             String name = key instanceof TruffleString string ? Str.java(string) : null;
             String target = target(mode, name, key, prefix, included, context);
             if (target == null) {
+                continue;
+            }
+            if (refs) {
+                PhpRef ref = values.refAtPosition(p);
+                if (included != null) {
+                    included.bind(target, ref);
+                } else {
+                    context.bindGlobal(target, ref);
+                }
+                count++;
                 continue;
             }
             Object value = PhpRef.deref(values.valueAt(p));

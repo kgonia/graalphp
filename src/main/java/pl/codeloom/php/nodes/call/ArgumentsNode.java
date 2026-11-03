@@ -5,7 +5,14 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.nodes.stmt.ForeachNode;
+import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.SourceLocation;
+import pl.codeloom.php.runtime.Str;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
@@ -145,7 +152,7 @@ public final class ArgumentsNode extends Node {
                     addSpreadRefs(list, array, callee, position, false);
                 }
             } else {
-                addSpread(list, value);
+                addSpread(list, value, callee, this);
             }
         }
         Object[] values = toArray(list);
@@ -163,7 +170,7 @@ public final class ArgumentsNode extends Node {
         for (int i = 0; i < args.length; i++) {
             Object value = args[i].execute(frame);
             if (spread[i]) {
-                addSpread(values, value);
+                addSpread(values, value, null, this);
             } else {
                 add(values, value);
             }
@@ -176,15 +183,37 @@ public final class ArgumentsNode extends Node {
         values.add(value);
     }
 
+    /**
+     * `...value` (ZEND_SEND_UNPACK) by value: an array's elements, or a Traversable's, each as the iterator gives
+     * it, by a new reference with php-src's warning where it lands on a by-reference parameter of callee (null: not
+     * known yet). ponytail: string keys, php-src's named arguments, aren't taken by name (issue 017).
+     */
     @TruffleBoundary
-    public static void addSpread(List<Object> values, Object value) {
-        if (!(value instanceof PhpArray array)) {
+    public static void addSpread(List<Object> values, Object value, PhpFunction callee, Node site) {
+        if (value instanceof PhpArray array) {
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                values.add(array.valueAt(p));
+            }
+            return;
+        }
+        if (!(value instanceof PhpObject object) || !object.getPhpClass().isSubclassOf("traversable")) {
             throw new PhpError("TypeError", "Only arrays and Traversables can be unpacked, " + Args.valueName(value)
                     + " given");
         }
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            values.add(array.valueAt(p));
-        }
+        ForeachNode.traverse(site, object, (key, element) -> {
+            if (!(key instanceof Long) && !(key instanceof TruffleString)) {
+                throw new PhpError("Keys must be of type int|string during argument unpacking");
+            }
+            if (callee != null && callee.isByRef(values.size())) {
+                ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING, Str.of("Cannot pass "
+                        + "by-reference argument " + (values.size() + 1) + " of " + callee.displayName()
+                        + "() by unpacking a Traversable, passing by-value instead"), SourceLocation.of(site));
+                values.add(new PhpRef(element));
+            } else {
+                values.add(element);
+            }
+            return true;
+        });
     }
 
     @TruffleBoundary

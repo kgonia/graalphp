@@ -427,19 +427,21 @@ final class CurlFunctions {
 
     static Methods methods(Registry r) {
         List<PhpFunction> curlFile = List.of(
-                r.method("__construct", false, a -> {
+                r.method("CURLFile", "__construct", false, a -> {
                     PhpObject self = (PhpObject) a[PhpFunction.ARG_THIS];
                     curlFileConstruct(PhpContext.get(null), self, a, "CURLFile::__construct");
                     return PhpNull.NULL;
                 }),
-                r.method("getFilename", false, a -> curlFileProperty(a, "getFilename", "name")),
-                r.method("getMimeType", false, a -> curlFileProperty(a, "getMimeType", "mime")),
-                r.method("getPostFilename", false, a -> curlFileProperty(a, "getPostFilename", "postname")),
-                r.method("setMimeType", false, a -> curlFileSetProperty(a, "setMimeType", "mime", "mime_type")),
-                r.method("setPostFilename", false,
+                r.method("CURLFile", "getFilename", false, a -> curlFileProperty(a, "getFilename", "name")),
+                r.method("CURLFile", "getMimeType", false, a -> curlFileProperty(a, "getMimeType", "mime")),
+                r.method("CURLFile", "getPostFilename", false, a -> curlFileProperty(a, "getPostFilename", "postname")),
+                r.method("CURLFile", "setMimeType", false,
+                        a -> curlFileSetProperty(a, "setMimeType", "mime", "mime_type")),
+                r.method("CURLFile", "setPostFilename", false,
                         a -> curlFileSetProperty(a, "setPostFilename", "postname", "posted_filename")));
         List<PhpFunction> curlStringFile = List.of(
-                r.method("__construct", false, a -> curlStringFileConstruct(PhpContext.get(null), a)));
+                r.method("CURLStringFile", "__construct", false,
+                        a -> curlStringFileConstruct(PhpContext.get(null), a)));
         return new Methods(curlFile, curlStringFile);
     }
 

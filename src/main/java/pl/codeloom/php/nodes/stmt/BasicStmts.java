@@ -84,7 +84,7 @@ public final class BasicStmts {
 
         /** Writes a value as a string to the output of site's context. */
         public static void echo(Node site, Object value) {
-            TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(value);
+            TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(site, value);
             PhpContext.get(site).write(text, site);
         }
     }
@@ -191,7 +191,10 @@ public final class BasicStmts {
     public static final class GlobalNode extends StmtNode {
         @Child private LValueNode local;
         @Child private GlobalRefNode global;
-        /** In a file's top-level code: a no-op in the global scope, a binding in a file included from a function. */
+        /**
+         * In a file's top-level code: in the global scope the global made (null) if it doesn't exist, as
+         * ZEND_BIND_GLOBAL defines the variable; a binding in a file included from a function.
+         */
         private final boolean fileLevel;
 
         public GlobalNode(LValueNode local, String name, boolean fileLevel) {
@@ -203,6 +206,7 @@ public final class BasicStmts {
         @Override
         public void execute(VirtualFrame frame) {
             if (fileLevel && IncludeScope.of(frame) == null) {
+                global.execute(PhpContext.get(this), true);
                 return;
             }
             local.bindRef(frame, global.execute(PhpContext.get(this), true));

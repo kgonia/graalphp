@@ -15,6 +15,7 @@ public final class FileVarNode extends LValueNode {
     private final String name;
     @Child private GlobalVarNode global;
     private final BranchProfile included = BranchProfile.create();
+    private final BranchProfile undefined = BranchProfile.create();
 
     public FileVarNode(String name) {
         this.name = name;
@@ -29,14 +30,17 @@ public final class FileVarNode extends LValueNode {
         return scope;
     }
 
+    /** The variable's value; null after php-src's "Undefined variable" warning (zval_undefined_cv) when unset. */
     @Override
     public Object execute(VirtualFrame frame) {
         IncludeScope scope = scope(frame);
-        if (scope == null) {
-            return global.execute(frame);
+        Object value = scope == null ? global.valueOrNull() : scope.get(name);
+        if (value == null) {
+            undefined.enter();
+            GlobalVarNode.undefined(this, "Undefined variable $" + name);
+            return PhpNull.NULL;
         }
-        Object value = scope.get(name);
-        return value == null ? PhpNull.NULL : value;
+        return value;
     }
 
     @Override

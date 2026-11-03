@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.bytecode.OperationProxy;
+import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -57,10 +58,10 @@ public final class InterpolationNode extends ExprNode {
             return value;
         }
 
-        /** Floats, booleans, null, arrays, objects (__toString): the runtime conversion. */
+        /** Floats, booleans, null, arrays (warning at this part's statement), objects (__toString). */
         @Fallback
-        public static TruffleString other(Object value) {
-            return Convert.toStr(value);
+        public static TruffleString other(Object value, @Bind Node node) {
+            return Convert.toStr(node, value);
         }
     }
 }

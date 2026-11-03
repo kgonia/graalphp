@@ -143,10 +143,9 @@ final class CoreFunctions {
         });
         // compiled in place where a call names them; called by a name resolved at run time they refuse, as
         // zend_forbid_dynamic_call does
-        for (String frameFunction : new String[] {"func_get_arg", "func_get_args", "func_num_args"}) {
-            int arity = frameFunction.equals("func_get_arg") ? 1 : 0;
+        for (String frameFunction : new String[] {"func_get_arg", "func_get_args", "func_num_args", "compact",
+                "extract"}) {
             r.fn(frameFunction, a -> {
-                Args.arity(a, frameFunction, arity, arity);
                 throw new PhpError("Error", "Cannot call " + frameFunction + "() dynamically");
             });
         }
@@ -559,12 +558,17 @@ final class CoreFunctions {
                 "int"))));
         r.fn("octdec", (context, a) -> baseToNumber(context, Args.string(context, a, 0, "octdec", "octal_string",
                 false), 8));
-        r.fn("mt_rand", a -> Args.has(a, 1)
-                ? Args.lng(a, 0, 0) + (long) (Math.random() * (Args.lng(a, 1, 0) - Args.lng(a, 0, 0) + 1))
-                : (long) (Math.random() * Integer.MAX_VALUE));
-        r.fn("rand", a -> Args.has(a, 1)
-                ? Args.lng(a, 0, 0) + (long) (Math.random() * (Args.lng(a, 1, 0) - Args.lng(a, 0, 0) + 1))
-                : (long) (Math.random() * Integer.MAX_VALUE));
+        for (String rand : new String[] {"mt_rand", "rand"}) {
+            r.fn(rand, a -> {
+                if (Args.count(a) != 0) {
+                    // php-src takes no arguments or both bounds, though the arginfo allows one
+                    Args.arity(a, rand, 2, 2);
+                }
+                return Args.has(a, 1)
+                        ? Args.lng(a, 0, 0) + (long) (Math.random() * (Args.lng(a, 1, 0) - Args.lng(a, 0, 0) + 1))
+                        : (long) (Math.random() * Integer.MAX_VALUE);
+            });
+        }
 
         // ---- hashing ----
         r.fn("crc32", a -> crc32(Args.str(a, 0)));

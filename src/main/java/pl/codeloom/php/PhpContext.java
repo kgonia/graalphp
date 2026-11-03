@@ -388,6 +388,25 @@ public final class PhpContext {
         return Math.max(id + 1, length * 2);
     }
 
+    /**
+     * The function each call by an unqualified name in a namespace found first, by its site's number
+     * (PhpLanguage.nextFallbackSite): INIT_NS_FCALL_BY_NAME's runtime cache slot, which keeps it for the request.
+     */
+    private PhpFunction[] fallbackFunctions = new PhpFunction[64];
+
+    public PhpFunction fallbackFunction(int site) {
+        PhpFunction[] kept = fallbackFunctions;
+        return site < kept.length ? kept[site] : null;
+    }
+
+    @TruffleBoundary
+    public void keepFallbackFunction(int site, PhpFunction function) {
+        if (site >= fallbackFunctions.length) {
+            fallbackFunctions = Arrays.copyOf(fallbackFunctions, grown(fallbackFunctions.length, site));
+        }
+        fallbackFunctions[site] = function;
+    }
+
     /** The function declared under a name id (PhpLanguage.functionId), or null. */
     public PhpFunction functionAt(int id) {
         PhpFunction[] slots = functionSlots;
@@ -494,7 +513,8 @@ public final class PhpContext {
         String className = stripSlash(name);
         String lowerName = Str.lower(className);
         PhpClass phpClass = findClass(lowerName);
-        if (phpClass != null || autoloaders.isEmpty() || !autoloading.add(lowerName)) {
+        if (phpClass != null || autoloaders.isEmpty() || !validClassName(className)
+                || !autoloading.add(lowerName)) {
             return phpClass;
         }
         try {
@@ -509,6 +529,18 @@ public final class PhpContext {
         } finally {
             autoloading.remove(lowerName);
         }
+    }
+
+    /** zend_is_valid_class_name, non-empty: what php-src passes to an autoloader (0-9, a-z, A-Z, _, a backslash, 0x80-0xff). */
+    private static boolean validClassName(String name) {
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '\\'
+                    || c >= 0x80)) {
+                return false;
+            }
+        }
+        return !name.isEmpty();
     }
 
     private static String stripSlash(String name) {

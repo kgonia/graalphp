@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes;
 
+import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.GenerateUncached;
@@ -8,11 +9,13 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.Str;
 
 /**
  * A value as a PHP string ({@link Convert#toStr}), specialized on the value's type: strings pass through and ints
- * are formatted by a cached node; floats, booleans, null and objects (__toString) take the runtime conversion.
+ * are formatted by a cached node; an array warns at this node's statement; floats, booleans, null and objects
+ * (__toString) take the runtime conversion.
  */
 @ReportPolymorphism
 @GenerateUncached
@@ -31,6 +34,11 @@ public abstract class ToStrNode extends Node {
     @Specialization
     protected static TruffleString number(long value, @Cached TruffleString.FromLongNode fromLong) {
         return fromLong.execute(value, Str.ENC, true);
+    }
+
+    @Specialization
+    protected static TruffleString array(PhpArray value, @Bind Node node) {
+        return Convert.arrayToStr(node);
     }
 
     @Fallback
