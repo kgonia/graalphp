@@ -1253,6 +1253,32 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * An element as the object of a property written (FETCH_DIM_W): an array's quietly, an ArrayAccess object's
+     * offsetGet() alone, a string's offset php-src's Error.
+     */
+    @Operation
+    public static final class ElementForWrite {
+        @Specialization
+        public static Object array(PhpArray container, Object key,
+                                   @Shared @Cached ElementNodes.ElementIfSetNode read) {
+            return read.execute(container, key);
+        }
+
+        @Fallback
+        public static Object other(Object container, Object key, @Shared @Cached ElementNodes.ElementIfSetNode read) {
+            if (container instanceof TruffleString) {
+                throw stringOffsetObject();
+            }
+            return read.execute(container, key);
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpError stringOffsetObject() {
+        return new PhpError("Error", "Cannot use string offset as an object");
+    }
+
     /** `isset($container[key])` (DimNode.isSet): as ElementIfSet, but an ArrayAccess object's offsetExists() alone. */
     @Operation
     public static final class IssetElement {
@@ -1782,20 +1808,54 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                             neverDefault = true) PropNode access,
                                     @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
                                     @Cached TruffleString.ConcatNode concat) {
-            PhpObject target = propertyTarget(object, site.name, "assign");
-            TruffleString left = currentToStr.execute(access.readOn(frame.getArguments(), target, site.name));
-            TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
-            return access.writeOn(frame.getArguments(), target, site.name, result);
+            return concatOn(frame, access, site.name, operand, object, currentToStr, operandToStr, concat);
         }
 
         @Specialization(guards = "op != 8")
         public static Object generic(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
                                      @Cached(value = "site.create()", uncached = "site.uncached()",
                                              neverDefault = true) PropNode access, @Bind Node node) {
-            PhpObject target = propertyTarget(object, site.name, "assign");
-            Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame.getArguments(), target, site.name),
-                    operand);
-            return access.writeOn(frame.getArguments(), target, site.name, result);
+            return compoundOn(frame, access, site.name, op, operand, object, node);
+        }
+
+        static Object concatOn(VirtualFrame frame, PropNode access, String name, Object operand, Object object,
+                               ToStrNode currentToStr, ToStrNode operandToStr, TruffleString.ConcatNode concat) {
+            PhpObject target = propertyTarget(object, name, "assign");
+            TruffleString left = currentToStr.execute(access.readOn(frame.getArguments(), target, name));
+            TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
+            return access.writeOn(frame.getArguments(), target, name, result);
+        }
+
+        static Object compoundOn(VirtualFrame frame, PropNode access, String name, int op, Object operand,
+                                 Object object, Node node) {
+            PhpObject target = propertyTarget(object, name, "assign");
+            Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame.getArguments(), target,
+                    name), operand);
+            return access.writeOn(frame.getArguments(), target, name, result);
+        }
+    }
+
+    /** `$obj->$name op= value`: as CompoundProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = int.class, name = "op")
+    public static final class CompoundPropNamed {
+        @Specialization(guards = "op == 8")
+        public static Object concat(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
+                                    String name,
+                                    @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access,
+                                    @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
+                                    @Cached TruffleString.ConcatNode concat) {
+            return CompoundProp.concatOn(frame, access, name, operand, object, currentToStr, operandToStr, concat);
+        }
+
+        @Specialization(guards = "op != 8")
+        public static Object generic(VirtualFrame frame, PropSite site, int op, Object operand, Object object,
+                                     String name,
+                                     @Cached(value = "site.create()", uncached = "site.uncached()",
+                                             neverDefault = true) PropNode access, @Bind Node node) {
+            return CompoundProp.compoundOn(frame, access, name, op, operand, object, node);
         }
     }
 
@@ -1812,23 +1872,43 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object step(VirtualFrame frame, PropSite site, boolean increment, boolean prefix, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access, @Bind Node node) {
-            PhpObject target = propertyTarget(object, site.name, "increment/decrement");
-            Object old = access.readOn(frame.getArguments(), target, site.name);
+            return stepOn(frame, access, site.name, increment, prefix, object, node);
+        }
+
+        static Object stepOn(VirtualFrame frame, PropNode access, String name, boolean increment, boolean prefix,
+                             Object object, Node node) {
+            PhpObject target = propertyTarget(object, name, "increment/decrement");
+            Object old = access.readOn(frame.getArguments(), target, name);
             Object updated;
             try {
                 updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             } catch (PhpError e) {
                 // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
-                if (target.isReadonly(site.name)) {
-                    access.writeOn(frame.getArguments(), target, site.name, old);
+                if (target.isReadonly(name)) {
+                    access.writeOn(frame.getArguments(), target, name, old);
                 }
                 throw e;
             }
             if (old instanceof Long && updated instanceof Double) {
-                PropNode.incDecOverflow(target, site.name, increment);
+                PropNode.incDecOverflow(target, name, increment);
             }
-            updated = access.writeOn(frame.getArguments(), target, site.name, updated);
+            updated = access.writeOn(frame.getArguments(), target, name, updated);
             return prefix ? updated : old;
+        }
+    }
+
+    /** `++$obj->$name`...: as IncDecProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "increment")
+    @ConstantOperand(type = boolean.class, name = "prefix")
+    public static final class IncDecPropNamed {
+        @Specialization
+        public static Object step(VirtualFrame frame, PropSite site, boolean increment, boolean prefix, Object object,
+                                  String name,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access, @Bind Node node) {
+            return IncDecProp.stepOn(frame, access, name, increment, prefix, object, node);
         }
     }
 
@@ -2734,6 +2814,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `...$x` of a variable kept in a reference (a file's variable, a superglobal): as SpreadVar. */
+    @Operation
+    public static final class SpreadRef {
+        @Specialization
+        public static SpreadArguments spread(SpreadArguments list, PhpFunction function, PhpRef ref,
+                                             @Bind Node node) {
+            Object value = ref.get();
+            int position = list.size();
+            if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
+                ArgumentsNode.addSpreadRefs(list.values(), ref.arrayForWrite(), function, position, true);
+            } else {
+                ArgumentsNode.addSpread(list.values(), value, function, node);
+            }
+            return list;
+        }
+    }
+
     /** `name(...)` with unpacked arguments: as Call and CallRef (keepRef), the frame arguments from the list. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
@@ -2918,6 +3015,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** func_get_args()'s array (see FuncGetArgs); the loop over the parameters is over constants. */
     @ExplodeLoop
     PhpArray passedArguments(VirtualFrame frame, BytecodeNode bytecode) {
+        if (file) {
+            throw globalScope("func_get_args() cannot be called from the global scope");
+        }
         Object[] arguments = frame.getArguments();
         int count = arguments.length - PhpFunction.ARG_FIRST;
         PhpArray list = PhpArray.ofCapacity(count);
@@ -2953,6 +3053,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     Object passedArgument(VirtualFrame frame, BytecodeNode bytecode, long offset) {
         if (offset < 0) {
             throw FrameArgNode.negativeOffset();
+        }
+        if (file) {
+            throw globalScope("func_get_arg() cannot be called from the global scope");
         }
         Object[] arguments = frame.getArguments();
         if (offset >= arguments.length - PhpFunction.ARG_FIRST) {
@@ -3009,9 +3112,18 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class FuncNumArgs {
         @Specialization
-        public static long count(VirtualFrame frame) {
+        public static long count(VirtualFrame frame, @Bind PhpBytecodeRootNode root) {
+            if (root.file) {
+                throw globalScope("func_num_args() must be called from a function context");
+            }
             return frame.getArguments().length - PhpFunction.ARG_FIRST;
         }
+    }
+
+    /** The func_*_arg*() family at a file's top level (ZEND_CALL_CODE frames): php-src's Error. */
+    @TruffleBoundary
+    private static PhpError globalScope(String message) {
+        return new PhpError("Error", message);
     }
 
     // ---- the call's variables by name: include, extract(), compact(), get_object_vars() ----
@@ -3604,14 +3716,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          @Cached("site.isScoped(root, phpClass)") boolean scoped,
                                          @Cached("find(site, phpClass, cachedScope)") PhpFunction method,
                                          @Shared @Cached SubclassTestNode subclassTest) {
-            return checked(frame, site, phpClass, method, subclassTest);
+            return checked(frame, site, phpClass, method, subclassTest, root);
         }
 
         @Specialization(replaces = "cached")
         public static PhpFunction generic(VirtualFrame frame, MethodSite site, PhpClass phpClass,
                                           @Bind PhpBytecodeRootNode root,
                                           @Shared @Cached SubclassTestNode subclassTest) {
-            return checked(frame, site, phpClass, find(site, phpClass, root.callingScope(frame)), subclassTest);
+            return checked(frame, site, phpClass, find(site, phpClass, root.callingScope(frame)), subclassTest,
+                    root);
         }
 
         /**
@@ -3629,11 +3742,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
          * its own class.
          */
         private static PhpFunction checked(VirtualFrame frame, MethodSite site, PhpClass phpClass,
-                                           PhpFunction method, SubclassTestNode subclassTest) {
-            if (MethodSite.byValue(method) || method.isStatic()) {
+                                           PhpFunction method, SubclassTestNode subclassTest,
+                                           PhpBytecodeRootNode root) {
+            Object[] caller = frame.getArguments();
+            if (MethodSite.byValue(method)) {
+                // zend_std_get_static_method: __call on the caller's $this, else __callStatic, else the error
+                // before the arguments
+                if (!site.constructor && magicMethod(phpClass, "__callstatic") == null
+                        && (magicMethod(phpClass, "__call") == null
+                        || CallStatic.callerThis(caller, phpClass, subclassTest) == null)) {
+                    throw phpClass.callError(site.name, root.callingScope(frame));
+                }
                 return method;
             }
-            Object[] caller = frame.getArguments();
+            if (method.isStatic()) {
+                return method;
+            }
             if (site.constructor) {
                 StaticCallNode.checkPrivateConstructor(phpClass, method, caller[PhpFunction.ARG_THIS]);
             }
@@ -3705,7 +3829,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         /** The caller's $this when it is an instance of the class. */
-        private static Object callerThis(Object[] caller, PhpClass phpClass, SubclassTestNode subclassTest) {
+        static Object callerThis(Object[] caller, PhpClass phpClass, SubclassTestNode subclassTest) {
             Object self = caller[PhpFunction.ARG_THIS];
             if (self instanceof PhpObject object && !subclassTest.execute(object.getPhpClass(), phpClass)) {
                 return null;
@@ -4226,6 +4350,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `foreach ($obj->$name as &$v)`: as ForeachRefProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ForeachRefPropNamed {
+        @Specialization
+        public static Object subject(VirtualFrame frame, PropSite site, Object object, String name,
+                                     @Cached(value = "site.create()", uncached = "site.uncached()",
+                                             neverDefault = true) PropNode access) {
+            Object value = access.readOn(frame.getArguments(), object, name);
+            return value instanceof PhpArray ? access.makeRefOn(frame.getArguments(), object, name) : value;
+        }
+    }
+
     /** As ForeachRefVar, for a property of an object (PropNode.execute, then makeRef for an array). */
     @Operation
     @ConstantOperand(type = PropSite.class)
@@ -4560,6 +4697,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         array.putRef(append ? (Object) array.nextIndex() : toKey.execute(keys[levels]), ref);
     }
 
+    /** `$obj->$name = &place`: as BindProp, the name computed (PropName). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class BindPropNamed {
+        @Specialization
+        public static Object bind(VirtualFrame frame, PropSite site, PhpRef ref, Object object, String name,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            access.bindRefOn(frame.getArguments(), object, name, ref);
+            return ref.get();
+        }
+    }
+
     /** `$obj->name = &place` (PropNode.bindRef): the reference, then the object. */
     @Operation
     @ConstantOperand(type = PropSite.class)
@@ -4770,6 +4920,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Locals.bindRef(frame, variable, bytecode,
                     PhpContext.get(node).createStaticVariable(function, frame.getArguments()[PhpFunction.ARG_CLOSURE],
                             name, initial));
+        }
+    }
+
+    /**
+     * `place = &f()` where place isn't a plain variable (zend_compile_assign_ref's ZEND_RETURNS_FUNCTION): the
+     * reference the callee returned, else its value in a reference of its own, with php-src's notice.
+     */
+    @Operation
+    public static final class AssignedRef {
+        @Specialization
+        public static PhpRef assigned(Object value, @Bind Node node) {
+            if (value instanceof PhpRef ref) {
+                return ref;
+            }
+            CallNode.notice(node, CallNode.ASSIGNED_VALUE);
+            return PhpRef.unbound(value);
         }
     }
 

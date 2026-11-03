@@ -82,6 +82,17 @@ final class Variance {
         if (parent == null) {
             return true;
         }
+        SourceLocation declared = phpClass.getDeclaration() instanceof ClassTemplate template
+                ? template.getDeclaredAt() : null;
+        context.setCompiledFile(declared == null ? null : declared.file());
+        try {
+            return canEarlyBind(context, phpClass, parent);
+        } finally {
+            context.setCompiledFile(null);
+        }
+    }
+
+    private static boolean canEarlyBind(PhpContext context, PhpClass phpClass, PhpClass parent) {
         Set<String> unresolved = new LinkedHashSet<>();
         for (Map.Entry<String, PhpFunction> entry : parent.methods().entrySet()) {
             PhpFunction child = phpClass.findMethod(entry.getKey());
@@ -482,6 +493,13 @@ final class Variance {
     private static Object lookup(PhpContext context, String name, Set<String> unresolved) {
         String lower = Str.lower(name);
         Object found = context.findClass(lower);
+        String compiled = context.compiledFile();
+        if (compiled != null && found instanceof PhpClass phpClass
+                && phpClass.getDeclaration() instanceof ClassTemplate template && template.getDeclaredAt() != null
+                && !compiled.equals(template.getDeclaredAt().file())) {
+            // class_visible: another file's class, which the compile doesn't see
+            found = null;
+        }
         if (found == null) {
             found = context.linkingClass(lower);
         }

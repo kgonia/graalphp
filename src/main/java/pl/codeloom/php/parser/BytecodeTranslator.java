@@ -267,8 +267,12 @@ public final class BytecodeTranslator {
                 null, path, new PhpFunction.Param[0], new String[0], new boolean[0], Names.GLOBAL, false);
         translator.reread = reread;
         translator.eval = eval;
-        PhpBytecodeRootNode root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT,
-                translator::parse).getNode(0);
+        PhpBytecodeRootNode root;
+        try {
+            root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse).getNode(0);
+        } catch (Unsupported unsupported) {
+            throw new PhpError("Unsupported " + unsupported.getMessage() + " in " + path);
+        }
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                 translator.foreachStates.toArray(new LocalAccessor[0]), null);
@@ -390,6 +394,8 @@ public final class BytecodeTranslator {
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
          */
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
+        /** How many variables of its own (hiddenVariable) the run has made. */
+        private int hiddenVariables;
         /** The objects of written properties (delayedProp): read as isset() reads them, as php-src's BP_VAR_W. */
         private final Set<Ast> writeFetched = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** A generator's local holding its PhpGenerator. */
@@ -1535,7 +1541,7 @@ public final class BytecodeTranslator {
          */
         private void foreach(Ast node) {
             Ast value = node.node("value");
-            if (value.is("AST_REF")) {
+            if (value.is("AST_REF") || value.is("AST_ARRAY") && Translator.listHasRefs(value)) {
                 foreachByRef(node);
                 return;
             }
@@ -1599,11 +1605,11 @@ public final class BytecodeTranslator {
         }
 
         private void foreachByRef(Ast node) {
-            Ast value = node.node("value").node("var");
+            // `as &$v`, or `as [&$a, $b]` (zend_propagate_list_refs makes the foreach by reference)
+            Ast value = node.node("value").is("AST_REF") ? node.node("value").node("var") : node.node("value");
             Ast keyTarget = node.node("key");
             if (value.is("AST_ARRAY")) {
-                // dead: `&[...]` doesn't parse
-                throw new Unsupported("foreach by reference into list()", value);
+                checkList(value);
             }
             checkForeachKey(keyTarget);
             boolean direct = isVariable(value) && (keyTarget == null || isVariable(keyTarget));
@@ -1611,7 +1617,14 @@ public final class BytecodeTranslator {
             BytecodeLocal keyVariable = keyTarget == null ? null
                     : direct ? variable(keyTarget, "foreach key") : b.createLocal();
             Runnable bind = direct ? null : () -> {
-                bindFrom(value, valueVariable);
+                if (value.is("AST_ARRAY")) {
+                    Ast held = hiddenVariable(value);
+                    bindFrom(held, valueVariable);
+                    destructureRefs(value, held);
+                    b.emitUnsetVar(variable(held, "list"));
+                } else {
+                    bindFrom(value, valueVariable);
+                }
                 b.emitUnsetVar(valueVariable);
                 if (keyTarget != null) {
                     assignFrom(keyTarget, keyVariable, keyTarget);
@@ -1659,9 +1672,16 @@ public final class BytecodeTranslator {
                 if (ast.is("AST_PROP")) {
                     b.beginBlock();
                     Ast property = delayedProp(ast, VariableVariableNode.W);
-                    b.beginForeachRefProp(writtenPropSite(property));
-                    writtenObject(property.get("expr"), BP_VAR_W);
-                    b.endForeachRefProp();
+                    if (!(property.get("prop") instanceof String)) {
+                        b.beginForeachRefPropNamed(propSite(property, null));
+                        writtenObject(property.get("expr"), BP_VAR_W);
+                        propName(property.get("prop"));
+                        b.endForeachRefPropNamed();
+                    } else {
+                        b.beginForeachRefProp(writtenPropSite(property));
+                        writtenObject(property.get("expr"), BP_VAR_W);
+                        b.endForeachRefProp();
+                    }
                     b.endBlock();
                     return;
                 }
@@ -1949,6 +1969,15 @@ public final class BytecodeTranslator {
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
                         Ast target = writtenProp(node.node("var"), VariableVariableNode.RW);
+                        if (!(target.get("prop") instanceof String)) {
+                            b.beginCompoundPropNamed(propSite(target, null), node.flags);
+                            expression(node.get("expr"));
+                            writtenObject(target.get("expr"), BP_VAR_RW);
+                            propName(target.get("prop"));
+                            b.endCompoundPropNamed();
+                            b.endBlock();
+                            break;
+                        }
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
                         writtenObject(target.get("expr"), BP_VAR_RW);
@@ -1985,6 +2014,14 @@ public final class BytecodeTranslator {
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
                         Ast target = writtenProp(node.node("var"), VariableVariableNode.RW);
+                        if (!(target.get("prop") instanceof String)) {
+                            b.beginIncDecPropNamed(propSite(target, null), increment, prefix);
+                            writtenObject(target.get("expr"), BP_VAR_RW);
+                            propName(target.get("prop"));
+                            b.endIncDecPropNamed();
+                            b.endBlock();
+                            break;
+                        }
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
                         writtenObject(target.get("expr"), BP_VAR_RW);
                         b.endIncDecProp();
@@ -2385,6 +2422,12 @@ public final class BytecodeTranslator {
                 case "AST_VAR" -> b.emitRefVar(variable(place, "reference to"));
                 // a reference a foreach by reference bound a hidden local to
                 case "BYTECODE_OBJECT" -> b.emitRefVar(nullsafeObjects.get(place));
+                // `place = &f()` (assignRef): the reference the callee returned, else its value in one
+                case "BYTECODE_CALL_REF" -> {
+                    b.beginAssignedRef();
+                    callForRef(place.node("expr"));
+                    b.endAssignedRef();
+                }
                 case "AST_DIM" -> {
                     b.beginBlock();
                     ElementPlace element = elementPlace(place, "assignment to");
@@ -2452,19 +2495,21 @@ public final class BytecodeTranslator {
         private void assignRef(Ast node) {
             Ast target = node.node("var");
             Object source = node.get("expr");
-            if (Translator.isCall(source)) {
-                if (!isVariable(target)) {
-                    throw new Unsupported("reference to a call's result assigned to", target);
-                }
+            if (Translator.isCall(source) && isVariable(target)) {
                 b.beginBindVarToResult(variable(target, "assignment to"));
                 callForRef((Ast) source);
                 b.endBindVarToResult();
                 return;
             }
-            if (!(source instanceof Ast place) || !isRefPlace(place)) {
-                // php-src's compile errors (a value, $this, $GLOBALS)
-                throw new Unsupported("reference to", source instanceof Ast ast ? ast : node);
+            if (Translator.isCall(source)) {
+                // any other place bound to the reference the callee returned, else given its value (the notice)
+                source = new Ast("BYTECODE_CALL_REF", 0, node.line, node.endLine, null, Map.of("expr", source));
+            } else if (isGlobals(source)) {
+                throw compileError(node, "Cannot acquire reference to $GLOBALS");
+            } else if (!(source instanceof Ast ast) || !isRefPlace(ast) && !isThis(ast)) {
+                throw compileError(node, "Cannot assign reference to non referenceable value");
             }
+            Ast place = (Ast) source;
             if (refPlace(target) instanceof RefPlace kept) {
                 // a class or a key of the target first (zend_delayed_compile_var), then the source's reference
                 b.beginBlock();
@@ -2507,6 +2552,15 @@ public final class BytecodeTranslator {
                 case "AST_PROP" -> {
                     b.beginBlock();
                     Ast property = delayedProp(target, VariableVariableNode.W);
+                    if (!(property.get("prop") instanceof String)) {
+                        b.beginBindPropNamed(propSite(property, null));
+                        refOf(place);
+                        writtenObject(property.get("expr"), BP_VAR_W);
+                        propName(property.get("prop"));
+                        b.endBindPropNamed();
+                        b.endBlock();
+                        return;
+                    }
                     b.beginBindProp(writtenPropSite(property));
                     refOf(place);
                     writtenObject(property.get("expr"), BP_VAR_W);
@@ -2604,6 +2658,10 @@ public final class BytecodeTranslator {
          */
         private void listAssignment(Ast list, Object value) {
             checkList(list);
+            if (Translator.listHasRefs(list)) {
+                listAssignmentRefs(list, value);
+                return;
+            }
             b.beginBlock();
             BytecodeLocal source = b.createLocal();
             boolean hold = assignsTo(list, value);
@@ -2647,9 +2705,6 @@ public final class BytecodeTranslator {
                 if (element.is("AST_UNPACK")) {
                     throw compileError(element, "Spread operator is not supported in assignments");
                 }
-                if ((element.flags & ARRAY_ELEM_REF) != 0) {
-                    throw new Unsupported("reference in list()", element);
-                }
                 if (element.get("key") == null) {
                     unkeyed = true;
                 } else {
@@ -2664,6 +2719,74 @@ public final class BytecodeTranslator {
             }
             if (keyed && unkeyed) {
                 throw compileError(list, "Cannot mix keyed and unkeyed array entries in assignments");
+            }
+        }
+
+        /**
+         * `[&$a, $b] = place` (zend_compile_assign of a list with references): the place's reference first (MAKE_REF;
+         * a call's result made one), then each element in order from it: one by reference bound to the element's
+         * reference (made if missing), a nested list with references from the element's, any other assigned from
+         * the element read; the value is the place's.
+         */
+        private void listAssignmentRefs(Ast list, Object value) {
+            if (!(value instanceof Ast source) || !isRefPlace(source) && !Translator.isCall(source)) {
+                throw compileError(list, "Cannot assign reference to non referenceable value");
+            }
+            b.beginBlock();
+            Ast held = hiddenVariable(list);
+            assignRef(new Ast("AST_ASSIGN_REF", 0, list.line, list.endLine, null, Map.of("var", held,
+                    "expr", source)));
+            destructureRefs(list, held);
+            BytecodeLocal result = b.createLocal();
+            b.beginStoreLocal(result);
+            b.emitReadVar(variable(held, "list"));
+            b.endStoreLocal();
+            b.emitUnsetVar(variable(held, "list"));
+            b.emitLoadLocal(result);
+            b.endBlock();
+        }
+
+        /** A variable of the translator's own, a local in any code (a file's too), unset after its use. */
+        private Ast hiddenVariable(Ast near) {
+            String name = "\0list" + hiddenVariables++;
+            variables.put(name, b.createLocal());
+            return new Ast("AST_VAR", 0, near.line, near.endLine, null, Map.of("name", name));
+        }
+
+        /** The elements of a list with references from the reference the hidden variable held is bound to. */
+        private void destructureRefs(Ast list, Ast held) {
+            long position = 0;
+            for (Object child : list.children()) {
+                if (!(child instanceof Ast element)) {
+                    position++;
+                    continue;
+                }
+                Object key = element.get("key") != null ? element.get("key") : (Object) position++;
+                Ast target = element.node("value");
+                Ast dim = new Ast("AST_DIM", 0, element.line, element.endLine, null, Map.of("expr", held,
+                        "dim", key));
+                if ((element.flags & ARRAY_ELEM_REF) != 0 || target.is("AST_ARRAY") && Translator.listHasRefs(target)) {
+                    Ast bound = (element.flags & ARRAY_ELEM_REF) != 0 ? target : hiddenVariable(target);
+                    assignRef(new Ast("AST_ASSIGN_REF", 0, element.line, element.endLine, null, Map.of("var", bound,
+                            "expr", dim)));
+                    if (bound != target) {
+                        destructureRefs(target, bound);
+                        b.emitUnsetVar(variable(bound, "list"));
+                    }
+                    continue;
+                }
+                BytecodeLocal item = b.createLocal();
+                b.beginStoreLocal(item);
+                b.beginListElement();
+                b.emitReadVar(variable(held, "list"));
+                key(key);
+                b.endListElement();
+                b.endStoreLocal();
+                if (target.is("AST_ARRAY")) {
+                    destructure(target, item);
+                } else {
+                    assignFrom(target, item, element);
+                }
             }
         }
 
@@ -3384,6 +3507,11 @@ public final class BytecodeTranslator {
                     || (fetched.is("AST_VAR") && (isVariable(fetched)
                     || refPlace(fetched) != null && !isVariableVariable(fetched))))) {
                 writeFetched.add(fetched);
+                // every element down the chain is fetched for write (FETCH_DIM_W)
+                for (Object inner = fetched.get("expr"); inner instanceof Ast dim && dim.is("AST_DIM");
+                     inner = dim.get("expr")) {
+                    writeFetched.add(dim);
+                }
             }
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
             return withParts(target, "expr", object, "prop", prop);
@@ -3525,13 +3653,14 @@ public final class BytecodeTranslator {
                 b.endUnsetProp();
                 return;
             }
-            if (!(prop instanceof Ast ast && ast.is("AST_VAR"))) {
-                throw new Unsupported("unset of a property by a computed name", target);
-            }
+            // a name that isn't a variable first (zend_delayed_compile_prop), then the object
+            b.beginBlock();
+            Object name = prop instanceof Ast ast && ast.is("AST_VAR") ? prop : onceKey(prop);
             b.beginUnsetPropNamed(propSite(target, null));
             writtenObject(target.get("expr"), BP_VAR_UNSET);
-            propName(prop);
+            propName(name);
             b.endUnsetPropNamed();
+            b.endBlock();
         }
 
         /**
@@ -3642,6 +3771,13 @@ public final class BytecodeTranslator {
                         }
                         if (isGlobals(ast.get("expr"))) {
                             refPlace(ast).readIfSet();
+                            return;
+                        }
+                        if (writeFetched.contains(ast)) {
+                            b.beginElementForWrite();
+                            readIfSet(ast.get("expr"));
+                            key(ast.get("dim"));
+                            b.endElementForWrite();
                             return;
                         }
                         b.beginElementIfSet();
@@ -4418,6 +4554,8 @@ public final class BytecodeTranslator {
                     b.beginSpreadAdd();
                 } else if (((Ast) arg).get("expr") instanceof Ast unpacked && isVariable(unpacked)) {
                     b.beginSpreadVar(variable(unpacked, "unpacking of"));
+                } else if (namedPlace(((Ast) arg).get("expr"))) {
+                    b.beginSpreadRef();
                 } else {
                     b.beginSpreadValue();
                 }
@@ -4434,11 +4572,20 @@ public final class BytecodeTranslator {
                 Object unpacked = ((Ast) arg).get("expr");
                 if (unpacked instanceof Ast ast && isVariable(ast)) {
                     b.endSpreadVar();
+                } else if (namedPlace(unpacked)) {
+                    refPlace(unpacked).ref(true);
+                    b.endSpreadRef();
                 } else {
                     expression(unpacked);
                     b.endSpreadValue();
                 }
             }
+        }
+
+        /** A file's variable or a superglobal: a variable by a constant name kept in a reference (RefPlace). */
+        private boolean namedPlace(Object value) {
+            return value instanceof Ast ast && ast.is("AST_VAR") && ast.get("name") instanceof String
+                    && refPlace(ast) != null;
         }
 
         /** Whether a call's arguments need the callee (some may go by reference); no unpacking or names. */
@@ -4880,9 +5027,10 @@ public final class BytecodeTranslator {
                 return;
             }
             if (arg instanceof Ast assign && assign.is("AST_ASSIGN_REF")) {
-                if (isVariable(assign.node("var"))) {
+                if (isVariable(assign.node("var")) || assign.node("var").is("AST_VAR")
+                        && assign.node("var").get("name") instanceof String) {
                     // ASSIGN_REF's result is the reference, which SEND_VAR_NO_REF passes: the assignment, then its
-                    // variable as the argument
+                    // variable (a file's or a global by name too) as the argument
                     b.beginBlock();
                     assignRef(assign);
                     argument(assign.node("var"), index, callee);
@@ -5223,7 +5371,7 @@ public final class BytecodeTranslator {
                     if (!(node.get("name") instanceof String name)) {
                         return new RefPlace(null, null, null, node.get("name"), true, node.flags);
                     }
-                    if (reread != null && plainVariable(name)) {
+                    if (reread != null && plainVariable(name) && !name.startsWith("\0")) {
                         // a file's variable: the global, or the including call's variable, by name
                         return new RefPlace(null, null, null, name, true, node.flags);
                     }
@@ -5330,8 +5478,8 @@ public final class BytecodeTranslator {
 
         /** A plain variable (a CV): no $this, $GLOBALS or superglobal, no variable variable. */
         private boolean isVariable(Ast node) {
-            return reread == null && node.is("AST_VAR") && node.get("name") instanceof String name
-                    && plainVariable(name);
+            return node.is("AST_VAR") && node.get("name") instanceof String name
+                    && (reread == null && plainVariable(name) || name.startsWith("\0"));
         }
 
         /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */

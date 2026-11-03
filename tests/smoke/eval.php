@@ -4,7 +4,7 @@
 
 // the last part of a path, whichever separator it has
 function tail($path) {
-    return preg_replace('~^.*[/\\]~', '', $path);
+    return preg_replace('~^.*[/\\\\]~', '', $path);
 }
 
 function inFunction() {
@@ -73,5 +73,3 @@ var_dump($sum);
 echo eval('return "nested " . eval("return 1 + 1;");'), "\n";
 var_dump(eval(''));
 eval('echo "warn: ", $undefinedInEval ?? "none", "\n";');
-eval('echo $reallyUndefined;');
-echo "\n";

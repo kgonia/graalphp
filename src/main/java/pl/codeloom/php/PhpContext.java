@@ -79,6 +79,20 @@ public final class PhpContext {
         return linking.get(lowerName);
     }
 
+    /**
+     * While an early binding's checks run as the compile's (zend_can_early_bind with ZEND_COMPILE_IGNORE_OTHER_FILES):
+     * the file being compiled, whose classes and the built-ins are the only ones they see; else null.
+     */
+    private String compiledFile;
+
+    public String compiledFile() {
+        return compiledFile;
+    }
+
+    public void setCompiledFile(String file) {
+        compiledFile = file;
+    }
+
     public void setLinking(String lowerName, ClassTemplate template) {
         if (template == null) {
             linking.remove(lowerName);
