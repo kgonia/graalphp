@@ -2778,7 +2778,16 @@ public final class BytecodeTranslator {
                     b.endExtract();
                     return true;
                 }
-                case "func_get_arg", "get_object_vars", "get_defined_vars" -> throw new Unsupported(lower + "()", node);
+                case "get_object_vars" -> {
+                    if (args.size() != 1 || hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    b.beginObjectVars();
+                    expression(args.child(0));
+                    b.endObjectVars();
+                    return true;
+                }
+                case "func_get_arg", "get_defined_vars" -> throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;
                 }

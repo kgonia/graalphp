@@ -74,6 +74,7 @@ import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.ExtractNode;
+import pl.codeloom.php.nodes.vars.ObjectVarsNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.nodes.vars.Variables;
@@ -2157,6 +2158,18 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
         } else {
             compactUndefined(node, name);
+        }
+    }
+
+    /**
+     * get_object_vars($object) (ObjectVarsNode): the properties the calling scope may access (a closure's bound
+     * class, else the function's).
+     */
+    @Operation
+    public static final class ObjectVars {
+        @Specialization
+        public static Object vars(VirtualFrame frame, Object object, @Bind PhpBytecodeRootNode root) {
+            return ObjectVarsNode.objectVars(object, PropNode.callingScope(frame, root.scopeName));
         }
     }
 

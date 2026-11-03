@@ -125,12 +125,21 @@ public final class PhpObject extends DynamicObject {
         return array;
     }
 
-    /** The names of the properties code in the scope may access, in order. */
+    /**
+     * The names of the properties code in the scope may access, in order (zend_check_property_access): a parent's
+     * private one only from that parent (canAccessProperty lets other scopes take its name for a dynamic property,
+     * which this object doesn't have).
+     */
     @TruffleBoundary
     public List<String> visiblePropertyNames(String scope) {
         List<String> names = new ArrayList<>();
         for (Object name : propertyNames()) {
             String property = (String) name;
+            PhpClass.PropertyDecl decl = phpClass.findProperty(property);
+            if (decl != null && decl.visibility() == PhpClass.PropertyDecl.PRIVATE
+                    && !decl.declaringClass().equals(scope) && !decl.declaringClass().equals(phpClass.getLowerName())) {
+                continue;
+            }
             if (phpClass.canAccessProperty(property, scope)) {
                 names.add(property);
             }
