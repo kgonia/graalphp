@@ -826,20 +826,13 @@ final class ArrayFunctions {
     private static long unshift(Object[] a) {
         PhpRef ref = Args.ref(a, 0);
         PhpArray array = writable(ref, "array_unshift");
-        PhpArray result = new PhpArray();
-        for (int i = 1; i < Args.count(a); i++) {
-            result.append(Args.get(a, i));
+        Object[] values = new Object[Args.count(a) - 1];
+        for (int i = 0; i < values.length; i++) {
+            Object value = Args.get(a, i + 1);
+            values[i] = value == array ? array.copy() : value;
         }
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            Object key = array.keyAt(p);
-            if (key instanceof Long) {
-                result.append(array.valueAt(p));
-            } else {
-                result.put(key, array.valueAt(p));
-            }
-        }
-        ref.set(result);
-        return result.size();
+        array.prependAll(values);
+        return array.size();
     }
 
     @TruffleBoundary

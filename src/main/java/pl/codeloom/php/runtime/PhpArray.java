@@ -715,10 +715,11 @@ public final class PhpArray implements TruffleObject {
 
     /**
      * array_unshift() of one value: it becomes the first element, int keys are renumbered (string keys kept) and
-     * the internal pointer goes back to the start. A packed list shifts its elements inline.
+     * the internal pointer goes back to the start. A packed list no foreach by reference walks shifts its elements
+     * inline.
      */
     public void prepend(Object value) {
-        if (!(store instanceof Hash) && nextIndex == size) {
+        if (!(store instanceof Hash) && nextIndex == size && iterations == 0) {
             if (store instanceof long[] longs) {
                 if (value instanceof Long number) {
                     if (size == longs.length) {
@@ -747,25 +748,41 @@ public final class PhpArray implements TruffleObject {
             pointer = 0;
             return;
         }
-        prependRebuilt(value);
+        prependAll(new Object[] {value == this ? copy() : value});
     }
 
+    /**
+     * array_unshift(): the values become the first elements, int keys are renumbered (string keys kept), the
+     * elements keep their references and the internal pointer goes back to the start. As php-src swaps the new
+     * table into the same array and advances its iterators (zend_hash_iterators_advance), a foreach by reference
+     * over this array moves with its element.
+     */
     @TruffleBoundary
-    private void prependRebuilt(Object value) {
+    public void prependAll(Object[] values) {
         PhpArray rebuilt = new PhpArray();
-        rebuilt.append(value);
+        for (Object value : values) {
+            rebuilt.append(value);
+        }
         for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
             Object key = keyAt(p);
+            Object raw = rawAt(p);
             if (key instanceof Long) {
-                rebuilt.append(valueAt(p));
+                rebuilt.append(raw);
             } else {
-                rebuilt.put(key, valueAt(p));
+                rebuilt.put(key, raw);
+            }
+            if (raw instanceof PhpArray nested) {
+                // ponytail: rebuilt counted it again; the old store's count goes with the old store
+                nested.removeHolder();
             }
         }
         store = rebuilt.store;
         size = rebuilt.size;
         nextIndex = rebuilt.nextIndex;
         pointer = firstPosition();
+        if (iterations != 0) {
+            RefIteration.advanced(this, values.length);
+        }
     }
 
     @TruffleBoundary
