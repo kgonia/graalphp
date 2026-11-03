@@ -1,6 +1,6 @@
 # 017: String keys in argument unpacking aren't taken as named arguments
 
-**State:** Open: a decision (named arguments)
+**State:** Open: the owner chose option 1 (2026-11-04); php-src's rules and the design are in [wiki/named-arguments.md](../wiki/named-arguments.md), the tests in `tests/smoke/named-args-*.php`
 
 **Symptom:** an unpacked array's or Traversable's string keys are php-src's named arguments (PHP 8.1):
 ```php
