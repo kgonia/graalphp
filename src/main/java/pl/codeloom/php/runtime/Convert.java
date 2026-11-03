@@ -863,12 +863,6 @@ public final class Convert {
             // closures compare only to themselves
             return 1;
         }
-        // lazy objects compare as initialized, a proxy as its instance
-        PhpObject realX = x.initialized();
-        PhpObject realY = y.initialized();
-        if (realX != x || realY != y) {
-            return compareObjects(objectLeft ? realX : realY, objectLeft ? realY : realX, objectLeft, guard);
-        }
         PhpClass classX = x.getPhpClass();
         if (classX.isSubclassOf("datetimeinterface") && y.getPhpClass().isSubclassOf("datetimeinterface")) {
             // date_object_compare_date: the instants (prelude/date.php's timestamp and microseconds)
@@ -879,6 +873,12 @@ public final class Convert {
         if (classX != y.getPhpClass() || classX.isSubclassOf("dateinterval")) {
             // different classes, or DateInterval (php-src warns "Cannot compare DateInterval objects")
             return 1;
+        }
+        // lazy objects of one class compare as initialized, a proxy as its instance (zend_std_compare_objects)
+        PhpObject realX = x.initialized();
+        PhpObject realY = y.initialized();
+        if (realX != x || realY != y) {
+            return compareObjects(objectLeft ? realX : realY, objectLeft ? realY : realX, objectLeft, guard);
         }
         if (Guard.contains(guard, x)) {
             throw nestingTooDeep();
