@@ -97,3 +97,17 @@ function h() {
     yield from new K([1]);
 }
 foreach (h() as $v) {}
+
+// a deep chain resumes on one frame, not one per generator (php-src's yield_from_deep_recursion), and a trace from
+// its end still shows every generator of it
+function deep($i) {
+    if ($i > 0) {
+        yield from deep($i - 1);
+    } else {
+        yield count((new Exception)->getTrace());
+        yield from new ArrayIterator([debug_backtrace()[20000]['args'][0] ?? 'none']);
+    }
+}
+foreach (deep(20000) as $v) {
+    var_dump($v);
+}

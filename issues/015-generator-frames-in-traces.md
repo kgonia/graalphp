@@ -24,13 +24,16 @@ body, so the frame was there. php-src's `zend_generator_resume` links the runnin
 placeholders for the generators delegating to it (`zend_generator_check_placeholder_frame`), before it calls the
 Iterator or the body.
 
-**Fix:** `PhpGenerator.linked` runs that step inside a frame per generator of the chain (and the running one's own
-for its Iterator): a call of `PhpGenerator.LinkedFrame`, one root per generator function
-(`PhpBytecodeRootNode.linkedFrame`), whose arguments are the generator's frame and the location it is suspended at
-(its `yield from`). `SourceLocation.codeRoot`, `codeFrame` and `callingInstruction` show it to every frame walker
-as that generator's frame at that line. A generator resumed without delegation (the common case) and an array's
-values go on as before. `Backtrace.userCaller` maps roots and frames like `Backtrace.here`.
+**Fix:** `PhpGenerator.linked` runs that step inside one frame, a call of `PhpGenerator.LinkedFrame` (one root
+per generator function, `PhpBytecodeRootNode.linkedFrame`), whose arguments are the innermost linked generator's
+frame and the location it is suspended at (its `yield from`), and the chain. `SourceLocation.codeRoot`, `codeFrame`
+and `callingInstruction` show it to every frame walker as that generator's frame at that line; `Backtrace.here`
+unfolds it into every generator of the chain (`PhpGenerator.linkedLevels`), as php-src's placeholder frame is
+unfolded only when a trace is built. So a resume costs one call however deep the chain (php-src's
+`yield_from_deep_recursion`, 50,000 deep: a frame per generator overflowed the stack). A generator resumed without
+delegation (the common case) and an array's values go on as before. `Backtrace.userCaller` maps roots and frames
+like `Backtrace.here`.
 
 **Test:** `tests/smoke/generators-trace.php` (gh8289; nested generators; a user Iterator one and two delegations
 deep, by foreach and by `Generator::next()`, with `debug_backtrace()`; "passed in ... on line" from a body and
-from an Iterator).
+from an Iterator; a chain 20,000 deep).

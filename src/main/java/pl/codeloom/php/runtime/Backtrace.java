@@ -113,6 +113,14 @@ public final class Backtrace {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
             RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            if (root instanceof PhpGenerator.LinkedFrame) {
+                // the generators of a yield from chain, unfolded
+                for (Object[] linked : PhpGenerator.linkedLevels(
+                        frame.getFrame(FrameInstance.FrameAccess.READ_ONLY).getArguments())) {
+                    levels.add(new Level((RootNode) linked[0], (Frame) linked[1], null, (BytecodeLocation) linked[2]));
+                }
+                return null;
+            }
             levels.add(new Level(SourceLocation.codeRoot(root),
                     SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
                     frame.getCallNode(), SourceLocation.callingInstruction(frame)));
