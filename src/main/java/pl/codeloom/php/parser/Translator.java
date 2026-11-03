@@ -101,8 +101,8 @@ public final class Translator {
     private static final int MODIFIER_ABSTRACT = 64;
     private static final int PARAM_REF = 8;
     private static final int PARAM_VARIADIC = 16;
-    /** Visibility or readonly on a constructor parameter: a promoted property. */
-    private static final int PROMOTED = 7 | 128;
+    /** Visibility, readonly or a set visibility on a constructor parameter: a promoted property. */
+    private static final int PROMOTED = 7 | 128 | 1024 | 2048 | 4096;
     private static final int FUNC_RETURNS_REF = 4096;
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
@@ -1182,7 +1182,7 @@ public final class Translator {
                                         + param.get("name") + " must have type");
                             }
                             promoted.add(new PhpClass.PropertyDecl(propertyName,
-                                    (modifiers & MODIFIER_READONLY) != 0 ? null : PhpNull.NULL,
+                                    (modifiers & MODIFIER_READONLY) != 0 || type != null ? null : PhpNull.NULL,
                                     PhpClass.PropertyDecl.visibilityOf(param.flags), null, modifiers, type));
                         }
                     }
@@ -1225,7 +1225,7 @@ public final class Translator {
                         }
                     }
                     Object initial = element.get("default") != null ? constantOrDeferred(element.get("default"))
-                            : (modifiers & MODIFIER_READONLY) != 0 ? null : PhpNull.NULL;
+                            : (modifiers & MODIFIER_READONLY) != 0 || type != null && !isStatic ? null : PhpNull.NULL;
                     members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, modifiers,
                             type));
                 }

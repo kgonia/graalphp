@@ -4405,7 +4405,7 @@ public final class BytecodeTranslator {
     private static final int EXEC_INCLUDE_ONCE = 4;
     private static final int EXEC_REQUIRE = 8;
     private static final int EXEC_REQUIRE_ONCE = 16;
-    private static final int PROMOTED = 7 | 128;
+    private static final int PROMOTED = 7 | 128 | 1024 | 2048 | 4096;
 
     /** Whether a body has a finally block, outside the functions and classes declared in it. */
     private static boolean hasFinally(Object node) {

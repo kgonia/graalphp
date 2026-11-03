@@ -181,17 +181,12 @@ public final class PropNode extends LValueNode {
     }
 
     /**
-     * A reference to, or an element write into, a readonly property: an Error unless the property holds an object
-     * (which the caller then reads); an uninitialized one too.
+     * A reference to, or an element write into, a property: PhpObject.indirect for a readonly one or one with a
+     * set visibility (PROPERTY_SET_CHECKED), or one this object doesn't have (old null); false for the others.
      */
-    private boolean readonlyIndirect(PhpObject phpObject, String name, Object old) {
-        boolean readonly = old == null ? phpObject.isReadonly(name)
-                : (objects.getPropertyFlagsOrDefault(phpObject, name, 0) & PhpClass.PROPERTY_SET_CHECKED) != 0
-                && phpObject.isReadonly(name);
-        if (readonly && !(PhpRef.deref(old) instanceof PhpObject)) {
-            throw phpObject.indirectModification(name);
-        }
-        return readonly;
+    private boolean readonlyIndirect(VirtualFrame frame, PhpObject phpObject, String name, Object old) {
+        return (old == null || (objects.getPropertyFlagsOrDefault(phpObject, name, 0)
+                & PhpClass.PROPERTY_SET_CHECKED) != 0) && phpObject.indirect(name, old, scope(frame));
     }
 
     /**
@@ -305,9 +300,9 @@ public final class PropNode extends LValueNode {
         if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
             Object property = objects.getOrDefault(phpObject, name, null);
             if (property != null) {
-                readonlyIndirect(phpObject, name, property);
-            } else if (!rw && phpObject.isReadonly(name) && phpObject.isUninitialized(name)) {
-                throw phpObject.indirectModification(name);
+                readonlyIndirect(frame, phpObject, name, property);
+            } else if (!rw && phpObject.isUninitialized(name)) {
+                readonlyIndirect(frame, phpObject, name, null);
             }
         }
         return readOn(frame, value, name);
@@ -316,11 +311,11 @@ public final class PropNode extends LValueNode {
     public Object readForUnsetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
             Object property = objects.getOrDefault(phpObject, name, null);
-            if (property == null && phpObject.isReadonly(name) && phpObject.isUninitialized(name)) {
+            if (property == null && phpObject.isUninitialized(name)) {
                 return PhpNull.NULL;
             }
             if (property != null) {
-                readonlyIndirect(phpObject, name, property);
+                readonlyIndirect(frame, phpObject, name, property);
             }
         }
         return readOn(frame, value, name);
@@ -418,7 +413,7 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpRef ref) {
             return ref;
         }
-        if (readonlyIndirect(phpObject, name, old)) {
+        if (readonlyIndirect(frame, phpObject, name, old)) {
             return new PhpRef(old);
         }
         PhpRef ref = new PhpRef(old == null ? PhpNull.NULL : old);
@@ -443,8 +438,8 @@ public final class PropNode extends LValueNode {
             throw boundToInaccessible(phpObject, name);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
-        if (old == null ? phpObject.isReadonly(name) : readonlyIndirect(phpObject, name, old)) {
-            throw phpObject.indirectModification(name);
+        if (readonlyIndirect(frame, phpObject, name, old)) {
+            throw phpObject.indirectError(name, scope(frame));
         }
         if (old instanceof PhpArray array) {
             array.removeHolder();
@@ -474,7 +469,7 @@ public final class PropNode extends LValueNode {
             return overloadedArray(inaccessibleRead(phpObject, name));
         }
         Object old = objects.getOrDefault(phpObject, name, null);
-        if (readonlyIndirect(phpObject, name, old)) {
+        if (readonlyIndirect(frame, phpObject, name, old)) {
             return null;
         }
         if (old instanceof PhpArray array) {
@@ -542,6 +537,7 @@ public final class PropNode extends LValueNode {
                 array.removeHolder();
             }
             objects.removeKey(phpObject, name);
+            phpObject.unsetDeclared(name);
         }
     }
 

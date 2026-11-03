@@ -35,6 +35,7 @@ public final class PhpClass {
         public static final int PRIVATE = 2;
         /** php-ast's modifier flags. */
         public static final int READONLY = 128;
+        public static final int PUBLIC_SET = 1024;
         public static final int PROTECTED_SET = 2048;
         public static final int PRIVATE_SET = 4096;
 
@@ -50,9 +51,13 @@ public final class PhpClass {
             return (modifiers & READONLY) != 0;
         }
 
-        /** Whether writes are restricted to fewer scopes than reads: readonly is protected(set) unless private. */
+        /**
+         * Whether writes are restricted to fewer scopes than reads: readonly is protected(set) unless private or
+         * public(set).
+         */
         public boolean restrictsSet() {
-            return (modifiers & (PROTECTED_SET | PRIVATE_SET)) != 0 || isReadonly() && visibility != PRIVATE;
+            return (modifiers & (PROTECTED_SET | PRIVATE_SET)) != 0
+                    || isReadonly() && visibility != PRIVATE && (modifiers & PUBLIC_SET) == 0;
         }
 
         PropertyDecl withDefault(Object value, String declaringClass) {
