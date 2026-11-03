@@ -1,0 +1,560 @@
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/AbstractBytecodeNodeElement.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/AbstractBytecodeNodeElement.java
+index 5ba05542c1938..83af4cd5acd5e 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/AbstractBytecodeNodeElement.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/AbstractBytecodeNodeElement.java
+@@ -70,6 +70,7 @@
+ import com.oracle.truffle.dsl.processor.bytecode.model.InstructionModel;
+ import com.oracle.truffle.dsl.processor.bytecode.model.InstructionModel.ImmediateKind;
+ import com.oracle.truffle.dsl.processor.bytecode.model.InstructionModel.InstructionImmediate;
++import com.oracle.truffle.dsl.processor.bytecode.model.OperationModel.OperationArgument;
+ import com.oracle.truffle.dsl.processor.generator.GeneratorUtils;
+ import com.oracle.truffle.dsl.processor.java.ElementUtils;
+ import com.oracle.truffle.dsl.processor.java.model.CodeAnnotationMirror;
+@@ -789,8 +790,9 @@ private CodeExecutableElement createValidateBytecodes() {
+             b.startBlock();
+ 
+             boolean rootNodeAvailable = false;
++            InstructionModel representativeInstruction = instructions.getFirst();
+             for (InstructionImmediate immediate : group.immediates()) {
+-                String localName = immediate.name();
++                String localName = representativeInstruction.resolveOperationArgument(immediate).map(OperationArgument::name).orElse(immediate.name());
+                 CodeTree declareImmediate = CodeTreeBuilder.createBuilder() //
+                                 .startDeclaration(immediate.kind().toDeclaredType(parent.context), localName) //
+                                 .tree(BytecodeRootNodeElement.readImmediate("bc", "bci", immediate)) //
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BuilderElement.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BuilderElement.java
+index 57ce0a0a5a8c3..cfec13538a15a 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BuilderElement.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BuilderElement.java
+@@ -2905,7 +2905,7 @@ private CodeExecutableElement createEndRoot(OperationModel rootOperation) {
+                     buildConstantOperandValidation(b, operationArgument.builderType(), operationArgument.name());
+                 }
+                 for (int i = 0; i < prologOperation.operationEndArguments.length; i++) {
+-                    String constantOperandValue = emitConstantOperand(b, prologOperation.operationEndArguments[i], prologOperation.constantOperandAfterNames.get(i));
++                    String constantOperandValue = emitConstantOperand(b, prologOperation.operationEndArguments[i]);
+                     InstructionImmediate immediate = prologOperation.instruction().constantOperandImmediates.get(after.get(i));
+                     b.statement(BytecodeRootNodeElement.writeImmediate("state.bc", operationStack.read(rootOperation, operationFields.prologBci), constantOperandValue, immediate.encoding()));
+                 }
+@@ -3814,14 +3814,11 @@ private List<String> emitConstantBeginOperands(CodeTreeBuilder b, OperationModel
+             return List.of();
+         }
+ 
+-        List<ConstantOperandModel> constantOperandsBefore = operation.constantOperands.before();
+-        if (constantOperandsBefore.isEmpty()) {
+-            return List.of();
+-        }
+-
+-        List<String> result = new ArrayList<>(constantOperandsBefore.size());
+-        for (int i = 0; i < constantOperandsBefore.size(); i++) {
+-            result.add(emitConstantOperand(b, operation.operationBeginArguments[i], operation.getConstantOperandBeforeName(i)));
++        List<String> result = new ArrayList<>(operation.constantOperands.before().size());
++        for (OperationArgument argument : operation.operationBeginArguments) {
++            if (argument.constantOperand().isPresent()) {
++                result.add(emitConstantOperand(b, argument));
++            }
+         }
+         return result;
+     }
+@@ -3848,8 +3845,8 @@ private Map<ConstantOperandModel, String> emitConstantOperands(CodeTreeBuilder b
+         boolean inEmit = !operation.hasChildren();
+         Map<ConstantOperandModel, String> resultMap = new IdentityHashMap<>();
+         if (inEmit) {
+-            for (int i = 0; i < before.size(); i++) {
+-                resultMap.put(before.get(i), emitConstantOperand(b, operation.operationBeginArguments[i], operation.getConstantOperandBeforeName(i)));
++            for (OperationArgument argument : operation.operationBeginArguments) {
++                argument.constantOperand().ifPresent(constantOperand -> resultMap.put(constantOperand, emitConstantOperand(b, argument)));
+             }
+         } else {
+             List<OperationField> fields = operationFields.getConstants(before, false);
+@@ -3859,13 +3856,13 @@ private Map<ConstantOperandModel, String> emitConstantOperands(CodeTreeBuilder b
+         }
+         for (int i = 0; i < after.size(); i++) {
+             if (model.prolog != null && operation == model.prolog.operation) {
+-                /**
++                /*
+                  * Special case: when emitting the prolog in beginRoot, end constants are not yet
+                  * known. They will be patched in endRoot.
+                  */
+                 resultMap.put(after.get(i), UNINIT);
+             } else {
+-                resultMap.put(after.get(i), emitConstantOperand(b, operation.operationEndArguments[i], operation.getConstantOperandAfterName(i)));
++                resultMap.put(after.get(i), emitConstantOperand(b, operation.operationEndArguments[i]));
+             }
+ 
+         }
+@@ -3980,14 +3977,14 @@ private String[] buildCustomInitializer(CodeTreeBuilder b, OperationModel operat
+         return args;
+     }
+ 
+-    private String emitConstantOperand(CodeTreeBuilder b, OperationArgument argument, String constantOperandName) {
++    private String emitConstantOperand(CodeTreeBuilder b, OperationArgument argument) {
+         ConstantOperandModel constantOperand = argument.constantOperand().orElseThrow(() -> new AssertionError("Operation argument " + argument + " did not have a constant operand."));
+         if (constantOperand.kind() == ImmediateKind.CONSTANT) {
+-            /**
++            /*
+              * Eagerly allocate space for the constants. Even if the node is not emitted (e.g., it's
+              * a disabled instrumentation), we need the constant pool to be stable.
+              */
+-            String constantPoolIndex = constantOperandName + "Index";
++            String constantPoolIndex = argument.logicalName() + "Index";
+             b.startDeclaration(type(int.class), constantPoolIndex);
+             b.startCall("state.addConstant");
+             if (ElementUtils.typeEquals(argument.builderType(), constantOperand.type())) {
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java
+index d07adf147b7bc..24f24345acf42 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/generator/BytecodeRootNodeElement.java
+@@ -67,7 +67,6 @@
+ import java.util.LinkedHashSet;
+ import java.util.List;
+ import java.util.Map;
+-import java.util.Map.Entry;
+ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.Set;
+@@ -1819,54 +1818,31 @@ private CodeExecutableElement createUnquickenBytecode() {
+         CodeTreeBuilder b = ex.createBuilder();
+         b.declaration(arrayOf(type(byte.class)), "copy", "Arrays.copyOf(original, original.length)");
+ 
+-        Map<Boolean, List<InstructionModel>> partitionedByIsQuickening = model.getInstructions().stream() //
+-                        .sorted(Comparator.comparing(InstructionModel::getName)).collect(Collectors.partitioningBy(InstructionModel::isQuickening));
+-
+-        List<Entry<Integer, List<InstructionModel>>> regularGroupedByLength = partitionedByIsQuickening.get(false).stream() //
+-                        .collect(deterministicGroupingBy(InstructionModel::getInstructionLength)).entrySet() //
+-                        .stream().sorted(Comparator.comparing(entry -> entry.getKey())) //
+-                        .toList();
+-
+-        List<Entry<InstructionModel, List<InstructionModel>>> quickenedGroupedByQuickeningRoot = partitionedByIsQuickening.get(true).stream() //
+-                        .collect(deterministicGroupingBy(InstructionModel::getQuickeningRoot)).entrySet() //
+-                        .stream().sorted(Comparator.comparing((Entry<InstructionModel, List<InstructionModel>> entry) -> {
+-                            InstructionKind kind = entry.getKey().kind;
+-                            return kind == InstructionKind.CUSTOM || kind == InstructionKind.CUSTOM_SHORT_CIRCUIT;
+-                        }).thenComparing(entry -> entry.getKey().getInstructionLength())) //
+-                        .toList();
+-
+         b.declaration(getBytecodeIndexType(), "bci", "0");
+ 
+         b.startWhile().string("bci < copy.length").end().startBlock();
+         b.startSwitch().tree(readInstruction("copy", "bci")).end().startBlock();
+ 
+-        for (var quickenedGroup : quickenedGroupedByQuickeningRoot) {
+-            InstructionModel quickeningRoot = quickenedGroup.getKey();
+-            List<InstructionModel> instructions = quickenedGroup.getValue();
+-            int instructionLength = instructions.get(0).getInstructionLength();
+-            for (InstructionModel instruction : instructions) {
+-                if (instruction.getInstructionLength() != instructionLength) {
+-                    throw new AssertionError("quickened group has multiple different instruction lengths");
+-                }
+-                b.startCase().tree(createInstructionConstant(instruction)).end();
+-            }
+-            b.startCaseBlock();
+-
+-            b.statement(writeInstruction("copy", "bci", createInstructionConstant(quickeningRoot)));
+-            b.startStatement().string("bci += ").string(instructionLength).end();
+-            b.statement("break");
+-            b.end();
++        if (ImmediateKind.STATE_PROFILE.width != ImmediateWidth.SHORT) {
++            throw new AssertionError("state bitset width changed");
+         }
+-
+-        for (var regularGroup : regularGroupedByLength) {
+-            int instructionLength = regularGroup.getKey();
+-            List<InstructionModel> instructions = regularGroup.getValue();
++        Map<EqualityCodeTree, List<InstructionModel>> caseGrouping = EqualityCodeTree.group(b, model.getInstructions(), (InstructionModel instruction, CodeTreeBuilder group) -> {
++            if (instruction.isQuickening()) {
++                group.statement(writeInstruction("copy", "bci", createInstructionConstant(instruction.getQuickeningRoot())));
++            }
++            for (InstructionImmediate stateBitset : instruction.getImmediates(ImmediateKind.STATE_PROFILE)) {
++                group.statement(writeImmediate("copy", "bci", "(short) 0", stateBitset.encoding()));
++            }
++            group.startStatement().string("bci += ").string(instruction.getInstructionLength()).end();
++            group.statement("break");
++        });
++        for (var group : caseGrouping.entrySet()) {
++            List<InstructionModel> instructions = group.getValue();
+             for (InstructionModel instruction : instructions) {
+                 b.startCase().tree(createInstructionConstant(instruction)).end();
+             }
+             b.startCaseBlock();
+-            b.startStatement().string("bci += ").string(instructionLength).end();
+-            b.statement("break");
++            b.tree(group.getKey().getTree());
+             b.end();
+         }
+ 
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLBuiltins.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLBuiltins.java
+index adc8d3a6b3707..c90b7607fb9eb 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLBuiltins.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLBuiltins.java
+@@ -467,10 +467,10 @@ private static void configureTagYieldInstructions(BytecodeDSLModel m) {
+     private static void addBackwardCompatibleOperations(BytecodeDSLModel m, TruffleTypes types) {
+         m.bindStackValueOperation = m.operation(OperationKind.BIND_STACKVALUE, "BindStackValue",
+                         """
+-                                        BindStackValue binds its child's result while it remains live on the operand stack.
+-                                        It must be directly enclosed by a custom operation or Block, ignoring Source and SourceSection metadata operations.
+-                                        The returned StackValue is valid while the enclosing operation is active.
+-                                        """, "BindStackValue", true);
++                                                        BindStackValue binds its child's result while it remains live on the operand stack.
++                                                        It must be directly enclosed by a custom operation or Block, ignoring Source and SourceSection metadata operations.
++                                                        The returned StackValue is valid while the enclosing operation is active.
++                                        """, "BindStackValue", BytecodeDSLModel.RegistrationMode.OPTIONAL_BUILTIN);
+         if (m.bindStackValueOperation != null) {
+             m.bindStackValueOperation.setDynamicOperands(child("value"));
+         }
+@@ -478,7 +478,7 @@ private static void addBackwardCompatibleOperations(BytecodeDSLModel m, TruffleT
+         m.loadStackValueOperation = m.operation(OperationKind.LOAD_STACKVALUE, "LoadStackValue", """
+                         LoadStackValue reads {@code stackValue}.
+                         The stack value must belong to an active custom operation or Block in the current root.
+-                        """, "LoadStackValue", true);
++                        """, "LoadStackValue", BytecodeDSLModel.RegistrationMode.OPTIONAL_BUILTIN);
+         if (m.loadStackValueOperation != null) {
+             m.loadStackValueOperation.setOperationBeginArguments(new OperationArgument(types.StackValue, Encoding.STACK_VALUE, "stackValue", "the stack value to load")) //
+                             .setInstruction(m.loadStackValueInstruction);
+@@ -487,7 +487,7 @@ private static void addBackwardCompatibleOperations(BytecodeDSLModel m, TruffleT
+         m.storeStackValueOperation = m.operation(OperationKind.STORE_STACKVALUE, "StoreStackValue", """
+                         StoreStackValue writes the value produced by {@code value} into {@code stackValue}.
+                         The stack value must belong to an active custom operation or Block in the current root.
+-                        """, "StoreStackValue", true);
++                        """, "StoreStackValue", BytecodeDSLModel.RegistrationMode.OPTIONAL_BUILTIN);
+         if (m.storeStackValueOperation != null) {
+             m.storeStackValueOperation.setVoid(true) //
+                             .setOperationBeginArguments(new OperationArgument(types.StackValue, Encoding.STACK_VALUE, "stackValue", "the stack value to store to")) //
+@@ -498,7 +498,7 @@ private static void addBackwardCompatibleOperations(BytecodeDSLModel m, TruffleT
+         OperationModel clearLocalOperation = m.operation(OperationKind.CLEAR_LOCAL, "ClearLocal", String.format("""
+                         ClearLocal clears {@code local} in the current frame.
+                         Until a value is written to the local, a subsequent LoadLocal %s.
+-                        """, loadIllegalLocalBehaviour(m)), "ClearLocal", true);
++                        """, loadIllegalLocalBehaviour(m)), "ClearLocal", BytecodeDSLModel.RegistrationMode.OPTIONAL_BUILTIN);
+         if (clearLocalOperation != null) {
+             clearLocalOperation.setVoid(true)//
+                             .setOperationBeginArguments(new OperationArgument(types.BytecodeLocal, Encoding.LOCAL, "local", "the local to clear"))//
+@@ -506,6 +506,17 @@ private static void addBackwardCompatibleOperations(BytecodeDSLModel m, TruffleT
+         }
+     }
+ 
++    /**
++     * Like {@link #addBackwardCompatibleOperations} but adds operation stub definitions for the
++     * fallback class generated on error.
++     */
++    public static void addBackwardCompatibleOperationsOnError(BytecodeDSLModel m) {
++        m.operation(OperationKind.BIND_STACKVALUE, "BindStackValue", null, "BindStackValue", BytecodeDSLModel.RegistrationMode.FALLBACK);
++        m.operation(OperationKind.LOAD_STACKVALUE, "LoadStackValue", null, "LoadStackValue", BytecodeDSLModel.RegistrationMode.FALLBACK);
++        m.operation(OperationKind.STORE_STACKVALUE, "StoreStackValue", null, "StoreStackValue", BytecodeDSLModel.RegistrationMode.FALLBACK);
++        m.operation(OperationKind.CLEAR_LOCAL, "ClearLocal", null, "ClearLocal", BytecodeDSLModel.RegistrationMode.FALLBACK);
++    }
++
+     private static String rootOperationJavadoc(BytecodeDSLModel m) {
+         String rootClass = m.templateType.getSimpleName().toString();
+         String innerRootBehaviour;
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLModel.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLModel.java
+index 433df4750914f..5ef2704c5d03a 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLModel.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/BytecodeDSLModel.java
+@@ -155,6 +155,12 @@ public enum LoadIllegalLocalStrategy {
+         CUSTOM_EXCEPTION
+     }
+ 
++    public enum RegistrationMode {
++        DEFAULT,
++        OPTIONAL_BUILTIN,
++        FALLBACK
++    }
++
+     public LoadIllegalLocalStrategy loadIllegalLocalStrategy;
+     public String defaultLocalValue;
+     public DSLExpression defaultLocalValueExpression;
+@@ -413,16 +419,17 @@ public OperationModel operation(OperationKind kind, String name, String javadoc)
+     }
+ 
+     public OperationModel operation(OperationKind kind, String name, String javadoc, String builderName) {
+-        return operation(kind, name, javadoc, builderName, false);
++        return operation(kind, name, javadoc, builderName, RegistrationMode.DEFAULT);
+     }
+ 
+-    public OperationModel operation(OperationKind kind, String name, String javadoc, String builderName, boolean optionalBuiltin) {
++    public OperationModel operation(OperationKind kind, String name, String javadoc, String builderName, RegistrationMode registrationMode) {
+         if (operations.containsKey(name)) {
+-            if (optionalBuiltin) {
+-                addSuppressableWarning(TruffleSuppressedWarnings.HIDE_BUILTIN, "Custom operation with name %s conflicts with a built-in operation with the same name. " +
++            switch (registrationMode) {
++                case DEFAULT -> addError("Multiple operations declared with name %s. Operation names must be distinct.", name);
++                case OPTIONAL_BUILTIN -> addSuppressableWarning(TruffleSuppressedWarnings.HIDE_BUILTIN, "Custom operation with name %s conflicts with a built-in operation with the same name. " +
+                                 "The built-in operation will not be generated. ", name);
+-            } else {
+-                addError("Multiple operations declared with name %s. Operation names must be distinct.", name);
++                case FALLBACK -> {
++                }
+             }
+             return null;
+         }
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/InstructionModel.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/InstructionModel.java
+index acfc4049a92d7..9f92b9bcd4e4a 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/InstructionModel.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/InstructionModel.java
+@@ -52,6 +52,7 @@
+ import javax.lang.model.type.TypeMirror;
+ 
+ import com.oracle.truffle.dsl.processor.ProcessorContext;
++import com.oracle.truffle.dsl.processor.bytecode.model.OperationModel.OperationArgument;
+ import com.oracle.truffle.dsl.processor.bytecode.model.OperationModel.OperationKind;
+ import com.oracle.truffle.dsl.processor.bytecode.model.Signature.Operand;
+ import com.oracle.truffle.dsl.processor.java.ElementUtils;
+@@ -795,6 +796,13 @@ public Optional<ConstantOperandModel> resolveConstantOperand(InstructionImmediat
+         return resolveOperand(immediate).filter(Operand::isConstant).map(Operand::constant);
+     }
+ 
++    public Optional<OperationArgument> resolveOperationArgument(InstructionImmediate immediate) {
++        if (operation == null) {
++            return Optional.empty();
++        }
++        return resolveConstantOperand(immediate).flatMap(operation::resolveOperationArgument);
++    }
++
+     public InstructionImmediate findImmediate(ImmediateKind immediateKind, String immediateName) {
+         for (InstructionImmediate immediate : immediates) {
+             if (immediate.kind == immediateKind && immediate.name.equals(immediateName)) {
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/OperationModel.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/OperationModel.java
+index e2a52a8a81b39..771f48c3fc87a 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/OperationModel.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/model/OperationModel.java
+@@ -41,7 +41,9 @@
+ package com.oracle.truffle.dsl.processor.bytecode.model;
+ 
+ import java.util.ArrayList;
++import java.util.HashMap;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Optional;
+ import java.util.stream.Stream;
+ 
+@@ -96,11 +98,18 @@ public enum OperationKind {
+ 
+     /**
+      * Models an argument to a begin/emit/end method.
++     *
++     * @param builderType the Java type of the builder method parameter
++     * @param kind the serialization encoding of the argument
++     * @param name the Java variable name used in generated code
++     * @param logicalName the logical operand name, which defaults to {@code name}
++     * @param doc the builder method parameter documentation
++     * @param constantOperand the declared constant operand, if this argument represents one
+      */
+-    public record OperationArgument(TypeMirror builderType, Encoding kind, String name, String doc, Optional<ConstantOperandModel> constantOperand) {
++    public record OperationArgument(TypeMirror builderType, Encoding kind, String name, String logicalName, String doc, Optional<ConstantOperandModel> constantOperand) {
+ 
+         OperationArgument(TypeMirror builderType, Encoding kind, String name, String doc) {
+-            this(builderType, kind, name, doc, Optional.empty());
++            this(builderType, kind, name, name, doc, Optional.empty());
+         }
+ 
+         public CodeVariableElement toVariableElement() {
+@@ -186,13 +195,15 @@ public List<ConstantOperandModel> all() {
+     // Dynamic operand data supplied by builtin specs / parsed from operation specializations.
+     public DynamicOperandModel[] dynamicOperands = new DynamicOperandModel[0];
+ 
+-    // Operand names parsed from operation specializations.
+-    public List<String> constantOperandBeforeNames;
+-    public List<String> constantOperandAfterNames;
+-
+     public OperationArgument[] operationBeginArguments = EMPTY_ARGUMENTS;
+     public OperationArgument[] operationEndArguments = EMPTY_ARGUMENTS;
+ 
++    /*
++     * Defines a mapping from constant operand to operation argument. Useful for resolving the
++     * generated Java name of an operation argument from an instruction immediate.
++     */
++    private final Map<ConstantOperandModel, OperationArgument> constantOperandArguments = new HashMap<>();
++
+     public OperationModel(BytecodeDSLModel parent, int id, OperationKind kind, String name, String builderName, String javadoc) {
+         this.parent = parent;
+         this.id = id;
+@@ -245,14 +256,6 @@ public OperationModel setVoid(boolean isVoid) {
+         return this;
+     }
+ 
+-    public String getConstantOperandBeforeName(int i) {
+-        return constantOperandBeforeNames.get(i);
+-    }
+-
+-    public String getConstantOperandAfterName(int i) {
+-        return constantOperandAfterNames.get(i);
+-    }
+-
+     public OperationModel setDynamicOperands(DynamicOperandModel... dynamicOperands) {
+         this.dynamicOperands = dynamicOperands;
+         return this;
+@@ -289,23 +292,33 @@ public NodeData getNodeData() {
+     }
+ 
+     public OperationModel setOperationBeginArguments(OperationArgument... operationBeginArguments) {
+-        if (this.operationBeginArguments != EMPTY_ARGUMENTS && this.operationBeginArguments.length != operationBeginArguments.length) {
+-            throw new AssertionError("Number of begin arguments for %s should not change (was %d, attempted to set to %d).".formatted(name, this.operationBeginArguments.length,
+-                            operationBeginArguments.length));
++        if (this.operationBeginArguments != EMPTY_ARGUMENTS) {
++            throw new AssertionError("Operation begin arguments for %s were already set.".formatted(name));
+         }
+         this.operationBeginArguments = operationBeginArguments;
++        registerConstantOperandArguments(operationBeginArguments);
+         return this;
+     }
+ 
+     public OperationModel setOperationEndArguments(OperationArgument... operationEndArguments) {
+-        if (this.operationEndArguments != EMPTY_ARGUMENTS && this.operationEndArguments.length != operationEndArguments.length) {
+-            throw new AssertionError(
+-                            "Number of end arguments for %s should not change (was %d, attempted to set to %d).".formatted(name, this.operationEndArguments.length, operationEndArguments.length));
++        if (this.operationEndArguments != EMPTY_ARGUMENTS) {
++            throw new AssertionError("Operation end arguments for %s were already set.".formatted(name));
+         }
+         this.operationEndArguments = operationEndArguments;
++        registerConstantOperandArguments(operationEndArguments);
+         return this;
+     }
+ 
++    private void registerConstantOperandArguments(OperationArgument[] arguments) {
++        for (OperationArgument argument : arguments) {
++            argument.constantOperand().ifPresent(constantOperand -> constantOperandArguments.put(constantOperand, argument));
++        }
++    }
++
++    public Optional<OperationArgument> resolveOperationArgument(ConstantOperandModel constantOperand) {
++        return Optional.ofNullable(constantOperandArguments.get(constantOperand));
++    }
++
+     public String getOperationBeginArgumentName(int i) {
+         return operationBeginArguments[i].name;
+     }
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/BytecodeDSLParser.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/BytecodeDSLParser.java
+index a0693547497d3..f10f12c441633 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/BytecodeDSLParser.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/BytecodeDSLParser.java
+@@ -151,7 +151,8 @@ protected BytecodeDSLModels parse(Element element, List<AnnotationMirror> mirror
+         for (BytecodeDSLModel model : models) {
+             parseBytecodeDSLModel(typeElement, model, model.getTemplateTypeAnnotation());
+             if (model.hasErrors()) {
+-                // we only need one copy of the error messages.
++                BytecodeDSLBuiltins.addBackwardCompatibleOperationsOnError(model);
++                // We only need one copy of the error messages, so we can abort early.
+                 break;
+             }
+ 
+diff --git a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/CustomOperationParser.java b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/CustomOperationParser.java
+index 30fe4b5713717..b563784ce0975 100644
+--- a/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/CustomOperationParser.java
++++ b/truffle/src/com.oracle.truffle.dsl.processor/src/com/oracle/truffle/dsl/processor/bytecode/parser/CustomOperationParser.java
+@@ -332,13 +332,9 @@ CustomOperationModel parseCustomRegularOperation(AnnotationMirror mirror, TypeEl
+ 
+         produceConstantOperandWarnings(customOperation, signature, mirror);
+ 
+-        List<String> constantOperandBeforeNames = mergeConstantOperandNames(customOperation, constantOperands.before(), signatures, 0);
+-        List<String> constantOperandAfterNames = mergeConstantOperandNames(customOperation, constantOperands.after(), signatures,
+-                        constantOperands.before().size() + signature.dynamicOperandCount());
+-        operation.constantOperandBeforeNames = constantOperandBeforeNames;
+-        operation.constantOperandAfterNames = constantOperandAfterNames;
+-        operation.operationBeginArguments = createOperationConstantArguments(constantOperands.before(), constantOperandBeforeNames);
+-        operation.operationEndArguments = createOperationConstantArguments(constantOperands.after(), constantOperandAfterNames);
++        operation.setOperationBeginArguments(createOperationConstantArguments(customOperation, constantOperands.before(), signatures, 0));
++        operation.setOperationEndArguments(createOperationConstantArguments(customOperation, constantOperands.after(), signatures,
++                        constantOperands.before().size() + signature.dynamicOperandCount()));
+ 
+         createCustomInstruction(customOperation, generatedNode, signature, name);
+ 
+@@ -450,23 +446,6 @@ private void parseStoreBytecodeIndex(AnnotationMirror mirror, OperationModel ope
+         }
+     }
+ 
+-    private static List<String> mergeConstantOperandNames(CustomOperationModel customOperation, List<ConstantOperandModel> constantOperands, List<Signature> signatures,
+-                    int operandOffset) {
+-        List<String> result = new ArrayList<>();
+-        for (int i = 0; i < constantOperands.size(); i++) {
+-            ConstantOperandModel constantOperand = constantOperands.get(i);
+-            List<String> operandNames = getConstantOperandNames(signatures, constantOperand, operandOffset + i);
+-            if (operandNames.size() > 1) {
+-                customOperation.addWarning(constantOperand.mirror(), null,
+-                                "Specializations use multiple different names for this operand (%s). It is recommended to use the same name in each specialization or to explicitly provide a name for the operand.",
+-                                operandNames);
+-            }
+-            // Take the first name.
+-            result.add(operandNames.getFirst());
+-        }
+-        return result;
+-    }
+-
+     private void produceConstantOperandWarnings(CustomOperationModel customOperation, Signature polymorphicSignature, AnnotationMirror mirror) {
+         ConstantOperandsModel constantOperands = customOperation.operation.constantOperands;
+         for (ConstantOperandModel constantOperand : constantOperands.before()) {
+@@ -664,14 +643,18 @@ private void validateEpilogExceptionalSignature(CustomOperationModel customOpera
+         }
+     }
+ 
+-    private OperationArgument[] createOperationConstantArguments(List<ConstantOperandModel> operands, List<String> operandNames) {
+-        if (operands.size() != operandNames.size()) {
+-            throw new AssertionError("Operands and operand names have different sizes (%d vs. %d)".formatted(operands.size(), operandNames.size()));
+-        }
+-        OperationArgument[] arguments = new OperationArgument[operandNames.size()];
+-        for (int i = 0; i < operandNames.size(); i++) {
+-            ConstantOperandModel constantOperand = operands.get(i);
+-            String argumentName = operandNames.get(i);
++    private OperationArgument[] createOperationConstantArguments(CustomOperationModel customOperation, List<ConstantOperandModel> constantOperands, List<Signature> signatures, int operandOffset) {
++        OperationArgument[] arguments = new OperationArgument[constantOperands.size()];
++        for (int i = 0; i < arguments.length; i++) {
++            ConstantOperandModel constantOperand = constantOperands.get(i);
++            List<String> operandNames = getConstantOperandNames(signatures, constantOperand, operandOffset + i);
++            if (operandNames.size() > 1) {
++                customOperation.addWarning(constantOperand.mirror(), null,
++                                "Specializations use multiple different names for this operand (%s). It is recommended to use the same name in each specialization or to explicitly provide a name for the operand.",
++                                operandNames);
++            }
++            // Take the first name.
++            String logicalName = operandNames.getFirst();
+             TypeMirror builderType;
+             OperationArgument.Encoding encoding;
+             // Special cases: local accessors are supplied by BytecodeLocal builder arguments.
+@@ -685,7 +668,7 @@ private OperationArgument[] createOperationConstantArguments(List<ConstantOperan
+                 builderType = constantOperand.type();
+                 encoding = OperationArgument.Encoding.CONSTANT;
+             }
+-            arguments[i] = new OperationArgument(builderType, encoding, sanitizeConstantArgumentName(argumentName), constantOperand.doc(), Optional.of(constantOperand));
++            arguments[i] = new OperationArgument(builderType, encoding, sanitizeConstantArgumentName(logicalName), logicalName, constantOperand.doc(), Optional.of(constantOperand));
+         }
+         return arguments;
+     }
+@@ -1051,21 +1034,28 @@ private void createCustomInstruction(CustomOperationModel customOperation, CodeT
+         }
+ 
+         OperationModel operation = customOperation.operation;
+-        List<ConstantOperandModel> constantOperandsBefore = operation.constantOperands.before();
+-        for (int i = 0; i < constantOperandsBefore.size(); i++) {
+-            Operand operand = signature.constantOperands().get(i);
+-            if (!operand.isConstant() || operand.constant() != constantOperandsBefore.get(i)) {
+-                throw new AssertionError("Operand should be the i-th constant operand before, but was " + operand);
++        int operandIndex = 0;
++        for (OperationArgument argument : operation.operationBeginArguments) {
++            if (argument.constantOperand().isEmpty()) {
++                continue;
+             }
+-            instr.addConstantOperandImmediate(operand, operation.getConstantOperandBeforeName(i));
++            ConstantOperandModel constantOperand = argument.constantOperand().get();
++            Operand operand = signature.constantOperands().get(operandIndex++);
++            if (!operand.isConstant() || operand.constant() != constantOperand) {
++                throw new AssertionError("Operand should be a constant operand before, but was " + operand);
++            }
++            instr.addConstantOperandImmediate(operand, argument.logicalName());
+         }
+-        List<ConstantOperandModel> constantOperandsAfter = operation.constantOperands.after();
+-        for (int i = 0; i < constantOperandsAfter.size(); i++) {
+-            Operand operand = signature.constantOperands().get(constantOperandsBefore.size() + i);
+-            if (!operand.isConstant() || operand.constant() != constantOperandsAfter.get(i)) {
+-                throw new AssertionError("Operand should be the i-th constant operand after, but was " + operand);
++        for (OperationArgument argument : operation.operationEndArguments) {
++            if (argument.constantOperand().isEmpty()) {
++                continue;
++            }
++            ConstantOperandModel constantOperand = argument.constantOperand().get();
++            Operand operand = signature.constantOperands().get(operandIndex++);
++            if (!operand.isConstant() || operand.constant() != constantOperand) {
++                throw new AssertionError("Operand should be a constant operand after, but was " + operand);
+             }
+-            instr.addConstantOperandImmediate(operand, operation.getConstantOperandAfterName(i));
++            instr.addConstantOperandImmediate(operand, argument.logicalName());
+         }
+ 
+         if (customOperation.isCustomYield()) {
