@@ -12,6 +12,7 @@ import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 
@@ -29,10 +30,14 @@ public final class FunctionCallNode extends CallNode {
     /** A call php-src compiles to an opcode instead (strlen, count...): stack traces list no frame for it. */
     private final boolean frameless;
 
-    /** id is the lowercase name's {@link pl.codeloom.php.PhpLanguage#functionId}. */
-    public FunctionCallNode(String displayName, int id, int fallbackId, ArgumentsNode args, boolean frameless) {
+    /**
+     * id is the lowercase name's {@link pl.codeloom.php.PhpLanguage#functionId}; site, for a call with a fallback,
+     * a number of its own ({@link PhpLanguage#nextFallbackSite}), else -1.
+     */
+    public FunctionCallNode(String displayName, int id, int fallbackId, int site, ArgumentsNode args,
+                            boolean frameless) {
         this.args = args;
-        this.lookup = FunctionCallNodeFactory.LookupNodeGen.create(displayName, id, fallbackId);
+        this.lookup = FunctionCallNodeFactory.LookupNodeGen.create(displayName, id, fallbackId, site);
         this.dispatch = FunctionCallNodeFactory.DispatchNodeGen.create(displayName);
         this.frameless = frameless;
     }
@@ -59,11 +64,13 @@ public final class FunctionCallNode extends CallNode {
         private final int id;
         /** An unqualified name in a namespace falls back to the global function: its id, else -1. */
         private final int fallbackId;
+        private final int site;
 
-        Lookup(String displayName, int id, int fallbackId) {
+        Lookup(String displayName, int id, int fallbackId, int site) {
             this.displayName = displayName;
             this.id = id;
             this.fallbackId = fallbackId;
+            this.site = site;
         }
 
         abstract PhpFunction execute();
@@ -81,16 +88,11 @@ public final class FunctionCallNode extends CallNode {
         /** The function, or null when the context doesn't declare it: the call's dispatch fails on it. */
         @Specialization(replaces = {"single", "builtin"})
         protected PhpFunction perContext() {
-            PhpContext context = PhpContext.get(this);
-            PhpFunction function = context.functionAt(id);
-            if (function == null && fallbackId >= 0) {
-                function = context.functionAt(fallbackId);
-            }
-            return function;
+            return lookUp(PhpContext.get(this), id, fallbackId, site);
         }
 
         protected PhpFunction find() {
-            return FunctionCallNode.find(PhpContext.get(this), displayName, id, fallbackId);
+            return FunctionCallNode.find(PhpContext.get(this), displayName, id, fallbackId, site);
         }
 
         protected PhpFunction builtinOrNull() {
@@ -106,14 +108,33 @@ public final class FunctionCallNode extends CallNode {
      * The function a call by name calls in context: by the name's id, else (an unqualified name in a namespace)
      * the global function's; an error if neither is declared.
      */
-    public static PhpFunction find(PhpContext context, String displayName, int id, int fallbackId) {
-        PhpFunction function = context.functionAt(id);
-        if (function == null && fallbackId >= 0) {
-            function = context.functionAt(fallbackId);
-        }
+    public static PhpFunction find(PhpContext context, String displayName, int id, int fallbackId, int site) {
+        PhpFunction function = lookUp(context, id, fallbackId, site);
         if (function == null) {
             CompilerDirectives.transferToInterpreter();
             throw undefined(displayName);
+        }
+        return function;
+    }
+
+    /**
+     * The function, or null. An unqualified name in a namespace (fallbackId) finds the namespace's function, else the
+     * global one, and its site keeps the one it found first for the request (INIT_NS_FCALL_BY_NAME's cache slot),
+     * though the namespace declares one later.
+     */
+    public static PhpFunction lookUp(PhpContext context, int id, int fallbackId, int site) {
+        if (fallbackId < 0) {
+            return context.functionAt(id);
+        }
+        PhpFunction function = context.fallbackFunction(site);
+        if (function == null) {
+            function = context.functionAt(id);
+            if (function == null) {
+                function = context.functionAt(fallbackId);
+            }
+            if (function != null) {
+                context.keepFallbackFunction(site, function);
+            }
         }
         return function;
     }
@@ -126,8 +147,36 @@ public final class FunctionCallNode extends CallNode {
         if (fallbackId >= 0) {
             return null;
         }
-        PhpFunction function = find(context, displayName, id, fallbackId);
+        PhpFunction function = find(context, displayName, id, fallbackId, -1);
         return function.getBuiltin() != null ? function : null;
+    }
+
+    /**
+     * A built-in compiled in place (Translator.call) for an unqualified name in a namespace, which php-src resolves
+     * at run time: run while the call finds the global function ({@link #lookUp}), else the call, of the
+     * namespace's function.
+     */
+    public static final class FallbackNode extends ExprNode {
+        @Child private ExprNode builtin;
+        @Child private ExprNode call;
+        private final int id;
+        private final int fallbackId;
+        private final int site;
+
+        public FallbackNode(ExprNode builtin, ExprNode call, int id, int fallbackId, int site) {
+            this.builtin = builtin;
+            this.call = call;
+            this.id = id;
+            this.fallbackId = fallbackId;
+            this.site = site;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            PhpContext context = PhpContext.get(this);
+            return lookUp(context, id, fallbackId, site) == context.functionAt(fallbackId) ? builtin.execute(frame)
+                    : call.execute(frame);
+        }
     }
 
     @TruffleBoundary

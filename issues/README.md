@@ -17,4 +17,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [011](011-pcre-utf-check-per-call.md) | preg_match with /u checks the subject's UTF-8 again on every call | Open |
 | [012](012-class-constant-visibility.md) | Class constants' visibility isn't checked | Open |
 | [013](013-method-visibility.md) | Methods' visibility isn't checked, and a private method isn't resolved in the calling scope | Open |
-| [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Open |
+| [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Fixed |

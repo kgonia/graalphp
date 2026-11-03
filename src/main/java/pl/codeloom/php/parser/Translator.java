@@ -1746,6 +1746,17 @@ public final class Translator {
         return (scope != null ? scope : fileSlots).slot("\0" + purpose + hiddenCounter++);
     }
 
+    /**
+     * The site numbers (PhpLanguage.nextFallbackSite) of the calls by an unqualified name in a namespace: one per
+     * name in the code translated, as opcache shares one runtime cache slot between the INIT_NS_FCALL_BY_NAMEs of
+     * an op_array that name the same function (compact_literals).
+     */
+    private final Map<String, Integer> fallbackSites = new HashMap<>();
+
+    private int fallbackSite(String lowerName) {
+        return fallbackSites.computeIfAbsent(lowerName, name -> language.nextFallbackSite());
+    }
+
     /** The class (lowercase) the code being translated is written in, or null outside classes. */
     private String lexicalClass() {
         return classInfo == null ? null : Str.lower(classInfo.name());
@@ -2170,7 +2181,8 @@ public final class Translator {
             }
             String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
             return new CallableConvertNodes.FunctionNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
+                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])),
+                    resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])));
         }
         if (!callee.is("AST_NAME") || method) {
             return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null, true);
@@ -2178,6 +2190,25 @@ public final class Translator {
         String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
         // the global name, for the built-ins the translator handles itself (null: a namespaced function)
         String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
+        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
+        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
+        if (special && Str.lower(resolved[0]).equals("defined")) {
+            return defined(definedName(args.child(0)));
+        }
+        ExprNode inPlace = name.isEmpty() ? null : inPlace(node, name, resolved, args, special);
+        if (inPlace != null && resolved[1] == null) {
+            return inPlace;
+        }
+        int id = language.functionId(Str.lower(resolved[0]));
+        int fallbackId = resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1]));
+        int site = resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0]));
+        ExprNode call = new FunctionCallNode(resolved[0], id, fallbackId, site, arguments(args), special);
+        // a built-in compiled in place for an unqualified name in a namespace, while the call falls back to it
+        return inPlace == null ? call : new FunctionCallNode.FallbackNode(inPlace, call, id, fallbackId, site);
+    }
+
+    /** A call of a built-in compiled in place (name: the global name), or null for a call. */
+    private ExprNode inPlace(Ast node, String name, String[] resolved, Ast args, boolean special) {
         switch (Str.lower(name)) {
             case "func_get_args":
                 return new FrameArgsNode(false);
@@ -2258,17 +2289,7 @@ public final class Translator {
             default:
                 break;
         }
-        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
-        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
-        if (special && Str.lower(resolved[0]).equals("defined")) {
-            return defined(definedName(args.child(0)));
-        }
-        ExprNode intrinsic = name.isEmpty() ? null : intrinsic(Str.lower(name), args, special);
-        if (intrinsic != null) {
-            return intrinsic;
-        }
-        return new FunctionCallNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), arguments(args), special);
+        return intrinsic(Str.lower(name), args, special);
     }
 
     /**

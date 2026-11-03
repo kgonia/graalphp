@@ -1961,6 +1961,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * Whether an unqualified call in a namespace finds the global function (CallInfo.fallsBack), which the
+     * translator compiled in place, rather than the namespace's.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class FallsBack {
+        @Specialization
+        public static boolean fallsBack(CallInfo call, @Bind Node node) {
+            return call.fallsBack(PhpContext.get(node));
+        }
+    }
+
     /** A call: directly while the site sees one function (nearly always), else indirectly; the value it returns. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
@@ -2762,10 +2775,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "displayName")
     @ConstantOperand(type = int.class, name = "id")
     @ConstantOperand(type = int.class, name = "fallbackId")
+    @ConstantOperand(type = int.class, name = "site")
     public static final class ConvertFunction {
         @Specialization
-        public static Object convert(String displayName, int id, int fallbackId, @Bind Node node) {
-            return CallableConvertNodes.FunctionNode.convert(PhpContext.get(node), displayName, id, fallbackId);
+        public static Object convert(String displayName, int id, int fallbackId, int site, @Bind Node node) {
+            return CallableConvertNodes.FunctionNode.convert(PhpContext.get(node), displayName, id, fallbackId,
+                    site);
         }
     }
 

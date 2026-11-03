@@ -102,6 +102,12 @@ public final class BytecodeTranslator {
     private Ast firstBody;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
     private final List<Object> made = new ArrayList<>();
+    /** The site numbers of the body's calls by an unqualified name in a namespace (Translator.fallbackSite). */
+    private final Map<String, Integer> fallbackSites = new HashMap<>();
+
+    private int fallbackSite(String lowerName) {
+        return fallbackSites.computeIfAbsent(lowerName, name -> language.nextFallbackSite());
+    }
     /** The variables' locals, made by the first run (later runs number them alike). */
     private LocalAccessor[] variableLocals;
     /** The variables' names, in the order of their locals. */
@@ -3280,8 +3286,9 @@ public final class BytecodeTranslator {
                     return;
                 }
                 String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
+                int site = (int) made(() -> resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])));
                 b.emitConvertFunction(resolved[0], language.functionId(Str.lower(resolved[0])),
-                        resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])));
+                        resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), site);
                 return;
             }
             if (!callee.is("AST_NAME") || method) {
@@ -3291,6 +3298,21 @@ public final class BytecodeTranslator {
             String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
             String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
             String lower = Str.lower(name);
+            if (resolved[1] != null && FRAME_FUNCTIONS.contains(lower)) {
+                // unqualified in a namespace, php-src resolves the name at run time: the built-in compiled in place
+                // while the call finds it, else the namespace's function (FunctionCallNode.lookUp)
+                CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0],
+                        language.functionId(Str.lower(resolved[0])), language.functionId(lower),
+                        fallbackSite(Str.lower(resolved[0])), false));
+                b.beginConditional();
+                b.emitFallsBack(info);
+                if (!frameFunction(node, lower, args, false)) {
+                    functionCall(info, args, byRefContext);
+                }
+                functionCall(info, args, byRefContext);
+                b.endConditional();
+                return;
+            }
             if (frameFunction(node, lower, args, resolved[1] == null)) {
                 return;
             }
@@ -3305,7 +3327,13 @@ public final class BytecodeTranslator {
                 return;
             }
             CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0], language.functionId(Str.lower(resolved[0])),
-                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), special));
+                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])),
+                    resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])), special));
+            functionCall(info, args, byRefContext);
+        }
+
+        /** The call of the function info names, looked up first, then each argument evaluated. */
+        private void functionCall(CallInfo info, Ast args, boolean byRefContext) {
             if (unpacks(args)) {
                 b.beginCallSpread(info, byRefContext);
                 b.beginBindStackValue();
@@ -3348,6 +3376,11 @@ public final class BytecodeTranslator {
                 expression(value);
             }
         }
+
+        /** The names {@link #frameFunction} compiles in place. */
+        private static final Set<String> FRAME_FUNCTIONS = Set.of("func_get_args", "func_num_args",
+                "call_user_func", "call_user_func_array", "get_class", "get_called_class", "func_get_arg", "compact",
+                "extract", "get_object_vars", "get_defined_vars");
 
         /**
          * The built-ins the tree compiles itself (Translator.call): func_get_args(), func_num_args(),

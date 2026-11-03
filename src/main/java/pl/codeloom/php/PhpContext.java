@@ -357,6 +357,25 @@ public final class PhpContext {
         return Math.max(id + 1, length * 2);
     }
 
+    /**
+     * The function each call by an unqualified name in a namespace found first, by its site's number
+     * (PhpLanguage.nextFallbackSite): INIT_NS_FCALL_BY_NAME's runtime cache slot, which keeps it for the request.
+     */
+    private PhpFunction[] fallbackFunctions = new PhpFunction[64];
+
+    public PhpFunction fallbackFunction(int site) {
+        PhpFunction[] kept = fallbackFunctions;
+        return site < kept.length ? kept[site] : null;
+    }
+
+    @TruffleBoundary
+    public void keepFallbackFunction(int site, PhpFunction function) {
+        if (site >= fallbackFunctions.length) {
+            fallbackFunctions = Arrays.copyOf(fallbackFunctions, grown(fallbackFunctions.length, site));
+        }
+        fallbackFunctions[site] = function;
+    }
+
     /** The function declared under a name id (PhpLanguage.functionId), or null. */
     public PhpFunction functionAt(int id) {
         PhpFunction[] slots = functionSlots;

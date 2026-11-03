@@ -1,6 +1,6 @@
 # 003: Top-level classes aren't bound early
 
-**State:** Fixed (commit: see below)
+**State:** Fixed (`517557e`)
 
 **Symptom:** a class used in a file above its own declaration isn't found:
 ```php
