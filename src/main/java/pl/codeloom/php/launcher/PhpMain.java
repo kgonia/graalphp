@@ -34,8 +34,8 @@ public final class PhpMain {
      * without the economy configuration. With it, a bytecode function's first-tier code was a fifth larger than its
      * last tier's, and a large function (CompilationTest's large-function.php, WP_Query::get_posts' size) passed
      * HotSpot's install limit, a permanent bailout: the function stayed in the interpreter. Without it the first tier
-     * makes the last tier's code, in about a tenth more compile time. The fallback runtime (a JDK without a
-     * matching Graal) has no compiler options.
+     * makes the last tier's code, in about a tenth more compile time. A runtime without compilation (a JDK other
+     * than the GraalVM the build targets) has no compiler options: none is set there.
      */
     static void compilerDefaults() {
         if (Truffle.getRuntime().getName().equals("Interpreted")) {

@@ -228,6 +228,28 @@ public final class Args {
         return l;
     }
 
+    /** Z_PARAM_DOUBLE in coercive mode. */
+    public static double dbl(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Double d) {
+            return d;
+        }
+        if (value instanceof Long l) {
+            return l;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "float");
+            return 0;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1 : 0;
+        }
+        if (value instanceof TruffleString s && Convert.numericValue(s) instanceof Number n) {
+            return n.doubleValue();
+        }
+        throw typeError(function, index + 1, name, "float", value);
+    }
+
     /** Z_PARAM_BOOL in coercive mode (zend_parse_arg_bool_weak). */
     public static boolean bool(PhpContext context, Object[] a, int index, String function, String name) {
         Object value = get(a, index, PhpNull.NULL);

@@ -86,6 +86,29 @@ final class RuntimeFunctions {
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
+        // PG(connection_status): CONNECTION_NORMAL, the CLI's (a request's connection isn't watched)
+        r.fn("php_sapi_name", (context, a) -> {
+            Args.arity(a, "php_sapi_name", 0, 0);
+            return Str.of(context.response() != null ? "cgi-fcgi" : "cli");
+        });
+        r.fn("ini_parse_quantity", (context, a) -> {
+            Args.arity(a, "ini_parse_quantity", 1, 1);
+            long[] result = new long[1];
+            String error = Ini.parseQuantity(Str.java(Args.string(context, a, 0, "ini_parse_quantity", "shorthand",
+                    false)), result);
+            if (error != null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(error), SourceLocation.current());
+            }
+            return result[0];
+        });
+        r.fn("connection_status", (context, a) -> {
+            Args.arity(a, "connection_status", 0, 0);
+            return 0L;
+        });
+        r.fn("connection_aborted", (context, a) -> {
+            Args.arity(a, "connection_aborted", 0, 0);
+            return 0L;
+        });
         r.fn("flush", (context, a) -> {
             context.flush();
             return PhpNull.NULL;
@@ -143,6 +166,7 @@ final class RuntimeFunctions {
 
         // ---- environment and self-description ----
         r.fn("getenv", (context, a) -> getenv(context, a));
+        r.fn("putenv", (context, a) -> putenv(context, a));
         r.fn("phpversion", a -> Args.has(a, 0) ? (Object) Boolean.FALSE : Str.of("8.5.12"));
         r.fn("php_uname", (context, a) -> {
             String mode = Args.has(a, 0) ? Str.java(Args.string(context, a, 0, "php_uname", "mode", false)) : "a";
@@ -262,8 +286,35 @@ final class RuntimeFunctions {
     }
 
     @TruffleBoundary
+    /** The environment variables, as putenv() left them. */
+    static Map<String, String> environment(PhpContext context) {
+        Map<String, String> changed = context.builtinState().environment;
+        return changed != null ? changed : context.getEnv().getEnvironment();
+    }
+
+    /** putenv(): "NAME=value" sets, "NAME" unsets. */
+    @TruffleBoundary
+    private static Object putenv(PhpContext context, Object[] a) {
+        Args.arity(a, "putenv", 1, 1);
+        String setting = Str.java(Args.string(context, a, 0, "putenv", "assignment", false));
+        if (setting.isEmpty() || setting.charAt(0) == '=') {
+            throw new PhpError("ValueError", "putenv(): Argument #1 ($assignment) must have a valid syntax");
+        }
+        BuiltinState state = context.builtinState();
+        if (state.environment == null) {
+            state.environment = new java.util.HashMap<>(context.getEnv().getEnvironment());
+        }
+        int equals = setting.indexOf('=');
+        if (equals < 0) {
+            state.environment.remove(setting);
+        } else {
+            state.environment.put(setting.substring(0, equals), setting.substring(equals + 1));
+        }
+        return Boolean.TRUE;
+    }
+
     private static Object getenv(PhpContext context, Object[] a) {
-        Map<String, String> environment = context.getEnv().getEnvironment();
+        Map<String, String> environment = environment(context);
         if (!Args.has(a, 0) || Args.get(a, 0) == PhpNull.NULL) {
             PhpArray all = new PhpArray();
             for (Map.Entry<String, String> variable : new TreeMap<>(environment).entrySet()) {
