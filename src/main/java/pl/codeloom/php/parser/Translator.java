@@ -477,6 +477,12 @@ public final class Translator {
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
     }
 
+    /** `new`, include or eval, yield: besides calls, the expressions whose result is php-src's IS_VAR. */
+    static boolean isVarResult(Object value) {
+        return value instanceof Ast node && (node.is("AST_NEW") || node.is("AST_INCLUDE_OR_EVAL")
+                || node.is("AST_YIELD"));
+    }
+
     private StmtNode resumableIf(Ast node, int index) {
         if (index >= node.size()) {
             return null;
@@ -1112,7 +1118,9 @@ public final class Translator {
                     exclusions.add(new ClassTemplate.Exclusion(trait, method, excluded));
                 } else {
                     aliases.add(new ClassTemplate.Alias(trait, method,
-                            adaptation.get("alias") instanceof String alias ? alias : null));
+                            adaptation.get("alias") instanceof String alias ? alias : null, adaptation.flags
+                                    & (PhpFunction.ACC_PUBLIC | PhpFunction.ACC_PROTECTED | PhpFunction.ACC_PRIVATE
+                                    | PhpFunction.ACC_FINAL)));
                 }
             }
         }
@@ -1141,7 +1149,8 @@ public final class Translator {
                 for (Object child : member.node("const").children()) {
                     Ast element = (Ast) child;
                     members.add(new ClassTemplate.Constant((String) element.get("name"),
-                            constantOrDeferred(element.get("value"))));
+                            constantOrDeferred(element.get("value")),
+                            PhpClass.PropertyDecl.visibilityOf(member.flags)));
                 }
                 break;
             }
@@ -1343,10 +1352,15 @@ public final class Translator {
                 String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
                 boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
                 if (isCallableConvert(node)) {
-                    if (!(node.get("method") instanceof String method)) {
-                        throw unsupported(node, "dynamic static method name");
-                    }
-                    return new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, forwarding);
+                    return node.get("method") instanceof String method
+                            ? new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, null,
+                            forwarding)
+                            : new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), null,
+                            expression(node.get("method")), forwarding);
+                }
+                if (!(node.get("method") instanceof String)) {
+                    return new StaticCallNode(classRef(node.get("class")), expression(node.get("method")),
+                            arguments(node.node("args")), forwarding);
                 }
                 return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
                         forwarding);
@@ -2051,7 +2065,7 @@ public final class Translator {
         boolean[] calls = new boolean[count];
         for (int i = 0; i < count; i++) {
             Object arg = list.child(i);
-            calls[i] = isCall(arg) && !compiledInPlace((Ast) arg);
+            calls[i] = isCall(arg) ? !compiledInPlace((Ast) arg) : isVarResult(arg);
             if (arg instanceof Ast ast && ast.is("AST_UNPACK")) {
                 spread[i] = true;
                 args[i] = expression(ast.get("expr"));
