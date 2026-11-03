@@ -409,6 +409,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * A prelude function's argument count, checked as php-src checks an internal function's (BuiltinRootNode):
+     * too many arguments are an error too.
+     */
+    @Operation
+    @ConstantOperand(type = String.class)
+    @ConstantOperand(type = int.class)
+    @ConstantOperand(type = int.class)
+    public static final class CheckArity {
+        @Specialization
+        public static void check(VirtualFrame frame, String name, int min, int max) {
+            int count = frame.getArguments().length - PhpFunction.ARG_FIRST;
+            if (count < min || count > max) {
+                CompilerDirectives.transferToInterpreter();
+                throw Args.wrongCount(name, min, max, count);
+            }
+        }
+    }
+
     /** The argument for parameter index; the call is an error when it passed fewer and there is no default. */
     @Operation
     @ConstantOperand(type = int.class)

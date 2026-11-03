@@ -29,8 +29,8 @@ final class WeakReferences {
 
     static List<PhpFunction> methods(Registry registry) {
         return List.of(
-                registry.method("create", true, a -> create(Args.get(a, 0))),
-                registry.method("get", false, a -> {
+                registry.method("WeakReference", "create", true, a -> create(Args.get(a, 0))),
+                registry.method("WeakReference", "get", false, a -> {
                     PhpObject self = (PhpObject) a[PhpFunction.ARG_THIS];
                     Object target = self.getInternal() instanceof WeakReference<?> reference ? reference.get() : null;
                     return target == null ? PhpNull.NULL : target;

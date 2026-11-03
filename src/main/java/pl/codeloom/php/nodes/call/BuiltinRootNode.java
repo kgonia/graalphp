@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
@@ -9,10 +10,12 @@ import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.source.SourceSection;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.builtins.Builtin;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -31,17 +34,39 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
     private final Builtin body;
     /** A built-in class's method (traces name its class), not a function. */
     private final boolean method;
+    /** The argument counts php-src's arginfo allows (Registry.arity); max is Integer.MAX_VALUE for variadic. */
+    private final int min;
+    private final int max;
 
-    public BuiltinRootNode(PhpLanguage language, String name, Builtin body, boolean method) {
+    public BuiltinRootNode(PhpLanguage language, String name, Builtin body, boolean method, int min, int max) {
         super(language);
         this.name = name;
         this.body = body;
         this.method = method;
+        this.min = min;
+        this.max = max;
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
-        return call(body, frame.getArguments());
+        Object[] arguments = frame.getArguments();
+        int count = arguments.length - PhpFunction.ARG_FIRST;
+        if (count < min || count > max) {
+            CompilerDirectives.transferToInterpreter();
+            throw wrongCount(arguments);
+        }
+        return call(body, arguments);
+    }
+
+    /**
+     * zend_wrong_parameters_count_error, thrown in the built-in's frame (traces list it as #0). A method is named
+     * after the class declaring it, as php-src's scope.
+     */
+    @TruffleBoundary
+    private PhpError wrongCount(Object[] arguments) {
+        String className = method ? declaringClass(arguments) : null;
+        return Args.wrongCount(className == null ? name : className + "::" + name, min, max,
+                arguments.length - PhpFunction.ARG_FIRST);
     }
 
     @TruffleBoundary
@@ -60,24 +85,28 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         }
         Object[] arguments = frame.getArguments();
         PhpObject self = method && arguments[PhpFunction.ARG_THIS] instanceof PhpObject object ? object : null;
-        String className = null;
-        if (method) {
-            PhpClass called = self != null ? self.getPhpClass()
-                    : arguments[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
-            String lowerName = Str.lower(name);
-            for (PhpClass c = called; c != null; c = c.getParent()) {
-                PhpFunction declared = c.findMethod(lowerName);
-                if (declared != null && declared.getCallTarget() == getCallTarget()) {
-                    className = c.getName();
-                }
-            }
-        }
+        String className = method ? declaringClass(arguments) : null;
         PhpArray args = new PhpArray();
         for (int i = PhpFunction.ARG_FIRST; i < arguments.length; i++) {
             args.append(PhpRef.deref(arguments[i]));
         }
         Backtrace.describeCall(entry, name, className, self, options, args);
         return true;
+    }
+
+    /** The topmost class of the call's object (or static class) with this implementation, or null. */
+    private String declaringClass(Object[] arguments) {
+        PhpClass called = arguments[PhpFunction.ARG_THIS] instanceof PhpObject self ? self.getPhpClass()
+                : arguments[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
+        String lowerName = Str.lower(name);
+        String className = null;
+        for (PhpClass c = called; c != null; c = c.getParent()) {
+            PhpFunction declared = c.findMethod(lowerName);
+            if (declared != null && declared.getCallTarget() == getCallTarget()) {
+                className = c.getName();
+            }
+        }
+        return className;
     }
 
     @Override
