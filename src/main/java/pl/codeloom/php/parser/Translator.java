@@ -109,6 +109,7 @@ public final class Translator {
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
     private static final int CLASS_ABSTRACT = 64;
+    private static final int CLASS_READONLY = 65536;
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
     private static final int ARRAY_SYNTAX_LIST = 1;
@@ -1194,12 +1195,55 @@ public final class Translator {
         }
     }
 
-    /** `parent::$name::get()` or `::set()`, a parent property hook's call (zend_compile_parent_property_hook_call). */
+    /**
+     * `parent::$name::get()` or `::set()`, a parent property hook's call (zend_compile_parent_property_hook_call),
+     * but not `(parent::$name)::get()`, a static property's (ZEND_PARENTHESIZED_STATIC_PROP).
+     */
     static boolean isParentHookCall(Ast call) {
-        return call.node("class") instanceof Ast prop && prop.is("AST_STATIC_PROP") && prop.get("prop") instanceof String
+        return call.node("class") instanceof Ast prop && prop.is("AST_STATIC_PROP") && (prop.flags & 1) == 0
+                && prop.get("prop") != null && !(prop.get("prop") instanceof Ast)
                 && prop.node("class") instanceof Ast parent && parent.is("AST_NAME")
                 && "parent".equalsIgnoreCase((String) parent.get("name")) && call.get("method") instanceof String method
                 && (method.equalsIgnoreCase("get") || method.equalsIgnoreCase("set"));
+    }
+
+    /** A parent hook call's property name, as written: `parent::${0}::get()`'s is "0". */
+    static String parentHookProperty(Ast call) {
+        return String.valueOf(call.node("class").get("prop"));
+    }
+
+    /** php-src's compile error of a parent hook call in the function named function, or null. */
+    static String parentHookError(Ast call, String function) {
+        String property = parentHookProperty(call);
+        String method = (String) call.get("method");
+        String prefix = "Must not use parent::$" + property + "::" + method + "() ";
+        if (!function.startsWith("$")) {
+            return prefix + "outside a property hook";
+        }
+        String active = function.substring(1, function.lastIndexOf("::"));
+        String kind = function.substring(function.lastIndexOf("::") + 2);
+        return !active.equals(property) ? prefix + "in a different property ($" + active + ")"
+                : !kind.equalsIgnoreCase(method) ? prefix + "in a different property hook (" + kind + ")" : null;
+    }
+
+    /** A hook body's parent hook calls checked at the class's compilation, as php-src does (not in nested functions). */
+    private void checkParentHooks(Object node, String function) {
+        if (!(node instanceof Ast ast) || ast.is("AST_CLOSURE") || ast.is("AST_ARROW_FUNC") || ast.is("AST_CLASS")
+                || ast.is("AST_FUNC_DECL")) {
+            return;
+        }
+        if (ast.is("AST_STATIC_CALL") && isParentHookCall(ast)) {
+            String error = parentHookError(ast, function);
+            if (error != null) {
+                throw compileError(ast.line, error);
+            }
+        }
+        for (Object child : ast.children()) {
+            checkParentHooks(child, function);
+        }
+        for (Object child : ast.namedValues()) {
+            checkParentHooks(child, function);
+        }
     }
 
     /** A constructor parameter that declares a property: a visibility, readonly or final modifier, or hooks. */
@@ -1226,7 +1270,7 @@ public final class Translator {
             }
             return null;
         }
-        if ((flags & MODIFIER_READONLY) != 0) {
+        if ((flags & MODIFIER_READONLY) != 0 || (classFlags & CLASS_READONLY) != 0) {
             throw compileError(line, "Hooked properties cannot be readonly");
         }
         if (hookList.size() == 0) {
@@ -1324,6 +1368,7 @@ public final class Translator {
                 }
                 body = new Ast("AST_STMT_LIST", 0, hook.line, hook.line, List.of(statement), null);
             }
+            checkParentHooks(body, "$" + name + "::" + kind);
             Map<String, Object> method = new java.util.LinkedHashMap<>();
             method.put("name", "$" + name + "::" + kind);
             method.put("docComment", hook.get("docComment"));

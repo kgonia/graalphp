@@ -3748,7 +3748,7 @@ public final class BytecodeTranslator {
             }
             Ast classNode = node.node("class");
             if (Translator.isParentHookCall(node)) {
-                parentHook(node, (String) classNode.get("prop"), name);
+                parentHook(node, Translator.parentHookProperty(node), name);
                 return;
             }
             String lower = classNode != null && classNode.is("AST_NAME") ? Str.lower(classNameOf(classNode)) : "";
@@ -3793,19 +3793,12 @@ public final class BytecodeTranslator {
             if (Translator.isCallableConvert(node)) {
                 throw compileError(node, "Cannot create Closure for parent property hook call");
             }
-            String call = "parent::$" + property + "::" + method + "()";
             String hook = function.getName();
-            if (!hook.startsWith("$")) {
-                throw compileError(node, "Must not use " + call + " outside a property hook");
+            String error = Translator.parentHookError(node, hook);
+            if (error != null) {
+                throw compileError(node, error);
             }
-            String active = hook.substring(1, hook.lastIndexOf("::"));
             String kind = hook.substring(hook.lastIndexOf("::") + 2);
-            if (!active.equals(property)) {
-                throw compileError(node, "Must not use " + call + " in a different property ($" + active + ")");
-            }
-            if (!kind.equalsIgnoreCase(method)) {
-                throw compileError(node, "Must not use " + call + " in a different property hook (" + kind + ")");
-            }
             PropSite site = (PropSite) made(() -> new PropSite(Str.sourceKey(property), Str.lower(owner.name()),
                     false, false, null));
             b.beginParentHook(site, kind.equals("set"));
