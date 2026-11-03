@@ -1304,4 +1304,27 @@ class SplObjectStorage implements Countable, Iterator, ArrayAccess
     {
         $this->detach($object);
     }
+
+    /** spl_SplObjectStorage___serialize: the objects and their data in pairs, then the other properties. */
+    public function __serialize(): array
+    {
+        $storage = [];
+        foreach ($this->objects as $id => $object) {
+            $storage[] = $object;
+            $storage[] = $this->data[$id];
+        }
+        $members = get_object_vars($this);
+        unset($members['objects'], $members['data'], $members['position']);
+        return [$storage, $members];
+    }
+
+    public function __unserialize(array $data): void
+    {
+        for ($i = 0; $i + 1 < count($data[0]); $i += 2) {
+            $this->attach($data[0][$i], $data[0][$i + 1]);
+        }
+        foreach ($data[1] as $name => $value) {
+            $this->$name = $value;
+        }
+    }
 }
