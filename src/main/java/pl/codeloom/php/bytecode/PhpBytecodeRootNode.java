@@ -1167,7 +1167,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                  @Cached ElementNodes.ElementReadNode read) {
-            Object container = ElementChain.read(access.readOn(frame, object, site.name), keys, read);
+            Object container = ElementChain.read(access.readForUnsetOn(frame, object, site.name), keys, read);
             Object key = ElementChain.removed(node, container, keys, toKey);
             if (key != null) {
                 ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey,
@@ -1443,7 +1443,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                           neverDefault = true) PropNode access, @Bind Node node) {
             PhpObject target = propertyTarget(object, site.name, "increment/decrement");
             Object old = access.readOn(frame, target, site.name);
-            Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            Object updated;
+            try {
+                updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+            } catch (PhpError e) {
+                // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
+                if (target.isReadonly(site.name)) {
+                    access.writeOn(frame, target, site.name, old);
+                }
+                throw e;
+            }
             access.writeOn(frame, target, site.name, updated);
             return prefix ? updated : old;
         }

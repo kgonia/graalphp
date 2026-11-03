@@ -44,6 +44,7 @@ final class JsonFunctions {
     private static final int ERROR_INF_OR_NAN = 7;
     private static final int ERROR_UNSUPPORTED_TYPE = 8;
     private static final int ERROR_UTF16 = 10;
+    private static final int ERROR_NON_BACKED_ENUM = 11;
 
     /** Per-context state: json_last_error(). */
     static final class State {
@@ -77,6 +78,7 @@ final class JsonFunctions {
             case ERROR_INF_OR_NAN -> "Inf and NaN cannot be JSON encoded";
             case ERROR_UNSUPPORTED_TYPE -> "Type is not supported";
             case ERROR_UTF16 -> "Single unpaired UTF-16 surrogate in unicode escape";
+            case ERROR_NON_BACKED_ENUM -> "Non-backed enums have no default serialization";
             default -> "Unknown error";
         };
     }
@@ -552,10 +554,21 @@ final class JsonFunctions {
                 value(object.callMethod("jsonserialize"));
                 return;
             }
-            Object[] names = object.propertyNames();
+            if (object.getPhpClass().isEnum()) {
+                // php_json_encode_serializable_enum
+                if (object.getPhpClass().backingType() == null) {
+                    error = ERROR_NON_BACKED_ENUM;
+                    out.write('0');
+                } else {
+                    value(object.getProperty("value"));
+                }
+                return;
+            }
+            // the property table, but for the non-public (mangled) properties
+            Object[] table = object.propertyTable();
             int visible = 0;
-            for (Object name : names) {
-                if (object.getPhpClass().isPublicProperty((String) name)) {
+            for (int i = 0; i < table.length; i += 2) {
+                if (!((String) table[i]).startsWith("\0")) {
                     visible++;
                 }
             }
@@ -568,8 +581,8 @@ final class JsonFunctions {
             }
             out.write('{');
             boolean first = true;
-            for (Object name : names) {
-                if (!object.getPhpClass().isPublicProperty((String) name)) {
+            for (int i = 0; i < table.length; i += 2) {
+                if (((String) table[i]).startsWith("\0")) {
                     continue;
                 }
                 if (!first) {
@@ -577,8 +590,8 @@ final class JsonFunctions {
                 }
                 first = false;
                 newline();
-                key(Str.ofKey((String) name));
-                value(object.getProperty((String) name));
+                key(Str.ofKey((String) table[i]));
+                value(table[i + 1]);
             }
             depth--;
             newline();

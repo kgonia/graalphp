@@ -6,6 +6,7 @@ import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,8 +20,13 @@ public final class PhpObject extends DynamicObject {
     private final int id;
     /** Native state of a built-in class's instance (a mysqli connection, a query result), or null. */
     private Object internal;
-    /** The magic property accesses in progress ("get:name", ...): inside __get('x'), $this->x is the real one. */
-    private java.util.Set<String> magicGuards;
+    /**
+     * The magic property accesses in progress ("__get:name", ...): inside __get('x'), $this->x is the real one.
+     * Also the states of typed properties besides initialized and uninitialized (IS_PROP_UNINIT, which a typed
+     * property this object doesn't have is in): "unset:name" once unset() took one out of it, "reinit:name" while
+     * __clone may set a readonly one again (IS_PROP_REINITABLE).
+     */
+    private java.util.Set<String> guards;
 
     /** id: var_dump's #n and spl_object_id(), from {@code PhpContext.nextObjectId()}. */
     public PhpObject(Shape shape, PhpClass phpClass, int id) {
@@ -39,10 +45,10 @@ public final class PhpObject extends DynamicObject {
             return NO_MAGIC;
         }
         String guard = lowerMethod + ":" + name;
-        if (magicGuards == null) {
-            magicGuards = new java.util.HashSet<>();
+        if (guards == null) {
+            guards = new java.util.HashSet<>();
         }
-        if (!magicGuards.add(guard)) {
+        if (!guards.add(guard)) {
             return NO_MAGIC;
         }
         try {
@@ -51,7 +57,7 @@ public final class PhpObject extends DynamicObject {
             System.arraycopy(args, 0, arguments, 1, args.length);
             return callMethod(lowerMethod, arguments);
         } finally {
-            magicGuards.remove(guard);
+            guards.remove(guard);
         }
     }
 
@@ -145,6 +151,148 @@ public final class PhpObject extends DynamicObject {
             }
         }
         return names;
+    }
+
+    /** Adds a state to {@link #guards}. */
+    @TruffleBoundary
+    public void mark(String state) {
+        if (guards == null) {
+            guards = new java.util.HashSet<>();
+        }
+        guards.add(state);
+    }
+
+    /** Takes a state out of {@link #guards}: whether it was there. */
+    @TruffleBoundary
+    public boolean unmark(String state) {
+        return guards != null && guards.remove(state);
+    }
+
+    /** A declared typed property this object doesn't have and never unset: IS_PROP_UNINIT, no magic method runs. */
+    @TruffleBoundary
+    public boolean isUninitialized(String name) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        return decl != null && decl.type() != null && (guards == null || !guards.contains("unset:" + name))
+                && !DynamicObjectLibrary.getUncached().containsKey(this, name);
+    }
+
+    /** Puts a property with its shape flags: a declared one's visibility and set checks, none for a dynamic one. */
+    @TruffleBoundary
+    public void initProperty(String name, Object value) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        DynamicObjectLibrary.getUncached().putWithFlags(this, name, value,
+                decl == null ? 0 : phpClass.propertyFlags(decl));
+    }
+
+    /**
+     * Reading a property this object doesn't have (zend_std_read_property): __get's result, unless the property is
+     * uninitialized; then for a typed one an Error, else null.
+     */
+    @TruffleBoundary
+    public Object readMissing(Node site, String name) {
+        if (!isUninitialized(name)) {
+            Object magic = magicProperty(site, "__get", name);
+            if (magic != NO_MAGIC) {
+                return magic;
+            }
+        }
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl != null && decl.type() != null) {
+            throw new PhpError("Typed property " + PhpClass.printed(phpClass.declaringClassName(decl)) + "::$" + Str.keyText(name)
+                    + " must not be accessed before initialization");
+        }
+        return PhpNull.NULL;
+    }
+
+    /**
+     * Writing a property this object doesn't have (zend_std_write_property): __set, unless the property is
+     * uninitialized; else a declared one is put, checked as php-src's write_std_property, and true returned. False
+     * for a dynamic property the caller puts, if the class allows them.
+     */
+    @TruffleBoundary
+    public boolean writeMissing(Node site, String scope, String name, Object value) {
+        if (!isUninitialized(name) && magicProperty(site, "__set", name, value) != NO_MAGIC) {
+            return true;
+        }
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl == null) {
+            if (phpClass.forbidsDynamicProperties()) {
+                throw new PhpError("Cannot create dynamic property " + PhpClass.printed(phpClass.getName()) + "::$"
+                        + Str.keyText(name));
+            }
+            return false;
+        }
+        checkSetAccess(decl, scope, "modify");
+        if (value instanceof PhpArray array) {
+            array.addHolder();
+        }
+        initProperty(name, value);
+        return true;
+    }
+
+    /** unset() of a property this object doesn't have: true when it was uninitialized, which it no longer is. */
+    @TruffleBoundary
+    public boolean unsetUninitialized(String scope, String name) {
+        if (!isUninitialized(name)) {
+            return false;
+        }
+        checkSetAccess(phpClass.findProperty(name), scope, "unset");
+        mark("unset:" + name);
+        return true;
+    }
+
+    /**
+     * A write (operation "modify") or unset ("unset") of a property with PROPERTY_SET_CHECKED from the scope: a
+     * readonly one only while __clone may set it again, then its set visibility.
+     */
+    @TruffleBoundary
+    public void checkModify(String name, String scope, String operation) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl.isReadonly() && !unmark("reinit:" + name)) {
+            throw new PhpError("Cannot " + operation + " readonly property " + PhpClass.printed(phpClass.declaringClassName(decl))
+                    + "::$" + Str.keyText(name));
+        }
+        checkSetAccess(decl, scope, operation);
+    }
+
+    /** zend_readonly_property_indirect_modification_error, for a readonly property this object has or not. */
+    @TruffleBoundary
+    public PhpError indirectModification(String name) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        return new PhpError("Cannot indirectly modify readonly property " + PhpClass.printed(phpClass.declaringClassName(decl))
+                + "::$" + Str.keyText(name));
+    }
+
+    /** Whether the property is a declared readonly one. */
+    @TruffleBoundary
+    public boolean isReadonly(String name) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        return decl != null && decl.isReadonly();
+    }
+
+    /**
+     * zend_asymmetric_property_has_set_access: the declaring class, or for protected(set) (a readonly property's
+     * implied one) a scope related to the class that first declared the property (is_protected_compatible_scope).
+     */
+    private void checkSetAccess(PhpClass.PropertyDecl decl, String scope, String operation) {
+        if (!decl.restrictsSet() || decl.declaringClass().equals(scope)) {
+            return;
+        }
+        PhpClass scopeClass = scope == null ? null : PhpContext.get(null).findClass(scope);
+        if ((decl.modifiers() & PhpClass.PropertyDecl.PRIVATE_SET) == 0 && scopeClass != null) {
+            PhpClass root = phpClass;
+            while (root.getParent() != null && root.getParent().isDeclaredProperty(decl.name())) {
+                root = root.getParent();
+            }
+            if (root.isSubclassOf(scope) || scopeClass.isSubclassOf(root.getLowerName())) {
+                return;
+            }
+        }
+        String visibility = (decl.modifiers() & PhpClass.PropertyDecl.PRIVATE_SET) != 0 ? "private(set)"
+                : decl.isReadonly() ? "protected(set) readonly" : "protected(set)";
+        throw new PhpError("Cannot " + operation + " " + visibility + " property " + PhpClass.printed(phpClass.declaringClassName(decl))
+                + "::$" + Str.keyText(decl.name()) + " from " + (scopeClass == null ? "global scope"
+                : "scope " + PhpClass.printed(scopeClass.getName())));
     }
 
     /** What magicProperty returns when it called no method. */

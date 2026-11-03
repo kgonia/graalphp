@@ -210,7 +210,7 @@ public final class DimNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = container.execute(frame);
+        Object value = container instanceof PropNode property ? property.readForUnset(frame) : container.execute(frame);
         if (value instanceof PhpArray current) {
             Object k = normalizedKey(frame);
             if (current.containsKey(k)) {

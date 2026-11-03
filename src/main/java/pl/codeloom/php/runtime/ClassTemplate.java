@@ -2,6 +2,7 @@ package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 
 import java.util.HashSet;
 import java.util.List;
@@ -33,8 +34,16 @@ public final class ClassTemplate {
     public record Constant(String name, Object value) implements Member {
     }
 
-    /** A property: its default value, or a {@link Deferred} initializer. */
-    public record Property(String name, Object initial, int visibility, boolean isStatic) implements Member {
+    /**
+     * A property: its default value, a {@link Deferred} initializer, or null for a typed one without a default;
+     * its php-ast modifiers and type as PhpClass.PropertyDecl's.
+     */
+    public record Property(String name, Object initial, int visibility, boolean isStatic, int modifiers,
+                           String type) implements Member {
+    }
+
+    /** An enum case: its backing value, a {@link Deferred} one, or null in a pure enum. */
+    public record Case(String name, Object value) implements Member {
     }
 
     /**
@@ -124,6 +133,26 @@ public final class ClassTemplate {
         return flags;
     }
 
+    /** php-ast's class flags. */
+    public static final int ENUM = 1 << 28;
+    public static final int READONLY = 1 << 16;
+    public static final int FINAL = 32;
+
+    public boolean isEnum() {
+        return (flags & ENUM) != 0;
+    }
+
+    /** A backed enum's type ("int" or "string"), else null. */
+    private String backingType;
+
+    public String getBackingType() {
+        return backingType;
+    }
+
+    public void setBackingType(String backingType) {
+        this.backingType = backingType;
+    }
+
     public String getDocComment() {
         return docComment;
     }
@@ -164,14 +193,46 @@ public final class ClassTemplate {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
+        if (parent != null) {
+            checkParent(context, parent);
+        }
+        Set<String> implemented = new HashSet<>();
         for (String iface : interfaces) {
-            phpClass.addInterface(context.getClass(iface));
+            PhpClass declared = context.getClass(iface);
+            checkInterface(context, declared);
+            if (!implemented.add(declared.getLowerName())) {
+                throw linkError(context, (isEnum() ? "Enum " : isInterface ? "Interface " : "Class ") + name
+                        + " cannot implement previously implemented interface " + declared.getName());
+            }
+            phpClass.addInterface(declared);
         }
         if (unsupported != null) {
             throw new PhpError(unsupported);
         }
+        if (isEnum()) {
+            // zend_enum_add_interfaces, zend_enum_register_props and _funcs
+            phpClass.addInterface(context.getClass("UnitEnum"));
+            phpClass.addProperty(new PhpClass.PropertyDecl("name", null, PhpClass.PropertyDecl.PUBLIC, null,
+                    PhpClass.PropertyDecl.READONLY, "string"));
+            if (backingType != null) {
+                phpClass.addInterface(context.getClass("BackedEnum"));
+                phpClass.addProperty(new PhpClass.PropertyDecl("value", null, PhpClass.PropertyDecl.PUBLIC, null,
+                        PhpClass.PropertyDecl.READONLY, backingType));
+            }
+            for (PhpFunction method : context.getLanguage().builtins().enumMethods()) {
+                if (backingType != null || method.getName().equals("cases")) {
+                    phpClass.addMethod(method);
+                }
+            }
+            phpClass.setHandlers(new PhpClass.ObjectHandlers("Cannot instantiate enum " + name, null, true, false,
+                    false, true));
+        }
         List<Member> declared = ownMembers();
         Set<String> own = new HashSet<>();
+        if (isEnum()) {
+            // the enum's own methods: a trait's of the name doesn't replace them
+            own.addAll(Set.of("cases", "from", "tryfrom"));
+        }
         for (Member member : declared) {
             if (member instanceof Method method) {
                 own.add(Str.lower(method.function().getName()));
@@ -183,10 +244,79 @@ public final class ClassTemplate {
                 useTraits(context, phpClass, use, own);
             }
         }
+        if (isEnum()) {
+            checkEnum(context, phpClass);
+        }
         return phpClass;
     }
 
-    private static void add(PhpClass phpClass, Member member) {
+    /** A compile error of the class's linking (zend_do_inheritance, zend_enum's checks) at its declaration. */
+    private PhpBailout linkError(PhpContext context, String message) {
+        return ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of(message), declaredAt, 0);
+    }
+
+    private void checkParent(PhpContext context, PhpClass parent) {
+        if (parent.isEnum()) {
+            throw linkError(context, "Class " + name + " cannot extend enum " + parent.getName());
+        }
+        int parentFlags = parent.getDeclaration() instanceof ClassTemplate template ? template.flags : 0;
+        if ((parentFlags & FINAL) != 0) {
+            throw linkError(context, "Class " + name + " cannot extend final class " + parent.getName());
+        }
+        if ((parentFlags & READONLY) != (flags & READONLY)) {
+            throw linkError(context, ((flags & READONLY) != 0 ? "Readonly class " + name
+                    + " cannot extend non-readonly" : "Non-readonly class " + name + " cannot extend readonly")
+                    + " class " + parent.getName());
+        }
+    }
+
+    /** zend_implement_unit_enum, zend_implement_backed_enum and the interfaces an enum can't implement. */
+    private void checkInterface(PhpContext context, PhpClass iface) {
+        boolean unit = iface.isDeclaredSubclassOf("unitenum");
+        boolean backed = iface.isDeclaredSubclassOf("backedenum");
+        if (!isEnum()) {
+            if (unit && !isInterface) {
+                throw linkError(context, "Non-enum class " + name + " cannot implement interface "
+                        + (backed ? "BackedEnum" : "UnitEnum"));
+            }
+            return;
+        }
+        if (backed && backingType == null) {
+            throw linkError(context, "Non-backed enum " + name + " cannot implement interface BackedEnum");
+        }
+        if (iface.getLowerName().equals("unitenum") || iface.getLowerName().equals("backedenum")) {
+            // zend_enum_add_interfaces implemented it already
+            throw linkError(context, "Enum " + name + " cannot implement previously implemented interface "
+                    + iface.getName());
+        }
+        if (iface.isDeclaredSubclassOf("serializable")) {
+            throw linkError(context, "Enum " + name + " cannot implement the Serializable interface");
+        }
+        if (iface.isDeclaredSubclassOf("throwable")) {
+            throw linkError(context, "Enum " + name + " cannot implement interface Throwable");
+        }
+    }
+
+    /** zend_verify_enum: no properties (a trait's either), no magic methods but __call, __callStatic, __invoke. */
+    private void checkEnum(PhpContext context, PhpClass phpClass) {
+        for (PhpClass.PropertyDecl property : phpClass.getProperties()) {
+            if (!property.name().equals("name") && !property.name().equals("value")) {
+                throw linkError(context, "Enum " + name + " cannot include properties");
+            }
+        }
+        if (phpClass.hasStaticProperties()) {
+            throw linkError(context, "Enum " + name + " cannot include properties");
+        }
+        for (String magic : new String[]{"__construct", "__destruct", "__clone", "__get", "__set", "__unset",
+                "__isset", "__toString", "__debugInfo", "__serialize", "__unserialize", "__sleep", "__wakeup",
+                "__set_state"}) {
+            if (phpClass.findMethod(Str.lower(magic)) != null) {
+                throw linkError(context, "Enum " + name + " cannot include magic method " + magic);
+            }
+        }
+    }
+
+    private void add(PhpClass phpClass, Member member) {
         if (member instanceof Method method) {
             for (PhpClass.PropertyDecl property : method.promoted()) {
                 phpClass.addProperty(property);
@@ -199,8 +329,20 @@ public final class ClassTemplate {
             if (property.isStatic()) {
                 phpClass.addStaticProperty(property.name(), initial);
             } else {
-                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility()));
+                PhpClass.PropertyDecl inherited = phpClass.findProperty(property.name());
+                boolean readonly = (property.modifiers() & PhpClass.PropertyDecl.READONLY) != 0;
+                if (inherited != null && inherited.isReadonly() != readonly) {
+                    // zend_do_inheritance's property check
+                    throw linkError(PhpContext.get(null), "Cannot redeclare " + (readonly ? "non-readonly" : "readonly")
+                            + " property " + phpClass.declaringClassName(inherited) + "::$" + property.name() + " as "
+                            + (readonly ? "readonly " : "non-readonly ") + phpClass.getName() + "::$"
+                            + property.name());
+                }
+                phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
+                        property.modifiers(), property.type()));
             }
+        } else if (member instanceof Case enumCase) {
+            phpClass.addCase(enumCase.name(), bind(enumCase.value(), phpClass));
         }
     }
 
@@ -236,6 +378,16 @@ public final class ClassTemplate {
                 } else if (member instanceof TraitUse nested) {
                     useTraits(context, phpClass, nested, own);
                 } else {
+                    if (member instanceof Constant constant && phpClass.caseNames().contains(constant.name())) {
+                        throw linkError(context, "Cannot use trait " + trait.getName() + ", because "
+                                + trait.getName() + "::" + constant.name() + " conflicts with enum case " + name
+                                + "::" + constant.name());
+                    }
+                    if (member instanceof Property property && (flags & READONLY) != 0
+                            && (property.modifiers() & PhpClass.PropertyDecl.READONLY) == 0) {
+                        throw linkError(context, "Readonly class " + name + " cannot use trait with a non-readonly"
+                                + " property " + trait.getName() + "::$" + property.name());
+                    }
                     add(phpClass, member);
                 }
             }

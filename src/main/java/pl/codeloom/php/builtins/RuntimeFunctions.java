@@ -196,7 +196,7 @@ final class RuntimeFunctions {
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }
-            copy.setProperty((String) name, property);
+            copy.initProperty((String) name, property);
         }
         if (withProperties instanceof PhpArray properties) {
             for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
@@ -204,7 +204,19 @@ final class RuntimeFunctions {
             }
         }
         if (copy.getPhpClass().findMethod("__clone") != null) {
-            copy.callMethod("__clone");
+            // zend_objects_clone_members: __clone may set each readonly property once more (IS_PROP_REINITABLE)
+            for (Object name : copy.propertyNames()) {
+                if (copy.isReadonly((String) name)) {
+                    copy.mark("reinit:" + name);
+                }
+            }
+            try {
+                copy.callMethod("__clone");
+            } finally {
+                for (Object name : copy.propertyNames()) {
+                    copy.unmark("reinit:" + name);
+                }
+            }
         }
         return copy;
     }

@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -116,6 +117,12 @@ final class Dump {
             }
             leave(array);
             closeBrace(level);
+        } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
+            ascii(common + "enum(");
+            utf8(object.getPhpClass().getName());
+            ascii("::");
+            out.write((TruffleString) object.getProperty("name"));
+            ascii(")\n");
         } else if (value instanceof PhpObject object) {
             if (!enter(object)) {
                 ascii("*RECURSION*\n");
@@ -139,16 +146,30 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
-            Object[] names = object.propertyNames();
+            // the property table (php_object_property_dump), an uninitialized typed property included
+            PhpClass phpClass = object.getPhpClass();
             ascii(common + "object(");
-            utf8(object.getPhpClass().getName());
-            ascii(")#" + object.id() + " (" + names.length + ") {\n");
-            for (Object name : names) {
-                spaces(level + 1);
-                ascii("[\"");
-                out.write(Str.ofKey((String) name));
-                ascii("\"]=>\n");
-                varDump(object.getProperty((String) name), level + 2);
+            utf8(phpClass.getName());
+            ascii(")#" + object.id() + " (" + object.propertyTable().length / 2 + ") {\n");
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                Object property = object.getProperty(decl.name());
+                if (property != null || decl.type() != null) {
+                    spaces(level + 1);
+                    dumpPropertyKey(phpClass.mangledName(decl.name()));
+                    if (property == null) {
+                        spaces(level + 1);
+                        ascii("uninitialized(" + decl.type() + ")\n");
+                    } else {
+                        varDump(property, level + 2);
+                    }
+                }
+            }
+            for (Object name : object.propertyNames()) {
+                if (!phpClass.isDeclaredProperty((String) name)) {
+                    spaces(level + 1);
+                    dumpPropertyKey((String) name);
+                    varDump(object.getProperty((String) name), level + 2);
+                }
             }
             leave(object);
             closeBrace(level);
@@ -159,6 +180,44 @@ final class Dump {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
         } else {
             ascii(common + "UNKNOWN:0\n");
+        }
+    }
+
+    /** A property table's key as var_dump shows it: "name", "name":protected or "name":"Class":private. */
+    private void dumpPropertyKey(String key) {
+        ascii("[\"");
+        int end = key.startsWith("\0") ? key.indexOf('\0', 1) : -1;
+        if (end < 0) {
+            out.write(Str.ofKey(key));
+            ascii("\"]=>\n");
+            return;
+        }
+        String scope = key.substring(1, end);
+        out.write(Str.ofKey(key.substring(end + 1)));
+        if (scope.equals("*")) {
+            ascii("\":protected]=>\n");
+        } else {
+            ascii("\":\"");
+            out.write(Str.ofKey(scope));
+            ascii("\":private]=>\n");
+        }
+    }
+
+    /** A property table's key as print_r shows it: name, name:protected or name:Class:private. */
+    private void printPropertyKey(String key) {
+        int end = key.startsWith("\0") ? key.indexOf('\0', 1) : -1;
+        if (end < 0) {
+            out.write(Str.ofKey(key));
+            return;
+        }
+        String scope = key.substring(1, end);
+        out.write(Str.ofKey(key.substring(end + 1)));
+        if (scope.equals("*")) {
+            ascii(":protected");
+        } else {
+            out.write(':');
+            out.write(Str.ofKey(scope));
+            ascii(":private");
         }
     }
 
@@ -220,6 +279,15 @@ final class Dump {
                 spaces(level - 1);
             }
             out.write(')');
+        } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
+            if (level > 1) {
+                out.write('\n');
+                spaces(level - 1);
+            }
+            out.write('\\');
+            utf8(object.getPhpClass().getName());
+            ascii("::");
+            out.write((TruffleString) object.getProperty("name"));
         } else if (value instanceof PhpObject object) {
             if (!enter(object)) {
                 ascii("NULL");
@@ -237,11 +305,15 @@ final class Dump {
                 utf8(object.getPhpClass().getName());
                 ascii("::__set_state(array(\n");
             }
-            for (Object name : object.propertyNames()) {
+            Object[] table = object.propertyTable();
+            for (int i = 0; i < table.length; i += 2) {
+                // the name unmangled
+                String key = (String) table[i];
                 spaces(level + 2);
-                exportString(Str.ofKey((String) name));
+                exportString(Str.ofKey(key.startsWith("\0") && key.indexOf('\0', 1) > 0
+                        ? key.substring(key.indexOf('\0', 1) + 1) : key));
                 ascii(" => ");
-                varExport(object.getProperty((String) name), level + 2);
+                varExport(table[i + 1], level + 2);
                 ascii(",\n");
             }
             leave(object);
@@ -313,19 +385,21 @@ final class Dump {
             ascii(")\n");
         } else if (value instanceof PhpObject object) {
             utf8(object.getPhpClass().getName());
-            ascii(" Object\n");
+            String backing = object.getPhpClass().backingType();
+            ascii(!object.getPhpClass().isEnum() ? " Object\n" : backing == null ? " Enum\n" : " Enum:" + backing + "\n");
             if (!enter(object)) {
                 ascii(" *RECURSION*");
                 return;
             }
             spaces(indent);
             ascii("(\n");
-            for (Object name : object.propertyNames()) {
+            Object[] table = object.propertyTable();
+            for (int i = 0; i < table.length; i += 2) {
                 spaces(indent + 4);
                 out.write('[');
-                out.write(Str.ofKey((String) name));
+                printPropertyKey((String) table[i]);
                 ascii("] => ");
-                printR(object.getProperty((String) name), indent + 8);
+                printR(table[i + 1], indent + 8);
                 out.write('\n');
             }
             leave(object);

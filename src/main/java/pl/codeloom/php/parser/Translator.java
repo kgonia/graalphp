@@ -107,6 +107,9 @@ public final class Translator {
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
     private static final int CLASS_ABSTRACT = 64;
+    private static final int MODIFIER_READONLY = 128;
+    /** A property's modifiers PhpClass.PropertyDecl keeps: readonly and the set visibilities. */
+    private static final int PROPERTY_MODIFIERS = MODIFIER_READONLY | 1024 | 2048 | 4096;
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
     private static final int ARRAY_SYNTAX_LIST = 1;
@@ -1052,13 +1055,24 @@ public final class Translator {
         }
         boolean isInterface = (node.flags & CLASS_INTERFACE) != 0;
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
+        String backingType = null;
+        if ((node.flags & ClassTemplate.ENUM) != 0 && node.node("type") != null) {
+            backingType = typeString(node.node("type"), false);
+            if (!backingType.equals("int") && !backingType.equals("string")) {
+                throw compileError(node.line, "Enum backing type must be int or string, " + backingType + " given");
+            }
+        }
+        if ((node.flags & ClassTemplate.READONLY) != 0 && hasAttribute(node, "AllowDynamicProperties")) {
+            throw compileError(node.line, "Cannot apply #[\\AllowDynamicProperties] to readonly class "
+                    + name.split("\0")[0]);
+        }
         ClassInfo info = new ClassInfo(name, parentName);
         Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
         try {
             for (Object child : node.node("stmts").children()) {
-                inClass.addMember(members, (Ast) child, name, info);
+                inClass.addMember(members, (Ast) child, name, info, node.flags, backingType);
             }
         } catch (PhpError error) {
             // the file still loads; the declaration fails if it runs, after resolving its parent and interfaces
@@ -1068,7 +1082,23 @@ public final class Translator {
                 unsupported);
         template.setDeclaredAt(declaredAt(node));
         template.setDeclaration(node.flags, node.get("docComment") instanceof String doc ? doc : null, node.endLine);
+        template.setBackingType(backingType);
         return template;
+    }
+
+    /** Whether the declaration has an attribute of the class (by its resolved name, case-insensitively). */
+    private boolean hasAttribute(Ast node, String className) {
+        if (node.node("attributes") == null) {
+            return false;
+        }
+        for (Object group : node.node("attributes").children()) {
+            for (Object attribute : ((Ast) group).children()) {
+                if (className(((Ast) attribute).node("class")).equalsIgnoreCase(className)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** A trait: its members are translated for each class that uses it, on that class's first declaration. */
@@ -1081,7 +1111,7 @@ public final class Translator {
                     declaredNames);
             List<ClassTemplate.Member> members = new ArrayList<>();
             for (Object child : statements.children()) {
-                inClass.addMember(members, (Ast) child, className, info);
+                inClass.addMember(members, (Ast) child, className, info, 0, null);
             }
             return members;
         };
@@ -1119,17 +1149,41 @@ public final class Translator {
         return new ClassTemplate.TraitUse(traits, aliases, exclusions);
     }
 
-    private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info) {
+    /**
+     * A class member; classFlags and backingType are the class's (php-ast's flags; an enum's "int" or "string"),
+     * 0 and null for a trait's.
+     */
+    private void addMember(List<ClassTemplate.Member> members, Ast member, String className, ClassInfo info,
+                           int classFlags, String backingType) {
+        boolean isEnum = (classFlags & ClassTemplate.ENUM) != 0;
+        int readonlyClass = (classFlags & ClassTemplate.READONLY) != 0 ? MODIFIER_READONLY : 0;
         switch (member.kind) {
             case "AST_METHOD": {
+                String methodName = (String) member.get("name");
+                if (isEnum && (member.flags & MODIFIER_ABSTRACT) != 0) {
+                    throw compileError(member.line, "Enum method " + className + "::" + methodName
+                            + "() must not be abstract");
+                }
+                if (isEnum && (methodName.equalsIgnoreCase("cases") || backingType != null
+                        && (methodName.equalsIgnoreCase("from") || methodName.equalsIgnoreCase("tryFrom")))) {
+                    throw compileError(member.line, "Cannot redeclare " + className + "::" + methodName + "()");
+                }
                 PhpFunction method = declareFunction(member, info);
                 List<PhpClass.PropertyDecl> promoted = new ArrayList<>();
                 if (method.getName().equalsIgnoreCase("__construct")) {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
                         if ((param.flags & PROMOTED) != 0) {
-                            promoted.add(new PhpClass.PropertyDecl(Str.sourceKey((String) param.get("name")),
-                                    PhpNull.NULL, PhpClass.PropertyDecl.visibilityOf(param.flags)));
+                            String propertyName = Str.sourceKey((String) param.get("name"));
+                            int modifiers = param.flags & PROPERTY_MODIFIERS | readonlyClass;
+                            String type = typeString(param.node("type"), false);
+                            if ((modifiers & MODIFIER_READONLY) != 0 && type == null) {
+                                throw compileError(param.line, "Readonly property " + className + "::$"
+                                        + param.get("name") + " must have type");
+                            }
+                            promoted.add(new PhpClass.PropertyDecl(propertyName,
+                                    (modifiers & MODIFIER_READONLY) != 0 ? null : PhpNull.NULL,
+                                    PhpClass.PropertyDecl.visibilityOf(param.flags), null, modifiers, type));
                         }
                     }
                 }
@@ -1146,15 +1200,52 @@ public final class Translator {
                 break;
             }
             case "AST_PROP_GROUP": {
+                if (isEnum) {
+                    throw compileError(member.line, "Enum " + className + " cannot include properties");
+                }
                 boolean isStatic = (member.flags & MODIFIER_STATIC) != 0;
                 int visibility = PhpClass.PropertyDecl.visibilityOf(member.flags);
+                int modifiers = member.flags & PROPERTY_MODIFIERS | readonlyClass;
+                String type = typeString(member.node("type"), false);
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
-                    Object initial = element.get("default") == null ? PhpNull.NULL
-                            : constantOrDeferred(element.get("default"));
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic));
+                    if ((modifiers & MODIFIER_READONLY) != 0) {
+                        // zend_compile_prop_decl's readonly checks
+                        String what = "Readonly property " + className + "::$" + element.get("name");
+                        if (type == null) {
+                            throw compileError(element.line, what + " must have type");
+                        }
+                        if (element.get("default") != null) {
+                            throw compileError(element.line, what + " cannot have default value");
+                        }
+                        if (isStatic) {
+                            throw compileError(element.line, "Static property " + className + "::$"
+                                    + element.get("name") + " cannot be readonly");
+                        }
+                    }
+                    Object initial = element.get("default") != null ? constantOrDeferred(element.get("default"))
+                            : (modifiers & MODIFIER_READONLY) != 0 ? null : PhpNull.NULL;
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, modifiers,
+                            type));
                 }
+                break;
+            }
+            case "AST_ENUM_CASE": {
+                String caseName = (String) member.get("name");
+                if (!isEnum) {
+                    throw compileError(member.line, "Case can only be used in enums");
+                }
+                if (backingType == null && member.get("expr") != null) {
+                    throw compileError(member.line, "Case " + caseName + " of non-backed enum " + className
+                            + " must not have a value");
+                }
+                if (backingType != null && member.get("expr") == null) {
+                    throw compileError(member.line, "Case " + caseName + " of backed enum " + className
+                            + " must have a value");
+                }
+                members.add(new ClassTemplate.Case(caseName,
+                        member.get("expr") == null ? null : constantOrDeferred(member.get("expr"))));
                 break;
             }
             case "AST_USE_TRAIT":

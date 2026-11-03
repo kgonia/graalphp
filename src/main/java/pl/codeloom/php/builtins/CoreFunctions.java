@@ -128,6 +128,8 @@ final class CoreFunctions {
         r.fn("interface_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.INTERFACE,
                 Args.bool(a, 1, true)));
         r.fn("trait_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.TRAIT, Args.bool(a, 1, true)));
+        r.fn("enum_exists", (context, a) -> classExists(context, Args.str(a, 0), Kind.CLASS, Args.bool(a, 1, true))
+                && context.findClass(lowerName(Args.str(a, 0))).isEnum());
         r.fn("class_alias", (context, a) -> classAlias(context, Args.str(a, 0), Args.str(a, 1), Args.bool(a, 2, true)));
         r.fn("spl_autoload_register", (context, a) -> {
             Object callable = Args.get(a, 0, PhpNull.NULL);

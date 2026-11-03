@@ -95,6 +95,10 @@ public abstract class InstantiateNode extends Node {
         PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
+            if (value == null) {
+                // a typed property without a default: uninitialized
+                continue;
+            }
             byte kind = kinds == null ? DefaultKinds.GENERIC : kinds.kind(i, value);
             if ((kind == DefaultKinds.ARRAY || kind == DefaultKinds.GENERIC) && value instanceof PhpArray array) {
                 array.addHolder();
