@@ -1,13 +1,16 @@
 # Named arguments (PHP 8.0+): php-src's rules and the design for Truffle PHP
 
-**State (2026-11-04):** phase 1, research and design; no code in `src/main` yet. The owner chose issue 017's option 1,
-full support exactly as php-src. Under D18 the observable behaviour must equal PHP's; the internals need not mirror
-php-src. The design is for the bytecode interpreter only: the tree is being removed, and top-level code moves to
-bytecode on branch `bytecode-only`. Phase 2 starts once that port is in.
+**State (2026-11-04):** phase 2 under way on branch `named-args`. Part 1 is in: the compile errors (1.1, checked
+with the file's compile in `JumpChecks`), binding at the call site (`NamedSite`, `BindingPlan`, the named sends and
+calls of 4.2 and 4.3) and the defaults target (4.4), for user functions, methods, constructors, closures and callable
+values; constant-expression `new` (zend_ast_evaluate's order). Still to come, each failing with a clear "Unsupported
+named arguments" Error meanwhile: extras into a variadic and `__call` (4.5), names after unpacking and the dynamic
+paths (4.7), the built-ins' parameter table and entry (4.6; a built-in binds no name yet), `assert`. The owner chose
+issue 017's option 1, full support exactly as php-src. Under D18 the observable behaviour must equal PHP's; the
+internals need not mirror php-src. The design is for the bytecode interpreter only.
 
-Today Truffle PHP has no named arguments. The bytecode translator throws `Unsupported("argument")` on
-`AST_NAMED_ARG`, so the function stays on the tree, whose translation has none either. `ArgumentsNode.addSpread`
-passes an unpacked array's string keys by position (issue 017).
+Before phase 2 Truffle PHP had no named arguments: the bytecode translator threw `Unsupported("argument")` on
+`AST_NAMED_ARG`. `ArgumentsNode.addSpread` passes an unpacked array's string keys by position (issue 017).
 
 Tests (they fail until phase 2), each recorded on PHP 8.5 by `tests/smoke/run.sh`:
 
@@ -308,7 +311,7 @@ TruffleString[]`), the varargs index and the `**kwargs` flag. It lives on the ro
 | plain variable | `SendVar(local, i)` | `SendVarNamed(local, site, k)` | binding before the read: no "Undefined variable" warning on an unknown name |
 | any value (literal, expression) | `SendValue(i)` | `SendValueNamed(site, k)` | after the value |
 | a call's result | `SendCall(i)` | `SendCallNamed(site, k)` | after the value |
-| element, property, static property, nested, temporary | `SendElement`/`SendProp`/... | `Conditional(NamedByRef(site, k), place's reference, place's value)` into `SendPlaceNamed(site, k)` | after the fetch, as `CHECK_FUNC_ARG` + `SEND_FUNC_ARG` |
+| element, property, static property, nested, temporary | `SendElement`/`SendProp`/... | the same positional send at position 0, its callee `NamedTarget(site, k)` (a stand-in by reference or by value as the plan says), into `SendPlaceNamed(site, k)` | after the fetch, as `CHECK_FUNC_ARG` + `SEND_FUNC_ARG` |
 
   The positional arguments before the first name keep their operations: their slots are their indices.
 - **Calls.** The call becomes a named variant taking the callee and the values in source order:
