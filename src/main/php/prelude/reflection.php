@@ -89,15 +89,16 @@ final class TruffleReflection
         return $type;
     }
 
+    /** A closure's name ({closure:...}) is in no namespace. */
     public static function shortName(string $name): string
     {
-        $separator = strrpos($name, '\\');
+        $separator = $name[0] === '{' ? false : strrpos($name, '\\');
         return $separator === false ? $name : substr($name, $separator + 1);
     }
 
     public static function namespaceName(string $name): string
     {
-        $separator = strrpos($name, '\\');
+        $separator = $name[0] === '{' ? false : strrpos($name, '\\');
         return $separator === false ? '' : substr($name, 0, $separator);
     }
 
@@ -275,7 +276,7 @@ abstract class ReflectionFunctionAbstract implements Reflector
 
     public function inNamespace(): bool
     {
-        return str_contains(TruffleReflection::of($this)['name'], '\\');
+        return TruffleReflection::namespaceName(TruffleReflection::of($this)['name']) !== '';
     }
 
     public function isClosure(): bool

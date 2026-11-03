@@ -78,6 +78,9 @@ public final class Callables {
             if (first instanceof PhpObject object) {
                 return method(object.getPhpClass(), object, Str.name(methodName), direct);
             }
+            if (first instanceof PhpClosure closure && Str.lower(Str.name(methodName)).equals("__invoke")) {
+                return resolve(context, closure, direct);
+            }
             if (first instanceof TruffleString className) {
                 return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName), direct);
             }

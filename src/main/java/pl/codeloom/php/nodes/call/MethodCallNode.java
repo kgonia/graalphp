@@ -46,7 +46,8 @@ public final class MethodCallNode extends CallNode {
                     CompilerDirectives.transferToInterpreterAndInvalidate();
                     call = closureCall();
                 }
-                return call.execute(closure, args.values(frame));
+                return call.execute(closure, closure.getMagicName() == null
+                        ? args.values(frame, closure.getFunction()) : args.values(frame));
             }
             return closureMethod(this, lowerName, closure, args.values(frame));
         }

@@ -331,6 +331,7 @@ public final class BytecodeTranslator {
                     throw compileError(declaration, "Cannot re-assign auto-global variable " + name);
                 }
             }
+            Set<String> bound = new java.util.HashSet<>();
             for (String capture : captures) {
                 if (capture.equals("this")) {
                     throw compileError(declaration, "Cannot use $this as lexical variable");
@@ -338,7 +339,12 @@ public final class BytecodeTranslator {
                 if (!plainVariable(capture)) {
                     throw compileError(declaration, "Cannot use auto-global as lexical variable");
                 }
-                names.add(capture);
+                if (!bound.add(capture)) {
+                    throw compileError(declaration, "Cannot use variable $" + capture + " twice");
+                }
+                if (!names.add(capture)) {
+                    throw compileError(declaration, "Cannot use lexical variable $" + capture + " as a parameter name");
+                }
             }
             collectVariables(body, names);
             List<LocalAccessor> locals = new ArrayList<>();

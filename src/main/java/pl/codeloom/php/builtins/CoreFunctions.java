@@ -611,14 +611,19 @@ final class CoreFunctions {
                 if (target instanceof PhpObject object) {
                     return Str.of(object.getPhpClass().getName() + "::" + Str.java(method));
                 }
+                if (target instanceof PhpClosure) {
+                    return Str.of("Closure::" + Str.java(method));
+                }
             }
             return Str.of("Array");
         }
         if (value instanceof PhpObject object) {
             return Str.of(object.getPhpClass().getName() + "::__invoke");
         }
-        if (value instanceof PhpClosure) {
-            return Str.of("Closure::__invoke");
+        if (value instanceof PhpClosure closure) {
+            // zend_get_callable_name_ex: a closure's function name, a method's with its class
+            String name = closure.getFunction().getName();
+            return Str.of(name.startsWith("{closure") ? name : closure.getFunction().displayName());
         }
         return Convert.toStr(value);
     }

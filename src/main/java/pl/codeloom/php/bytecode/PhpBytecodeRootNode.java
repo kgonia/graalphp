@@ -2867,9 +2867,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return find(site, receiver.getPhpClass());
         }
 
+        /** A Closure's __invoke takes its arguments as the closure's function does (by reference too). */
         @Specialization
         public static PhpFunction closure(MethodSite site, PhpClosure receiver) {
-            return MethodSite.BY_VALUE;
+            return site.lowerName.equals("__invoke") && receiver.getMagicName() == null ? receiver.getFunction()
+                    : MethodSite.BY_VALUE;
         }
 
         @Fallback
@@ -2898,6 +2900,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = MethodSite.class)
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallMethod {
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite site, boolean keepRef, PhpClosure receiver, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Shared @Cached IndirectCallNode callNode) {
+            return result(callNode.call(function.getCallTarget(),
+                    CallableDispatchNode.closureArguments(receiver, values(arguments))), keepRef);
+        }
+
         @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
         public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
