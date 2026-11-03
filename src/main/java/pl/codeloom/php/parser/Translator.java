@@ -620,6 +620,7 @@ public final class Translator {
                 continue; // #[attributes] on the declaration
             }
             String name = names.declared((String) element.get("name"));
+            constantExpression(element.get("value"));
             ExprNode value = expression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
@@ -1208,12 +1209,61 @@ public final class Translator {
 
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
+        constantExpression(expression);
         ExprNode node = expression(expression);
         Object value = node.constantValue();
         if (value != null) {
             return value;
         }
         return new ThunkRootNode(language, node);
+    }
+
+    /**
+     * zend_compile_const_expr's compile errors for what PHP 8.5 allows of calls and closures in a constant
+     * expression: a static closure without use(), and `f(...)` or `Cls::m(...)` of names.
+     */
+    private void constantExpression(Object value) {
+        if (!(value instanceof Ast ast)) {
+            return;
+        }
+        switch (ast.kind) {
+            case "AST_CLOSURE" -> {
+                if ((ast.flags & MODIFIER_STATIC) == 0) {
+                    throw compileError(ast.line, "Closures in constant expressions must be static");
+                }
+                if (ast.get("uses") != null) {
+                    throw compileError(ast.line, "Cannot use(...) variables in constant expression");
+                }
+                return;
+            }
+            case "AST_CALL", "AST_STATIC_CALL" -> {
+                if (!isCallableConvert(ast)) {
+                    throw compileError(ast.line, "Constant expression contains invalid operations");
+                }
+                boolean call = ast.is("AST_CALL");
+                if (!(ast.get(call ? "expr" : "class") instanceof Ast name) || !name.is("AST_NAME")) {
+                    throw compileError(ast.line, call ? "Cannot use dynamic function name in constant expression"
+                            : "Cannot use dynamic class name in constant expression");
+                }
+                if (!call && !(ast.get("method") instanceof String)) {
+                    throw compileError(ast.line, "Cannot use dynamic method name in constant expression");
+                }
+                if (!call && className(name).equalsIgnoreCase("static")) {
+                    throw compileError(ast.line, "\"static\" is not allowed in compile-time constants");
+                }
+                return;
+            }
+            case "AST_METHOD_CALL", "AST_NULLSAFE_METHOD_CALL", "AST_ARROW_FUNC" ->
+                    throw compileError(ast.line, "Constant expression contains invalid operations");
+            default -> {
+            }
+        }
+        for (Object child : ast.children()) {
+            constantExpression(child);
+        }
+        for (Object child : ast.namedValues()) {
+            constantExpression(child);
+        }
     }
 
     /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
