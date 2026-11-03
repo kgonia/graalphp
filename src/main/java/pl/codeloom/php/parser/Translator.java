@@ -1136,6 +1136,7 @@ public final class Translator {
                         Ast param = (Ast) child;
                         if (isPromoted(param)) {
                             String name = (String) param.get("name");
+                            checkSetVisibility(param.flags, param.node("type"), className, name, param.line);
                             promoted.add(new ClassTemplate.Property(Str.sourceKey(name), PhpNull.NULL,
                                     PhpClass.PropertyDecl.visibilityOf(param.flags), false, param.flags,
                                     propertyHooks(param.node("hooks"), name, param.node("type"), param.flags, false,
@@ -1177,6 +1178,8 @@ public final class Translator {
                 }
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
+                    checkSetVisibility(flags, member.node("type"), className, (String) element.get("name"),
+                            element.line);
                     String propertyName = Str.sourceKey((String) element.get("name"));
                     Object initial = element.get("default") == null ? PhpNull.NULL
                             : constantOrDeferred(element.get("default"));
@@ -1243,6 +1246,24 @@ public final class Translator {
         }
         for (Object child : ast.namedValues()) {
             checkParentHooks(child, function);
+        }
+    }
+
+    /** zend_compile_prop_decl's checks of a set visibility (private(set), protected(set), public(set)). */
+    private void checkSetVisibility(int flags, Ast type, String className, String name, int line) {
+        int set = (flags & (1024 | 2048 | 4096)) >> 10;
+        if (set == 0) {
+            return;
+        }
+        if (type == null) {
+            throw compileError(line, "Property with asymmetric visibility " + className + "::$" + name
+                    + " must have type");
+        }
+        // public 1, protected 2, private 4, for both
+        int read = (flags & 4) != 0 ? 4 : (flags & 2) != 0 ? 2 : 1;
+        if (set < read) {
+            throw compileError(line, "Visibility of property " + className + "::$" + name
+                    + " must not be weaker than set visibility");
         }
     }
 
@@ -1392,6 +1413,10 @@ public final class Translator {
         }
         if (isInterface) {
             virtual = true;
+        }
+        if (virtual && (flags & (1024 | 2048 | 4096)) != 0 && (get == null) != (set == null)) {
+            throw compileError(line, (get != null ? "Read-only" : "Write-only") + " virtual property " + property
+                    + " must not specify asymmetric visibility");
         }
         // zend_verify_hooked_property's checks that don't depend on a parent
         if ((flags & MODIFIER_ABSTRACT) != 0 && !anyAbstract) {

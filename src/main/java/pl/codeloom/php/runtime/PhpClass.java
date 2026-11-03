@@ -54,6 +54,8 @@ public final class PhpClass {
     public static final int PROPERTY_PRIVATE = 2;
     /** A backed property with hooks: every access takes the site's slow path, which calls them. */
     public static final int PROPERTY_HOOKED = 4;
+    /** A property with a set visibility (private(set), protected(set)): writes take the slow path, which checks it. */
+    public static final int PROPERTY_SET_RESTRICTED = 8;
 
     /**
      * A hooked property's hooks (php-src's prop_info->hooks), get and set, null where it has none; virtual when no
@@ -94,6 +96,8 @@ public final class PhpClass {
     private Map<String, Hooks> hooks;
     /** The final properties (declared or inherited), or null for none. */
     private Set<String> finalProperties;
+    /** The properties with a set visibility (PropertyDecl.PROTECTED or PRIVATE) by name, or null for none. */
+    private Map<String, Integer> setVisibilities;
 
     @CompilationFinal private PhpFunction constructor;
 
@@ -129,6 +133,7 @@ public final class PhpClass {
             properties.putAll(parent.properties);
             hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
             finalProperties = parent.finalProperties == null ? null : new HashSet<>(parent.finalProperties);
+            setVisibilities = parent.setVisibilities == null ? null : new HashMap<>(parent.setVisibilities);
             constructor = parent.constructor;
         }
     }
@@ -336,6 +341,59 @@ public final class PhpClass {
             finalProperties = new HashSet<>();
         }
         finalProperties.add(propertyName);
+    }
+
+    /** Gives a declared property its set visibility from php-ast's modifiers (none: PUBLIC_SET or no modifier). */
+    public void setSetVisibility(String propertyName, int flags) {
+        int visibility = (flags & 4096) != 0 ? PropertyDecl.PRIVATE : (flags & 2048) != 0 ? PropertyDecl.PROTECTED
+                : PropertyDecl.PUBLIC;
+        if (visibility != PropertyDecl.PUBLIC) {
+            if (setVisibilities == null) {
+                setVisibilities = new HashMap<>();
+            }
+            setVisibilities.put(propertyName, visibility);
+        } else if (setVisibilities != null) {
+            setVisibilities.remove(propertyName);
+        }
+    }
+
+    /** The property's set visibility as php-ast's modifier: 4096 private(set), 2048 protected(set), else 0. */
+    public int setVisibilityFlag(String propertyName) {
+        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
+        return visibility == null ? 0 : visibility == PropertyDecl.PRIVATE ? 4096 : 2048;
+    }
+
+    public boolean hasSetVisibilities() {
+        return setVisibilities != null;
+    }
+
+    /** "private" or "protected", the property's set visibility as errors name it. */
+    public String setVisibilityName(String propertyName) {
+        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
+        return visibility != null && visibility == PropertyDecl.PRIVATE ? "private" : "protected";
+    }
+
+    /** zend_asymmetric_property_has_set_access: whether code in scope (a lowercase class, or null) may write it. */
+    @TruffleBoundary
+    public boolean canSetProperty(String propertyName, String scope) {
+        Integer visibility = setVisibilities == null ? null : setVisibilities.get(propertyName);
+        if (visibility == null) {
+            return true;
+        }
+        if (scope == null) {
+            return false;
+        }
+        String declaring = properties.get(propertyName).declaringClass();
+        if (visibility == PropertyDecl.PRIVATE) {
+            return declaring.equals(scope);
+        }
+        // protected(set): a scope related to the property's prototype, its topmost declaration
+        PhpClass root = this;
+        while (root.parent != null && root.parent.properties.containsKey(propertyName)) {
+            root = root.parent;
+        }
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return root.isSubclassOf(scope) || scopeClass != null && scopeClass.isSubclassOf(root.lowerName);
     }
 
     /** A hooked property without a backing value: objects have no slot for it. */
@@ -650,6 +708,9 @@ public final class PhpClass {
         int flags = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                 : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
                 ? PROPERTY_PRIVATE : 0;
+        if (setVisibilities != null && setVisibilities.containsKey(propertyName)) {
+            flags |= PROPERTY_SET_RESTRICTED;
+        }
         return findHooks(propertyName) != null ? flags | PROPERTY_HOOKED : flags;
     }
 

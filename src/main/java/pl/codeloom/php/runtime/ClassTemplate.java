@@ -218,6 +218,7 @@ public final class ClassTemplate {
             } else {
                 inheritHooks(phpClass, property);
                 phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility()));
+                phpClass.setSetVisibility(property.name(), property.flags());
             }
         }
     }
@@ -236,7 +237,24 @@ public final class ClassTemplate {
         if (inherited != null && phpClass.isFinalProperty(name)) {
             throw fatal("Cannot override final property " + className(phpClass, inherited) + "::$" + Str.keyText(name));
         }
-        if ((property.flags() & FINAL) != 0) {
+        int childSet = property.flags() & (1024 | 2048 | 4096);
+        PhpClass.Hooks inheritedHooks = inherited == null ? null : phpClass.findHooks(name);
+        if (inherited != null && childSet != 0
+                && !(inheritedHooks != null && inheritedHooks.virtual() && inheritedHooks.set() == null)) {
+            // a set visibility no stricter than the parent's (its read visibility's, if it has none)
+            int parentSet = phpClass.setVisibilityFlag(name);
+            int visibility = inherited.visibility();
+            int effective = parentSet != 0 ? parentSet : visibility == PhpClass.PropertyDecl.PRIVATE ? 4096
+                    : visibility == PhpClass.PropertyDecl.PROTECTED ? 2048 : 1024;
+            if (childSet > effective) {
+                throw fatal("Set access level of " + phpClass.getName() + "::$" + Str.keyText(name) + " must be "
+                        + (parentSet == 0 ? "omitted" : parentSet == 4096 ? "private(set)" : parentSet == 2048
+                        ? "protected(set)" : "public(set)") + " (as in class " + className(phpClass, inherited) + ")"
+                        + (parentSet == 0 ? "" : " or weaker"));
+            }
+        }
+        // private(set) is implicitly final
+        if ((property.flags() & (FINAL | 4096)) != 0) {
             phpClass.setFinalProperty(name);
         }
         PhpClass.Hooks parent = inherited == null ? null : phpClass.findHooks(name);
