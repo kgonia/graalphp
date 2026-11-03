@@ -88,6 +88,17 @@ final class ElementChain {
         return container;
     }
 
+    /**
+     * The element a read-modify-write reads once its container is writable: `[]` last (`$a[] .= v`, `$a[]++`) a
+     * new element, null (zend_binary_assign_op_dim appends one), an ArrayAccess object's offsetGet(null).
+     */
+    static Object readForUpdate(ElementNodes.ElementReadNode read, Object container, Object key) {
+        if (key == APPEND) {
+            return container instanceof PhpArray ? PhpNull.NULL : read.execute(container, PhpNull.NULL);
+        }
+        return read.execute(container, key);
+    }
+
     /** `container[key] = value` once the container is writable: an array's element, else offsetSet(). */
     static void write(Node node, Object container, Object key, Object value, ElementNodes.ElementWriteNode write,
                       InlinedBranchProfile objectWrite) {

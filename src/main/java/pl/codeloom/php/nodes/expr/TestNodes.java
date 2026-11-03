@@ -106,6 +106,9 @@ public final class TestNodes {
             String lowerClassName;
             if (target instanceof PhpObject object) {
                 lowerClassName = object.getPhpClass().getLowerName();
+            } else if (target instanceof pl.codeloom.php.runtime.PhpClass phpClass) {
+                // static, parent, a closure's self: the class the code resolved
+                lowerClassName = phpClass.getLowerName();
             } else if (target instanceof com.oracle.truffle.api.strings.TruffleString name) {
                 String text = name.toJavaStringUncached();
                 lowerClassName = Str.lower(text.startsWith("\\") ? text.substring(1) : text);

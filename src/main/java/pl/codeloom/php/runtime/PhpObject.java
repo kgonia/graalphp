@@ -161,6 +161,12 @@ public final class PhpObject extends DynamicObject {
         }
         PhpArray result = new PhpArray();
         for (String property : visiblePropertyNames(scope)) {
+            // a reference held elsewhere too stays one (zend_get_properties_for, then Z_REFCOUNT > 1)
+            if (phpClass.findHooks(property) == null && getProperty(property) instanceof PhpRef ref
+                    && ref.isShared()) {
+                result.putRef(ArrayKey.of(Str.ofKey(property)), ref);
+                continue;
+            }
             Object value = visibleValue(property);
             if (value != null) {
                 result.put(ArrayKey.of(Str.ofKey(property)), value);

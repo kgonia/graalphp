@@ -112,6 +112,7 @@ import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -210,6 +211,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean generatorHasFinally;
     /** `function &f()` (no generator): every return gives a PhpRef. */
     @CompilationFinal private boolean returnsRef;
+    /** The PHP variables' names in their locals' order (get_defined_vars). */
+    private String[] variableNames = new String[0];
     /** The PHP variables' names, by the offsets of {@link #variables}, for access by name (BytecodeScope). */
     private Map<String, Integer> variableOffsets = Map.of();
     /**
@@ -337,6 +340,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * {@link BytecodeScope} (null if the body neither includes nor extracts).
      */
     public void initializeNames(String[] variableNames, LocalAccessor callScopeLocal) {
+        this.variableNames = variableNames;
         Map<String, Integer> offsets = new HashMap<>();
         for (int i = 0; i < variableNames.length; i++) {
             offsets.put(variableNames[i], i);
@@ -371,6 +375,46 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @TruffleBoundary
     private BytecodeScope newScope(MaterializedFrame frame, BytecodeNode bytecode, String classScope) {
         return new BytecodeScope(this, frame, bytecode, classScope);
+    }
+
+    /**
+     * get_defined_vars() (zend_rebuild_symbol_table, then zend_array_dup): the defined variables, the function's in
+     * their order then the call's others; a reference held elsewhere too stays one. A file's: the including call's,
+     * or a copy of the globals.
+     */
+    @TruffleBoundary
+    PhpArray definedVariables(MaterializedFrame frame, BytecodeNode bytecode, IncludeScope scope, PhpContext context) {
+        if (file) {
+            return scope == null ? context.globalsArray() : scope.definedVariables();
+        }
+        PhpArray result = new PhpArray();
+        for (int i = 0; i < variables.length; i++) {
+            Object stored = Locals.stored(frame, variables[i], bytecode);
+            if (stored == null) {
+                continue;
+            }
+            Object key = ArrayKey.of(Str.of(variableNames[i]));
+            if (stored instanceof PhpRef ref && ref.isShared()) {
+                result.putRef(key, ref);
+            } else {
+                result.put(key, Variables.value(stored));
+            }
+        }
+        if (scope != null) {
+            scope.addOthers(result);
+        }
+        return result;
+    }
+
+    /** get_defined_vars() (see definedVariables). */
+    @Operation
+    public static final class DefinedVars {
+        @Specialization
+        public static PhpArray vars(VirtualFrame frame, @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                    @Bind Node node) {
+            return root.definedVariables(frame.materialize(), bytecode, root.namedScope(frame, bytecode),
+                    PhpContext.get(node));
+        }
     }
 
     /** The variables by name compact() reads: a file's scope, or the call's if an include or extract() made it. */
@@ -1254,15 +1298,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * An element as the object of a property written (FETCH_DIM_W): an array's quietly, an ArrayAccess object's
-     * offsetGet() alone, a string's offset php-src's Error.
+     * An element as the object of a property written (FETCH_DIM_W): an array's quietly (`[]`'s new element null),
+     * an ArrayAccess object's offsetGet() alone (of null for `[]`), a string's offset php-src's Error.
      */
     @Operation
     public static final class ElementForWrite {
         @Specialization
         public static Object array(PhpArray container, Object key,
                                    @Shared @Cached ElementNodes.ElementIfSetNode read) {
-            return read.execute(container, key);
+            return key == APPEND ? PhpNull.NULL : read.execute(container, key);
         }
 
         @Fallback
@@ -1270,7 +1314,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof TruffleString) {
                 throw stringOffsetObject();
             }
-            return read.execute(container, key);
+            return read.execute(container, key == APPEND ? PhpNull.NULL : key);
         }
     }
 
@@ -1352,6 +1396,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                    @Cached ElementNodes.ElementWriteNode write,
                                    @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite) {
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
             // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
             PhpArray held = null;
             if (value instanceof PhpArray array) {
@@ -1360,7 +1406,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 held.addHolder();
             }
             try {
-                Object base = propertyForWrite(frame, access, object, site.name);
+                Object base = propertyForWrite(frame, access, object, name);
                 int levels = append ? keys.length : keys.length - 1;
                 Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
@@ -1400,7 +1446,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, read.execute(container, keys[last]), operand);
+            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1419,13 +1465,28 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached ElementNodes.ElementReadNode read,
                                       @Cached ElementNodes.ElementWriteNode write,
                                    @Cached InlinedBranchProfile objectWrite) {
-            Object base = propertyForWrite(frame, access, object, site.name);
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
+            Object base = propertyForWrite(frame, access, object, name);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, read.execute(container, keys[last]), operand);
+            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
+    }
+
+    /**
+     * An object's element stepped (FETCH_DIM_RW, then the increment): offsetGet()'s reference, else its value with
+     * php-src's notice, which the step doesn't write back.
+     */
+    @TruffleBoundary
+    private static Object stepOverloaded(Node node, Object object, Object key, boolean increment, boolean prefix) {
+        PhpRef ref = DimNode.overloadedRef(node, object, key == ElementChain.APPEND ? PhpNull.NULL : key);
+        Object old = ref.get();
+        Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
+        ref.set(updated);
+        return prefix ? updated : old;
     }
 
     /** `++$x[k1]...[kn]`, `$x[k]--`... (IncDecNode on a DimNode): the element read, stepped and written. */
@@ -1446,7 +1507,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object old = read.execute(container, keys[last]);
+            if (container instanceof PhpObject) {
+                return stepOverloaded(node, container, keys[last], increment, prefix);
+            }
+            Object old = ElementChain.readForUpdate(read, container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -1467,10 +1531,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached ElementNodes.ElementReadNode read,
                                   @Cached ElementNodes.ElementWriteNode write,
                                   @Cached InlinedBranchProfile objectWrite) {
-            Object base = propertyForWrite(frame, access, object, site.name);
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
+            Object base = propertyForWrite(frame, access, object, name);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object old = read.execute(container, keys[last]);
+            if (container instanceof PhpObject) {
+                return stepOverloaded(node, container, keys[last], increment, prefix);
+            }
+            Object old = ElementChain.readForUpdate(read, container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -1513,10 +1582,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                  @Cached ElementNodes.ElementIfSetNode read) {
-            Object container = ElementChain.read(access.readForUnsetOn(frame.getArguments(), object, site.name), keys, read);
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
+            Object container = ElementChain.read(access.readForUnsetOn(frame.getArguments(), object, name), keys, read);
             Object key = ElementChain.removed(node, container, keys, toKey);
             if (key != null) {
-                ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey);
+                ElementChain.remove(node, propertyForWrite(frame, access, object, name), keys, key, toKey);
             }
         }
     }
@@ -1571,7 +1642,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached InlinedBranchProfile objectWrite) {
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
-            Object result = compounded(node, op, read.execute(container, keys[last]), operand);
+            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1590,7 +1661,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached InlinedBranchProfile objectWrite) {
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
-            Object old = read.execute(container, keys[last]);
+            if (container instanceof PhpObject) {
+                return stepOverloaded(node, container, keys[last], increment, prefix);
+            }
+            Object old = ElementChain.readForUpdate(read, container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -1660,6 +1734,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             throw pending;
         }
         return base;
+    }
+
+    /** A nested property place's name: the site's, else computed, the first of the keys (PropName). */
+    private static String placeName(PropSite site, Object[] keys) {
+        return site.name != null ? site.name : (String) keys[0];
+    }
+
+    /** A nested property place's keys after its name (placeName). */
+    private static Object[] placeKeys(PropSite site, Object[] keys) {
+        return site.name != null ? keys : Arrays.copyOfRange(keys, 1, keys.length);
     }
 
     /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
@@ -2134,6 +2218,39 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object bind(StaticPropSite site, PhpRef ref, PhpClass phpClass, @Bind Node node) {
             StaticPropNode.bind(node, phpClass, site.name, ref);
+            return ref.get();
+        }
+    }
+
+    /**
+     * `Cls::$$name`, `Cls::${expr}` (ZEND_FETCH_STATIC_PROP_* of a computed name): the class, then the name, then as
+     * ReadStaticProp (mode R), StaticPropRef (W), StaticPropIfSet (IS) or UnsetStaticProp (UNSET) by that name.
+     */
+    @Operation
+    @ConstantOperand(type = StaticPropSite.class)
+    @ConstantOperand(type = int.class, name = "mode")
+    public static final class StaticPropNamed {
+        @Specialization
+        public static Object fetch(VirtualFrame frame, StaticPropSite site, int mode, PhpClass phpClass, String name) {
+            if (mode == VariableVariableNode.UNSET) {
+                throw StaticPropNode.unsetError(phpClass, name);
+            }
+            PhpRef ref = StaticPropNode.checked(frame, phpClass, phpClass.getStaticProperty(name), name,
+                    site.lexicalClass, site.scopeInFrame, mode == VariableVariableNode.IS);
+            if (mode == VariableVariableNode.IS) {
+                return ref == null ? PhpNull.NULL : ref.get();
+            }
+            ref = StaticPropNode.declared(ref, phpClass, name);
+            return mode == VariableVariableNode.W ? ref : ref.get();
+        }
+    }
+
+    /** `Cls::$$name = &place`: as BindStaticProp, the property named at run time. */
+    @Operation
+    public static final class BindStaticPropNamed {
+        @Specialization
+        public static Object bind(PhpRef ref, PhpClass phpClass, String name, @Bind Node node) {
+            StaticPropNode.bind(node, phpClass, name, ref);
             return ref.get();
         }
     }
@@ -2620,13 +2737,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                           neverDefault = true) PropNode access,
                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                   @Cached ElementNodes.ElementReadNode read) {
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
             if (!function.isByRef(index)) {
                 if (append) {
                     throw appendRead();
                 }
-                return readChain(access.read(frame.getArguments(), object, site.name), keys, read);
+                return readChain(access.read(frame.getArguments(), object, name), keys, read);
             }
-            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey);
+            return elementRef(node, propertyForWrite(frame, access, object, name), keys, append, toKey);
         }
     }
 
@@ -2686,6 +2805,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     private static Object readChain(Object base, Object[] keys, ElementNodes.ElementReadNode read) {
         Object value = base;
         for (Object key : keys) {
+            if (key == ElementChain.APPEND) {
+                // a by-value argument's `[]` (FETCH_DIM_FUNC_ARG for read)
+                throw appendRead();
+            }
             value = read.execute(value, key);
         }
         return value;
@@ -3079,6 +3202,47 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void deprecated(String message, @Bind Node node) {
             deprecation(node, message);
         }
+    }
+
+    /**
+     * get_class() without arguments outside a class's code (ZEND_GET_CLASS): the scope the code runs in (a closure's
+     * bound class, an included file's), else php-src's Error; deprecated in 8.5.
+     */
+    @Operation
+    public static final class ScopeClassName {
+        @Specialization
+        public static TruffleString name(VirtualFrame frame, @Bind PhpBytecodeRootNode root, @Bind Node node) {
+            return scopeClassName(node, root.callingScope(frame));
+        }
+    }
+
+    @TruffleBoundary
+    private static TruffleString scopeClassName(Node node, String scope) {
+        if (scope == null) {
+            throw new PhpError("Error", "get_class() without arguments must be called from within a class");
+        }
+        deprecation(node, "Calling get_class() without arguments is deprecated");
+        return Str.of(PhpContext.get(node).findClass(scope).getName());
+    }
+
+    /**
+     * get_called_class() outside a class's code (ZEND_GET_CALLED_CLASS): the called class the frame was passed, else
+     * php-src's Error.
+     */
+    @Operation
+    public static final class CalledClassName {
+        @Specialization
+        public static TruffleString name(VirtualFrame frame) {
+            return calledClassName(frame.getArguments()[PhpFunction.ARG_STATIC]);
+        }
+    }
+
+    @TruffleBoundary
+    private static TruffleString calledClassName(Object called) {
+        if (!(called instanceof PhpClass phpClass)) {
+            throw new PhpError("Error", "get_called_class() must be called from within a class");
+        }
+        return Str.of(phpClass.getName());
     }
 
     @TruffleBoundary
@@ -4573,7 +4737,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey) {
-            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey);
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
+            return elementRef(node, propertyForWrite(frame, access, object, name), keys, append, toKey);
         }
     }
 
@@ -4670,7 +4836,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access,
                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey) {
-            bindElement(node, propertyForWrite(frame, access, object, site.name), keys, append, ref, toKey);
+            String name = placeName(site, keys);
+            keys = placeKeys(site, keys);
+            bindElement(node, propertyForWrite(frame, access, object, name), keys, append, ref, toKey);
             return ref.get();
         }
     }

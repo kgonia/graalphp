@@ -6,6 +6,7 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.Str;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
@@ -32,7 +33,7 @@ public class IncludeScope {
     private final String classScope;
     private final Map<String, LocalVarNode> places = new HashMap<>();
     /** Variables of the call that the function has no slot for. */
-    private final Map<String, PhpRef> others = new HashMap<>();
+    private final Map<String, PhpRef> others = new java.util.LinkedHashMap<>();
 
     public IncludeScope(MaterializedFrame frame, Map<String, Integer> slots, String classScope) {
         this.frame = frame;
@@ -169,6 +170,27 @@ public class IncludeScope {
             return place.arrayForWrite(frame);
         }
         return Places.refArrayForWrite(ref(name));
+    }
+
+    /** get_defined_vars() in the file this scope runs: the call's variables (see BytecodeScope). */
+    @TruffleBoundary
+    public PhpArray definedVariables() {
+        PhpArray result = new PhpArray();
+        addOthers(result);
+        return result;
+    }
+
+    /** The variables the function has no slot for, in the order they were made, into result. */
+    @TruffleBoundary
+    public void addOthers(PhpArray result) {
+        for (Map.Entry<String, PhpRef> other : others.entrySet()) {
+            Object key = pl.codeloom.php.runtime.ArrayKey.of(Str.of(other.getKey()));
+            if (other.getValue().isShared()) {
+                result.putRef(key, other.getValue());
+            } else {
+                result.put(key, other.getValue().get());
+            }
+        }
     }
 
     /** The call ends: the variables it has no slot for give up their values (php-src destroys the table). */
