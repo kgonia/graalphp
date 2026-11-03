@@ -236,8 +236,8 @@ public final class ArithmeticNodes {
         }
 
         @Fallback
-        public static TruffleString concat(Object a, Object b) {
-            return Str.concat(Convert.toStr(a), Convert.toStr(b));
+        public static TruffleString concat(Object a, Object b, @Bind Node node) {
+            return Str.concat(Convert.toStr(node, a), Convert.toStr(node, b));
         }
     }
 }

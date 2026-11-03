@@ -20,6 +20,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Open |
 | [021](021-undefined-variable-warning.md) | A read of an unset variable doesn't warn "Undefined variable" | Fixed (file-level read-modify-write after a throwing handler open) |
 | [022](022-undefined-array-key-warning.md) | A read of a missing array key, string offset or scalar's offset doesn't warn | Fixed (file-level nested read-modify-write open) |
+| [023](023-array-to-string-warning.md) | Converting an array to a string doesn't warn "Array to string conversion" | Fixed (string parameters of built-ins open) |
 | [025](025-array-key-conversion-notices.md) | Converting a null, float or resource array key doesn't deprecate or warn | Open |
 | [026](026-error-exception-constructor.md) | ErrorException ignores its severity, filename and line arguments | Open |
 | [027](027-undefined-property-warning.md) | A read of a missing property doesn't warn "Undefined property" | Open |

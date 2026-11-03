@@ -82,7 +82,7 @@ public final class BasicStmts {
 
         /** Writes a value as a string to the output of site's context. */
         public static void echo(Node site, Object value) {
-            TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(value);
+            TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(site, value);
             PhpContext.get(site).write(text, site);
         }
     }

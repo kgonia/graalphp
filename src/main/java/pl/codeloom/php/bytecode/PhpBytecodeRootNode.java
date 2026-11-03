@@ -1398,14 +1398,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      */
     private static Object compounded(Node node, int op, Object current, Object operand) {
         if (op == AssignNodes.CompoundAssignNode.CONCAT) {
-            return concatenated(current, operand);
+            return concatenated(node, current, operand);
         }
         return AssignNodes.CompoundAssignNode.apply(node, op, current, operand);
     }
 
-    private static TruffleString concatenated(Object current, Object operand) {
-        TruffleString left = Convert.toStr(current);
-        return Str.concat(left, Convert.toStr(operand));
+    private static TruffleString concatenated(Node node, Object current, Object operand) {
+        TruffleString left = Convert.toStr(node, current);
+        return Str.concat(left, Convert.toStr(node, operand));
     }
 
     /** The key of an `[]` on the way to a nested element (`$a[][k] = v`), as the translator emits it. */
