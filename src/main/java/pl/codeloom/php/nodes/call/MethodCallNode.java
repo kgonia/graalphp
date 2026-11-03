@@ -3,11 +3,13 @@ package pl.codeloom.php.nodes.call;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
@@ -23,7 +25,6 @@ public final class MethodCallNode extends CallNode {
     @Child private ExprNode receiver;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
-    @Child private CallableDispatchNode closureCall;
     private final String lowerName;
 
     public MethodCallNode(ExprNode receiver, String methodName, ArgumentsNode args) {
@@ -41,12 +42,8 @@ public final class MethodCallNode extends CallNode {
         }
         if (target instanceof PhpClosure closure) {
             if (lowerName.equals("__invoke")) {
-                CallableDispatchNode call = closureCall;
-                if (call == null) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    call = closureCall();
-                }
-                return call.execute(closure, args.values(frame));
+                return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), closure), args,
+                        IndirectCallNode.getUncached());
             }
             return closureMethod(this, lowerName, closure, args.values(frame));
         }
@@ -62,20 +59,6 @@ public final class MethodCallNode extends CallNode {
         }
         return Backtrace.callFrom(site, () -> method.getCallTarget().call(
                 ArgumentsNode.frameArguments(closure, null, null, values)));
-    }
-
-    /** Inserted under the AST lock: the AST is shared by contexts that may run on several threads. */
-    private CallableDispatchNode closureCall() {
-        Lock lock = getLock();
-        lock.lock();
-        try {
-            if (closureCall == null) {
-                closureCall = insert(CallableDispatchNode.create(null, true));
-            }
-            return closureCall;
-        } finally {
-            lock.unlock();
-        }
     }
 
     /** A method called on a value that isn't an object: the value as zend_zval_value_name names it. */

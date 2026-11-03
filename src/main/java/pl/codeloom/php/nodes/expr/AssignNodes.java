@@ -91,9 +91,14 @@ public final class AssignNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
+            return executeRef(frame).get();
+        }
+
+        /** The reference both places hold now: ASSIGN_REF's result, which a by-reference argument takes. */
+        public PhpRef executeRef(VirtualFrame frame) {
             PhpRef ref = source.makeRef(frame);
             target.bindRef(frame, ref);
-            return ref.get();
+            return ref;
         }
     }
 

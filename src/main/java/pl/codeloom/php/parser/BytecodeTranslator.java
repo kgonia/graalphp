@@ -3936,19 +3936,26 @@ public final class BytecodeTranslator {
             b.endInstanceOf();
         }
 
-        /** An argument whose value is passed whatever the callee's parameter: no place and no call. */
+        /**
+         * An argument passed as its value whatever the callee's parameter: $this (SEND_VAR_EX of FETCH_THIS, which a
+         * by-reference parameter binds as a new reference).
+         */
         private boolean plainArgument(Object arg) {
-            if (!(arg instanceof Ast ast)) {
-                return true;
-            }
-            if (isThis(ast) || isGlobals(ast)) {
-                // passed as a value, as the tree's arguments pass it
+            return arg instanceof Ast ast && isThis(ast);
+        }
+
+        /**
+         * An argument php-src sends with SEND_VAL_EX: neither a place nor an IS_VAR result (a call, `new`, include,
+         * yield); $GLOBALS is a value, a built-in compiled in place a temporary.
+         */
+        private boolean valueArgument(Object arg) {
+            if (!(arg instanceof Ast ast) || isGlobals(ast)) {
                 return true;
             }
             if (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP")) {
                 return false;
             }
-            return !(Translator.isCall(ast) && !constants.compiledInPlace(ast));
+            return Translator.isCall(ast) ? constants.compiledInPlace(ast) : !Translator.isVarResult(ast);
         }
 
         private void argument(Object arg, int index, StackValue callee) {
@@ -3958,6 +3965,27 @@ public final class BytecodeTranslator {
             }
             if (plainArgument(arg)) {
                 expression(arg);
+                return;
+            }
+            if (arg instanceof Ast assign && assign.is("AST_ASSIGN_REF")) {
+                if (isVariable(assign.node("var"))) {
+                    // ASSIGN_REF's result is the reference, which SEND_VAR_NO_REF passes: the assignment, then its
+                    // variable as the argument
+                    b.beginBlock();
+                    assignRef(assign);
+                    argument(assign.node("var"), index, callee);
+                    b.endBlock();
+                } else {
+                    // ponytail: a reference assigned to an element or a property is sent as its value, unchecked
+                    expression(arg);
+                }
+                return;
+            }
+            if (valueArgument(arg)) {
+                b.beginSendValue(index);
+                b.emitLoadStackValue(callee);
+                expression(arg);
+                b.endSendValue();
                 return;
             }
             Ast ast = (Ast) arg;
@@ -4034,19 +4062,20 @@ public final class BytecodeTranslator {
                 expression(ast.get("expr"));
                 propName(ast.get("prop"));
                 b.endSendPropNamed();
-            } else if (ast.is("AST_CALL") || ast.is("AST_METHOD_CALL") || ast.is("AST_STATIC_CALL")) {
+            } else {
+                // a call, `new`, include or yield (SEND_VAR_NO_REF)
                 b.beginSendCall(index);
                 b.emitLoadStackValue(callee);
                 if (ast.is("AST_CALL")) {
                     call(ast, true);
                 } else if (ast.is("AST_METHOD_CALL")) {
                     methodCall(ast, true);
-                } else {
+                } else if (ast.is("AST_STATIC_CALL")) {
                     staticCall(ast, true);
+                } else {
+                    expression(ast);
                 }
                 b.endSendCall();
-            } else {
-                throw new Unsupported("argument", ast);
             }
         }
 

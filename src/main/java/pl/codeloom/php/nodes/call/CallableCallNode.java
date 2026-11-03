@@ -2,6 +2,8 @@ package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
@@ -16,6 +18,7 @@ public final class CallableCallNode extends CallNode {
     @Child private ArgumentsNode args;
     @Child private ExprNode argsArray;
     @Child private CallableDispatchNode dispatch;
+    @Child private IndirectCallNode call;
 
     /**
      * parameter: call_user_func(_array)'s callback parameter, null for `$f(args)`. keepRef: the callee's result
@@ -27,14 +30,31 @@ public final class CallableCallNode extends CallNode {
         this.callable = callable;
         this.args = args;
         this.argsArray = argsArray;
-        this.dispatch = CallableDispatchNode.create(parameter, keepRef);
+        if (parameter == null) {
+            this.call = IndirectCallNode.create();
+        } else {
+            this.dispatch = CallableDispatchNode.create(parameter, keepRef);
+        }
     }
 
     @Override
     public Object executeRef(VirtualFrame frame) {
         Object target = callable.execute(frame);
+        if (call != null) {
+            return call(frame, Callables.resolveCall(PhpContext.get(this), target), args, call);
+        }
         Object[] values = argsArray != null ? arrayArguments(argsArray.execute(frame)) : args.values(frame);
         return dispatch.execute(target, values);
+    }
+
+    /**
+     * `$f(args)` once its target is resolved (INIT_DYNAMIC_CALL): the arguments as the target's function takes
+     * them (SEND_VAR_EX), by value for __call or __callStatic; the result as the callee returned it.
+     */
+    static Object call(VirtualFrame frame, Callables.Target target, ArgumentsNode args, IndirectCallNode call) {
+        Object[] arguments = target.magicName() != null ? target.frameArguments(args.values(frame))
+                : args.build(frame, target.function(), target.thisObject(), target.staticClass(), target.closure());
+        return call.call(target.function().getCallTarget(), arguments);
     }
 
     /** call_user_func_array()'s arguments: the array's elements (see toValues); anything else is a TypeError. */

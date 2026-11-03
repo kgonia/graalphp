@@ -477,6 +477,12 @@ public final class Translator {
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
     }
 
+    /** `new`, include or eval, yield: besides calls, the expressions whose result is php-src's IS_VAR. */
+    static boolean isVarResult(Object value) {
+        return value instanceof Ast node && (node.is("AST_NEW") || node.is("AST_INCLUDE_OR_EVAL")
+                || node.is("AST_YIELD"));
+    }
+
     private StmtNode resumableIf(Ast node, int index) {
         if (index >= node.size()) {
             return null;
@@ -2051,7 +2057,7 @@ public final class Translator {
         boolean[] calls = new boolean[count];
         for (int i = 0; i < count; i++) {
             Object arg = list.child(i);
-            calls[i] = isCall(arg) && !compiledInPlace((Ast) arg);
+            calls[i] = isCall(arg) ? !compiledInPlace((Ast) arg) : isVarResult(arg);
             if (arg instanceof Ast ast && ast.is("AST_UNPACK")) {
                 spread[i] = true;
                 args[i] = expression(ast.get("expr"));

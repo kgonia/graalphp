@@ -2227,6 +2227,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * A value that is neither a variable nor a call as argument index (SEND_VAL_EX): php-src's Error, once the
+     * value is evaluated, when the callee's parameter is by reference.
+     */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class SendValue {
+        @Specialization
+        public static Object send(int index, PhpFunction function, Object value) {
+            if (function.isByRef(index)) {
+                throw CallNode.cannotPassByRef(function, index);
+            }
+            return value;
+        }
+    }
+
     @Operation
     @ConstantOperand(type = int.class)
     public static final class SendCall {
@@ -2854,9 +2870,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return find(site, receiver.getPhpClass());
         }
 
+        /** A Closure's __invoke is its function (unless __call stands in for it); its other methods take values. */
         @Specialization
         public static PhpFunction closure(MethodSite site, PhpClosure receiver) {
-            return MethodSite.BY_VALUE;
+            return site.lowerName.equals("__invoke") && receiver.getMagicName() == null ? receiver.getFunction()
+                    : MethodSite.BY_VALUE;
         }
 
         @Fallback
@@ -2886,23 +2904,33 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallMethod {
         @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
-        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object direct(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
-            PhpObject object = (PhpObject) receiver;
-            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : object;
-            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : receiver;
+            arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             return result(callNode.call(arguments), keepRef);
         }
 
         @Specialization(guards = "!isByValue(function)", replaces = "direct")
-        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                       @Shared @Cached IndirectCallNode callNode) {
-            PhpObject object = (PhpObject) receiver;
-            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : object;
-            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : receiver;
+            arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
+            return result(callNode.call(function.getCallTarget(), arguments), keepRef);
+        }
+
+        /** `$closure->__invoke(args)`: the closure's function, as `$closure(args)` calls it (CallValue). */
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite site, boolean keepRef, PhpClosure receiver, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Shared @Cached IndirectCallNode callNode) {
+            PhpObject self = receiver.getBoundThis();
+            arguments[PhpFunction.ARG_THIS] = self;
+            arguments[PhpFunction.ARG_STATIC] = self != null ? self.getPhpClass() : receiver.getScope();
+            arguments[PhpFunction.ARG_CLOSURE] = receiver;
             return result(callNode.call(function.getCallTarget(), arguments), keepRef);
         }
 
@@ -2936,7 +2964,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallMethodSpread {
         @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
-        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object direct(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                     SpreadArguments arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
@@ -2945,9 +2973,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Specialization(guards = "!isByValue(function)", replaces = "direct")
-        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
             return CallMethod.indirect(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite site, boolean keepRef, PhpClosure receiver, PhpFunction function,
+                                    SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
+            return CallMethod.invoke(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
         }
 
         @Specialization(guards = "isByValue(function)")
