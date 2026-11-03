@@ -569,7 +569,8 @@ public final class PcreFunctions {
         PhpArray result = new PhpArray();
         for (int i = 0; i < last; i++) {
             Object value = entry(m, i, i < count, flags);
-            if (m.regex.names[i] != null) {
+            // add_named: of groups sharing a name (?J), the one that matched, else the first
+            if (m.regex.names[i] != null && (i < count && m.start(i) >= 0 || !result.containsKey(m.regex.names[i]))) {
                 result.put(m.regex.names[i], value);
             }
             result.append(value);
