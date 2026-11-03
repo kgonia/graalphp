@@ -1,6 +1,7 @@
 package pl.codeloom.php.bytecode;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -39,6 +40,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.PhpTypes;
 import pl.codeloom.php.nodes.LargeCode;
@@ -57,6 +59,7 @@ import pl.codeloom.php.nodes.expr.ArrayLiteralNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.expr.Comparisons;
 import pl.codeloom.php.nodes.expr.ConstantNodes;
+import pl.codeloom.php.nodes.expr.IncludeNode;
 import pl.codeloom.php.nodes.expr.InterpolationNode;
 import pl.codeloom.php.nodes.expr.MatchNode;
 import pl.codeloom.php.nodes.expr.TestNodes;
@@ -70,8 +73,10 @@ import pl.codeloom.php.nodes.stmt.TryNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
+import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
+import pl.codeloom.php.nodes.vars.ObjectVarsNode;
 import pl.codeloom.php.nodes.vars.Places;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.RefWrites;
@@ -99,6 +104,9 @@ import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A PHP function body as Truffle Bytecode DSL bytecode ({@link BytecodeTranslator} builds it), beside the tree's
@@ -193,6 +201,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean generatorHasFinally;
     /** `function &f()` (no generator): every return gives a PhpRef. */
     @CompilationFinal private boolean returnsRef;
+    /** The PHP variables' names, by the offsets of {@link #variables}, for access by name (BytecodeScope). */
+    private Map<String, Integer> variableOffsets = Map.of();
+    /**
+     * The hidden local keeping the call's variables by name ({@link BytecodeScope}) once an include or extract()
+     * has made them; null when the body has neither.
+     */
+    @CompilationFinal private LocalAccessor scopeLocal;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -229,6 +244,52 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
+     * The variables' names (by offset, as the variables were given to initialize), and the local keeping the call's
+     * {@link BytecodeScope} (null if the body neither includes nor extracts).
+     */
+    public void initializeNames(String[] variableNames, LocalAccessor callScopeLocal) {
+        Map<String, Integer> offsets = new HashMap<>();
+        for (int i = 0; i < variableNames.length; i++) {
+            offsets.put(variableNames[i], i);
+        }
+        this.variableOffsets = offsets;
+        this.scopeLocal = callScopeLocal;
+    }
+
+    /** The local of the function's variable of this name, or null if the function names no such variable. */
+    LocalAccessor variableNamed(String variableName) {
+        Integer offset = variableOffsets.get(variableName);
+        return offset == null ? null : variables[offset];
+    }
+
+    /**
+     * The call's variables by name: made at the call's first include or extract() (IncludeScope.forCall), with the
+     * calling scope the included code has (a closure's bound class, else the function's).
+     */
+    BytecodeScope callScope(VirtualFrame frame, BytecodeNode bytecode) {
+        BytecodeScope scope = existingScope(frame, bytecode);
+        if (scope != null) {
+            return scope.at(bytecode);
+        }
+        scope = newScope(frame.materialize(), bytecode, PropNode.callingScope(frame, scopeName));
+        scopeLocal.setObject(bytecode, frame, scope);
+        return scope;
+    }
+
+    @TruffleBoundary
+    private BytecodeScope newScope(MaterializedFrame frame, BytecodeNode bytecode, String classScope) {
+        return new BytecodeScope(this, frame, bytecode, classScope);
+    }
+
+    /** The call's variables by name if an include or extract() has made them, else null. */
+    BytecodeScope existingScope(VirtualFrame frame, BytecodeNode bytecode) {
+        if (scopeLocal == null || scopeLocal.isCleared(bytecode, frame)) {
+            return null;
+        }
+        return scopeLocal.getObject(bytecode, frame) instanceof BytecodeScope scope ? scope.at(bytecode) : null;
+    }
+
+    /**
      * Prints the bytecode as it is when the process exits (php.bytecode.dump), for debugging: after the run, the
      * instructions show what the interpreter has quickened them to.
      */
@@ -256,6 +317,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     released(i, RELEASED_REF);
                     ref.unbind();
                 }
+            }
+        }
+        if (scopeLocal != null) {
+            BytecodeScope scope = existingScope(frame, bytecode);
+            if (scope != null) {
+                // the variables only the included code or extract() named
+                scope.release();
+                scopeLocal.clear(bytecode, frame);
             }
         }
     }
@@ -2198,6 +2267,182 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static long count(VirtualFrame frame) {
             return frame.getArguments().length - PhpFunction.ARG_FIRST;
+        }
+    }
+
+    // ---- the call's variables by name: include, extract(), compact(), get_object_vars() ----
+
+    /**
+     * include / require (_once) in a function (IncludeNode): the file runs in the call's variables (its
+     * {@link BytecodeScope}), with the call's $this and static class. Out of line as the tree's: the path's
+     * resolution and the file's run are a call each. This instruction is the file's caller in traces.
+     */
+    @Operation
+    @ConstantOperand(type = IncludeSite.class)
+    public static final class Include {
+        @Specialization
+        public static Object include(VirtualFrame frame, IncludeSite site, Object path,
+                                     @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                     @Bind Node node) {
+            CallTarget file = IncludeNode.resolve(node, path, site.once());
+            if (file == null) {
+                return Boolean.TRUE;
+            }
+            return IncludeNode.run(node, file, frame.getArguments(), root.callScope(frame, bytecode));
+        }
+    }
+
+    /**
+     * extract($array, $flags, $prefix) (ExtractNode): the array's entries become the call's variables, a name
+     * the function doesn't name one of the call's other variables (BytecodeScope).
+     */
+    @Operation
+    public static final class Extract {
+        @Specialization
+        public static long extract(VirtualFrame frame, @Variadic Object[] arguments,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            if (arguments.length == 0 || arguments.length > 3) {
+                throw extractArity(arguments.length);
+            }
+            return ExtractNode.extract(arguments[0], arguments.length > 1 ? arguments[1] : null,
+                    arguments.length > 2 ? arguments[2] : null, root.callScope(frame, bytecode), null);
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpError extractArity(int count) {
+        return new PhpError("ArgumentCountError", "extract() expects " + (count == 0 ? "at least 1 argument"
+                : "at most 3 arguments") + ", " + count + " given");
+    }
+
+    /** compact() with names known at translation time: the array CompactVar and CompactName fill in order. */
+    @Operation
+    public static final class CompactStart {
+        @Specialization
+        public static PhpArray start() {
+            return new PhpArray();
+        }
+    }
+
+    /**
+     * A name of compact() (php_compact_var) the function has a variable of: its value under the name (a null
+     * counts), or php-src's warning when it is undefined.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = TruffleString.class, name = "key")
+    public static final class CompactVar {
+        @Specialization
+        public static PhpArray add(VirtualFrame frame, LocalAccessor variable, TruffleString key, PhpArray result,
+                                   @Bind BytecodeNode bytecode, @Bind Node node) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            if (stored == null) {
+                compactUndefined(node, key);
+            } else {
+                result.put(key, Variables.value(stored));
+            }
+            return result;
+        }
+    }
+
+    /**
+     * A name of compact() the function names no variable of: one of the call's other variables (an include or
+     * extract() made it), $this for "this", else the warning.
+     */
+    @Operation
+    @ConstantOperand(type = TruffleString.class, name = "key")
+    public static final class CompactName {
+        @Specialization
+        public static PhpArray add(VirtualFrame frame, TruffleString key, PhpArray result,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode, @Bind Node node) {
+            compactEntries(result, new Object[] {key}, null, root, root.existingScope(frame, bytecode),
+                    frame.getArguments()[PhpFunction.ARG_THIS], bytecode, node);
+            return result;
+        }
+    }
+
+    /** compact() with names computed at run time (DynamicCompactNode): each looked up by name. */
+    @Operation
+    public static final class CompactDynamic {
+        @Specialization
+        public static PhpArray compact(VirtualFrame frame, @Variadic Object[] names,
+                                       @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                       @Bind Node node) {
+            PhpArray result = new PhpArray();
+            compactEntries(result, names, frame.materialize(), root, root.existingScope(frame, bytecode),
+                    frame.getArguments()[PhpFunction.ARG_THIS], bytecode, node);
+            return result;
+        }
+    }
+
+    @TruffleBoundary
+    private static void compactUndefined(Node node, TruffleString name) {
+        ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING,
+                Str.of("compact(): Undefined variable $" + Str.java(name)), SourceLocation.of(node));
+    }
+
+    /**
+     * compact()'s arguments (php-src's php_compact_var over each): a string names a variable, looked up in the
+     * call's symbol table (the function's locals, when frame is given, then the call's other variables), an array
+     * holds names (nested arrays too), anything else is warned about.
+     */
+    @TruffleBoundary
+    private static void compactEntries(PhpArray result, Object[] entries, MaterializedFrame frame,
+                                       PhpBytecodeRootNode root, BytecodeScope scope, Object thisObject,
+                                       BytecodeNode bytecode, Node node) {
+        if (entries.length == 0) {
+            throw new PhpError("ArgumentCountError", "compact() expects at least 1 argument, 0 given");
+        }
+        for (int i = 0; i < entries.length; i++) {
+            compactEntry(result, entries[i], i + 1, frame, root, scope, thisObject, bytecode, node);
+        }
+    }
+
+    private static void compactEntry(PhpArray result, Object entry, int position, MaterializedFrame frame,
+                                     PhpBytecodeRootNode root, BytecodeScope scope, Object thisObject,
+                                     BytecodeNode bytecode, Node node) {
+        Object value = PhpRef.deref(entry);
+        if (value instanceof PhpArray names) {
+            for (int p = names.firstPosition(); p >= 0; p = names.nextPosition(p)) {
+                compactEntry(result, names.valueAt(p), position, frame, root, scope, thisObject, bytecode, node);
+            }
+            return;
+        }
+        if (!(value instanceof TruffleString name)) {
+            ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING, Str.of("compact(): Argument #"
+                    + position + " must be string or array of strings, " + Args.valueName(value) + " given"),
+                    SourceLocation.of(node));
+            return;
+        }
+        String variableName = Str.java(name);
+        LocalAccessor variable = frame == null ? null : root.variableNamed(variableName);
+        Object found;
+        if (variable != null) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            found = stored == null ? null : Variables.value(stored);
+        } else {
+            found = scope == null ? null : scope.get(variableName);
+        }
+        if (found != null) {
+            result.put(ArrayKey.of(name), found);
+        } else if (variableName.equals("this")) {
+            if (thisObject instanceof PhpObject) {
+                result.put(ArrayKey.of(name), thisObject);
+            }
+        } else {
+            compactUndefined(node, name);
+        }
+    }
+
+    /**
+     * get_object_vars($object) (ObjectVarsNode): the properties the calling scope may access (a closure's bound
+     * class, else the function's).
+     */
+    @Operation
+    public static final class ObjectVars {
+        @Specialization
+        public static Object vars(VirtualFrame frame, Object object, @Bind PhpBytecodeRootNode root) {
+            return ObjectVarsNode.objectVars(object, PropNode.callingScope(frame, root.scopeName));
         }
     }
 

@@ -18,9 +18,11 @@ import java.util.Map;
  * including call's symbol table (zend_attach_symbol_table), so the file's top-level variables are the function's.
  * The function's variables are its frame slots, reached through the materialized frame with the same semantics as
  * its own code ({@link LocalVarNode}); a name it has no slot for lives here, in the call's table, where later
- * includes of the same call find it. Rare code: everything runs behind boundaries.
+ * includes of the same call find it. Rare code: everything runs behind boundaries. A function on bytecode has its
+ * variables in bytecode locals: its scope (pl.codeloom.php.bytecode.BytecodeScope) overrides the accessors for
+ * those and leaves the other names to this class.
  */
-public final class IncludeScope {
+public class IncludeScope {
     /** Where a file root's frame arguments carry the scope it runs in (a file has no closure); null: global. */
     public static final int ARG = PhpFunction.ARG_CLOSURE;
 
@@ -101,6 +103,12 @@ public final class IncludeScope {
         return place != null ? place.isDefined(frame) : others.containsKey(name);
     }
 
+    /** Whether the function names the variable: php-src's CV, in the symbol table also while it is unset. */
+    @TruffleBoundary
+    public boolean isFunctionVariable(String name) {
+        return place(name) != null;
+    }
+
     @TruffleBoundary
     public void set(String name, Object value) {
         LocalVarNode place = place(name);
@@ -161,5 +169,14 @@ public final class IncludeScope {
             return place.arrayForWrite(frame);
         }
         return Places.refArrayForWrite(ref(name));
+    }
+
+    /** The call ends: the variables it has no slot for give up their values (php-src destroys the table). */
+    @TruffleBoundary
+    public void release() {
+        for (PhpRef ref : others.values()) {
+            ref.unbind();
+        }
+        others.clear();
     }
 }

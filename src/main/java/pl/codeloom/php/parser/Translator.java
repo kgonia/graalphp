@@ -2247,7 +2247,7 @@ public final class Translator {
     }
 
     /** compact()'s variable names when they are string literals or arrays of them; false otherwise. */
-    private boolean compactNames(Ast list, List<String> out) {
+    boolean compactNames(Ast list, List<String> out) {
         for (Object child : list.children()) {
             if (child instanceof String name) {
                 out.add(name);
