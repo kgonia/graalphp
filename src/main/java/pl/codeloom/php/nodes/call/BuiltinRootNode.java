@@ -13,6 +13,7 @@ import pl.codeloom.php.builtins.Builtin;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -59,10 +60,13 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
             return false;
         }
         Object[] arguments = frame.getArguments();
-        PhpObject self = method && arguments[PhpFunction.ARG_THIS] instanceof PhpObject object ? object : null;
+        Object self = method && (arguments[PhpFunction.ARG_THIS] instanceof PhpObject
+                || arguments[PhpFunction.ARG_THIS] instanceof PhpClosure) ? arguments[PhpFunction.ARG_THIS] : null;
         String className = null;
-        if (method) {
-            PhpClass called = self != null ? self.getPhpClass()
+        if (self instanceof PhpClosure) {
+            className = "Closure";
+        } else if (method) {
+            PhpClass called = self instanceof PhpObject object ? object.getPhpClass()
                     : arguments[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
             String lowerName = Str.lower(name);
             for (PhpClass c = called; c != null; c = c.getParent()) {
