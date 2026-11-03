@@ -1,6 +1,6 @@
 # 020: Variable variables (`$$name`, `${expr}`) aren't supported
 
-**State:** Fixed (COMMIT)
+**State:** Fixed (`5620193`)
 
 **Symptom:** any function, method, closure or generator using `$$name` failed at its first call, and a file using it
 at its top level failed when included:
