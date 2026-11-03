@@ -739,16 +739,16 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object replace(PhpContext context, Object[] a, boolean callback) {
         String function = callback ? "preg_replace_callback" : "preg_replace";
-        Object pattern = arrayOrString(context, a, 0, function, "pattern");
+        Object pattern = Args.arrayOrString(context, a, 0, function, "pattern");
         Object replacement;
         if (callback) {
             // resolved once: every match calls the same target, whatever the callback calls in between
             replacement = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("preg_replace_callback", 2, false));
         } else {
-            replacement = arrayOrString(context, a, 1, function, "replacement");
+            replacement = Args.arrayOrString(context, a, 1, function, "replacement");
         }
-        Object subject = arrayOrString(context, a, 2, function, "subject");
+        Object subject = Args.arrayOrString(context, a, 2, function, "subject");
         long limit = Args.lng(a, 3, -1);
         long flags = callback ? Args.lng(a, 5, 0) : 0;
         if (replacement instanceof PhpArray && !(pattern instanceof PhpArray)) {
@@ -780,25 +780,6 @@ public final class PcreFunctions {
             Args.ref(a, 4).set(count[0]);
         }
         return result;
-    }
-
-    /** Z_PARAM_ARRAY_HT_OR_STR in coercive mode: the array, or the argument as a string. */
-    private static Object arrayOrString(PhpContext context, Object[] a, int index, String function, String name) {
-        Object value = PhpRef.deref(Args.get(a, index, PhpNull.NULL));
-        if (value instanceof PhpArray || value instanceof TruffleString) {
-            return value;
-        }
-        if (value == PhpNull.NULL) {
-            Args.deprecateNull(context, function, index, name, "array|string");
-            return Str.EMPTY;
-        }
-        if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
-            return Convert.toStr(value);
-        }
-        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
-            return object.toPhpString();
-        }
-        throw Args.typeError(function, index + 1, name, "array|string", value);
     }
 
     private TruffleString replaceOne(PhpContext context, String function, Object pattern, Object replacement,

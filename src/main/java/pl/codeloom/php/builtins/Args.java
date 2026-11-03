@@ -155,6 +155,25 @@ public final class Args {
         throw typeError(function, index + 1, name, "int|float", value);
     }
 
+    /** Z_PARAM_ARRAY_HT_OR_STR in coercive mode: the array, or the argument as a string. */
+    public static Object arrayOrString(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = PhpRef.deref(Args.get(a, index, PhpNull.NULL));
+        if (value instanceof PhpArray || value instanceof TruffleString) {
+            return value;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "array|string");
+            return Str.EMPTY;
+        }
+        if (value instanceof Long || value instanceof Double || value instanceof Boolean) {
+            return Convert.toStr(value);
+        }
+        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
+            return object.toPhpString();
+        }
+        throw typeError(function, index + 1, name, "array|string", value);
+    }
+
     /** The deprecation of null for a scalar parameter that doesn't allow it (8.1). */
     public static void deprecateNull(PhpContext context, String function, int index, String name, String type) {
         ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(function + "(): Passing null to parameter #"

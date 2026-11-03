@@ -45,8 +45,8 @@ public final class StringFunctions {
         r.fn("lcfirst", a -> caseFirst(Args.str(a, 0), false));
         r.fn("ucwords", a -> ucwords(Args.str(a, 0), Args.str(a, 1, Str.of(" \t\r\n\f\u000b"))));
         r.fn("explode", a -> explode(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, Long.MAX_VALUE)));
-        r.fn("implode", a -> implode(a));
-        r.fn("join", a -> implode(a));
+        r.fn("implode", (context, a) -> implode(context, a, "implode"));
+        r.fn("join", (context, a) -> implode(context, a, "join"));
         r.fn("sprintf", a -> Sprintf.format(a, 0, "sprintf"));
         r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf", "values")));
         r.fn("printf", (context, a) -> {
@@ -89,13 +89,24 @@ public final class StringFunctions {
             }
             return Boolean.FALSE;
         });
-        r.fn("chunk_split", a -> {
-            byte[] body = Str.bytes(Args.str(a, 0));
-            int length = (int) Args.lng(a, 1, 76);
-            byte[] end = Str.bytes(Args.str(a, 2, Str.of("\r\n")));
+        r.fn("chunk_split", (context, a) -> {
+            Args.arity(a, "chunk_split", 1, 3);
+            byte[] body = Str.bytes(Args.string(context, a, 0, "chunk_split", "string", false));
+            long length = Args.has(a, 1) ? Args.integer(context, a, 1, "chunk_split", "length", "int") : 76;
+            byte[] end = Args.has(a, 2) ? Str.bytes(Args.string(context, a, 2, "chunk_split", "separator", false))
+                    : new byte[] {'\r', '\n'};
+            if (length <= 0) {
+                throw new PhpError("ValueError", "chunk_split(): Argument #2 ($length) must be greater than 0");
+            }
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            for (int i = 0; i < body.length; i += length) {
-                out.write(body, i, Math.min(length, body.length - i));
+            if (length > body.length) {
+                // the string and the ending, an empty string's too (php-src's BC)
+                out.writeBytes(body);
+                out.writeBytes(end);
+                return Str.of(out.toByteArray());
+            }
+            for (int i = 0; i < body.length; i += (int) length) {
+                out.write(body, i, Math.min((int) length, body.length - i));
                 out.writeBytes(end);
             }
             return Str.of(out.toByteArray());
@@ -191,7 +202,15 @@ public final class StringFunctions {
         r.fn("http_build_query", UrlFunctions::httpBuildQuery);
         r.fn("pack", (context, a) -> Pack.pack(context, a));
         r.fn("unpack", (context, a) -> Pack.unpack(context, a));
-        r.fn("dirname", a -> dirname(Args.str(a, 0), Args.lng(a, 1, 1)));
+        r.fn("dirname", (context, a) -> {
+            Args.arity(a, "dirname", 1, 2);
+            TruffleString path = Args.string(context, a, 0, "dirname", "path", false);
+            long levels = Args.has(a, 1) ? Args.integer(context, a, 1, "dirname", "levels", "int") : 1;
+            if (levels < 1) {
+                throw new PhpError("ValueError", "dirname(): Argument #2 ($levels) must be greater than or equal to 1");
+            }
+            return dirname(path, levels);
+        });
         r.fn("basename", a -> basename(Args.str(a, 0), Args.str(a, 1, Str.EMPTY)));
         r.fn("pathinfo", a -> pathinfo(Args.str(a, 0), Args.lng(a, 1, 15)));
         r.fn("ctype_digit", a -> ctype(Args.get(a, 0), "digit"));
@@ -822,19 +841,34 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString implode(Object[] a) {
+    private static TruffleString implode(PhpContext context, Object[] a, String function) {
         Object first = Args.get(a, 0);
-        Object second = Args.get(a, 1);
+        Object second = Args.get(a, 1, PhpNull.NULL);
         PhpArray pieces;
         TruffleString glue;
-        if (first instanceof PhpArray array) {
+        if (first instanceof TruffleString s && second instanceof PhpArray array) {
+            glue = s;
             pieces = array;
-            glue = second == null ? Str.EMPTY : Convert.toStr(second);
-        } else if (second instanceof PhpArray array) {
-            pieces = array;
-            glue = Convert.toStr(first);
         } else {
-            throw new PhpError("TypeError", "implode(): Argument #2 ($array) must be of type ?array");
+            Args.arity(a, function, 1, 2);
+            first = Args.arrayOrString(context, a, 0, function, "separator");
+            if (second != PhpNull.NULL && !(second instanceof PhpArray)) {
+                throw Args.typeError(function, 2, "array", "?array", second);
+            }
+            if (second == PhpNull.NULL) {
+                if (!(first instanceof PhpArray array)) {
+                    throw new PhpError("TypeError", function + "(): If argument #1 ($separator) is of type string, "
+                            + "argument #2 ($array) must be of type array, null given");
+                }
+                glue = Str.EMPTY;
+                pieces = array;
+            } else if (first instanceof TruffleString s) {
+                glue = s;
+                pieces = (PhpArray) second;
+            } else {
+                throw new PhpError("TypeError", function + "(): Argument #1 ($separator) must be of type string, "
+                        + "array given");
+            }
         }
         ByteBuilder out = new ByteBuilder();
         boolean firstPiece = true;
@@ -1294,22 +1328,43 @@ public final class StringFunctions {
 
     @TruffleBoundary
     private static TruffleString dirname(TruffleString path, long levels) {
-        String p = Str.java(path);
-        for (long i = 0; i < levels; i++) {
-            int end = p.length();
-            while (end > 1 && p.charAt(end - 1) == '/') {
+        byte[] p = Str.bytes(path);
+        int length = p.length;
+        int previous;
+        do {
+            previous = length;
+            length = zendDirname(p, length);
+        } while (length < previous && --levels > 0);
+        // zend_dirname writes "/" or "." over the start for the paths it reduces to one
+        return Str.of(p, 0, length);
+    }
+
+    /** zend_dirname (unix): the length of the parent, "/" or "." written at the start when it is one of those. */
+    private static int zendDirname(byte[] p, int length) {
+        if (length == 0) {
+            return 0;
+        }
+        int end = length - 1;
+        while (end >= 0 && p[end] == '/') {
+            end--;
+        }
+        if (end >= 0) {
+            while (end >= 0 && p[end] != '/') {
                 end--;
             }
-            int slash = p.lastIndexOf('/', end - 1);
-            if (slash < 0) {
-                return Str.of(".");
+            if (end < 0) {
+                p[0] = '.';
+                return 1;
             }
-            while (slash > 0 && p.charAt(slash - 1) == '/') {
-                slash--;
+            while (end >= 0 && p[end] == '/') {
+                end--;
             }
-            p = slash == 0 ? "/" : p.substring(0, slash);
         }
-        return Str.of(p);
+        if (end < 0) {
+            p[0] = '/';
+            return 1;
+        }
+        return end + 1;
     }
 
     @TruffleBoundary
