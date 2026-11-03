@@ -364,16 +364,8 @@ public final class StringFunctions {
         });
         r.fn("strcoll", (context, a) -> {
             Args.arity(a, "strcoll", 2, 2);
-            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "strcoll", "string1", false));
-            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "strcoll", "string2", false));
-            // the C and C.UTF-8 locales collate as strcmp: the bytes up to the first NUL
-            for (int i = 0; ; i++) {
-                int c1 = at(s1, i);
-                int c2 = at(s2, i);
-                if (c1 != c2 || c1 == 0) {
-                    return (long) (c1 - c2);
-                }
-            }
+            return (long) strcoll(Args.string(context, a, 0, "strcoll", "string1", false),
+                    Args.string(context, a, 1, "strcoll", "string2", false));
         });
         r.fn("localeconv", a -> {
             PhpArray conventions = new PhpArray();
@@ -2769,5 +2761,18 @@ public final class StringFunctions {
             end = begin;
         }
         return broken.toByteArray();
+    }
+
+    /** strcoll in the C and C.UTF-8 locales, which collate as strcmp: the bytes up to the first NUL. */
+    static int strcoll(TruffleString a, TruffleString b) {
+        byte[] s1 = Str.readBytes(a);
+        byte[] s2 = Str.readBytes(b);
+        for (int i = 0; ; i++) {
+            int c1 = at(s1, i);
+            int c2 = at(s2, i);
+            if (c1 != c2 || c1 == 0) {
+                return c1 - c2;
+            }
+        }
     }
 }

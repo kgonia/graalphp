@@ -1486,8 +1486,10 @@ final class ArrayFunctions {
         return switch ((int) (flags & ~8L)) {
             case 1 -> (x, y) -> threeWay(Convert.toDouble(PhpRef.deref(x.value())),
                     Convert.toDouble(PhpRef.deref(y.value())));
-            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(PhpRef.deref(x.value())),
-                    Convert.toStr(PhpRef.deref(y.value())), fold && (flags & 7) == 2);
+            case 2 -> (x, y) -> stringCompare(Convert.toStr(PhpRef.deref(x.value())),
+                    Convert.toStr(PhpRef.deref(y.value())), fold);
+            case 5 -> (x, y) -> StringFunctions.strcoll(Convert.toStr(PhpRef.deref(x.value())),
+                    Convert.toStr(PhpRef.deref(y.value())));
             case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(PhpRef.deref(x.value()))),
                     Str.bytes(Convert.toStr(PhpRef.deref(y.value()))), fold);
             default -> (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
@@ -1500,7 +1502,8 @@ final class ArrayFunctions {
         return switch ((int) (flags & ~8L)) {
             case 1 -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
                     : threeWay(keyDouble(x.key()), keyDouble(y.key()));
-            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(x.key()), Convert.toStr(y.key()), fold && (flags & 7) == 2);
+            case 2 -> (x, y) -> stringCompare(Convert.toStr(x.key()), Convert.toStr(y.key()), fold);
+            case 5 -> (x, y) -> StringFunctions.strcoll(Convert.toStr(x.key()), Convert.toStr(y.key()));
             case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(x.key())),
                     Str.bytes(Convert.toStr(y.key())), fold);
             default -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
