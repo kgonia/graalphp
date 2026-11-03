@@ -53,6 +53,48 @@ final class ExecFunctions {
             }
             return Str.of(escaped);
         });
+        r.fn("escapeshellarg", (context, a) -> {
+            Args.arity(a, "escapeshellarg", 1, 1);
+            byte[] arg = Str.bytes(Args.string(context, a, 0, "escapeshellarg", "arg", false));
+            if (indexOf(arg, (byte) 0, 0) >= 0) {
+                throw new PhpError("ValueError", "escapeshellarg(): Argument #1 ($arg) must not contain any null "
+                        + "bytes");
+            }
+            if (arg.length > CommandLimit.MAX - 2 - 1) {
+                throw new PhpError("ValueError", "Argument exceeds the allowed length of " + CommandLimit.MAX
+                        + " bytes");
+            }
+            return Str.of(escapeShellArg(arg));
+        });
+    }
+
+    /**
+     * php_escape_shell_arg: the argument in single quotes, each quote in it closed, escaped and reopened ('\'');
+     * multi-byte characters are copied whole and a byte that starts none is dropped, as in escapeShellCmd.
+     */
+    @TruffleBoundary
+    static byte[] escapeShellArg(byte[] str) {
+        ByteBuilder cmd = new ByteBuilder(str.length + 2);
+        cmd.write('\'');
+        for (int x = 0; x < str.length; x++) {
+            int mbLen = mblen(str, x);
+            if (mbLen < 0) {
+                continue;
+            }
+            if (mbLen > 1) {
+                cmd.write(str, x, mbLen);
+                x += mbLen - 1;
+                continue;
+            }
+            if (str[x] == '\'') {
+                cmd.write('\'');
+                cmd.write('\\');
+                cmd.write('\'');
+            }
+            cmd.write(str[x]);
+        }
+        cmd.write('\'');
+        return cmd.toByteArray();
     }
 
     // ---- php_escape_shell_cmd ----
