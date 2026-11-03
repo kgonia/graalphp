@@ -1,5 +1,6 @@
 package pl.codeloom.php.launcher;
 
+import com.oracle.truffle.api.Truffle;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.EnvironmentAccess;
@@ -33,9 +34,13 @@ public final class PhpMain {
      * without the economy configuration. With it, a bytecode function's first-tier code was a fifth larger than its
      * last tier's, and a large function (CompilationTest's large-function.php, WP_Query::get_posts' size) passed
      * HotSpot's install limit, a permanent bailout: the function stayed in the interpreter. Without it the first tier
-     * makes the last tier's code, in about a tenth more compile time.
+     * makes the last tier's code, in about a tenth more compile time. The fallback runtime (a JDK without a
+     * matching Graal) has no compiler options.
      */
     static void compilerDefaults() {
+        if (Truffle.getRuntime().getName().equals("Interpreted")) {
+            return;
+        }
         String economy = "polyglot.compiler.FirstTierUseEconomy";
         System.setProperty(economy, System.getProperty(economy, "false"));
     }
