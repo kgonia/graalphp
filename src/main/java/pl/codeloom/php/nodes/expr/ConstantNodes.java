@@ -28,6 +28,34 @@ public final class ConstantNodes {
     }
 
     /**
+     * The object of `->` or of `[]` in a constant expression (zend_ast_evaluate): only an enum case's properties
+     * may be read, and no object's elements.
+     */
+    public static final class ConstantObjectNode extends ExprNode {
+        @Child private ExprNode value;
+        private final boolean element;
+
+        public ConstantObjectNode(ExprNode value, boolean element) {
+            this.value = value;
+            this.element = element;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return check(value.execute(frame), element);
+        }
+
+        public static Object check(Object value, boolean element) {
+            if (value instanceof PhpObject object && (element || !object.getPhpClass().isEnum())) {
+                CompilerDirectives.transferToInterpreter();
+                throw new PhpError(element ? "Cannot use [] on objects in constant expression"
+                        : "Fetching properties on non-enums in constant expressions is not allowed");
+            }
+            return value;
+        }
+    }
+
+    /**
      * A global constant, looked up in the calling context by the name's language-level id. A constant never
      * changes once defined: while the language serves one context, the value found first is a compile-time
      * constant; with several, a site that sees one value object (true, a shared literal) still folds it.

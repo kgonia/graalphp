@@ -117,7 +117,8 @@ public final class PropNode extends LValueNode {
     }
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
-        return target(object.execute(frame), name, action);
+        return target(object instanceof PropNode property ? property.readForWriteOn(frame,
+                property.object.execute(frame), property.name(frame), false) : object.execute(frame), name, action);
     }
 
     private static PhpObject target(Object value, String name, String action) {
@@ -147,7 +148,12 @@ public final class PropNode extends LValueNode {
 
     /** Whether the calling scope may access the property: public and undeclared ones need no check. */
     private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name) {
-        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0) & VISIBILITY;
+        return accessible(frame, phpObject, name, objects.getPropertyFlagsOrDefault(phpObject, name, 0));
+    }
+
+    /** accessible() of a property with these shape flags. */
+    private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name, int shapeFlags) {
+        int flags = shapeFlags & VISIBILITY;
         if (flags == 0 || thisInMethod && flags == PhpClass.PROPERTY_PROTECTED) {
             return true;
         }
@@ -163,6 +169,35 @@ public final class PropNode extends LValueNode {
             accessibleKey = phpClass.getKey();
         }
         return allowed;
+    }
+
+    /** The calling scope (callingScope) of an access here. */
+    private String scope(VirtualFrame frame) {
+        return callingScope(scopeInFrame ? frame.getArguments()[PhpFunction.ARG_CLOSURE] : null, lexicalClass);
+    }
+
+    /**
+     * Whether code here may write the property with these shape flags: after the visibility, a readonly or
+     * protected(set) property's checks (PROPERTY_SET_CHECKED: PhpObject.checkModify, an Error if not).
+     */
+    private boolean writable(VirtualFrame frame, PhpObject phpObject, String name, String operation) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if (!accessible(frame, phpObject, name, flags)) {
+            return false;
+        }
+        if ((flags & PhpClass.PROPERTY_SET_CHECKED) != 0) {
+            phpObject.checkModify(name, scope(frame), operation);
+        }
+        return true;
+    }
+
+    /**
+     * A reference to, or an element write into, a property: PhpObject.indirect for a readonly one or one with a
+     * set visibility (PROPERTY_SET_CHECKED), or one this object doesn't have (old null); false for the others.
+     */
+    private boolean readonlyIndirect(VirtualFrame frame, PhpObject phpObject, String name, Object old) {
+        return (old == null || (objects.getPropertyFlagsOrDefault(phpObject, name, 0)
+                & PhpClass.PROPERTY_SET_CHECKED) != 0) && phpObject.indirect(name, old, scope(frame));
     }
 
     /**
@@ -243,7 +278,10 @@ public final class PropNode extends LValueNode {
     @TruffleBoundary
     private Object missing(PhpObject phpObject, String name, String scope) {
         PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
-        if (decl != null && !phpObject.getPhpClass().canAccessProperty(name, scope)) {
+        if (decl == null) {
+            return phpObject.readMissing(this, name);
+        }
+        if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
             return inaccessibleRead(phpObject, name);
         }
         Object magic = decl == null || phpObject.wasUnset(name) ? phpObject.magicProperty(this, "__get", name)
@@ -299,6 +337,8 @@ public final class PropNode extends LValueNode {
             }
             phpObject.setUnset(name, false);
         }
+        // a readonly or set-restricted property is initialized from a scope that may set it
+        phpObject.checkSetAccess(name, scope, "modify");
         Object converted = decl.type().assign(PhpRef.deref(value), strict(), decl, this);
         if (converted instanceof PhpArray array) {
             array.addHolder();
@@ -328,6 +368,45 @@ public final class PropNode extends LValueNode {
         return PhpNull.NULL;
     }
 
+    /**
+     * The property as the base of an unset() of its elements (BP_VAR_UNSET): a readonly one holding a value that
+     * isn't an object is an Error, an uninitialized one has nothing to unset.
+     */
+    public Object readForUnset(VirtualFrame frame) {
+        Object value = object.execute(frame);
+        return readForUnsetOn(frame, value, name(frame));
+    }
+
+    /**
+     * The property as the object of a write to one of its own properties or elements (BP_VAR_W, or BP_VAR_RW for
+     * a compound assignment): a readonly one that holds no object is an Error, an uninitialized one too unless rw
+     * (whose read is the "must not be accessed" Error).
+     */
+    public Object readForWriteOn(VirtualFrame frame, Object value, String name, boolean rw) {
+        if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
+            Object property = objects.getOrDefault(phpObject, name, null);
+            if (property != null) {
+                readonlyIndirect(frame, phpObject, name, property);
+            } else if (!rw && phpObject.isUninitialized(name)) {
+                readonlyIndirect(frame, phpObject, name, null);
+            }
+        }
+        return readOn(frame, value, name);
+    }
+
+    public Object readForUnsetOn(VirtualFrame frame, Object value, String name) {
+        if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
+            Object property = objects.getOrDefault(phpObject, name, null);
+            if (property == null && phpObject.isUninitialized(name)) {
+                return PhpNull.NULL;
+            }
+            if (property != null) {
+                readonlyIndirect(frame, phpObject, name, property);
+            }
+        }
+        return readOn(frame, value, name);
+    }
+
     // ---- writes ----
 
     /** Stores an int unboxed (a long location), unless the property is a reference. */
@@ -335,11 +414,12 @@ public final class PropNode extends LValueNode {
     public void writeLong(VirtualFrame frame, long value) {
         String name = name(frame);
         PhpObject phpObject = target(frame, name, "assign");
-        if (typed(phpObject, name)) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if ((flags & (PhpClass.PROPERTY_TYPED | PhpClass.PROPERTY_SET_CHECKED)) != 0) {
             writeOn(frame, phpObject, name, value);
             return;
         }
-        if (!accessible(frame, phpObject, name)) {
+        if (!accessible(frame, phpObject, name, flags)) {
             inaccessibleWrite(phpObject, name, value);
             return;
         }
@@ -351,8 +431,8 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (initialize(phpObject, name, value, callingScope(frame, lexicalClass))
-                    || phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+            String scope = callingScope(frame, lexicalClass);
+            if (initialize(phpObject, name, value, scope) || phpObject.writeMissing(this, scope, name, value)) {
                 return;
             }
         }
@@ -380,11 +460,17 @@ public final class PropNode extends LValueNode {
      */
     public Object writeOn(VirtualFrame frame, Object target, String name, Object value) {
         PhpObject phpObject = target(target, name, "assign");
-        if (!accessible(frame, phpObject, name)) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if (!accessible(frame, phpObject, name, flags)) {
             inaccessibleWrite(phpObject, name, value);
             return value;
         }
-        if (typed(phpObject, name)) {
+        // readonly and set visibility before the type (zend_std_write_property)
+        boolean setChecked = (flags & PhpClass.PROPERTY_SET_CHECKED) != 0;
+        if (setChecked) {
+            phpObject.checkModify(name, scope(frame), "modify");
+        }
+        if ((flags & PhpClass.PROPERTY_TYPED) != 0) {
             value = checked(phpObject, name, value);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
@@ -395,10 +481,11 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (initialize(phpObject, name, value, callingScope(frame, lexicalClass))) {
+            String scope = callingScope(frame, lexicalClass);
+            if (initialize(phpObject, name, value, scope)) {
                 return PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             }
-            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+            if (phpObject.writeMissing(this, scope, name, value)) {
                 return value;
             }
         }
@@ -414,6 +501,10 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpArray array && old != value) {
             met(SEEN_OLD_ARRAY);
             array.removeHolder();
+        }
+        if (setChecked) {
+            // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)
+            phpObject.unmark("reinit:" + name);
         }
         return value;
     }
@@ -460,13 +551,15 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpRef ref) {
             return ref;
         }
-        if (old == null) {
-            if (!uninitializedRef(phpObject, name)) {
-                Object magic = magicForWrite(phpObject, name);
-                if (magic != PhpObject.NO_MAGIC) {
-                    return magicRef(magic);
-                }
+        if (old == null && !(phpObject.isReadonly(name) && phpObject.isUninitialized(name))
+                && !uninitializedRef(phpObject, name)) {
+            Object magic = magicForWrite(phpObject, name);
+            if (magic != PhpObject.NO_MAGIC) {
+                return magicRef(magic);
             }
+        }
+        if (readonlyIndirect(frame, phpObject, name, old)) {
+            return new PhpRef(old);
         }
         PhpRef ref = new PhpRef(old == null ? PhpNull.NULL : old);
         if (old instanceof PhpArray array) {
@@ -517,6 +610,9 @@ public final class PropNode extends LValueNode {
             throw boundToInaccessible(phpObject, name);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
+        if (readonlyIndirect(frame, phpObject, name, old)) {
+            throw phpObject.indirectError(name, scope(frame));
+        }
         if (old instanceof PhpArray array) {
             array.removeHolder();
         } else if (old instanceof PhpRef previous) {
@@ -558,6 +654,10 @@ public final class PropNode extends LValueNode {
             if (magic != PhpObject.NO_MAGIC) {
                 return overloadedContainer(magic);
             }
+        }
+        if (readonlyIndirect(frame, phpObject, name, old)) {
+            // a readonly or set-restricted property holding an object: the object, not a place in this one
+            return PhpRef.deref(old);
         }
         if (old instanceof PhpArray array) {
             if (array.isShared()) {
@@ -652,7 +752,7 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        Object value = object instanceof PropNode property ? property.readForUnset(frame) : object.execute(frame);
         if (value instanceof PhpObject) {
             unsetOn(frame, value, name(frame));
         }
@@ -661,14 +761,19 @@ public final class PropNode extends LValueNode {
     /** unset() of property name of value, evaluated (nothing for a value that isn't an object). */
     public void unsetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            if (!accessible(frame, phpObject, name)) {
+            if (!writable(frame, phpObject, name, "unset")) {
                 inaccessibleUnset(phpObject, name);
                 return;
             }
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                if (!unsetUninitialized(phpObject, name)) {
-                    phpObject.magicProperty(this, "__unset", name);
+                String scope = scope(frame);
+                if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
+                    inaccessibleUnset(phpObject, name);
+                } else if (!unsetUninitialized(phpObject, name, scope)
+                        && phpObject.magicProperty(this, "__unset", name) == PhpObject.NO_MAGIC) {
+                    // the standard unset's set visibility (a guarded __unset, or none)
+                    phpObject.checkSetAccess(name, scope, "unset");
                 }
                 return;
             }
@@ -685,10 +790,11 @@ public final class PropNode extends LValueNode {
 
     /** unset() of a typed property never initialized: marked unset, bypassing __unset. */
     @TruffleBoundary
-    private static boolean unsetUninitialized(PhpObject phpObject, String name) {
+    private static boolean unsetUninitialized(PhpObject phpObject, String name, String scope) {
         if (typedDecl(phpObject, name) == null || phpObject.wasUnset(name)) {
             return false;
         }
+        phpObject.checkSetAccess(name, scope, "unset");
         phpObject.setUnset(name, true);
         return true;
     }
