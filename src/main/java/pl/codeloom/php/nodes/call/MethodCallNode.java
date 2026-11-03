@@ -25,11 +25,13 @@ public final class MethodCallNode extends CallNode {
     @Child private ExprNode receiver;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
+    private final String name;
     private final String lowerName;
 
     public MethodCallNode(ExprNode receiver, String methodName, ArgumentsNode args) {
         this.receiver = receiver;
         this.args = args;
+        this.name = methodName;
         this.lowerName = Str.lower(methodName);
         this.dispatch = new Dispatch(lowerName, Str.of(methodName));
     }
@@ -45,26 +47,35 @@ public final class MethodCallNode extends CallNode {
                 return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), closure), args,
                         IndirectCallNode.getUncached());
             }
-            return closureMethod(this, lowerName, closure, args.values(frame));
+            return closureMethod(this, name, closure, args.values(frame));
         }
-        throw memberOnNonObject(lowerName, target);
+        throw memberOnNonObject(name, target);
     }
 
     /** The Closure class's other methods (bindTo, call) on a closure value, called from site. */
     @TruffleBoundary
-    public static Object closureMethod(Node site, String lowerName, PhpClosure closure, Object[] values) {
-        PhpFunction method = PhpContext.get(site).getClass("Closure").findMethod(lowerName);
+    public static Object closureMethod(Node site, String name, PhpClosure closure, Object[] values) {
+        PhpFunction method = PhpContext.get(site).getClass("Closure").findMethod(Str.lower(name));
         if (method == null) {
-            throw new PhpError("Call to undefined method Closure::" + lowerName + "()");
+            throw new PhpError("Call to undefined method Closure::" + name + "()");
         }
         return Backtrace.callFrom(site, () -> method.getCallTarget().call(
                 ArgumentsNode.frameArguments(closure, null, null, values)));
     }
 
-    /** A method called on a value that isn't an object: the value as zend_zval_value_name names it. */
+    /**
+     * A method called on a value that isn't an object (zend_invalid_method_call): the name as written, the value as
+     * zend_zval_value_name names it.
+     */
     @TruffleBoundary
-    public static PhpError memberOnNonObject(String lowerName, Object target) {
-        return new PhpError("Call to a member function " + lowerName + "() on " + Args.valueName(target));
+    public static PhpError memberOnNonObject(String name, Object target) {
+        return new PhpError("Call to a member function " + name + "() on " + Args.valueName(target));
+    }
+
+    /** `$obj->$name()` with a name that isn't a string (ZEND_INIT_METHOD_CALL). */
+    @TruffleBoundary
+    public static PhpError nameNotString() {
+        return new PhpError("Method name must be a string");
     }
 
     /**
@@ -119,22 +130,31 @@ public final class MethodCallNode extends CallNode {
             }
         }
 
-        /** The method of a class an object's method call calls, or __call standing in for it; else an Error. */
+        /**
+         * The method of a class an object's method call (the name as written) calls, or __call standing in for it;
+         * else an Error.
+         */
         @TruffleBoundary
-        public static PhpFunction findMethod(PhpClass phpClass, String lowerName) {
-            PhpFunction method = phpClass.findMethod(lowerName);
+        public static PhpFunction findMethod(PhpClass phpClass, String name) {
+            PhpFunction method = phpClass.findMethod(Str.lower(name));
             if (method == null) {
                 method = phpClass.findMethod("__call");
             }
             if (method == null) {
-                throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+                throw undefinedMethod(phpClass, name);
             }
             return method;
         }
 
         @TruffleBoundary
         private PhpError undefined(PhpClass phpClass) {
-            return new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+            return undefinedMethod(phpClass, Str.java(calledName));
         }
+    }
+
+    /** zend_undefined_method: the class and the method name as written. */
+    @TruffleBoundary
+    public static PhpError undefinedMethod(PhpClass phpClass, String name) {
+        return new PhpError("Call to undefined method " + phpClass.getName() + "::" + name + "()");
     }
 }

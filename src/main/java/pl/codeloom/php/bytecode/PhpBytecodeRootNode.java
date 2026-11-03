@@ -2361,13 +2361,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** What `$obj->$name(args)` calls (DynamicMethodCallNode): the callable [$obj, name], the name a string. */
+    /**
+     * What `$obj->$name(args)` calls (DynamicMethodCallNode): the callable [$obj, name]; ZEND_INIT_METHOD_CALL's
+     * Errors for a name that isn't a string and a value that isn't an object.
+     */
     @Operation
     public static final class ResolveDynamicMethod {
         @Specialization
-        public static Callables.Target resolve(Object object, Object name, @Bind Node node,
-                                               @Cached ToStrNode toStr) {
-            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, toStr.execute(name)));
+        public static Callables.Target resolve(Object object, Object name, @Bind Node node) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            if (!(object instanceof PhpObject) && !(object instanceof PhpClosure)) {
+                throw MethodCallNode.memberOnNonObject(Str.java(method), object);
+            }
+            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, method));
         }
     }
 
@@ -2789,8 +2797,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ConvertMethod {
         @Specialization
-        public static Object convert(Object object, Object name, @Cached ToStrNode toStr) {
-            return CallableConvertNodes.MethodNode.convert(object, Str.java(toStr.execute(name)));
+        public static Object convert(Object object, Object name) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return CallableConvertNodes.MethodNode.convert(object, Str.java(method));
         }
     }
 
@@ -2879,11 +2890,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Fallback
         public static PhpFunction other(MethodSite site, Object receiver) {
-            throw MethodCallNode.memberOnNonObject(site.lowerName, receiver);
+            throw MethodCallNode.memberOnNonObject(site.name, receiver);
         }
 
         public static PhpFunction find(MethodSite site, PhpClass phpClass) {
-            PhpFunction method = MethodCallNode.Dispatch.findMethod(phpClass, site.lowerName);
+            PhpFunction method = MethodCallNode.Dispatch.findMethod(phpClass, site.name);
             return isMagic(phpClass, site.lowerName) ? MethodSite.BY_VALUE : method;
         }
 
@@ -2944,7 +2955,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     return result(callNode.call(closure.getFunction().getCallTarget(),
                             CallableDispatchNode.closureArguments(closure, values)), keepRef);
                 }
-                return result(MethodCallNode.closureMethod(node, site.lowerName, closure, values), keepRef);
+                return result(MethodCallNode.closureMethod(node, site.name, closure, values), keepRef);
             }
             PhpObject object = (PhpObject) receiver;
             PhpClass phpClass = object.getPhpClass();
@@ -3032,7 +3043,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         public static PhpFunction find(MethodSite site, PhpClass phpClass) {
-            PhpFunction method = StaticCallNode.Dispatch.findStatic(phpClass, site.lowerName);
+            PhpFunction method = StaticCallNode.Dispatch.findStatic(phpClass, site.name);
             return method == null ? MethodSite.BY_VALUE : method;
         }
     }
@@ -3090,7 +3101,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
             if (viaStatic == null) {
-                throw StaticCallNode.Dispatch.undefined(phpClass, site.lowerName);
+                throw MethodCallNode.undefinedMethod(phpClass, site.name);
             }
             return result(callNode.call(viaStatic.getCallTarget(),
                     ArgumentsNode.frameArguments(null, staticClass, null, values)), keepRef);

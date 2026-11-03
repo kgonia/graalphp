@@ -7,12 +7,12 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.Callables;
-import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -80,8 +80,13 @@ public final class CallableConvertNodes {
         @Override
         public Object execute(VirtualFrame frame) {
             Object target = object.execute(frame);
-            String method = name != null ? name : Str.java(Convert.toStr(nameExpr.execute(frame)));
-            return convert(target, method);
+            if (name != null) {
+                return convert(target, name);
+            }
+            if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return convert(target, Str.java(method));
         }
 
         /** The closure of target's method name, bound to it; php-src's Errors for what has none. */
@@ -94,7 +99,7 @@ public final class CallableConvertNodes {
                 throw new PhpError("Call to undefined method Closure::" + name + "()");
             }
             if (!(target instanceof PhpObject self)) {
-                throw new PhpError("Call to a member function " + name + "() on " + Convert.debugType(target));
+                throw MethodCallNode.memberOnNonObject(name, target);
             }
             PhpClass phpClass = self.getPhpClass();
             PhpFunction method = phpClass.findMethod(Str.lower(name));

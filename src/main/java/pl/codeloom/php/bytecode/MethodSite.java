@@ -17,12 +17,14 @@ public final class MethodSite {
     static final PhpFunction BY_VALUE = new PhpFunction("{by value}", new PhpFunction.Param[0], false, false, true,
             false, () -> null);
 
+    /** The name as written, for messages; calledName, as __call and __callStatic are given it. */
+    final String name;
     final String lowerName;
-    /** The name as written, which __call and __callStatic are given. */
     final TruffleString calledName;
     final boolean forwarding;
 
     public MethodSite(String name, boolean forwarding) {
+        this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);
         this.forwarding = forwarding;

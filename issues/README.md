@@ -12,7 +12,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [006](006-compile-time-jump-checks.md) | Compile-time errors for jumps and try aren't raised | Open |
 | [007](007-goto-over-try-file-level.md) | A goto over a try at file level escapes as a Java exception | Open |
 | [008](008-builtin-arity.md) | Built-in functions don't check their argument count | Open |
-| [009](009-member-call-on-null-message.md) | "Call to a member function" names the type and the method wrongly | Open |
+| [009](009-member-call-on-null-message.md) | "Call to a member function" names the type and the method wrongly | Fixed |
 | [010](010-foreach-ref-unshift.md) | A foreach by reference loops forever after array_unshift | Open |
 | [011](011-pcre-utf-check-per-call.md) | preg_match with /u checks the subject's UTF-8 again on every call | Open |
 | [012](012-class-constant-visibility.md) | Class constants' visibility isn't checked | Open |

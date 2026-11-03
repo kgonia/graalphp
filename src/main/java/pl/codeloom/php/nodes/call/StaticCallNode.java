@@ -119,24 +119,23 @@ public final class StaticCallNode extends CallNode {
             return phpClass.findMethod(lowerName);
         }
 
-        /** A static call's method in a class, or null when __call or __callStatic stands in for it; else an Error. */
+        /**
+         * A static call's method (the name as written) in a class, or null when __call or __callStatic stands in
+         * for it; else an Error.
+         */
         @TruffleBoundary
-        public static PhpFunction findStatic(PhpClass phpClass, String lowerName) {
-            PhpFunction method = phpClass.findMethod(lowerName);
+        public static PhpFunction findStatic(PhpClass phpClass, String name) {
+            PhpFunction method = phpClass.findMethod(Str.lower(name));
             if (method == null && phpClass.findMethod("__call") == null
                     && phpClass.findMethod("__callstatic") == null) {
-                throw undefined(phpClass, lowerName);
+                throw MethodCallNode.undefinedMethod(phpClass, name);
             }
             return method;
         }
 
-        private PhpError undefined(PhpClass phpClass) {
-            return undefined(phpClass, lowerName);
-        }
-
         @TruffleBoundary
-        public static PhpError undefined(PhpClass phpClass, String lowerName) {
-            return new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+        private PhpError undefined(PhpClass phpClass) {
+            return MethodCallNode.undefinedMethod(phpClass, Str.java(calledName));
         }
     }
 }
