@@ -394,6 +394,29 @@ public final class ForeachNode extends StmtNode {
         };
     }
 
+    /** A step of {@link #traverse}: false stops the walk. */
+    @FunctionalInterface
+    public interface Visit {
+        boolean element(Object key, Object value);
+    }
+
+    /**
+     * A Traversable walked as php-src's object iterator walks it for unpacking (zend_user_it_*): rewind, then per
+     * element valid, current, key, visit, next; from site, which traces show as the calls' location.
+     */
+    @TruffleBoundary
+    public static void traverse(Node site, PhpObject subject, Visit visit) {
+        PhpObject iterator = unwrapAggregates(site, subject);
+        step(site, iterator, "rewind");
+        while (Convert.toBool(step(site, iterator, "valid"))) {
+            Object value = PhpRef.deref(step(site, iterator, "current"));
+            if (!visit.element(PhpRef.deref(step(site, iterator, "key")), value)) {
+                return;
+            }
+            step(site, iterator, "next");
+        }
+    }
+
     /** Follows getIterator() to the Iterator (a loop, not recursion: partial evaluation would inline it forever). */
     private PhpObject unwrapAggregates(PhpObject subject) {
         return unwrapAggregates(this, subject);

@@ -1861,8 +1861,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class LiteralSpread {
         @Specialization
-        public static PhpArray spread(PhpArray array, Object source) {
-            ArrayLiteralNode.spread(array, source);
+        public static PhpArray spread(PhpArray array, Object source, @Bind Node node) {
+            ArrayLiteralNode.spread(array, source, node);
             return array;
         }
     }
@@ -2288,12 +2288,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class SpreadValue {
         @Specialization
-        public static SpreadArguments spread(SpreadArguments list, PhpFunction function, Object value) {
+        public static SpreadArguments spread(SpreadArguments list, PhpFunction function, Object value,
+                                             @Bind Node node) {
             int position = list.size();
             if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
                 ArgumentsNode.addSpreadRefs(list.values(), array, function, position, false);
             } else {
-                ArgumentsNode.addSpread(list.values(), value);
+                ArgumentsNode.addSpread(list.values(), value, function, node);
             }
             return list;
         }
@@ -2319,7 +2320,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                         createdArray);
                 ArgumentsNode.addSpreadRefs(list.values(), writable, function, position, true);
             } else {
-                ArgumentsNode.addSpread(list.values(), value);
+                ArgumentsNode.addSpread(list.values(), value, function, node);
             }
             return list;
         }

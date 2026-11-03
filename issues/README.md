@@ -18,3 +18,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [012](012-class-constant-visibility.md) | Class constants' visibility isn't checked | Open |
 | [013](013-method-visibility.md) | Methods' visibility isn't checked, and a private method isn't resolved in the calling scope | Open |
 | [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Fixed |
+| [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Open: a decision |
+| [018](018-unpack-traversable.md) | Unpacking a Traversable fails | Fixed |
