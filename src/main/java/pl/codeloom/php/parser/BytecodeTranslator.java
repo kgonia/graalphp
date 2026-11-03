@@ -261,6 +261,12 @@ public final class BytecodeTranslator {
         /** In a finally block, how many of labelScopes are outside it: a goto may not leave it either. */
         private int labelScopesOutsideFinally;
         /**
+         * The labels inside an if or a block, where a goto from outside may jump in: each one's number, which such a
+         * goto leaves in entering for the ifs and lists on the way to take it there (see entries).
+         */
+        private final Map<String, Long> entries = new HashMap<>();
+        private BytecodeLocal entering;
+        /**
          * Values evaluated once into a local, by the node standing for each where it is used: the objects of `?->`s
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
          */
@@ -351,6 +357,12 @@ public final class BytecodeTranslator {
                 throw new Unsupported("no source text for lines", declaration);
             }
             prologue();
+            entries(body);
+            if (entering != null) {
+                b.beginStoreLocal(entering);
+                b.emitLoadConstant(0L);
+                b.endStoreLocal();
+            }
             if (declaration.is("AST_ARROW_FUNC")) {
                 if (body.is("AST_RETURN")) {
                     statement(body);
@@ -666,8 +678,9 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * `goto label`: a branch to the label in the innermost enclosing statement list naming it. A label in a list
-         * that doesn't enclose the goto (inside an if or a loop) is where the tree's goto can't go either.
+         * `goto label`: a branch to the label in the innermost enclosing statement list naming it, or to the
+         * statement there the label is inside of, an if or a block (php-src jumps in; the tree's goto doesn't). A
+         * label inside a loop, a switch or a try stays the tree's.
          */
         private void gotoStatement(Ast node) {
             String name = (String) node.get("label");
@@ -679,6 +692,12 @@ public final class BytecodeTranslator {
                 }
                 if (i < labelScopesOutsideFinally) {
                     throw compileError(node, "jump out of a finally block is disallowed");
+                }
+                if (scope.nested().contains(name)) {
+                    // into an if or a block: the label's number shows the way in (labeledStatements, ifChain)
+                    b.beginStoreLocal(entering);
+                    b.emitLoadConstant(entries.get(name));
+                    b.endStoreLocal();
                 }
                 if (scope.emitted().contains(name)) {
                     // backward: the list's loop goes round, and its top branches on to the label
@@ -697,18 +716,81 @@ public final class BytecodeTranslator {
         /** A statement list's goto labels, or null when it has none. */
         private LabelScope labelScope(Ast list) {
             Map<String, Integer> indexes = new HashMap<>();
+            Set<String> nested = new java.util.HashSet<>();
             boolean backward = false;
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
                     if (statement.is("AST_LABEL")) {
                         indexes.put((String) statement.get("name"), indexes.size());
-                    } else if (!indexes.isEmpty()) {
+                        continue;
+                    }
+                    for (String name : labelsInside(statement)) {
+                        indexes.put(name, indexes.size());
+                        nested.add(name);
+                    }
+                    if (!indexes.isEmpty()) {
                         backward |= gotoTo(statement, indexes.keySet());
                     }
                 }
             }
             return indexes.isEmpty() ? null : new LabelScope(indexes, new BytecodeLabel[indexes.size()],
-                    new java.util.HashSet<>(), backward ? b.createLocal() : null, null);
+                    new java.util.HashSet<>(), nested, backward ? b.createLocal() : null, null);
+        }
+
+        /**
+         * The labels a goto may jump in to inside statement, an if or a block, at any depth through ifs and blocks
+         * (zend_resolve_goto_label forbids only loops, switches and finally); none for any other statement.
+         */
+        private Set<String> labelsInside(Ast statement) {
+            Set<String> labels = new LinkedHashSet<>();
+            if (statement.is("AST_IF")) {
+                for (Object clause : statement.children()) {
+                    labels.addAll(labelsInside(((Ast) clause).node("stmts")));
+                }
+            } else if (statement.is("AST_STMT_LIST")) {
+                for (Object child : statement.children()) {
+                    if (child instanceof Ast inner) {
+                        if (inner.is("AST_LABEL")) {
+                            labels.add((String) inner.get("name"));
+                        } else {
+                            labels.addAll(labelsInside(inner));
+                        }
+                    }
+                }
+            }
+            return labels;
+        }
+
+        /**
+         * Numbers the labels a goto may jump in to (labelsInside) in the statement lists of code, outside nested
+         * functions and classes; with any, entering holds the number of the one being jumped to, else 0.
+         */
+        private void entries(Object code) {
+            if (!(code instanceof Ast node) || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC")
+                    || node.is("AST_FUNC_DECL") || node.is("AST_CLASS")) {
+                return;
+            }
+            if (node.is("AST_STMT_LIST")) {
+                for (Object child : node.children()) {
+                    if (child instanceof Ast statement && !statement.is("AST_LABEL")) {
+                        for (String name : labelsInside(statement)) {
+                            entries.putIfAbsent(name, (long) entries.size() + 1);
+                        }
+                    }
+                }
+            }
+            for (Object child : node.children()) {
+                entries(child);
+            }
+            Map<String, Object> named = node.namedOrNull();
+            if (named != null) {
+                for (Object child : named.values()) {
+                    entries(child);
+                }
+            }
+            if (entering == null && !entries.isEmpty()) {
+                entering = b.createLocal();
+            }
         }
 
         /** Whether code has a goto to one of the labels, not counting nested functions and classes. */
@@ -757,8 +839,8 @@ public final class BytecodeTranslator {
                 b.emitLoadConstant(Boolean.TRUE);
                 b.beginBlock();
             }
-            LabelScope scope = new LabelScope(plain.indexes(), plain.labels(), plain.emitted(), plain.target(),
-                    plain.target() == null ? null : b.createLabel());
+            LabelScope scope = new LabelScope(plain.indexes(), plain.labels(), plain.emitted(), plain.nested(),
+                    plain.target(), plain.target() == null ? null : b.createLabel());
             for (int i = 0; i < scope.labels().length; i++) {
                 scope.labels()[i] = b.createLabel();
             }
@@ -773,6 +855,25 @@ public final class BytecodeTranslator {
                     b.endIfThen();
                 }
             }
+            // a goto from outside jumping in to a label here, or inside a statement here: on to it
+            for (Map.Entry<String, Integer> label : scope.indexes().entrySet()) {
+                if (entries.containsKey(label.getKey())) {
+                    b.beginIfThen();
+                    b.beginIdentical();
+                    b.emitLoadLocal(entering);
+                    b.emitLoadConstant(entries.get(label.getKey()));
+                    b.endIdentical();
+                    b.beginBlock();
+                    if (!scope.nested().contains(label.getKey())) {
+                        b.beginStoreLocal(entering);
+                        b.emitLoadConstant(0L);
+                        b.endStoreLocal();
+                    }
+                    b.emitBranch(scope.labels()[label.getValue()]);
+                    b.endBlock();
+                    b.endIfThen();
+                }
+            }
             labelScopes.add(scope);
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
@@ -781,6 +882,10 @@ public final class BytecodeTranslator {
                         b.emitLabel(scope.labels()[scope.indexes().get(name)]);
                         scope.emitted().add(name);
                         continue;
+                    }
+                    for (String name : labelsInside(statement)) {
+                        b.emitLabel(scope.labels()[scope.indexes().get(name)]);
+                        scope.emitted().add(name);
                     }
                     statement(statement);
                 }
@@ -836,7 +941,29 @@ public final class BytecodeTranslator {
             } else {
                 b.beginIfThen();
             }
+            // a goto jumping in to a label in this clause takes it, one to a later clause passes it by
+            Set<String> into = entering == null ? Set.of() : labelsInside(element.node("stmts"));
+            Set<String> later = new LinkedHashSet<>();
+            for (int i = index + 1; entering != null && i < node.size(); i++) {
+                later.addAll(labelsInside(((Ast) node.child(i)).node("stmts")));
+            }
+            if (!into.isEmpty()) {
+                b.beginOr();
+                enteringOneOf(into);
+            }
+            if (!later.isEmpty()) {
+                b.beginAnd();
+                b.beginNot();
+                enteringOneOf(later);
+                b.endNot();
+            }
             condition(condition);
+            if (!later.isEmpty()) {
+                b.endAnd();
+            }
+            if (!into.isEmpty()) {
+                b.endOr();
+            }
             statements(element.node("stmts"));
             if (more) {
                 ifChain(node, index + 1);
@@ -844,6 +971,19 @@ public final class BytecodeTranslator {
             } else {
                 b.endIfThen();
             }
+        }
+
+        /** Whether entering holds the number of one of labels. */
+        private void enteringOneOf(Set<String> labels) {
+            b.beginOr();
+            for (String label : labels) {
+                b.beginIdentical();
+                b.emitLoadLocal(entering);
+                b.emitLoadConstant(entries.get(label));
+                b.endIdentical();
+            }
+            b.emitLoadConstant(Boolean.FALSE);
+            b.endOr();
         }
 
         private void whileLoop(Ast node) {
@@ -4195,10 +4335,11 @@ public final class BytecodeTranslator {
 
     /**
      * A statement list's goto labels: their numbers by name, their places, those emitted so far (a goto to one is
-     * backward), and for a list a goto jumps back in, the local holding the label to go on to and the branch round.
+     * backward), those inside a statement of the list (an if or a block; their place is before it), and for a
+     * list a goto jumps back in, the local holding the label to go on to and the branch round.
      */
     private record LabelScope(Map<String, Integer> indexes, BytecodeLabel[] labels, Set<String> emitted,
-                              BytecodeLocal target, BytecodeLabel again) {
+                              Set<String> nested, BytecodeLocal target, BytecodeLabel again) {
     }
 
     // php-ast flag values (Translator's)
