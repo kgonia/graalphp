@@ -96,8 +96,17 @@ final class CoreFunctions {
         r.fn("constant", (context, a) -> {
             String name = Str.java(Args.str(a, 0));
             int separator = name.indexOf("::");
-            Object value = separator > 0 ? context.getClass(name.substring(0, separator))
-                    .getConstant(name.substring(separator + 2)) : context.findConstant(name);
+            Object value;
+            if (separator > 0) {
+                PhpClass phpClass = context.getClass(name.substring(0, separator));
+                String constantName = name.substring(separator + 2);
+                value = phpClass.getConstant(constantName);
+                if (value != null && !phpClass.canAccessConstant(constantName, callerScope(context))) {
+                    throw phpClass.constantAccessError(constantName);
+                }
+            } else {
+                value = context.findConstant(name);
+            }
             if (value == null) {
                 throw new PhpError("Undefined constant \"" + name + "\"");
             }
@@ -452,6 +461,12 @@ final class CoreFunctions {
      * and null are defined in any case. A literal name without a namespace or class doesn't come here.
      */
     @TruffleBoundary
+    /** The scope (lowercase class, or null) of the PHP code calling a built-in. */
+    private static String callerScope(PhpContext context) {
+        PhpClass self = Callables.callerClass(context, "self");
+        return self == null ? null : self.getLowerName();
+    }
+
     private static boolean isDefined(PhpContext context, String constantName) {
         String name = constantName.startsWith("\\") ? constantName.substring(1) : constantName;
         int colon = name.lastIndexOf(':');
@@ -470,8 +485,10 @@ final class CoreFunctions {
                 phpClass = context.findClassAutoloading(className);
             }
             // a trait's constants are reached through the classes that use it only (zend_get_class_constant_ex)
+            String member = name.substring(colon + 1);
             return phpClass != null && !(phpClass.getDeclaration() instanceof ClassTemplate template
-                    && template.isTrait()) && phpClass.getConstant(name.substring(colon + 1)) != null;
+                    && template.isTrait()) && phpClass.getConstant(member) != null
+                    && phpClass.canAccessConstant(member, callerScope(context));
         }
         if (context.findConstant(name) != null) {
             return true;

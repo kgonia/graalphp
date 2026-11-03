@@ -210,6 +210,15 @@ final class RuntimeFunctions {
         if (handlers != null && handlers.uncloneable()) {
             throw new PhpError("Trying to clone an uncloneable object of class " + object.getPhpClass().getName());
         }
+        PhpFunction cloner = object.getPhpClass().findMethod("__clone");
+        if (cloner != null && !cloner.isPublic()) {
+            // ZEND_CLONE checks __clone from the executing function's scope
+            PhpClass self = Callables.callerClass(context, "self");
+            String scope = self == null ? null : self.getLowerName();
+            if (!object.getPhpClass().canCall(cloner, "__clone", scope)) {
+                throw object.getPhpClass().callError(cloner.getName(), scope);
+            }
+        }
         if (handlers != null && handlers.cloneObject() != null) {
             // a built-in class's clone_obj
             return handlers.cloneObject().apply(object);
