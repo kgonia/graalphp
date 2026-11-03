@@ -56,6 +56,28 @@ public final class StringFunctions {
             TruffleString format = Args.string(context, a, 1, "sscanf", "format", false);
             return Scanf.scan(Str.readBytes(string), Str.readBytes(format), a, 2);
         });
+        r.fn("str_getcsv", (context, a) -> {
+            Args.arity(a, "str_getcsv", 1, 4);
+            byte[] string = Str.readBytes(Args.string(context, a, 0, "str_getcsv", "string", false));
+            int delimiter = csvChar(context, a, 1, "separator", ',');
+            int enclosure = csvChar(context, a, 2, "enclosure", '"');
+            int escape;
+            if (Args.has(a, 3)) {
+                byte[] e = Str.readBytes(Args.string(context, a, 3, "str_getcsv", "escape", false));
+                if (e.length > 1) {
+                    throw new PhpError("ValueError", "str_getcsv(): Argument #4 ($escape) must be empty or a single "
+                            + "character");
+                }
+                escape = e.length == 0 ? -1 : e[0] & 0xFF;
+            } else {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("str_getcsv(): the $escape "
+                        + "parameter must be provided as its default value will change"), SourceLocation.current());
+                escape = '\\';
+            }
+            PhpArray values = csv(string, (byte) delimiter, (byte) enclosure, escape,
+                    !context.builtinState().locales[0].equals("C"));
+            return values != null ? values : PhpArray.list(PhpNull.NULL);
+        });
         r.fn("levenshtein", (context, a) -> {
             Args.arity(a, "levenshtein", 2, 5);
             byte[] s1 = Str.readBytes(Args.string(context, a, 0, "levenshtein", "string1", false));
@@ -2299,5 +2321,180 @@ public final class StringFunctions {
             i++;
         }
         return upper(w[from + i]);
+    }
+
+    /** str_getcsv's separator and enclosure: one byte. */
+    private static int csvChar(PhpContext context, Object[] a, int index, String name, int missing) {
+        if (!Args.has(a, index)) {
+            return missing;
+        }
+        byte[] c = Str.readBytes(Args.string(context, a, index, "str_getcsv", name, false));
+        if (c.length != 1) {
+            throw new PhpError("ValueError", "str_getcsv(): Argument #" + (index + 1) + " ($" + name
+                    + ") must be a single character");
+        }
+        return c[0] & 0xFF;
+    }
+
+    /** php_mblen as php_fgetcsv calls it: 1 for a NUL, the character's length in a UTF-8 LC_CTYPE. */
+    private static int csvLength(byte[] s, int i, int limit, boolean utf8) {
+        return i >= limit ? 0 : s[i] == 0 || !utf8 ? 1 : ExecFunctions.mblen(s, i, limit);
+    }
+
+    /** php_fgetcsv_lookup_trailing_spaces: where a final \r\n, \r or \n of s[from, from + length) begins. */
+    private static int csvTrailing(byte[] s, int from, int length, boolean utf8) {
+        int last0 = 0;
+        int last1 = 0;
+        int p = from;
+        int end = from + length;
+        while (p < end) {
+            int n = csvLength(s, p, end, utf8);
+            if (n == 0) {
+                break;
+            }
+            if (n < 0) {
+                n = 1;
+            } else {
+                last0 = last1;
+                last1 = s[p] & 0xFF;
+            }
+            p += n;
+        }
+        if (last1 == '\n' && last0 == '\r') {
+            return p - 2;
+        }
+        return last1 == '\n' || last1 == '\r' ? p - 1 : p;
+    }
+
+    /** php_fgetcsv on a string (str_getcsv: no stream to read more lines from); null for a blank line. */
+    private static PhpArray csv(byte[] string, byte delimiter, byte enclosure, int escape, boolean utf8) {
+        byte[] buf = Arrays.copyOf(string, string.length + 1); // the NUL after the string, which C reads
+        int limit = csvTrailing(buf, 0, string.length, utf8);
+        int lineEnd = limit;
+        int lineEndLength = string.length - limit;
+        PhpArray values = new PhpArray();
+        boolean firstField = true;
+        int bptr = 0;
+        int inc;
+        do {
+            ByteBuilder temp = new ByteBuilder();
+            inc = csvLength(buf, bptr, limit, utf8);
+            if (inc == 1) {
+                int tmp = bptr;
+                while (at(buf, tmp) != (delimiter & 0xFF) && isSpace(at(buf, tmp))) {
+                    tmp++;
+                }
+                if (at(buf, tmp) == (enclosure & 0xFF) && tmp < limit) {
+                    bptr = tmp;
+                }
+            }
+            if (firstField && bptr == lineEnd) {
+                return null;
+            }
+            firstField = false;
+            int hunk;
+            int compEnd;
+            if (inc != 0 && at(buf, bptr) == (enclosure & 0xFF)) {
+                int state = 0;
+                bptr++;
+                hunk = bptr;
+                enclosed:
+                while (true) {
+                    if (inc == 0) {
+                        if (state == 2) {
+                            temp.write(buf, hunk, bptr - hunk - 1);
+                            hunk = bptr;
+                            break;
+                        }
+                        if (state == 1) {
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                        }
+                        if (hunk != lineEnd) {
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                        }
+                        temp.write(buf, lineEnd, lineEndLength);
+                        if (bptr > limit) {
+                            if (hunk == bptr) {
+                                hunk--;
+                            }
+                            bptr--;
+                        }
+                        break;
+                    } else if (inc < 0 || inc == 1) {
+                        if (state == 1) {
+                            bptr++;
+                            state = 0;
+                        } else if (state == 2) {
+                            if (at(buf, bptr) != (enclosure & 0xFF)) {
+                                temp.write(buf, hunk, bptr - hunk - 1);
+                                hunk = bptr;
+                                break enclosed;
+                            }
+                            temp.write(buf, hunk, bptr - hunk);
+                            bptr++;
+                            hunk = bptr;
+                            state = 0;
+                        } else {
+                            if (at(buf, bptr) == (enclosure & 0xFF)) {
+                                state = 2;
+                            } else if (escape >= 0 && at(buf, bptr) == escape) {
+                                state = 1;
+                            }
+                            bptr++;
+                        }
+                    } else {
+                        if (state == 2) {
+                            temp.write(buf, hunk, bptr - hunk - 1);
+                            hunk = bptr;
+                            break;
+                        } else if (state == 1) {
+                            bptr += inc;
+                            temp.write(buf, hunk, bptr - hunk);
+                            hunk = bptr;
+                            state = 0;
+                        } else {
+                            bptr += inc;
+                        }
+                    }
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                // the delimiter
+                while (inc != 0) {
+                    if (inc < 0) {
+                        inc = 1;
+                    }
+                    if (inc == 1 && at(buf, bptr) == (delimiter & 0xFF)) {
+                        break;
+                    }
+                    bptr += inc;
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                temp.write(buf, hunk, bptr - hunk);
+                bptr += inc;
+                compEnd = temp.size();
+            } else {
+                hunk = bptr;
+                while (inc != 0) {
+                    if (inc < 0) {
+                        inc = 1;
+                    }
+                    if (inc == 1 && at(buf, bptr) == (delimiter & 0xFF)) {
+                        break;
+                    }
+                    bptr += inc;
+                    inc = csvLength(buf, bptr, limit, utf8);
+                }
+                temp.write(buf, hunk, bptr - hunk);
+                byte[] field = temp.toByteArray();
+                compEnd = csvTrailing(field, 0, field.length, utf8);
+                if (at(buf, bptr) == (delimiter & 0xFF)) {
+                    bptr++;
+                }
+            }
+            values.append(Str.of(Arrays.copyOf(temp.toByteArray(), compEnd)));
+        } while (inc > 0);
+        return values;
     }
 }

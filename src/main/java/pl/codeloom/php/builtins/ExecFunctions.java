@@ -204,6 +204,11 @@ final class ExecFunctions {
      * and surrogates.
      */
     private static int mblen(byte[] s, int i) {
+        return mblen(s, i, s.length);
+    }
+
+    /** mblen(s + i, end - i) in a UTF-8 locale: the character's length, 0 for NUL, -1 if it isn't one. */
+    static int mblen(byte[] s, int i, int end) {
         int ch = s[i] & 0xFF;
         if (ch < 0x80) {
             return ch == 0 ? 0 : 1;
@@ -227,7 +232,7 @@ final class ExecFunctions {
         } else {
             return -1;
         }
-        if (i + count > s.length) {
+        if (i + count > end) {
             return -1;
         }
         for (int k = 1; k < count; k++) {
