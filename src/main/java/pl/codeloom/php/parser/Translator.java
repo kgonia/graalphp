@@ -80,6 +80,7 @@ import pl.codeloom.php.runtime.Str;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -233,6 +234,7 @@ public final class Translator {
                 case "AST_USE":
                     for (Object element : statement.children()) {
                         Ast use = (Ast) element;
+                        checkUse(statement.flags, use, (String) use.get("name"));
                         names = names.use(statement.flags, (String) use.get("name"), (String) use.get("alias"));
                     }
                     break;
@@ -242,6 +244,7 @@ public final class Translator {
                     for (Object element : uses.children()) {
                         Ast use = (Ast) element;
                         int kind = use.flags != 0 ? use.flags : uses.flags;
+                        checkUse(kind, use, prefix + "\\" + use.get("name"));
                         names = names.use(kind, prefix + "\\" + use.get("name"), (String) use.get("alias"));
                     }
                     break;
@@ -252,16 +255,52 @@ public final class Translator {
         }
     }
 
+    /** zend_compile_use: a class can't be imported under a reserved name. */
+    private void checkUse(int kind, Ast use, String name) {
+        String alias = use.get("alias") instanceof String a ? a : name.substring(name.lastIndexOf('\\') + 1);
+        if (kind == 1 && RESERVED_CLASS_NAMES.contains(Str.lower(alias))) {
+            throw compileError(use.line, "Cannot use " + name + " as " + alias + " because '" + alias
+                    + "' is a special class name");
+        }
+    }
+
+    /** The file's strict_types declarations in their place (translateFile). */
+    private final Set<Ast> topDeclares = Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /** A declare statement's strict_types element, or null. */
+    private static Ast strictTypes(Ast declare) {
+        for (Object child : declare.node("declares").children()) {
+            if ("strict_types".equalsIgnoreCase((String) ((Ast) child).get("name"))) {
+                return (Ast) child;
+            }
+        }
+        return null;
+    }
+
     public FileRootNode translateFile(Ast file) {
+        // zend_compile_declare's strict_types: first in the file (after other declares), no block, 0 or 1
+        boolean first = true;
         for (Object child : file.children()) {
             if (child instanceof Ast statement && statement.is("AST_DECLARE")) {
-                for (Object declare : statement.node("declares").children()) {
-                    Ast element = (Ast) declare;
-                    if ("strict_types".equalsIgnoreCase((String) element.get("name"))
-                            && Long.valueOf(1).equals(element.get("value"))) {
+                if (strictTypes(statement) != null) {
+                    if (!first) {
+                        throw compileError(statement.line,
+                                "strict_types declaration must be the very first statement in the script");
+                    }
+                    if (statement.node("stmts") != null) {
+                        throw compileError(statement.line, "strict_types declaration must not use block mode");
+                    }
+                    Object value = strictTypes(statement).get("value");
+                    if (!Long.valueOf(0).equals(value) && !Long.valueOf(1).equals(value)) {
+                        throw compileError(statement.line, "strict_types declaration must have 0 or 1 as its value");
+                    }
+                    if (Long.valueOf(1).equals(value)) {
                         language.declareStrict(path);
                     }
+                    topDeclares.add(statement);
                 }
+            } else if (child != null) {
+                first = false;
             }
         }
         List<StmtNode> prologue = new ArrayList<>();
@@ -379,6 +418,10 @@ public final class Translator {
             case "AST_CONST_DECL":
                 return constDeclaration(node);
             case "AST_DECLARE":
+                if (strictTypes(node) != null && !topDeclares.contains(node)) {
+                    throw compileError(node.line,
+                            "strict_types declaration must be the very first statement in the script");
+                }
                 return new BasicStmts.NopNode();
             case "AST_INLINE_HTML":
                 return new BasicStmts.EchoNode(new ConstNode(literal(node.get("value"))));
@@ -703,6 +746,9 @@ public final class Translator {
                     throw compileError(type.line, (declared.has(PhpType.VOID) ? "void" : "never")
                             + " cannot be used as a parameter type");
                 }
+                if (declared != null) {
+                    validDefault(declared, literalBit(defaultValue), param.line, "parameter $" + param.get("name"));
+                }
                 params[i] = new PhpFunction.Param((String) param.get("name"), (param.flags & PARAM_REF) != 0,
                         (param.flags & PARAM_VARIADIC) != 0, defaultValue == null ? null : defaultText(defaultValue),
                         declared, nullable, typeString(type, isNullConstant(defaultValue)));
@@ -908,6 +954,7 @@ public final class Translator {
             mask |= bits;
             String name = part.is("AST_TYPE") ? part.flags == 13 ? "Traversable" : null : className(part);
             if (!part.is("AST_TYPE")) {
+                checkTypeName(part, name);
                 checkClassScope(part, name);
                 classType = true;
             }
@@ -925,6 +972,9 @@ public final class Translator {
         }
         if (nullable && (mask & PhpType.MIXED) == PhpType.MIXED) {
             throw compileError(type.line, "Type mixed cannot be marked as nullable since mixed already includes null");
+        }
+        if (nullable && (mask & PhpType.VOID) != 0) {
+            throw compileError(type.line, "Void can only be used as a standalone type");
         }
         if (nullable && (mask & PhpType.NULL) != 0) {
             throw compileError(type.line, "null cannot be marked as nullable");
@@ -982,6 +1032,27 @@ public final class Translator {
         throw compileError(at.line, "Type " + String.join("&", narrower)
                 + " is redundant as it is more restrictive than type " + widerText);
     }
+
+    /** zend_compile_single_typename's name checks: built-in types unqualified, no reserved class name. */
+    private void checkTypeName(Ast part, String resolved) {
+        String raw = Str.lower((String) part.get("name"));
+        if (part.flags != NAME_NOT_FQ && BUILTIN_TYPE_NAMES.contains(raw)) {
+            throw compileError(part.line, "Type declaration '" + raw + "' must be unqualified");
+        }
+        if (part.flags == NAME_FQ && (raw.equals("self") || raw.equals("parent") || raw.equals("static"))) {
+            throw compileError(part.line, "'\\" + part.get("name") + "' is an invalid class name");
+        }
+        String last = Str.lower(resolved.substring(resolved.lastIndexOf('\\') + 1));
+        if (resolved.indexOf('\\') >= 0 && RESERVED_CLASS_NAMES.contains(last)) {
+            throw compileError(part.line, "Cannot use \"" + resolved + "\" as a type name as it is reserved");
+        }
+    }
+
+    private static final int NAME_FQ = 0;
+    private static final int NAME_NOT_FQ = 1;
+    /** zend_lookup_builtin_type_by_name's names, and static. */
+    private static final Set<String> BUILTIN_TYPE_NAMES = Set.of("null", "true", "false", "int", "float", "string",
+            "bool", "void", "never", "iterable", "object", "mixed", "static");
 
     /** zend_ensure_valid_class_fetch_type: self and parent need a class, where the scope is known. */
     private void checkClassScope(Ast at, String name) {
@@ -1478,11 +1549,13 @@ public final class Translator {
                 : value instanceof TruffleString ? PhpType.STRING : value instanceof Boolean b
                 ? (b ? PhpType.TRUE : PhpType.FALSE) : value == PhpNull.NULL ? PhpType.NULL
                 : value instanceof PhpArray ? PhpType.ARRAY : 0;
-        if (type.has(bit)) {
-            return value;
-        }
-        if (bit == PhpType.INT && type.has(PhpType.FLOAT)) {
-            return (double) (long) (Long) value;
+        validDefault(type, bit, line, what);
+        return bit == PhpType.INT && !type.has(PhpType.INT) ? (Object) (double) (long) (Long) value : value;
+    }
+
+    private void validDefault(PhpType type, int bit, int line, String what) {
+        if (bit == 0 || type.has(bit) || bit == PhpType.INT && type.has(PhpType.FLOAT)) {
+            return;
         }
         if (bit == PhpType.NULL && !type.isIntersection() && what.startsWith("property")) {
             throw compileError(line, "Default value for property of type " + type.text(null)
@@ -1493,6 +1566,31 @@ public final class Translator {
                 : bit == PhpType.ARRAY ? "array" : bit == PhpType.NULL ? "null" : "bool";
         throw compileError(line, "Cannot use " + name + " as default value for " + what + " of type "
                 + type.text(null));
+    }
+
+    /** The type bit of a parameter's default as written, if it is a literal (0 for an expression to evaluate). */
+    private static int literalBit(Object value) {
+        if (value instanceof Long) {
+            return PhpType.INT;
+        }
+        if (value instanceof Double) {
+            return PhpType.FLOAT;
+        }
+        if (value instanceof String || value instanceof byte[]) {
+            return PhpType.STRING;
+        }
+        if (value instanceof Ast ast && ast.is("AST_CONST") && ast.node("name") != null) {
+            String name = Str.lower((String) ast.node("name").get("name"));
+            return name.equals("true") ? PhpType.TRUE : name.equals("false") ? PhpType.FALSE : 0;
+        }
+        if (value instanceof Ast ast && ast.is("AST_ARRAY") && ast.size() == 0) {
+            return PhpType.ARRAY;
+        }
+        if (value instanceof Ast ast && ast.is("AST_UNARY_OP") && (ast.get("expr") instanceof Long
+                || ast.get("expr") instanceof Double)) {
+            return literalBit(ast.get("expr"));
+        }
+        return 0;
     }
 
     /** zend_check_magic_method_return_type: a magic method's declared return type must be php-src's. */
