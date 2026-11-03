@@ -23,10 +23,10 @@ Then whether the Bytecode DSL interpreter has the same problems.
    page, −32% p99, −21% memory.peak, −59% libgraal**; warm (4 interleaved rounds, the order reversed each round):
    orders/s and CPU-s per page unchanged (1.00, 0.99), memory.peak **−42%**, RssAnon −48%. Of the targets alone,
    only target 1 moves anything measurable at steady state (memory); targets 2 and 3 are within ±5% noise there.
-5. **Correctness:** 4 new smoke tests pinning PHP 8.5 (the dispatch's and `defined()`'s cases), every smoke test
-   equal, Gate 2's pages 19 of 21 (the known oEmbed link), the WooCommerce walk as the base's, php-src `.phpt`
-   no new failure and 7 more passing, Gate 1's checksums equal. Found on the way: `issues/012-014` (class
-   constant and method visibility, namespaced intrinsics).
+5. **Correctness:** 4 new smoke tests pinning PHP 8.5 (the dispatch's and `defined()`'s cases), every smoke test equal,
+   Gate 2's pages 19 of 21 (the known oEmbed link), the WooCommerce walk as the base's, php-src `.phpt` no new failure
+   (7 more passing from this branch, 64 with main's merge), Gate 1's checksums equal. Found on the way: `issues/012-014`
+   (class constant and method visibility, namespaced intrinsics).
 6. **The bytecode interpreter** already dispatches per method and reports no polymorphism there, and keeps file
    tops and thunks on the tree (target 1 applies); `defined()` would need porting to it.
 
@@ -186,7 +186,8 @@ context, three contexts on one engine, statements instrumented):
   another, on base as on the others (three walks of base: one, none, none). That is #21's known difference: the
   Action Scheduler ends its batch when `memory_get_usage()` (the JVM's heap here) passes 90% of `memory_limit`.
 - **php-src `.phpt`:** t1 against base: 7 newly pass (`constants/bug41633_4`, `bug42820`, `bug46304`,
-  `inheritance/bug53727`, two of `attributes/deprecated/class_constants`, `type_coercion/float_to_int/non-rep-float-as-int-extra1`), 1 newly failed, `Zend/tests/traits/constant_017.php`:
+  `inheritance/bug53727`, two of `attributes/deprecated/class_constants`,
+  `type_coercion/float_to_int/non-rep-float-as-int-extra1`), 1 newly failed, `traits/constant_017.php`:
   `defined('Trait::X')` must be false, which `41b8e70` fixed (and `defined-special.php` now tests). The final
   build against base: 64 newly pass, and the one newly failing, `class_name/bug69754.php`, prints `date('Ymd')`:
   the oracle ran the day before.
@@ -239,10 +240,10 @@ memsplit every minute, TraceCompilation, libgraal's PrintGC), base and t1 interl
 | r2 base | 0.51 | 7.0 | 1950 / 6492 | 1.093 | 2,348 MB | 2,365 MB | 985 MB | 467 MB | 6,708 | 1 (the classmap's timeout) |
 | **t1 / base**, geometric mean | **1.26** | 1.21 | 0.86 / 0.68 | **0.83** | 0.78 | **0.79** | **0.41** | 0.19 | | |
 
-The first server of each round won its round again, so only the pair of rounds says anything: over both, t1 took
-26% more orders (21% more pages) in its first 12 minutes at 17% less CPU per page, with a fifth less memory.peak and less than half
-of libgraal's memory, and no failed compilation; base's second run hadn't reached two of the three giants in its
-12 minutes (one failure). Compile time stays saturated (1,981-2,040 s of wall time on each, `m-*-kinds.txt`); t1's
+The first server of each round won its round again, so only the pair of rounds says anything: over both, t1 took 26%
+more orders (21% more pages) in its first 12 minutes at 17% less CPU per page, with a fifth less memory.peak and less
+than half of libgraal's memory, and no failed compilation; base's second run hadn't reached two of the three giants in
+its 12 minutes (one failure). Compile time stays saturated (1,981-2,040 s of wall time on each, `m-*-kinds.txt`); t1's
 goes to tier 2 (919-1,250 s against base's 919).
 
 ### `defined()`: the sampler
@@ -273,8 +274,9 @@ The medians, base → t1: 1.57 → 1.64 orders/s, 12.6 → 13.1 pages/s, p50 112
   found for #19 and #20 (each round's ratio moves by ±10-40%, the first-started server still often ahead). The
   memruns' first 12 minutes (above) are where t1 is faster: there the compilation that no longer fails and the
   splits that no longer happen are a large part of the server's work; after 300 s of warm-up the requests run
-  compiled code that these targets barely change (the dispatch's direct calls replace per-class ones the split
-  copies already had; `defined()` was cheaper than the sampler's 6.8% said).
+  compiled code that these targets barely change: likely the split copies had already made the dispatch's sites
+  monomorphic per caller, and `defined()` cost less than the sampler's 6.8% (which counts where compiled code
+  polls for safepoints) said.
 - **Memory: −41-42% memory.peak and −46-48% RssAnon, from target 1** (t2 → t1 and base → t1 alike, every round
   0.46-0.66): with no giant compiling, libgraal's isolates stay small.
 - **Correctness under load** (`woo_check.py`): no failed request in any of the 32 runs. Four runs (one in eight,
@@ -312,11 +314,11 @@ functions' bodies; this page's measurements are the tree's, as the base's. On ma
    so **target 1 applies to it as it is**. If the tree goes and top levels become bytecode roots, the same
    `prepareForCompilation` belongs on them: no loop (the translator knows when it emits a loop or a label), large,
    and no include site having run the file twice (`IncludeNode`'s bookkeeping, wherever includes run).
-2. **Dispatch:** the bytecode path was already built this way: `ResolveMethod` / `ResolveStaticMethod` cache the
-   method per class key (limit 4, then a lookup per call), and `CallMethod`, `CallStatic` and `Construct` dispatch on
-   the `PhpFunction` found (limit 4). These operations carry no `@ReportPolymorphism`, so they don't ask for a
-   split, neither for one method over many classes nor for several methods. **No porting needed;** what differs is the lookup's limit (4
-   against the tree's 8) and that a site calling different methods doesn't report (target 6's question).
+2. **Dispatch:** the bytecode path was already built this way: `ResolveMethod` / `ResolveStaticMethod` cache the method
+   per class key (limit 4, then a lookup per call), and `CallMethod`, `CallStatic` and `Construct` dispatch on the
+   `PhpFunction` found (limit 4). These operations carry no `@ReportPolymorphism`, so they don't ask for a split,
+   neither for one method over many classes nor for several methods. **No porting needed;** what differs is the lookup's
+   limit (4 against the tree's 8) and that a site calling different methods doesn't report (target 6's question).
 3. **`defined()`:** `BytecodeTranslator.call` sends `defined('X')` through `CallInfo` to the built-in, as any
    call: **the node would need porting** (an operation with the constant's id as a constant operand, under
    `compiledSpecially`'s same condition). The built-in's fixes (`zend_get_constant_ex`'s forms, the namespace's
