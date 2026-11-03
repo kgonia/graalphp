@@ -400,16 +400,33 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class CheckParameter {
         @Specialization
         public static Object object(VirtualFrame frame, int index, PhpObject value, @Bind PhpBytecodeRootNode root,
-                                    @Bind Node node, @Cached SubclassTestNode test) {
-            PhpFunction.Param param = root.params[index];
-            return param.declared().acceptsObject(value.getPhpClass(), test) ? value
-                    : FunctionRootNode.argumentSlow(root.name, param, index, value, calledClass(frame), node);
+                                    @Bind Node node, @Bind BytecodeNode bytecode, @Cached SubclassTestNode test) {
+            return root.params[index].declared().acceptsObject(value.getPhpClass(), test) ? value
+                    : slow(frame, index, value, root, node, bytecode);
         }
 
         @Specialization(guards = "!isObject(value)")
         public static Object other(VirtualFrame frame, int index, Object value, @Bind PhpBytecodeRootNode root,
-                                   @Bind Node node) {
-            return FunctionRootNode.checkArgument(root.name, root.params[index], index, value, calledClass(frame),
+                                   @Bind Node node, @Bind BytecodeNode bytecode) {
+            if (value instanceof PhpRef) {
+                return FunctionRootNode.checkArgument(root.name, root.params[index], index, value,
+                        calledClass(frame), node);
+            }
+            Object accepted = root.params[index].declared().fast(value);
+            return accepted != null ? accepted : slow(frame, index, value, root, node, bytecode);
+        }
+
+        /**
+         * The argument converted or the TypeError: the parameter's variable holds the argument meanwhile, as
+         * php-src's call slot does, so the error's trace shows it (an array, whose holders the binding counts,
+         * stays out).
+         */
+        private static Object slow(VirtualFrame frame, int index, Object value, PhpBytecodeRootNode root, Node node,
+                                   BytecodeNode bytecode) {
+            if (!(value instanceof PhpArray)) {
+                root.variables[root.parameterLocals[index]].setObject(bytecode, frame, value);
+            }
+            return FunctionRootNode.argumentSlow(root.name, root.params[index], index, value, calledClass(frame),
                     node);
         }
 
