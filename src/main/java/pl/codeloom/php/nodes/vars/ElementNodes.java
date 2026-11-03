@@ -258,7 +258,7 @@ public final class ElementNodes {
                                                  @Shared("missing") @Cached InlinedBranchProfile missing) {
             long offset = key instanceof Long l ? l : stringOffsetOf(node, key);
             int length = string.byteLength(Str.ENC);
-            if (offset < 0 ? -offset > length : offset >= length) {
+            if (offset < 0 ? offset < -length : offset >= length) {
                 missing.enter(node);
                 return uninitializedOffset(node, offset);
             }

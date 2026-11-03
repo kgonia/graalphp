@@ -131,7 +131,8 @@ public final class PropNode extends LValueNode {
         if (object instanceof VariableVariableNode variable) {
             return variable.fetch(frame, fetch);
         }
-        if (object instanceof LValueNode place) {
+        // a property is read as a read does (FETCH_OBJ_W falls back to __get, with no __isset)
+        if (object instanceof LValueNode place && !(object instanceof PropNode)) {
             Object value = place.readIfSet(frame);
             return value == null ? PhpNull.NULL : value;
         }
