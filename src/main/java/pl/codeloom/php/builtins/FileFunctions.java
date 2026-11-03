@@ -915,6 +915,10 @@ final class FileFunctions {
             this.fd = fd;
         }
 
+        int fd() {
+            return fd;
+        }
+
         @Override
         int rawRead(byte[] into, int offset, int length) {
             if (fd != 0) {

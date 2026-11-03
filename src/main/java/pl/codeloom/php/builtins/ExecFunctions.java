@@ -4,7 +4,13 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.ffi.NativeLibrary;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpResource;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.Str;
 
@@ -23,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -37,6 +44,28 @@ final class ExecFunctions {
     }
 
     static void register(Registry r) {
+        r.fn("proc_open", "001", (context, a) -> ProcOpen.open(context, a));
+        r.fn("proc_close", (context, a) -> {
+            Args.arity(a, "proc_close", 1, 1);
+            PhpResource resource = ProcOpen.resource(a, "proc_close");
+            ProcOpen.Process process = (ProcOpen.Process) resource.getHandle();
+            resource.close();
+            return (long) process.close(context, true);
+        });
+        r.fn("proc_get_status", (context, a) -> {
+            Args.arity(a, "proc_get_status", 1, 1);
+            return ((ProcOpen.Process) ProcOpen.resource(a, "proc_get_status").getHandle()).status();
+        });
+        r.fn("proc_terminate", (context, a) -> {
+            Args.arity(a, "proc_terminate", 1, 2);
+            ProcOpen.Process process = (ProcOpen.Process) ProcOpen.resource(a, "proc_terminate").getHandle();
+            long signal = Args.has(a, 1) ? Args.integer(context, a, 1, "proc_terminate", "signal", "int") : 15;
+            try {
+                return (int) Libc.KILL.invokeExact(process.pid, (int) signal) == 0;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        });
         r.fn("escapeshellcmd", (context, a) -> {
             Args.arity(a, "escapeshellcmd", 1, 1);
             byte[] command = Str.bytes(Args.string(context, a, 0, "escapeshellcmd", "command", false));
@@ -443,6 +472,482 @@ final class ExecFunctions {
         }
     }
 
+    /** proc_open.c on Linux (its posix_spawn path): the descriptors, the child, the "process" resource. */
+    static final class ProcOpen {
+        private static final int O_RDONLY = 0;
+        private static final int O_WRONLY = 1;
+        private static final int O_RDWR = 2;
+        private static final int O_CREAT = 0x40;
+        private static final int O_EXCL = 0x80;
+        private static final int O_TRUNC = 0x200;
+        private static final int O_APPEND = 0x400;
+        private static final int O_CLOEXEC = 0x80000;
+
+        private ProcOpen() {
+        }
+
+        /** A descriptorspec_item: the child's fd number, the end it gets, the parent's end of a pipe (or -1). */
+        private static final class Descriptor {
+            final int index;
+            int childEnd = -1;
+            int parentEnd = -1;
+            String mode;
+
+            Descriptor(int index) {
+                this.index = index;
+            }
+        }
+
+        /** A php_process_handle. */
+        static final class Process {
+            final int pid;
+            final TruffleString command;
+            final List<PhpResource> pipes = new ArrayList<>();
+            /** The wait status once waitpid saw the child exit (has_cached_exit_wait_status). */
+            Integer cachedExit;
+
+            Process(int pid, TruffleString command) {
+                this.pid = pid;
+                this.command = command;
+            }
+
+            /** waitpid_cached: the pid, 0 or -1, and the status in status[0]. */
+            int waitpid(int[] status, int options) {
+                if (cachedExit != null) {
+                    status[0] = cachedExit;
+                    return pid;
+                }
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment wstatus = arena.allocate(ValueLayout.JAVA_INT);
+                    MemorySegment state = arena.allocate(Libc.CAPTURED);
+                    int waited;
+                    do {
+                        waited = (int) Libc.WAITPID.invokeExact(state, pid, wstatus, options);
+                    } while (waited == -1 && (int) Libc.ERRNO.get(state, 0L) == Spawn.EINTR);
+                    status[0] = wstatus.get(ValueLayout.JAVA_INT, 0);
+                    if (waited > 0 && (status[0] & 0x7F) == 0) {
+                        cachedExit = status[0];
+                    }
+                    return waited;
+                } catch (Throwable t) {
+                    throw new IllegalStateException(t);
+                }
+            }
+
+            /** proc_open_rsrc_dtor: the pipes closed, then the exit code (waiting when asked), or -1. */
+            int close(PhpContext context, boolean wait) {
+                for (PhpResource pipe : pipes) {
+                    if (pipe.getHandle() instanceof FileFunctions.Stream stream) {
+                        context.builtinState().openStreams.remove(stream);
+                        FileFunctions.closeStream(stream);
+                        pipe.close();
+                    }
+                }
+                int[] status = new int[1];
+                if (waitpid(status, wait ? 0 : 1) <= 0) {
+                    return -1;
+                }
+                return (status[0] & 0x7F) == 0 ? (status[0] >> 8) & 0xFF : status[0];
+            }
+
+            /** proc_get_status. */
+            PhpArray status() {
+                PhpArray result = new PhpArray();
+                result.put(FileFunctions.key("command"), command);
+                result.put(FileFunctions.key("pid"), (long) pid);
+                int[] status = new int[1];
+                int waited = waitpid(status, 1 | 2); // WNOHANG | WUNTRACED
+                boolean running = true;
+                boolean signaled = false;
+                boolean stopped = false;
+                long exitcode = -1;
+                long termsig = 0;
+                long stopsig = 0;
+                int w = status[0];
+                if (waited == pid) {
+                    if ((w & 0x7F) == 0) {
+                        running = false;
+                        exitcode = (w >> 8) & 0xFF;
+                    }
+                    if ((w & 0x7F) != 0 && (w & 0x7F) != 0x7F) {
+                        running = false;
+                        signaled = true;
+                        termsig = w & 0x7F;
+                    }
+                    if ((w & 0xFF) == 0x7F) {
+                        stopped = true;
+                        stopsig = (w >> 8) & 0xFF;
+                    }
+                } else if (waited == -1) {
+                    running = false;
+                }
+                result.put(FileFunctions.key("cached"), cachedExit != null);
+                result.put(FileFunctions.key("running"), running);
+                result.put(FileFunctions.key("signaled"), signaled);
+                result.put(FileFunctions.key("stopped"), stopped);
+                result.put(FileFunctions.key("exitcode"), exitcode);
+                result.put(FileFunctions.key("termsig"), termsig);
+                result.put(FileFunctions.key("stopsig"), stopsig);
+                return result;
+            }
+        }
+
+        /** A pipe's parent end as php_stream_fopen_from_fd makes it: read(2) and write(2), not seekable. */
+        static final class PipeStream extends FileFunctions.Stream {
+            private final int fd;
+
+            PipeStream(int fd, String mode) {
+                super(mode, "");
+                this.fd = fd;
+            }
+
+            @Override
+            int rawRead(byte[] into, int offset, int length) {
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment buffer = arena.allocate(Math.max(1, length));
+                    MemorySegment state = arena.allocate(Libc.CAPTURED);
+                    long n;
+                    do {
+                        n = (long) Libc.READ.invokeExact(state, fd, buffer, (long) length);
+                    } while (n < 0 && (int) Libc.ERRNO.get(state, 0L) == Spawn.EINTR);
+                    if (n <= 0) {
+                        eof = true;
+                        return n < 0 ? -1 : 0;
+                    }
+                    MemorySegment.copy(buffer, ValueLayout.JAVA_BYTE, 0, into, offset, (int) n);
+                    return (int) n;
+                } catch (Throwable t) {
+                    throw new IllegalStateException(t);
+                }
+            }
+
+            @Override
+            int rawWrite(byte[] bytes, int offset, int length) {
+                try (Arena arena = Arena.ofConfined()) {
+                    byte[] slice = Arrays.copyOfRange(bytes, offset, offset + length);
+                    return Spawn.write(arena, fd, slice) == 0 ? length : -1;
+                } catch (Throwable t) {
+                    throw new IllegalStateException(t);
+                }
+            }
+
+            @Override
+            boolean greedy() {
+                return false;
+            }
+
+            @Override
+            void rawClose() {
+                try {
+                    int ignored = (int) Libc.CLOSE.invokeExact(fd);
+                } catch (Throwable t) {
+                    throw new IllegalStateException(t);
+                }
+            }
+
+            @Override
+            String wrapperType() {
+                return null;
+            }
+
+            @Override
+            String streamType() {
+                return "STDIO";
+            }
+        }
+
+        static PhpResource resource(Object[] a, String function) {
+            Object value = Args.get(a, 0, PhpNull.NULL);
+            if (!(value instanceof PhpResource resource)) {
+                throw Args.typeError(function, 1, "process", "resource", value);
+            }
+            if (!(resource.getHandle() instanceof Process)) {
+                throw new PhpError("TypeError", function + "(): supplied resource is not a valid process resource");
+            }
+            return resource;
+        }
+
+        private static String strerror(int errno) {
+            try {
+                return ((MemorySegment) Libc.STRERROR.invokeExact(errno)).reinterpret(4096).getString(0);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        private static void warn(PhpContext context, String message) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("proc_open(): " + message),
+                    SourceLocation.current());
+        }
+
+        @TruffleBoundary
+        static Object open(PhpContext context, Object[] a) {
+            Args.arity(a, "proc_open", 3, 6);
+            Object commandArg = Args.get(a, 0);
+            List<byte[]> argv = null;
+            TruffleString command;
+            if (commandArg instanceof PhpArray list) {
+                if (list.size() == 0) {
+                    throw new PhpError("ValueError", "proc_open(): Argument #1 ($command) must not be empty");
+                }
+                argv = new ArrayList<>();
+                Object[] entries = list.entries();
+                for (int i = 1; i < entries.length; i += 2) {
+                    byte[] arg = Str.bytes(Convert.toStr(entries[i]));
+                    if (i == 1 && arg.length == 0) {
+                        throw new PhpError("ValueError", "First element must contain a non-empty program name");
+                    }
+                    if (indexOf(arg, (byte) 0, 0) >= 0) {
+                        throw new PhpError("ValueError", "Command array element " + (i / 2 + 1)
+                                + " contains a null byte");
+                    }
+                    argv.add(arg);
+                }
+                command = Str.of(argv.get(0));
+            } else {
+                command = Args.string(context, a, 0, "proc_open", "command", false);
+            }
+            Object spec = Args.get(a, 1);
+            if (!(spec instanceof PhpArray specs)) {
+                throw Args.typeError("proc_open", 2, "descriptor_spec", "array", spec);
+            }
+            TruffleString cwd = Args.get(a, 3, PhpNull.NULL) == PhpNull.NULL ? null
+                    : Args.string(context, a, 3, "proc_open", "cwd", true);
+            Object environmentArg = Args.get(a, 4, PhpNull.NULL);
+            if (environmentArg != PhpNull.NULL && !(environmentArg instanceof PhpArray)) {
+                throw Args.typeError("proc_open", 5, "env_vars", "?array", environmentArg);
+            }
+            List<byte[]> envp = new ArrayList<>();
+            if (environmentArg instanceof PhpArray variables) {
+                Object[] entries = variables.entries();
+                for (int i = 0; i < entries.length; i += 2) {
+                    byte[] value = Str.bytes(Convert.toStr(entries[i + 1]));
+                    if (value.length > 0) {
+                        envp.add(entries[i] instanceof TruffleString key && Str.length(key) > 0
+                                ? concat(Str.bytes(key), (byte) '=', value) : value);
+                    }
+                }
+            } else {
+                for (Map.Entry<String, String> variable : RuntimeFunctions.environment(context).entrySet()) {
+                    envp.add((variable.getKey() + "=" + variable.getValue()).getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            List<Descriptor> descriptors = new ArrayList<>();
+            try (Arena arena = Arena.ofConfined()) {
+                Object[] entries = specs.entries();
+                for (int i = 0; i < entries.length; i += 2) {
+                    if (!(entries[i] instanceof Long index)) {
+                        throw new PhpError("ValueError", "proc_open(): Argument #2 ($descriptor_spec) must be an "
+                                + "integer indexed array");
+                    }
+                    Descriptor descriptor = new Descriptor((int) (long) index);
+                    if (entries[i + 1] instanceof PhpResource resource) {
+                        int fd = resource.getHandle() instanceof PipeStream pipe ? pipe.fd
+                                : resource.getHandle() instanceof FileFunctions.StdStream std ? std.fd() : -1;
+                        if (fd < 0) {
+                            warn(context, "Cannot represent a stream of type " + (resource.getHandle()
+                                    instanceof FileFunctions.Stream stream ? stream.streamType() : "Unknown")
+                                    + " as a File Descriptor");
+                            return fail(descriptors);
+                        }
+                        descriptor.childEnd = (int) Libc.DUP.invokeExact(fd);
+                    } else if (entries[i + 1] instanceof PhpArray item) {
+                        if (!describe(context, arena, item, descriptor, descriptors)) {
+                            return fail(descriptors);
+                        }
+                    } else {
+                        throw new PhpError("ValueError", "proc_open(): Argument #2 ($descriptor_spec) must only "
+                                + "contain arrays and streams");
+                    }
+                    descriptors.add(descriptor);
+                }
+                if (context.response() == null) {
+                    context.flush();
+                }
+                MemorySegment actions = arena.allocate(256, 16);
+                int ignored = (int) Libc.FILE_ACTIONS_INIT.invokeExact(actions);
+                // the child's signal mask emptied, as Spawn's (a JVM thread's isn't php's)
+                MemorySegment attributes = arena.allocate(1024, 16);
+                MemorySegment signals = arena.allocate(256, 16);
+                ignored = (int) Libc.SPAWNATTR_INIT.invokeExact(attributes);
+                ignored = (int) Libc.SIGEMPTYSET.invokeExact(signals);
+                ignored = (int) Libc.SPAWNATTR_SETSIGMASK.invokeExact(attributes, signals);
+                ignored = (int) Libc.SPAWNATTR_SETFLAGS.invokeExact(attributes, Spawn.POSIX_SPAWN_SETSIGMASK);
+                int pid;
+                try {
+                    for (Descriptor d : descriptors) {
+                        if (d.parentEnd >= 0) {
+                            ignored = (int) Libc.FILE_ACTIONS_ADDCLOSE.invokeExact(actions, d.parentEnd);
+                        }
+                        if (d.childEnd != d.index) {
+                            ignored = (int) Libc.FILE_ACTIONS_ADDDUP2.invokeExact(actions, d.childEnd, d.index);
+                            ignored = (int) Libc.FILE_ACTIONS_ADDCLOSE.invokeExact(actions, d.childEnd);
+                        }
+                    }
+                    String directory = cwd != null ? Str.java(cwd)
+                            : context.getEnv().getCurrentWorkingDirectory().getPath();
+                    if ((cwd != null || !directory.equals(System.getProperty("user.dir"))) && AddChdir.AVAILABLE) {
+                        int error = (int) Libc.FILE_ACTIONS_ADDCHDIR.invokeExact(actions,
+                                Spawn.cString(arena, directory));
+                        if (error != 0) {
+                            warn(context, "posix_spawn_file_actions_addchdir_np() failed: " + strerror(error));
+                        }
+                    }
+                    MemorySegment child = arena.allocate(ValueLayout.JAVA_INT);
+                    int error = argv != null
+                            ? (int) Libc.POSIX_SPAWNP.invokeExact(child, Spawn.cString(arena, argv.get(0)), actions,
+                                    attributes, Spawn.pointers(arena, argv), Spawn.pointers(arena, envp))
+                            : (int) Libc.POSIX_SPAWN.invokeExact(child, Spawn.cString(arena, "/bin/sh"), actions,
+                                    attributes, Spawn.pointers(arena, List.of(
+                                            "sh".getBytes(StandardCharsets.US_ASCII),
+                                            "-c".getBytes(StandardCharsets.US_ASCII), Str.bytes(command))),
+                                    Spawn.pointers(arena, envp));
+                    if (error != 0) {
+                        warn(context, "posix_spawn() failed: " + strerror(error));
+                        return fail(descriptors);
+                    }
+                    pid = child.get(ValueLayout.JAVA_INT, 0);
+                } finally {
+                    ignored = (int) Libc.FILE_ACTIONS_DESTROY.invokeExact(actions);
+                    ignored = (int) Libc.SPAWNATTR_DESTROY.invokeExact(attributes);
+                }
+                PhpArray pipes = new PhpArray();
+                Process process = new Process(pid, command);
+                for (Descriptor d : descriptors) {
+                    ignored = (int) Libc.CLOSE.invokeExact(d.childEnd);
+                    if (d.parentEnd >= 0) {
+                        PhpResource pipe = FileFunctions.resource(context, new PipeStream(d.parentEnd, d.mode));
+                        pipes.put((long) d.index, pipe);
+                        process.pipes.add(pipe);
+                    }
+                }
+                Args.ref(a, 2).set(pipes);
+                return new PhpResource(context.nextResourceId(), "process", process);
+            } catch (PhpError e) {
+                fail(descriptors);
+                throw e;
+            } catch (Throwable t) {
+                throw new IllegalStateException("proc_open failed", t);
+            }
+        }
+
+        private static byte[] concat(byte[] key, byte separator, byte[] value) {
+            byte[] result = Arrays.copyOf(key, key.length + 1 + value.length);
+            result[key.length] = separator;
+            System.arraycopy(value, 0, result, key.length + 1, value.length);
+            return result;
+        }
+
+        /** close_all_descriptors, then false. */
+        private static Object fail(List<Descriptor> descriptors) {
+            try {
+                for (Descriptor d : descriptors) {
+                    int ignored = d.childEnd >= 0 ? (int) Libc.CLOSE.invokeExact(d.childEnd) : 0;
+                    ignored = d.parentEnd >= 0 ? (int) Libc.CLOSE.invokeExact(d.parentEnd) : 0;
+                }
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+            return Boolean.FALSE;
+        }
+
+        private static TruffleString parameter(PhpArray item, long index, String name) {
+            Object value = item.get(index);
+            if (value == null) {
+                throw new PhpError("ValueError", "Missing " + name);
+            }
+            return Convert.toStr(value instanceof pl.codeloom.php.runtime.PhpRef ref ? ref.get() : value);
+        }
+
+        /** set_proc_descriptor_from_array: false after a warning. */
+        private static boolean describe(PhpContext context, Arena arena, PhpArray item, Descriptor descriptor,
+                                        List<Descriptor> descriptors) throws Throwable {
+            String type = Str.java(parameter(item, 0, "handle qualifier"));
+            switch (type) {
+                case "pipe" -> {
+                    String mode = Str.java(parameter(item, 1, "mode parameter for 'pipe'"));
+                    MemorySegment fds = arena.allocate(ValueLayout.JAVA_INT, 2);
+                    if ((int) Libc.PIPE2.invokeExact(fds, 0) != 0) {
+                        warn(context, "Unable to create pipe");
+                        return false;
+                    }
+                    boolean parentWrites = !mode.startsWith("w");
+                    descriptor.parentEnd = fds.getAtIndex(ValueLayout.JAVA_INT, parentWrites ? 1 : 0);
+                    descriptor.childEnd = fds.getAtIndex(ValueLayout.JAVA_INT, parentWrites ? 0 : 1);
+                    descriptor.mode = parentWrites ? "w" : "r";
+                    int ignored = (int) Libc.FCNTL.invokeExact(descriptor.parentEnd, 2, 1); // F_SETFD, FD_CLOEXEC
+                    return true;
+                }
+                case "file" -> {
+                    String file = Str.java(parameter(item, 1, "file name parameter for 'file'"));
+                    String mode = Str.java(parameter(item, 2, "mode parameter for 'file'"));
+                    char kind = mode.isEmpty() ? 0 : mode.charAt(0);
+                    boolean plus = mode.indexOf('+') >= 0;
+                    int flags = switch (kind) {
+                        case 'r' -> plus ? O_RDWR : O_RDONLY;
+                        case 'w' -> (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_TRUNC;
+                        case 'a' -> (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_APPEND;
+                        case 'x' -> (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_EXCL;
+                        case 'c' -> (plus ? O_RDWR : O_WRONLY) | O_CREAT;
+                        default -> -1;
+                    };
+                    if (flags < 0) {
+                        warn(context, "`" + mode + "' is not a valid mode for fopen");
+                        return false;
+                    }
+                    String path = file.regionMatches(true, 0, "file://", 0, 7) ? file.substring(7) : file;
+                    MemorySegment state = arena.allocate(Libc.CAPTURED);
+                    descriptor.childEnd = (int) Libc.OPEN.invokeExact(state, Spawn.cString(arena,
+                            context.getEnv().getCurrentWorkingDirectory().resolve(path).getPath()), flags, 0666);
+                    if (descriptor.childEnd < 0) {
+                        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("proc_open(" + file
+                                + "): Failed to open stream: " + strerror((int) Libc.ERRNO.get(state, 0L))),
+                                SourceLocation.current());
+                        return false;
+                    }
+                    return true;
+                }
+                case "redirect" -> {
+                    Object target = item.get(1L);
+                    target = target instanceof pl.codeloom.php.runtime.PhpRef ref ? ref.get() : target;
+                    if (target == null) {
+                        throw new PhpError("ValueError", "Missing redirection target");
+                    }
+                    if (!(target instanceof Long t)) {
+                        throw new PhpError("ValueError", "Redirection target must be of type int, "
+                                + Args.valueName(target) + " given");
+                    }
+                    int redirectTo = -1;
+                    for (Descriptor d : descriptors) {
+                        if (d.index == t) {
+                            redirectTo = d.childEnd;
+                            break;
+                        }
+                    }
+                    if (redirectTo < 0) {
+                        if (t < 0 || t > 2) {
+                            warn(context, "Redirection target " + t + " not found");
+                            return false;
+                        }
+                        redirectTo = (int) (long) t;
+                    }
+                    descriptor.childEnd = (int) Libc.DUP.invokeExact(redirectTo);
+                    return true;
+                }
+                case "null" -> {
+                    MemorySegment state = arena.allocate(Libc.CAPTURED);
+                    descriptor.childEnd = (int) Libc.OPEN.invokeExact(state, Spawn.cString(arena, "/dev/null"), O_RDWR,
+                            0);
+                    return true;
+                }
+                default -> {
+                    warn(context, type + " is not a valid descriptor spec/mode");
+                    return false;
+                }
+            }
+        }
+    }
+
     /** The script owner's uid (php_getuid): the main script's, else the process's (php -r, stdin). */
     static long scriptOwner(PhpContext context) {
         String script = mainScript(context);
@@ -504,6 +1009,18 @@ final class ExecFunctions {
         static final MethodHandle WAITPID = NativeLibrary.LIBC.downcall("waitpid",
                 FunctionDescriptor.of(INT, INT, PTR, INT), Linker.Option.captureCallState("errno"));
         static final MethodHandle GETUID = NativeLibrary.LIBC.downcall("getuid", FunctionDescriptor.of(INT));
+        static final MethodHandle READ = NativeLibrary.LIBC.downcall("read",
+                FunctionDescriptor.of(NativeLibrary.SIZE_T, INT, PTR, NativeLibrary.SIZE_T),
+                Linker.Option.captureCallState("errno"));
+        static final MethodHandle OPEN = NativeLibrary.LIBC.downcall("open", FunctionDescriptor.of(INT, PTR, INT,
+                INT), Linker.Option.firstVariadicArg(2), Linker.Option.captureCallState("errno"));
+        static final MethodHandle DUP = libc("dup", INT, INT);
+        static final MethodHandle FCNTL = NativeLibrary.LIBC.downcall("fcntl", FunctionDescriptor.of(INT, INT, INT,
+                INT), Linker.Option.firstVariadicArg(2));
+        static final MethodHandle KILL = libc("kill", INT, INT, INT);
+        static final MethodHandle STRERROR = libc("strerror", PTR, INT);
+        static final MethodHandle FILE_ACTIONS_ADDCLOSE = libc("posix_spawn_file_actions_addclose", INT, PTR, INT);
+        static final MethodHandle POSIX_SPAWNP = libc("posix_spawnp", INT, PTR, PTR, PTR, PTR, PTR, PTR);
         static final MethodHandle SYSCONF = NativeLibrary.LIBC.downcall("sysconf",
                 FunctionDescriptor.of(NativeLibrary.C_LONG, INT));
         private Libc() {
