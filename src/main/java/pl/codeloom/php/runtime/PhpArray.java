@@ -684,6 +684,11 @@ public final class PhpArray implements TruffleObject {
         return nextIndex;
     }
 
+    /** array_multisort's rebuilt hash: the next append's key is the element count, whatever the keys. */
+    public void setNextIndex(long index) {
+        nextIndex = index;
+    }
+
     /**
      * array_pop(): removes and returns the last element (dereferenced), PhpNull when empty; the internal pointer
      * goes back to the start and a popped trailing int key is reused by the next append. Packed arrays pop inline.

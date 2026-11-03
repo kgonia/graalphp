@@ -12,15 +12,19 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** ext/standard array functions. Sorts are stable, as php-src's zend_sort is since PHP 8.0. */
 final class ArrayFunctions {
@@ -248,15 +252,18 @@ final class ArrayFunctions {
         r.fn("iterator_to_array", a -> iteratorToArray(Args.get(a, 0), Args.bool(a, 1, true)));
 
         // ---- sorting ----
-        r.fn("sort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, false));
-        r.fn("rsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, false));
-        r.fn("usort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, false));
-        r.fn("asort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, true));
-        r.fn("arsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, true));
-        r.fn("uasort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, true));
-        r.fn("ksort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, false, true));
-        r.fn("krsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, true, true));
-        r.fn("uksort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), true, false, true));
+        r.fn("sort", "1", (context, a) -> sort(context, "sort", a, false, false, false));
+        r.fn("rsort", "1", (context, a) -> sort(context, "rsort", a, false, true, false));
+        r.fn("usort", "1", (context, a) -> sort(context, "usort", a, false, false, false));
+        r.fn("asort", "1", (context, a) -> sort(context, "asort", a, false, false, true));
+        r.fn("arsort", "1", (context, a) -> sort(context, "arsort", a, false, true, true));
+        r.fn("uasort", "1", (context, a) -> sort(context, "uasort", a, false, false, true));
+        r.fn("ksort", "1", (context, a) -> sort(context, "ksort", a, true, false, true));
+        r.fn("krsort", "1", (context, a) -> sort(context, "krsort", a, true, true, true));
+        r.fn("uksort", "1", (context, a) -> sort(context, "uksort", a, true, false, true));
+        r.fn("natsort", "1", (context, a) -> sort(context, "natsort", a, false, false, true));
+        r.fn("natcasesort", "1", (context, a) -> sort(context, "natcasesort", a, false, false, true));
+        r.fn("array_multisort", "1*", (context, a) -> multisort(a));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));
@@ -943,35 +950,75 @@ final class ArrayFunctions {
         return result;
     }
 
+    private static final long SORT_REGULAR = 0;
+    private static final long SORT_NUMERIC = 1;
+    private static final long SORT_STRING = 2;
+    private static final long SORT_DESC = 3;
+    private static final long SORT_ASC = 4;
+    private static final long SORT_LOCALE_STRING = 5;
+    private static final long SORT_NATURAL = 6;
+    private static final long SORT_FLAG_CASE = 8;
+
+    /**
+     * The sort functions: the array at argument 0 sorted by the callback at argument 1 (usort, uasort, uksort), by
+     * natural order (natsort, natcasesort) or by the flags at argument 1. Stable, as zend_sort with its fallback to
+     * the original order.
+     */
     @TruffleBoundary
-    private static Object sort(PhpContext context, PhpRef ref, Object callback, boolean byKey, boolean reverse,
+    private static Object sort(PhpContext context, String name, Object[] a, boolean byKey, boolean reverse,
                                boolean keepKeys) {
-        String name = callback != null ? (byKey ? "uksort" : keepKeys ? "uasort" : "usort")
-                : (reverse ? (byKey ? "krsort" : keepKeys ? "arsort" : "rsort")
-                : (byKey ? "ksort" : keepKeys ? "asort" : "sort"));
+        boolean user = name.charAt(0) == 'u';
+        boolean natural = name.startsWith("nat");
+        Args.arity(a, name, user ? 2 : 1, natural ? 1 : 2);
+        PhpRef ref = Args.ref(a, 0);
         if (!(ref.get() instanceof PhpArray array)) {
-            throw new PhpError("TypeError", name + "(): Argument #1 ($array) must be of type array, "
-                    + Convert.debugType(ref.get()) + " given");
+            throw Args.typeError(name, 1, "array", "array", ref.get());
         }
-        List<Entry> entries = new ArrayList<>(array.size());
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            entries.add(new Entry(array.keyAt(p), array.rawAt(p)));
-        }
+        long flags = natural ? SORT_NATURAL | (name.equals("natcasesort") ? SORT_FLAG_CASE : 0)
+                : !user && Args.has(a, 1) ? Args.integer(context, a, 1, name, "flags", "int") : SORT_REGULAR;
         Comparator<Entry> order;
-        if (callback != null) {
-            Callables.Target compare = Callables.parameter(context, callback, new Callables.Parameter(name, 2, false));
-            order = (x, y) -> (int) Math.signum(Convert.toDouble(Convert.toNumber(compare.call(
-                    byKey ? x.key() : PhpRef.deref(x.value()), byKey ? y.key() : PhpRef.deref(y.value())))));
+        if (user) {
+            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+                    new Callables.Parameter(name, 2, false));
+            if (array.size() == 0) {
+                return true;
+            }
+            boolean[] deprecated = {false};
+            order = (x, y) -> {
+                Object first = byKey ? x.key() : PhpRef.deref(x.value());
+                Object second = byKey ? y.key() : PhpRef.deref(y.value());
+                Object result = callback.call(first, second);
+                if (result instanceof Boolean b) {
+                    if (!deprecated[0]) {
+                        deprecated[0] = true;
+                        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + "(): Returning bool"
+                                + " from comparison function is deprecated, return an integer less than, equal to, or"
+                                + " greater than zero"), SourceLocation.current());
+                    }
+                    if (!b) {
+                        return -Long.signum(Convert.toLong(callback.call(second, first)));
+                    }
+                }
+                return Long.signum(Convert.toLong(result));
+            };
         } else if (byKey) {
-            order = (x, y) -> Convert.compare(x.key(), y.key());
+            Comparator<Object> keys = keyOrder(flags);
+            order = (x, y) -> keys.compare(x.key(), y.key());
         } else {
-            order = (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
+            Comparator<Object> values = valueOrder(flags, false);
+            order = (x, y) -> values.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
         }
-        if (reverse) {
-            order = order.reversed();
+        if (array.size() <= (keepKeys ? 1 : 0)) {
+            return true;
         }
-        entries.sort(order);
-        PhpArray result = PhpArray.ofCapacity(entries.size());
+        Entry[] entries = new Entry[array.size()];
+        int i = 0;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            entries[i++] = new Entry(array.keyAt(p), array.rawAt(p));
+        }
+        Comparator<Entry> unstable = order;
+        ZendSort.sort(entries, reverse ? (x, y) -> -unstable.compare(x, y) : unstable);
+        PhpArray result = PhpArray.ofCapacity(entries.length);
         for (Entry entry : entries) {
             Object key = keepKeys ? entry.key() : (Object) result.nextIndex();
             if (entry.value() instanceof PhpRef r) {
@@ -980,7 +1027,163 @@ final class ArrayFunctions {
                 result.put(key, entry.value());
             }
         }
+        if (keepKeys) {
+            result.setNextIndex(array.nextIndex());
+        }
         ref.set(result);
+        return true;
+    }
+
+    /** php_get_data_compare_func: how values compare under the sort flags, reversed for a descending order. */
+    private static Comparator<Object> valueOrder(long flags, boolean reverse) {
+        boolean foldCase = (flags & SORT_FLAG_CASE) != 0;
+        long type = flags & ~SORT_FLAG_CASE;
+        Comparator<Object> order;
+        if (type == SORT_NUMERIC) {
+            order = (x, y) -> threeWay(Convert.toDouble(x), Convert.toDouble(y));
+        } else if (type == SORT_STRING && foldCase) {
+            order = (x, y) -> StringFunctions.compareIgnoreCase(Str.readBytes(Convert.toStr(x)),
+                    Str.readBytes(Convert.toStr(y)), Integer.MAX_VALUE);
+        } else if (type == SORT_STRING) {
+            order = (x, y) -> Str.compare(Convert.toStr(x), Convert.toStr(y));
+        } else if (type == SORT_NATURAL) {
+            order = (x, y) -> StringFunctions.naturalCompare(Str.readBytes(Convert.toStr(x)),
+                    Str.readBytes(Convert.toStr(y)), foldCase);
+        } else if (type == SORT_LOCALE_STRING) {
+            // strcoll in the C locale, the only one there is (no setlocale): the bytes up to the first NUL
+            order = (x, y) -> Str.compare(cString(Convert.toStr(x)), cString(Convert.toStr(y)));
+        } else {
+            order = Convert::compare;
+        }
+        return reverse ? (x, y) -> -order.compare(x, y) : order;
+    }
+
+    /** php_get_key_compare_func: as values, but SORT_NUMERIC reads a string key's leading number (zend_strtod). */
+    private static Comparator<Object> keyOrder(long flags) {
+        long type = flags & ~SORT_FLAG_CASE;
+        if (type == SORT_NUMERIC) {
+            return (x, y) -> x instanceof Long l && y instanceof Long m ? Long.compare(l, m)
+                    : threeWay(leadingDouble(x), leadingDouble(y));
+        }
+        return valueOrder(type == SORT_STRING || type == SORT_NATURAL || type == SORT_LOCALE_STRING ? flags
+                : SORT_REGULAR, false);
+    }
+
+    /** ZEND_THREEWAY_COMPARE of doubles: a NaN on either side compares as greater. */
+    private static int threeWay(double x, double y) {
+        return x == y ? 0 : x < y ? -1 : 1;
+    }
+
+    private static final Pattern LEADING_DOUBLE = Pattern.compile("^[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?");
+
+    /** zend_strtod(key, NULL): an int key's value, or a string key's leading decimal number (0 without one). */
+    private static double leadingDouble(Object key) {
+        if (key instanceof Long l) {
+            return l;
+        }
+        Matcher m = LEADING_DOUBLE.matcher(Str.java((TruffleString) key));
+        return m.find() ? Double.parseDouble(m.group()) : 0;
+    }
+
+    /** The string up to its first NUL, as a C function sees it. */
+    private static TruffleString cString(TruffleString s) {
+        byte[] bytes = Str.readBytes(s);
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] == 0) {
+                return Str.of(Arrays.copyOf(bytes, i));
+            }
+        }
+        return s;
+    }
+
+    /**
+     * array_multisort(): the arrays sorted together row by row, as SQL's ORDER BY, each in the order and type of
+     * the flags after it; string keys stay, int keys are renumbered.
+     */
+    @TruffleBoundary
+    private static Object multisort(Object[] a) {
+        Args.arity(a, "array_multisort", 1, Integer.MAX_VALUE);
+        List<PhpRef> arrays = new ArrayList<>();
+        List<Comparator<Object>> orders = new ArrayList<>();
+        boolean orderAllowed = false;
+        boolean typeAllowed = false;
+        long order = SORT_ASC;
+        long type = SORT_REGULAR;
+        for (int i = 0; i < Args.count(a); i++) {
+            Object arg = Args.get(a, i);
+            String argument = "array_multisort(): Argument #" + (i + 1) + (i == 0 ? " ($array)" : "");
+            if (arg instanceof PhpArray) {
+                if (i > 0) {
+                    orders.add(valueOrder(type, order != SORT_ASC));
+                    order = SORT_ASC;
+                    type = SORT_REGULAR;
+                }
+                arrays.add(Args.ref(a, i));
+                orderAllowed = true;
+                typeAllowed = true;
+            } else if (arg instanceof Long flag) {
+                long kind = flag & ~SORT_FLAG_CASE;
+                boolean isOrder = kind == SORT_ASC || kind == SORT_DESC;
+                if (!isOrder && kind != SORT_REGULAR && kind != SORT_NUMERIC && kind != SORT_STRING
+                        && kind != SORT_NATURAL && kind != SORT_LOCALE_STRING) {
+                    throw new PhpError("ValueError", argument + " must be a valid sort flag");
+                }
+                if (isOrder ? !orderAllowed : !typeAllowed) {
+                    throw new PhpError("TypeError", argument
+                            + " must be an array or a sort flag that has not already been specified");
+                }
+                if (isOrder) {
+                    order = flag == SORT_DESC ? SORT_DESC : SORT_ASC;
+                    orderAllowed = false;
+                } else {
+                    type = flag;
+                    typeAllowed = false;
+                }
+            } else {
+                throw new PhpError("TypeError", argument + " must be an array or a sort flag");
+            }
+        }
+        int size = ((PhpArray) arrays.get(0).get()).size();
+        for (PhpRef ref : arrays) {
+            if (((PhpArray) ref.get()).size() != size) {
+                throw new PhpError("ValueError", "Array sizes are inconsistent");
+            }
+        }
+        if (size == 0) {
+            return true;
+        }
+        orders.add(valueOrder(type, order != SORT_ASC));
+        int columns = arrays.size();
+        Entry[][] rows = new Entry[size][columns];
+        for (int i = 0; i < columns; i++) {
+            PhpArray array = (PhpArray) arrays.get(i).get();
+            int k = 0;
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                rows[k++][i] = new Entry(array.keyAt(p), array.rawAt(p));
+            }
+        }
+        ZendSort.sort(rows, (x, y) -> {
+            for (int i = 0; i < columns; i++) {
+                int result = orders.get(i).compare(PhpRef.deref(x[i].value()), PhpRef.deref(y[i].value()));
+                if (result != 0) {
+                    return result > 0 ? 1 : -1;
+                }
+            }
+            return 0;
+        });
+        for (int i = 0; i < columns; i++) {
+            PhpArray result = PhpArray.ofCapacity(size);
+            for (Entry[] row : rows) {
+                Object key = row[i].key() instanceof Long ? (Object) result.nextIndex() : row[i].key();
+                if (row[i].value() instanceof PhpRef r) {
+                    result.putRef(key, r);
+                } else {
+                    result.put(key, row[i].value());
+                }
+            }
+            result.setNextIndex(size);
+            arrays.get(i).set(result);
+        }
         return true;
     }
 
