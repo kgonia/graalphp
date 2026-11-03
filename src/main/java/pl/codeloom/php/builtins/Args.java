@@ -136,6 +136,25 @@ public final class Args {
         throw typeError(function, index + 1, name, nullable ? "?string" : "string", value);
     }
 
+    /** Z_PARAM_NUMBER in coercive mode (zend_parse_arg_number_slow): a Long or a Double. */
+    public static Object number(PhpContext context, Object[] a, int index, String function, String name) {
+        Object value = get(a, index, PhpNull.NULL);
+        if (value instanceof Long || value instanceof Double) {
+            return value;
+        }
+        if (value instanceof TruffleString s && Convert.numericValue(s) instanceof Object number) {
+            return number;
+        }
+        if (value == PhpNull.NULL) {
+            deprecateNull(context, function, index, name, "int|float");
+            return 0L;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1L : 0L;
+        }
+        throw typeError(function, index + 1, name, "int|float", value);
+    }
+
     /** The deprecation of null for a scalar parameter that doesn't allow it (8.1). */
     public static void deprecateNull(PhpContext context, String function, int index, String name, String type) {
         ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(function + "(): Passing null to parameter #"
