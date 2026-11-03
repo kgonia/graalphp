@@ -2263,11 +2263,8 @@ public final class BytecodeTranslator {
                     return;
                 }
                 case 8 -> {
-                    List<Object> parts = concatOperands(node);
-                    if (parts.size() >= 3) {
-                        concatChain(parts);
-                        return;
-                    }
+                    concat(concatParts(node));
+                    return;
                 }
                 default -> {
                 }
@@ -2279,23 +2276,83 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The operands of `a . b . c ...` (Translator.foldConcat): a left operand that is itself a concatenation
-         * extends the chain, unless it folds to a literal.
+         * The operands of `a . b . c ...` as the reference's opcache leaves them (Translator.concatParts): a left
+         * operand that is a concatenation extends the chain, unless it folds to a literal; an empty literal is
+         * dropped; an operand cast to a string is the value itself; a nested concatenation of two operands or more
+         * is a ConcatOperands.
          */
-        private List<Object> concatOperands(Ast node) {
+        private List<Object> concatParts(Ast node) {
             List<Object> parts = new ArrayList<>();
             if (node.get("left") instanceof Ast left && left.is("AST_BINARY_OP") && left.flags == 8
                     && !constantShaped(left)) {
-                parts.addAll(concatOperands(left));
+                parts.addAll(concatParts(left));
             } else {
-                parts.add(node.get("left"));
+                addConcatPart(parts, node.get("left"));
             }
-            parts.add(node.get("right"));
+            addConcatPart(parts, node.get("right"));
             return parts;
         }
 
+        private void addConcatPart(List<Object> parts, Object operand) {
+            if (constantShaped(operand)) {
+                Object value = constantValue(operand);
+                if (value != PhpNull.NULL && value != Boolean.FALSE
+                        && !(value instanceof TruffleString s && s.isEmpty())) {
+                    parts.add(operand);
+                }
+                return;
+            }
+            Ast ast = (Ast) operand;
+            if (ast.is("AST_CAST") && ast.flags == CastNode.TO_STRING) {
+                addConcatPart(parts, ast.get("expr"));
+            } else if (ast.is("AST_BINARY_OP") && ast.flags == 8) {
+                List<Object> nested = concatParts(ast);
+                if (nested.size() <= 1) {
+                    parts.addAll(nested);
+                } else {
+                    parts.add(new ConcatOperands(nested));
+                }
+            } else if (ast.is("AST_ENCAPS_LIST") && Translator.interpolated(ast).size() == 1) {
+                addConcatPart(parts, Translator.interpolated(ast).get(0));
+            } else {
+                parts.add(operand);
+            }
+        }
+
+        /** A nested concatenation's parts, as one operand. */
+        private record ConcatOperands(List<Object> parts) {
+        }
+
+        /** A concatenation of parts (concatParts): none is "", one converts as a cast, two are a Concat. */
+        private void concat(List<Object> parts) {
+            switch (parts.size()) {
+                case 0 -> b.emitLoadConstant(Str.EMPTY);
+                case 1 -> {
+                    b.beginCastString();
+                    concatPart(parts.get(0));
+                    b.endCastString();
+                }
+                case 2 -> {
+                    b.beginConcat();
+                    concatPart(parts.get(0));
+                    concatPart(parts.get(1));
+                    b.endConcat();
+                }
+                default -> concatChain(parts);
+            }
+        }
+
+        private void concatPart(Object part) {
+            if (part instanceof ConcatOperands nested) {
+                concat(nested.parts());
+            } else {
+                expression(part);
+            }
+        }
+
         /**
-         * Three or more operands (ConcatChainNode): one join, where a `.` per pair compiled a concatenation each.
+         * Three or more operands, or a two-part interpolation (ConcatChainNode): one join, where a `.` per pair
+         * compiled a concatenation each.
          * As php-src's chain of ZEND_CONCAT, the first two are evaluated, then converted (the second waits in a
          * local), and each next one is evaluated and converted in turn.
          */
@@ -2304,10 +2361,10 @@ public final class BytecodeTranslator {
             b.beginInterpolate();
             b.beginInterpolationPart();
             b.beginFirstOfTwo();
-            expression(parts.get(0));
+            concatPart(parts.get(0));
             b.beginBlock();
             b.beginStoreLocal(second);
-            expression(parts.get(1));
+            concatPart(parts.get(1));
             b.endStoreLocal();
             b.emitLoadConstant(PhpNull.NULL);
             b.endBlock();
@@ -2318,7 +2375,7 @@ public final class BytecodeTranslator {
             b.endInterpolationPart();
             for (int i = 2; i < parts.size(); i++) {
                 b.beginInterpolationPart();
-                expression(parts.get(i));
+                concatPart(parts.get(i));
                 b.endInterpolationPart();
             }
             b.endInterpolate();
@@ -2537,12 +2594,23 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * `"text {$expr} $var"` and heredoc (InterpolationNode): each part converted to a string as it is evaluated,
-         * a literal part as it is, then one join.
+         * `"text {$expr} $var"` and heredoc (Translator.interpolation): one part is a cast; two expressions a
+         * concatenation (FAST_CONCAT: both evaluated, then converted), joined as a chain is; anything else a rope
+         * (InterpolationNode): each part converted to a string as it is evaluated, a literal part as it is, then
+         * one join, which is FAST_CONCAT's order too when one of two parts is a literal.
          */
         private void interpolation(Ast node) {
+            List<Object> kept = Translator.interpolated(node);
+            if (kept.size() == 1) {
+                concat(kept);
+                return;
+            }
+            if (Translator.twoExpressions(kept)) {
+                concatChain(kept);
+                return;
+            }
             b.beginInterpolate();
-            for (Object part : node.children()) {
+            for (Object part : kept) {
                 if (part instanceof String || part instanceof byte[]) {
                     constant(part, node);
                     continue;
