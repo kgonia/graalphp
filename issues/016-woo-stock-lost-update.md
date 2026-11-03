@@ -31,8 +31,8 @@ check:
 
 Every server life's log has exactly as many "Deadlock found" errors on the stock UPDATE as its runs lost
 decrements (4 and 4, same products); the two other deadlocks logged (reserve INSERT as the victim) lost nothing.
-Our mysqli reported error 1213 as PHP's does, so `wpdb` logged it.
+InnoDB's `Innodb_deadlocks` counter, before and after each of the 68 runs (`*.dbstatus.before/after`), rose in 7
+runs: by one in each of the 4 with a lost decrement, and by 4 in 3 runs without one (other victims). Our mysqli reported error 1213 as PHP's does, so `wpdb` logged it.
 
 **Not ours:** the SQL and its order are WooCommerce's, the locking is MariaDB 11.4's (REPEATABLE READ), and php-fpm
-loses decrements the same way. The JVM sees it less often per order only because it places fewer orders per
-second. `woo_check.py` could count these deadlocks from the server log, to tell this race from a real lost write.
+loses decrements the same way. `woo_check.py` could count these deadlocks from the server log, to tell this race from a real lost write.
