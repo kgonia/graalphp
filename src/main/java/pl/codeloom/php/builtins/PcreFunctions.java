@@ -56,7 +56,6 @@ public final class PcreFunctions {
     private static final int INFO_NAMEENTRYSIZE = 18;
     private static final int INFO_NAMETABLE = 19;
     private static final int ERROR_NOMATCH = -1;
-    private static final int EXTRA_ALLOW_LOOKAROUND_BSK = 0x00000040;
     private static final int EXTRA_CASELESS_RESTRICT = 0x00000080;
 
     // PHP's preg_* flags and preg_last_error() codes
@@ -350,9 +349,11 @@ public final class PcreFunctions {
         r.fn("preg_match_all", "001", (context, a) -> pcre(context).match(a, true));
         r.fn("preg_replace", "00001", (context, a) -> pcre(context).replace(context, a, false));
         r.fn("preg_replace_callback", "00001", (context, a) -> pcre(context).replace(context, a, true));
-        r.fn("preg_split", (context, a) -> pcre(context).split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
+        r.fn("preg_split", (context, a) -> pcre(context).split(Args.string(context, a, 0, "preg_split", "pattern", false),
+                Args.string(context, a, 1, "preg_split", "subject", false), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
         r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
-        r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
+        r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.string(context, a, 0, "preg_grep", "pattern", false),
+                Args.array(a, 1, "preg_grep", "array"), Args.lng(a, 2, 0)));
         r.fn("preg_last_error", (context, a) -> (long) pcre(context).lastError);
         r.fn("preg_last_error_msg", (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError]));
     }
@@ -468,7 +469,7 @@ public final class PcreFunctions {
         }
         int patternEnd = p++;
         int options = 0;
-        int extra = EXTRA_ALLOW_LOOKAROUND_BSK;
+        int extra = 0;
         for (; p < regex.length; p++) {
             switch (regex[p]) {
                 case 'i' -> options |= CASELESS;
@@ -610,17 +611,19 @@ public final class PcreFunctions {
     @TruffleBoundary
     private Object match(Object[] a, boolean global) {
         String function = global ? "preg_match_all" : "preg_match";
-        Regex regex = compile(Args.str(a, 0), function);
-        if (regex == null) {
-            return Boolean.FALSE;
-        }
-        byte[] subject = Str.readBytes(Args.str(a, 1));
+        PhpContext context = PhpContext.get(null);
+        TruffleString pattern = Args.string(context, a, 0, function, "pattern", false);
+        byte[] subject = Str.readBytes(Args.string(context, a, 1, function, "subject", false));
         PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
-        long flags = Args.lng(a, 3, 0);
-        long offset = Args.lng(a, 4, 0);
+        long flags = Args.has(a, 3) ? Args.integer(context, a, 3, function, "flags", "int") : 0;
+        long offset = Args.has(a, 4) ? Args.integer(context, a, 4, function, "offset", "int") : 0;
         if (offset == Long.MIN_VALUE) {
             throw new PhpError("ValueError", function + "(): Argument #5 ($offset) must be greater than "
                     + Long.MIN_VALUE);
+        }
+        Regex regex = compile(pattern, function);
+        if (regex == null) {
+            return Boolean.FALSE;
         }
         if (matchesRef != null) {
             matchesRef.set(new PhpArray());
