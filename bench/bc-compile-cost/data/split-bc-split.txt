@@ -1,0 +1,40 @@
+cold visit (start to its end): 76.7 CPU-s in 14 s, 76.70 per visit
+  requests           12.37 per visit   16.1%
+  Truffle compiler   30.51 per visit   39.8%
+  HotSpot compiler   31.34 per visit   40.9%
+  GC and VM           0.47 per visit    0.6%
+  other               0.00 per visit    0.0%
+  not seen            2.01 per visit    2.6%
+  top threads: TruffleCompiler 30.5, JVMCI-native Co 26.7, pool-1-thread 12.4, C1 CompilerThre 4.6, GC Thread 0.4, G1 Conc 0.0
+  tier 1: 97 compilations done, 16.9 s compiling (3.9 PE + 12.9 Graal), 16.86 s per visit
+  tier 2: 2 compilations done, 0.0 s compiling (0.0 PE + 0.0 Graal), 0.01 s per visit
+visits 1-50: 393.0 CPU-s in 117 s, 7.86 per visit
+  requests            1.01 per visit   12.9%
+  Truffle compiler    5.68 per visit   72.3%
+  HotSpot compiler    0.80 per visit   10.2%
+  GC and VM           0.05 per visit    0.6%
+  other               0.00 per visit    0.0%
+  not seen            0.32 per visit    4.1%
+  top threads: TruffleCompiler 284.0, pool-1-thread 50.5, JVMCI-native Co 37.9, C1 CompilerThre 2.0, GC Thread 1.2, G1 Conc 0.9
+  tier 1: 1394 compilations done, 171.3 s compiling (36.2 PE + 135.1 Graal), 3.43 s per visit
+  tier 2: 167 compilations done, 76.7 s compiling (13.2 PE + 63.5 Graal), 1.53 s per visit
+visits 51-150: 646.1 CPU-s in 235 s, 6.46 per visit
+  requests            0.86 per visit   13.2%
+  Truffle compiler    5.13 per visit   79.4%
+  HotSpot compiler    0.10 per visit    1.5%
+  GC and VM           0.09 per visit    1.4%
+  other               0.00 per visit    0.0%
+  not seen            0.29 per visit    4.5%
+  top threads: TruffleCompiler 513.3, pool-1-thread 85.3, JVMCI-native Co 9.2, G1 Conc 4.4, GC Thread 3.8, C1 CompilerThre 0.5
+  tier 1: 3202 compilations done, 175.1 s compiling (48.3 PE + 126.8 Graal), 1.75 s per visit
+  tier 2: 485 compilations done, 296.8 s compiling (55.6 PE + 241.2 Graal), 2.97 s per visit
+visits 151-200 (the warm window): 208.8 CPU-s in 90 s, 4.18 per visit
+  requests            0.71 per visit   17.0%
+  Truffle compiler    3.17 per visit   75.9%
+  HotSpot compiler    0.07 per visit    1.7%
+  GC and VM           0.01 per visit    0.3%
+  other               0.00 per visit    0.0%
+  not seen            0.21 per visit    5.1%
+  top threads: TruffleCompiler 158.5, pool-1-thread 35.3, JVMCI-native Co 3.5, GC Thread 0.4, HTTP-Dispatcher 0.1, C1 CompilerThre 0.1
+  tier 1: 148 compilations done, 8.7 s compiling (2.6 PE + 6.1 Graal), 0.17 s per visit
+  tier 2: 228 compilations done, 158.6 s compiling (28.5 PE + 130.1 Graal), 3.17 s per visit

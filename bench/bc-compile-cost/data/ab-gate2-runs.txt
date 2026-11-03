@@ -1,0 +1,12 @@
+round 1 (base fix tree): host CPU before 87%
+jvm-java.base-1: ready 1.76 s, cold visit 21.08 s (113.5 CPU-s), warm median 1.399 s, 0 failed visits; host CPU median 99%, max 100%
+jvm-java.fix-1: ready 1.03 s, cold visit 10.93 s (60.9 CPU-s), warm median 0.709 s, 0 failed visits; host CPU median 41%, max 76%
+jvm-java.tree-1: ready 0.90 s, cold visit 5.72 s (31.2 CPU-s), warm median 0.732 s, 0 failed visits; host CPU median 51%, max 85%
+round 2 (tree fix base ): host CPU before 57%
+jvm-java.tree-1: ready 1.05 s, cold visit 8.49 s (45.1 CPU-s), warm median 0.679 s, 0 failed visits; host CPU median 46%, max 96%
+jvm-java.fix-1: ready 0.95 s, cold visit 10.93 s (61.2 CPU-s), warm median 0.697 s, 0 failed visits; host CPU median 45%, max 79%
+jvm-java.base-1: ready 0.95 s, cold visit 11.41 s (63.9 CPU-s), warm median 0.712 s, 0 failed visits; host CPU median 44%, max 97%
+round 3 (base fix tree): host CPU before 24%
+jvm-java.base-1: ready 0.90 s, cold visit 10.89 s (63.0 CPU-s), warm median 0.699 s, 0 failed visits; host CPU median 49%, max 100%
+jvm-java.fix-1: ready 0.96 s, cold visit 10.53 s (59.7 CPU-s), warm median 0.739 s, 0 failed visits; host CPU median 46%, max 100%
+jvm-java.tree-1: ready 0.97 s, cold visit 5.23 s (28.4 CPU-s), warm median 0.619 s, 0 failed visits; host CPU median 41%, max 88%

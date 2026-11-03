@@ -1814,6 +1814,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** An element with an int or string literal key, normalized by the translator. */
+    @Operation
+    @ConstantOperand(type = Object.class)
+    public static final class LiteralPutKey {
+        @Specialization
+        public static PhpArray put(Object key, PhpArray array, Object value) {
+            array.put(key, value);
+            return array;
+        }
+    }
+
+    /** An element of a record (LiteralSite.newArray's hash): a key no other element has, and its hash. */
+    @Operation
+    @ConstantOperand(type = Object.class)
+    @ConstantOperand(type = int.class)
+    public static final class LiteralAdd {
+        @Specialization
+        public static PhpArray add(Object key, int hash, PhpArray array, Object value) {
+            array.addEntry(key, hash, value);
+            return array;
+        }
+    }
+
     /** `&$place` without a key: the reference at the next index. */
     @Operation
     public static final class LiteralAppendRef {
@@ -1986,7 +2009,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
     public static final class SendVar {
-        @Specialization
+        /**
+         * The callee the site sees (nearly always one): whether its parameter is by reference is a constant, as
+         * the tree's direct call builds its arguments for the function it cached (FunctionCallNode.Dispatch).
+         */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
+                                    @Bind BytecodeNode bytecode, @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, variable, index, cachedFunction, bytecode);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
                                   @Bind BytecodeNode bytecode) {
             if (function.isByRef(index)) {
