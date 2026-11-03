@@ -2849,6 +2849,38 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `Cls::$name(...)`: as ConvertStatic, the name computed; php-src's Error for one that isn't a string. */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "forwarding")
+    public static final class ConvertStaticNamed {
+        @Specialization
+        public static Object convert(VirtualFrame frame, boolean forwarding, PhpClass phpClass, Object name,
+                                     @Bind PhpBytecodeRootNode root) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return ConvertStatic.convert(frame, Str.java(method), forwarding, phpClass, root);
+        }
+    }
+
+    /**
+     * What `Cls::$name(args)` calls (StaticCallNode.target), found before the arguments; CallValue calls it. forwarding:
+     * self::, parent::, static::, which keep the caller's called class.
+     */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "forwarding")
+    public static final class ResolveStaticCall {
+        @Specialization
+        public static Callables.Target resolve(VirtualFrame frame, boolean forwarding, PhpClass phpClass, Object name,
+                                               @Bind PhpBytecodeRootNode root) {
+            Object[] caller = frame.getArguments();
+            PhpClass called = forwarding && caller[PhpFunction.ARG_STATIC] instanceof PhpClass callerStatic
+                    ? callerStatic : phpClass;
+            return StaticCallNode.target(phpClass, name, caller[PhpFunction.ARG_THIS], called,
+                    root.callingScope(frame));
+        }
+    }
+
     /** `$f(...)` (CallableConvertNodes.ValueNode): what the call `$f()` would call; a Closure stays itself. */
     @Operation
     public static final class ConvertValue {

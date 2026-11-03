@@ -119,23 +119,33 @@ public final class CallableConvertNodes {
      */
     public static final class StaticMethodNode extends ExprNode {
         @Child private ClassRefNode classRef;
+        @Child private ExprNode nameExpr;
         private final String name;
         private final boolean forwarding;
 
-        public StaticMethodNode(ClassRefNode classRef, String name, boolean forwarding) {
+        /** A constant name, or null and the expression giving it (`Cls::$name(...)`). */
+        public StaticMethodNode(ClassRefNode classRef, String name, ExprNode nameExpr, boolean forwarding) {
             this.classRef = classRef;
             this.name = name;
+            this.nameExpr = nameExpr;
             this.forwarding = forwarding;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
             PhpClass phpClass = classRef.resolve(frame);
+            String method = name;
+            if (method == null) {
+                if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString computed)) {
+                    throw MethodCallNode.nameNotString();
+                }
+                method = Str.java(computed);
+            }
             Object[] callerArgs = frame.getArguments();
             Object caller = callerArgs[PhpFunction.ARG_THIS];
             Object callerStatic = callerArgs[PhpFunction.ARG_STATIC];
             return convert(phpClass, caller, forwarding && callerStatic instanceof PhpClass called ? called : phpClass,
-                    name, MethodCallNode.scope(frame, this));
+                    method, MethodCallNode.scope(frame, this));
         }
 
         /**

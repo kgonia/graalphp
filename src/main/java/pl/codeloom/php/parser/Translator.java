@@ -1350,10 +1350,15 @@ public final class Translator {
                 String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
                 boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
                 if (isCallableConvert(node)) {
-                    if (!(node.get("method") instanceof String method)) {
-                        throw unsupported(node, "dynamic static method name");
-                    }
-                    return new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, forwarding);
+                    return node.get("method") instanceof String method
+                            ? new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, null,
+                            forwarding)
+                            : new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), null,
+                            expression(node.get("method")), forwarding);
+                }
+                if (!(node.get("method") instanceof String)) {
+                    return new StaticCallNode(classRef(node.get("class")), expression(node.get("method")),
+                            arguments(node.node("args")), forwarding);
                 }
                 return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
                         forwarding);

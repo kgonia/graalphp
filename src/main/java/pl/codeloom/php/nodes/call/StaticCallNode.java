@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.PhpClass;
@@ -26,6 +27,8 @@ public final class StaticCallNode extends CallNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
+    /** `Cls::$name(args)`: the name's expression; dispatch is null then. */
+    @Child private ExprNode nameExpr;
     @Child private SubclassTestNode subclassTest = SubclassTestNode.create();
     private final boolean forwarding;
 
@@ -36,10 +39,25 @@ public final class StaticCallNode extends CallNode {
         this.dispatch = new Dispatch(methodName);
     }
 
+    /** `Cls::$name(args)`. */
+    public StaticCallNode(ClassRefNode classRef, ExprNode nameExpr, ArgumentsNode args, boolean forwarding) {
+        this.classRef = classRef;
+        this.args = args;
+        this.forwarding = forwarding;
+        this.nameExpr = nameExpr;
+    }
+
     @Override
     public Object executeRef(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
         Object[] callerArgs = frame.getArguments();
+        if (nameExpr != null) {
+            PhpClass called = forwarding && callerArgs[PhpFunction.ARG_STATIC] instanceof PhpClass callerStatic
+                    ? callerStatic : phpClass;
+            return CallableCallNode.call(frame, target(phpClass, nameExpr.execute(frame),
+                    callerArgs[PhpFunction.ARG_THIS], called, MethodCallNode.scope(frame, this)), args,
+                    IndirectCallNode.getUncached());
+        }
         Object self = callerArgs[PhpFunction.ARG_THIS];
         if (self instanceof PhpObject object && !subclassTest.execute(object.getPhpClass(), phpClass)) {
             self = null;
@@ -128,6 +146,41 @@ public final class StaticCallNode extends CallNode {
             return phpClass.findMethod(lowerName);
         }
 
+    }
+
+    /**
+     * What `Cls::$name(args)` calls (INIT_STATIC_METHOD_CALL of a name computed at run time): the method as
+     * zend_std_get_static_method finds it from scope, a non-static one on the caller's $this (an instance of the
+     * class), else __call on that $this or __callStatic standing in; staticClass is the call's called class.
+     */
+    @TruffleBoundary
+    public static Callables.Target target(PhpClass phpClass, Object name, Object callerThis, PhpClass staticClass,
+                                          String scope) {
+        if (!(name instanceof TruffleString method)) {
+            throw MethodCallNode.nameNotString();
+        }
+        String text = Str.java(method);
+        PhpObject self = callerThis instanceof PhpObject object
+                && object.getPhpClass().isSubclassOf(phpClass.getLowerName()) ? object : null;
+        PhpFunction function = phpClass.staticMethodFrom(text, scope);
+        if (function == null) {
+            PhpFunction viaCall = self != null ? phpClass.findMethod("__call") : null;
+            if (viaCall != null) {
+                return new Callables.Target(viaCall, self, self.getPhpClass(), null, method);
+            }
+            PhpFunction viaStatic = phpClass.findMethod("__callstatic");
+            if (viaStatic == null) {
+                throw phpClass.callError(text, scope);
+            }
+            return new Callables.Target(viaStatic, null, staticClass, null, method);
+        }
+        if (function.isStatic()) {
+            return new Callables.Target(function, null, staticClass, null);
+        }
+        if (self == null) {
+            throw PhpClass.nonStaticCall(function);
+        }
+        return new Callables.Target(function, self, self.getPhpClass(), null);
     }
 
     /** `Cls::__construct()`: the class's constructor, or php-src's Error for a class without one. */

@@ -3739,12 +3739,13 @@ public final class BytecodeTranslator {
          * (INIT_STATIC_METHOD_CALL), then the arguments; self, parent and static forward the called class.
          */
         private void staticCall(Ast node, boolean byRefContext) {
-            if (!(node.get("method") instanceof String name)) {
-                throw new Unsupported("call of a static method by a computed name", node);
-            }
             Ast classNode = node.node("class");
             String lower = classNode != null && classNode.is("AST_NAME") ? Str.lower(classNameOf(classNode)) : "";
             boolean forwarding = lower.equals("self") || lower.equals("parent") || lower.equals("static");
+            if (!(node.get("method") instanceof String name)) {
+                staticCallByName(node, forwarding, byRefContext);
+                return;
+            }
             if (Translator.isCallableConvert(node)) {
                 // `Cls::name(...)` (CallableConvertNodes.StaticMethodNode)
                 b.beginConvertStatic(name, forwarding);
@@ -3774,6 +3775,40 @@ public final class BytecodeTranslator {
                 b.endCallStaticSpread();
             } else {
                 b.endCallStatic();
+            }
+        }
+
+        /**
+         * `Cls::$name(args)` (StaticCallNode with a name expression): the class, then the name, then what they call
+         * (ResolveStaticCall) as a callable's call; `Cls::$name(...)` its closure.
+         */
+        private void staticCallByName(Ast node, boolean forwarding, boolean byRefContext) {
+            if (Translator.isCallableConvert(node)) {
+                b.beginConvertStaticNamed(forwarding);
+                classRef(node.get("class"));
+                expression(node.get("method"));
+                b.endConvertStaticNamed();
+                return;
+            }
+            Ast args = node.node("args");
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
+            if (spread) {
+                b.beginCallValueSpread(byRefContext);
+            } else {
+                b.beginCallValue(byRefContext);
+            }
+            b.beginBindStackValue();
+            b.beginResolveStaticCall(forwarding);
+            classRef(node.get("class"));
+            expression(node.get("method"));
+            b.endResolveStaticCall();
+            StackValue target = b.endBindStackValue();
+            callableArguments(args, target, needsCallee, spread);
+            if (spread) {
+                b.endCallValueSpread();
+            } else {
+                b.endCallValue();
             }
         }
 
