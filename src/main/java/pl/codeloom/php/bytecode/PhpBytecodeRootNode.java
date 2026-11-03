@@ -2227,6 +2227,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** A temporary value as argument index (SEND_VAL_EX): php-src's Error for a by-reference parameter. */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class SendValue {
+        @Specialization
+        public static Object send(int index, PhpFunction function, Object value) {
+            if (function.isByRef(index)) {
+                throw CallNode.notReferenceable(function, index);
+            }
+            return value;
+        }
+    }
+
     @Operation
     @ConstantOperand(type = int.class)
     public static final class SendCall {
@@ -2826,9 +2839,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
                 captured[i] = value;
             }
-            Object self = isStatic ? null : frame.getArguments()[PhpFunction.ARG_THIS];
-            return new PhpClosure(function, self instanceof PhpObject object ? object : null,
-                    scope instanceof PhpClass phpClass ? phpClass : null, captured);
+            return PhpClosure.declared(function, isStatic, frame.getArguments()[PhpFunction.ARG_THIS],
+                    frame.getArguments()[PhpFunction.ARG_STATIC], scope instanceof PhpClass phpClass ? phpClass : null,
+                    captured);
         }
     }
 
@@ -4068,7 +4081,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static boolean bind(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
                                    @Bind BytecodeNode bytecode, @Bind Node node) {
-            PhpRef ref = PhpContext.get(node).findStaticVariable(function, name);
+            PhpRef ref = PhpContext.get(node).findStaticVariable(function,
+                    frame.getArguments()[PhpFunction.ARG_CLOSURE], name);
             if (ref == null) {
                 return false;
             }
@@ -4086,7 +4100,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void create(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
                                   Object initial, @Bind BytecodeNode bytecode, @Bind Node node) {
             Locals.bindRef(frame, variable, bytecode,
-                    PhpContext.get(node).createStaticVariable(function, name, initial));
+                    PhpContext.get(node).createStaticVariable(function, frame.getArguments()[PhpFunction.ARG_CLOSURE],
+                            name, initial));
         }
     }
 

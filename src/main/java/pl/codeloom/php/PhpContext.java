@@ -21,6 +21,7 @@ import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
@@ -228,6 +229,17 @@ public final class PhpContext {
     public PhpRef findStaticVariable(PhpFunction function, String name) {
         Map<String, PhpRef> variables = staticVariables.get(function);
         return variables == null ? null : variables.get(name);
+    }
+
+    /** `static $name` in a call whose frame's closure is closure: a closure object's own, else the function's. */
+    public PhpRef findStaticVariable(PhpFunction function, Object closure, String name) {
+        return closure instanceof PhpClosure c && c.hasStatics() ? c.findStatic(name)
+                : findStaticVariable(function, name);
+    }
+
+    public PhpRef createStaticVariable(PhpFunction function, Object closure, String name, Object initial) {
+        return closure instanceof PhpClosure c && c.hasStatics() ? c.createStatic(name, initial)
+                : createStaticVariable(function, name, initial);
     }
 
     @TruffleBoundary

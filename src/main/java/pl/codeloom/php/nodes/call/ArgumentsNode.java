@@ -10,6 +10,7 @@ import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.FileVarNode;
 import pl.codeloom.php.nodes.vars.LocalVarNode;
+import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
@@ -27,8 +28,10 @@ public final class ArgumentsNode extends Node {
     @Children private final ExprNode[] args;
     @CompilationFinal(dimensions = 1) private final boolean[] spread;
     /**
-     * The arguments that are calls (zend_is_call: also of built-ins compiled in place): a by-reference parameter
-     * takes the reference a callee returning by reference returned, else the value with a notice.
+     * The arguments that are calls (zend_is_call, but built-ins compiled in place) or other expressions php-src
+     * gives a VAR (`new`, `$GLOBALS`...): a by-reference parameter takes the reference a callee returning by
+     * reference returned, else the value with a notice (SEND_VAR_NO_REF). Any other expression but $this is a
+     * temporary, which a by-reference parameter refuses (SEND_VAL_EX).
      */
     @CompilationFinal(dimensions = 1) private final boolean[] calls;
     private final boolean hasSpread;
@@ -64,6 +67,9 @@ public final class ArgumentsNode extends Node {
                 arguments[PhpFunction.ARG_FIRST + i] = place.makeRef(frame);
             } else if (calls[i] && callee.isByRef(i)) {
                 arguments[PhpFunction.ARG_FIRST + i] = refArgument(frame, args[i]);
+            } else if (callee.isByRef(i) && !(args[i] instanceof ThisNode)) {
+                args[i].execute(frame);
+                throw CallNode.notReferenceable(callee, i);
             } else {
                 arguments[PhpFunction.ARG_FIRST + i] = args[i].execute(frame);
             }
@@ -113,6 +119,9 @@ public final class ArgumentsNode extends Node {
                     add(list, place.makeRef(frame));
                 } else if (calls[i] && callee.isByRef(position)) {
                     add(list, refArgument(frame, args[i]));
+                } else if (callee.isByRef(position) && !(args[i] instanceof ThisNode)) {
+                    args[i].execute(frame);
+                    throw CallNode.notReferenceable(callee, position);
                 } else {
                     add(list, args[i].execute(frame));
                 }

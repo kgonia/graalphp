@@ -6,6 +6,8 @@ import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
@@ -33,6 +35,17 @@ public abstract class CallNode extends ExprNode {
     @TruffleBoundary
     public static void notice(Node site, String message) {
         notice(site, message, SourceLocation.of(site));
+    }
+
+    /** A temporary value sent to a by-reference parameter (zend_cannot_pass_by_reference). */
+    @TruffleBoundary
+    public static PhpError notReferenceable(PhpFunction function, int index) {
+        PhpFunction.Param[] params = function.getParams();
+        int last = params.length - 1;
+        String name = index < params.length ? params[index].name()
+                : last >= 0 && params[last].variadic() ? params[last].name() : null;
+        return new PhpError(function.displayName() + "(): Argument #" + (index + 1)
+                + (name == null ? "" : " ($" + name + ")") + " could not be passed by reference");
     }
 
     @TruffleBoundary

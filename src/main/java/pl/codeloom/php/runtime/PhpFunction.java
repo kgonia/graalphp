@@ -156,6 +156,27 @@ public final class PhpFunction {
     /** A closure whose body uses $this (ZEND_ACC_USES_THIS): Closure::bind can't unbind its $this. */
     private boolean usesThis;
 
+    /**
+     * A closure's `use` variables, then its `static` ones, by name, and the statics' initial values where they are
+     * constants (else null): what its debug info shows before a call initializes them.
+     */
+    private String[] closureVariables;
+    private Object[] staticInitials;
+
+    public void setClosureVariables(String[] names, Object[] staticInitials) {
+        this.closureVariables = names;
+        this.staticInitials = staticInitials;
+    }
+
+    public String[] getClosureVariables() {
+        return closureVariables;
+    }
+
+    public Object getStaticInitial(int index) {
+        Object value = staticInitials[index];
+        return value == null ? PhpNull.NULL : value;
+    }
+
     public void setUsesThis(boolean usesThis) {
         this.usesThis = usesThis;
     }

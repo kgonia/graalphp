@@ -58,7 +58,22 @@ final class CoreFunctions {
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("traversable"));
         r.fn("is_countable", a -> Args.get(a, 0) instanceof PhpArray
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("countable"));
-        r.fn("is_callable", (context, a) -> Callables.resolve(context, Args.get(a, 0, PhpNull.NULL)) != null);
+        r.fn("is_callable", "001", (context, a) -> {
+            Object value = Args.get(a, 0, PhpNull.NULL);
+            if (Args.has(a, 2)) {
+                Args.ref(a, 2).set(callableName(value));
+            }
+            if (!Args.bool(a, 1, false)) {
+                return Callables.resolve(context, value) != null;
+            }
+            // IS_CALLABLE_CHECK_SYNTAX_ONLY: a string, a [class or object, method] pair, an object with __invoke
+            if (value instanceof PhpArray pair) {
+                Object target = pair.size() == 2 ? PhpRef.deref(pair.get(0L)) : null;
+                return PhpRef.deref(pair.get(1L)) instanceof TruffleString
+                        && (target instanceof TruffleString || target instanceof PhpObject);
+            }
+            return value instanceof TruffleString || Callables.resolve(context, value) != null;
+        });
         r.fn("is_finite", a -> Double.isFinite(Convert.toDouble(Args.get(a, 0))));
         r.fn("is_nan", a -> Double.isNaN(Convert.toDouble(Args.get(a, 0))));
         r.fn("is_infinite", a -> Double.isInfinite(Convert.toDouble(Args.get(a, 0))));
@@ -584,9 +599,36 @@ final class CoreFunctions {
         return value instanceof PhpObject object ? object.visibleProperties(null) : new PhpArray();
     }
 
+    /** zend_get_callable_name_ex: is_callable()'s $callable_name. */
+    @TruffleBoundary
+    private static TruffleString callableName(Object value) {
+        if (value instanceof PhpArray pair) {
+            Object target = pair.size() == 2 ? PhpRef.deref(pair.get(0L)) : null;
+            if (pair.size() == 2 && PhpRef.deref(pair.get(1L)) instanceof TruffleString method) {
+                if (target instanceof TruffleString className) {
+                    return Str.concat(Str.concat(className, Str.of("::")), method);
+                }
+                if (target instanceof PhpObject object) {
+                    return Str.of(object.getPhpClass().getName() + "::" + Str.java(method));
+                }
+            }
+            return Str.of("Array");
+        }
+        if (value instanceof PhpObject object) {
+            return Str.of(object.getPhpClass().getName() + "::__invoke");
+        }
+        if (value instanceof PhpClosure) {
+            return Str.of("Closure::__invoke");
+        }
+        return Convert.toStr(value);
+    }
+
     private static int objectId(Object value) {
         if (value instanceof PhpObject object) {
             return object.id();
+        }
+        if (value instanceof PhpClosure closure) {
+            return closure.id();
         }
         return System.identityHashCode(value);
     }

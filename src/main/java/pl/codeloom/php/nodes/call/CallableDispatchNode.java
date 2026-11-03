@@ -67,7 +67,7 @@ public abstract class CallableDispatchNode extends Node {
      */
     public static Object[] closureArguments(PhpClosure callable, Object[] values) {
         PhpObject self = callable.getBoundThis();
-        PhpClass scope = self != null ? self.getPhpClass() : callable.getScope();
+        PhpClass scope = callable.staticClass();
         Object[] arguments = callable.getMagicName() == null ? values
                 : Callables.magicValues(callable.getMagicName(), values);
         return ArgumentsNode.frameArguments(self, scope, callable, arguments);

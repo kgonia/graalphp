@@ -224,9 +224,10 @@ public final class BasicStmts {
         @Override
         public void execute(VirtualFrame frame) {
             PhpContext context = PhpContext.get(this);
-            PhpRef ref = context.findStaticVariable(function, name);
+            Object closure = frame.getArguments()[PhpFunction.ARG_CLOSURE];
+            PhpRef ref = context.findStaticVariable(function, closure, name);
             if (ref == null) {
-                ref = context.createStaticVariable(function, name,
+                ref = context.createStaticVariable(function, closure, name,
                         initial == null ? PhpNull.NULL : initial.execute(frame));
             }
             local.bindRef(frame, ref);

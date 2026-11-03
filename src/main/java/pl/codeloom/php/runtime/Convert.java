@@ -311,6 +311,9 @@ public final class Convert {
             return Str.of("Resource id #" + r.getId());
         }
         CompilerDirectives.transferToInterpreter();
+        if (value instanceof PhpClosure) {
+            throw new PhpError("Object of class Closure could not be converted to string");
+        }
         throw new PhpError("Cannot convert " + value + " to string");
     }
 
