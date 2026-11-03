@@ -720,10 +720,17 @@ kernels, the smoke tests and php-src's tests).
   which makes the caches and specializes anew. Bytecode roots split again (`isCloningAllowed` true). To drop once a
   release has GR-79787. With it Gate 2's pages are 19/21 (the two oEmbed links, as before), the WooCommerce walk
   51/51 equal to the tree's, the smoke tests pass.
-- **Open:** `CompilationTest`'s `large-function.php` fails in `mvn test` when `PhpBytecodeRootNodeTest` runs before
-  it and bytecode roots may split: `Query::sql`'s first tier is "code is too large" (HotSpot's install limit). Alone,
-  or with splitting off, it compiles (552,894 bytes of code at the first tier: already at the limit). No split
-  happens in that run (`TraceSplitting` prints none); the cause isn't found yet.
+- **`mvn test` after it, `CompilationTest`'s `large-function.php`:** `Query::sql`'s first tier was "code is too large"
+  (HotSpot's install limit) when `PhpBytecodeRootNodeTest` ran first. Graal reads `FirstTierUseEconomy` once per
+  process, from the engine of the first call target (`TruffleCompilerImpl.initialize`: unless it is true the first
+  tier takes the last tier's configuration); the unit test's contexts had Truffle's default (true), so
+  `CompilationTest`'s `compiler.FirstTierUseEconomy=false` had no effect and `Query::sql`'s first tier was the
+  economy one: 51,557/125,217 IR nodes, 657,930 bytes of code, the same as a run of the file alone with
+  `-Dpolyglot.compiler.FirstTierUseEconomy=true`, against 542,406 bytes with false. The launchers set it as a system
+  property (`PhpMain.compilerDefaults`), so only the tests mixed it; the unit test's contexts now take the launchers'
+  default. Whether the economy tier passes the limit depends on the graph: after PE `Query::sql` has 51,557 or
+  51,605 nodes with what ran earlier in the JVM (with splitting allowed the former, not explained), and only the
+  former passes it at the economy tier.
 
 ### Splitting, tree against bytecode (2026-11-03)
 `-Dpolyglot.engine.TraceSplittingSummary=true` on 120 s of the WooCommerce load (`woo.sh diag`, 8 users) and of

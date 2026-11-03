@@ -212,7 +212,8 @@ public final class UnaryNodes {
             return fromLong.execute(value, Str.ENC, true);
         }
 
-        /** With number's cache, unused: a split bytecode copy must not take an int here (PhpBytecodeRootNode#isCloningAllowed). */
+        /** With number's cache, unused: a split bytecode copy must not take an int here (see
+         * PhpBytecodeRootNode#isCloningAllowed). */
         @Fallback
         public static TruffleString other(Object value, @Shared @Cached TruffleString.FromLongNode fromLong) {
             return Convert.toStr(value);
