@@ -1,6 +1,6 @@
 # 023: Converting an array to a string doesn't warn "Array to string conversion"
 
-**State:** Fixed (branch `fix-warnings-conversions`)
+**State:** Fixed
 
 **Symptom:**
 ```php

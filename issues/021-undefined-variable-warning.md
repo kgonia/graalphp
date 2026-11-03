@@ -1,6 +1,6 @@
 # 021: A read of an unset variable doesn't warn "Undefined variable"
 
-**State:** Fixed (branch `fix-warnings-conversions`), on bytecode and at file level; see "Still open" for the tree.
+**State:** Fixed on bytecode and at file level; see "Still open" for the tree.
 
 **Symptom:**
 ```php

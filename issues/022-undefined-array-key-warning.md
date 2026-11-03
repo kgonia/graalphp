@@ -1,6 +1,6 @@
 # 022: A read of a missing array key, string offset or scalar's offset doesn't warn
 
-**State:** Fixed (branch `fix-warnings-conversions`); see "Still open" for the tree.
+**State:** Fixed; see "Still open" for the tree.
 
 **Symptom:**
 ```php

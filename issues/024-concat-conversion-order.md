@@ -1,6 +1,6 @@
 # 024: Concatenation converts its operands in an order the reference doesn't
 
-**State:** Fixed (branch `fix-warnings-conversions`); one opcache quirk is left, below.
+**State:** Fixed; one opcache quirk is left, below.
 
 **Symptom:** with g() echoing `[g]` and returning an object whose `__toString` echoes `[toString]`:
 ```php
