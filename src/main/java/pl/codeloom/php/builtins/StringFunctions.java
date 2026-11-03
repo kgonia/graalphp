@@ -849,10 +849,6 @@ public final class StringFunctions {
         }
         byte[] b = Str.readBytes(s);
         PhpArray result = new PhpArray();
-        if (b.length == 0) {
-            result.append(Str.EMPTY);
-            return result;
-        }
         for (int i = 0; i < b.length; i += (int) length) {
             result.append(Str.of(b, i, (int) Math.min(length, b.length - i)));
         }
