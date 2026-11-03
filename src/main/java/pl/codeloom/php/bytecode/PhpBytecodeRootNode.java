@@ -77,6 +77,7 @@ import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
+import pl.codeloom.php.nodes.vars.ListAssignNode;
 import pl.codeloom.php.nodes.vars.ObjectVarsNode;
 import pl.codeloom.php.nodes.vars.Places;
 import pl.codeloom.php.nodes.vars.PropNode;
@@ -506,6 +507,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void bind(VirtualFrame frame, LocalAccessor variable, int index, boolean byRef,
                                 @Bind BytecodeNode bytecode) {
             Object captured = ((PhpClosure) frame.getArguments()[PhpFunction.ARG_CLOSURE]).getCaptured(index);
+            if (captured == null) {
+                // an arrow function's capture of an unset variable (ReadVarIfDefined): left unset
+                return;
+            }
             if (!byRef && captured instanceof PhpArray array) {
                 array.addHolder();
             } else if (captured instanceof PhpRef ref) {
@@ -517,7 +522,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     // ---- variables ----
 
-    /** `$x`: the variable's value (a reference's content; null when unset), ints and floats unboxed. */
+    /**
+     * `$x`: the variable's value (a reference's content), ints and floats unboxed. An unset variable reads as null
+     * after php-src's "Undefined variable" warning (zval_undefined_cv), on a branch that a site which hasn't met it
+     * compiles as a deoptimization.
+     */
     @Operation
     @ConstantOperand(type = LocalAccessor.class)
     public static final class ReadVar {
@@ -534,8 +543,88 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Specialization(replaces = {"readLong", "readDouble"})
+        public static Object read(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode,
+                                  @Bind Node node, @Cached InlinedBranchProfile undefined) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            if (stored == null) {
+                undefined.enter(node);
+                undefinedVariable(node, variable, bytecode);
+                return PhpNull.NULL;
+            }
+            return Variables.value(stored);
+        }
+    }
+
+    /** `$x` as isset(), `??` and `??=` read it (BP_VAR_IS): null when unset, quietly. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class ReadVarIfSet {
+        @Specialization(rewriteOn = Locals.KindMismatch.class)
+        public static long readLong(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode)
+                throws Locals.KindMismatch {
+            return Locals.readLong(frame, variable, bytecode);
+        }
+
+        @Specialization(rewriteOn = Locals.KindMismatch.class)
+        public static double readDouble(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode)
+                throws Locals.KindMismatch {
+            return Locals.readDouble(frame, variable, bytecode);
+        }
+
+        @Specialization(replaces = {"readLong", "readDouble"})
         public static Object read(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
             return Variables.value(Locals.stored(frame, variable, bytecode));
+        }
+    }
+
+    /**
+     * An arrow function's capture of `$x` (BIND_LEXICAL with ZEND_BIND_IMPLICIT): quiet, and Java null when unset,
+     * which leaves the arrow function's variable unset (BindCapture), so its own read warns.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class ReadVarIfDefined {
+        @Specialization
+        public static Object read(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            return stored == null ? null : Variables.value(stored);
+        }
+    }
+
+    /**
+     * A variable's value as an operation's operand reads it (BP_VAR_R), as ReadVar: null after the "Undefined
+     * variable" warning when it is unset.
+     */
+    static Object readValue(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Node node,
+                            InlinedBranchProfile undefined) {
+        Object stored = Locals.stored(frame, variable, bytecode);
+        if (stored == null) {
+            undefined.enter(node);
+            undefinedVariable(node, variable, bytecode);
+            return PhpNull.NULL;
+        }
+        return Variables.value(stored);
+    }
+
+    /** php-src's zval_undefined_cv: "Undefined variable $name" at the instruction. */
+    @TruffleBoundary
+    static void undefinedVariable(Node node, LocalAccessor variable, BytecodeNode bytecode) {
+        ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING,
+                Str.of("Undefined variable $" + variable.getLocalName(bytecode)), SourceLocation.of(node));
+    }
+
+    /**
+     * The warning of a read-modify-write of an unset variable (BP_VAR_RW: `$x .= `, `$x++`): php-src's operation
+     * goes on with null and stores its result before an exception the error handler threw leaves, so the exception
+     * is returned, for the caller to throw after its store; null if there is none.
+     */
+    @TruffleBoundary
+    static PhpThrowable undefinedForUpdate(Node node, LocalAccessor variable, BytecodeNode bytecode) {
+        try {
+            undefinedVariable(node, variable, bytecode);
+            return null;
+        } catch (PhpThrowable thrown) {
+            return thrown;
         }
     }
 
@@ -587,10 +676,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(replaces = "longs")
         public static Object generic(VirtualFrame frame, LocalAccessor variable, boolean increment, boolean prefix,
                                      @Bind BytecodeNode bytecode, @Bind Node node,
+                                     @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            Object old = Variables.value(Locals.stored(frame, variable, bytecode));
+            Object stored = Locals.stored(frame, variable, bytecode);
+            PhpThrowable pending = null;
+            if (stored == null) {
+                undefined.enter(node);
+                pending = undefinedForUpdate(node, variable, bytecode);
+            }
+            Object old = Variables.value(stored);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             writes.write(frame, variable, bytecode, updated);
+            if (pending != null) {
+                throw pending;
+            }
             return prefix ? updated : old;
         }
     }
@@ -607,13 +706,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class CompoundVar {
         @Specialization(guards = "op == 8")
         public static TruffleString concat(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
-                                           @Bind BytecodeNode bytecode, @Cached ToStrNode currentToStr,
-                                           @Cached ToStrNode operandToStr,
+                                           @Bind BytecodeNode bytecode, @Bind Node node,
+                                           @Cached InlinedBranchProfile undefined,
+                                           @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
                                            @Cached TruffleString.ConcatNode concat,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            TruffleString left = currentToStr.execute(Variables.value(Locals.stored(frame, variable, bytecode)));
+            Object stored = Locals.stored(frame, variable, bytecode);
+            PhpThrowable pending = null;
+            if (stored == null) {
+                undefined.enter(node);
+                pending = undefinedForUpdate(node, variable, bytecode);
+            }
+            TruffleString left = currentToStr.execute(Variables.value(stored));
             TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
             writes.writeObject(frame, variable, bytecode, result);
+            if (pending != null) {
+                throw pending;
+            }
             return result;
         }
 
@@ -639,8 +748,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "op != 8")
         public static Object longOperand(VirtualFrame frame, LocalAccessor variable, int op, long operand,
                                          @Bind BytecodeNode bytecode, @Bind Node node,
+                                         @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            return generic(frame, variable, op, operand, bytecode, node, writes);
+            return generic(frame, variable, op, operand, bytecode, node, undefined, writes);
         }
 
         @Specialization(guards = "isFloatOperator(op)", rewriteOn = Locals.KindMismatch.class)
@@ -664,10 +774,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "op != 8", replaces = {"longs", "longOperand", "doubles"})
         public static Object generic(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
                                      @Bind BytecodeNode bytecode, @Bind Node node,
+                                     @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            Object current = Variables.value(Locals.stored(frame, variable, bytecode));
-            Object result = AssignNodes.CompoundAssignNode.apply(node, op, current, operand);
+            Object stored = Locals.stored(frame, variable, bytecode);
+            PhpThrowable pending = null;
+            if (stored == null) {
+                undefined.enter(node);
+                pending = undefinedForUpdate(node, variable, bytecode);
+            }
+            Object result = AssignNodes.CompoundAssignNode.apply(node, op, Variables.value(stored), operand);
             writes.write(frame, variable, bytecode, result);
+            if (pending != null) {
+                throw pending;
+            }
             return result;
         }
 
@@ -724,8 +843,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(replaces = "longs")
         public static void generic(VirtualFrame frame, LocalAccessor variable, boolean increment,
                                    @Bind BytecodeNode bytecode, @Bind Node node,
+                                   @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            IncDecVar.generic(frame, variable, increment, true, bytecode, node, writes);
+            IncDecVar.generic(frame, variable, increment, true, bytecode, node, undefined, writes);
         }
     }
 
@@ -736,10 +856,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class CompoundVarStatement {
         @Specialization(guards = "op == 8")
         public static void concat(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
-                                  @Bind BytecodeNode bytecode, @Cached ToStrNode currentToStr,
+                                  @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached InlinedBranchProfile undefined, @Cached ToStrNode currentToStr,
                                   @Cached ToStrNode operandToStr, @Cached TruffleString.ConcatNode concat,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            CompoundVar.concat(frame, variable, op, operand, bytecode, currentToStr, operandToStr, concat, writes);
+            CompoundVar.concat(frame, variable, op, operand, bytecode, node, undefined, currentToStr, operandToStr,
+                    concat, writes);
         }
 
         @ForceQuickening
@@ -754,8 +876,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "op != 8")
         public static void longOperand(VirtualFrame frame, LocalAccessor variable, int op, long operand,
                                        @Bind BytecodeNode bytecode, @Bind Node node,
+                                       @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            CompoundVar.generic(frame, variable, op, operand, bytecode, node, writes);
+            CompoundVar.generic(frame, variable, op, operand, bytecode, node, undefined, writes);
         }
 
         @ForceQuickening
@@ -769,8 +892,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "op != 8", replaces = {"longs", "longOperand", "doubles"})
         public static void generic(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
                                    @Bind BytecodeNode bytecode, @Bind Node node,
+                                   @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
-            CompoundVar.generic(frame, variable, op, operand, bytecode, node, writes);
+            CompoundVar.generic(frame, variable, op, operand, bytecode, node, undefined, writes);
         }
 
         public static boolean isIntOperator(int op) {
@@ -937,12 +1061,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ElementIfSet {
         @Specialization
-        public static Object array(PhpArray container, Object key, @Shared @Cached ElementNodes.ElementReadNode read) {
+        public static Object array(PhpArray container, Object key,
+                                   @Shared @Cached ElementNodes.ElementIfSetNode read) {
             return read.execute(container, key);
         }
 
         @Fallback
-        public static Object other(Object container, Object key, @Shared @Cached ElementNodes.ElementReadNode read,
+        public static Object other(Object container, Object key, @Shared @Cached ElementNodes.ElementIfSetNode read,
                                    @Bind Node node) {
             if (container == PhpNull.NULL || !DimNode.isSetIn(node, container, key)) {
                 return PhpNull.NULL;
@@ -955,7 +1080,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class IssetElement {
         @Specialization
-        public static boolean array(PhpArray container, Object key, @Cached ElementNodes.ElementReadNode read) {
+        public static boolean array(PhpArray container, Object key, @Cached ElementNodes.ElementIfSetNode read) {
             return read.execute(container, key) != PhpNull.NULL;
         }
 
@@ -980,7 +1105,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, LocalAccessor variable, boolean append, Object value,
                                    @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
                                    @Cached ElementNodes.ArrayKeyNode toKey,
-                                   @Cached ElementNodes.ElementReadNode read,
                                    @Cached ElementNodes.ElementWriteNode write,
                                    @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite,
                                    @Cached InlinedBranchProfile sharedArray,
@@ -996,7 +1120,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
                 int levels = append ? keys.length : keys.length - 1;
-                Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+                Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
                         objectWrite);
             } catch (Throwable t) {
@@ -1023,7 +1147,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access,
                                    @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                   @Cached ElementNodes.ElementReadNode read,
                                    @Cached ElementNodes.ElementWriteNode write,
                                    @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite) {
             // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
@@ -1036,7 +1159,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 Object base = propertyForWrite(frame, access, object, site.name);
                 int levels = append ? keys.length : keys.length - 1;
-                Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+                Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
                         objectWrite);
             } catch (Throwable t) {
@@ -1071,9 +1194,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached InlinedBranchProfile sharedArray,
                                       @Cached InlinedBranchProfile refArray,
                                       @Cached InlinedBranchProfile createdArray) {
-            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
             Object result = compounded(node, op, read.execute(container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
@@ -1095,7 +1218,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Cached InlinedBranchProfile objectWrite) {
             Object base = propertyForWrite(frame, access, object, site.name);
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
             Object result = compounded(node, op, read.execute(container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
@@ -1117,9 +1240,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached InlinedBranchProfile sharedArray,
                                   @Cached InlinedBranchProfile refArray,
                                   @Cached InlinedBranchProfile createdArray) {
-            Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+            Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
             Object old = read.execute(container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
@@ -1143,7 +1266,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached InlinedBranchProfile objectWrite) {
             Object base = propertyForWrite(frame, access, object, site.name);
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, base, keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
             Object old = read.execute(container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
@@ -1163,7 +1286,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void unset(VirtualFrame frame, LocalAccessor variable, @Variadic Object[] keys,
                                  @Bind BytecodeNode bytecode, @Bind Node node,
                                  @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read,
+                                 @Cached ElementNodes.ElementIfSetNode read,
                                  @Cached InlinedBranchProfile sharedArray,
                                  @Cached InlinedBranchProfile refArray,
                                  @Cached InlinedBranchProfile createdArray) {
@@ -1173,7 +1296,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (key != null) {
                 Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray,
                         createdArray);
-                ElementChain.remove(node, base, keys, key, toKey, read);
+                ElementChain.remove(node, base, keys, key, toKey);
             }
         }
     }
@@ -1186,12 +1309,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read) {
+                                 @Cached ElementNodes.ElementIfSetNode read) {
             Object container = ElementChain.read(access.readOn(frame, object, site.name), keys, read);
             Object key = ElementChain.removed(node, container, keys, toKey);
             if (key != null) {
-                ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey,
-                        read);
+                ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey);
             }
         }
     }
@@ -1207,7 +1329,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object write(boolean append, Object value, PhpRef ref, @Variadic Object[] keys,
                                    @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                   @Cached ElementNodes.ElementReadNode read,
                                    @Cached ElementNodes.ElementWriteNode write,
                                    @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite) {
             // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
@@ -1219,7 +1340,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             try {
                 int levels = append ? keys.length : keys.length - 1;
-                Object container = ElementChain.forWrite(node, referenceForWrite(ref), keys, levels, toKey, read);
+                Object container = ElementChain.forWrite(node, referenceForWrite(ref), keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
                         objectWrite);
             } catch (Throwable t) {
@@ -1246,7 +1367,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                       @Cached ElementNodes.ElementWriteNode write,
                                       @Cached InlinedBranchProfile objectWrite) {
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, referenceForWrite(ref), keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
             Object result = compounded(node, op, read.execute(container, keys[last]), operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
@@ -1265,7 +1386,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached ElementNodes.ElementWriteNode write,
                                   @Cached InlinedBranchProfile objectWrite) {
             int last = keys.length - 1;
-            Object container = ElementChain.forWrite(node, referenceForWrite(ref), keys, last, toKey, read);
+            Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
             Object old = read.execute(container, keys[last]);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
@@ -1282,11 +1403,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void unset(Object ref, @Variadic Object[] keys, @Bind Node node,
                                  @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read) {
+                                 @Cached ElementNodes.ElementIfSetNode read) {
             Object base = ref instanceof PhpRef found ? found.get() : PhpNull.NULL;
             Object key = ElementChain.removed(node, ElementChain.read(base, keys, read), keys, toKey);
             if (key != null) {
-                ElementChain.remove(node, referenceForWrite((PhpRef) ref), keys, key, toKey, read);
+                ElementChain.remove(node, referenceForWrite((PhpRef) ref), keys, key, toKey);
             }
         }
     }
@@ -1297,14 +1418,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      */
     private static Object compounded(Node node, int op, Object current, Object operand) {
         if (op == AssignNodes.CompoundAssignNode.CONCAT) {
-            return concatenated(current, operand);
+            return concatenated(node, current, operand);
         }
         return AssignNodes.CompoundAssignNode.apply(node, op, current, operand);
     }
 
-    private static TruffleString concatenated(Object current, Object operand) {
-        TruffleString left = Convert.toStr(current);
-        return Str.concat(left, Convert.toStr(operand));
+    private static TruffleString concatenated(Node node, Object current, Object operand) {
+        TruffleString left = Convert.toStr(node, current);
+        return Str.concat(left, Convert.toStr(node, operand));
     }
 
     /** The key of an `[]` on the way to a nested element (`$a[][k] = v`), as the translator emits it. */
@@ -1316,6 +1437,26 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                            InlinedBranchProfile refArray, InlinedBranchProfile createdArray) {
         PhpArray array = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
         return array != null ? array : Variables.value(Locals.stored(frame, variable, bytecode));
+    }
+
+    /**
+     * variableForWrite for a read-modify-write of an element (BP_VAR_RW: `$x[k] .= `, `$x[k]++`): an unset variable
+     * warns first, and php-src makes it the array before an exception the error handler threw leaves.
+     */
+    private static Object variableForUpdate(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode,
+                                            Node node, InlinedBranchProfile sharedArray,
+                                            InlinedBranchProfile refArray, InlinedBranchProfile createdArray) {
+        PhpThrowable pending = null;
+        if (variable.isCleared(bytecode, frame)) {
+            // the variable becomes an array (createdArray's case)
+            createdArray.enter(node);
+            pending = undefinedForUpdate(node, variable, bytecode);
+        }
+        Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
+        if (pending != null) {
+            throw pending;
+        }
+        return base;
     }
 
     /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
@@ -1369,7 +1510,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.readOn(frame, object, site.name);
+            return access.read(frame, object, site.name);
         }
     }
 
@@ -1381,7 +1522,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object, String name,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.readOn(frame, object, name);
+            return access.read(frame, object, name);
         }
     }
 
@@ -1900,8 +2041,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     // ---- list() (ListAssignNode) ----
 
     /**
-     * An element of a list() assignment's value (FETCH_LIST_R): an array's element, null when it is missing; an
-     * ArrayAccess object's offsetGet(); null for anything else (ListAssignNode).
+     * An element of a list() assignment's value (FETCH_LIST_R): an array's element, null after "Undefined array key"
+     * when it is missing; an ArrayAccess object's offsetGet(); null for anything else, after "Cannot use int as
+     * array" for a scalar that isn't null (ListAssignNode).
      */
     @Operation
     public static final class ListElement {
@@ -1918,7 +2060,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(Object container, Object key) {
+        public static Object other(Object container, Object key, @Bind Node node) {
+            if (container != PhpNull.NULL) {
+                ListAssignNode.notAnArray(node, container);
+            }
             return PhpNull.NULL;
         }
     }
@@ -2048,17 +2193,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
          */
         @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
         public static Object cached(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
-                                    @Bind BytecodeNode bytecode, @Cached("function") PhpFunction cachedFunction) {
-            return send(frame, variable, index, cachedFunction, bytecode);
+                                    @Bind BytecodeNode bytecode, @Bind Node node,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Shared("undefined") @Cached InlinedBranchProfile undefined) {
+            return send(frame, variable, index, cachedFunction, bytecode, node, undefined);
         }
 
         @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
-                                  @Bind BytecodeNode bytecode) {
+                                  @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Shared("undefined") @Cached InlinedBranchProfile undefined) {
             if (function.isByRef(index)) {
                 return Locals.makeRef(frame, variable, bytecode);
             }
-            return Variables.value(Locals.stored(frame, variable, bytecode));
+            return readValue(frame, variable, bytecode, node, undefined);
         }
     }
 
@@ -2075,12 +2223,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   Object key, @Bind BytecodeNode bytecode, @Bind Node node,
                                   @Cached ElementNodes.ElementReadNode read,
                                   @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Cached InlinedBranchProfile undefined,
                                   @Cached InlinedBranchProfile byRef,
                                   @Cached InlinedBranchProfile sharedArray,
                                   @Cached InlinedBranchProfile refArray,
                                   @Cached InlinedBranchProfile createdArray) {
             if (!function.isByRef(index)) {
-                return read.execute(Variables.value(Locals.stored(frame, variable, bytecode)), key);
+                return read.execute(readValue(frame, variable, bytecode, node, undefined), key);
             }
             byRef.enter(node);
             PhpArray array = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
@@ -2109,7 +2258,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (function.isByRef(index)) {
                 return access.makeRefOn(frame, object, site.name);
             }
-            return access.readOn(frame, object, site.name);
+            return access.read(frame, object, site.name);
         }
     }
 
@@ -2126,7 +2275,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (function.isByRef(index)) {
                 return access.makeRefOn(frame, object, name);
             }
-            return access.readOn(frame, object, name);
+            return access.read(frame, object, name);
         }
     }
 
@@ -2145,6 +2294,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   PhpFunction function, @Variadic Object[] keys, @Bind BytecodeNode bytecode,
                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                   @Cached ElementNodes.ElementReadNode read,
+                                  @Cached InlinedBranchProfile undefined,
                                   @Cached InlinedBranchProfile sharedArray,
                                   @Cached InlinedBranchProfile refArray,
                                   @Cached InlinedBranchProfile createdArray) {
@@ -2152,10 +2302,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (append) {
                     throw appendRead();
                 }
-                return readChain(Variables.value(Locals.stored(frame, variable, bytecode)), keys, read);
+                return readChain(readValue(frame, variable, bytecode, node, undefined), keys, read);
             }
             Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
-            return elementRef(node, base, keys, append, toKey, read);
+            return elementRef(node, base, keys, append, toKey);
         }
     }
 
@@ -2176,9 +2326,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (append) {
                     throw appendRead();
                 }
-                return readChain(access.readOn(frame, object, site.name), keys, read);
+                return readChain(access.read(frame, object, site.name), keys, read);
             }
-            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey, read);
+            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey);
         }
     }
 
@@ -2206,7 +2356,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (!call) {
                 throw temporaryWrite();
             }
-            return elementRef(node, separated(base), keys, append, toKey, read);
+            return elementRef(node, separated(base), keys, append, toKey);
         }
     }
 
@@ -2330,10 +2480,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static SpreadArguments spread(VirtualFrame frame, LocalAccessor variable, SpreadArguments list,
                                              PhpFunction function, @Bind BytecodeNode bytecode, @Bind Node node,
+                                             @Cached InlinedBranchProfile undefined,
                                              @Cached InlinedBranchProfile sharedArray,
                                              @Cached InlinedBranchProfile refArray,
                                              @Cached InlinedBranchProfile createdArray) {
-            Object value = Variables.value(Locals.stored(frame, variable, bytecode));
+            Object value = readValue(frame, variable, bytecode, node, undefined);
             int position = list.size();
             if (value instanceof PhpArray array && ArgumentsNode.takesRef(function, position, array.size())) {
                 PhpArray writable = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
@@ -3663,8 +3814,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     public static final class ForeachRefVar {
         @Specialization
-        public static Object subject(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode) {
-            Object value = Variables.value(Locals.stored(frame, variable, bytecode));
+        public static Object subject(VirtualFrame frame, LocalAccessor variable, @Bind BytecodeNode bytecode,
+                                     @Bind Node node, @Cached InlinedBranchProfile undefined) {
+            Object value = readValue(frame, variable, bytecode, node, undefined);
             return value instanceof PhpArray ? Locals.makeRef(frame, variable, bytecode) : value;
         }
     }
@@ -3859,12 +4011,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static PhpRef ref(VirtualFrame frame, LocalAccessor variable, boolean append, @Variadic Object[] keys,
                                  @Bind BytecodeNode bytecode, @Bind Node node,
                                  @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read,
                                  @Cached InlinedBranchProfile sharedArray,
                                  @Cached InlinedBranchProfile refArray,
                                  @Cached InlinedBranchProfile createdArray) {
             Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
-            return elementRef(node, base, keys, append, toKey, read);
+            return elementRef(node, base, keys, append, toKey);
         }
     }
 
@@ -3878,9 +4029,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                  @Variadic Object[] keys,
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access,
-                                 @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read) {
-            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey, read);
+                                 @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey) {
+            return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey);
         }
     }
 
@@ -3890,17 +4040,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class RefRefNested {
         @Specialization
         public static PhpRef ref(boolean append, PhpRef ref, @Variadic Object[] keys, @Bind Node node,
-                                 @Cached ElementNodes.ArrayKeyNode toKey,
-                                 @Cached ElementNodes.ElementReadNode read) {
-            return elementRef(node, referenceForWrite(ref), keys, append, toKey, read);
+                                 @Cached ElementNodes.ArrayKeyNode toKey) {
+            return elementRef(node, referenceForWrite(ref), keys, append, toKey);
         }
     }
 
     /** The reference of the element keys name from base (made writable), or of a new element (append). */
     private static PhpRef elementRef(Node node, Object base, Object[] keys, boolean append,
-                                     ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
+                                     ElementNodes.ArrayKeyNode toKey) {
         int levels = append ? keys.length : keys.length - 1;
-        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
         if (!(container instanceof PhpArray array)) {
             throw ElementChain.overloaded();
         }
@@ -3958,12 +4107,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object bind(VirtualFrame frame, LocalAccessor variable, boolean append, PhpRef ref,
                                   @Variadic Object[] keys, @Bind BytecodeNode bytecode, @Bind Node node,
                                   @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read,
                                   @Cached InlinedBranchProfile sharedArray,
                                   @Cached InlinedBranchProfile refArray,
                                   @Cached InlinedBranchProfile createdArray) {
             Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
-            bindElement(node, base, keys, append, ref, toKey, read);
+            bindElement(node, base, keys, append, ref, toKey);
             return ref.get();
         }
     }
@@ -3978,9 +4126,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Variadic Object[] keys,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access,
-                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read) {
-            bindElement(node, propertyForWrite(frame, access, object, site.name), keys, append, ref, toKey, read);
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey) {
+            bindElement(node, propertyForWrite(frame, access, object, site.name), keys, append, ref, toKey);
             return ref.get();
         }
     }
@@ -3991,17 +4138,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class BindRefNested {
         @Specialization
         public static Object bind(boolean append, PhpRef ref, PhpRef base, @Variadic Object[] keys,
-                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read) {
-            bindElement(node, referenceForWrite(base), keys, append, ref, toKey, read);
+                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey) {
+            bindElement(node, referenceForWrite(base), keys, append, ref, toKey);
             return ref.get();
         }
     }
 
     private static void bindElement(Node node, Object base, Object[] keys, boolean append, PhpRef ref,
-                                    ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
+                                    ElementNodes.ArrayKeyNode toKey) {
         int levels = append ? keys.length : keys.length - 1;
-        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
         if (!(container instanceof PhpArray array)) {
             throw ElementChain.overloaded();
         }
@@ -4063,44 +4209,66 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /**
      * A global by name read: a superglobal (`$_GET`, GlobalVarNode.execute) or `$GLOBALS['name']` by a constant
-     * key (GlobalsDimNode): its value, null when it doesn't exist. The site's GlobalRefNode keeps the reference.
+     * key (GlobalsDimNode): its value; null when it doesn't exist, after "Undefined global variable" unless the
+     * read is isset()'s (quiet). The site's GlobalRefNode keeps the reference.
      */
     @Operation
     @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = boolean.class, name = "quiet")
     public static final class GlobalValue {
         @Specialization(excludeForUncached = true)
-        public static Object cached(String name, @Bind Node node,
+        public static Object cached(String name, boolean quiet, @Bind Node node,
                                     @Cached(value = "create(name)", neverDefault = true) GlobalRefNode global) {
             PhpRef ref = global.execute(PhpContext.get(node), false);
-            return ref == null ? PhpNull.NULL : ref.get();
+            return ref == null ? undefinedGlobal(node, name, quiet) : ref.get();
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(String name, @Bind Node node) {
+        public static Object uncached(String name, boolean quiet, @Bind Node node) {
             PhpRef ref = PhpContext.get(node).findGlobal(name);
-            return ref == null ? PhpNull.NULL : ref.get();
+            return ref == null ? undefinedGlobal(node, name, quiet) : ref.get();
         }
+    }
+
+    /** A missing global read: null, after php-src's warning (ZEND_FETCH_R with ZEND_FETCH_GLOBAL) unless quiet. */
+    @TruffleBoundary
+    static Object undefinedGlobal(Node node, String name, boolean quiet) {
+        if (!quiet) {
+            ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING,
+                    Str.of("Undefined global variable $" + name), SourceLocation.of(node));
+        }
+        return PhpNull.NULL;
     }
 
     /**
      * A global by name as a place (GlobalVarNode.makeRef): its reference, made (null) when create says so and the
      * global doesn't exist; else null for a missing one (an unset of an element, a foreach by reference read it
-     * without creating it).
+     * without creating it). For a read-modify-write (update: `$GLOBALS['x'] .= `, BP_VAR_RW) a missing global
+     * warns before it is made.
      */
     @Operation
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = boolean.class, name = "create")
+    @ConstantOperand(type = boolean.class, name = "update")
     public static final class GlobalRef {
         @Specialization(excludeForUncached = true)
-        public static Object cached(String name, boolean create, @Bind Node node,
+        public static Object cached(String name, boolean create, boolean update, @Bind Node node,
                                     @Cached(value = "create(name)", neverDefault = true) GlobalRefNode global) {
-            PhpRef ref = global.execute(PhpContext.get(node), create);
+            PhpContext context = PhpContext.get(node);
+            // ponytail: an uncached lookup for the check; a read-modify-write of a global by name is rare
+            if (update && context.findGlobal(name) == null) {
+                undefinedGlobal(node, name, false);
+            }
+            PhpRef ref = global.execute(context, create);
             return ref == null ? PhpNull.NULL : ref;
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(String name, boolean create, @Bind Node node) {
+        public static Object uncached(String name, boolean create, boolean update, @Bind Node node) {
             PhpContext context = PhpContext.get(node);
+            if (update && context.findGlobal(name) == null) {
+                undefinedGlobal(node, name, false);
+            }
             PhpRef ref = create ? context.globalRef(name) : context.findGlobal(name);
             return ref == null ? PhpNull.NULL : ref;
         }
@@ -4108,22 +4276,28 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** `$GLOBALS[key]` by a computed key read (GlobalsDimNode.execute): the global the key names, or null. */
     @Operation
+    @ConstantOperand(type = boolean.class, name = "quiet")
     public static final class GlobalsElementValue {
         @Specialization
-        public static Object read(Object key, @Bind Node node) {
-            PhpRef ref = PhpContext.get(node).findGlobal(GlobalsDimNode.toName(key));
-            return ref == null ? PhpNull.NULL : ref.get();
+        public static Object read(boolean quiet, Object key, @Bind Node node) {
+            String name = GlobalsDimNode.toName(key);
+            PhpRef ref = PhpContext.get(node).findGlobal(name);
+            return ref == null ? undefinedGlobal(node, name, quiet) : ref.get();
         }
     }
 
     /** `$GLOBALS[key]` by a computed key as a place (GlobalsDimNode.makeRef): as GlobalRef. */
     @Operation
     @ConstantOperand(type = boolean.class, name = "create")
+    @ConstantOperand(type = boolean.class, name = "update")
     public static final class GlobalsElementRef {
         @Specialization
-        public static Object ref(boolean create, Object key, @Bind Node node) {
+        public static Object ref(boolean create, boolean update, Object key, @Bind Node node) {
             PhpContext context = PhpContext.get(node);
             String name = GlobalsDimNode.toName(key);
+            if (update && context.findGlobal(name) == null) {
+                undefinedGlobal(node, name, false);
+            }
             PhpRef ref = create ? context.globalRef(name) : context.findGlobal(name);
             return ref == null ? PhpNull.NULL : ref;
         }

@@ -212,8 +212,8 @@ public final class UnaryNodes {
         }
 
         @Fallback
-        public static TruffleString other(Object value) {
-            return Convert.toStr(value);
+        public static TruffleString other(Object value, @Bind Node node) {
+            return Convert.toStr(node, value);
         }
     }
 

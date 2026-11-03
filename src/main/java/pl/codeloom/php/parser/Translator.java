@@ -82,7 +82,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -1010,7 +1009,8 @@ public final class Translator {
             captureNodes[i] = variable(parts.captures()[i]);
         }
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
-        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(), scopeRef);
+        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(),
+                node.is("AST_ARROW_FUNC"), scopeRef);
     }
 
     /**
@@ -1724,13 +1724,18 @@ public final class Translator {
         }
     }
 
-    /** An element of an array (key null for `[]`), its key normalized once when it is a constant. */
+    /**
+     * An element of an array (key null for `[]`), its key normalized once when it is a constant string or int, as
+     * php-src's compiler does (zend_handle_numeric_dim); a float, bool or null key converts where it is used, which
+     * warns for a string offset.
+     */
     private static DimNode element(ExprNode container, ExprNode key) {
         if (key == null) {
             return new DimNode(container, null, null);
         }
         Object constant = key.constantValue();
-        Object normalized = constant == null || constant instanceof PhpArray ? null : ArrayKey.of(constant);
+        Object normalized = constant instanceof TruffleString || constant instanceof Long ? ArrayKey.of(constant)
+                : null;
         return new DimNode(container, key, normalized);
     }
 
@@ -1896,6 +1901,9 @@ public final class Translator {
     // ---- operators ----
 
     private ExprNode binary(Ast node) {
+        if (node.flags == 8) {
+            return concatNode(concatParts(node));
+        }
         ExprNode left = expression(node.get("left"));
         ExprNode right = expression(node.get("right"));
         switch (node.flags) {
@@ -1911,8 +1919,6 @@ public final class Translator {
                 return ArithmeticNodesFactory.ModNodeGen.create(left, right);
             case 12:
                 return ArithmeticNodesFactory.PowNodeGen.create(left, right);
-            case 8:
-                return foldConcat(left, right);
             case 9:
                 return ArithmeticNodesFactory.BitOrNodeGen.create(left, right);
             case 10:
@@ -1955,29 +1961,98 @@ public final class Translator {
     }
 
     /**
-     * Concatenation of two literals folds to a literal (common in long split strings); a chain of three or more
-     * operands is one ConcatChainNode. concatParts keeps each concatenation's operands, so the next `.` extends it.
+     * The operands of `a . b . c ...` as the reference's opcache leaves them (its block pass): a left operand that
+     * is a concatenation extends the chain; an empty literal ('', null, false) is dropped (CONCAT(X, '') becomes
+     * CAST(X)); an operand cast to a string ((string) x, "$x", a concatenation left with one operand) is the value
+     * itself, which the concatenation converts (CONCAT(CAST(X), Y) becomes CONCAT(X, Y)).
      */
-    private ExprNode foldConcat(ExprNode left, ExprNode right) {
-        if (left.constantValue() instanceof TruffleString a && right.constantValue() instanceof TruffleString b) {
-            return new ConstNode(language.intern(Str.concat(a, b)));
-        }
-        List<ExprNode> leftParts = concatParts.get(left);
+    private List<ExprNode> concatParts(Ast node) {
         List<ExprNode> parts = new ArrayList<>();
-        if (leftParts != null) {
-            parts.addAll(leftParts);
+        Object left = node.get("left");
+        if (left instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            parts.addAll(concatParts(ast));
         } else {
-            parts.add(left);
+            addConcatPart(parts, left);
         }
-        parts.add(right);
-        ExprNode concat = parts.size() == 2 ? ArithmeticNodesFactory.ConcatNodeGen.create(left, right)
-                : new ConcatChainNode(parts.toArray(new ExprNode[0]));
-        concatParts.put(concat, parts);
-        return concat;
+        addConcatPart(parts, node.get("right"));
+        return parts;
     }
 
-    /** The operands of the concatenations made so far (foldConcat), by node identity. */
-    private final Map<ExprNode, List<ExprNode>> concatParts = new IdentityHashMap<>();
+    private void addConcatPart(List<ExprNode> parts, Object operand) {
+        if (operand instanceof Ast ast && ast.is("AST_CAST") && ast.flags == UnaryNodes.CastNode.TO_STRING) {
+            addConcatPart(parts, ast.get("expr"));
+            return;
+        }
+        if (operand instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            List<ExprNode> nested = concatParts(ast);
+            if (nested.size() <= 1) {
+                parts.addAll(nested);
+            } else {
+                parts.add(concatNode(nested));
+            }
+            return;
+        }
+        if (operand instanceof Ast ast && ast.is("AST_ENCAPS_LIST") && interpolated(ast).size() == 1) {
+            addConcatPart(parts, interpolated(ast).get(0));
+            return;
+        }
+        ExprNode part = expression(operand);
+        Object value = part.constantValue();
+        if (value == PhpNull.NULL || value == Boolean.FALSE || (value instanceof TruffleString s && s.isEmpty())) {
+            return;
+        }
+        parts.add(part);
+    }
+
+    /**
+     * A concatenation of its parts (concatParts), adjacent literals joined: none is "", one converts as a cast,
+     * two are a ConcatNode, more one ConcatChainNode (a join, where a `.` per pair made a string each).
+     */
+    private ExprNode concatNode(List<ExprNode> operands) {
+        List<ExprNode> parts = new ArrayList<>();
+        for (ExprNode operand : operands) {
+            ExprNode last = parts.isEmpty() ? null : parts.get(parts.size() - 1);
+            if (last != null && literal(last) && literal(operand)) {
+                parts.set(parts.size() - 1, new ConstNode(language.intern(Str.concat(
+                        Convert.toStr(last.constantValue()), Convert.toStr(operand.constantValue())))));
+            } else {
+                parts.add(operand);
+            }
+        }
+        return switch (parts.size()) {
+            case 0 -> new ConstNode(language.intern(Str.EMPTY));
+            case 1 -> literal(parts.get(0)) ? new ConstNode(language.intern(Convert.toStr(parts.get(0)
+                    .constantValue()))) : UnaryNodes.CastNode.create(parts.get(0), UnaryNodes.CastNode.TO_STRING);
+            case 2 -> ArithmeticNodesFactory.ConcatNodeGen.create(parts.get(0), parts.get(1));
+            default -> new ConcatChainNode(parts.toArray(new ExprNode[0]));
+        };
+    }
+
+    /** A constant php-src's compiler converts to a string in a concatenation (not an array). */
+    private static boolean literal(ExprNode node) {
+        Object value = node.constantValue();
+        return value != null && !(value instanceof PhpArray);
+    }
+
+    /**
+     * Whether an interpolation's parts are two expressions, whose FAST_CONCAT evaluates both before converting
+     * either; with a literal part, converting each as it is evaluated (a rope's order) is the same.
+     */
+    static boolean twoExpressions(List<Object> parts) {
+        return parts.size() == 2 && parts.get(0) instanceof Ast && parts.get(1) instanceof Ast;
+    }
+
+    /** The parts of an interpolated string that php-src's rope keeps: all but empty literals. */
+    static List<Object> interpolated(Ast node) {
+        List<Object> parts = new ArrayList<>();
+        for (Object part : node.children()) {
+            if (!(part instanceof String text && text.isEmpty()) && !(part instanceof byte[] bytes
+                    && bytes.length == 0)) {
+                parts.add(part);
+            }
+        }
+        return parts;
+    }
 
     private ExprNode unary(Ast node) {
         ExprNode operand = expression(node.get("expr"));
@@ -2140,10 +2215,23 @@ public final class Translator {
         return new ArrayLiteralNode(keys, values, kinds);
     }
 
+    /**
+     * `"text {$expr} $var"` as php-src compiles it (zend_compile_encaps_list, zend_compile_rope_finalize): one part
+     * is a cast, two are a concatenation (FAST_CONCAT: both evaluated, then converted), more a rope, which converts
+     * each part as it is evaluated.
+     */
     private ExprNode interpolation(Ast node) {
-        ExprNode[] parts = new ExprNode[node.size()];
+        List<Object> kept = interpolated(node);
+        if (kept.size() == 1) {
+            return UnaryNodes.CastNode.create(expression(kept.get(0)), UnaryNodes.CastNode.TO_STRING);
+        }
+        if (twoExpressions(kept)) {
+            // joined as a chain is (ConcatChainNode's order is FAST_CONCAT's for two)
+            return new ConcatChainNode(new ExprNode[] {expression(kept.get(0)), expression(kept.get(1))});
+        }
+        ExprNode[] parts = new ExprNode[kept.size()];
         for (int i = 0; i < parts.length; i++) {
-            parts[i] = expression(node.child(i));
+            parts[i] = expression(kept.get(i));
         }
         return new InterpolationNode(parts);
     }

@@ -2,7 +2,10 @@ package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -302,7 +305,7 @@ public final class Convert {
             return Str.EMPTY;
         }
         if (value instanceof PhpArray) {
-            return Str.of("Array");
+            return arrayToStr(null);
         }
         if (value instanceof PhpObject o) {
             return o.toPhpString();
@@ -312,6 +315,23 @@ public final class Convert {
         }
         CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot convert " + value + " to string");
+    }
+
+    /** toStr at site: an array's warning is at site's statement (a built-in's at its call: null). */
+    @TruffleBoundary
+    public static TruffleString toStr(Node site, Object value) {
+        return value instanceof PhpArray ? arrayToStr(site) : toStr(value);
+    }
+
+    /**
+     * An array as a string: "Array", after php-src's "Array to string conversion" (zval_get_string_func), at site's
+     * statement, or where user code runs now (a built-in's call) when site is null.
+     */
+    @TruffleBoundary
+    public static TruffleString arrayToStr(Node site) {
+        ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING, Str.of("Array to string conversion"),
+                site == null ? SourceLocation.current() : SourceLocation.of(site));
+        return Str.of("Array");
     }
 
     /** A float as echo and string conversion print it: php-src's zend_gcvt with precision=14. */

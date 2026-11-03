@@ -415,15 +415,16 @@ public final class BuiltinNodes {
     public abstract static class ImplodeNode extends BuiltinNode {
         @Specialization
         protected TruffleString join(TruffleString glue, PhpArray pieces) {
-            return joinPieces(glue, pieces);
+            return joinPieces(this, glue, pieces);
         }
 
         @TruffleBoundary
-        private static TruffleString joinPieces(TruffleString glue, PhpArray pieces) {
+        private static TruffleString joinPieces(Node site, TruffleString glue, PhpArray pieces) {
             List<Object> parts = new ArrayList<>(pieces.size());
             for (int p = pieces.firstPosition(); p >= 0; p = pieces.nextPosition(p)) {
                 Object piece = pieces.valueAt(p);
-                parts.add(piece instanceof TruffleString || piece instanceof Long ? piece : Convert.toStr(piece));
+                parts.add(piece instanceof TruffleString || piece instanceof Long ? piece
+                        : Convert.toStr(site, piece));
             }
             return Str.join(glue, parts.toArray());
         }

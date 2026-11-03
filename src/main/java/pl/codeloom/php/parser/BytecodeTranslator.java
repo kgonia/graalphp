@@ -280,6 +280,8 @@ public final class BytecodeTranslator {
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
          */
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
+        /** The objects of written properties (delayedProp): read as isset() reads them, as php-src's BP_VAR_W. */
+        private final Set<Ast> writeFetched = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
         /** The local keeping the call's variables by name, made where the body first needs it. */
@@ -1454,6 +1456,10 @@ public final class BytecodeTranslator {
         }
 
         private void expressionBody(Object value) {
+            if (value instanceof Ast fetched && writeFetched.contains(fetched)) {
+                readIfSet(fetched);
+                return;
+            }
             if (constantShaped(value)) {
                 constant(value, value instanceof Ast ast ? ast : null);
                 return;
@@ -1791,10 +1797,14 @@ public final class BytecodeTranslator {
         }
 
         /** An array key: a literal one normalized once, as DimNode's constant key. */
+        /**
+         * A key: a constant string or int normalized once, as php-src's compiler does (zend_handle_numeric_dim);
+         * a float, bool or null converts where it is used, which warns for a string offset.
+         */
         private void key(Object dim) {
             if (constantShaped(dim)) {
                 Object constant = constantValue(dim);
-                if (!(constant instanceof PhpArray)) {
+                if (constant instanceof TruffleString || constant instanceof Long) {
                     b.emitLoadConstant(ArrayKey.of(constant));
                     return;
                 }
@@ -1886,6 +1896,8 @@ public final class BytecodeTranslator {
             for (int i = 0; i < locals.length; i++) {
                 if (parts.byRef()[i]) {
                     b.emitRefVar(locals[i]);
+                } else if (node.is("AST_ARROW_FUNC")) {
+                    b.emitReadVarIfDefined(locals[i]);
                 } else {
                     b.emitReadVar(locals[i]);
                 }
@@ -2268,11 +2280,8 @@ public final class BytecodeTranslator {
                     return;
                 }
                 case 8 -> {
-                    List<Object> parts = concatOperands(node);
-                    if (parts.size() >= 3) {
-                        concatChain(parts);
-                        return;
-                    }
+                    concat(concatParts(node));
+                    return;
                 }
                 default -> {
                 }
@@ -2284,23 +2293,83 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The operands of `a . b . c ...` (Translator.foldConcat): a left operand that is itself a concatenation
-         * extends the chain, unless it folds to a literal.
+         * The operands of `a . b . c ...` as the reference's opcache leaves them (Translator.concatParts): a left
+         * operand that is a concatenation extends the chain, unless it folds to a literal; an empty literal is
+         * dropped; an operand cast to a string is the value itself; a nested concatenation of two operands or more
+         * is a ConcatOperands.
          */
-        private List<Object> concatOperands(Ast node) {
+        private List<Object> concatParts(Ast node) {
             List<Object> parts = new ArrayList<>();
             if (node.get("left") instanceof Ast left && left.is("AST_BINARY_OP") && left.flags == 8
                     && !constantShaped(left)) {
-                parts.addAll(concatOperands(left));
+                parts.addAll(concatParts(left));
             } else {
-                parts.add(node.get("left"));
+                addConcatPart(parts, node.get("left"));
             }
-            parts.add(node.get("right"));
+            addConcatPart(parts, node.get("right"));
             return parts;
         }
 
+        private void addConcatPart(List<Object> parts, Object operand) {
+            if (constantShaped(operand)) {
+                Object value = constantValue(operand);
+                if (value != PhpNull.NULL && value != Boolean.FALSE
+                        && !(value instanceof TruffleString s && s.isEmpty())) {
+                    parts.add(operand);
+                }
+                return;
+            }
+            Ast ast = (Ast) operand;
+            if (ast.is("AST_CAST") && ast.flags == CastNode.TO_STRING) {
+                addConcatPart(parts, ast.get("expr"));
+            } else if (ast.is("AST_BINARY_OP") && ast.flags == 8) {
+                List<Object> nested = concatParts(ast);
+                if (nested.size() <= 1) {
+                    parts.addAll(nested);
+                } else {
+                    parts.add(new ConcatOperands(nested));
+                }
+            } else if (ast.is("AST_ENCAPS_LIST") && Translator.interpolated(ast).size() == 1) {
+                addConcatPart(parts, Translator.interpolated(ast).get(0));
+            } else {
+                parts.add(operand);
+            }
+        }
+
+        /** A nested concatenation's parts, as one operand. */
+        private record ConcatOperands(List<Object> parts) {
+        }
+
+        /** A concatenation of parts (concatParts): none is "", one converts as a cast, two are a Concat. */
+        private void concat(List<Object> parts) {
+            switch (parts.size()) {
+                case 0 -> b.emitLoadConstant(Str.EMPTY);
+                case 1 -> {
+                    b.beginCastString();
+                    concatPart(parts.get(0));
+                    b.endCastString();
+                }
+                case 2 -> {
+                    b.beginConcat();
+                    concatPart(parts.get(0));
+                    concatPart(parts.get(1));
+                    b.endConcat();
+                }
+                default -> concatChain(parts);
+            }
+        }
+
+        private void concatPart(Object part) {
+            if (part instanceof ConcatOperands nested) {
+                concat(nested.parts());
+            } else {
+                expression(part);
+            }
+        }
+
         /**
-         * Three or more operands (ConcatChainNode): one join, where a `.` per pair compiled a concatenation each.
+         * Three or more operands, or a two-part interpolation (ConcatChainNode): one join, where a `.` per pair
+         * compiled a concatenation each.
          * As php-src's chain of ZEND_CONCAT, the first two are evaluated, then converted (the second waits in a
          * local), and each next one is evaluated and converted in turn.
          */
@@ -2309,10 +2378,10 @@ public final class BytecodeTranslator {
             b.beginInterpolate();
             b.beginInterpolationPart();
             b.beginFirstOfTwo();
-            expression(parts.get(0));
+            concatPart(parts.get(0));
             b.beginBlock();
             b.beginStoreLocal(second);
-            expression(parts.get(1));
+            concatPart(parts.get(1));
             b.endStoreLocal();
             b.emitLoadConstant(PhpNull.NULL);
             b.endBlock();
@@ -2323,7 +2392,7 @@ public final class BytecodeTranslator {
             b.endInterpolationPart();
             for (int i = 2; i < parts.size(); i++) {
                 b.beginInterpolationPart();
-                expression(parts.get(i));
+                concatPart(parts.get(i));
                 b.endInterpolationPart();
             }
             b.endInterpolate();
@@ -2542,12 +2611,23 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * `"text {$expr} $var"` and heredoc (InterpolationNode): each part converted to a string as it is evaluated,
-         * a literal part as it is, then one join.
+         * `"text {$expr} $var"` and heredoc (Translator.interpolation): one part is a cast; two expressions a
+         * concatenation (FAST_CONCAT: both evaluated, then converted), joined as a chain is; anything else a rope
+         * (InterpolationNode): each part converted to a string as it is evaluated, a literal part as it is, then
+         * one join, which is FAST_CONCAT's order too when one of two parts is a literal.
          */
         private void interpolation(Ast node) {
+            List<Object> kept = Translator.interpolated(node);
+            if (kept.size() == 1) {
+                concat(kept);
+                return;
+            }
+            if (Translator.twoExpressions(kept)) {
+                concatChain(kept);
+                return;
+            }
             b.beginInterpolate();
-            for (Object part : node.children()) {
+            for (Object part : kept) {
                 if (part instanceof String || part instanceof byte[]) {
                     constant(part, node);
                     continue;
@@ -2706,10 +2786,23 @@ public final class BytecodeTranslator {
          * Emits into the block the caller opened. `?->` on the way is php-src's compile error.
          */
         private Ast delayedProp(Ast target, int fetch) {
+            return delayedProp(target, fetch, fetch == VariableVariableNode.RW);
+        }
+
+        /**
+         * delayedProp for a write (BP_VAR_W, update false), whose object php-src fetches quietly (an unset variable
+         * or a missing element warns only for the Error that follows), or for a read-modify-write or an argument
+         * (update), whose object reads warn; a `$$name` on the way fetched by fetch.
+         */
+        private Ast delayedProp(Ast target, int fetch, boolean update) {
             if (deepestNullsafe(target) != null) {
                 throw compileError(target, "Can't use nullsafe operator in write context");
             }
             Object object = delayedObject(target.get("expr"), fetch);
+            if (!update && object instanceof Ast fetched && (fetched.is("AST_DIM") || fetched.is("AST_PROP")
+                    || (fetched.is("AST_VAR") && (isVariable(fetched) || refPlace(fetched) != null)))) {
+                writeFetched.add(fetched);
+            }
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
             return withParts(target, "expr", object, "prop", prop);
         }
@@ -2822,7 +2915,10 @@ public final class BytecodeTranslator {
             b.endBlock();
         }
 
-        /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
+        /**
+         * `unset($obj->name)` (PropNode.unset): the object, read as isset() reads it (BP_VAR_UNSET), then the name
+         * (a constant or a variable).
+         */
         private void unsetProp(Ast target) {
             if (target.node("expr") != null && deepestNullsafe(target.node("expr")) != null) {
                 // php-src's compile error: ?-> in a write context
@@ -2836,7 +2932,7 @@ public final class BytecodeTranslator {
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
-                expression(target.get("expr"));
+                readIfSet(target.get("expr"));
                 b.endUnsetProp();
                 return;
             }
@@ -2844,7 +2940,7 @@ public final class BytecodeTranslator {
                 throw new Unsupported("unset of a property by a computed name", target);
             }
             b.beginUnsetPropNamed(propSite(target, null));
-            expression(target.get("expr"));
+            readIfSet(target.get("expr"));
             propName(prop);
             b.endUnsetPropNamed();
         }
@@ -2872,7 +2968,7 @@ public final class BytecodeTranslator {
             }
             if (tested instanceof Ast target && target.is("AST_VAR")) {
                 b.beginIsSetValue();
-                b.emitReadVar(variable(target, "isset of"));
+                b.emitReadVarIfSet(variable(target, "isset of"));
                 b.endIsSetValue();
                 return;
             }
@@ -2968,13 +3064,17 @@ public final class BytecodeTranslator {
                         refPlace(ast).readIfSet();
                         return;
                     }
+                    case "AST_NULLSAFE_PROP" -> throw new Unsupported("isset of", ast);
                     case "AST_VAR" -> {
-                        if (isVariableVariable(ast)) {
-                            refPlace(ast).readIfSet();
+                        if (isVariable(ast)) {
+                            b.emitReadVarIfSet(variable(ast, "isset of"));
+                            return;
+                        }
+                        if (refPlace(ast) instanceof RefPlace kept) {
+                            kept.readIfSet();
                             return;
                         }
                     }
-                    case "AST_NULLSAFE_PROP" -> throw new Unsupported("isset of", ast);
                     default -> {
                     }
                 }
@@ -3007,7 +3107,7 @@ public final class BytecodeTranslator {
             if (target.is("AST_VAR")) {
                 BytecodeLocal variable = variable(target, "??= to");
                 b.beginCoalesce();
-                b.emitReadVar(variable);
+                b.emitReadVarIfSet(variable);
                 b.beginWriteVar(variable);
                 expression(value);
                 b.endWriteVar();
@@ -3119,7 +3219,7 @@ public final class BytecodeTranslator {
                     case "compound assignment to", "increment of" -> VariableVariableNode.RW;
                     case "unset of" -> VariableVariableNode.UNSET;
                     default -> VariableVariableNode.W;
-                });
+                }, what.equals("compound assignment to") || what.equals("increment of") || what.equals("argument"));
                 return new ElementPlace(null, property, writtenPropSite(property), null, dims);
             }
             throw new Unsupported(what + " an element of an expression", target);
@@ -3203,7 +3303,7 @@ public final class BytecodeTranslator {
             if (place.ref() != null) {
                 place.ref().readIfSet();
             } else if (place.variable() != null) {
-                b.emitReadVar(place.variable());
+                b.emitReadVarIfSet(place.variable());
             } else {
                 b.beginReadPropIfSet(place.site());
                 readIfSet(place.property().get("expr"));
@@ -4210,23 +4310,30 @@ public final class BytecodeTranslator {
                     b.beginReadStaticProp(site);
                     emitClass();
                     b.endReadStaticProp();
-                } else if (global != null) {
-                    b.emitGlobalValue(global);
                 } else {
-                    b.beginGlobalsElementValue();
+                    readGlobal(false);
+                }
+            }
+
+            /** A global's value: a missing one warns unless quiet. */
+            private void readGlobal(boolean quiet) {
+                if (global != null) {
+                    b.emitGlobalValue(global, quiet);
+                } else {
+                    b.beginGlobalsElementValue(quiet);
                     expression(key);
                     b.endGlobalsElementValue();
                 }
             }
 
-            /** The value as isset() reads it (readIfSet): null for a missing static property too. */
+            /** The value as isset() reads it (readIfSet): null for a missing static property or global, quietly. */
             void readIfSet() {
                 if (variable) {
                     variableValue(VariableVariableNode.IS);
                     return;
                 }
                 if (site == null) {
-                    read();
+                    readGlobal(true);
                     return;
                 }
                 b.beginStaticPropIfSet(site);
@@ -4250,7 +4357,7 @@ public final class BytecodeTranslator {
                     expression(key);
                     b.endVariableRef();
                 } else {
-                    ref(true);
+                    ref(true, true);
                 }
             }
 
@@ -4259,6 +4366,10 @@ public final class BytecodeTranslator {
              * `$$key` fetched for W, else for UNSET.
              */
             void ref(boolean create) {
+                ref(create, false);
+            }
+
+            private void ref(boolean create, boolean update) {
                 if (variable) {
                     b.beginVariableRef(create ? VariableVariableNode.W : VariableVariableNode.UNSET);
                     expression(key);
@@ -4268,9 +4379,9 @@ public final class BytecodeTranslator {
                     emitClass();
                     b.endStaticPropRef();
                 } else if (global != null) {
-                    b.emitGlobalRef(global, create);
+                    b.emitGlobalRef(global, create, update);
                 } else {
-                    b.beginGlobalsElementRef(create);
+                    b.beginGlobalsElementRef(create, update);
                     expression(key);
                     b.endGlobalsElementRef();
                 }

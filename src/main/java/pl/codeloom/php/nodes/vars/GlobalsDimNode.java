@@ -33,10 +33,16 @@ public final class GlobalsDimNode extends LValueNode {
         return Str.java(Convert.toStr(value));
     }
 
+    /** The global's value; null after "Undefined global variable" when it doesn't exist (also for `op=`). */
     @Override
     public Object execute(VirtualFrame frame) {
-        PhpRef ref = PhpContext.get(this).findGlobal(name(frame));
-        return ref == null ? PhpNull.NULL : ref.get();
+        String name = name(frame);
+        PhpRef ref = PhpContext.get(this).findGlobal(name);
+        if (ref == null) {
+            GlobalVarNode.undefined(this, "Undefined global variable $" + name);
+            return PhpNull.NULL;
+        }
+        return ref.get();
     }
 
     @Override

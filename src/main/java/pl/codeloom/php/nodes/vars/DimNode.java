@@ -10,6 +10,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
+import pl.codeloom.php.nodes.vars.ElementNodes.ElementIfSetNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
 import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
@@ -30,6 +31,8 @@ public final class DimNode extends LValueNode {
     @Child private ExprNode container;
     @Child private ExprNode key;
     @Child private ElementReadNode read = ElementNodesFactory.ElementReadNodeGen.create();
+    /** isset()'s and `??`'s read, quiet (FETCH_DIM_IS). */
+    @Child private ElementIfSetNode lookup = ElementNodesFactory.ElementIfSetNodeGen.create();
     @Child private ElementWriteNode writeElement = ElementNodesFactory.ElementWriteNodeGen.create();
     @Child private ArrayKeyNode toKey = ElementNodesFactory.ArrayKeyNodeGen.create();
     private final Object constantKey;
@@ -208,9 +211,10 @@ public final class DimNode extends LValueNode {
         return nested;
     }
 
+    /** The containers are read as isset() reads them (FETCH_DIM_UNSET): quietly. */
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = container.execute(frame);
+        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         if (value instanceof PhpArray current) {
             Object k = normalizedKey(frame);
             if (current.containsKey(k)) {
@@ -228,7 +232,7 @@ public final class DimNode extends LValueNode {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            return read.execute(array, offset) != PhpNull.NULL;
+            return lookup.execute(array, offset) != PhpNull.NULL;
         }
         if (value == null || value == PhpNull.NULL) {
             return false;
@@ -267,14 +271,14 @@ public final class DimNode extends LValueNode {
         Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
         Object offset = rawKey(frame);
         if (value instanceof PhpArray array) {
-            Object element = read.execute(array, offset);
+            Object element = lookup.execute(array, offset);
             return element == PhpNull.NULL ? null : element;
         }
         if (value == null || value == PhpNull.NULL) {
             return null;
         }
         notArray.enter();
-        return isSetIn(this, value, offset) ? read.execute(value, offset) : null;
+        return isSetIn(this, value, offset) ? lookup.execute(value, offset) : null;
     }
 
     @Override

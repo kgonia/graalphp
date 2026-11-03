@@ -482,12 +482,8 @@ final class Serialization {
             return entries;
         }
 
-        /** zval_get_tmp_string of a name __sleep returned. */
+        /** zval_get_tmp_string of a name __sleep returned (an array warns, Convert.arrayToStr). */
         private TruffleString stringOf(Object value) {
-            if (value instanceof PhpArray) {
-                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Array to string conversion"),
-                        SourceLocation.current());
-            }
             return Convert.toStr(value);
         }
 
