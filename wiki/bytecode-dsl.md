@@ -730,7 +730,7 @@ kernels, the smoke tests and php-src's tests).
   property (`PhpMain.compilerDefaults`), so only the tests mixed it; the unit test's contexts now take the launchers'
   default. Whether the economy tier passes the limit depends on the graph: after PE `Query::sql` has 51,557 or
   51,605 nodes with what ran earlier in the JVM (with splitting allowed the former, not explained), and only the
-  former passes it at the economy tier.
+  former goes over it at the economy tier.
 
 ### Splitting, tree against bytecode (2026-11-03)
 `-Dpolyglot.engine.TraceSplittingSummary=true` on 120 s of the WooCommerce load (`woo.sh diag`, 8 users) and of
