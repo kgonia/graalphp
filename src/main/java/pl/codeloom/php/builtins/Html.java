@@ -97,7 +97,7 @@ final class Html {
     }
 
     /** A decoder for one string: get_next_char with its cursor and status. */
-    private static final class Reader {
+    static final class Reader {
         final byte[] str;
         final int length;
         final int charset;

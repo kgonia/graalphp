@@ -20,8 +20,7 @@ import java.util.Map;
 /**
  * var_dump, var_export and print_r, as php-src's php_var_dump, php_var_export_ex (ext/standard/var.c) and
  * zend_print_zval_r (Zend/zend.c). Strings are written as their raw bytes. Arrays and objects being printed are
- * tracked for recursion as php-src's recursion guards. Property visibility isn't printed (the runtime doesn't keep
- * protected and private apart), nor are uninitialized typed properties.
+ * tracked for recursion as php-src's recursion guards. Uninitialized typed properties aren't printed.
  */
 final class Dump {
     private final ByteBuilder out = new ByteBuilder(64);
@@ -155,22 +154,14 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
-            // the property table, its non-public names as "name":"Class":private and "name":protected
             Object[] table = object.propertyTable();
             ascii(common + "object(");
             utf8(object.getPhpClass().getName());
             ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
             for (int i = 0; i < table.length; i += 2) {
-                String name = (String) table[i];
-                int end = name.startsWith("\0") ? name.indexOf('\0', 1) : -1;
                 spaces(level + 1);
-                ascii("[\"");
-                out.write(Str.ofKey(end < 0 ? name : name.substring(end + 1)));
-                ascii(end < 0 ? "\"]=>\n" : name.charAt(1) == '*' && end == 2 ? "\":protected]=>\n" : "\":\"");
-                if (end > 0 && !(name.charAt(1) == '*' && end == 2)) {
-                    out.write(Str.ofKey(name.substring(1, end)));
-                    ascii("\":private]=>\n");
-                }
+                property((String) table[i], true);
+                ascii("]=>\n");
                 varDump(table[i + 1], level + 2);
             }
             leave(object);
@@ -182,6 +173,44 @@ final class Dump {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
         } else {
             ascii(common + "UNKNOWN:0\n");
+        }
+    }
+
+    /** __debugInfo()'s array as a property table (zend_std_get_debug_info), its keys as strings. */
+    private static Object[] debugTable(PhpObject object) {
+        if (!(PhpRef.deref(object.callMethod("__debuginfo")) instanceof PhpArray debug)) {
+            throw new PhpError("__debuginfo() must return an array");
+        }
+        Object[] table = new Object[debug.size() * 2];
+        int i = 0;
+        for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
+            Object key = debug.keyAt(p);
+            table[i++] = key instanceof Long l ? l.toString() : Str.key((TruffleString) key);
+            table[i++] = debug.rawAt(p);
+        }
+        return table;
+    }
+
+    /**
+     * A property table key after its "[", as php_object_property_dump (quoted) and print_hash write it: the name, then
+     * ":protected" or the private one's ":Class:private".
+     */
+    private void property(String key, boolean quoted) {
+        String q = quoted ? "[\"" : "[";
+        int end = key.startsWith("\0") ? key.indexOf('\0', 1) : -1;
+        ascii(q);
+        out.write(Str.ofKey(end < 0 ? key : key.substring(end + 1)));
+        q = quoted ? "\"" : "";
+        ascii(q);
+        if (end > 0) {
+            String scope = key.substring(1, end);
+            if (scope.equals("*")) {
+                ascii(":protected");
+            } else {
+                ascii(":" + q);
+                out.write(Str.ofKey(scope));
+                ascii(q + ":private");
+            }
         }
     }
 
@@ -345,12 +374,13 @@ final class Dump {
             }
             spaces(indent);
             ascii("(\n");
-            for (Object name : object.propertyNames()) {
+            Object[] table = object.getPhpClass().findMethod("__debuginfo") != null ? debugTable(object)
+                    : object.propertyTable();
+            for (int i = 0; i < table.length; i += 2) {
                 spaces(indent + 4);
-                out.write('[');
-                out.write(Str.ofKey((String) name));
+                property((String) table[i], false);
                 ascii("] => ");
-                printR(object.getProperty((String) name), indent + 8);
+                printR(table[i + 1], indent + 8);
                 out.write('\n');
             }
             leave(object);
