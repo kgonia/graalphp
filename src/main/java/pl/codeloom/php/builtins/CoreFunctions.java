@@ -70,7 +70,8 @@ final class CoreFunctions {
             if (value instanceof PhpArray pair) {
                 Object target = pair.size() == 2 ? PhpRef.deref(pair.get(0L)) : null;
                 return PhpRef.deref(pair.get(1L)) instanceof TruffleString
-                        && (target instanceof TruffleString || target instanceof PhpObject);
+                        && (target instanceof TruffleString || target instanceof PhpObject
+                        || target instanceof PhpClosure);
             }
             return value instanceof TruffleString || Callables.resolve(context, value) != null;
         });

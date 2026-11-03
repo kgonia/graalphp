@@ -20,7 +20,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * The Closure class's methods (Zend/zend_closures.c): bind, bindTo, call and fromCallable. A closure value is a
+ * The Closure class's methods (Zend/zend_closures.c): bind, bindTo, call, fromCallable and getCurrent. A closure value is a
  * PhpClosure; its function is the closure's own body, or for a "fake" closure (made from a function or method by
  * fromCallable or `f(...)`) that function or method, whose scope can't be changed.
  */
@@ -37,7 +37,14 @@ final class ClosureMethods {
                 registry.method("bindTo", false, a -> bind((PhpClosure) a[PhpFunction.ARG_THIS],
                         thisArgument(a, 0, "Closure::bindTo"), Args.get(a, 1), "Closure::bindTo")),
                 registry.method("call", false, a -> call((PhpClosure) a[PhpFunction.ARG_THIS], a)),
-                registry.method("fromCallable", true, ClosureMethods::fromCallable));
+                registry.method("fromCallable", true, ClosureMethods::fromCallable),
+                registry.method("getCurrent", true, a -> {
+                    if (Callables.callerArgument(PhpFunction.ARG_CLOSURE) instanceof PhpClosure closure
+                            && !isFake(closure)) {
+                        return closure;
+                    }
+                    throw new PhpError("Current function is not a closure");
+                }));
     }
 
     private static PhpClosure closureArgument(Object[] a, int index, String function) {

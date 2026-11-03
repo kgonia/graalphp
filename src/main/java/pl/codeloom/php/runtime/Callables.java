@@ -217,6 +217,12 @@ public final class Callables {
         });
     }
 
+    /** The frame argument of the PHP code calling (a built-in's caller), or null. */
+    public static Object callerArgument(int index) {
+        Caller caller = caller();
+        return caller == null ? null : caller.argument(index);
+    }
+
     /** $this of the PHP code calling when it is an instance of the class, or null. */
     private static PhpObject callerThisOf(PhpClass phpClass) {
         Caller caller = caller();

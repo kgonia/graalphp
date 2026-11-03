@@ -7,6 +7,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.util.Objects;
 
 /**
  * PHP 8's type juggling: conversions, numeric strings and comparisons, following php-src's zend_operators.c.
@@ -837,6 +838,10 @@ public final class Convert {
      * The compare handler of the object operand (objectLeft: a, else b) against the other operand, which is not
      * null or a bool: zend_std_compare_objects, with ext/date's handlers for the prelude's date classes.
      */
+    private static boolean isFake(PhpClosure closure) {
+        return closure.getMagicName() != null || !closure.getFunction().getName().startsWith("{closure");
+    }
+
     private static int compareObjects(Object a, Object b, boolean objectLeft, Guard guard) {
         if (notComparable(a) || notComparable(b)) {
             // zend_objects_not_comparable (ext/curl's handles): uncomparable but to themselves
@@ -862,8 +867,14 @@ public final class Convert {
         if (a == b) {
             return 0;
         }
+        if (a instanceof PhpClosure x && b instanceof PhpClosure y) {
+            // zend_closure_compare: two fake closures (of named functions and methods) of the same function, with the
+            // same $this and called scope, are equal; other closures only to themselves
+            return isFake(x) && isFake(y) && x.getFunction() == y.getFunction() && x.getBoundThis() == y.getBoundThis()
+                    && x.getCalledScope() == y.getCalledScope() && Objects.equals(x.getMagicName(), y.getMagicName())
+                    ? 0 : 1;
+        }
         if (!(a instanceof PhpObject x) || !(b instanceof PhpObject y)) {
-            // closures compare only to themselves
             return 1;
         }
         PhpClass classX = x.getPhpClass();
