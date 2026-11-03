@@ -312,6 +312,8 @@ public final class PropNode extends LValueNode {
             phpObject.writeRaw(name, value);
             return true;
         }
+        // the set visibility before the hook (zend_std_write_property's hooked case)
+        phpObject.checkSetAccess(name, scope(arguments), "modify");
         callHook(hooks.set(), phpObject, value);
         return true;
     }
