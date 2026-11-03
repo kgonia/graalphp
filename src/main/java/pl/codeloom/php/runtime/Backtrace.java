@@ -359,7 +359,7 @@ public final class Backtrace {
 
     /**
      * smart_str_append_zval: a scalar as smart_str_append_scalar shows it (a string quoted, escaped and cut to
-     * maxLength bytes); false, appending nothing, for an array, object or resource (this runtime has no enums).
+     * maxLength bytes), an enum case as Class::Case; false, appending nothing, for an array, other object or resource.
      */
     public static boolean appendZval(ByteBuilder out, Object value, int maxLength) {
         if (value == PhpNull.NULL || value == null) {
@@ -382,6 +382,10 @@ public final class Backtrace {
                 out.writeAscii("...");
             }
             out.write('\'');
+        } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
+            out.write(Str.of(object.getPhpClass().getName()));
+            out.writeAscii("::");
+            out.write((TruffleString) object.getProperty("name"));
         } else {
             return false;
         }
