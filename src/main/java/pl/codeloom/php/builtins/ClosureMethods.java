@@ -264,7 +264,7 @@ final class ClosureMethods {
         }
         // a closure of a method __call stands in for has the trampoline's parameter, `...$arguments`
         PhpFunction.Param[] params = closure.getMagicName() != null
-                ? new PhpFunction.Param[] {new PhpFunction.Param("arguments", false, true, null, (char) 0, false, null)}
+                ? new PhpFunction.Param[] {new PhpFunction.Param("arguments", false, true, null, null, false, null)}
                 : function.getParams();
         String[] paramNames;
         int required = 0;
