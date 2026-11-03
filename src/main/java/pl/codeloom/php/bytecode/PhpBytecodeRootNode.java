@@ -2595,7 +2595,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object include(VirtualFrame frame, IncludeSite site, Object path,
                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
                                      @Bind Node node) {
-            CallTarget file = IncludeNode.resolve(node, path, site.once());
+            CallTarget file = IncludeNode.resolve(node, site, path, site.once());
             if (file == null) {
                 return Boolean.TRUE;
             }
