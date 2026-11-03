@@ -532,7 +532,7 @@ final class MailFunctions {
     }
 
     /** strerror of the errno an open failed with, as the JDK reports it. */
-    private static String reason(IOException e) {
+    static String reason(IOException e) {
         if (e instanceof NoSuchFileException) {
             return "No such file or directory";
         }

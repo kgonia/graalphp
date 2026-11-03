@@ -10,6 +10,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -914,6 +915,10 @@ final class FileFunctions {
             this.fd = fd;
         }
 
+        int fd() {
+            return fd;
+        }
+
         @Override
         int rawRead(byte[] into, int offset, int length) {
             if (fd != 0) {
@@ -1095,6 +1100,26 @@ final class FileFunctions {
         });
         r.fn("fwrite", a -> write(a, "fwrite"));
         r.fn("fputs", a -> write(a, "fputs"));
+        r.fn("fprintf", (context, a) -> {
+            Args.arity(a, "fprintf", 2, Integer.MAX_VALUE);
+            Stream stream = stream(a, "fprintf");
+            Args.string(context, a, 1, "fprintf", "format", false);
+            return printTo(stream, Sprintf.format(a, 1, "fprintf"));
+        });
+        r.fn("fscanf", "00*", (context, a) -> {
+            Args.arity(a, "fscanf", 2, Integer.MAX_VALUE);
+            PhpResource resource = resource(a, 0, "fscanf", "stream", false);
+            TruffleString format = Args.string(context, a, 1, "fscanf", "format", false);
+            if (resource.isClosed() || !(resource.getHandle() instanceof Stream stream)) {
+                throw new PhpError("TypeError", "fscanf(): supplied resource is not a valid File-Handle resource");
+            }
+            byte[] line = stream.readLine(-1);
+            return line == null ? Boolean.FALSE : Scanf.scan(line, Str.readBytes(format), a, 2);
+        });
+        r.fn("vfprintf", (context, a) -> {
+            Args.arity(a, "vfprintf", 3, 3);
+            return printTo(stream(a, "vfprintf"), Sprintf.formatArray(context, a, 1, "vfprintf"));
+        });
         r.fn("fgets", a -> {
             Stream stream = stream(a, "fgets");
             int limit = -1;
@@ -1187,6 +1212,27 @@ final class FileFunctions {
             }
             context.write(Str.of(bytes));
             return (long) bytes.length;
+        });
+        r.fn("parse_ini_string", (context, a) -> {
+            Args.arity(a, "parse_ini_string", 1, 3);
+            TruffleString ini = Args.string(context, a, 0, "parse_ini_string", "ini_string", false);
+            return IniParser.parse(context, Str.bytes(ini), iniSections(context, a, "parse_ini_string"),
+                    iniMode(context, a, "parse_ini_string"), null);
+        });
+        r.fn("parse_ini_file", (context, a) -> {
+            Args.arity(a, "parse_ini_file", 1, 3);
+            String name = Str.java(Args.string(context, a, 0, "parse_ini_file", "filename", false));
+            if (name.indexOf(0) >= 0) {
+                throw new PhpError("ValueError", "parse_ini_file(): Argument #1 ($filename) must not contain any null "
+                        + "bytes");
+            }
+            boolean sections = iniSections(context, a, "parse_ini_file");
+            long mode = iniMode(context, a, "parse_ini_file");
+            if (name.isEmpty()) {
+                throw new PhpError("ValueError", "parse_ini_file(): Argument #1 ($filename) must not be empty");
+            }
+            byte[] text = readForZend(context, "parse_ini_file", name);
+            return text == null ? Boolean.FALSE : IniParser.parse(context, text, sections, mode, name);
         });
         r.fn("md5_file", (context, a) -> digestFile(context, "MD5", a));
         r.fn("sha1_file", (context, a) -> digestFile(context, "SHA-1", a));
@@ -1333,6 +1379,34 @@ final class FileFunctions {
         return context.getEnv().getPublicTruffleFile(name);
     }
 
+    /**
+     * A file as zend_stream_open reads it for the scanners (php_stream_open_for_zend_ex): through the include path
+     * ("."), then beside the running script (php_resolve_path); null after the warning if it can't be read.
+     */
+    @TruffleBoundary
+    static byte[] readForZend(PhpContext context, String function, String name) {
+        try {
+            TruffleFile file = file(context, name);
+            if (!file.exists() && !file.isAbsolute() && !name.startsWith("./") && !name.startsWith("../")) {
+                TruffleFile beside = file(context, SourceLocation.current().file()).resolveSibling(name);
+                file = beside.exists() ? beside : file;
+            }
+            return file.readAllBytes();
+        } catch (IOException e) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(" + name
+                    + "): Failed to open stream: " + MailFunctions.reason(e)), SourceLocation.current());
+            return null;
+        }
+    }
+
+    private static boolean iniSections(PhpContext context, Object[] a, String function) {
+        return Args.has(a, 1) && Args.bool(context, a, 1, function, "process_sections");
+    }
+
+    private static long iniMode(PhpContext context, Object[] a, String function) {
+        return Args.has(a, 2) ? Args.integer(context, a, 2, function, "scanner_mode", "int") : IniParser.NORMAL;
+    }
+
     private static long seconds(FileTime time) {
         return time.toMillis() / 1000;
     }
@@ -1433,6 +1507,15 @@ final class FileFunctions {
         }
         int written = stream.write(bytes);
         return written < 0 ? (Object) Boolean.FALSE : (Object) (long) written;
+    }
+
+    /** fprintf and vfprintf: the length formatted, whether or not the stream took it. */
+    private static long printTo(Stream stream, TruffleString text) {
+        byte[] bytes = Str.bytes(text);
+        if (bytes.length > 0) {
+            stream.write(bytes);
+        }
+        return bytes.length;
     }
 
     @TruffleBoundary
