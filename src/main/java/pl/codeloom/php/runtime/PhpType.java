@@ -312,12 +312,16 @@ public final class PhpType {
         if ((mask & NEVER) != 0) {
             parts.add("never");
         }
-        String text = String.join("|", parts);
+        // an anonymous class is "class@anonymous"
+        String text = String.join("|", parts).replaceAll("\0[^|&)]*", "");
         if ((mask & NULL) == 0) {
             return text;
         }
         if (parts.isEmpty()) {
             return "null";
+        }
+        if (text.indexOf('|') < 0 && text.indexOf('&') >= 0 && text.charAt(0) != '(') {
+            return "(" + text + ")|null";
         }
         return text.indexOf('|') < 0 && text.indexOf('&') < 0 ? "?" + text : text + "|null";
     }

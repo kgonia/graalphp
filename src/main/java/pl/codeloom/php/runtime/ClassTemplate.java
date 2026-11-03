@@ -176,7 +176,11 @@ public final class ClassTemplate {
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
         for (String iface : interfaces) {
-            phpClass.addInterface(context.getClass(iface));
+            PhpClass found = context.findClassAutoloading(iface);
+            if (found == null) {
+                throw new PhpError("Interface \"" + iface + "\" not found");
+            }
+            phpClass.addInterface(found);
         }
         if (unsupported != null) {
             throw new PhpError(unsupported);

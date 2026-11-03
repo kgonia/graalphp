@@ -191,18 +191,25 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         if (accepted != null) {
             return accepted;
         }
-        throw new PhpError("TypeError", function + "(): Return value must be of type " + type.text(calledClass)
-                + ", " + PhpType.valueName(value) + " returned");
+        throw new PhpError("TypeError", returnName(function) + "(): Return value must be of type "
+                + type.text(calledClass) + ", " + PhpType.valueName(value) + " returned");
+    }
+
+    /** zend_verify_return_error's "class::function": an anonymous class's name up to its NUL. */
+    private static String returnName(String function) {
+        int nul = function.indexOf('\0');
+        return nul < 0 ? function : function.substring(0, nul) + function.substring(function.lastIndexOf("::"));
     }
 
     /** The end of a function with a return type: a never-returning one must not get there either. */
     @TruffleBoundary
     public static PhpError noneReturned(String function, PhpType type, PhpClass calledClass) {
         if (type.has(PhpType.NEVER)) {
-            return new PhpError("TypeError", function + "(): never-returning function must not implicitly return");
+            return new PhpError("TypeError", returnName(function) + "(): never-returning "
+                    + (function.contains("::") ? "method" : "function") + " must not implicitly return");
         }
-        return new PhpError("TypeError", function + "(): Return value must be of type " + type.text(calledClass)
-                + ", none returned");
+        return new PhpError("TypeError", returnName(function) + "(): Return value must be of type "
+                + type.text(calledClass) + ", none returned");
     }
 
     /**
@@ -227,7 +234,8 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             caller = Backtrace.userCaller();
         }
         // a variadic parameter's arguments go unnamed (get_function_arg_name)
-        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1)
+        // the active function's name as %s writes it: an anonymous class's method up to its NUL
+        throw new PhpError("TypeError", function.split("\0", 2)[0] + "(): Argument #" + (index + 1)
                 + (param.variadic() ? "" : " ($" + param.name() + ")") + " must be of type " + param.declared().text(calledClass) + ", " + PhpType.valueName(value)
                 + " given" + (caller == null ? "" : ", called in " + caller.file() + " on line " + caller.line()));
     }
