@@ -2759,6 +2759,13 @@ public final class BytecodeTranslator {
                     }
                     return true;
                 }
+                case "compact" -> {
+                    if (hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    compact(args);
+                    return true;
+                }
                 case "extract" -> {
                     if (hasUnpackOrNames(args)) {
                         return false;
@@ -2771,10 +2778,44 @@ public final class BytecodeTranslator {
                     b.endExtract();
                     return true;
                 }
-                case "func_get_arg", "compact", "get_object_vars", "get_defined_vars" ->
-                        throw new Unsupported(lower + "()", node);
+                case "func_get_arg", "get_object_vars", "get_defined_vars" -> throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;
+                }
+            }
+        }
+
+        /**
+         * compact() (Translator's CompactNode, DynamicCompactNode): names given as literals are read where the
+         * function has their variables, else looked up by name (an include's or extract()'s variable, $this); names
+         * computed at run time are all looked up by name.
+         */
+        private void compact(Ast args) {
+            List<String> literal = new ArrayList<>();
+            if (args.size() == 0 || !constants.compactNames(args, literal)) {
+                b.beginCompactDynamic();
+                for (Object arg : args.children()) {
+                    expression(arg);
+                }
+                b.endCompactDynamic();
+                return;
+            }
+            for (int i = literal.size() - 1; i >= 0; i--) {
+                String name = literal.get(i);
+                TruffleString key = (TruffleString) made(() -> language.intern(Str.of(name)));
+                BytecodeLocal local = variables.get(name);
+                if (local != null) {
+                    b.beginCompactVar(local, key);
+                } else {
+                    b.beginCompactName(key);
+                }
+            }
+            b.emitCompactStart();
+            for (String name : literal) {
+                if (variables.containsKey(name)) {
+                    b.endCompactVar();
+                } else {
+                    b.endCompactName();
                 }
             }
         }
