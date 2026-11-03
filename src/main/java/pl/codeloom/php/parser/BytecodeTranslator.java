@@ -32,6 +32,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -176,9 +177,8 @@ public final class BytecodeTranslator {
         for (int i = 0; i < params.length; i++) {
             parameterLocals[i] = i;
         }
-        Ast returnType = declaration.node("returnType");
         root.initialize(display, path, internal, translator.functionSection(), params, parameterLocals,
-                Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
+                Translator.checkedReturn(function, generator), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
@@ -374,7 +374,12 @@ public final class BytecodeTranslator {
                 statements(body);
             }
             b.beginReturn();
-            if (returnsRef()) {
+            if (Translator.checkedReturn(function, generator) != null) {
+                // the TypeError is at the closing brace
+                beginLine(declaration.endLine);
+                b.emitNoneReturned();
+                endLine(declaration.endLine);
+            } else if (returnsRef()) {
                 b.emitImplicitReturnRef(declaration.endLine);
             } else {
                 b.emitLoadConstant(PhpNull.NULL);
@@ -397,10 +402,16 @@ public final class BytecodeTranslator {
                 Ast param = (Ast) paramList.child(i);
                 BytecodeLocal local = variables.get(params[i].name());
                 if (params[i].variadic()) {
+                    beginLine(declaration.line);
                     b.emitBindVariadic(local, i);
+                    endLine(declaration.line);
                     continue;
                 }
                 b.beginBindParameter(local, i);
+                if (params[i].declared() != null) {
+                    beginLine(declaration.line);
+                    b.beginCheckParameter(i);
+                }
                 Object defaultValue = param.get("default");
                 if (defaultValue == null) {
                     b.emitArgument(i);
@@ -416,6 +427,10 @@ public final class BytecodeTranslator {
                         expression(defaultValue);
                     }
                     b.endConditional();
+                }
+                if (params[i].declared() != null) {
+                    b.endCheckParameter();
+                    endLine(declaration.line);
                 }
                 b.endBindParameter();
             }
@@ -903,7 +918,30 @@ public final class BytecodeTranslator {
         }
 
         private void returnValue(Object value, Ast node) {
+            Ast declared = declaration.node("returnType");
+            if (declared != null && !generator) {
+                // zend_emit_return_type_check's compile errors
+                String kind = owner != null ? "method" : "function";
+                boolean isVoid = declared.is("AST_TYPE") && declared.flags == 14;
+                if (isVoid && value != null) {
+                    throw compileError(node, "A void " + kind + " must not return a value"
+                            + (Translator.isNullConstant(value)
+                            ? " (did you mean \"return;\" instead of \"return null;\"?)" : ""));
+                }
+                if (declared.is("AST_TYPE") && declared.flags == 17) {
+                    throw compileError(node, "A never-returning " + kind + " must not return");
+                }
+                if (value == null && !isVoid) {
+                    throw compileError(node, "A " + kind + " with return type must return a value"
+                            + (function.getDeclaredReturn().has(PhpType.NULL)
+                            ? " (did you mean \"return null;\" instead of \"return;\"?)" : ""));
+                }
+            }
             b.beginReturn();
+            boolean typed = Translator.checkedReturn(function, generator) != null;
+            if (typed) {
+                b.beginCheckReturn();
+            }
             if (returnsRef()) {
                 // zend_compile_return in a function returning by reference (Translator.returnStatement): a place
                 // gives its reference, a call the reference its callee returned, anything else its value
@@ -924,6 +962,9 @@ public final class BytecodeTranslator {
                 b.emitLoadConstant(PhpNull.NULL);
             } else {
                 expression(value);
+            }
+            if (typed) {
+                b.endCheckReturn();
             }
             b.endReturn();
         }
