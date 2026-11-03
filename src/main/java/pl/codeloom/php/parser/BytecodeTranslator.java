@@ -37,6 +37,7 @@ import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -2430,10 +2431,32 @@ public final class BytecodeTranslator {
                 }
             }
             List<Object> elements = node.children();
-            LiteralSite site = (LiteralSite) made(() -> new LiteralSite(elements.size()));
+            int count = elements.size();
+            // ArrayLiteralNode's constantKeys and recordHashes: an int or string literal key normalized once (a key
+            // the compiled code would otherwise normalize out of line, then insert by every path a key can take),
+            // and when every element is a value under a distinct such key, one a string, each key's hash
+            Object[] keys = new Object[count];
+            int[] hashes = new int[count];
+            boolean record = true;
+            boolean stringKey = false;
+            Set<Object> distinct = new HashSet<>();
+            for (int i = 0; i < count; i++) {
+                Ast element = (Ast) elements.get(i);
+                Object key = element.get("key");
+                Object constant = key == null || element.is("AST_UNPACK") || !constantShaped(key) ? null
+                        : constantValue(key);
+                if (constant instanceof Long || constant instanceof TruffleString) {
+                    keys[i] = ArrayKey.of(constant);
+                    hashes[i] = PhpArray.hashOf(keys[i]);
+                    stringKey |= keys[i] instanceof TruffleString;
+                }
+                record &= keys[i] != null && !literalRef(element) && distinct.add(keys[i]);
+            }
+            boolean isRecord = record && stringKey;
+            LiteralSite site = (LiteralSite) made(() -> new LiteralSite(count, isRecord));
             // LiteralEnd(Literal...(Literal...(LiteralStart, e1), e2)...): each element goes in as it is evaluated
             b.beginLiteralEnd(site);
-            for (int i = elements.size() - 1; i >= 0; i--) {
+            for (int i = count - 1; i >= 0; i--) {
                 Ast element = (Ast) elements.get(i);
                 boolean keyed = element.get("key") != null;
                 if (element.is("AST_UNPACK")) {
@@ -2444,6 +2467,10 @@ public final class BytecodeTranslator {
                     } else {
                         b.beginLiteralAppendRef();
                     }
+                } else if (isRecord) {
+                    b.beginLiteralAdd(keys[i], hashes[i]);
+                } else if (keys[i] != null) {
+                    b.beginLiteralPutKey(keys[i]);
                 } else if (keyed) {
                     b.beginLiteralPut();
                 } else {
@@ -2451,18 +2478,18 @@ public final class BytecodeTranslator {
                 }
             }
             b.emitLiteralStart(site);
-            for (Object child : elements) {
-                Ast element = (Ast) child;
+            for (int i = 0; i < count; i++) {
+                Ast element = (Ast) elements.get(i);
                 boolean keyed = element.get("key") != null;
                 if (element.is("AST_UNPACK")) {
                     expression(element.get("expr"));
                     b.endLiteralSpread();
                     continue;
                 }
-                if (keyed) {
-                    expression(element.get("key"));
-                }
                 if (literalRef(element)) {
+                    if (keyed) {
+                        expression(element.get("key"));
+                    }
                     if (!(element.get("value") instanceof Ast place) || !isRefPlace(place)) {
                         // php-src's compile error "Cannot assign reference to non referenceable value"
                         throw new Unsupported("reference to", element);
@@ -2475,8 +2502,15 @@ public final class BytecodeTranslator {
                     }
                     continue;
                 }
+                if (keyed && keys[i] == null) {
+                    expression(element.get("key"));
+                }
                 expression(element.get("value"));
-                if (keyed) {
+                if (isRecord) {
+                    b.endLiteralAdd();
+                } else if (keys[i] != null) {
+                    b.endLiteralPutKey();
+                } else if (keyed) {
                     b.endLiteralPut();
                 } else {
                     b.endLiteralAppend();

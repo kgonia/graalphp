@@ -1814,6 +1814,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** An element with an int or string literal key, normalized by the translator. */
+    @Operation
+    @ConstantOperand(type = Object.class)
+    public static final class LiteralPutKey {
+        @Specialization
+        public static PhpArray put(Object key, PhpArray array, Object value) {
+            array.put(key, value);
+            return array;
+        }
+    }
+
+    /** An element of a record (LiteralSite.newArray's hash): a key no other element has, and its hash. */
+    @Operation
+    @ConstantOperand(type = Object.class)
+    @ConstantOperand(type = int.class)
+    public static final class LiteralAdd {
+        @Specialization
+        public static PhpArray add(Object key, int hash, PhpArray array, Object value) {
+            array.addEntry(key, hash, value);
+            return array;
+        }
+    }
+
     /** `&$place` without a key: the reference at the next index. */
     @Operation
     public static final class LiteralAppendRef {

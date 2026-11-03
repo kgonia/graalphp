@@ -98,7 +98,7 @@ class PhpBytecodeRootNodeTest {
 
     /** `[e1, e2, ...]` as BytecodeTranslator emits it: each element appended as soon as it is evaluated. */
     private static void list(PhpBytecodeRootNodeGen.Builder b, Runnable... elements) {
-        LiteralSite site = new LiteralSite(elements.length);
+        LiteralSite site = new LiteralSite(elements.length, false);
         b.beginLiteralEnd(site);
         for (int i = 0; i < elements.length; i++) {
             b.beginLiteralAppend();
