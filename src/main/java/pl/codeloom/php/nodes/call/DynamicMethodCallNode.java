@@ -35,7 +35,7 @@ public final class DynamicMethodCallNode extends CallNode {
         if (!(target instanceof PhpObject) && !(target instanceof PhpClosure)) {
             throw MethodCallNode.memberOnNonObject(Str.java((TruffleString) method), target);
         }
-        return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), PhpArray.list(target, method)),
-                args, call);
+        return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), PhpArray.list(target, method),
+                MethodCallNode.scope(frame, this)), args, call);
     }
 }

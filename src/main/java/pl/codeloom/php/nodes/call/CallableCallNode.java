@@ -41,7 +41,8 @@ public final class CallableCallNode extends CallNode {
     public Object executeRef(VirtualFrame frame) {
         Object target = callable.execute(frame);
         if (call != null) {
-            return call(frame, Callables.resolveCall(PhpContext.get(this), target), args, call);
+            return call(frame, Callables.resolveCall(PhpContext.get(this), target, MethodCallNode.scope(frame, this)),
+                    args, call);
         }
         Object[] values = argsArray != null ? arrayArguments(argsArray.execute(frame)) : args.values(frame);
         return dispatch.execute(target, values);

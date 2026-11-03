@@ -222,6 +222,175 @@ public final class PhpClass {
         return methods.get(lowerMethodName);
     }
 
+    /**
+     * The method `$obj->name()` calls from a scope (zend_std_get_method; scope: the calling class, lowercase, or
+     * null): the scope's own private method where a subclass declares the name again (ZEND_ACC_CHANGED,
+     * zend_get_parent_private_method); null when __call stands in for a missing or inaccessible one; else
+     * zend_undefined_method's or zend_bad_method_call's Error. name: as written.
+     */
+    @TruffleBoundary
+    public PhpFunction methodFrom(String name, String scope) {
+        PhpFunction method = accessibleMethod(Str.lower(name), scope);
+        if (method != null || methods.containsKey("__call")) {
+            return method;
+        }
+        throw callError(name, scope);
+    }
+
+    /** methodFrom's method, or null for a missing or inaccessible one (whatever stands in for it). */
+    @TruffleBoundary
+    public PhpFunction accessibleMethod(String lower, String scope) {
+        PhpFunction method = methods.get(lower);
+        if (method != null && scope != null && !scope.equals(declaringClass(method))) {
+            PhpFunction own = scopePrivate(lower, scope);
+            if (own != null) {
+                return own;
+            }
+        }
+        return method != null && canCall(method, lower, scope) ? method : null;
+    }
+
+    /**
+     * The method `Cls::name()` calls from a scope (zend_std_get_static_method): null when __call or __callStatic
+     * may stand in for a missing or inaccessible one (the call picks one by its $this); else the Error.
+     */
+    @TruffleBoundary
+    public PhpFunction staticMethodFrom(String name, String scope) {
+        PhpFunction method = accessibleStaticMethod(Str.lower(name), scope);
+        if (method != null || methods.containsKey("__call") || methods.containsKey("__callstatic")) {
+            return method;
+        }
+        throw callError(name, scope);
+    }
+
+    /** staticMethodFrom's method, or null for a missing or inaccessible one. */
+    @TruffleBoundary
+    public PhpFunction accessibleStaticMethod(String lower, String scope) {
+        PhpFunction method = methods.get(lower);
+        return method != null && canCall(method, lower, scope) ? method : null;
+    }
+
+    /** zend_bad_constructor_call: a constructor the scope may not call. */
+    @TruffleBoundary
+    public static PhpError constructorError(PhpFunction constructor, String scope) {
+        return new PhpError("Call to " + visibility(constructor) + " " + constructor.getClassName() + "::"
+                + constructor.getName() + "() from " + scopeName(scope));
+    }
+
+    /** zend_non_static_method_call. */
+    @TruffleBoundary
+    public static PhpError nonStaticCall(PhpFunction method) {
+        return new PhpError("Non-static method " + method.getClassName() + "::" + method.getName()
+                + "() cannot be called statically");
+    }
+
+    /**
+     * Why a call of name from scope finds nothing: zend_undefined_method for a missing method, zend_bad_method_call
+     * for an inaccessible one.
+     */
+    @TruffleBoundary
+    public PhpError callError(String name, String scope) {
+        PhpFunction method = methods.get(Str.lower(name));
+        if (method == null) {
+            return new PhpError("Call to undefined method " + this.name + "::" + name + "()");
+        }
+        return new PhpError("Call to " + visibility(method) + " method " + method.getClassName() + "::" + name
+                + "() from " + scopeName(scope));
+    }
+
+    /** zend_bad_method_call's "scope X" or "global scope". */
+    public static String scopeName(String scope) {
+        PhpClass scopeClass = scope == null ? null : PhpContext.get(null).findClass(scope);
+        return scopeClass == null ? "global scope" : "scope " + scopeClass.getName();
+    }
+
+    public static String visibility(PhpFunction method) {
+        return (method.getModifiers() & PhpFunction.ACC_PRIVATE) != 0 ? "private" : "protected";
+    }
+
+    /** zend_check_method_accessible: public, or the scope's own, or protected and the scope related to its root. */
+    @TruffleBoundary
+    public boolean canCall(PhpFunction method, String lower, String scope) {
+        int modifiers = method.getModifiers();
+        if ((modifiers & (PhpFunction.ACC_PRIVATE | PhpFunction.ACC_PROTECTED)) == 0
+                || scope != null && scope.equals(declaringClass(method))) {
+            return true;
+        }
+        if ((modifiers & PhpFunction.ACC_PRIVATE) != 0 || scope == null) {
+            return false;
+        }
+        PhpClass root = methodRoot(lower);
+        if (root.ancestors.contains(scope)) {
+            return true;
+        }
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return scopeClass != null && scopeClass.isDeclaredSubclassOf(root.lowerName);
+    }
+
+    /**
+     * Whether methodFrom's and staticMethodFrom's answer for scope follows from this class's key, so a site may
+     * keep it for every class with the key: it does unless a protected method is reached from a scope outside its
+     * root's ancestry and this class's, whose own ancestors decide (as isPropertyAccessKeyed).
+     */
+    @TruffleBoundary
+    public boolean isMethodAccessKeyed(String lower, String scope) {
+        PhpFunction method = methods.get(lower);
+        if (method == null || scope == null || (method.getModifiers() & PhpFunction.ACC_PROTECTED) == 0
+                || scope.equals(declaringClass(method)) || ancestors.contains(scope)) {
+            return true;
+        }
+        return methodRoot(lower).ancestors.contains(scope);
+    }
+
+    /** Whether the method a call of lower finds depends on the calling scope at all. */
+    @TruffleBoundary
+    public boolean methodDependsOnScope(String lower) {
+        PhpFunction method = methods.get(lower);
+        if (method == null) {
+            return false;
+        }
+        if ((method.getModifiers() & (PhpFunction.ACC_PRIVATE | PhpFunction.ACC_PROTECTED)) != 0) {
+            return true;
+        }
+        for (PhpClass ancestor = parent; ancestor != null; ancestor = ancestor.parent) {
+            PhpFunction own = ancestor.methods.get(lower);
+            if (own != null && own != method && (own.getModifiers() & PhpFunction.ACC_PRIVATE) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The scope's own private method of the name, when the scope is a proper ancestor (zend_get_parent_private_method). */
+    private PhpFunction scopePrivate(String lower, String scope) {
+        for (PhpClass ancestor = parent; ancestor != null; ancestor = ancestor.parent) {
+            if (ancestor.lowerName.equals(scope)) {
+                PhpFunction own = ancestor.methods.get(lower);
+                return own != null && (own.getModifiers() & PhpFunction.ACC_PRIVATE) != 0
+                        && scope.equals(declaringClass(own)) ? own : null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The class a protected method is checked against (zend_get_function_root_class): the topmost ancestor its
+     * declaration overrides, through non-private declarations.
+     */
+    private PhpClass methodRoot(String lower) {
+        PhpClass root = this;
+        while (root.parent != null && root.parent.methods.get(lower) instanceof PhpFunction inherited
+                && (inherited.getModifiers() & PhpFunction.ACC_PRIVATE) == 0) {
+            root = root.parent;
+        }
+        return root;
+    }
+
+    /** The class (lowercase) that declared a method, or null for a built-in class's shared one. */
+    private static String declaringClass(PhpFunction method) {
+        return method.getClassName() == null ? null : Str.lower(method.getClassName());
+    }
+
     /** The methods by lowercase name (own, imported and inherited), for Reflection; read only. */
     public Map<String, PhpFunction> methods() {
         return java.util.Collections.unmodifiableMap(methods);

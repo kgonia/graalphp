@@ -5,6 +5,9 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
+import pl.codeloom.php.nodes.stmt.GeneratorNodes;
+import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Backtrace;
@@ -33,7 +36,18 @@ public final class MethodCallNode extends CallNode {
         this.args = args;
         this.name = methodName;
         this.lowerName = Str.lower(methodName);
-        this.dispatch = new Dispatch(lowerName, Str.of(methodName));
+        this.dispatch = new Dispatch(methodName);
+    }
+
+    /**
+     * php-src's executed scope at a tree node (lowercase, or null): the class bound in the frame (a closure's, an
+     * included file's), else the class of the function the node is in. ponytail: a method run through a closure
+     * made of it takes that closure's class.
+     */
+    public static String scope(VirtualFrame frame, Node site) {
+        RootNode root = site.getRootNode();
+        return PropNode.callingScope(frame, root instanceof FunctionRootNode function ? function.getScopeName()
+                : root instanceof GeneratorNodes.BodyRootNode body ? body.getScopeName() : null);
     }
 
     @Override
@@ -44,7 +58,7 @@ public final class MethodCallNode extends CallNode {
         }
         if (target instanceof PhpClosure closure) {
             if (lowerName.equals("__invoke")) {
-                return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), closure), args,
+                return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), closure, null), args,
                         IndirectCallNode.getUncached());
             }
             return closureMethod(this, name, closure, args.values(frame));
@@ -93,15 +107,15 @@ public final class MethodCallNode extends CallNode {
         @Child private MethodLookupNode magicLookup;
         @Child private MethodDispatchNode magicCall;
 
-        Dispatch(String lowerName, TruffleString calledName) {
-            this.lowerName = lowerName;
-            this.calledName = calledName;
-            this.lookup = MethodLookupNode.create(lowerName);
+        Dispatch(String name) {
+            this.lowerName = Str.lower(name);
+            this.calledName = Str.of(name);
+            this.lookup = MethodLookupNode.create(name, false);
         }
 
         public Object execute(VirtualFrame frame, PhpObject receiver, ArgumentsNode args) {
             PhpClass phpClass = receiver.getPhpClass();
-            PhpFunction method = lookup.execute(phpClass);
+            PhpFunction method = lookup.execute(phpClass, scope(frame, this));
             if (method != null) {
                 return call.execute(frame, method, receiver, phpClass, args);
             }
@@ -109,7 +123,7 @@ public final class MethodCallNode extends CallNode {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 insertMagic();
             }
-            PhpFunction viaCall = magicLookup.execute(phpClass);
+            PhpFunction viaCall = magicLookup.execute(phpClass, null);
             if (viaCall == null) {
                 throw undefined(phpClass);
             }
@@ -122,28 +136,12 @@ public final class MethodCallNode extends CallNode {
             lock.lock();
             try {
                 if (magicCall == null) {
-                    magicLookup = insert(MethodLookupNode.create("__call"));
+                    magicLookup = insert(MethodLookupNode.create("__call", false));
                     magicCall = insert(MethodDispatchNode.createMagic(calledName));
                 }
             } finally {
                 lock.unlock();
             }
-        }
-
-        /**
-         * The method of a class an object's method call (the name as written) calls, or __call standing in for it;
-         * else an Error.
-         */
-        @TruffleBoundary
-        public static PhpFunction findMethod(PhpClass phpClass, String name) {
-            PhpFunction method = phpClass.findMethod(Str.lower(name));
-            if (method == null) {
-                method = phpClass.findMethod("__call");
-            }
-            if (method == null) {
-                throw undefinedMethod(phpClass, name);
-            }
-            return method;
         }
 
         @TruffleBoundary

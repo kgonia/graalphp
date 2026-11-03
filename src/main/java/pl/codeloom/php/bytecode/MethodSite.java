@@ -1,6 +1,7 @@
 package pl.codeloom.php.bytecode;
 
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.Str;
 
@@ -22,12 +23,25 @@ public final class MethodSite {
     final String lowerName;
     final TruffleString calledName;
     final boolean forwarding;
+    /** `Cls::__construct()`, which php-src calls without a lookup. */
+    final boolean constructor;
 
     public MethodSite(String name, boolean forwarding) {
         this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);
         this.forwarding = forwarding;
+        this.constructor = lowerName.equals("__construct");
+    }
+
+    /** Whether the lookup's answer from scope follows from the class's key (PhpClass.isMethodAccessKeyed). */
+    public boolean isKeyed(PhpClass phpClass, String scope) {
+        return phpClass.isMethodAccessKeyed(lowerName, scope);
+    }
+
+    /** Whether the lookup in a closure, whose bound scope may change, depends on the scope. */
+    public boolean isScoped(PhpBytecodeRootNode root, PhpClass phpClass) {
+        return root.isClosure() && phpClass.methodDependsOnScope(lowerName);
     }
 
     static boolean byValue(PhpFunction function) {

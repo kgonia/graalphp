@@ -39,10 +39,6 @@ public abstract class CallableDispatchNode extends Node {
         this.keepRef = keepRef;
     }
 
-    public static CallableDispatchNode create() {
-        return CallableDispatchNodeGen.create(null, false);
-    }
-
     public static CallableDispatchNode create(Callables.Parameter parameter) {
         return CallableDispatchNodeGen.create(parameter, false);
     }
@@ -93,11 +89,12 @@ public abstract class CallableDispatchNode extends Node {
      * keeps the method only (a language-level object); the receiver and its class are the current call's.
      */
     @Specialization(guards = {"isObjectMethod(callable)", "classOf(callable).getKey() == cachedKey",
-            "equal.execute(methodName(callable), cachedMethod, ENC)"}, limit = "LIMIT")
+            "equal.execute(methodName(callable), cachedMethod, ENC)", "!scoped"}, limit = "LIMIT")
     protected Object objectMethod(PhpArray callable, Object[] values,
                                   @Cached("classOf(callable).getKey()") ClassKey cachedKey,
                                   @Cached("methodName(callable)") TruffleString cachedMethod,
                                   @Cached TruffleString.EqualNode equal,
+                                  @Cached("scoped(classOf(callable), cachedMethod)") boolean scoped,
                                   @Cached("resolve(callable).function()") PhpFunction method,
                                   @Cached("resolve(callable).magicName()") TruffleString magicName,
                                   @Cached("create(method.getCallTarget())") DirectCallNode call) {
@@ -113,7 +110,7 @@ public abstract class CallableDispatchNode extends Node {
     @Specialization(guards = {"isClassMethod(callable)", "equalClass.execute(className(callable), cachedClassName, ENC)",
             "isStaticCall(method, magicName)",
             "equalMethod.execute(methodName(callable), cachedMethod, ENC)", "classId >= 0",
-            "keyAt(classId) == cachedKey"}, limit = "LIMIT")
+            "keyAt(classId) == cachedKey", "!scoped"}, limit = "LIMIT")
     protected Object classMethod(PhpArray callable, Object[] values,
                                  @Cached("className(callable)") TruffleString cachedClassName,
                                  @Cached("methodName(callable)") TruffleString cachedMethod,
@@ -123,6 +120,7 @@ public abstract class CallableDispatchNode extends Node {
                                  @Cached("resolve(callable).magicName()") TruffleString magicName,
                                  @Cached("classId(cachedClassName, cachedMethod)") int classId,
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
+                                 @Cached("scoped(classAt(classId), cachedMethod)") boolean scoped,
                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
         return result(call.call(ArgumentsNode.frameArguments(null,
@@ -149,11 +147,22 @@ public abstract class CallableDispatchNode extends Node {
         return method.isStatic() && magicName == null;
     }
 
-    /** A direct call `$f()` (no parameter) takes names literally; a built-in's callable resolves against its caller. */
+    /** A built-in's callable resolves against its caller. */
     protected Callables.Target resolve(Object callable) {
-        PhpContext context = PhpContext.get(this);
-        return parameter == null ? Callables.resolveCall(context, callable)
-                : Callables.resolveOrThrow(context, callable, parameter);
+        return Callables.resolveOrThrow(PhpContext.get(this), callable, parameter);
+    }
+
+    /**
+     * Whether a class's method callable resolves by the calling scope (its visibility, a private method of the
+     * scope): an entry can't keep it then.
+     */
+    protected static boolean scoped(PhpClass phpClass, TruffleString method) {
+        return phpClass == null || phpClass.methodDependsOnScope(Str.lower(Str.java(method)));
+    }
+
+    @NonIdempotent
+    protected PhpClass classAt(int classId) {
+        return classId < 0 ? null : PhpContext.get(this).classAt(classId);
     }
 
     /** The function name id of a callable naming a plain function, or -1 for a method ("Cls::m"). */
