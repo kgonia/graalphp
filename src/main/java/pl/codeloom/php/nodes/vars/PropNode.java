@@ -133,6 +133,10 @@ public final class PropNode extends LValueNode {
      */
     @TruffleBoundary
     public static PhpError notAnObject(String action, String name, Object value) {
+        if (value instanceof PhpClosure) {
+            // an object of a class without dynamic properties (ZEND_ACC_NO_DYNAMIC_PROPERTIES)
+            return new PhpError("Cannot create dynamic property Closure::$" + Str.keyText(name));
+        }
         return new PhpError("Attempt to " + action + " property \"" + Str.keyText(name) + "\" on "
                 + Args.valueName(value));
     }

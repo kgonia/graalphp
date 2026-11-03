@@ -57,7 +57,7 @@ public final class Callables {
      */
     private static Target resolve(PhpContext context, Object callable, boolean direct, String scope) {
         if (callable instanceof PhpClosure closure) {
-            PhpClass bound = closure.getBoundThis() != null ? closure.getBoundThis().getPhpClass() : closure.getScope();
+            PhpClass bound = closure.staticClass();
             return new Target(closure.getFunction(), closure.getBoundThis(), bound, closure, closure.getMagicName());
         }
         if (callable instanceof TruffleString name) {
@@ -78,6 +78,9 @@ public final class Callables {
             }
             if (first instanceof PhpObject object) {
                 return method(object.getPhpClass(), object, Str.name(methodName), direct, scope);
+            }
+            if (first instanceof PhpClosure closure && Str.lower(Str.name(methodName)).equals("__invoke")) {
+                return resolve(context, closure, direct, scope);
             }
             if (first instanceof TruffleString className) {
                 return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName),
@@ -237,6 +240,12 @@ public final class Callables {
                     ? pl.codeloom.php.nodes.vars.PropNode.callingScope(arguments[PhpFunction.ARG_CLOSURE], scope)
                     : scope);
         });
+    }
+
+    /** The frame argument of the PHP code calling (a built-in's caller), or null. */
+    public static Object callerArgument(int index) {
+        Caller caller = caller();
+        return caller == null ? null : caller.argument(index);
     }
 
     /** $this of the PHP code calling when it is an instance of the class, or null. */

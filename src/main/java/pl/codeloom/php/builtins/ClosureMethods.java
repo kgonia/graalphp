@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
@@ -15,11 +16,14 @@ import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * The Closure class's methods (Zend/zend_closures.c): bind, bindTo, call and fromCallable. A closure value is a
+ * The Closure class's methods (Zend/zend_closures.c): bind, bindTo, call, fromCallable and getCurrent. A closure value is a
  * PhpClosure; its function is the closure's own body, or for a "fake" closure (made from a function or method by
  * fromCallable or `f(...)`) that function or method, whose scope can't be changed.
  */
@@ -36,7 +40,14 @@ final class ClosureMethods {
                 registry.method("bindTo", false, a -> bind((PhpClosure) a[PhpFunction.ARG_THIS],
                         thisArgument(a, 0, "Closure::bindTo"), Args.get(a, 1), "Closure::bindTo")),
                 registry.method("call", false, a -> call((PhpClosure) a[PhpFunction.ARG_THIS], a)),
-                registry.method("fromCallable", true, ClosureMethods::fromCallable));
+                registry.method("fromCallable", true, ClosureMethods::fromCallable),
+                registry.method("getCurrent", true, a -> {
+                    if (Callables.callerArgument(PhpFunction.ARG_CLOSURE) instanceof PhpClosure closure
+                            && !isFake(closure)) {
+                        return closure;
+                    }
+                    throw new PhpError("Current function is not a closure");
+                }));
     }
 
     private static PhpClosure closureArgument(Object[] a, int index, String function) {
@@ -104,7 +115,19 @@ final class ClosureMethods {
         if (!validBinding(context, closure, newThis, scope)) {
             return PhpNull.NULL;
         }
-        return new PhpClosure(closure.getFunction(), newThis, scope, captures(closure), closure.getMagicName());
+        // zend_create_closure_ex: an object bound without a scope gets Closure as a dummy scope
+        PhpClass calledScope = newThis != null ? newThis.getPhpClass() : scope;
+        PhpClosure bound = new PhpClosure(closure.getFunction(), newThis, scope == null && newThis != null
+                ? context.findClass("closure") : scope, calledScope, captures(closure), closure.getMagicName());
+        bound.copyStatics(closure);
+        return bound;
+    }
+
+    static PhpClosure copy(PhpClosure closure) {
+        PhpClosure copy = new PhpClosure(closure.getFunction(), closure.getBoundThis(), closure.getScope(),
+                closure.getCalledScope(), captures(closure), closure.getMagicName());
+        copy.copyStatics(closure);
+        return copy;
     }
 
     /** The closure's captured values, shared with the new one (a by-value array counts it as another holder). */
@@ -172,8 +195,7 @@ final class ClosureMethods {
         if (!validBinding(context, closure, newThis, newThis.getPhpClass())) {
             return PhpNull.NULL;
         }
-        PhpClosure bound = new PhpClosure(closure.getFunction(), newThis, newThis.getPhpClass(), captures(closure),
-                closure.getMagicName());
+        PhpClosure bound = closure.rebound(newThis, newThis.getPhpClass());
         int count = Args.count(a);
         Object[] values = count > 1 ? Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, PhpFunction.ARG_FIRST + count)
                 : new Object[0];
@@ -195,6 +217,95 @@ final class ClosureMethods {
         }
         return new PhpClosure(target.function(), target.thisObject() instanceof PhpObject self ? self : null,
                 target.staticClass(), new Object[0], target.magicName());
+    }
+
+    /**
+     * zend_closure_get_debug_info, what var_dump() and print_r() show of a closure: a fake closure's function, or
+     * a closure's name, file and line; its `use` and `static` variables; its $this; its parameters.
+     */
+    @TruffleBoundary
+    static PhpArray debugInfo(PhpClosure closure) {
+        PhpFunction function = closure.getFunction();
+        PhpArray info = new PhpArray();
+        if (closure.getMagicName() != null) {
+            info.put(Str.of("function"), Str.of(function.getClassName() + "::" + Str.java(closure.getMagicName())));
+        } else if (isFake(closure)) {
+            info.put(Str.of("function"), Str.of(function.displayName()));
+        } else {
+            info.put(Str.of("name"), Str.of(function.getName()));
+            SourceLocation at = function.getDeclaredAt();
+            if (at != null) {
+                info.put(Str.of("file"), Str.of(at.file()));
+                info.put(Str.of("line"), (long) at.line());
+            }
+        }
+        String[] names = function.getClosureVariables();
+        if (names != null && names.length > 0) {
+            PhpArray variables = new PhpArray();
+            int captures = closure.getCaptureCount();
+            for (int i = 0; i < names.length; i++) {
+                Object value;
+                if (i < captures) {
+                    value = closure.getCaptured(i);
+                } else {
+                    PhpRef ref = PhpContext.get(null).findStaticVariable(function, closure, names[i]);
+                    value = ref != null ? ref.get() : function.getStaticInitial(i - captures);
+                }
+                if (value instanceof PhpRef ref) {
+                    variables.putRef(Str.of(names[i]), ref);
+                } else {
+                    variables.put(Str.of(names[i]), value);
+                }
+            }
+            info.put(Str.of("static"), variables);
+        }
+        if (closure.getBoundThis() != null) {
+            info.put(Str.of("this"), closure.getBoundThis());
+        }
+        // a closure of a method __call stands in for has the trampoline's parameter, `...$arguments`
+        PhpFunction.Param[] params = closure.getMagicName() != null
+                ? new PhpFunction.Param[] {new PhpFunction.Param("arguments", false, true, null, null, false, null)}
+                : function.getParams();
+        String[] paramNames;
+        int required = 0;
+        if (function.getBuiltin() == null) {
+            paramNames = new String[params.length];
+            for (int i = 0; i < params.length; i++) {
+                paramNames[i] = (params[i].byRef() ? "&$" : "$") + params[i].name();
+                if (params[i].defaultValue() == null && !params[i].variadic()) {
+                    required = i + 1;
+                }
+            }
+        } else {
+            // a built-in function's arginfo, which this runtime's built-ins don't declare
+            String[] known = closure.getMagicName() == null ? builtinParams(function.getName()) : null;
+            paramNames = known == null || known[2].isEmpty() ? new String[0] : known[2].replace("...", "")
+                    .replaceAll("(^|,)(&?)", "$1$2\\$").split(",");
+            required = known == null ? 0 : Integer.parseInt(known[1]);
+        }
+        if (paramNames.length > 0) {
+            PhpArray parameters = new PhpArray();
+            for (int i = 0; i < paramNames.length; i++) {
+                parameters.put(Str.of(paramNames[i]), Str.of(i < required ? "<required>" : "<optional>"));
+            }
+            info.put(Str.of("parameter"), parameters);
+        }
+        return info;
+    }
+
+    /** PHP's internal functions' parameters (params.txt, tools/builtin-params.php), by lowercase name. */
+    private static Map<String, String[]> builtinParams;
+
+    private static synchronized String[] builtinParams(String name) {
+        if (builtinParams == null) {
+            Map<String, String[]> table = new HashMap<>();
+            for (String line : new String(StringFunctions.resource("params.txt"), StandardCharsets.UTF_8).split("\n")) {
+                String[] fields = line.split("\t", -1);
+                table.put(fields[0], fields);
+            }
+            builtinParams = table;
+        }
+        return builtinParams.get(Str.lower(name));
     }
 
     private static void warn(PhpContext context, String message) {

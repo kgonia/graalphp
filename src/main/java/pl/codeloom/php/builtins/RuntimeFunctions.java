@@ -9,6 +9,7 @@ import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
@@ -226,6 +227,10 @@ final class RuntimeFunctions {
     /** `clone $object`:a shallow copy (arrays copy on write), then __clone() on the copy. */
     @TruffleBoundary
     private static Object cloneObject(PhpContext context, Object value, Object withProperties) {
+        if (value instanceof PhpClosure closure) {
+            // zend_closure_clone: a new closure of the same function, scope, $this and variables
+            return ClosureMethods.copy(closure);
+        }
         if (!(value instanceof PhpObject object)) {
             throw new PhpError("clone(): Argument #1 ($object) must be of type object, "
                     + Convert.typeName(value) + " given");

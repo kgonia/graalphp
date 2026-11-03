@@ -11,8 +11,11 @@ import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 /**
@@ -65,7 +68,7 @@ public final class IncludeNode extends ExprNode {
     @TruffleBoundary
     public static CallTarget resolve(Node site, Object includeSite, Object pathValue, boolean once) {
         PhpContext context = PhpContext.get(site);
-        String canonical = context.canonicalPath(Str.java(Convert.toStr(pathValue)));
+        String canonical = context.canonicalPath(located(Str.java(Convert.toStr(pathValue)), site));
         if (!context.markIncluded(canonical) && once) {
             return null;
         }
@@ -74,6 +77,20 @@ public final class IncludeNode extends ExprNode {
             root.includedAgain();
         }
         return root.getCallTarget();
+    }
+
+    /**
+     * php_resolve_path with the include_path ".": a relative name that doesn't start with ./ or ../ and isn't in
+     * the working directory is looked for in the directory of the file that includes it.
+     */
+    @TruffleBoundary
+    private static String located(String path, Node site) {
+        if (path.startsWith("/") || path.startsWith("./") || path.startsWith("../") || Files.exists(Path.of(path))
+                || !(site.getRootNode() instanceof SourceLocation.Code code) || code.getPath() == null) {
+            return path;
+        }
+        Path beside = Path.of(code.getPath()).resolveSibling(path);
+        return Files.exists(beside) ? beside.toString() : path;
     }
 
     /**

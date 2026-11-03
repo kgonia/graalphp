@@ -230,7 +230,8 @@ public final class ClassTemplate {
         } else if (member instanceof Property property) {
             Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {
-                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial);
+                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial,
+                        property.visibility());
             } else {
                 phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
                         property.type()));

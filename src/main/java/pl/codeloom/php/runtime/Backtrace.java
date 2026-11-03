@@ -238,7 +238,8 @@ public final class Backtrace {
     }
 
     /** Adds function, class, object (with PROVIDE_OBJECT), type and args (unless IGNORE_ARGS) to an entry. */
-    public static void describeCall(PhpArray entry, String function, String className, PhpObject self, int options,
+    /** self: the $this (an object or a Closure), or null for a static call. */
+    public static void describeCall(PhpArray entry, String function, String className, Object self, int options,
                                     PhpArray args) {
         entry.put(FUNCTION, Str.of(function));
         if (className != null) {
