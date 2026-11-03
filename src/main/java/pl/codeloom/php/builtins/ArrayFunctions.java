@@ -41,9 +41,9 @@ final class ArrayFunctions {
                 Args.lng(a, 2, 0)));
         r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
         r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
-        r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array"), Args.bool(a, 2, false)) != null);
+        r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array", "haystack"), Args.bool(a, 2, false)) != null);
         r.fn("array_search", a -> {
-            Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search"), Args.bool(a, 2, false));
+            Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search", "haystack"), Args.bool(a, 2, false));
             return key == null ? Boolean.FALSE : key;
         });
         r.fn("array_slice", a -> slice(Args.array(a, 0, "array_slice"), Args.lng(a, 1, 0),
@@ -64,7 +64,7 @@ final class ArrayFunctions {
             return result;
         });
         r.fn("array_fill_keys", a -> {
-            PhpArray keys = Args.array(a, 0, "array_fill_keys");
+            PhpArray keys = Args.array(a, 0, "array_fill_keys", "keys");
             PhpArray result = new PhpArray();
             for (int p = keys.firstPosition(); p >= 0; p = keys.nextPosition(p)) {
                 result.put(ArrayKey.of(keys.valueAt(p)), Args.get(a, 1));
@@ -126,8 +126,8 @@ final class ArrayFunctions {
         });
         r.fn("array_reverse", a -> reverse(Args.array(a, 0, "array_reverse"), Args.bool(a, 1, false)));
         r.fn("array_combine", a -> {
-            PhpArray keys = Args.array(a, 0, "array_combine");
-            PhpArray values = Args.array(a, 1, "array_combine");
+            PhpArray keys = Args.array(a, 0, "array_combine", "keys");
+            PhpArray values = Args.array(a, 1, "array_combine", "values");
             if (keys.size() != values.size()) {
                 throw new PhpError("ValueError", "array_combine(): Argument #1 ($keys) and argument #2 ($values) "
                         + "must have the same number of elements");
@@ -216,7 +216,7 @@ final class ArrayFunctions {
         r.fn("array_merge_recursive", a -> {
             PhpArray result = new PhpArray();
             for (int i = 0; i < Args.count(a); i++) {
-                mergeRecursive(result, Args.array(a, i, "array_merge_recursive"));
+                mergeRecursive(result, Args.array(a, i, "array_merge_recursive", null));
             }
             return result;
         });
@@ -501,13 +501,13 @@ final class ArrayFunctions {
         boolean packed = true;
         boolean longs = true;
         for (int i = 0; i < arguments; i++) {
-            PhpArray array = Args.array(a, i, "array_merge");
+            PhpArray array = Args.array(a, i, "array_merge", null);
             count += array.size();
             packed &= array.isPacked();
             longs &= array.holdsLongs() || array.size() == 0;
         }
         if (arguments == 2) {
-            PhpArray first = Args.array(a, 0, "array_merge");
+            PhpArray first = Args.array(a, 0, "array_merge", null);
             PhpArray second = Args.array(a, 1, "array_merge");
             PhpArray only = first.size() == 0 ? second : second.size() == 0 ? first : null;
             if (only != null && (only.isPacked() || onlyStringKeys(only))) {
@@ -517,7 +517,7 @@ final class ArrayFunctions {
         PhpArray result = count == 0 ? new PhpArray() : !packed ? PhpArray.ofHashCapacity(count)
                 : longs ? PhpArray.ofLongCapacity(count) : PhpArray.ofCapacity(count);
         for (int i = 0; i < arguments; i++) {
-            PhpArray array = Args.array(a, i, "array_merge");
+            PhpArray array = Args.array(a, i, "array_merge", null);
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object key = array.keyAt(p);
                 if (key instanceof Long) {
@@ -545,7 +545,7 @@ final class ArrayFunctions {
                 : Callables.parameter(context, Args.get(a, 0), new Callables.Parameter("array_map", 1, true));
         int arrays = Args.count(a) - 1;
         if (arrays == 1) {
-            PhpArray array = Args.array(a, 1, "array_map");
+            PhpArray array = Args.array(a, 1, "array_map", "array");
             PhpArray result = PhpArray.ofCapacity(array.size());
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = callback == null ? array.valueAt(p) : callback.call(array.valueAt(p));
@@ -557,7 +557,7 @@ final class ArrayFunctions {
         int[] positions = new int[arrays];
         int longest = 0;
         for (int i = 0; i < arrays; i++) {
-            inputs[i] = Args.array(a, i + 1, "array_map");
+            inputs[i] = Args.array(a, i + 1, "array_map", i == 0 ? "array" : null);
             positions[i] = inputs[i].firstPosition();
             longest = Math.max(longest, inputs[i].size());
         }

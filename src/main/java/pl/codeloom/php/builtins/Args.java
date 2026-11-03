@@ -62,13 +62,19 @@ public final class Args {
         return value == null ? missing : Convert.toBool(value);
     }
 
+    /** An array parameter; the first is named $array, as nearly everywhere in php-src, the others are variadic. */
     public static PhpArray array(Object[] arguments, int index, String function) {
+        return array(arguments, index, function, index == 0 ? "array" : null);
+    }
+
+    /** An array parameter of the name (null for a variadic one, which php-src's messages don't name). */
+    public static PhpArray array(Object[] arguments, int index, String function, String name) {
         Object value = get(arguments, index);
         if (value instanceof PhpArray array) {
             return array;
         }
-        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + " must be of type array, "
-                + (value == null ? "none" : valueName(value)) + " given");
+        throw new PhpError("TypeError", function + "(): Argument #" + (index + 1) + (name == null ? "" : " ($" + name
+                + ")") + " must be of type array, " + (value == null ? "none" : valueName(value)) + " given");
     }
 
     /** A by-reference argument. Built-ins declare these parameters by-ref, so callers pass a PhpRef. */

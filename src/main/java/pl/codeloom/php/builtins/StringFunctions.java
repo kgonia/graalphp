@@ -48,7 +48,7 @@ public final class StringFunctions {
         r.fn("implode", a -> implode(a));
         r.fn("join", a -> implode(a));
         r.fn("sprintf", a -> Sprintf.format(a, 0));
-        r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf")));
+        r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf", "values")));
         r.fn("printf", (context, a) -> {
             TruffleString text = Sprintf.format(a, 0);
             context.write(text);
@@ -57,7 +57,7 @@ public final class StringFunctions {
         r.fn("str_pad", a -> strPad(Args.str(a, 0), Args.lng(a, 1, 0), Args.str(a, 2, Str.of(" ")),
                 Args.lng(a, 3, 1)));
         r.fn("str_repeat", a -> repeat(Args.str(a, 0), Args.lng(a, 1, 0)));
-        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr"))
+        r.fn("strtr", a -> Args.count(a) == 2 ? strtrArray(Args.str(a, 0), Args.array(a, 1, "strtr", "from"))
                 : strtrChars(Args.str(a, 0), Args.str(a, 1), Args.str(a, 2)));
         r.fn("strspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), true));
         r.fn("strcspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), false));

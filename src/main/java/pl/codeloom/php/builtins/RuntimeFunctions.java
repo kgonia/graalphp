@@ -57,7 +57,7 @@ final class RuntimeFunctions {
         });
         r.fn("call_user_func_array", (context, a) -> {
             Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC_ARRAY);
-            return target.call(positional(Args.array(a, 1, "call_user_func_array")));
+            return target.call(positional(Args.array(a, 1, "call_user_func_array", "args")));
         });
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());
