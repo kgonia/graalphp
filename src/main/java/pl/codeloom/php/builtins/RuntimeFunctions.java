@@ -63,6 +63,20 @@ final class RuntimeFunctions {
         r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
         // PG(connection_status): CONNECTION_NORMAL, the CLI's (a request's connection isn't watched)
+        r.fn("php_sapi_name", (context, a) -> {
+            Args.arity(a, "php_sapi_name", 0, 0);
+            return Str.of(context.response() != null ? "cgi-fcgi" : "cli");
+        });
+        r.fn("ini_parse_quantity", (context, a) -> {
+            Args.arity(a, "ini_parse_quantity", 1, 1);
+            long[] result = new long[1];
+            String error = Ini.parseQuantity(Str.java(Args.string(context, a, 0, "ini_parse_quantity", "shorthand",
+                    false)), result);
+            if (error != null) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(error), SourceLocation.current());
+            }
+            return result[0];
+        });
         r.fn("connection_status", (context, a) -> {
             Args.arity(a, "connection_status", 0, 0);
             return 0L;
