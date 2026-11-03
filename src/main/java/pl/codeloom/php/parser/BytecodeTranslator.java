@@ -729,15 +729,16 @@ public final class BytecodeTranslator {
             for (int i = 0; i < params.length; i++) {
                 Ast param = (Ast) paramList.child(i);
                 BytecodeLocal local = variables.get(params[i].name());
+                // a parameter's errors are at its own line, its RECV opline's
                 if (params[i].variadic()) {
-                    beginLine(declaration.line);
+                    beginLine(param.line);
                     b.emitBindVariadic(local, i);
-                    endLine(declaration.line);
+                    endLine(param.line);
                     continue;
                 }
                 b.beginBindParameter(local, i);
                 if (params[i].declared() != null) {
-                    beginLine(declaration.line);
+                    beginLine(param.line);
                     b.beginCheckParameter(i);
                 }
                 Object defaultValue = param.get("default");
@@ -752,15 +753,17 @@ public final class BytecodeTranslator {
                     if (constantShaped(defaultValue)) {
                         constant(defaultValue, param);
                     } else {
+                        beginLine(param.line);
                         constantExpression = true;
                         expression(defaultValue);
                         constantExpression = false;
+                        endLine(param.line);
                     }
                     b.endConditional();
                 }
                 if (params[i].declared() != null) {
                     b.endCheckParameter();
-                    endLine(declaration.line);
+                    endLine(param.line);
                 }
                 b.endBindParameter();
             }
