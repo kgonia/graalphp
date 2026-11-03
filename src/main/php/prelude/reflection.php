@@ -1129,6 +1129,47 @@ class ReflectionProperty implements Reflector
     {
     }
 
+    /** The property's value as code in the reflected class reads it: hooks run, a lazy object initializes. */
+    public function getValue(?object $object = null): mixed
+    {
+        $info = TruffleReflection::of($this);
+        $name = $info['name'];
+        if ($this->isStatic()) {
+            return \Truffle\static_property($info['class'], $name);
+        }
+        if ($object === null) {
+            throw new TypeError('ReflectionProperty::getValue(): Argument #1 ($object) must be provided for instance properties');
+        }
+        if (!$object instanceof $info['class']) {
+            throw new ReflectionException('Given object is not an instance of the class this property was declared in');
+        }
+        return isset($info['dynamic']) ? $object->$name
+            : \Closure::bind(fn() => $this->$name, $object, $info['reflected'])();
+    }
+
+    /** The property written as code in the reflected class writes it: a set hook runs, a lazy object initializes. */
+    public function setValue(mixed $objectOrValue = null, mixed $value = null): void
+    {
+        $info = TruffleReflection::of($this);
+        $name = $info['name'];
+        if ($this->isStatic()) {
+            $value = func_num_args() === 1 ? $objectOrValue : $value;
+            \Truffle\set_static_property($info['class'], $name, $value);
+            return;
+        }
+        if (!is_object($objectOrValue)) {
+            throw new TypeError('ReflectionProperty::setValue(): Argument #1 ($objectOrValue) must be of type object, '
+                . get_debug_type($objectOrValue) . ' given');
+        }
+        if (isset($info['dynamic'])) {
+            $objectOrValue->$name = $value;
+            return;
+        }
+        \Closure::bind(function () use ($name, $value) {
+            $this->$name = $value;
+        }, $objectOrValue, $info['reflected'])();
+    }
+
     public function skipLazyInitialization(object $object): void
     {
         $this->lazyObject('skipLazyInitialization', $object);

@@ -63,7 +63,19 @@ final class ReflectionFunctions {
         r.fn("truffle\\reflection_property", (context, a) -> {
             PhpClass phpClass = phpClass(context, Args.get(a, 0), false);
             String name = Str.key(Args.str(a, 1));
-            return phpClass == null ? Boolean.FALSE : propertyInfo(phpClass, name);
+            Object info = phpClass == null ? Boolean.FALSE : propertyInfo(phpClass, name);
+            if (info == Boolean.FALSE && Args.get(a, 0) instanceof PhpObject object
+                    && object.initialized().getProperty(name) != null) {
+                // an object's dynamic property (ReflectionProperty's dynam_prop)
+                PhpArray dynamic = new PhpArray();
+                put(dynamic, "name", Str.ofKey(name));
+                put(dynamic, "class", Str.of(phpClass.getName()));
+                put(dynamic, "reflected", Str.of(phpClass.getName()));
+                put(dynamic, "modifiers", 1L);
+                put(dynamic, "dynamic", Boolean.TRUE);
+                return dynamic;
+            }
+            return info;
         });
         r.fn("truffle\\reflection_properties", (context, a) -> {
             PhpClass phpClass = phpClass(context, Args.get(a, 0), false);
@@ -72,6 +84,13 @@ final class ReflectionFunctions {
                 names.append(Str.ofKey(decl.name()));
             }
             return names;
+        });
+        // ReflectionProperty::getValue() and setValue() of a static property
+        r.fn("truffle\\static_property", (context, a) ->
+                phpClass(context, Args.get(a, 0), false).getStaticProperty(Str.key(Args.str(a, 1))).get());
+        r.fn("truffle\\set_static_property", (context, a) -> {
+            phpClass(context, Args.get(a, 0), false).getStaticProperty(Str.key(Args.str(a, 1))).set(Args.get(a, 2));
+            return PhpNull.NULL;
         });
         r.fn("truffle\\property_lazy", (context, a) -> propertyLazy(context, (PhpObject) Args.get(a, 0),
                 Str.key(Args.str(a, 1)), Str.java(Args.str(a, 2)), Args.get(a, 3, PhpNull.NULL)));
