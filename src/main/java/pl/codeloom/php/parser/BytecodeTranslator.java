@@ -4266,7 +4266,9 @@ public final class BytecodeTranslator {
                     if (!(node.get("prop") instanceof String name)) {
                         throw new Unsupported("static property by a computed name", node);
                     }
-                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name)));
+                    boolean scopeInFrame = function.getName().startsWith(CLOSURE_PREFIX);
+                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name),
+                            owner == null ? null : Str.lower(owner.name()), scopeInFrame));
                     return new RefPlace(node.get("class"), site, null, null);
                 }
                 case "AST_VAR" -> {

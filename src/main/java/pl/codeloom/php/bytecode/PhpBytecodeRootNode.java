@@ -1606,14 +1606,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = StaticPropSite.class)
     public static final class ReadStaticProp {
         @Specialization(excludeForUncached = true)
-        public static Object cached(StaticPropSite site, PhpClass phpClass,
+        public static Object cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            return StaticPropNode.declared(lookup.execute(phpClass), phpClass, site.name).get();
+            return StaticPropNode.declared(lookup.execute(frame, phpClass, false), phpClass, site.name).get();
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(StaticPropSite site, PhpClass phpClass) {
-            return StaticPropNode.declared(phpClass.getStaticProperty(site.name), phpClass, site.name).get();
+        public static Object uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            return StaticPropNode.declared(site.find(frame, phpClass, false), phpClass, site.name).get();
         }
     }
 
@@ -1622,34 +1622,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = StaticPropSite.class)
     public static final class StaticPropRef {
         @Specialization(excludeForUncached = true)
-        public static PhpRef cached(StaticPropSite site, PhpClass phpClass,
+        public static PhpRef cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            return StaticPropNode.declared(lookup.execute(phpClass), phpClass, site.name);
+            return StaticPropNode.declared(lookup.execute(frame, phpClass, false), phpClass, site.name);
         }
 
         @Specialization(replaces = "cached")
-        public static PhpRef uncached(StaticPropSite site, PhpClass phpClass) {
-            return StaticPropNode.declared(phpClass.getStaticProperty(site.name), phpClass, site.name);
+        public static PhpRef uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            return StaticPropNode.declared(site.find(frame, phpClass, false), phpClass, site.name);
         }
     }
 
     /**
      * `Cls::$name` as isset(), empty() and `??` read it (StaticPropNode.isSet, readIfSet): its value, null for a
-     * property the class doesn't have.
+     * property the class doesn't have or the calling scope may not access.
      */
     @Operation
     @ConstantOperand(type = StaticPropSite.class)
     public static final class StaticPropIfSet {
         @Specialization(excludeForUncached = true)
-        public static Object cached(StaticPropSite site, PhpClass phpClass,
+        public static Object cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            PhpRef ref = lookup.execute(phpClass);
+            PhpRef ref = lookup.execute(frame, phpClass, true);
             return ref == null ? PhpNull.NULL : ref.get();
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(StaticPropSite site, PhpClass phpClass) {
-            PhpRef ref = phpClass.getStaticProperty(site.name);
+        public static Object uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            PhpRef ref = site.find(frame, phpClass, true);
             return ref == null ? PhpNull.NULL : ref.get();
         }
     }

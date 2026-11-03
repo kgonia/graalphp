@@ -1762,7 +1762,8 @@ public final class Translator {
                 if (!(node.get("prop") instanceof String name)) {
                     throw unsupported(node, "dynamic static property name");
                 }
-                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name));
+                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name), lexicalClass(),
+                        scopeInFrame());
             }
             default:
                 throw unsupported(node, "assignment target");
