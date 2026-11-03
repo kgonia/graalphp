@@ -2126,8 +2126,11 @@ public final class Translator {
                 return new ConstNode(Str.of(Path.of(path).getParent().toString()));
             case 349:
                 return new ConstNode(Str.of(classInfo == null ? "" : classInfo.name()));
-            case 351:
-                return new ConstNode(Str.of(functionName));
+            case 351: {
+                // a closure's __METHOD__ is its name, without its scope's class
+                int closure = functionName.indexOf(CLOSURE_PREFIX);
+                return new ConstNode(Str.of(closure > 0 ? functionName.substring(closure) : functionName));
+            }
             case 352: {
                 String name = functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
                         : functionName;

@@ -163,6 +163,9 @@ final class CoreFunctions {
             if (target instanceof PhpObject o) {
                 return o.getProperty(name) != null || hasDeclared(o.getPhpClass(), name);
             }
+            if (target instanceof PhpClosure) {
+                return false;
+            }
             if (!(target instanceof TruffleString className)) {
                 throw Args.typeError("property_exists", 1, "object_or_class", "object|string", target);
             }
