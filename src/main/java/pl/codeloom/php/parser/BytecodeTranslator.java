@@ -2799,8 +2799,11 @@ public final class BytecodeTranslator {
                 throw compileError(target, "Can't use nullsafe operator in write context");
             }
             Object object = delayedObject(target.get("expr"), fetch);
-            if (!update && object instanceof Ast fetched && (fetched.is("AST_DIM") || fetched.is("AST_PROP")
-                    || (fetched.is("AST_VAR") && (isVariable(fetched) || refPlace(fetched) != null)))) {
+            // a property is read as a read does (FETCH_OBJ_W falls back to __get), no warning being implemented;
+            // a `$$name` is fetched by fetch (delayedObject)
+            if (!update && object instanceof Ast fetched && (fetched.is("AST_DIM")
+                    || (fetched.is("AST_VAR") && (isVariable(fetched)
+                    || refPlace(fetched) != null && !isVariableVariable(fetched))))) {
                 writeFetched.add(fetched);
             }
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));

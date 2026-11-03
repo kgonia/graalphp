@@ -47,11 +47,7 @@ public final class VariableVariableNode extends LValueNode {
     /** The variable's name (zval_try_get_tmp_string): an array's with php-src's warning, an object's __toString(). */
     @TruffleBoundary
     public static String name(Node node, Object value) {
-        Object name = PhpRef.deref(value);
-        if (name instanceof PhpArray) {
-            warn(node, "Array to string conversion");
-        }
-        return Str.java(Convert.toStr(name));
+        return Str.java(Convert.toStr(node, PhpRef.deref(value)));
     }
 
     /**
