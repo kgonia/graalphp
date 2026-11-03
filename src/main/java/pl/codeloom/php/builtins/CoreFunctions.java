@@ -31,7 +31,10 @@ final class CoreFunctions {
     static void register(Registry r) {
 
         // ---- types ----
-        r.fn("strlen", a -> (long) Str.length(Args.str(a, 0)));
+        r.fn("strlen", (context, a) -> {
+            Args.arity(a, "strlen", 1, 1);
+            return (long) Str.length(Args.string(context, a, 0, "strlen", "string", false));
+        });
         r.fn("count", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
         r.fn("sizeof", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
         r.fn("is_array", a -> Args.get(a, 0) instanceof PhpArray);
@@ -80,7 +83,8 @@ final class CoreFunctions {
                 case "array" -> ref.set(v instanceof PhpArray ? v : v == PhpNull.NULL ? new PhpArray()
                         : PhpArray.list(v));
                 case "null" -> ref.set(PhpNull.NULL);
-                default -> throw new PhpError("settype(): Invalid type");
+                case "resource" -> throw new PhpError("ValueError", "Cannot convert to resource type");
+                default -> throw new PhpError("ValueError", "settype(): Argument #2 ($type) must be a valid type");
             }
             return true;
         });
@@ -161,6 +165,9 @@ final class CoreFunctions {
             }
             if (target instanceof PhpClosure) {
                 return Str.of("Closure");
+            }
+            if (target != null) {
+                throw Args.typeError("get_class", 1, "object", "object", target);
             }
             throw new PhpError("get_class(): Argument #1 ($object) must be of type object");
         });

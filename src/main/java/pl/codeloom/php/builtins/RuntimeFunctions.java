@@ -39,6 +39,30 @@ final class RuntimeFunctions {
     private static final Callables.Parameter CALL_USER_FUNC_ARRAY =
             new Callables.Parameter("call_user_func_array", 1, false);
 
+    /** php_get_uname on Linux: uname(2)'s fields, as /proc/sys/kernel gives them. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static String uname(char mode) {
+        String[] fields = new String[5];
+        String[] files = {"ostype", "hostname", "osrelease", "version"};
+        for (int i = 0; i < 4; i++) {
+            try {
+                fields[i] = java.nio.file.Files.readString(java.nio.file.Path.of("/proc/sys/kernel/" + files[i])).strip();
+            } catch (java.io.IOException | RuntimeException e) {
+                fields[i] = i == 0 ? "Linux" : "";
+            }
+        }
+        String arch = System.getProperty("os.arch");
+        fields[4] = arch.equals("amd64") ? "x86_64" : arch.equals("aarch64") ? "aarch64" : arch;
+        return switch (mode) {
+            case 's' -> fields[0];
+            case 'n' -> fields[1];
+            case 'r' -> fields[2];
+            case 'v' -> fields[3];
+            case 'm' -> fields[4];
+            default -> String.join(" ", fields);
+        };
+    }
+
     static void register(Registry r) {
         // ---- lifecycle ----
         r.fn("exit", (context, a) -> exit(context, Args.get(a, 0, 0L)));
@@ -120,8 +144,17 @@ final class RuntimeFunctions {
         // ---- environment and self-description ----
         r.fn("getenv", (context, a) -> getenv(context, a));
         r.fn("phpversion", a -> Args.has(a, 0) ? (Object) Boolean.FALSE : Str.of("8.5.12"));
-        r.fn("php_uname", a -> Str.of(Args.str(a, 0, Str.of("a")).equals(Str.of("s")) ? "Linux"
-                : "Linux localhost 6.0 #1 SMP x86_64"));
+        r.fn("php_uname", (context, a) -> {
+            String mode = Args.has(a, 0) ? Str.java(Args.string(context, a, 0, "php_uname", "mode", false)) : "a";
+            if (mode.length() != 1) {
+                throw new PhpError("ValueError", "php_uname(): Argument #1 ($mode) must be a single character");
+            }
+            if ("amnrsv".indexOf(mode.charAt(0)) < 0) {
+                throw new PhpError("ValueError", "php_uname(): Argument #1 ($mode) must be one of \"a\", \"m\", "
+                        + "\"n\", \"r\", \"s\", or \"v\"");
+            }
+            return Str.of(uname(mode.charAt(0)));
+        });
         r.fn("get_loaded_extensions", a -> PhpArray.ofStrings(EXTENSIONS.toArray(new String[0])));
         r.fn("error_log", (context, a) -> errorLog(context, Str.bytes(Args.str(a, 0))));
         // the trace without debug_backtrace's own frame (php-src's skip_last)
