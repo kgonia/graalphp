@@ -887,3 +887,117 @@ The pattern: cold code runs faster on bytecode (the uncached interpreter, smalle
 the compiled steady state about a fifth slower, with more memory. The compiler is the cost: a bytecode function's
 compile takes 1.3-1.5 times the tree's for 1.1 times the graph (the splitting section), and on Gate 2 the warm
 visits still spend 1.63 times the CPU, compile threads included.
+
+### What a bytecode compilation costs (2026-11-03, branch `bc-compile-cost`)
+The question after the flip: where the warm visits' extra CPU goes, and why a bytecode compilation costs more per
+graph. One build (`7363eba`, `dsl-processor-patched`), each interpreter on a diagnosis server of its own
+(`bench/bc-compile-cost/runs.sh diag`: CPUs 6-13, Gate 2's 200 paced visits, `TraceCompilationDetails`, each thread's
+CPU sampled every second and cut at the visits' ends by `cpusplit.py`; `compare.py` and `excess.py` read two engine
+logs). Diagnosis runs, not timings: the host was loaded by other people's processes, and compile times are wall
+clock on a compiler thread.
+
+**Where the warm CPU goes** (CPU-s per visit; "Truffle compiler" is the PHP code's compilations, libgraal's work and
+GC included, as they run on the compiling thread; "HotSpot compiler" the JVM's own Java code):
+
+| window | tree: total / requests / Truffle compiler / HotSpot compiler / GC and VM | bytecode: the same |
+|---|---|---|
+| cold visit | 56.6 / 8.7 / 22.7 / 23.3 / 0.5 | 76.7 / 12.4 / 30.5 / 31.3 / 0.5 |
+| visits 1-50 | 9.02 / 1.21 / 6.62 / 0.58 / 0.10 | 7.86 / 1.01 / 5.68 / 0.80 / 0.05 |
+| visits 51-150 | 3.74 / 0.71 / 2.66 / 0.08 / 0.04 | 6.46 / 0.86 / 5.13 / 0.10 / 0.09 |
+| visits 151-200 (the warm window) | **1.78** / 0.55 / **1.03** / 0.04 / 0.01 | **4.18** / 0.71 / **3.17** / 0.07 / 0.01 |
+| compilations finished in the warm window | tier 1: 136 (5.6 s), tier 2: 110 (45 s) | tier 1: 148 (8.7 s), tier 2: 228 (159 s) |
+
+- **The warm gap is the compile queue.** Of bytecode's 2.40 CPU-s more per warm visit, 2.14 (89 %) is Truffle's
+  compiler threads, 0.16 the request threads (the compiled code itself), GC and HotSpot's compiler nothing. In the
+  warm window the tree's queue is nearly empty and bytecode's still works through the last tier (228 compilations,
+  159 s, against the tree's 110, 45 s). Over the 200 visits bytecode compiled for 904 s (tier 1 372, tier 2 532), the
+  tree for 664 (274, 390).
+- **Not recompilations.** Tier 1 compiled a target again 34 times on bytecode, 24 on the tree; tier 2 once and
+  twice. 18 and 16 deoptimizations (all uncommon traps; `WP_Hook::apply_filters` 3 on both), 24 and 12
+  invalidations ("Profiled Argument Types" 20 and 10, "Profiled Return Type" 4 on bytecode only), and 13 dequeues
+  for "local tags updated" (a bytecode local changing kind). The audit's series with five times the tier-1
+  recompilations didn't recur here.
+- **The queue overflows on both:** "Stale compilation task" dequeues, a target queued and dropped again before a
+  thread took it, 95,387 on bytecode against 33,546; 28,000 of bytecode's are the `add_filter`/`WP_Hook::add_filter`/
+  `apply_filters` split copies.
+
+**Where the extra compile time comes from** (904 against 664 s, ranked):
+1. **Split copies at tier 1: about +90 s.** 2,201 copies compiled at tier 1 (124 s) against the tree's 1,055 (33 s):
+   `WP_Hook::add_filter` 488 copies (59 s), `apply_filters` 416 (24 s), `add_filter` 495 (17 s), `add_action` 302
+   (8 s), the chain "Which splits pay" found useless outside Gate 1's `hooks`. `8225a73` (PR #29, the owner's call)
+   removes it.
+2. **Larger graphs for the same functions: about +90 s** (`excess.py`: tier 1 +33 s over the 378 functions whose IR
+   after PE is 1.5 times the tree's or more, tier 2 +59 s over 105). For the 1,764 functions both compiled at tier 1
+   the IR after PE is 1.39 times the tree's in total but 1.14 in the median: a few hundred functions are 2-10 times
+   larger. Two constructs make them (micro-programs, `BackgroundCompilation=false`, tier 1, IR after PE):
+
+   | program (20-40 copies of a statement in a function) | tree | bytecode | bytecode, fixed |
+   |---|---|---|---|
+   | `return ['k0' => $n, ... 'k39' => $n];` | 743 (6.5 KB code) | 10,504 (156 KB) | 914 (6.6 KB) |
+   | `['s0' => ['name' => f('N0', 'c'), 'icon' => 'svg0'], ...]` x20 (`block_core_social_link_services`' shape) | 1,111 (72 KB) | 12,955 (225 KB) | 1,184 (72 KB) |
+   | `$v = k($x);` x20 | 996 | 3,113 | 917 |
+   | `$v = k($x, $x, $x);` x20 | 996 | 7,677 | 917 |
+   | `$v = k(1);` x20 (no variable argument) | 950 | 869 | 869 |
+
+   - **Array literals with literal keys** (`d3c04a0`): the key came to `LiteralPut` at run time, so compiled code
+     normalized it out of line (`ArrayKey.ofString`, a boundary) and then inlined every path `put()` has for an
+     unknown key (the int strategy, packed in place, a reference element, the old value's holder) before the hash
+     insert: about 250 IR nodes per element. The tree normalizes literal keys at translation and builds a record
+     (distinct literal keys, one a string) as a hash directly (`ArrayLiteralNode.constantKeys`, `recordHashes`);
+     the bytecode now does the same (`LiteralPutKey`, `LiteralAdd`, `LiteralSite`'s record). WordPress is full of
+     them: `register_taxonomy`'s and `register_post_type`'s arguments, the block registrations, query arguments.
+   - **A variable as an argument** (`455ae9c`): `SendVar` runs before the call, on the callee `ResolveFunction`
+     pushed, and that value is no constant in compiled code (`CompilerAsserts.partialEvaluationConstant` fails on
+     it: a Pi of the stack slot's read; why the cached function doesn't arrive as a constant isn't found). So each
+     variable argument compiled the by-value read and making the variable a reference, where the tree's direct call
+     builds its arguments for the function it cached and compiles one path. `SendVar` now caches the callee itself
+     (limit 1). Arguments of other shapes (`$a['k']`, `$this->p`, calls, method calls) measured within 30 % of the
+     tree already: their by-reference paths are profiled or out of line.
+3. **A slow Graal tier in a few last-tier compilations: about +37 s**, 19 functions whose Graal time per node was
+   2-15 times the tree's (`sanitize_term` 7.5 s against 1.2, `get_plugin_page_hook` 5.1 against 0.35,
+   `WP_User::get_caps_data` 4.7 against 0.65, `esc_url_raw` 4.2 against 0.76, `wp_cache_get_salted` 2.9 against
+   0.16). Not a phase gone superlinear on bytecode as such: their inlined callees pass variables to functions and
+   build keyed arrays (`wp_cache_get`, `apply_filters`' callers), and with both fixes their graphs fall to the tree's
+   (below).
+4. **Partial evaluation costs more per node**, inherent to the bytecode loop: for the same IR, PE takes 1.3-2.5 times
+   the tree's (a list of 40 variables: 31 against 82 ms for 3,999 and 4,131 nodes; tier 2 over the 565 functions
+   both compiled, 20.7 against 25.4 ms per 1,000 nodes). PE is a fifth of the compile time, so this is about +5 %.
+5. **Built-ins called, not compiled in place**: the tree's `Intrinsics` are nodes; bytecode calls the built-in's
+   root, which tier 2 then inlines (a `wp_cache_get_salted`-like micro-program: 6 inlined targets against 2). Gate 1
+   measured it (hooks, kses); on Gate 2 it is a part of the larger graphs.
+
+**The same functions on the three builds** (first compilation; ms is wall clock, and the fixed build's diagnosis
+run had the host at 90-100 % load, so its times are inflated, its graphs not):
+
+| function, tier | tree: ms (PE + rest), IR after PE / after all, code KB | bytecode | bytecode, both fixes |
+|---|---|---|---|
+| `block_core_social_link_services`, 1 | 896 (135+762), 3,428 / 19,793, 172 | 2,858 (329+2,529), 33,199 / 98,101, 557 | 2,024 (575+1,449), 3,720 / 20,102, 174 |
+| `create_initial_taxonomies`, 1 | 374 (149+225), 4,450 / 13,414, 79 | 3,501 (331+3,170), 33,606 / 100,481, 562 | 635 (330+305), 5,197 / 13,612, 82 |
+| `WP_Http::request`, 1 | 320 (70+250), 6,683 / 13,355, 67 | 1,361 (243+1,118), 15,210 / 29,555, 156 | 695 (311+384), 6,337 / 11,916, 57 |
+| `WP_Theme_JSON::get_block_nodes`, 1 | 6,876 (672+6,204), 26,433 / 61,205, 324 | 10,250 (670+9,579), 35,493 / 72,653, 398 | 14,588 (1,332+13,256), 24,756 / 47,594, 250 |
+| `WP::parse_request`, 2 | 2,813 (326+2,486), 15,817 / 31,682, 161 | 2,863 (353+2,510), 15,461 / 28,550, 146 | 5,567 (1,810+3,757), 15,566 / 26,360, 135 |
+| `sanitize_term`, 2 | 1,278 (95+1,182), 8,722 / 19,092, 94 | 7,719 (240+7,479), 11,301 / 25,475, 134 | 3,192 (617+2,575), 9,717 / 19,605, 95 |
+| `wp_cache_get_salted`, 2 | 194 (37+156), 3,611 / 6,549, 28 | 2,951 (95+2,856), 5,615 / 20,298, 108 | 732 (200+532), 3,560 / 7,300, 31 |
+| `get_plugin_page_hook`, 2 | 397 (46+351), 4,881 / 11,910, 54 | 5,250 (133+5,117), 10,858 / 30,240, 140 | 1,439 (566+873), 5,680 / 9,570, 42 |
+| `WP_User::get_caps_data`, 2 | 785 (131+654), 5,855 / 15,088, 69 | 4,903 (170+4,733), 9,577 / 27,364, 129 | 1,654 (370+1,284), 6,574 / 14,935, 70 |
+| `esc_url_raw`, 2 | 985 (221+764), 7,690 / 15,986, 75 | 4,495 (247+4,248), 10,234 / 23,598, 102 | 1,756 (430+1,326), 8,661 / 14,821, 67 |
+
+Bytecode's graphs against the tree's, over the functions both compiled (first compilation of each; totals):
+
+| | tier 1: IR after PE, after all, code | tier 2: IR after PE, after all, code |
+|---|---|---|
+| bytecode / tree | 1.39, 1.35, 1.39 (1,764 functions) | 1.13, 1.13, 1.15 (565) |
+| bytecode with both fixes / tree | 1.09, 0.99, 1.00 (1,774) | 0.99, 0.89, 0.90 (563) |
+
+All compilations of the 200 visits: tier 1 6.13 M IR nodes after PE and 60.2 MB of code before, 5.00 M and 47.5 MB
+with the fixes (the tree 3.30 M and 33.5 MB: what is left is mostly the 2,168 split copies); tier 2 3.87 M and
+40.1 MB before, 3.38 M and 31.3 MB with the fixes (the tree 3.34 M and 34.0 MB).
+
+Gate 1's kernels (one diagnosis run each, CPUs 6-13, TraceCompilation): `esc_html`'s last tier 15,874 IR nodes and
+75 KB of code before, 8,849 and 40 KB with the fixes (the tree 7,197 and 30 KB); `_wp_specialchars` 5,961 and 25 KB,
+then 2,627 and 10 KB (the tree 2,456 and 9 KB); `WP_Block_Parser::parse` stays larger (36,981 against 27,567).
+
+Correctness on the fixed build: `mvn clean package` passes, the smoke tests 141/141 on bytecode
+(`tests/smoke/literal-keys.php` is new: duplicate and int-like keys, the evaluation order, a record's next index,
+by-value and by-reference arguments, compiled and then not; it passes on the tree too), Gate 2's pages 19/21 equal
+to PHP's (the two oEmbed links, as before).

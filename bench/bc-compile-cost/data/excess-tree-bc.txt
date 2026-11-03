@@ -1,0 +1,8 @@
+IR after PE >= 1.5x            378 functions, excess    32.8 s (149.6%; PE 3.9 s, Graal tier 28.9 s), A's time 46.0 s
+Graal time per node >= 2x        1 functions, excess     0.1 s (  0.3%; PE 0.0 s, Graal tier 0.0 s), A's time 0.0 s
+neither                       1385 functions, excess   -10.9 s (-49.9%; PE 0.9 s, Graal tier -11.8 s), A's time 138.7 s
+total excess 21.9 s
+IR after PE >= 1.5x            105 functions, excess    58.9 s ( 55.6%; PE 4.3 s, Graal tier 54.6 s), A's time 23.5 s
+Graal time per node >= 2x       19 functions, excess    37.0 s ( 34.9%; PE 2.2 s, Graal tier 34.8 s), A's time 18.0 s
+neither                        441 functions, excess    10.1 s (  9.5%; PE 14.5 s, Graal tier -4.4 s), A's time 261.3 s
+total excess 105.9 s
