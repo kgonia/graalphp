@@ -2397,9 +2397,12 @@ public final class BytecodeTranslator {
         private void globalConstant(Ast node) {
             Ast nameNode = node.node("name");
             String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
-            if (language.builtins().deprecation(resolved[1] != null ? resolved[1] : resolved[0]) != null) {
-                // the tree's DeprecatedConstNode raises the deprecation at every fetch; no operation here does
-                throw new Unsupported("deprecated constant", node);
+            String deprecation = language.builtins().deprecation(resolved[1] != null ? resolved[1] : resolved[0]);
+            if (deprecation != null) {
+                b.emitDeprecatedConstant(resolved[0], language.constantId(resolved[0]),
+                        resolved[1] == null ? -1 : language.constantId(resolved[1]),
+                        (TruffleString) made(() -> Str.of(deprecation)), node.line);
+                return;
             }
             b.emitGlobalConstant(resolved[0], language.constantId(resolved[0]),
                     resolved[1] == null ? -1 : language.constantId(resolved[1]));

@@ -3205,6 +3205,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** A deprecated predefined constant (DeprecatedConstNode): the deprecation raised at every fetch. */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = int.class, name = "id")
+    @ConstantOperand(type = int.class, name = "fallbackId")
+    @ConstantOperand(type = TruffleString.class, name = "deprecation")
+    @ConstantOperand(type = int.class, name = "line")
+    public static final class DeprecatedConstant {
+        @Specialization
+        public static Object fetch(String name, int id, int fallbackId, TruffleString deprecation, int line,
+                                   @Bind Node node) {
+            return ConstantNodes.DeprecatedConstNode.fetch(node, name, id, fallbackId, deprecation, line);
+        }
+    }
+
     /** `static::class` (ClassNameNode). */
     @Operation
     public static final class ClassName {

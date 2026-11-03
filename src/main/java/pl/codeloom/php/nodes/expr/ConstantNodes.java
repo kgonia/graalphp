@@ -71,12 +71,14 @@ public final class ConstantNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return fetch();
+            return fetch(this, name, id, fallbackId, deprecation, line);
         }
 
+        /** The constant's value, the deprecation raised at the fetch's line (also the bytecode's DeprecatedConstant). */
         @CompilerDirectives.TruffleBoundary
-        private Object fetch() {
-            PhpContext context = PhpContext.get(this);
+        public static Object fetch(Node site, String name, int id, int fallbackId, TruffleString deprecation,
+                                   int line) {
+            PhpContext context = PhpContext.get(site);
             Object value = context.constantAt(id);
             if (value != null && fallbackId >= 0) {
                 return value;
@@ -87,8 +89,8 @@ public final class ConstantNodes {
             if (value == null) {
                 throw new PhpError("Undefined constant \"" + name + "\"");
             }
-            SourceLocation at = SourceLocation.of(this);
-            if (SourceLocation.isUserCode(getRootNode())) {
+            SourceLocation at = SourceLocation.of(site);
+            if (SourceLocation.isUserCode(site.getRootNode())) {
                 at = new SourceLocation(at.file(), line);
             }
             ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, deprecation, at);
