@@ -730,3 +730,47 @@ Gate 2's visits (`DIAG_SEED=gate2-seed`), CPUs 6-13, the build of `966765a` (byt
   for 1.10 times the IR and 1.09 times the code; on Gate 2 1.32, 1.10 and 1.08 (480 functions). The compile
   queue, not the profile, is what this window measured: a bytecode function costs the compiler about half again as
   much per graph.
+
+### Fallbacks to the tree: the inventory, and what closed them
+`tests/bytecode/scan.php` translates every function body of a corpus without running it, with
+`-Dphp.bytecode.report=all` (each reason a body has, not only the first); `tests/bytecode/fallbacks.py` counts the
+reasons by construct. Functions on bytecode / on the tree; "the only one": functions that construct alone kept on
+the tree:
+
+| corpus | at the flip (`874f1a9`) | after the closing commits and merges |
+|---|---|---|
+| `tests/smoke` | 941 / 62 | 979 / 0 |
+| WordPress (`target/gate2/wordpress`, core) | 11,285 / 1,386 | 12,599 / 1 |
+| WooCommerce (its plugin directory) | 20,208 / 1,698 | 21,796 / 6 |
+
+The reasons at the flip, by functions (WordPress / WooCommerce), and the commit that closed each:
+
+| construct | WP | Woo | closed by |
+|---|---|---|---|
+| static properties (`A::$x`): read, write, isset, argument, reference, increment | 249+72+64+60 | 525+248+142+75 | bc-places `2c20e09` |
+| superglobals (`$_GET`, `$_POST`, `$_REQUEST`, `$_SERVER`, `$_COOKIE`...): read, element, argument | 150+112+105+104... | 352+166+113+80... | bc-places `d922400` |
+| `$GLOBALS`, `$GLOBALS[name]` | 138 | 63 | bc-places `d6ac78e` |
+| `include` / `require` in a function | 235 | 302 | bc-scope `13ef554` |
+| `@` (unary 260) | 176 | 70 | bc-calls `81040f5` |
+| `compact()` | 82 | 29 | bc-scope `29da138` |
+| `get_object_vars()` | 50 | 26 | bc-scope `caec144` |
+| write to a property of an expression (`f()->x = v`), argument `$o->p` | 48+28 | 36+21 | bc-calls `42c2e30` |
+| argument unpacking `...` | 47 | 46 | bc-calls `01cf723` |
+| an element of an expression as an argument (`f()[0]`) | 14 | 22 | bc-calls `42c2e30` |
+| `func_get_arg()` | 4 | 3 | bc-calls `fe5aeb7` |
+| `extract()` | 2 | 10 | bc-scope `be5847e` |
+| goto | 16 | 0 | `966765a`, into an if `1380b58` |
+| promoted constructor parameters, anonymous classes, nested declarations, xor | 9 (smoke) | 3+ | `c9cfce1` |
+| php-src's compile errors (break levels, two defaults, list() forms, parameter names) | | | `38c59b2` |
+| a deprecated predefined constant (`FILTER_SANITIZE_STRING`) | 1 (smoke) | | `04eb83d` |
+
+**What is left** is what the tree can't run either: `A::$m()` (a static method by a computed name: WordPress's
+`getid3_lib::iconv_fallback`, WooCommerce's `PushTokenValidator::validate`) and `$$name` (variable variables: five
+WooCommerce functions, Sabberworm's `expandDimensionsShorthand` twice, `CLIRunner::backfill`,
+`Jetpack_Signature::sign_request`, `BaseInstaller::templatePath`). The tree's translation raises "Unsupported ..."
+when such a function is first called; bytecode falls back to it, so both fail alike. `BytecodeScope` (the call's
+variables by name, bc-scope) is what `$$name` needs.
+
+**Still the tree's whatever the corpus:** a file's top-level code (`FileRootNode`: the globals by name, the hoisted
+declarations, `return` from an include), constant expressions evaluated on first use (`ThunkRootNode`: class
+constants, property defaults), and `eval`. The tree can't be deleted before these move.
