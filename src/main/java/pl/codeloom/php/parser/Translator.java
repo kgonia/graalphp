@@ -1182,7 +1182,8 @@ public final class Translator {
                                         + param.get("name") + " must have type");
                             }
                             promoted.add(new PhpClass.PropertyDecl(propertyName,
-                                    (modifiers & MODIFIER_READONLY) != 0 || type != null ? null : PhpNull.NULL,
+                                    (modifiers & MODIFIER_READONLY) != 0 || type != null && param.get("hooks") == null
+                                            ? null : PhpNull.NULL,
                                     PhpClass.PropertyDecl.visibilityOf(param.flags), null, modifiers, type));
                         }
                     }
@@ -1225,7 +1226,8 @@ public final class Translator {
                         }
                     }
                     Object initial = element.get("default") != null ? constantOrDeferred(element.get("default"))
-                            : (modifiers & MODIFIER_READONLY) != 0 || type != null && !isStatic ? null : PhpNull.NULL;
+                            : (modifiers & MODIFIER_READONLY) != 0 || type != null && !isStatic
+                            && element.get("hooks") == null ? null : PhpNull.NULL;
                     members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, modifiers,
                             type));
                 }

@@ -697,6 +697,17 @@ public final class PhpClass {
     }
 
     /** The shape flags of a declared property in an object of this class. */
+    /**
+     * The shape flags a write from the scope initializes the typed property with when nothing but a put is needed
+     * (declared, typed, not readonly nor set-restricted, accessible, no __set), else -1.
+     */
+    @TruffleBoundary
+    public int directInit(String name, String scope) {
+        PropertyDecl decl = properties.get(name);
+        return decl == null || decl.type() == null || decl.isReadonly() || decl.restrictsSet()
+                || findMethod("__set") != null || !canAccessProperty(name, scope) ? -1 : propertyFlags(decl);
+    }
+
     public int propertyFlags(PropertyDecl decl) {
         return (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                 : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())

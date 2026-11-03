@@ -57,6 +57,12 @@ public final class PropNode extends LValueNode {
      * assignment compiled all of them (about 27 IR nodes a site).
      */
     @CompilationFinal private int seen;
+    /**
+     * The key of classes whose typed property (the constant name) a write here initializes as a plain put with
+     * initFlags: declared, not readonly nor set-restricted, accessible from the lexical scope, no __set (directInit).
+     */
+    @CompilationFinal private ClassKey initKey;
+    @CompilationFinal private int initFlags;
     private static final int SEEN_REF = 1;
     private static final int SEEN_MISSING = 1 << 1;
     private static final int SEEN_NEW_ARRAY = 1 << 2;
@@ -246,7 +252,7 @@ public final class PropNode extends LValueNode {
                 return objects.getLongOrDefault(phpObject, name, ABSENT);
             } catch (UnexpectedResultException e) {
                 Object result = e.getResult();
-                throw new UnexpectedResultException(result == ABSENT ? missing(phpObject, name)
+                throw new UnexpectedResultException(result == ABSENT ? missing(frame, phpObject, name)
                         : PhpRef.deref(result));
             }
         }
@@ -256,8 +262,14 @@ public final class PropNode extends LValueNode {
     /** The default of a property lookup: the property doesn't exist (declared ones exist until unset). */
     private static final Object ABSENT = new Object();
 
-    /** Reading a property that doesn't exist: PhpObject.readMissing. */
-    private Object missing(PhpObject phpObject, String name) {
+    /**
+     * Reading a property that doesn't exist: PhpObject.readMissing, or for a declared one the scope may not access
+     * (a typed one has no slot while uninitialized, so no shape flags) inaccessibleRead.
+     */
+    private Object missing(VirtualFrame frame, PhpObject phpObject, String name) {
+        if (!phpObject.getPhpClass().canAccessProperty(name, scope(frame))) {
+            return inaccessibleRead(phpObject, name);
+        }
         return phpObject.readMissing(this, name);
     }
 
@@ -277,7 +289,7 @@ public final class PropNode extends LValueNode {
             if (property instanceof PhpRef ref) {
                 return ref.get();
             }
-            return property == null ? missing(phpObject, name) : property;
+            return property == null ? missing(frame, phpObject, name) : property;
         }
         return PhpNull.NULL;
     }
@@ -340,7 +352,7 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (phpObject.writeMissing(this, scope(frame), name, value)) {
+            if (missingWritten(frame, phpObject, name, value)) {
                 return;
             }
         }
@@ -372,7 +384,7 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (phpObject.writeMissing(this, scope(frame), name, value)) {
+            if (missingWritten(frame, phpObject, name, value)) {
                 return;
             }
         }
@@ -528,7 +540,9 @@ public final class PropNode extends LValueNode {
             }
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                if (!phpObject.unsetUninitialized(scope(frame), name)) {
+                if (!phpObject.getPhpClass().canAccessProperty(name, scope(frame))) {
+                    inaccessibleUnset(phpObject, name);
+                } else if (!phpObject.unsetUninitialized(scope(frame), name)) {
                     phpObject.magicProperty(this, "__unset", name);
                 }
                 return;
@@ -539,6 +553,36 @@ public final class PropNode extends LValueNode {
             objects.removeKey(phpObject, name);
             phpObject.unsetDeclared(name);
         }
+    }
+
+    /**
+     * A write of a property the object doesn't have: false for a dynamic one the caller puts, else done here, an
+     * uninitialized typed one put directly when the site's cache (initKey) covers its class (PhpObject.writeMissing).
+     */
+    private boolean missingWritten(VirtualFrame frame, PhpObject phpObject, String name, Object value) {
+        PhpClass phpClass = phpObject.getPhpClass();
+        if (initKey != null && phpClass.getKey() == initKey) {
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            objects.putWithFlags(phpObject, name, value, initFlags);
+            return true;
+        }
+        String scope = scope(frame);
+        if (!phpClass.canAccessProperty(name, scope)) {
+            inaccessibleWrite(phpObject, name, value);
+            return true;
+        }
+        int flags = initKey == null && constantName != null && !scopeInFrame ? phpClass.directInit(name, scope) : -1;
+        if (!phpObject.writeMissing(this, scope, name, value)) {
+            return false;
+        }
+        if (flags >= 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            initFlags = flags;
+            initKey = phpClass.getKey();
+        }
+        return true;
     }
 
     @TruffleBoundary
@@ -601,7 +645,7 @@ public final class PropNode extends LValueNode {
                 if (!magicIsset(phpObject, name)) {
                     return null;
                 }
-                property = missing(phpObject, name);
+                property = missing(frame, phpObject, name);
             }
             return property == PhpNull.NULL ? null : property;
         }
