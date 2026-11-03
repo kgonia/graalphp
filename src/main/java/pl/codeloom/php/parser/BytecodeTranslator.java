@@ -2621,6 +2621,9 @@ public final class BytecodeTranslator {
          * quiet: in isset(), empty() and `??` (BP_VAR_IS), the object and the rest read as isset() reads them.
          */
         private void nullsafeChain(Ast node, Ast nullsafe, boolean quiet) {
+            if (Translator.convertInChain(node, nullsafe) instanceof Ast convert) {
+                throw compileError(convert, "Cannot combine nullsafe operator with Closure creation");
+            }
             b.beginBlock();
             BytecodeLocal object = b.createLocal();
             b.beginStoreLocal(object);
@@ -3833,6 +3836,9 @@ public final class BytecodeTranslator {
          * evaluated by value and dropped (zend_pass_function). The object is the value.
          */
         private void newObject(Ast node) {
+            if (Translator.isCallableConvert(node)) {
+                throw compileError(node, "Cannot create Closure for new expression");
+            }
             ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                 // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs

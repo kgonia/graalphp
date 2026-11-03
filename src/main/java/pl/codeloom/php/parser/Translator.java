@@ -1422,6 +1422,9 @@ public final class Translator {
                 return new GeneratorNodes.YieldFromNode(expression(node.get("expr")), hiddenSlot("yield"),
                         hiddenSlot("source"), hiddenSlot("position"), generatorSlot);
             case "AST_NEW":
+                if (isCallableConvert(node)) {
+                    throw compileError(node.line, "Cannot create Closure for new expression");
+                }
                 if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                     return newAnonymousClass(node, classNode);
                 }
@@ -1661,6 +1664,18 @@ public final class Translator {
         return found;
     }
 
+    /** A `->m(...)` the `?->` short-circuits (zend_compile_method_call's compile error), or null. */
+    static Ast convertInChain(Ast node, Ast nullsafe) {
+        for (Ast link = node; ; link = link.node(chainLink(link))) {
+            if ((link.is("AST_METHOD_CALL") || link.is("AST_NULLSAFE_METHOD_CALL")) && isCallableConvert(link)) {
+                return link;
+            }
+            if (link == nullsafe) {
+                return null;
+            }
+        }
+    }
+
     /** A copy of the chain from node down to nullsafe, which becomes a plain access to object. */
     static Ast withObject(Ast node, Ast nullsafe, Ast object) {
         Map<String, Object> parts = new LinkedHashMap<>(node.namedOrNull());
@@ -1679,6 +1694,9 @@ public final class Translator {
      * it, the `?->` as `->` (with further `?->`s of its own); quiet in isset(), empty() and `??` (BP_VAR_IS).
      */
     private ExprNode nullsafeChain(Ast node, Ast nullsafe, boolean quiet) {
+        if (convertInChain(node, nullsafe) instanceof Ast convert) {
+            throw compileError(convert.line, "Cannot combine nullsafe operator with Closure creation");
+        }
         ExprNode object = expression(nullsafe.get("expr"));
         int slot = hiddenSlot("nullsafe");
         Ast chain = withObject(node, nullsafe, temporary(slot, node));
