@@ -18,7 +18,7 @@ line offsets and touch different files.
 Once per machine (and again after a change to `patches/`), before `mvn`:
 
 ```sh
-truffle-dsl-processor/build.sh    # JAVA_HOME: a JDK 21+; mvn, curl, unzip and patch on PATH
+bash truffle-dsl-processor/build.sh    # JAVA_HOME: a JDK 21+; mvn, curl, unzip and patch on PATH
 ```
 
 1. Downloads the processor's `-sources.jar` from Maven Central.

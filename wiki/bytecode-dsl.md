@@ -717,8 +717,8 @@ kernels, the smoke tests and php-src's tests).
   `tests/smoke/split-copies.php` has one test per wrong shape, from the shape's original to its copies.
 - **The workaround (`6b0988a`):** each such `@Fallback` takes those specializations' caches as `@Shared` parameters,
   unused. The fallback's fast path then checks them too, so in a copy it falls through to `executeAndSpecialize`,
-  which makes the caches and specializes anew. Bytecode roots split again (`isCloningAllowed` true). To drop once a
-  release has GR-79787. With it Gate 2's pages are 19/21 (the two oEmbed links, as before), the WooCommerce walk
+  which makes the caches and specializes anew. Bytecode roots split again (`isCloningAllowed` true). Dropped for the
+  patched processor (below). With it Gate 2's pages are 19/21 (the two oEmbed links, as before), the WooCommerce walk
   51/51 equal to the tree's, the smoke tests pass.
 - **`mvn test` after it, `CompilationTest`'s `large-function.php`:** `Query::sql`'s first tier was "code is too large"
   (HotSpot's install limit) when `PhpBytecodeRootNodeTest` ran first. Graal reads `FirstTierUseEconomy` once per
@@ -755,7 +755,7 @@ bytecode run beside a `mvn test`, so its orders aren't a measure):
 - **Bytecode splits other roots than the tree:** a bytecode operation reports polymorphism only through a cached
   child node that does (`SubclassTestNode`, `CallableDispatchNode`, `ElementReadNode`...; Proxies.java), not the
   tree's `MethodCallNode$Dispatch`, `ToBoolean` or `Identical`. So `get_prop`/`set_prop` don't split, and the hook
-  registrations, whose callables differ per caller, do.
+  registrations, whose callables differ per caller, do. (Until the patched processor, below.)
 
 Before (`966765a`):
 
@@ -774,7 +774,34 @@ Before (`966765a`):
   queue, not the profile, is what this window measured: a bytecode function costs the compiler about half again as
   much per graph.
 
-### Fallbacks to the tree: the inventory, and what closed them
+### The patched processor (2026-11-03, branch `dsl-processor-patched`)
+Both Truffle bugs above are fixed upstream but in no release: GR-79787 (the copy's state) on master, and
+[#14871](https://github.com/oracle/graal/issues/14871) (`@ReportPolymorphism` on a proxied or plain operation
+generates `checkForPolymorphicSpecialize` reading `$bc`/`$bci` out of scope, so Proxies.java had 21
+`@ReportPolymorphism.Exclude`) by the open [PR #14872](https://github.com/oracle/graal/pull/14872). We build the
+25.4.4.1.1 processor with the processor part of both (`truffle-dsl-processor/build.sh`, its README); the runtime stays
+the released 25.4.4.1.1. The clone-state reproducer's copy answers right with it; the generated `unquickenBytecode`
+zeroes each operation's state. Without the workarounds (the unused `@Shared` caches reverted, the 21 `Exclude`
+removed) `split-copies.php` passes with splitting on, and fails with the released processor. `mvn clean package`
+passes; the smoke tests 140/140 on bytecode (on the tree the same 19 fail as on `bc-split-fix`), `tests/http`, Gate 2's
+pages 19/21 (the oEmbed links), the WooCommerce walk 51/51 against the tree, php-src's `.phpt` 3,398 against
+`bc-split-fix`'s 3,397 (none that passed fails).
+
+The proxied nodes report polymorphism again, so bytecode roots split on them as the tree's do.
+`TraceSplittingSummary`, the diagnosis above (120 s, CPUs 6-13, beside a smoke run, so the loads aren't equal: on Woo
+`bc-split-fix` placed 11 orders, the patched build 16), bytecode:
+
+| run | splits | nodes made by splitting | top split roots (copies) | top split nodes |
+|---|---|---|---|---|
+| Woo, `bc-split-fix` | 5,805 | 270,289 (+51.2 %) | `add_filter` 1,979, `WP_Hook::add_filter` 1,968, `add_action` 1,351, `is_wp_error` 90 | `CallableDispatch` 214, `SubclassTest` 94, `ElementRead` 58 |
+| Woo, patched | 7,831 | 352,649 (+66.7 %) | `add_filter` 1,987, `WP_Hook::add_filter` 1,975, `add_action` 1,361, `absint` 183, `esc_attr` 157, `wp_parse_args` 109, `is_wp_error` 96 | `ToBool` 517, `CallableDispatch` 255, `SubclassTest` 98, `ElementRead` 57, `CastString` 30 |
+| Gate 2, `bc-split-fix` | 1,497 | 69,247 (+27.3 %) | `add_filter` 529, `WP_Hook::add_filter` 519, `add_action` 308, `is_wp_error` 56 | `CallableDispatch` 99, `ElementRead` 29, `SubclassTest` 24 |
+| Gate 2, patched | 2,121 | 96,781 (+38.1 %) | `add_filter` 530, `WP_Hook::add_filter` 519, `add_action` 309, `is_wp_error` 58, `esc_attr` 57, `get_context_param` 45, `absint` 38 | `ToBool` 324, `CallableDispatch` 114, `ElementRead` 29, `SubclassTest` 27 |
+
+- **The tree's helpers split on bytecode too** (`absint`, `esc_attr`, `wp_parse_args`), mostly through `ToBool`.
+- **Still not:** `get_prop`/`set_prop` (the tree splits them on `MethodCallNode$Dispatch`) and the comparisons
+  (`Comparisons`' classes don't report). Whether the extra splits pay is the open audit's question (`bc-split-audit`).
+
 `tests/bytecode/scan.php` translates every function body of a corpus without running it, with
 `-Dphp.bytecode.report=all` (each reason a body has, not only the first); `tests/bytecode/fallbacks.py` counts the
 reasons by construct. Functions on bytecode / on the tree; "the only one": functions that construct alone kept on
