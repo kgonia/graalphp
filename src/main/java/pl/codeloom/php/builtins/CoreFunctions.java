@@ -19,7 +19,6 @@ import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.CRC32;
@@ -32,7 +31,10 @@ final class CoreFunctions {
     static void register(Registry r) {
 
         // ---- types ----
-        r.fn("strlen", a -> (long) Str.length(Args.str(a, 0)));
+        r.fn("strlen", (context, a) -> {
+            Args.arity(a, "strlen", 1, 1);
+            return (long) Str.length(Args.string(context, a, 0, "strlen", "string", false));
+        });
         r.fn("count", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
         r.fn("sizeof", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
         r.fn("is_array", a -> Args.get(a, 0) instanceof PhpArray);
@@ -50,6 +52,7 @@ final class CoreFunctions {
             return v instanceof Long || v instanceof Double || v instanceof TruffleString || v instanceof Boolean;
         });
         r.fn("is_numeric", a -> {
+            Args.arity(a, "is_numeric", 1, 1);
             Object v = Args.get(a, 0);
             return v instanceof Long || v instanceof Double
                     || v instanceof TruffleString s && Convert.numericValue(s) != null;
@@ -80,7 +83,8 @@ final class CoreFunctions {
                 case "array" -> ref.set(v instanceof PhpArray ? v : v == PhpNull.NULL ? new PhpArray()
                         : PhpArray.list(v));
                 case "null" -> ref.set(PhpNull.NULL);
-                default -> throw new PhpError("settype(): Invalid type");
+                case "resource" -> throw new PhpError("ValueError", "Cannot convert to resource type");
+                default -> throw new PhpError("ValueError", "settype(): Argument #2 ($type) must be a valid type");
             }
             return true;
         });
@@ -172,6 +176,9 @@ final class CoreFunctions {
             }
             if (target instanceof PhpClosure) {
                 return Str.of("Closure");
+            }
+            if (target != null) {
+                throw Args.typeError("get_class", 1, "object", "object", target);
             }
             throw new PhpError("get_class(): Argument #1 ($object) must be of type object");
         });
@@ -366,8 +373,8 @@ final class CoreFunctions {
         });
 
         // ---- math ----
-        r.fn("abs", a -> {
-            Object v = Convert.toNumber(Args.get(a, 0));
+        r.fn("abs", (context, a) -> {
+            Object v = Args.number(context, a, 0, "abs", "num");
             if (v instanceof Long l) {
                 return l == Long.MIN_VALUE ? -(double) l : (Object) Math.abs(l);
             }
@@ -375,9 +382,20 @@ final class CoreFunctions {
         });
         r.fn("max", a -> minMax(a, true));
         r.fn("min", a -> minMax(a, false));
-        r.fn("floor", a -> Math.floor(Convert.toDouble(Args.get(a, 0))));
-        r.fn("ceil", a -> Math.ceil(Convert.toDouble(Args.get(a, 0))));
-        r.fn("round", a -> round(Convert.toNumber(Args.get(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("floor", (context, a) -> Math.floor(Convert.toDouble(Args.number(context, a, 0, "floor", "num"))));
+        r.fn("ceil", (context, a) -> Math.ceil(Convert.toDouble(Args.number(context, a, 0, "ceil", "num"))));
+        r.fn("round", (context, a) -> {
+            Object value = Args.number(context, a, 0, "round", "num");
+            long precision = Args.has(a, 1) ? Args.integer(context, a, 1, "round", "precision", "int") : 0;
+            long mode = Args.has(a, 2) ? Args.integer(context, a, 2, "round", "mode", "RoundingMode|int") : 1;
+            if (mode < 1 || mode > 8) {
+                throw new PhpError("ValueError", "round(): Argument #3 ($mode) must be a valid rounding mode "
+                        + "(RoundingMode::*)");
+            }
+            int places = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, precision));
+            return value instanceof Long l && places >= 0 ? (double) l
+                    : round(Convert.toDouble(value), places, (int) mode);
+        });
         r.fn("sqrt", a -> Math.sqrt(Convert.toDouble(Args.get(a, 0))));
         r.fn("log", a -> Args.has(a, 1) ? Math.log(Convert.toDouble(Args.get(a, 0)))
                 / Math.log(Convert.toDouble(Args.get(a, 1))) : Math.log(Convert.toDouble(Args.get(a, 0))));
@@ -385,11 +403,15 @@ final class CoreFunctions {
         r.fn("log2", a -> Math.log(Convert.toDouble(Args.get(a, 0))) / Math.log(2));
         r.fn("exp", a -> Math.exp(Convert.toDouble(Args.get(a, 0))));
         r.fn("pi", a -> Math.PI);
-        r.fn("bindec", a -> Long.parseUnsignedLong("0" + Str.java(Args.str(a, 0)).replaceAll("[^01]", ""), 2));
+        r.fn("bindec", (context, a) -> baseToNumber(context, Args.string(context, a, 0, "bindec", "binary_string",
+                false), 2));
         r.fn("mt_getrandmax", a -> 2147483647L);
         r.fn("getrandmax", a -> 2147483647L);
         r.fn("lcg_value", a -> Math.random());
-        r.fn("pow", a -> pl.codeloom.php.runtime.Operators.pow(null, Args.get(a, 0), Args.get(a, 1)));
+        r.fn("pow", a -> {
+            Args.arity(a, "pow", 2, 2);
+            return pl.codeloom.php.runtime.Operators.pow(null, Args.get(a, 0), Args.get(a, 1));
+        });
         r.fn("intdiv", a -> {
             long divisor = Args.lng(a, 1, 1);
             if (divisor == 0) {
@@ -402,11 +424,15 @@ final class CoreFunctions {
             return dividend / divisor;
         });
         r.fn("fmod", a -> Convert.toDouble(Args.get(a, 0)) % Convert.toDouble(Args.get(a, 1)));
-        r.fn("dechex", a -> Str.of(Long.toHexString(Args.lng(a, 0, 0))));
-        r.fn("hexdec", a -> hexdec(Args.str(a, 0)));
-        r.fn("decbin", a -> Str.of(Long.toBinaryString(Args.lng(a, 0, 0))));
-        r.fn("decoct", a -> Str.of(Long.toOctalString(Args.lng(a, 0, 0))));
-        r.fn("octdec", a -> Long.parseLong(Str.java(Args.str(a, 0)).replaceAll("[^0-7]", "0"), 8));
+        r.fn("dechex", (context, a) -> Str.of(Long.toHexString(Args.integer(context, a, 0, "dechex", "num", "int"))));
+        r.fn("hexdec", (context, a) -> baseToNumber(context, Args.string(context, a, 0, "hexdec", "hex_string", false),
+                16));
+        r.fn("decbin", (context, a) -> Str.of(Long.toBinaryString(Args.integer(context, a, 0, "decbin", "num",
+                "int"))));
+        r.fn("decoct", (context, a) -> Str.of(Long.toOctalString(Args.integer(context, a, 0, "decoct", "num",
+                "int"))));
+        r.fn("octdec", (context, a) -> baseToNumber(context, Args.string(context, a, 0, "octdec", "octal_string",
+                false), 8));
         r.fn("mt_rand", a -> Args.has(a, 1)
                 ? Args.lng(a, 0, 0) + (long) (Math.random() * (Args.lng(a, 1, 0) - Args.lng(a, 0, 0) + 1))
                 : (long) (Math.random() * Integer.MAX_VALUE));
@@ -721,31 +747,121 @@ final class CoreFunctions {
         return best;
     }
 
-    /** round(): PHP rounds half away from zero, using the value's shortest decimal representation. */
-    @TruffleBoundary
-    private static Object round(Object number, long precision) {
-        if (number instanceof Long l && precision >= 0) {
-            return (double) l;
-        }
-        double value = ((Number) number).doubleValue();
-        if (!Double.isFinite(value)) {
-            return value;
-        }
-        BigDecimal decimal = new BigDecimal(Double.toString(value)).setScale((int) precision, RoundingMode.HALF_UP);
-        return decimal.doubleValue();
+    /** php_intpow10. */
+    private static double intpow10(int power) {
+        return power < 0 || power > 22 ? Math.pow(10.0, power) : POWERS_OF_TEN[power];
     }
 
+    private static final double[] POWERS_OF_TEN = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+
+    /** _php_math_round: to places decimal places in one of the PHP_ROUND_* modes (1 to 8). */
     @TruffleBoundary
-    private static Object hexdec(TruffleString s) {
-        String digits = Str.java(s).replaceAll("[^0-9A-Fa-f]", "");
-        if (digits.isEmpty()) {
-            return 0L;
+    static double round(double value, int places, int mode) {
+        if (!Double.isFinite(value) || value == 0.0 || places == 0 && value == Math.rint(value)) {
+            return value;
         }
-        BigDecimal value = new BigDecimal(new java.math.BigInteger(digits, 16));
-        if (value.compareTo(BigDecimal.valueOf(Long.MAX_VALUE)) <= 0) {
-            return value.longValue();
+        places = Math.max(places, Integer.MIN_VALUE + 1);
+        double exponent = intpow10(Math.abs(places));
+        double tmp;
+        double tmp2;
+        if (value >= 0.0) {
+            tmp = Math.floor(places > 0 ? value * exponent : value / exponent);
+            tmp2 = tmp + 1.0;
+        } else {
+            tmp = Math.ceil(places > 0 ? value * exponent : value / exponent);
+            tmp2 = tmp - 1.0;
         }
-        return value.doubleValue();
+        if ((places > 0 ? tmp2 / exponent : tmp2 * exponent) == value) {
+            tmp = tmp2;
+        }
+        if (Math.abs(tmp) >= 1e16) {
+            return value;
+        }
+        tmp = roundHelper(tmp, value, exponent, places, mode);
+        if (Math.abs(places) < 23) {
+            return places > 0 ? tmp / exponent : tmp * exponent;
+        }
+        // snprintf("%15fe%d") and zend_strtod: the nearest double to the decimal
+        double parsed = new BigDecimal(String.format(Locale.ROOT, "%.6f", tmp)).scaleByPowerOfTen(-places)
+                .doubleValue();
+        return Double.isFinite(parsed) ? parsed : value;
+    }
+
+    /** php_round_helper: integral rounded in the mode, value its unscaled original. */
+    private static double roundHelper(double integral, double value, double exponent, int places, int mode) {
+        double abs = Math.abs(value);
+        double halfUp = integral + Math.copySign(0.5, integral);
+        double half = Math.abs(places > 0 ? halfUp / exponent : halfUp * exponent);
+        double zero = Math.abs(places > 0 ? integral / exponent : integral * exponent);
+        double away = integral + Math.copySign(1.0, integral);
+        return switch (mode) {
+            case 1 -> abs >= half ? away : integral;
+            case 2 -> abs > half ? away : integral;
+            case 3 -> abs > half || abs == half && integral % 2.0 != 0 ? away : integral;
+            case 4 -> abs > half || abs == half && integral % 2.0 == 0 ? away : integral;
+            case 5 -> value > 0.0 && abs > zero ? integral + 1.0 : integral;
+            case 6 -> value < 0.0 && abs > zero ? integral - 1.0 : integral;
+            case 7 -> integral;
+            default -> abs > zero ? away : integral;
+        };
+    }
+
+    /**
+     * _php_math_basetozval: the base's digits after whitespace and a 0x/0o/0b prefix, others ignored (deprecated),
+     * an int until it overflows into a float.
+     */
+    @TruffleBoundary
+    static Object baseToNumber(PhpContext context, TruffleString string, int base) {
+        byte[] s = Str.readBytes(string);
+        int i = 0;
+        int end = Str.length(string);
+        while (i < end && isCSpace(s[i])) {
+            i++;
+        }
+        while (i < end && isCSpace(s[end - 1])) {
+            end--;
+        }
+        if (end - i >= 2 && s[i] == '0') {
+            int prefix = s[i + 1] | 0x20;
+            if (base == 16 && prefix == 'x' || base == 8 && prefix == 'o' || base == 2 && prefix == 'b') {
+                i += 2;
+            }
+        }
+        long cutoff = Long.MAX_VALUE / base;
+        long cutlim = Long.MAX_VALUE % base;
+        long num = 0;
+        double fnum = 0;
+        boolean isFloat = false;
+        boolean invalid = false;
+        for (; i < end; i++) {
+            int c = s[i];
+            c = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : c >= 'a' && c <= 'z'
+                    ? c - 'a' + 10 : 36;
+            if (c >= base) {
+                invalid = true;
+                continue;
+            }
+            if (!isFloat) {
+                if (num < cutoff || num == cutoff && c <= cutlim) {
+                    num = num * base + c;
+                    continue;
+                }
+                fnum = num;
+                isFloat = true;
+            }
+            fnum = fnum * base + c;
+        }
+        if (invalid) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Invalid characters passed for "
+                    + "attempted conversion, these have been ignored"), SourceLocation.current());
+        }
+        return isFloat ? (Object) fnum : (Object) num;
+    }
+
+    /** C's isspace in the C locale. */
+    private static boolean isCSpace(byte b) {
+        return b == ' ' || b >= '\t' && b <= '\r';
     }
 
     @TruffleBoundary

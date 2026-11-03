@@ -1478,6 +1478,15 @@ final class FileFunctions {
         return new PhpResource(context.nextResourceId(), "stream", stream);
     }
 
+    /** sapi/cli's cli_register_file_handles: STDIN, STDOUT and STDERR, resources 1 to 3. */
+    static void defineStdStreams(PhpContext context) {
+        String[] names = {"STDIN", "STDOUT", "STDERR"};
+        for (int fd = 0; fd < 3; fd++) {
+            context.defineConstant(names[fd], new PhpResource(fd + 1, "stream", new StdStream(context, fd,
+                    fd == 0 ? "rb" : "wb", "php://" + names[fd].toLowerCase(java.util.Locale.ROOT))));
+        }
+    }
+
     static Stream openStream(PhpContext context, String name, String mode) {
         if (name.regionMatches(true, 0, "php://", 0, 6)) {
             String target = Str.lower(name.substring(6));

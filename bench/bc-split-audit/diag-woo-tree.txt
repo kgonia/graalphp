@@ -1,0 +1,74 @@
+diag woo-tree/engine.log
+splits 6196 of 507 roots; copies compiled 1338 (22%), inlined somewhere 130 (2%), neither 4837 (78%); polymorphic again 277 (4%)
+compilations 4580, 796 s; of copies 1338 targets, 74 s (9%); inlining traces 4584
+refused splits: {'Target too big': 2918}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| WC_Data::get_prop | DispatchNode 4 | 1/0 | 953 | 152 (0) | 0 | 801 | 2 (AssignNode) | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 745, wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-order.php 100 |
+| absint | ToLongNode 2 | 1/0 | 209 | 56 (2) | 2 | 153 | 20 (ToLongNode) | wp-content/plugins/woocommerce/includes/wc-page-functions.php 41, wp-includes/media.php 17 |
+| WC_Data::set_prop | IdenticalNode 2 | 1/0 | 197 | 70 (0) | 0 | 127 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 86, wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-order.php 43 |
+| esc_attr | ToStringNode 1 | 1/0 | 158 | 32 (0) | 1 | 126 | 2 (ToStringNode) | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-settings-api.php 15, wp-content/plugins/woocommerce/templates/global/quantity-input.php 13 |
+| wp_parse_args | - | 0/0 | 108 | 49 (0) | 6 | 59 | 0 | wp-content/plugins/woocommerce/includes/wc-product-functions.php 15, wp-includes/widgets/class-wp-widget-media.php 8 |
+| Automattic\WooCommerce\Blocks\Registry\SharedType::get | - | 0/0 | 94 | 7 (0) | 1 | 86 | 0 | wp-content/plugins/woocommerce/src/Blocks/Registry/Container.php 94 |
+| Automattic\WooCommerce\Blocks\Registry\Container::get | - | 0/0 | 93 | 7 (0) | 0 | 86 | 0 | wp-content/plugins/woocommerce/src/Blocks/Domain/Bootstrap.php 42, wp-content/plugins/woocommerce/src/StoreApi/Schemas/V1/AbstractAddressSchema.php 9 |
+| is_wp_error | SubclassTestNode 2 | 1/0 | 90 | 27 (0) | 10 | 59 | 0 | wp-includes/rest-api/class-wp-rest-server.php 10, wp-includes/taxonomy.php 9 |
+| WP_REST_Controller::add_additional_fields_schema | DispatchNode 4 | 1/0 | 71 | 1 (0) | 0 | 70 | 0 | wp-includes/rest-api/endpoints/class-wp-rest-posts-controller.php 4, wp-includes/rest-api/endpoints/class-wp-rest-revisions-controller.php 3 |
+| WC_Product::get_parent_id | DispatchNode 2 | 1/0 | 66 | 16 (0) | 0 | 50 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 38, wp-content/plugins/woocommerce/src/Blocks/Utils/ProductDescriptionUtils.php 9 |
+| WP_Object_Cache::_exists | KeyExistsNode 1 | 1/0 | 64 | 13 (2) | 3 | 51 | 5 (ElementReadNode, KeyExistsNode) | wp-includes/class-wp-object-cache.php 64 |
+| WC_Product::get_manage_stock | DispatchNode 1 | 1/0 | 64 | 9 (0) | 0 | 55 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 64 |
+| WC_Order::get_address_prop | DispatchNode 1 | 1/0 | 63 | 0 (0) | 0 | 63 | 0 | wp-content/plugins/woocommerce/includes/class-wc-order.php 63 |
+| WC_Product::get_status | DispatchNode 2 | 1/0 | 62 | 20 (0) | 0 | 42 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 60, wp-content/plugins/woocommerce/includes/wc-template-functions.php 1 |
+| WC_Product::managing_stock | DispatchNode 2 | 1/0 | 60 | 9 (0) | 0 | 51 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 50, wp-content/plugins/woocommerce/src/StoreApi/Utilities/QuantityLimits.php 4 |
+| WC_Product::is_type | DispatchNode 1 | 1/0 | 58 | 11 (0) | 0 | 47 | 0 | wp-content/plugins/woocommerce/src/StoreApi/Schemas/V1/ProductSchema.php 24, wp-content/plugins/woocommerce/src/Blocks/BlockTypes/ProductButton.php 11 |
+| WC_Settings_API::get_option | DispatchNode 7 | 1/0 | 57 | 1 (0) | 0 | 56 | 2 (DispatchNode) | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-shipping-method.php 16, wp-content/plugins/woocommerce/includes/emails/class-wc-email.php 13 |
+| WC_Product::get_price | DispatchNode 2 | 1/0 | 57 | 14 (0) | 0 | 43 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 30, wp-content/plugins/woocommerce/includes/wc-product-functions.php 20 |
+| WC_Product::get_stock_status | DispatchNode 1 | 1/0 | 56 | 12 (0) | 0 | 44 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-product.php 47, wp-content/plugins/woocommerce/src/StoreApi/Schemas/V1/ProductSchema.php 4 |
+| Automattic\WooCommerce\StoreApi\SchemaController::get | ConstructNode 4, InstantiateNode 1 | 2/0 | 55 | 16 (0) | 0 | 39 | 2 (InstantiateNode, ConstructNode) | wp-content/plugins/woocommerce/src/StoreApi/Schemas/V1/ProductSchema.php 13, wp-content/plugins/woocommerce/src/StoreApi/Routes/V1/AbstractCartRoute.php 12 |
+| esc_html | ToStringNode 1 | 1/0 | 54 | 12 (0) | 0 | 42 | 0 | wp-includes/l10n.php 3, wp-includes/block-patterns/navigation-overlay-centered-with-extras.php 3 |
+| WC_Settings_API::get_form_fields | CallableDispatchNode 8 | 1/0 | 52 | 0 (0) | 0 | 52 | 0 | wp-content/plugins/woocommerce/includes/abstracts/abstract-wc-settings-api.php 52 |
+| WP_HTML_Tag_Processor::next_token | DispatchNode 4 | 1/0 | 50 | 31 (2) | 3 | 19 | 0 | wp-includes/html-api/class-wp-html-tag-processor.php 46, wp-includes/kses.php 3 |
+| WP_Object_Cache::delete | - | 0/0 | 48 | 8 (0) | 0 | 40 | 0 | wp-includes/cache.php 47, wp-includes/class-wp-object-cache.php 1 |
+| wp_cache_delete | - | 0/0 | 46 | 7 (0) | 0 | 39 | 0 | wp-content/plugins/woocommerce/includes/data-stores/abstract-wc-order-item-type-data-store.php 18, wp-includes/post.php 9 |
+| block_has_support | IdenticalNode 1 | 1/0 | 45 | 41 (1) | 17 | 3 | 13 (IdenticalNode) | wp-includes/block-supports/border.php 7, wp-includes/block-supports/background.php 4 |
+| WP_HTML_Tag_Processor::next_tag | DispatchNode 3 | 1/0 | 42 | 27 (2) | 1 | 15 | 0 | wp-includes/blocks/navigation.php 6, wp-content/plugins/woocommerce/src/Blocks/BlockTypes/ProductCollection/Renderer.php 4 |
+| WP_HTML_Tag_Processor::matches | DispatchNode 3 | 1/0 | 42 | 22 (0) | 3 | 20 | 0 | wp-includes/html-api/class-wp-html-tag-processor.php 42 |
+| Automattic\WooCommerce\Blocks\Registry\AbstractDependencyType::resolve_value | CallableDispatchNode 5 | 1/0 | 41 | 0 (0) | 1 | 40 | 2 (CallableDispatchNode) | wp-content/plugins/woocommerce/src/Blocks/Registry/SharedType.php 41 |
+| wc_get_page_id | ToBooleanNode 1 | 1/0 | 41 | 6 (0) | 0 | 35 | 2 (ToBooleanNode) | wp-content/plugins/woocommerce/includes/wc-template-functions.php 8, wp-content/plugins/woocommerce/includes/wc-conditional-functions.php 6 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| DispatchNode | 217 | 3251 | 607 (19%) | 24 | 2637 | 44 |
+| for a callee | 107 | 890 | 186 (21%) | 26 | 702 | 3 |
+| IdenticalNode | 37 | 437 | 171 (39%) | 28 | 264 | 64 |
+| ToBooleanNode | 40 | 288 | 58 (20%) | 11 | 230 | 47 |
+| ToStringNode | 7 | 264 | 68 (26%) | 2 | 196 | 5 |
+| SubclassTestNode | 26 | 251 | 51 (20%) | 16 | 193 | 0 |
+| ToLongNode | 3 | 213 | 58 (27%) | 4 | 155 | 22 |
+| CallableDispatchNode | 16 | 176 | 13 (7%) | 3 | 162 | 10 |
+| ConstructNode | 3 | 91 | 16 (18%) | 0 | 75 | 4 |
+| AssignNode | 11 | 67 | 18 (27%) | 4 | 48 | 4 |
+| KeyExistsNode | 1 | 64 | 13 (20%) | 3 | 51 | 5 |
+| StableValueNode | 17 | 58 | 12 (21%) | 0 | 46 | 57 |
+| InArrayNode | 4 | 51 | 32 (63%) | 3 | 18 | 2 |
+| CaseNode | 1 | 38 | 13 (34%) | 0 | 25 | 0 |
+| BindNode | 6 | 25 | 15 (60%) | 5 | 10 | 1 |
+| InstantiateNode | 3 | 10 | 1 (10%) | 0 | 9 | 2 |
+| ElementReadNode | 3 | 9 | 5 (56%) | 1 | 4 | 2 |
+| ConcatNode | 1 | 5 | 0 (0%) | 0 | 5 | 1 |
+| ToDoubleNode | 1 | 4 | 0 (0%) | 0 | 4 | 0 |
+| LessNode | 3 | 4 | 1 (25%) | 0 | 3 | 4 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :     263397
+Split limit (limit for the number of nodes to create through splitting)           :     996480
+Splits (number of targets created through splitting)                              :       6205
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :     263768
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     665686
+Increase in nodes                                                                 :     39.62%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :      30263
+Percent of split nodes wasted                                                     :     11.47%
+Targets wasted due to splitting                                                   :        671
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS

@@ -32,12 +32,17 @@ final class Sprintf {
 
     /** Formats with the format at argument formatIndex and the following arguments (sprintf, printf). */
     @TruffleBoundary
-    static TruffleString format(Object[] a, int formatIndex) {
+    static TruffleString format(Object[] a, int formatIndex, String function) {
+        if (Args.count(a) <= formatIndex) {
+            Args.arity(a, function, formatIndex + 1, Integer.MAX_VALUE);
+        }
+        TruffleString format = Args.string(pl.codeloom.php.PhpContext.get(null), a, formatIndex, function, "format",
+                false);
         Object[] values = new Object[Math.max(0, Args.count(a) - formatIndex - 1)];
         for (int i = 0; i < values.length; i++) {
             values[i] = Args.get(a, formatIndex + 1 + i);
         }
-        return format(Args.str(a, formatIndex), values, formatIndex + 1);
+        return format(format, values, formatIndex + 1);
     }
 
     /** vsprintf: the arguments from an array. */

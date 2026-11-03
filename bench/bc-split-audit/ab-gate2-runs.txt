@@ -1,0 +1,14 @@
+jvm-java.on-1: ready 1.15 s, cold visit 17.46 s (97.3 CPU-s), warm median 0.955 s, 0 failed visits; host CPU median 73%, max 100%
+jvm-java.off-1: ready 1.04 s, cold visit 12.97 s (74.8 CPU-s), warm median 0.910 s, 0 failed visits; host CPU median 70%, max 100%
+jvm-java.tree-1: ready 1.38 s, cold visit 8.32 s (44.2 CPU-s), warm median 0.847 s, 0 failed visits; host CPU median 71%, max 91%
+jvm-java.fix-1: ready 1.08 s, cold visit 14.63 s (83.7 CPU-s), warm median 0.914 s, 0 failed visits; host CPU median 77%, max 96%
+jvm-java.fix-1: ready 1.06 s, cold visit 12.08 s (69.3 CPU-s), warm median 0.823 s, 0 failed visits; host CPU median 69%, max 100%
+jvm-java.tree-1: ready 1.05 s, cold visit 7.36 s (40.8 CPU-s), warm median 0.830 s, 0 failed visits; host CPU median 66%, max 100%
+jvm-java.fix-1: ready 1.10 s, cold visit 12.55 s (71.6 CPU-s), warm median 0.751 s, 0 failed visits; host CPU median 62%, max 100%
+jvm-java.tree-1: ready 0.95 s, cold visit 5.75 s (31.1 CPU-s), warm median 0.683 s, 0 failed visits; host CPU median 48%, max 100%
+jvm-java.off-1: ready 0.95 s, cold visit 11.10 s (63.8 CPU-s), warm median 0.723 s, 0 failed visits; host CPU median 56%, max 94%
+jvm-java.on-1: ready 1.00 s, cold visit 11.73 s (67.5 CPU-s), warm median 0.753 s, 0 failed visits; host CPU median 56%, max 82%
+jvm-java.on-1: ready 0.94 s, cold visit 11.88 s (68.4 CPU-s), warm median 0.761 s, 0 failed visits; host CPU median 59%, max 91%
+jvm-java.off-1: ready 0.94 s, cold visit 18.34 s (105.9 CPU-s), warm median 0.803 s, 0 failed visits; host CPU median 63%, max 100%
+jvm-java.tree-1: ready 1.07 s, cold visit 5.90 s (31.6 CPU-s), warm median 0.667 s, 0 failed visits; host CPU median 48%, max 79%
+jvm-java.fix-1: ready 0.97 s, cold visit 12.02 s (68.4 CPU-s), warm median 0.794 s, 0 failed visits; host CPU median 63%, max 100%

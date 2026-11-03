@@ -238,32 +238,32 @@ public final class Operators {
             throw binopError("**", a, b);
         }
         if (x instanceof Long base && y instanceof Long exponent && exponent >= 0) {
-            long result = 1;
-            long factor = base;
-            long e = exponent;
-            boolean overflow = false;
-            while (e > 0 && !overflow) {
-                if ((e & 1) != 0) {
-                    Object product = mulLongs(result, factor);
-                    if (product instanceof Long l) {
-                        result = l;
-                    } else {
-                        overflow = true;
+            // pow_function_base: by squaring; on an overflow the rest in doubles, from what it had
+            long l1 = 1;
+            long l2 = base;
+            long i = exponent;
+            if (i == 0) {
+                return 1L;
+            }
+            if (l2 == 0) {
+                return 0L;
+            }
+            while (i >= 1) {
+                if (i % 2 != 0) {
+                    --i;
+                    if (!(mulLongs(l1, l2) instanceof Long l)) {
+                        return (double) l1 * (double) l2 * Math.pow(l2, i);
                     }
-                }
-                e >>= 1;
-                if (e > 0) {
-                    Object square = mulLongs(factor, factor);
-                    if (square instanceof Long l) {
-                        factor = l;
-                    } else {
-                        overflow = true;
+                    l1 = l;
+                } else {
+                    i /= 2;
+                    if (!(mulLongs(l2, l2) instanceof Long l)) {
+                        return (double) l1 * Math.pow((double) l2 * (double) l2, i);
                     }
+                    l2 = l;
                 }
             }
-            if (!overflow) {
-                return result;
-            }
+            return l1;
         }
         return Math.pow(((Number) x).doubleValue(), ((Number) y).doubleValue());
     }

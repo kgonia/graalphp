@@ -9,8 +9,8 @@ import pl.codeloom.php.nodes.vars.ElementNodes;
 
 /**
  * The tree's nodes as the bytecode interpreter proxies them: each a subclass with the node's specializations
- * (inherited, one copy). Those that report polymorphism (ExprNode, ToBooleanNode, ElementReadNode) report it from the
- * bytecode too, as on the tree: the released processors 25.1 to 25.4 generate code for that which doesn't compile
+ * (inherited, one copy). Those that report polymorphism (ExprNode, ToBooleanNode) report it from the bytecode
+ * too, as on the tree: the released processors 25.1 to 25.4 generate code for that which doesn't compile
  * (https://github.com/oracle/graal/issues/14871), the patched one (truffle-dsl-processor/, PR #14872) compiles it.
  * The comparisons have their own classes ({@link pl.codeloom.php.nodes.expr.Comparisons}).
  */

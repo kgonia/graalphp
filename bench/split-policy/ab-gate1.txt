@@ -1,0 +1,16 @@
+# Gate 1 (runs.sh gate1 3 200 A B C; ratios below 1 are faster)
+A        hooks 36.16  escape 4.44  slugs 3.48  wpautop 13.14  wptexturize 9.04  blocks 14.16  kses 77.11  peak memory 1610 MB
+B        hooks 34.44  escape 4.56  slugs 3.57  wpautop 13.11  wptexturize 8.67  blocks 14.42  kses 83.86  peak memory 1669 MB
+C        hooks 37.45  escape 4.49  slugs 3.26  wpautop 12.70  wptexturize 8.69  blocks 15.26  kses 83.29  peak memory 1664 MB
+A->B: hooks 0.86 (IQR 0.74-0.91)  escape 1.00 (IQR 0.94-1.18)  slugs 1.00 (IQR 0.85-1.16)  wpautop 1.04 (IQR 0.95-1.08)  wptexturize 0.91 (IQR 0.77-1.06)  blocks 1.04 (IQR 0.97-1.10)  kses 1.03 (IQR 0.84-1.06)  memory 1.03 (IQR 0.99-1.06)
+A->C: hooks 0.95 (IQR 0.84-0.97)  escape 0.98 (IQR 0.89-1.16)  slugs 0.97 (IQR 0.95-1.01)  wpautop 1.04 (IQR 0.85-1.22)  wptexturize 0.91 (IQR 0.71-1.19)  blocks 1.08 (IQR 1.03-1.20)  kses 1.05 (IQR 0.85-1.11)  memory 1.04 (IQR 0.94-1.14)
+
+# Gate 1 without hooks (KERNELS=escape,slugs,wpautop,wptexturize,blocks,kses runs.sh gate1 2 200 A B)
+A        escape 3.98  slugs 2.68  wpautop 14.79  wptexturize 9.40  blocks 14.95  kses 101.26  peak memory 1523 MB
+B        escape 3.30  slugs 2.43  wpautop 14.63  wptexturize 9.44  blocks 15.34  kses 91.81  peak memory 1522 MB
+A->B: escape 0.82 (IQR 0.74-0.90)  slugs 0.87 (IQR 0.81-0.93)  wpautop 0.97 (IQR 0.95-0.99)  wptexturize 0.92 (IQR 0.86-0.98)  blocks 1.00 (IQR 0.99-1.02)  kses 0.89 (IQR 0.81-0.97)  memory 1.00 (IQR 0.97-1.02)
+
+# wpautop alone (KERNELS=wpautop runs.sh gate1 2 200 A B)
+A        wpautop 7.85  peak memory 656 MB
+B        wpautop 7.12  peak memory 652 MB
+A->B: wpautop 0.92 (IQR 0.84-1.00)  memory 0.99 (IQR 0.98-0.99)

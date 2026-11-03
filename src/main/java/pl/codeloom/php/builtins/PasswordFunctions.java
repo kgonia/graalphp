@@ -65,7 +65,7 @@ final class PasswordFunctions {
     }
 
     private static PhpArray options(Object[] a, String function) {
-        return Args.has(a, 2) ? Args.array(a, 2, function) : null;
+        return Args.has(a, 2) ? Args.array(a, 2, function, "options") : null;
     }
 
     @TruffleBoundary

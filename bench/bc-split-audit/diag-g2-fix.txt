@@ -1,0 +1,49 @@
+diag g2-fix/engine.log
+splits 131 of 21 roots; copies compiled 9 (7%), inlined somewhere 2 (2%), neither 122 (93%); polymorphic again 11 (8%)
+compilations 1252, 773 s; of copies 9 targets, 4 s (0%); inlining traces 1267
+refused splits: {'Target too big': 112}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| is_wp_error | SubclassTestNode 3 | 1/0 | 55 | 3 (0) | 2 | 52 | 0 | <Unknown> 55 |
+| WP_Widget_Factory::register | InstantiateNode 1 | 0/1 | 19 | 0 (0) | 0 | 19 | 1 (InstantiateNode) | <Unknown> 19 |
+| register_widget | - | 0/0 | 18 | 0 (0) | 0 | 18 | 0 | <Unknown> 18 |
+| map_deep | CallableDispatchNode 1 | 1/0 | 7 | 1 (0) | 0 | 6 | 0 | <Unknown> 7 |
+| WP_Post_Type::get_rest_controller | InstantiateNode 1 | 1/0 | 6 | 0 (0) | 0 | 6 | 1 (InstantiateNode) | <Unknown> 6 |
+| WP_Widget_Media::__construct | SubclassTestNode 2 | 1/0 | 4 | 0 (0) | 0 | 4 | 0 | <Unknown> 4 |
+| WP_Post_Type::get_revisions_rest_controller | InstantiateNode 1 | 1/0 | 3 | 0 (0) | 0 | 3 | 1 (InstantiateNode) | <Unknown> 3 |
+| WP_REST_Revisions_Controller::get_collection_params | SubclassTestNode 1 | 1/0 | 3 | 0 (0) | 0 | 3 | 0 | <Unknown> 3 |
+| WP_Widget_Media::_register_one | SubclassTestNode 2 | 0/1 | 2 | 0 (0) | 0 | 2 | 1 (SubclassTestNode) | <Unknown> 2 |
+| WP_Sitemaps_Registry::add_provider | SubclassTestNode 3 | 3/0 | 2 | 0 (0) | 0 | 2 | 2 (SubclassTestNode) | <Unknown> 2 |
+| WP_Block_Bindings_Source::get_value | CallableDispatchNode 1 | 1/0 | 2 | 0 (0) | 0 | 2 | 0 | <Unknown> 2 |
+| WP_Widget::_register | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Font_Utils::apply_sanitizer | CallableDispatchNode 2 | 1/0 | 1 | 1 (0) | 0 | 0 | 1 (CallableDispatchNode) | <Unknown> 1 |
+| traverse_and_serialize_blocks | CallableDispatchNode 1, ToStrNode 1 | 2/0 | 1 | 1 (0) | 0 | 0 | 1 (CallableDispatchNode, ToStrNode) | <Unknown> 1 |
+| WP_Post::get_instance | SubclassTestNode 1 | 1/0 | 1 | 1 (0) | 0 | 0 | 1 (SubclassTestNode) | <Unknown> 1 |
+| wp_interactivity_process_directives | - | 0/0 | 1 | 0 (0) | 0 | 1 | 0 | <Unknown> 1 |
+| WP_Interactivity_API::process_directives | - | 0/0 | 1 | 0 (0) | 0 | 1 | 0 | <Unknown> 1 |
+| WP_Sitemaps::register_sitemaps | - | 0/0 | 1 | 0 (0) | 0 | 1 | 0 | <Unknown> 1 |
+| WP_Block_Supports::register_attributes | CallableDispatchNode 8 | 2/0 | 1 | 1 (1) | 0 | 0 | 1 (CallableDispatchNode) | <Unknown> 1 |
+| rest_send_allow_header | CallableDispatchNode 4 | 1/0 | 1 | 0 (0) | 0 | 1 | 1 (CallableDispatchNode) | <Unknown> 1 |
+| WP_REST_Server::get_response_links | - | 0/0 | 1 | 0 (0) | 0 | 1 | 0 | <Unknown> 1 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| SubclassTestNode | 6 | 67 | 4 (6%) | 2 | 63 | 4 |
+| InstantiateNode | 3 | 28 | 0 (0%) | 0 | 28 | 3 |
+| for a callee | 6 | 23 | 1 (4%) | 0 | 22 | 0 |
+| CallableDispatchNode | 6 | 13 | 4 (31%) | 0 | 9 | 4 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :       3670
+Split limit (limit for the number of nodes to create through splitting)           :     379744
+Splits (number of targets created through splitting)                              :        131
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :       3670
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     253719
+Increase in nodes                                                                 :      1.45%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :          0
+Percent of split nodes wasted                                                     :      0.00%
+Targets wasted due to splitting                                                   :          0
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS

@@ -1,0 +1,49 @@
+2026-11-03 12:07:49 gate1 hold 1: outside 14-21 59%, on 14-21 55%; top: node#3 264%, node#1 241%, vmmemWSL 212%, MsMpEng 114%, SearchIndexer 97%, WmiPrvSE#2 42%
+2026-11-03 12:23:54 gate1 hold 2: outside 14-21 80%, on 14-21 83%; top: vmmemWSL 420%, python#27 417%, idea64 291%, node#3 190%, node#1 182%, LenovoVantage-(DeviceSettingsSystemAddin) 95%
+2026-11-03 12:32:16 gate1 hold 3: outside 14-21 98%, on 14-21 98%; top: python#27 842%, vmmemWSL 797%, node#1 73%, WmiPrvSE#2 61%, node#3 52%, find 33%
+2026-11-03 12:45:05 gate1 hold 1: outside 14-21 93%, on 14-21 91%; top: python#27 405%, java#3 248%, vmmemWSL 228%, node#3 228%, java#4 182%, node#1 156%
+2026-11-03 12:50:15 gate1 hold 1: outside 14-21 88%, on 14-21 69%; top: vmmemWSL 697%, node#1 236%, node#3 211%, java#3 190%, python#27 95%, WmiPrvSE#2 57%
+2026-11-03 12:51:30 woo A-r1: outside 14-21 81%, on 14-21 72%; top: vmmemWSL 743%, node#3 244%, node#1 218%, MsMpEng 161%, LenovoVantage-(DeviceSettingsSystemAddin) 116%, WmiPrvSE#2 59%
+2026-11-03 12:59:30 woo B-r1: outside 14-21 80%, on 14-21 72%; top: vmmemWSL 738%, node#1 216%, node#3 191%, LenovoVantage-(LenovoSecurityAddin) 100%, LenovoVantage-(SettingsWidgetAddin) 86%, MsMpEng 67%
+2026-11-03 14:10:10 woo C-r1: outside 14-21 36%, on 14-21 29%; top: node#1 246%, node#3 221%, dwm 128%, WmiPrvSE#2 40%, System 18%, LenovoVantage-(LenovoSystemUpdateAddin) 14%
+2026-11-03 14:17:40 woo C-r2: outside 14-21 20%, on 14-21 65%; top: node#3 229%, node#1 225%, WmiPrvSE#2 34%, chrome#39 22%, dwm 11%, chrome#2 11%
+2026-11-03 14:25:26 woo B-r2: outside 14-21 24%, on 14-21 51%; top: node#1 219%, node#3 193%, python#27 100%, WmiPrvSE#2 40%, System 18%, dwm 7%
+2026-11-03 14:33:13 woo A-r2: outside 14-21 35%, on 14-21 49%; top: node#3 245%, node#1 201%, MsMpEng 201%, LenovoVantage-(LenovoSystemUpdateAddin) 77%, SearchIndexer 67%, WmiPrvSE#2 47%
+2026-11-03 14:40:54 woo A-r3: outside 14-21 37%, on 14-21 28%; top: node#1 238%, node#3 227%, vmmemWSL 144%, MsMpEng 93%, WmiPrvSE#2 46%, dllhost 20%
+2026-11-03 14:48:43 woo B-r3: outside 14-21 30%, on 14-21 56%; top: node#1 245%, node#3 216%, WmiPrvSE#2 43%, MsMpEng 39%, dllhost 36%, chrome#39 32%
+2026-11-03 14:56:25 woo C-r3: outside 14-21 39%, on 14-21 41%; top: ffmpeg 1815%, node#3 97%, jetbrains_client64 92%, node#1 82%, WmiPrvSE#2 58%, MsMpEng 24%
+2026-11-03 15:04:06 g2 A-r1: outside 14-21 26%, on 14-21 47%; top: node#3 232%, node#1 207%, chrome#40 81%, Memory Compression 69%, WmiPrvSE#2 47%, MsMpEng 47%
+2026-11-03 15:11:22 g2 B-r1: outside 14-21 11%, on 14-21 59%; top: node#3 245%, node#1 208%, chrome#39 48%, jetbrains_client64 44%, WmiPrvSE#2 37%, dwm 11%
+2026-11-03 15:18:21 g2 C-r1: outside 14-21 23%, on 14-21 32%; top: node#3 264%, node#1 260%, WmiPrvSE#2 39%, System 27%, dwm 23%, svchost#84 11%
+2026-11-03 15:25:21 g2 C-r2: outside 14-21 23%, on 14-21 33%; top: node#3 234%, node#1 219%, WmiPrvSE#2 38%, aw-server 11%, dwm 7%, herdr 7%
+2026-11-03 15:32:40 g2 B-r2: outside 14-21 46%, on 14-21 45%; top: node#1 247%, node#3 236%, WmiPrvSE#2 42%, MsMpEng 38%, vmmemWSL 21%, chrome#43 14%
+2026-11-03 15:40:15 g2 A-r2: outside 14-21 33%, on 14-21 41%; top: node#1 237%, node#3 234%, WmiPrvSE#2 39%, System 21%, MsMpEng 17%, dwm 17%
+2026-11-03 15:47:43 g2 A-r3: outside 14-21 76%, on 14-21 95%; top: MsMpEng 298%, node#1 261%, node#3 244%, java#2 190%, SearchIndexer 96%, explorer 90%
+2026-11-03 15:55:59 g2 B-r3: outside 14-21 56%, on 14-21 79%; top: node#3 251%, node#1 225%, vmmemWSL 120%, Docker Desktop#4 111%, find 98%, MsMpEng 79%
+2026-11-03 16:04:33 g2 C-r3: outside 14-21 80%, on 14-21 85%; top: vmmemWSL 278%, node#3 268%, java#1 233%, node#1 233%, find 93%, Docker Desktop#4 91%
+2026-11-03 16:14:28 gate1 hold 1: outside 14-21 76%, on 14-21 73%; top: MsMpEng 225%, node#3 217%, node#1 201%, java#1 196%, Docker Desktop#4 129%, find 96%
+2026-11-03 16:22:05 gate1 hold 2: outside 14-21 93%, on 14-21 90%; top: vmmemWSL 407%, java#1 254%, node#3 217%, node#1 198%, chrome#43 171%, dwm 134%
+2026-11-03 16:30:29 gate1 hold 3: outside 14-21 100%, on 14-21 100%; top: vmmemWSL 514%, java#3 195%, java#1 177%, node#1 175%, node#3 167%, java#2 134%
+2026-11-03 16:39:13 gate1 hold 1: outside 14-21 94%, on 14-21 96%; top: MsMpEng 208%, node#3 187%, node#1 182%, dwm 127%, java#1 106%, find 93%
+2026-11-03 16:44:11 gate1 hold 2: outside 14-21 100%, on 14-21 100%; top: java#1 388%, MsMpEng 214%, node#1 162%, node#3 154%, dwm 130%, java#3 88%
+2026-11-03 17:34:14 g2 T-r1: outside 14-21 87%, on 14-21 82%; top: node#3 242%, node#1 224%, vmmemWSL 200%, MsMpEng 185%, dwm 125%, find 96%
+2026-11-03 17:43:23 g2 T-r2: outside 14-21 73%, on 14-21 63%; top: vmmemWSL 318%, node#1 214%, node#3 208%, dwm 141%, SearchIndexer 135%, dllhost 104%
+2026-11-03 17:51:50 woo C-r4: outside 14-21 64%, on 14-21 60%; top: node#3 240%, node#1 217%, vmmemWSL 197%, dwm 127%, find 101%, Docker Desktop#4 96%
+2026-11-03 17:59:31 woo B-r4: outside 14-21 59%, on 14-21 67%; top: node#1 265%, node#3 253%, MsMpEng 250%, Docker Desktop#4 166%, vmmemWSL 148%, find 98%
+2026-11-03 18:10:23 woo A-r4: outside 14-21 63%, on 14-21 67%; top: MsMpEng 281%, node#1 225%, node#3 209%, vmmemWSL 121%, Docker Desktop#4 90%, dllhost 66%
+2026-11-03 18:19:05 woo A-r5: outside 14-21 65%, on 14-21 65%; top: node#3 223%, node#1 205%, MsMpEng 192%, vmmemWSL 181%, Docker Desktop#4 150%, dwm 139%
+2026-11-03 18:26:48 woo B-r5: outside 14-21 64%, on 14-21 82%; top: java#1 284%, node#1 223%, node#3 198%, MsMpEng 187%, dwm 115%, Docker Desktop#4 110%
+2026-11-03 18:34:37 woo C-r5: outside 14-21 74%, on 14-21 82%; top: java#1 247%, node#1 222%, node#3 214%, MsMpEng 157%, dwm 133%, vmmemWSL 122%
+2026-11-03 18:53:56 g2 T-r3: outside 14-21 45%, on 14-21 49%; top: node#1 223%, node#3 211%, MsMpEng 189%, Docker Desktop#4 158%, vmmemWSL 150%, dwm 131%
+2026-11-03 19:01:58 gate1 hold 1: outside 14-21 52%, on 14-21 48%; top: node#3 225%, node#1 213%, MsMpEng 149%, dwm 127%, SearchIndexer 95%, Docker Desktop#4 66%
+2026-11-03 19:02:55 gate1 hold 2: outside 14-21 78%, on 14-21 81%; top: vmmemWSL 596%, MsMpEng 260%, node#3 217%, node#1 215%, dwm 134%, SearchIndexer 86%
+2026-11-03 19:03:57 g2 C-r4: outside 14-21 51%, on 14-21 38%; top: node#3 228%, node#1 203%, MsMpEng 138%, dwm 119%, vmmemWSL 103%, SearchIndexer 86%
+2026-11-03 19:12:27 g2 B-r4: outside 14-21 51%, on 14-21 28%; top: node#3 251%, node#1 222%, vmmemWSL 160%, dwm 140%, MsMpEng 55%, svchost#84 52%
+2026-11-03 19:20:18 g2 A-r4: outside 14-21 40%, on 14-21 42%; top: node#3 242%, node#1 213%, dwm 146%, vmmemWSL 92%, LenovoVantage-(SmartPerformanceUserAddin) 47%, WmiPrvSE#1 44%
+2026-11-03 19:27:49 g2 A-r5: outside 14-21 51%, on 14-21 35%; top: node#1 280%, node#3 207%, dwm 124%, vmmemWSL 108%, LenovoVantage-(LenovoSystemUpdateAddin) 82%, Memory Compression 50%
+2026-11-03 19:35:26 g2 B-r5: outside 14-21 73%, on 14-21 40%; top: vmmemWSL 437%, node#1 229%, node#3 226%, dwm 128%, SearchIndexer 74%, WmiPrvSE#1 56%
+2026-11-03 19:52:19 g2 C-r5: outside 14-21 36%, on 14-21 34%; top: node#1 219%, node#3 216%, WmiPrvSE#1 53%, SearchProtocolHost 53%, SearchIndexer 33%, claude#4 13%
+2026-11-03 19:59:46 g2 mB-r1: outside 14-21 27%, on 14-21 43%; top: node#3 289%, node#1 213%, MsMpEng 78%, WmiPrvSE#1 41%, claude#4 37%, SpotifyLauncher 11%
+2026-11-03 20:08:42 g2 mA-r1: outside 14-21 67%, on 14-21 60%; top: node#3 237%, node#1 234%, java#1 168%, Docker Desktop#4 141%, LenovoVantage-(DeviceSettingsSystemAddin) 68%, System 59%
+2026-11-03 20:18:03 woo mA-r1: outside 14-21 84%, on 14-21 78%; top: node#1 248%, node#3 233%, java#3 169%, Docker Desktop#4 148%, java#4 135%, java#2 79%
+2026-11-03 20:26:07 woo mB-r1: outside 14-21 47%, on 14-21 80%; top: MsMpEng 329%, node#1 253%, node#3 208%, vmmemWSL 108%, SearchIndexer 84%, Docker Desktop#4 78%

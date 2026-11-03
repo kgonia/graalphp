@@ -132,6 +132,11 @@ public final class Builtins {
                 enumMethods(registry), curlMethods);
     }
 
+    /** The CLI SAPI's STDIN, STDOUT and STDERR. */
+    public static void defineStdStreams(PhpContext context) {
+        FileFunctions.defineStdStreams(context);
+    }
+
     public static void install(PhpContext context, Table table) {
         for (Map.Entry<String, Object> constant : table.constants.entrySet()) {
             context.defineConstant(constant.getKey(), constant.getValue());
@@ -223,7 +228,7 @@ public final class Builtins {
                 {"PREG_BAD_UTF8_ERROR", 4L}, {"PREG_BAD_UTF8_OFFSET_ERROR", 5L}, {"PREG_JIT_STACKLIMIT_ERROR", 6L},
                 {"JSON_ERROR_CTRL_CHAR", 3L}, {"JSON_ERROR_STATE_MISMATCH", 2L}, {"JSON_ERROR_RECURSION", 6L},
                 {"JSON_ERROR_INF_OR_NAN", 7L}, {"JSON_ERROR_UNSUPPORTED_TYPE", 8L},
-                {"JSON_ERROR_NON_BACKED_ENUM", 11L},
+                {"JSON_ERROR_INVALID_PROPERTY_NAME", 9L}, {"JSON_ERROR_UTF16", 10L}, {"JSON_ERROR_NON_BACKED_ENUM", 11L},
                 {"MB_CASE_FOLD", 3L}, {"MB_CASE_UPPER_SIMPLE", 4L}, {"MB_CASE_LOWER_SIMPLE", 5L},
                 {"MB_CASE_TITLE_SIMPLE", 6L}, {"MB_CASE_FOLD_SIMPLE", 7L},
                 {"LC_NUMERIC", 1L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L}, {"LC_TIME", 2L}, {"LC_MESSAGES", 5L},

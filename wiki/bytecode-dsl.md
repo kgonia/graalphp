@@ -774,6 +774,202 @@ Before (`966765a`):
   queue, not the profile, is what this window measured: a bytecode function costs the compiler about half again as
   much per graph.
 
+### Which splits pay (2026-11-03, branch `bc-split-audit`)
+*Measured on `bc-split-fix` (#27, `6b0988a`) with the released processor, where the proxied operations didn't report
+polymorphism; since #28 they do. What changed then: the next two sections.*
+
+The owner's question after #27: are the splits justified? A split pays when the copy's profile is narrower than the
+original's at the node that reported, and the copy is then compiled, or inlined into a hot caller. It doesn't when
+the copy runs a few times a request, ends as polymorphic as the original, is never compiled, or was made for a node
+whose polymorphism doesn't depend on the caller.
+
+**Method.** One diagnosis server per run (`bench/bc-split-audit/runs.sh diag`: CPUs 6-13, 300 s from cold, the
+WooCommerce load at 16 users half buying, or Gate 2's front-end pages under 16 curl loops; 4 server threads, as every
+`woo.sh diag` so far) with `TraceCompilation`, `TraceSplitting`, `SplittingTraceEvents` and `TraceInlining`, the
+build of `6b0988a` (#27). `split_audit.py` reads per split root: the node classes whose polymorphic events the
+original reported, the copies made, those compiled (an `opt done`: past the compile threshold, 400 calls and loops at
+least), those inlined somewhere (`Inlined NAME <split-ID>`), those neither, and those that reported polymorphism
+again themselves. No diagnostic code was needed. The reports: `bench/bc-split-audit/diag-*.txt`.
+
+| run | splits | copies compiled | inlined anywhere | neither | polymorphic again | nodes made by splitting |
+|---|---|---|---|---|---|---|
+| WooCommerce, bytecode (#27) | 5,824 of 76 roots | 174 (3 %) | 7 | 5,647 (97 %) | 87 | +51 % |
+| WooCommerce, tree | 6,196 of 507 roots | 1,338 (22 %) | 130 | 4,837 (78 %) | 277 | +40 % |
+| Gate 2, bytecode (#27) | 1,497 of 29 roots | 135 (9 %) | 5 | 1,361 (91 %) | 31 | +27 % |
+| Gate 2, tree | 1,115 of 127 roots | 704 (63 %) | 97 | 404 (36 %) | 134 | +16 % |
+| WooCommerce, bytecode, `8225a73` | 398 of 53 roots | 17 (4 %) | 0 | 381 | 43 | +2.6 % |
+| Gate 2, bytecode, `8225a73` | 131 of 21 roots | 9 (7 %) | 2 | 122 | 11 | +1.5 % |
+
+Few copies reached tier 2 in 300 s (bytecode 1 on WooCommerce and 0 on Gate 2, the tree 34 and 15: WooCommerce's
+compile queue never empties, woocommerce-load.md), and tier 1 inlines almost no PHP function (5 of 2,459 first-tier
+compilations on bytecode, 19 of 4,090 on the tree; the callees are `Cutoff` unexplored), so "inlined" means tier 2.
+
+The top roots, bytecode (#27):
+
+| root | reporting node | copies Woo / Gate 2 | compiled | inlined | polymorphic again | verdict |
+|---|---|---|---|---|---|---|
+| `WP_Hook::add_filter` | `ElementReadNode` (`isset($this->callbacks[$priority])`) | 1,971 / 519 | 36 / 50, tier 1 | 1 / 1 | 31 / 19 | useless in the servers; pays in Gate 1's `hooks` (below) |
+| `add_filter` | for its callee (one caller: propagated) | 1,988 / 531 | 35 / 49 | 1 / 2 | 0 | as `WP_Hook::add_filter` |
+| `add_action` | for its callee | 1,350 / 305 | 12 / 6 | 1 / 0 | 0 | useless |
+| `is_wp_error` | `SubclassTestNode` (`instanceof WP_Error`) | 91 / 56 | 21 / 10 | 2 / 2 | 0 | justified (small) |
+| `SchemaController::get` | `InstantiateNode` (`new $class`) | 47 / - | 11 | 0 | 2 | unclear |
+| `WP_Widget_Factory::register`, `register_widget` | `InstantiateNode`, for its callee | 34+33 / 19+18 | 0 | 0 | 1 | useless (bootstrap) |
+| `WC_Shipping_Method::get_option`, `WC_Widget::__construct`, `WC_Order::save` | `SubclassTestNode` | 18, 13, 11 | 0 | 0 | 0-1 | useless (cold) |
+| `map_deep`, `LegacyProxy::call_function` | `CallableDispatchNode` | 7, 7 / 7 | 3, 1 / 6 | 0 | 0 | justified (small) |
+
+The tree, for comparison:
+
+| root | reporting node | copies Woo / Gate 2 | compiled | inlined | polymorphic again | verdict |
+|---|---|---|---|---|---|---|
+| `WC_Data::get_prop` | `MethodCallNode$Dispatch` (by class) | 953 / - | 152 | 0 | 2 | unclear; round 4's dispatch per method removes the cause |
+| `absint` | `ToLongNode` | 209 / 44 | 56 / 22 | 2 / 0 | 20 / 7 | unclear |
+| `WC_Data::set_prop` | `IdenticalNode` | 197 / - | 70 | 0 | 0 | unclear |
+| `esc_attr` | `ToStringNode` | 158 / 61 | 32 / 36 | 1 / 1 | 2 / 1 | justified (Gate 2) |
+| `is_wp_error` | `SubclassTestNode` | 90 / 56 | 27 / 19 | 10 / 8 | 0 | justified |
+| `block_has_support` | `IdenticalNode` | - / 44 | 42 (5 at tier 2) | 29 | 15 | justified |
+| `WP_HTML_Tag_Processor::next_token`, `next_tag`, `matches` | `MethodCallNode$Dispatch` | 50 / 36, 29, 29 | 31 / 33, 28, 25 | 3 / 5, 3, 5 | 0 | justified |
+| `wp_should_skip_block_supports_serialization` | `InArrayNode` | - / 31 | 31 | 5 | 0 | justified |
+| `get_theme_root`, `wp_get_theme` | `StableValueNode` | - / 24, 23 | 20, 18 | 0, 1 | 24, 23 (all) | useless (as polymorphic as the original) |
+| `WP_REST_Controller::add_additional_fields_schema`, `get_additional_fields` | `Dispatch`, `ToBooleanNode` | 71 / 73, 73 | 1 / 14, 14 | 0 | 0 | useless (cold) |
+
+- **Why bytecode splits `add_filter`.** Not #14871: the node is the same on both interpreters.
+  `WP_Hook::add_filter`'s `isset($this->callbacks[$priority])` reads with a cached `ElementReadNode`
+  (`IssetElement`), which carries `@ReportPolymorphism`: the hook's callbacks are an empty array at its first
+  callback and a hash after, so the original goes polymorphic. Its only caller is `add_filter`, so after the
+  first copy goes polymorphic again Truffle marks the caller ("One caller! Analysing parent", "Set needs split via
+  parent"), and `add_filter` is split per call site, each copy with its own copy of `WP_Hook::add_filter`, and
+  `add_action` above it. The tree reports the same node and refuses: `Target too big: 105 > 100 WP_Hook::add_filter`
+  (`SplittingMaxCalleeSize`). A bytecode root's size for splitting is the generated `computeSize()`, bytecode length
+  / 10, about 0.7 of the tree's node count (a small `add_filter` model: 54 against 75 nodes), so it passes. In a
+  model of 300 sites (`target/exp`, not kept) the split goes away when the `isset` is an `array_key_exists`: that
+  `isset` alone is the trigger. The copies' profile is narrower (31 of 1,971 went polymorphic again), but each runs
+  once a request from a file's top level or a hook registration: 97 % never compiled, and none at tier 2.
+- **Why the tree's top roots don't split on bytecode.** Their reporting nodes have no reporting counterpart there:
+  `get_prop`'s and `next_token`'s method dispatch is per method found on bytecode (no polymorphism to report: the
+  calls are already direct), and `ToLongNode` (`absint`), `ToStringNode` (`esc_attr`), `IdenticalNode`
+  (`set_prop`, `block_has_support`), `ToBooleanNode` are operation proxies that exclude reporting (#14871,
+  Proxies.java) or the comparisons' own classes. What bytecode reports is what reaches it through a cached child:
+  `SubclassTestNode`, `CallableDispatchNode`, `InstantiateNode`, and until `8225a73` `ElementReadNode`. So the
+  justified tree splits of Gate 2 (`block_has_support`, `wp_should_skip_block_supports_serialization`, `esc_attr`)
+  have no bytecode equivalent, and the useless `add_filter` chain does.
+- **The fix (`8225a73`):** `ElementReadNode` reports no polymorphism. Its specializations are the container's storage
+  (packed, hash, a long's slot) and the key's kind, a guard each: a copy per caller saves a type check, not a call.
+  On the tree it made 9 copies on WooCommerce (5 compiled) and 4 on Gate 2. Splits fall to 398 on WooCommerce and
+  131 on Gate 2, `is_wp_error` (80 and 55 copies) the largest left. Smoke 140/140, Gate 2's pages 19 of 21 (the
+  oEmbed links, as before).
+
+**The A/B** (`runs.sh ab` and `g2`, CPUs 14-21 under the CPU lock, interleaved, the order reversed every round, 3
+rounds; the servers logged their compilations, TraceCompilation, and a watcher read their compiler threads' CPU and
+code cache). The host was loaded by other processes all along (node, git-lfs, a JVM: the host's CPU at 60-97 %
+during the runs, 50-70 % without them), so single rounds swing by half.
+
+WooCommerce (`woo.sh load jvm 16`: 300 s warm-up from cold, then 120 s at 16 users every visitor buying; medians,
+the range over rounds; memory.peak is the server's life, warm-up included). Two series, each its own interleaving:
+
+| variant | orders/s | pages/s | p50 / p99 ms | CPU-s/page | memory.peak MB | compilations (copies) | compile s (window) | compiler CPU-s | code compiled / code cache MB |
+|---|---|---|---|---|---|---|---|---|---|
+| bytecode, splitting (#27) | 1.31 (1.15-1.45) | 10.5 | 1,393 / 2,858 | 0.74 (0.67-0.84) | 2,512 | 2,046 (80) | 1,132 (330) | 650 | 45 / 68 |
+| bytecode, `Splitting=false` | 1.13 (0.80-1.27) | 9.0 | 1,438 / 4,916 | 0.86 (0.76-1.19) | 2,542 | 1,544 (0) | 1,116 (341) | 650 | 35 / 63 |
+| tree | 1.05 (0.88-1.46) | 8.4 | 1,675 / 3,611 | 0.91 (0.66-1.07) | 1,972 | 2,978 (673) | 1,191 (347) | 691 | 41 / 65 |
+| bytecode, splitting (#27), second series | 0.97 (0.42-1.15) | 7.8 | 1,622 / 4,823 | 1.01 (0.85-2.35) | 2,703 | 4,083 (157) | 2,281 (365) | 658 | 85 / 64 |
+| bytecode, `8225a73` | 1.04 (0.60-1.21) | 8.3 | 1,781 / 3,564 | 0.93 (0.79-1.65) | 2,596 | 2,092 (27) | 1,116 (341) | 673 | 44 / 68 |
+
+- **Throughput: no difference the noise lets through.** In the first series splitting won each round against
+  splitting off (orders/s 1.44, 1.14, 1.16 times), so off is probably a little slower; the tree and the fix sit inside
+  the ranges. The compile queue decides the window (woocommerce-load.md): the compiler threads were busy all along
+  in every variant (650-690 CPU-s of 420 s).
+- **The split copies cost little compile time on bytecode** (80-157 copies compiled, 2-4 % of the compile time; the
+  tree 673): what splitting adds on bytecode is memory, nodes and the copies' interpretation, not compilations.
+- **The second series' splitting runs recompiled at tier 1 five times as often** as every other bytecode run
+  (1,000 against 150-200 targets compiled again at the same tier, deopts "Unknown" and uncommon traps in
+  `WP_Theme_JSON`'s OSR loops and the hook dispatch), from the same build: not explained, and it is what doubled
+  their compilations and code. The fix's runs were interleaved with them and recompiled as the first series.
+- **In one fix run (`r1`, the slowest) Truffle split `apply_filters` 170 times**, compiled every copy, a split for a
+  callee (`WP_Hook::apply_filters`' `CallableDispatchNode`) that is itself too big to split: copies of the hottest
+  function that change nothing in the callee. With #27's `add_filter` copies the split budget is used up before
+  that can happen (`Not enough budget`, 291 refusals); without them it can. The other runs of either build didn't.
+  That is Truffle's propagation, not a node of ours: a parent split for a callee that won't be split itself.
+
+Gate 2 (`native.sh measure`, 200 paced visits from a cold server, each server's compilations logged; medians of 3
+rounds, the range; the host's CPU at 48-79 % median during the runs. The first attempt's round 1 lost two runs'
+files and was run again for those two, so round 1 is on, off, then tree and fix 40 minutes later):
+
+| variant | cold home page s | cold visit wait s / CPU-s | warm wait s (last 50) | warm CPU-s per visit | memory.peak MB, cold / warm | compilations (copies) | compiler CPU-s | code compiled / code cache MB |
+|---|---|---|---|---|---|---|---|---|
+| bytecode, splitting (#27) | 7.51 | 11.88 / 68.4 | 0.729 (0.719-0.905) | 5.08 (4.73-5.54) | 1,088 / 1,768 | 5,090 (1,720) | 829 | 92 / 107 |
+| bytecode, `Splitting=false` | 8.29 | 12.97 / 74.8 | 0.769 (0.699-0.872) | 4.42 (3.68-5.64) | 1,014 / 2,217 | 3,592 (0) | 931 | 82 / 89 |
+| bytecode, `8225a73` | 7.56 | 12.08 / 69.3 | 0.691 (0.683-0.721) | 4.60 (4.57-4.76) | 1,071 / 1,846 | 4,047 (469) | 867 | 83 / 95 |
+| tree | 4.93 | 5.90 / 31.6 | 0.605 (0.591-0.771) | 1.61 (1.59-2.35) | 882 / 1,269 | 6,787 (1,701) | 538 | 102 / 95 |
+
+- **`8225a73` against #27:** the split copies compiled fall from 1,720 to 469 and the compilations by a fifth, the
+  code by a tenth (92 to 83 MB compiled, 107 to 95 MB of code cache); the warm visits wait 5 % less and spend 9 %
+  less CPU, each round's fix run inside or under #27's range; the cold visit and memory.peak are within the noise.
+- **Splitting off** is no better than either: as many CPU-s per warm visit as the fix within the noise, a slower
+  cold visit, and the largest warm memory.peak (2.2 GB: it compiles fewer, larger targets and keeps more interpreted
+  profiles alive). Bytecode needs splitting less than the tree does, but not none: `is_wp_error` and the callable
+  dispatch copies are what's left, and they're cheap.
+- **The tree is a separate gap** (a third of bytecode's warm CPU, half its cold visit): the compile cost per graph
+  the flip measured ("The flip measured" below), not splitting; both have about as many split copies compiled (1,701 against 1,720 with
+  #27), the tree's of hot helpers, bytecode's of hook registrations.
+
+Gate 1 (`runs.sh gate1 200 4`: `bench/gate1/ab.sh all 200 4`, the kernels in one JVM per run, CPUs 14-21, 4
+rounds; the ratio is the variant's time over #27's, IQR in parentheses):
+
+| kernel | #27 ms | `8225a73` / #27 | `Splitting=false` / #27 |
+|---|---|---|---|
+| hooks | 16.41 | 1.10 (1.08-1.11) | 1.10 (1.04-1.16) |
+| escape | 2.72 | 1.00 (0.99-1.01) | 0.98 (0.96-1.00) |
+| slugs | 2.12 | 1.01 (0.99-1.03) | 1.14 (1.14-1.14) |
+| wpautop | 6.28 | 1.14 (1.14-1.14) | 1.12 (1.10-1.15) |
+| wptexturize | 4.70 | 1.04 (1.03-1.05) | 1.00 |
+| blocks | 7.30 | 1.01 (1.00-1.01) | 0.92 (0.84-0.99) |
+| kses | 39.06 | 0.98 (0.92-1.04) | 0.99 (0.87-1.10) |
+| peak memory | 1,565 MB | 1.02 | 0.99 |
+
+- **`hooks` loses 10 % without the `add_filter` copies.** Its iteration registers six filters from seven sites in a
+  compiled closure, so there `add_filter` is hot: `TraceSplitting` on the same run shows 14 splits with #27
+  (`add_filter` 7, all 7 inlined into the kernel's compilation; `WP_Hook::add_filter` 7) and none with the fix. In
+  WordPress the same sites run once per request from top-level code and hook registration, where 97 % of the copies
+  never compiled.
+- **`wpautop` loses 14 % (and 12 % with splitting off) without being split at all**: neither build splits anything
+  in it, its compilations are the same (tier 2: 8,416 IR nodes, 47 inlined, in both), and run alone it is 1.02. The
+  loss comes from running after `hooks` in the same JVM; why the hooks kernel's split copies make the later
+  `wpautop` faster isn't found.
+
+**What changes with the patched DSL** (PR #14872's and GR-79787's fixes, branch `dsl-processor-patched`: the proxies'
+21 `@ReportPolymorphism.Exclude` removed, so bytecode operations report as the tree's nodes do):
+- **`add_filter`/`add_action` stay split without `8225a73`**: their trigger is the cached `ElementReadNode` of
+  `IssetElement` and the size estimate, neither touched by the patch; the `ReadElement` proxy reporting again adds
+  plain `$a[k]` reads as triggers. With `8225a73` neither reports.
+- **`absint` (`CastLong` = `ToLongNode`), `esc_attr`/`esc_html` (`CastString` = `ToStringNode`) and the
+  `ToBoolean` roots should come back** (on #28 they did), with the arithmetic and concatenation proxies as new triggers. On Gate 2's
+  tree `esc_attr`'s copies compiled (36 of 61) and stayed monomorphic, so that part is likely justified; `absint`'s
+  copies went polymorphic again more often (20 of 209 on WooCommerce).
+- **`get_prop` won't**: its trigger on the tree was the dispatch keyed on the class; bytecode dispatches per method
+  found and reports nothing there. `set_prop`/`block_has_support` (`===`) only if the comparisons' own classes
+  (`Comparisons`, not proxies) are made to report.
+- **The budget will bind again**: with `add_filter`'s 5,300 copies the budget ran out on WooCommerce; with the
+  proxies reporting, those copies would crowd out the justified ones, so `8225a73` matters more there, not less.
+- Removing `6b0988a`'s unused `@Shared` caches changes nothing here: they only made copies specialize anew.
+
+**Recommendation.** Keep splitting on for bytecode (off is no better anywhere and slower on Gate 1's hooks, slugs
+and wpautop). `8225a73` (one annotation deleted) removes 93 % of the splits, the `add_filter`/`add_action` chain:
+on Gate 2 the warm visits spend 9 % less CPU and the code is a tenth smaller, on WooCommerce nothing measurable
+changes, and on Gate 1 `hooks` is 10 % slower, the one place where hook registration is compiled hot code, with
+`wpautop` 14 % slower for a reason not found. The trade is the owner's: WordPress's own servers against the
+registration kernel. Keep `SubclassTestNode` (`is_wp_error`: copies monomorphic, compiled, inlined on the tree),
+`CallableDispatchNode` and `InstantiateNode` reporting: their polymorphism depends on the caller, and their cold
+copies (widget and schema registration) cost nodes, not compilations. Proposals, not done: (1) `StableValueNode`'s
+copies on the tree all went polymorphic again (`get_theme_root`, `wp_get_theme`: 47 of 47), so it shouldn't report;
+it doesn't matter on bytecode today. (2) A parent split for a callee too big to split (`apply_filters` for
+`WP_Hook::apply_filters`) is Truffle's heuristic; the ways out on our side, the callee small enough to split or not
+reporting there, are larger changes to measure first. (3) No narrower change keeps `hooks`' copies and drops WordPress's: they are the same split of the same
+`isset`, and only the callers' heat differs, which Truffle doesn't weigh before splitting (a split needs a
+polymorphic event and a second caller, not calls).
+
+*On #28's processor (below, "Which splits pay, on the patched processor"): `hooks` is 0.86 with `8225a73`, not
+1.10, the `wpautop` loss doesn't reproduce, and `StableValueNode` is taken out as proposed.*
+
 ### The patched processor (2026-11-03, branch `dsl-processor-patched`)
 Both Truffle bugs above are fixed upstream but in no release: GR-79787 (the copy's state) on master, and
 [#14871](https://github.com/oracle/graal/issues/14871) (`@ReportPolymorphism` on a proxied or plain operation
@@ -800,8 +996,174 @@ The proxied nodes report polymorphism again, so bytecode roots split on them as 
 
 - **The tree's helpers split on bytecode too** (`absint`, `esc_attr`, `wp_parse_args`), mostly through `ToBool`.
 - **Still not:** `get_prop`/`set_prop` (the tree splits them on `MethodCallNode$Dispatch`) and the comparisons
-  (`Comparisons`' classes don't report). Whether the extra splits pay is the open audit's question (`bc-split-audit`).
+  (`Comparisons`' classes don't report). Whether the extra splits pay: "Which splits pay" above (on
+  `bc-split-fix`), and "Which splits pay, on the patched processor" below.
 
+### Which splits pay, on the patched processor (2026-11-03, branch `split-policy`)
+The audit's two proposals ("Which splits pay" above), measured again now that the proxies report polymorphism.
+Three builds (`bench/split-policy/runs.sh`; target/classes-X):
+- **A**: #28 as it is (`7363eba`, `dsl-processor-patched`, the patched processor);
+- **B**: A with `ElementReadNode` reporting no polymorphism (`59d9b30`, the audit's `8225a73` cherry-picked);
+- **C**: B with `StableValueNode` reporting none (`03fc08b`).
+
+All three were measured on #28's tree, before the branch merged `main`. One confirming round on `main` is at the
+end: mA = `main` at `4214f6b` (#25-#32), mB = mA with `59d9b30`. #33, merged later, wasn't measured.
+
+Every timed server logged its compilations (`TraceCompilation`) and libgraal's collections (`PrintGC`), and ran
+with `memwatch.py` beside it (its cgroup every 0.1 s, RssAnon every second). Before every timed run, `hostload.ps1`
+logged the load on 14-21 and on the other cores, and the busiest processes; a logger did the same every minute
+(`bench/split-policy/hostload*.log`).
+
+**The host was loaded through all of it.** About ten other sessions' builds, `.phpt` runs and servers were going.
+- Before the runs, the cores outside 14-21 were 11-100 % busy (median 61 %), and 14-21 themselves 28-100 %.
+  Sampled every minute during the runs (until 18:41, WooCommerce round 5), the median outside 14-21 was 87 % (our database and load driver included).
+- The CPU lock kept other sessions' timed runs off 14-21, but not this load. Docker's cpusets pin inside the WSL
+  VM, while `vmmemWSL` (up to 7 cores), Defender (`MsMpEng`, 2-3 cores), `node` and other sessions' `java` ran on
+  any host core.
+- The ranges are wide, so more rounds were run than planned (WooCommerce 5, Gate 2 5, Gate 1 6). Read the medians
+  with their ranges; the per-round ratios are in `bench/split-policy/ab-*`.
+
+**Splits** (`runs.sh diag`: 300 s from cold on CPUs 6-13, 4 server threads, `TraceSplittingSummary`;
+`split_audit.py`; `bench/split-policy/diag-*.txt`). The loads differ: in 300 s A placed 19 orders, B 49 and C 64,
+so the split counts compare better than the compilations.
+
+| run | splits | nodes made by splitting | copies compiled | refused: budget / too big | top split roots |
+|---|---|---|---|---|---|
+| Woo, A | 7,833 of 256 roots | +66.7 % | 125 (2 %) | 300 / 1,378 | `add_filter` 1,987, `WP_Hook::add_filter` 1,975, `add_action` 1,361, `absint`, `esc_attr` |
+| Woo, B | 2,444 of 228 | +18.3 % | 107 (4 %) | 0 / 1,366 | `absint` 189, `esc_attr` 157, `wp_parse_args` 105, `SharedType::get` 96 |
+| Woo, C | 2,397 of 228 | +18.2 % | 254 (11 %) | 0 / 1,282 | the same |
+| Gate 2, A | 2,157 of 128 | +38.8 % | 171 (8 %) | 290 / 594 | `add_filter`, `WP_Hook::add_filter`, `add_action`, `is_wp_error`, `esc_attr` |
+| Gate 2, B | 757 of 110 | +12.5 % | 228 (30 %) | 0 / 545 | `esc_attr`, `is_wp_error`, `absint` |
+| Gate 2, C | 825 of 121 | +14.1 % | 335 (41 %) | 0 / 587 | the same |
+
+- **As predicted, #28 still has the `add_filter`/`WP_Hook::add_filter`/`add_action` chain.** It makes about 5,300
+  copies on WooCommerce and 1,400 on Gate 2, and the split budget runs out. With `ElementReadNode` not reporting
+  (B), the chain is gone and the budget lasts.
+- `absint`, `esc_attr`/`esc_html` and the `ToBool` roots came back, as the audit expected.
+- **`StableValueNode` doesn't matter on bytecode**: C splits what B does. On the tree it triggered splits only for
+  `get_theme_root` and `wp_get_theme`, and those copies all went generic again.
+
+**WooCommerce** (`runs.sh ab`: `woo.sh load jvm 16`, 300 s of warm-up, then 120 s of 16 users all buying; 5 rounds,
+interleaved, the order reversed every round; `ab_report.py`, `mem_report.py`; `bench/split-policy/ab-woo.md`):
+
+| | orders/s | CPU-s/page | p50 / p99 ms | memory.peak MB | code compiled MB |
+|---|---|---|---|---|---|
+| A | 1.00 (0.74-1.38) | 0.97 (0.70-1.31) | 1,815 / 5,867 | 2,782 (2,458-3,478) | 39 (28-52) |
+| B | 1.12 (0.99-1.98) | 0.87 (0.49-0.99) | 1,547 / 3,774 | 2,625 (2,518-2,827) | 50 (36-62) |
+| C | 1.24 (0.52-1.63) | 0.78 (0.60-1.90) | 1,243 / 5,195 | 2,552 (2,342-2,754) | 52 (29-54) |
+
+- Per round, B's orders/s over A's were 2.68, 1.16, 0.72, 1.37 and 1.08 (median 1.16): B was ahead in 4 of 5
+  rounds.
+- C's were 2.00, 1.04, 1.18, 1.38 and 0.52 (median 1.18). Its 0.52 came in the round with the most load on 14-21.
+- "Code compiled" is per run, not per page, and A served fewer pages than B and C.
+
+**Gate 2** (`runs.sh g2`: `native.sh measure`, 200 visits; 5 rounds, interleaved, the order reversed every round;
+`bench/split-policy/ab-gate2.md`). Round 4's runs deleted round 1's files: `measure` names every run VARIANT-1, and
+`runs.sh` now keeps it from overwriting an earlier run. Round 1's summary lines survived, so the per-round ratios
+below cover all 5 rounds; the table after them covers rounds 2-5.
+
+Warm median per round, B over A: 0.90, 1.01, 1.13, 0.98 and 0.95; C over A: 0.91, 0.99, 1.37, 1.29 and 0.93.
+The rounds above 1.1 are the ones where the host was 90-94 % busy during the run.
+
+| rounds 2-5 | A | B | C |
+|---|---|---|---|
+| warm wait per visit, last 50 | 0.936 s | 0.829 s | 0.837 s |
+| warm CPU-s per visit, last 50 | 5.41 | 5.40 | 5.22 |
+| cold visit, wait | 11.79 s | 16.13 s | 13.16 s |
+| compilations (of split copies) | 5,437 (2,233) | 4,407 (1,003) | 4,415 (1,010) |
+| code compiled | 90 MB | 82 MB | 82 MB |
+
+- **B makes a fifth fewer compilations and a tenth less code, for the same warm CPU.** Its warm wait was the same
+  as A's or better in every round where the host was below 80 % busy.
+- **B's cold visit was slower than A's in 4 of 5 rounds**: per round, 0.92, 1.12, 1.45, 1.14 and 1.85 times A's
+  time. C has B's change and splits what B does, yet it came in at 0.85, 0.98, 1.44, 1.21 and 1.02. This isn't
+  explained, and the splits don't account for it. The cold visit is the run's first 15 s, the part most exposed to
+  the load.
+
+**Gate 1** (`runs.sh gate1 3 200 A B C`: `bench/gate1/ab.sh all 200 2` per hold of the CPU lock, 3 holds, 6 rounds;
+time per iteration in ms; the ratio is the variant's time over A's, IQR in parentheses; `bench/split-policy/ab-gate1.txt`):
+
+| kernel | A ms | B / A | C / A |
+|---|---|---|---|
+| hooks | 36.16 | 0.86 (0.74-0.91) | 0.95 (0.84-0.97) |
+| wpautop | 13.14 | 1.04 (0.95-1.08) | 1.04 (0.85-1.22) |
+| the other five, peak memory | | 0.91-1.04 | 0.91-1.08 |
+
+These times are twice those in "The flip measured": before each hold the other cores were 76-100 % busy. An
+earlier series, run at 59-98 % (IQRs of ±30 %), is left out.
+
+- **`hooks` is faster with B (0.86), not slower** as with the audit's `8225a73` on #27 (1.10). Since #28, A's
+  `add_filter` copies use up the split budget (300 splits refused for budget on WooCommerce, 290 on Gate 2), so other
+  roots don't get split. That is the likely reason, but it wasn't traced per kernel.
+- **The audit's 14 % loss in `wpautop` doesn't reproduce on #28.** Without `hooks`, and alone, B is no slower.
+  Whether the audit's 1.14 came from running after `hooks` can't be told at this noise level: the effect is either
+  gone or hidden in it.
+
+  | run | B / A |
+  |---|---|
+  | all kernels | 1.04 (0.95-1.08) |
+  | without `hooks` (`KERNELS=escape,slugs,wpautop,wptexturize,blocks,kses`, 4 rounds) | 0.97 (0.95-0.99) |
+  | `wpautop` alone (4 rounds) | 0.92 (0.84-1.00) |
+
+**Where memory.peak comes from.** The owner asked why bytecode's memory.peak is higher than the tree's while RssAnon
+is about equal. `visits_report.py` reads RssAnon at three points (after start, after the cold visit, at the end),
+while memory.peak is the cgroup's high-water mark. `memwatch.py` sampled every 0.1 s instead. Runs:
+- Gate 2: the tree (T: `php.Interpreter=tree` on C's build, 3 runs; the second run reused the first's name, so
+  the first survives only in memwatch) against A, B and C (rounds 2-5);
+- WooCommerce: A, B and C, 5 runs each.
+
+Medians (range), MB (`mem_report.py`; `--runs` gives a row per run):
+
+| | memory.peak | max RssAnon | anon p90 | anon, last minute | anon near its max | largest libgraal isolate heap |
+|---|---|---|---|---|---|---|
+| Gate 2, T | 1,277 (1,265-1,439) | 1,253 (1,233-1,419) | 1,077 (1,076-1,136) | 1,015 (999-1,124) | 3.8 s | 315 (304-326) |
+| Gate 2, A | 1,785 (1,703-1,823) | 1,708 | 1,175 | 1,113 | 2.5 s | 722 (667-781) |
+| Gate 2, B | 1,787 (1,710-2,085) | 1,726 | 1,230 | 1,155 | 2.0 s | 731 (675-731) |
+| Gate 2, C | 1,956 (1,623-2,315) | 1,825 | 1,217 | 1,115 | 1.2 s | 731 (722-780) |
+| Woo, A | 2,782 (2,458-3,478) | 2,728 | 1,749 | 1,523 | 6.4 s | 888 (884-1,910) |
+| Woo, B | 2,625 (2,518-2,827) | 2,601 | 1,717 | 1,540 | 4.2 s | 908 (834-1,049) |
+| Woo, C | 2,552 (2,342-2,754) | 2,439 | 1,708 | 1,526 | 3.8 s | 1,035 (908-1,039) |
+
+- **memory.peak is the largest RssAnon.** At 0.1 s sampling the gap between them is 20-65 MB, and file pages are
+  0-7 MB. RssAnon only looked about equal because the peak lasts 1-8 s and the three points miss it.
+- **The peak is a short burst above a plateau.** On Gate 2, bytecode's plateau (anon p90 1,175-1,230, last minute
+  1,113-1,155) is 100-150 MB above the tree's, but its peak is 500-680 MB above. On WooCommerce the plateau is about
+  1,520 MB and the bursts reach 2,340-3,480.
+- **The burst is libgraal compiling a big graph.** Each compilation's isolate logs its collections, timed from the
+  VM's start. On Gate 2, bytecode's largest isolate heap (670-780 MB) comes within 5 s of the anon maximum in 10 of
+  12 runs; for example A-2 at 167.1 s against 165.9 s, and B-2 at 130.8 s against 131.9 s. On WooCommerce the
+  largest isolate is 830-1,910 MB. The tree's is 300-330 MB, and its anon maximum doesn't line up with it.
+- **So the hypothesis holds**: a bytecode compilation's isolate heap is 2.3 times the tree's, and memory.peak records
+  that burst. The splits don't change it: A's, B's and C's largest isolates fall within each other's ranges.
+
+**The confirming round on `main`** (`4214f6b`; one round, Gate 2 then WooCommerce):
+
+| | Gate 2 warm wait / CPU-s per visit (last 50) | Gate 2 cold visit | Gate 2 compilations (of copies) | Woo orders/s | Woo CPU-s/page | Woo memory.peak |
+|---|---|---|---|---|---|---|
+| mA | 1.445 s / 5.80 | 15.19 s | 5,639 (2,242) | 0.98 | 0.99 | 2,577 MB |
+| mB | 1.348 s / 2.73 | 12.40 s | 4,416 (995) | 1.39 | 0.70 | 2,361 MB |
+
+The host was 93-96 % busy during the Gate 2 runs (`bench/split-policy/ab-confirm-main.md`), so treat the single
+round as a direction only. It is the same direction as on #28: mB ahead on both, with fewer compilations. Here mB's
+cold visit was the faster one.
+
+**Correctness of C** (#28 and both commits): smoke 142/142 on bytecode, `mvn clean test` passes, Gate 2's pages
+19/21 (the two oEmbed links), and the WooCommerce walk 51/51 against the tree
+(`bench/split-policy/walk-compare-tree-C.txt`). Merged with `main` (#33 included): `mvn clean package` passes and
+smoke is 153/153.
+
+**Recommendation.** Take B (`ElementReadNode` reporting no polymorphism):
+- splits fall by 69 % on WooCommerce and 65 % on Gate 2, and the budget lasts;
+- Gate 2 makes a fifth fewer compilations and a tenth less code, for the same warm CPU;
+- WooCommerce was ahead in 4 of 5 rounds;
+- Gate 1's `hooks` gets faster, not slower, and the `wpautop` loss is gone.
+
+The one open point is Gate 2's cold visit: slower with B in 4 of 5 rounds, but not with C. Take C
+(`StableValueNode`) because it makes the split policy correct, not for speed: on bytecode it changes nothing
+measurable, and on the tree all its copies went generic again. Neither change touches what memory.peak measures,
+which is libgraal's burst during a big compilation.
+
+### Fallbacks to the tree: the inventory, and what closed them
 `tests/bytecode/scan.php` translates every function body of a corpus without running it, with
 `-Dphp.bytecode.report=all` (each reason a body has, not only the first); `tests/bytecode/fallbacks.py` counts the
 reasons by construct. Functions on bytecode / on the tree; "the only one": functions that construct alone kept on

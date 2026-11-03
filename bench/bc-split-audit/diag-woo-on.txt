@@ -1,0 +1,59 @@
+diag woo-on/engine.log
+splits 5824 of 76 roots; copies compiled 174 (3%), inlined somewhere 7 (0%), neither 5647 (97%); polymorphic again 87 (1%)
+compilations 2699, 727 s; of copies 174 targets, 24 s (3%); inlining traces 2721
+refused splits: {'Not enough budget': 291, 'Target too big': 277}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| add_filter | - | 0/0 | 1988 | 35 (0) | 1 | 1952 | 0 | <Unknown> 1726, wp-includes/default-filters.php 146 |
+| WP_Hook::add_filter | ElementReadNode 1 | 1/0 | 1971 | 36 (0) | 1 | 1934 | 31 (ElementReadNode) | <Unknown> 1971 |
+| add_action | - | 0/0 | 1350 | 12 (0) | 1 | 1337 | 0 | <Unknown> 902, wp-includes/default-filters.php 125 |
+| is_wp_error | SubclassTestNode 4 | 2/0 | 91 | 21 (0) | 2 | 70 | 0 | <Unknown> 91 |
+| Automattic\WooCommerce\StoreApi\SchemaController::get | InstantiateNode 1 | 1/0 | 47 | 11 (0) | 0 | 36 | 2 (InstantiateNode) | <Unknown> 47 |
+| WP_Widget_Factory::register | InstantiateNode 1 | 0/1 | 34 | 0 (0) | 0 | 34 | 1 (InstantiateNode) | <Unknown> 34 |
+| register_widget | - | 0/0 | 33 | 0 (0) | 0 | 33 | 0 | <Unknown> 33 |
+| wc_get_product | - | 0/0 | 21 | 1 (0) | 0 | 20 | 0 | <Unknown> 21 |
+| wp_lazyload_term_meta | - | 0/0 | 18 | 6 (0) | 0 | 12 | 0 | <Unknown> 18 |
+| WC_Shipping_Method::get_option | SubclassTestNode 3 | 1/0 | 18 | 0 (0) | 0 | 18 | 0 | <Unknown> 18 |
+| _prime_term_caches | - | 0/0 | 16 | 6 (0) | 0 | 10 | 0 | <Unknown> 16 |
+| WP_Metadata_Lazyloader::queue_objects | ElementReadNode 2 | 0/2 | 15 | 8 (0) | 0 | 7 | 6 (ElementReadNode) | <Unknown> 15 |
+| get_object_term_cache | - | 0/0 | 14 | 6 (0) | 0 | 8 | 0 | <Unknown> 14 |
+| WC_Widget::__construct | SubclassTestNode 4 | 1/0 | 13 | 0 (0) | 0 | 13 | 0 | <Unknown> 13 |
+| get_the_terms | - | 0/0 | 12 | 5 (0) | 1 | 7 | 0 | <Unknown> 12 |
+| WC_Order::save | SubclassTestNode 1 | 1/0 | 11 | 0 (0) | 0 | 11 | 1 (SubclassTestNode) | <Unknown> 11 |
+| WC_Order::get_changes | SubclassTestNode 1 | 1/0 | 11 | 3 (0) | 0 | 8 | 7 (SubclassTestNode) | <Unknown> 11 |
+| Automattic\WooCommerce\StoreApi\Schemas\V1\ProductSchema::__construct | SubclassTestNode 1 | 1/0 | 10 | 2 (0) | 0 | 8 | 1 (SubclassTestNode) | <Unknown> 10 |
+| WC_Settings_Page::__construct | - | 0/0 | 10 | 0 (0) | 0 | 10 | 0 | <Unknown> 10 |
+| Automattic\WooCommerce\StoreApi\Schemas\V1\AbstractAddressSchema::__construct | SubclassTestNode 1 | 0/1 | 9 | 2 (0) | 0 | 7 | 1 (SubclassTestNode) | <Unknown> 9 |
+| Automattic\WooCommerce\Proxies\LegacyProxy::call_function | CallableDispatchNode 4 | 1/0 | 7 | 1 (0) | 0 | 6 | 0 | <Unknown> 7 |
+| map_deep | CallableDispatchNode 2 | 1/0 | 7 | 3 (0) | 0 | 4 | 0 | <Unknown> 7 |
+| Automattic\WooCommerce\Proxies\LegacyProxy::get_instance_of | InstantiateNode 1 | 1/0 | 6 | 0 (0) | 0 | 6 | 1 (InstantiateNode) | <Unknown> 6 |
+| WC_Email::get_option | SubclassTestNode 1 | 1/0 | 6 | 0 (0) | 0 | 6 | 2 (SubclassTestNode) | <Unknown> 6 |
+| WP_Post_Type::get_rest_controller | InstantiateNode 1 | 1/0 | 6 | 0 (0) | 0 | 6 | 1 (InstantiateNode) | <Unknown> 6 |
+| Automattic\WooCommerce\Packages::get_enabled_packages | CallableDispatchNode 3 | 0/3 | 4 | 0 (0) | 0 | 4 | 4 (CallableDispatchNode) | <Unknown> 4 |
+| WP_Widget_Media::__construct | SubclassTestNode 2 | 1/0 | 4 | 0 (0) | 0 | 4 | 0 | <Unknown> 4 |
+| {closure:make_before_block_visitor():1614} | CallableDispatchNode 2 | 1/0 | 4 | 2 (0) | 0 | 2 | 3 (CallableDispatchNode) | <Unknown> 4 |
+| {closure:make_after_block_visitor():1670} | CallableDispatchNode 2 | 1/0 | 4 | 2 (0) | 0 | 2 | 3 (CallableDispatchNode) | <Unknown> 4 |
+| WC_Payment_Gateway::init_settings | SubclassTestNode 2 | 1/0 | 4 | 0 (0) | 0 | 4 | 0 | <Unknown> 4 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| for a callee | 28 | 3488 | 75 (2%) | 3 | 3411 | 0 |
+| ElementReadNode | 6 | 1996 | 44 (2%) | 1 | 1951 | 41 |
+| SubclassTestNode | 24 | 206 | 33 (16%) | 3 | 173 | 24 |
+| InstantiateNode | 9 | 103 | 12 (12%) | 0 | 91 | 9 |
+| CallableDispatchNode | 9 | 31 | 10 (32%) | 0 | 21 | 13 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :     271109
+Split limit (limit for the number of nodes to create through splitting)           :     790506
+Splits (number of targets created through splitting)                              :       5828
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :     271225
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     528532
+Increase in nodes                                                                 :     51.32%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :          0
+Percent of split nodes wasted                                                     :      0.00%
+Targets wasted due to splitting                                                   :          0
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS
