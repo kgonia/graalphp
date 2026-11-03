@@ -16,21 +16,24 @@ import pl.codeloom.php.runtime.PhpRef;
 /**
  * `function (...) use ($a, &$b) {...}` and `fn (...) => ...`: captures the use-variables (values, or references
  * for &), $this unless static, and the class scope. A by-value captured array counts the closure as a holder
- * for the closure's lifetime.
+ * for the closure's lifetime. An arrow function's capture (implicit) of an unset variable is quiet and leaves its
+ * variable unset (Java null), so the arrow function's own read warns.
  */
 public final class ClosureNode extends ExprNode {
     private final PhpFunction function;
     @Children private final ExprNode[] captures;
     @CompilationFinal(dimensions = 1) private final boolean[] byRef;
     private final boolean isStatic;
+    private final boolean implicit;
     @Child private ClassRefNode scope;
 
     public ClosureNode(PhpFunction function, ExprNode[] captures, boolean[] byRef, boolean isStatic,
-                       ClassRefNode scope) {
+                       boolean implicit, ClassRefNode scope) {
         this.function = function;
         this.captures = captures;
         this.byRef = byRef;
         this.isStatic = isStatic;
+        this.implicit = implicit;
         this.scope = scope;
     }
 
@@ -47,6 +50,8 @@ public final class ClosureNode extends ExprNode {
                 PhpRef ref = ((LValueNode) captures[i]).makeRef(frame);
                 ref.bind();
                 captured[i] = ref;
+            } else if (implicit && !((LValueNode) captures[i]).isDefined(frame)) {
+                captured[i] = null;
             } else {
                 Object value = captures[i].execute(frame);
                 if (value instanceof PhpArray array) {

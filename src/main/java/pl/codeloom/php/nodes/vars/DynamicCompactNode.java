@@ -4,12 +4,15 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.Map;
@@ -37,24 +40,25 @@ public final class DynamicCompactNode extends ExprNode {
             names[i] = arguments[i].execute(frame);
         }
         IncludeScope included = slots == null ? IncludeScope.of(frame) : null;
-        return compact(frame.materialize(), names, slots, included, slots == null ? PhpContext.get(this) : null);
+        return compact(this, frame.materialize(), names, slots, included,
+                slots == null ? PhpContext.get(this) : null);
     }
 
     @TruffleBoundary
-    private static PhpArray compact(MaterializedFrame frame, Object[] names, Map<String, Integer> slots,
+    private static PhpArray compact(Node site, MaterializedFrame frame, Object[] names, Map<String, Integer> slots,
                                     IncludeScope included, PhpContext context) {
         PhpArray result = new PhpArray();
         for (Object name : names) {
-            add(result, frame, name, slots, included, context);
+            add(site, result, frame, name, slots, included, context);
         }
         return result;
     }
 
-    private static void add(PhpArray result, MaterializedFrame frame, Object name, Map<String, Integer> slots,
-                            IncludeScope included, PhpContext context) {
+    private static void add(Node site, PhpArray result, MaterializedFrame frame, Object name,
+                            Map<String, Integer> slots, IncludeScope included, PhpContext context) {
         if (name instanceof PhpArray nested) {
             for (int p = nested.firstPosition(); p >= 0; p = nested.nextPosition(p)) {
-                add(result, frame, nested.valueAt(p), slots, included, context);
+                add(site, result, frame, nested.valueAt(p), slots, included, context);
             }
             return;
         }
@@ -63,7 +67,16 @@ public final class DynamicCompactNode extends ExprNode {
                 : slots == null ? global(context, variable) : local(frame, slots.get(variable));
         if (value != null) {
             result.put(ArrayKey.of(Str.of(variable)), value);
+        } else {
+            undefined(site, variable);
         }
+    }
+
+    /** php-src's warning for a name compact() finds no variable of. */
+    @TruffleBoundary
+    static void undefined(Node site, String name) {
+        ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING,
+                Str.of("compact(): Undefined variable $" + name), SourceLocation.of(site));
     }
 
     private static Object global(PhpContext context, String name) {

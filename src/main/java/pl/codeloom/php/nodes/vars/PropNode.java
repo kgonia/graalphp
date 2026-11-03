@@ -4,11 +4,14 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -19,6 +22,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -52,15 +56,17 @@ public final class PropNode extends LValueNode {
      */
     @CompilationFinal private ClassKey accessibleKey;
     /**
-     * What writes here have met, one bit per case (the SEEN_ constants), as LocalVarNode's: compiled code leaves
-     * out a reference's write, __set() and the holder updates until a write meets them. Unprofiled, every property
-     * assignment compiled all of them (about 27 IR nodes a site).
+     * What writes (and reads of non-objects) here have met, one bit per case (the SEEN_ constants), as LocalVarNode's:
+     * compiled code leaves out a reference's write, __set() and the holder updates until a write meets them.
+     * Unprofiled, every property assignment compiled all of them (about 27 IR nodes a site).
      */
     @CompilationFinal private int seen;
     private static final int SEEN_REF = 1;
     private static final int SEEN_MISSING = 1 << 1;
     private static final int SEEN_NEW_ARRAY = 1 << 2;
     private static final int SEEN_OLD_ARRAY = 1 << 3;
+    /** A read (read()) of a value that isn't an object. */
+    private static final int SEEN_NON_OBJECT = 1 << 4;
     /** The writes through a property that is a reference (SEEN_REF). */
     private final RefWrites refWrites = RefWrites.create();
 
@@ -112,7 +118,16 @@ public final class PropNode extends LValueNode {
     }
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
-        return target(object.execute(frame), name, action);
+        return target(writtenObject(frame), name, action);
+    }
+
+    /** The object as a write fetches it (BP_VAR_W): an unset place quietly, as null. */
+    private Object writtenObject(VirtualFrame frame) {
+        if (object instanceof LValueNode place) {
+            Object value = place.readIfSet(frame);
+            return value == null ? PhpNull.NULL : value;
+        }
+        return object.execute(frame);
     }
 
     private static PhpObject target(Object value, String name, String action) {
@@ -215,7 +230,7 @@ public final class PropNode extends LValueNode {
                         : PhpRef.deref(result));
             }
         }
-        throw new UnexpectedResultException(PhpNull.NULL);
+        throw new UnexpectedResultException(read(frame, value, name(frame)));
     }
 
     /** The default of a property lookup: the property doesn't exist (declared ones exist until unset). */
@@ -231,7 +246,26 @@ public final class PropNode extends LValueNode {
     @Override
     public Object execute(VirtualFrame frame) {
         Object value = object.execute(frame);
-        return readOn(frame, value, name(frame));
+        return read(frame, value, name(frame));
+    }
+
+    /**
+     * A read of property name of value as an operand (ZEND_FETCH_OBJ_R): readOn, and for a value that isn't an
+     * object null after php-src's warning (zend_wrong_property_read).
+     */
+    public Object read(VirtualFrame frame, Object value, String name) {
+        if (!(value instanceof PhpObject)) {
+            met(SEEN_NON_OBJECT);
+            nonObjectRead(this, value, name);
+            return PhpNull.NULL;
+        }
+        return readOn(frame, value, name);
+    }
+
+    @TruffleBoundary
+    private static void nonObjectRead(Node site, Object value, String name) {
+        ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_WARNING, Str.of("Attempt to read property \""
+                + Str.keyText(name) + "\" on " + Args.valueName(value)), SourceLocation.of(site));
     }
 
     /** The read of property name of value, evaluated (null for a value that isn't an object). */
@@ -353,7 +387,7 @@ public final class PropNode extends LValueNode {
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         String name = name(frame);
-        bindRefOn(frame, object.execute(frame), name, ref);
+        bindRefOn(frame, writtenObject(frame), name, ref);
     }
 
     /** bindRef of property name of target, evaluated: an error if it isn't an object. */
@@ -432,7 +466,7 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        Object value = writtenObject(frame);
         if (value instanceof PhpObject) {
             unsetOn(frame, value, name(frame));
         }

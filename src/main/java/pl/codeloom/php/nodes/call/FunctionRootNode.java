@@ -274,6 +274,10 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
     private void bindCaptures(VirtualFrame frame, PhpClosure closure) {
         for (int i = 0; i < captureSlots.length; i++) {
             Object captured = closure.getCaptured(i);
+            if (captured == null) {
+                // an arrow function's capture of an unset variable (ClosureNode): left unset
+                continue;
+            }
             if (!captureByRef[i] && captured instanceof PhpArray array) {
                 array.addHolder();
             } else if (captured instanceof PhpRef ref) {

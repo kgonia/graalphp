@@ -925,7 +925,8 @@ public final class Translator {
             captureNodes[i] = variable(parts.captures()[i]);
         }
         ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
-        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(), scopeRef);
+        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(),
+                node.is("AST_ARROW_FUNC"), scopeRef);
     }
 
     /**
@@ -1629,13 +1630,18 @@ public final class Translator {
         }
     }
 
-    /** An element of an array (key null for `[]`), its key normalized once when it is a constant. */
+    /**
+     * An element of an array (key null for `[]`), its key normalized once when it is a constant string or int, as
+     * php-src's compiler does (zend_handle_numeric_dim); a float, bool or null key converts where it is used, which
+     * warns for a string offset.
+     */
     private static DimNode element(ExprNode container, ExprNode key) {
         if (key == null) {
             return new DimNode(container, null, null);
         }
         Object constant = key.constantValue();
-        Object normalized = constant == null || constant instanceof PhpArray ? null : ArrayKey.of(constant);
+        Object normalized = constant instanceof TruffleString || constant instanceof Long ? ArrayKey.of(constant)
+                : null;
         return new DimNode(container, key, normalized);
     }
 
