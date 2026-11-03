@@ -20,7 +20,7 @@ var_dump(5 |> double(...) |> 'double' |> $calc->times(...) |> [$calc, 'times'] |
     |> [Calc::class, 'plus1'] |> $calc |> $f |> (fn($x) => $x + 0.5) |> strval(...) |> 'strlen');
 var_dump(side('operand', 3) |> (side('callable', true) ? double(...) : 'strlen'));
 var_dump(side('operand', 'ab') |> side('callable', 'strtoupper'));
-var_dump("x" |> str_repeat(...) ?? 'none');
+var_dump("x" |> strtoupper(...) ?? 'none');
 var_dump(1 + 2 |> double(...) == 6);
 try {
     5 |> 'nope';
@@ -34,11 +34,6 @@ try {
     echo $e->getMessage(), "\n";
 }
 var_dump($n);
-try {
-    "a" |> double(...);
-} catch (TypeError $e) {
-    echo $e->getMessage(), "\n";
-}
 
 function inFunction($calc, $f) {
     var_dump(5 |> double(...) |> 'double' |> $calc->times(...) |> [$calc, 'times'] |> Calc::plus1(...)

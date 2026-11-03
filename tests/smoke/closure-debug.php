@@ -30,15 +30,16 @@ $plain(1);
 var_dump($plain);
 print_r($plain);
 echo "\n";
-var_dump(user(...));
-var_dump((new B)->method(...));
-[$bound, $static] = (new B)->make();
+// every object kept in a variable: Truffle PHP doesn't reuse a freed object's id (no refcounts)
+var_dump($user = user(...));
+var_dump($method = ($b1 = new B)->method(...));
+[$bound, $static] = ($b2 = new B)->make();
 var_dump($bound, $bound(1), $static());
-$rebound = Closure::bind(fn() => 1, new B);
+$rebound = Closure::bind($arrow = fn() => 1, $b3 = new B);
 var_dump($rebound);
 $unbound = function () { return isset($this) ? get_class($this) : 'none'; };
-var_dump($unbound->bindTo(new A)());
-var_dump(spl_object_id($plain) === spl_object_id($plain), new stdClass);
+var_dump(($unboundA = $unbound->bindTo($a = new A))());
+var_dump(spl_object_id($plain) === spl_object_id($plain), $std = new stdClass);
 $copy = clone $plain;
 var_dump($copy(1));
 try {
