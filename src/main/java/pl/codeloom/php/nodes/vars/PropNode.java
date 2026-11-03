@@ -238,14 +238,15 @@ public final class PropNode extends LValueNode {
     @TruffleBoundary
     private Object missing(PhpObject phpObject, String name, String scope) {
         PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
-        if (decl != null) {
-            if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
-                return inaccessibleRead(phpObject, name);
-            }
+        if (decl != null && !phpObject.getPhpClass().canAccessProperty(name, scope)) {
+            return inaccessibleRead(phpObject, name);
+        }
+        Object magic = decl == null || phpObject.wasUnset(name) ? phpObject.magicProperty(this, "__get", name)
+                : PhpObject.NO_MAGIC;
+        if (magic == PhpObject.NO_MAGIC && decl != null) {
             throw new PhpError("Typed property " + PhpType.declaringName(decl) + "::$" + Str.keyText(name)
                     + " must not be accessed before initialization");
         }
-        Object magic = phpObject.magicProperty(this, "__get", name);
         return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
     }
 
@@ -286,6 +287,12 @@ public final class PropNode extends LValueNode {
         }
         if (!phpObject.getPhpClass().canAccessProperty(name, scope)) {
             throw inaccessible(phpObject, name);
+        }
+        if (phpObject.wasUnset(name)) {
+            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+                return true;
+            }
+            phpObject.setUnset(name, false);
         }
         Object converted = decl.type().assign(PhpRef.deref(value), strict(), decl);
         if (converted instanceof PhpArray array) {
@@ -588,14 +595,30 @@ public final class PropNode extends LValueNode {
             }
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                phpObject.magicProperty(this, "__unset", name);
+                if (!unsetUninitialized(phpObject, name)) {
+                    phpObject.magicProperty(this, "__unset", name);
+                }
                 return;
             }
             if (old instanceof PhpArray array) {
                 array.removeHolder();
             }
+            boolean typed = typed(phpObject, name);
             objects.removeKey(phpObject, name);
+            if (typed) {
+                phpObject.setUnset(name, true);
+            }
         }
+    }
+
+    /** unset() of a typed property never initialized: marked unset, bypassing __unset. */
+    @TruffleBoundary
+    private static boolean unsetUninitialized(PhpObject phpObject, String name) {
+        if (typedDecl(phpObject, name) == null || phpObject.wasUnset(name)) {
+            return false;
+        }
+        phpObject.setUnset(name, true);
+        return true;
     }
 
     @TruffleBoundary
@@ -621,7 +644,7 @@ public final class PropNode extends LValueNode {
             }
             Object property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             if (property == null) {
-                return typedDecl(phpObject, name) == null && magicIsset(phpObject, name);
+                return (typedDecl(phpObject, name) == null || phpObject.wasUnset(name)) && magicIsset(phpObject, name);
             }
             return property != PhpNull.NULL;
         }
@@ -653,7 +676,7 @@ public final class PropNode extends LValueNode {
             if (property == null) {
                 // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value; an uninitialized
                 // typed property is unset
-                if (typedDecl(phpObject, name) != null || !magicIsset(phpObject, name)) {
+                if (typedDecl(phpObject, name) != null && !phpObject.wasUnset(name) || !magicIsset(phpObject, name)) {
                     return null;
                 }
                 property = missing(frame, phpObject, name);

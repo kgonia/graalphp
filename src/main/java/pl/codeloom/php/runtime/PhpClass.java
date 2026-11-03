@@ -9,6 +9,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 
 import java.util.ArrayList;
+import com.oracle.truffle.api.object.HiddenKey;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -72,6 +73,28 @@ public final class PhpClass {
     public record ConstantType(PhpType type, PhpClass declaringClass, boolean isPrivate) {
     }
 
+    /** The hidden keys marking an object's unset typed properties (PhpObject.wasUnset), by property name. */
+    private Map<String, HiddenKey> unsetKeys;
+
+    @TruffleBoundary
+    public HiddenKey unsetKey(String propertyName) {
+        if (unsetKeys == null) {
+            unsetKeys = new HashMap<>();
+        }
+        return unsetKeys.computeIfAbsent(propertyName, HiddenKey::new);
+    }
+
+    /** The properties declared with hooks, inherited ones included (their inheritance isn't checked yet). */
+    private final Set<String> hooked = new HashSet<>();
+
+    public void addHooked(String propertyName) {
+        hooked.add(propertyName);
+    }
+
+    public boolean isHooked(String propertyName) {
+        return hooked.contains(propertyName);
+    }
+
     public ConstantType constantType(String constantName) {
         return constantTypes.get(constantName);
     }
@@ -132,6 +155,7 @@ public final class PhpClass {
             methods.putAll(parent.methods);
             constants.putAll(parent.constants);
             constantTypes.putAll(parent.constantTypes);
+            hooked.addAll(parent.hooked);
             staticProperties.putAll(parent.staticProperties);
             properties.putAll(parent.properties);
             constructor = parent.constructor;

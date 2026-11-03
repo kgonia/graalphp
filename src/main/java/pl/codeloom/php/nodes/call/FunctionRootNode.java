@@ -236,7 +236,8 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
         // a variadic parameter's arguments go unnamed (get_function_arg_name)
         // the active function's name as %s writes it: an anonymous class's method up to its NUL
         throw new PhpError("TypeError", function.split("\0", 2)[0] + "(): Argument #" + (index + 1)
-                + (param.variadic() ? "" : " ($" + param.name() + ")") + " must be of type " + param.declared().text(calledClass) + ", " + PhpType.valueName(value)
+                + (param.variadic() ? "" : " ($" + param.name() + ")") + " must be of type "
+                + param.declared().text(calledClass) + ", " + PhpType.valueName(value)
                 + " given" + (caller == null ? "" : ", called in " + caller.file() + " on line " + caller.line()));
     }
 

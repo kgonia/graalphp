@@ -74,7 +74,7 @@ final class Variance {
         for (PhpClass.PropertyDecl parentDecl : parent.getProperties()) {
             PhpClass.PropertyDecl decl = phpClass.findProperty(parentDecl.name());
             if (decl == parentDecl || decl == null || !phpClass.getLowerName().equals(decl.declaringClass())
-                    || parentDecl.visibility() == PhpClass.PropertyDecl.PRIVATE) {
+                    || parentDecl.visibility() == PhpClass.PropertyDecl.PRIVATE || phpClass.isHooked(decl.name())) {
                 continue;
             }
             String name = phpClass.getName() + "::$" + Str.keyText(decl.name());

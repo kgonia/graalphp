@@ -427,9 +427,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object object(VirtualFrame frame, PhpObject value, @Bind PhpBytecodeRootNode root,
                                     @Bind Node node, @Cached SubclassTestNode test) {
-            return root.returnType.acceptsObject(value.getPhpClass(), test) ? value
-                    : FunctionRootNode.returnSlow(root.name, root.returnType, value, calledClass(frame), root.path,
-                            node);
+            PhpType type = root.returnType;
+            PhpClass phpClass = value.getPhpClass();
+            // static: an object of the called class itself ($this, new static) needs no subclass test
+            if (type.acceptsObject(phpClass, test) || type.has(PhpType.STATIC) && phpClass == calledClass(frame)) {
+                return value;
+            }
+            return FunctionRootNode.returnSlow(root.name, type, value, calledClass(frame), root.path, node);
         }
 
         @Specialization(guards = "!isObject(value)")

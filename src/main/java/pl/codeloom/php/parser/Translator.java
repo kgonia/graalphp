@@ -1006,7 +1006,9 @@ public final class Translator {
                 throw compileError(part.line, "Type " + text + " cannot be part of an intersection type");
             }
             String name = className(part);
-            if (name.equalsIgnoreCase("self") || name.equalsIgnoreCase("parent")) {
+            // self and parent only where they resolve at compile time (zend_is_scope_known)
+            if ((name.equalsIgnoreCase("self") || name.equalsIgnoreCase("parent"))
+                    && (classInfo == null || classInfo.isTrait() || closureTypes)) {
                 throw compileError(part.line, "Type " + name + " cannot be part of an intersection type");
             }
             for (String seen : members) {
@@ -1151,7 +1153,8 @@ public final class Translator {
             return Convert.toStr(value).toString();
         }
         if (value instanceof String || value instanceof byte[]) {
-            String text = value instanceof String s ? s : new String((byte[]) value, java.nio.charset.StandardCharsets.ISO_8859_1);
+            String text = value instanceof String s ? s
+                    : new String((byte[]) value, java.nio.charset.StandardCharsets.ISO_8859_1);
             return "'" + (text.length() > 10 ? text.substring(0, 10) + "..." : text) + "'";
         }
         Ast ast = (Ast) value;
@@ -1249,7 +1252,8 @@ public final class Translator {
             return root.getCallTarget();
         }
         FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
-                paramSlots, defaults, captureSlots, captureByRef, checkedReturn(target, false), statements, path, internal, lineSection(node.line));
+                paramSlots, defaults, captureSlots, captureByRef, checkedReturn(target, false), statements, path,
+                internal, lineSection(node.line));
         root.setScope(owner == null ? null : owner.name());
         if (body.returnsRef) {
             root.setReturnsRef(node.endLine);
@@ -1520,16 +1524,18 @@ public final class Translator {
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
-                    // a hooked property (not supported yet) stays untyped: its variance and state are its hooks'
-                    PhpType type = element.get("hooks") != null ? null
-                            : propertyType(member.node("type"), className, propertyName);
+                    // a hooked property (hooks aren't supported yet) stays untyped: its variance and state are its
+                    // hooks'
+                    boolean hooked = element.get("hooks") != null;
+                    PhpType type = hooked ? null : propertyType(member.node("type"), className, propertyName);
                     Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
                     if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {
                         initial = validDefault(type, initial, member.line, "default value for property " + className
                                 + "::$" + Str.keyText(propertyName));
                     }
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type));
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, type,
+                            hooked));
                 }
                 break;
             }

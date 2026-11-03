@@ -33,9 +33,12 @@ public final class ClassTemplate {
     public record Constant(String name, Object value, PhpType type, boolean isPrivate) implements Member {
     }
 
-    /** A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its type. */
-    public record Property(String name, Object initial, int visibility, boolean isStatic, PhpType type)
-            implements Member {
+    /**
+     * A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its type,
+     * whether it has hooks.
+     */
+    public record Property(String name, Object initial, int visibility, boolean isStatic, PhpType type,
+                           boolean hooked) implements Member {
     }
 
     /**
@@ -228,6 +231,9 @@ public final class ClassTemplate {
             } else {
                 phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
                         property.type()));
+                if (property.hooked()) {
+                    phpClass.addHooked(property.name());
+                }
             }
         }
     }
