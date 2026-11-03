@@ -375,7 +375,10 @@ public final class BytecodeTranslator {
             }
             b.beginReturn();
             if (Translator.checkedReturn(function, generator) != null) {
+                // the TypeError is at the closing brace
+                beginLine(declaration.endLine);
                 b.emitNoneReturned();
+                endLine(declaration.endLine);
             } else if (returnsRef()) {
                 b.emitImplicitReturnRef(declaration.endLine);
             } else {

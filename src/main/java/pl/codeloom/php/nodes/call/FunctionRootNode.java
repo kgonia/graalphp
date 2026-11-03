@@ -428,7 +428,7 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
 
     /**
      * describeCall for any function's frame: its display name, the class it is declared in (or null), its
-     * parameters, the frame's arguments and the current value of the variable of parameter i (null when unset).
+     * parameters, the frame's arguments and the current value of the variable of parameter i (null when unbound).
      */
     public static void describeCall(String name, String className, PhpFunction.Param[] params, Object[] arguments,
                                     IntFunction<Object> parameter, PhpArray entry, int options) {
@@ -450,9 +450,9 @@ public final class FunctionRootNode extends RootNode implements SourceLocation.C
             int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1
                     : params.length;
             for (int i = 0; i < arguments.length - PhpFunction.ARG_FIRST; i++) {
-                Object value = i < declared ? parameter.apply(i)
-                        : arguments[PhpFunction.ARG_FIRST + i];
-                value = PhpRef.deref(value);
+                Object value = i < declared ? parameter.apply(i) : null;
+                // a parameter not bound yet (its argument failed its type) shows the argument, as php-src's slot
+                value = PhpRef.deref(value == null ? arguments[PhpFunction.ARG_FIRST + i] : value);
                 args.append(value == null ? PhpNull.NULL : value);
             }
         }
