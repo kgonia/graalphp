@@ -25,6 +25,11 @@
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 
+## Build
+GraalVM JDK 25.4.4.1.1 and Maven. Once per machine, `bash truffle-dsl-processor/build.sh`: it installs the Truffle DSL
+processor with two Bytecode DSL fixes not yet released, which `pom.xml` requires
+([truffle-dsl-processor/README.md](../truffle-dsl-processor/README.md)). Then `mvn clean package`.
+
 ## Checks before merging a change to the interpreter
 | Check | Command | Passes when |
 |---|---|---|
