@@ -1,1212 +1,3003 @@
-abs	1	num
-acos	1	num
-acosh	1	num
-addcslashes	2	string,characters
-addslashes	1	string
-array_all	2	array,callback
-array_any	2	array,callback
-array_change_key_case	1	array,case
-array_chunk	2	array,length,preserve_keys
-array_column	2	array,column_key,index_key
-array_combine	2	keys,values
-array_count_values	1	array
-array_diff	1	array,...arrays
-array_diff_assoc	1	array,...arrays
-array_diff_key	1	array,...arrays
-array_diff_uassoc	1	array,...rest
-array_diff_ukey	1	array,...rest
-array_fill	3	start_index,count,value
-array_fill_keys	2	keys,value
-array_filter	1	array,callback,mode
-array_find	2	array,callback
-array_find_key	2	array,callback
-array_first	1	array
-array_flip	1	array
-array_intersect	1	array,...arrays
-array_intersect_assoc	1	array,...arrays
-array_intersect_key	1	array,...arrays
-array_intersect_uassoc	1	array,...rest
-array_intersect_ukey	1	array,...rest
-array_is_list	1	array
-array_key_exists	2	key,array
-array_key_first	1	array
-array_key_last	1	array
-array_keys	1	array,filter_value,strict
-array_last	1	array
-array_map	2	callback,array,...arrays
-array_merge	0	...arrays
-array_merge_recursive	0	...arrays
-array_multisort	1	&array,&...rest
-array_pad	3	array,length,value
-array_pop	1	&array
-array_product	1	array
-array_push	1	&array,...values
-array_rand	1	array,num
-array_reduce	2	array,callback,initial
-array_replace	1	array,...replacements
-array_replace_recursive	1	array,...replacements
-array_reverse	1	array,preserve_keys
-array_search	2	needle,haystack,strict
-array_shift	1	&array
-array_slice	2	array,offset,length,preserve_keys
-array_splice	2	&array,offset,length,replacement
-array_sum	1	array
-array_udiff	1	array,...rest
-array_udiff_assoc	1	array,...rest
-array_udiff_uassoc	1	array,...rest
-array_uintersect	1	array,...rest
-array_uintersect_assoc	1	array,...rest
-array_uintersect_uassoc	1	array,...rest
-array_unique	1	array,flags
-array_unshift	1	&array,...values
-array_values	1	array
-array_walk	2	&array,callback,arg
-array_walk_recursive	2	&array,callback,arg
-arsort	1	&array,flags
-asin	1	num
-asinh	1	num
-asort	1	&array,flags
-assert	1	assertion,description
-assert_options	1	option,value
-atan	1	num
-atan2	2	y,x
-atanh	1	num
-base64_decode	1	string,strict
-base64_encode	1	string
-base_convert	3	num,from_base,to_base
-basename	1	path,suffix
-bin2hex	1	string
-bindec	1	binary_string
-boolval	1	value
-call_user_func	1	callback,...args
-call_user_func_array	2	callback,args
-ceil	1	num
-chdir	1	directory
-checkdate	3	month,day,year
-checkdnsrr	1	hostname,type
-chgrp	2	filename,group
-chmod	2	filename,permissions
-chop	1	string,characters
-chown	2	filename,user
-chr	1	codepoint
-chroot	1	directory
-chunk_split	1	string,length,separator
-class_alias	2	class,alias,autoload
-class_exists	1	class,autoload
-class_implements	1	object_or_class,autoload
-class_parents	1	object_or_class,autoload
-class_uses	1	object_or_class,autoload
-clearstatcache	0	clear_realpath_cache,filename
-cli_get_process_title	0	
-cli_set_process_title	1	title
-clone	1	object,withProperties
-closedir	0	dir_handle
-closelog	0	
-compact	1	var_name,...var_names
-connection_aborted	0	
-connection_status	0	
-constant	1	name
-convert_uudecode	1	string
-convert_uuencode	1	string
-copy	2	from,to,context
-cos	1	num
-cosh	1	num
-count	1	value,mode
-count_chars	1	string,mode
-crc32	1	string
-crypt	2	string,salt
-ctype_alnum	1	text
-ctype_alpha	1	text
-ctype_cntrl	1	text
-ctype_digit	1	text
-ctype_graph	1	text
-ctype_lower	1	text
-ctype_print	1	text
-ctype_punct	1	text
-ctype_space	1	text
-ctype_upper	1	text
-ctype_xdigit	1	text
-curl_close	1	handle
-curl_copy_handle	1	handle
-curl_errno	1	handle
-curl_error	1	handle
-curl_escape	2	handle,string
-curl_exec	1	handle
-curl_file_create	1	filename,mime_type,posted_filename
-curl_getinfo	1	handle,option
-curl_init	0	url
-curl_multi_add_handle	2	multi_handle,handle
-curl_multi_close	1	multi_handle
-curl_multi_errno	1	multi_handle
-curl_multi_exec	2	multi_handle,&still_running
-curl_multi_get_handles	1	multi_handle
-curl_multi_getcontent	1	handle
-curl_multi_info_read	1	multi_handle,&queued_messages
-curl_multi_init	0	
-curl_multi_remove_handle	2	multi_handle,handle
-curl_multi_select	1	multi_handle,timeout
-curl_multi_setopt	3	multi_handle,option,value
-curl_multi_strerror	1	error_code
-curl_pause	2	handle,flags
-curl_reset	1	handle
-curl_setopt	3	handle,option,value
-curl_setopt_array	2	handle,options
-curl_share_close	1	share_handle
-curl_share_errno	1	share_handle
-curl_share_init	0	
-curl_share_init_persistent	1	share_options
-curl_share_setopt	3	share_handle,option,value
-curl_share_strerror	1	error_code
-curl_strerror	1	error_code
-curl_unescape	2	handle,string
-curl_upkeep	1	handle
-curl_version	0	
-current	1	array
-date	1	format,timestamp
-date_add	2	object,interval
-date_create	0	datetime,timezone
-date_create_from_format	2	format,datetime,timezone
-date_create_immutable	0	datetime,timezone
-date_create_immutable_from_format	2	format,datetime,timezone
-date_date_set	4	object,year,month,day
-date_default_timezone_get	0	
-date_default_timezone_set	1	timezoneId
-date_diff	2	baseObject,targetObject,absolute
-date_format	2	object,format
-date_get_last_errors	0	
-date_interval_create_from_date_string	1	datetime
-date_interval_format	2	object,format
-date_isodate_set	3	object,year,week,dayOfWeek
-date_modify	2	object,modifier
-date_offset_get	1	object
-date_parse	1	datetime
-date_parse_from_format	2	format,datetime
-date_sub	2	object,interval
-date_sun_info	3	timestamp,latitude,longitude
-date_sunrise	1	timestamp,returnFormat,latitude,longitude,zenith,utcOffset
-date_sunset	1	timestamp,returnFormat,latitude,longitude,zenith,utcOffset
-date_time_set	3	object,hour,minute,second,microsecond
-date_timestamp_get	1	object
-date_timestamp_set	2	object,timestamp
-date_timezone_get	1	object
-date_timezone_set	2	object,timezone
-debug_backtrace	0	options,limit
-debug_print_backtrace	0	options,limit
-debug_zval_dump	1	value,...values
-decbin	1	num
-dechex	1	num
-decoct	1	num
-define	2	constant_name,value,case_insensitive
-defined	1	constant_name
-deflate_add	2	context,data,flush_mode
-deflate_init	1	encoding,options
-deg2rad	1	num
-die	0	status
-dir	1	directory,context
-dirname	1	path,levels
-disk_free_space	1	directory
-disk_total_space	1	directory
-diskfreespace	1	directory
-dl	1	extension_filename
-dns_check_record	1	hostname,type
-dns_get_mx	2	hostname,&hosts,&weights
-dns_get_record	1	hostname,type,&authoritative_name_servers,&additional_records,raw
-dom\import_simplexml	1	node
-dom_import_simplexml	1	node
-doubleval	1	value
-end	1	&array
-enum_exists	1	enum,autoload
-error_clear_last	0	
-error_get_last	0	
-error_log	1	message,message_type,destination,additional_headers
-error_reporting	0	error_level
-escapeshellarg	1	arg
-escapeshellcmd	1	command
-exec	1	command,&output,&result_code
-exit	0	status
-exp	1	num
-explode	2	separator,string,limit
-expm1	1	num
-extension_loaded	1	extension
-extract	1	&array,flags,prefix
-fclose	1	stream
-fdatasync	1	stream
-fdiv	2	num1,num2
-feof	1	stream
-fflush	1	stream
-fgetc	1	stream
-fgetcsv	1	stream,length,separator,enclosure,escape
-fgets	1	stream,length
-file	1	filename,flags,context
-file_exists	1	filename
-file_get_contents	1	filename,use_include_path,context,offset,length
-file_put_contents	2	filename,data,flags,context
-fileatime	1	filename
-filectime	1	filename
-filegroup	1	filename
-fileinode	1	filename
-filemtime	1	filename
-fileowner	1	filename
-fileperms	1	filename
-filesize	1	filename
-filetype	1	filename
-filter_has_var	2	input_type,var_name
-filter_id	1	name
-filter_input	2	type,var_name,filter,options
-filter_input_array	1	type,options,add_empty
-filter_list	0	
-filter_var	1	value,filter,options
-filter_var_array	1	array,options,add_empty
-finfo_buffer	2	finfo,string,flags,context
-finfo_close	1	finfo
-finfo_file	2	finfo,filename,flags,context
-finfo_open	0	flags,magic_database
-finfo_set_flags	2	finfo,flags
-floatval	1	value
-flock	2	stream,operation,&would_block
-floor	1	num
-flush	0	
-fmod	2	num1,num2
-fnmatch	2	pattern,filename,flags
-fopen	2	filename,mode,use_include_path,context
-forward_static_call	1	callback,...args
-forward_static_call_array	2	callback,args
-fpassthru	1	stream
-fpow	2	num,exponent
-fprintf	2	stream,format,...values
-fputcsv	2	stream,fields,separator,enclosure,escape,eol
-fputs	2	stream,data,length
-fread	2	stream,length
-fscanf	2	stream,format,&...vars
-fseek	2	stream,offset,whence
-fsockopen	1	hostname,port,&error_code,&error_message,timeout
-fstat	1	stream
-fsync	1	stream
-ftell	1	stream
-ftok	2	filename,project_id
-ftruncate	2	stream,size
-func_get_arg	1	position
-func_get_args	0	
-func_num_args	0	
-function_exists	1	function
-fwrite	2	stream,data,length
-gc_collect_cycles	0	
-gc_disable	0	
-gc_enable	0	
-gc_enabled	0	
-gc_mem_caches	0	
-gc_status	0	
-get_browser	0	user_agent,return_array
-get_called_class	0	
-get_cfg_var	1	option
-get_class	0	object
-get_class_methods	1	object_or_class
-get_class_vars	1	class
-get_current_user	0	
-get_debug_type	1	value
-get_declared_classes	0	
-get_declared_interfaces	0	
-get_declared_traits	0	
-get_defined_constants	0	categorize
-get_defined_functions	0	exclude_disabled
-get_defined_vars	0	
-get_error_handler	0	
-get_exception_handler	0	
-get_extension_funcs	1	extension
-get_headers	1	url,associative,context
-get_html_translation_table	0	table,flags,encoding
-get_include_path	0	
-get_included_files	0	
-get_loaded_extensions	0	zend_extensions
-get_mangled_object_vars	1	object
-get_meta_tags	1	filename,use_include_path
-get_object_vars	1	object
-get_parent_class	0	object_or_class
-get_required_files	0	
-get_resource_id	1	resource
-get_resource_type	1	resource
-get_resources	0	type
-getcwd	0	
-getdate	0	timestamp
-getenv	0	name,local_only
-gethostbyaddr	1	ip
-gethostbyname	1	hostname
-gethostbynamel	1	hostname
-gethostname	0	
-getimagesize	1	filename,&image_info
-getimagesizefromstring	1	string,&image_info
-getlastmod	0	
-getmxrr	2	hostname,&hosts,&weights
-getmygid	0	
-getmyinode	0	
-getmypid	0	
-getmyuid	0	
-getopt	1	short_options,long_options,&rest_index
-getprotobyname	1	protocol
-getprotobynumber	1	protocol
-getrandmax	0	
-getrusage	0	mode
-getservbyname	2	service,protocol
-getservbyport	2	port,protocol
-gettimeofday	0	as_float
-gettype	1	value
-glob	1	pattern,flags
-gmdate	1	format,timestamp
-gmmktime	1	hour,minute,second,month,day,year
-gmstrftime	1	format,timestamp
-gzclose	1	stream
-gzcompress	1	data,level,encoding
-gzdecode	1	data,max_length
-gzdeflate	1	data,level,encoding
-gzencode	1	data,level,encoding
-gzeof	1	stream
-gzfile	1	filename,use_include_path
-gzgetc	1	stream
-gzgets	1	stream,length
-gzinflate	1	data,max_length
-gzopen	2	filename,mode,use_include_path
-gzpassthru	1	stream
-gzputs	2	stream,data,length
-gzread	2	stream,length
-gzrewind	1	stream
-gzseek	2	stream,offset,whence
-gztell	1	stream
-gzuncompress	1	data,max_length
-gzwrite	2	stream,data,length
-hash	2	algo,data,binary,options
-hash_algos	0	
-hash_copy	1	context
-hash_equals	2	known_string,user_string
-hash_file	2	algo,filename,binary,options
-hash_final	1	context,binary
-hash_hkdf	2	algo,key,length,info,salt
-hash_hmac	3	algo,data,key,binary
-hash_hmac_algos	0	
-hash_hmac_file	3	algo,filename,key,binary
-hash_init	1	algo,flags,key,options
-hash_pbkdf2	4	algo,password,salt,iterations,length,binary,options
-hash_update	2	context,data
-hash_update_file	2	context,filename,stream_context
-hash_update_stream	2	context,stream,length
-header	1	header,replace,response_code
-header_register_callback	1	callback
-header_remove	0	name
-headers_list	0	
-headers_sent	0	&filename,&line
-hebrev	1	string,max_chars_per_line
-hex2bin	1	string
-hexdec	1	hex_string
-highlight_file	1	filename,return
-highlight_string	1	string,return
-hrtime	0	as_number
-html_entity_decode	1	string,flags,encoding
-htmlentities	1	string,flags,encoding,double_encode
-htmlspecialchars	1	string,flags,encoding,double_encode
-htmlspecialchars_decode	1	string,flags
-http_build_query	1	data,numeric_prefix,arg_separator,encoding_type
-http_clear_last_response_headers	0	
-http_get_last_response_headers	0	
-http_response_code	0	response_code
-hypot	2	x,y
-iconv	3	from_encoding,to_encoding,string
-iconv_get_encoding	0	type
-iconv_mime_decode	1	string,mode,encoding
-iconv_mime_decode_headers	1	headers,mode,encoding
-iconv_mime_encode	2	field_name,field_value,options
-iconv_set_encoding	2	type,encoding
-iconv_strlen	1	string,encoding
-iconv_strpos	2	haystack,needle,offset,encoding
-iconv_strrpos	2	haystack,needle,encoding
-iconv_substr	2	string,offset,length,encoding
-idate	1	format,timestamp
-ignore_user_abort	0	enable
-image_type_to_extension	1	image_type,include_dot
-image_type_to_mime_type	1	image_type
-implode	1	separator,array
-in_array	2	needle,haystack,strict
-inet_ntop	1	ip
-inet_pton	1	ip
-inflate_add	2	context,data,flush_mode
-inflate_get_read_len	1	context
-inflate_get_status	1	context
-inflate_init	1	encoding,options
-ini_alter	2	option,value
-ini_get	1	option
-ini_get_all	0	extension,details
-ini_parse_quantity	1	shorthand
-ini_restore	1	option
-ini_set	2	option,value
-intdiv	2	num1,num2
-interface_exists	1	interface,autoload
-intval	1	value,base
-ip2long	1	ip
-iptcembed	2	iptc_data,filename,spool
-iptcparse	1	iptc_block
-is_a	2	object_or_class,class,allow_string
-is_array	1	value
-is_bool	1	value
-is_callable	1	value,syntax_only,&callable_name
-is_countable	1	value
-is_dir	1	filename
-is_double	1	value
-is_executable	1	filename
-is_file	1	filename
-is_finite	1	num
-is_float	1	value
-is_infinite	1	num
-is_int	1	value
-is_integer	1	value
-is_iterable	1	value
-is_link	1	filename
-is_long	1	value
-is_nan	1	num
-is_null	1	value
-is_numeric	1	value
-is_object	1	value
-is_readable	1	filename
-is_resource	1	value
-is_scalar	1	value
-is_string	1	value
-is_subclass_of	2	object_or_class,class,allow_string
-is_uploaded_file	1	filename
-is_writable	1	filename
-is_writeable	1	filename
-iterator_apply	2	iterator,callback,args
-iterator_count	1	iterator
-iterator_to_array	1	iterator,preserve_keys
-join	1	separator,array
-json_decode	1	json,associative,depth,flags
-json_encode	1	value,flags,depth
-json_last_error	0	
-json_last_error_msg	0	
-json_validate	1	json,depth,flags
-key	1	array
-key_exists	2	key,array
-krsort	1	&array,flags
-ksort	1	&array,flags
-lcfirst	1	string
-lcg_value	0	
-lchgrp	2	filename,group
-lchown	2	filename,user
-levenshtein	2	string1,string2,insertion_cost,replacement_cost,deletion_cost
-libxml_clear_errors	0	
-libxml_disable_entity_loader	0	disable
-libxml_get_errors	0	
-libxml_get_external_entity_loader	0	
-libxml_get_last_error	0	
-libxml_set_external_entity_loader	1	resolver_function
-libxml_set_streams_context	1	context
-libxml_use_internal_errors	0	use_errors
-link	2	target,link
-linkinfo	1	path
-localeconv	0	
-localtime	0	timestamp,associative
-log	1	num,base
-log10	1	num
-log1p	1	num
-long2ip	1	ip
-lstat	1	filename
-ltrim	1	string,characters
-mail	3	to,subject,message,additional_headers,additional_params
-max	1	value,...values
-mb_check_encoding	0	value,encoding
-mb_chr	1	codepoint,encoding
-mb_convert_case	2	string,mode,encoding
-mb_convert_encoding	2	string,to_encoding,from_encoding
-mb_convert_kana	1	string,mode,encoding
-mb_convert_variables	3	to_encoding,from_encoding,&var,&...vars
-mb_decode_mimeheader	1	string
-mb_decode_numericentity	2	string,map,encoding
-mb_detect_encoding	1	string,encodings,strict
-mb_detect_order	0	encoding
-mb_encode_mimeheader	1	string,charset,transfer_encoding,newline,indent
-mb_encode_numericentity	2	string,map,encoding,hex
-mb_encoding_aliases	1	encoding
-mb_ereg	2	pattern,string,&matches
-mb_ereg_match	2	pattern,string,options
-mb_ereg_replace	3	pattern,replacement,string,options
-mb_ereg_replace_callback	3	pattern,callback,string,options
-mb_ereg_search	0	pattern,options
-mb_ereg_search_getpos	0	
-mb_ereg_search_getregs	0	
-mb_ereg_search_init	1	string,pattern,options
-mb_ereg_search_pos	0	pattern,options
-mb_ereg_search_regs	0	pattern,options
-mb_ereg_search_setpos	1	offset
-mb_eregi	2	pattern,string,&matches
-mb_eregi_replace	3	pattern,replacement,string,options
-mb_get_info	0	type
-mb_http_input	0	type
-mb_http_output	0	encoding
-mb_internal_encoding	0	encoding
-mb_language	0	language
-mb_lcfirst	1	string,encoding
-mb_list_encodings	0	
-mb_ltrim	1	string,characters,encoding
-mb_ord	1	string,encoding
-mb_output_handler	2	string,status
-mb_parse_str	2	string,&result
-mb_preferred_mime_name	1	encoding
-mb_regex_encoding	0	encoding
-mb_regex_set_options	0	options
-mb_rtrim	1	string,characters,encoding
-mb_scrub	1	string,encoding
-mb_send_mail	3	to,subject,message,additional_headers,additional_params
-mb_split	2	pattern,string,limit
-mb_str_pad	2	string,length,pad_string,pad_type,encoding
-mb_str_split	1	string,length,encoding
-mb_strcut	2	string,start,length,encoding
-mb_strimwidth	3	string,start,width,trim_marker,encoding
-mb_stripos	2	haystack,needle,offset,encoding
-mb_stristr	2	haystack,needle,before_needle,encoding
-mb_strlen	1	string,encoding
-mb_strpos	2	haystack,needle,offset,encoding
-mb_strrchr	2	haystack,needle,before_needle,encoding
-mb_strrichr	2	haystack,needle,before_needle,encoding
-mb_strripos	2	haystack,needle,offset,encoding
-mb_strrpos	2	haystack,needle,offset,encoding
-mb_strstr	2	haystack,needle,before_needle,encoding
-mb_strtolower	1	string,encoding
-mb_strtoupper	1	string,encoding
-mb_strwidth	1	string,encoding
-mb_substitute_character	0	substitute_character
-mb_substr	2	string,start,length,encoding
-mb_substr_count	2	haystack,needle,encoding
-mb_trim	1	string,characters,encoding
-mb_ucfirst	1	string,encoding
-md5	1	string,binary
-md5_file	1	filename,binary
-memory_get_peak_usage	0	real_usage
-memory_get_usage	0	real_usage
-memory_reset_peak_usage	0	
-metaphone	1	string,max_phonemes
-method_exists	2	object_or_class,method
-mhash	2	algo,data,key
-mhash_count	0	
-mhash_get_block_size	1	algo
-mhash_get_hash_name	1	algo
-mhash_keygen_s2k	4	algo,password,salt,length
-microtime	0	as_float
-mime_content_type	1	filename
-min	1	value,...values
-mkdir	1	directory,permissions,recursive,context
-mktime	1	hour,minute,second,month,day,year
-move_uploaded_file	2	from,to
-mt_getrandmax	0	
-mt_rand	0	min,max
-mt_srand	0	seed,mode
-natcasesort	1	&array
-natsort	1	&array
-net_get_interfaces	0	
-next	1	&array
-nl2br	1	string,use_xhtml
-nl_langinfo	1	item
-number_format	1	num,decimals,decimal_separator,thousands_separator
-ob_clean	0	
-ob_end_clean	0	
-ob_end_flush	0	
-ob_flush	0	
-ob_get_clean	0	
-ob_get_contents	0	
-ob_get_flush	0	
-ob_get_length	0	
-ob_get_level	0	
-ob_get_status	0	full_status
-ob_gzhandler	2	data,flags
-ob_implicit_flush	0	enable
-ob_list_handlers	0	
-ob_start	0	callback,chunk_size,flags
-octdec	1	octal_string
-opcache_compile_file	1	filename
-opcache_get_configuration	0	
-opcache_get_status	0	include_scripts
-opcache_invalidate	1	filename,force
-opcache_is_script_cached	1	filename
-opcache_is_script_cached_in_file_cache	1	filename
-opcache_jit_blacklist	1	closure
-opcache_reset	0	
-opendir	1	directory,context
-openlog	3	prefix,flags,facility
-openssl_cipher_iv_length	1	cipher_algo
-openssl_cipher_key_length	1	cipher_algo
-openssl_cms_decrypt	3	input_filename,output_filename,certificate,private_key,encoding
-openssl_cms_encrypt	4	input_filename,output_filename,certificate,headers,flags,encoding,cipher_algo
-openssl_cms_read	2	input_filename,&certificates
-openssl_cms_sign	5	input_filename,output_filename,certificate,private_key,headers,flags,encoding,untrusted_certificates_filename
-openssl_cms_verify	1	input_filename,flags,certificates,ca_info,untrusted_certificates_filename,content,pk7,sigfile,encoding
-openssl_csr_export	2	csr,&output,no_text
-openssl_csr_export_to_file	2	csr,output_filename,no_text
-openssl_csr_get_public_key	1	csr,short_names
-openssl_csr_get_subject	1	csr,short_names
-openssl_csr_new	2	distinguished_names,&private_key,options,extra_attributes
-openssl_csr_sign	4	csr,ca_certificate,private_key,days,options,serial,serial_hex
-openssl_decrypt	3	data,cipher_algo,passphrase,options,iv,tag,aad
-openssl_dh_compute_key	2	public_key,private_key
-openssl_digest	2	data,digest_algo,binary
-openssl_encrypt	3	data,cipher_algo,passphrase,options,iv,&tag,aad,tag_length
-openssl_error_string	0	
-openssl_free_key	1	key
-openssl_get_cert_locations	0	
-openssl_get_cipher_methods	0	aliases
-openssl_get_curve_names	0	
-openssl_get_md_methods	0	aliases
-openssl_get_privatekey	1	private_key,passphrase
-openssl_get_publickey	1	public_key
-openssl_open	5	data,&output,encrypted_key,private_key,cipher_algo,iv
-openssl_pbkdf2	4	password,salt,key_length,iterations,digest_algo
-openssl_pkcs12_export	4	certificate,&output,private_key,passphrase,options
-openssl_pkcs12_export_to_file	4	certificate,output_filename,private_key,passphrase,options
-openssl_pkcs12_read	3	pkcs12,&certificates,passphrase
-openssl_pkcs7_decrypt	3	input_filename,output_filename,certificate,private_key
-openssl_pkcs7_encrypt	4	input_filename,output_filename,certificate,headers,flags,cipher_algo
-openssl_pkcs7_read	2	data,&certificates
-openssl_pkcs7_sign	5	input_filename,output_filename,certificate,private_key,headers,flags,untrusted_certificates_filename
-openssl_pkcs7_verify	2	input_filename,flags,signers_certificates_filename,ca_info,untrusted_certificates_filename,content,output_filename
-openssl_pkey_derive	2	public_key,private_key,key_length
-openssl_pkey_export	2	key,&output,passphrase,options
-openssl_pkey_export_to_file	2	key,output_filename,passphrase,options
-openssl_pkey_free	1	key
-openssl_pkey_get_details	1	key
-openssl_pkey_get_private	1	private_key,passphrase
-openssl_pkey_get_public	1	public_key
-openssl_pkey_new	0	options
-openssl_private_decrypt	3	data,&decrypted_data,private_key,padding,digest_algo
-openssl_private_encrypt	3	data,&encrypted_data,private_key,padding
-openssl_public_decrypt	3	data,&decrypted_data,public_key,padding
-openssl_public_encrypt	3	data,&encrypted_data,public_key,padding,digest_algo
-openssl_random_pseudo_bytes	1	length,&strong_result
-openssl_seal	5	data,&sealed_data,&encrypted_keys,public_key,cipher_algo,&iv
-openssl_sign	3	data,&signature,private_key,algorithm,padding
-openssl_spki_export	1	spki
-openssl_spki_export_challenge	1	spki
-openssl_spki_new	2	private_key,challenge,digest_algo
-openssl_spki_verify	1	spki
-openssl_verify	3	data,signature,public_key,algorithm,padding
-openssl_x509_check_private_key	2	certificate,private_key
-openssl_x509_checkpurpose	2	certificate,purpose,ca_info,untrusted_certificates_file
-openssl_x509_export	2	certificate,&output,no_text
-openssl_x509_export_to_file	2	certificate,output_filename,no_text
-openssl_x509_fingerprint	1	certificate,digest_algo,binary
-openssl_x509_free	1	certificate
-openssl_x509_parse	1	certificate,short_names
-openssl_x509_read	1	certificate
-openssl_x509_verify	2	certificate,public_key
-ord	1	character
-output_add_rewrite_var	2	name,value
-output_reset_rewrite_vars	0	
-pack	1	format,...values
-parse_ini_file	1	filename,process_sections,scanner_mode
-parse_ini_string	1	ini_string,process_sections,scanner_mode
-parse_str	2	string,&result
-parse_url	1	url,component
-passthru	1	command,&result_code
-password_algos	0	
-password_get_info	1	hash
-password_hash	2	password,algo,options
-password_needs_rehash	2	hash,algo,options
-password_verify	2	password,hash
-pathinfo	1	path,flags
-pclose	1	handle
-pdo_drivers	0	
-pfsockopen	1	hostname,port,&error_code,&error_message,timeout
-php_ini_loaded_file	0	
-php_ini_scanned_files	0	
-php_sapi_name	0	
-php_strip_whitespace	1	filename
-php_uname	0	mode
-phpcredits	0	flags
-phpinfo	0	flags
-phpversion	0	extension
-pi	0	
-popen	2	command,mode
-pos	1	array
-posix_access	1	filename,flags
-posix_ctermid	0	
-posix_eaccess	1	filename,flags
-posix_errno	0	
-posix_fpathconf	2	file_descriptor,name
-posix_get_last_error	0	
-posix_getcwd	0	
-posix_getegid	0	
-posix_geteuid	0	
-posix_getgid	0	
-posix_getgrgid	1	group_id
-posix_getgrnam	1	name
-posix_getgroups	0	
-posix_getlogin	0	
-posix_getpgid	1	process_id
-posix_getpgrp	0	
-posix_getpid	0	
-posix_getppid	0	
-posix_getpwnam	1	username
-posix_getpwuid	1	user_id
-posix_getrlimit	0	resource
-posix_getsid	1	process_id
-posix_getuid	0	
-posix_initgroups	2	username,group_id
-posix_isatty	1	file_descriptor
-posix_kill	2	process_id,signal
-posix_mkfifo	2	filename,permissions
-posix_mknod	2	filename,flags,major,minor
-posix_pathconf	2	path,name
-posix_setegid	1	group_id
-posix_seteuid	1	user_id
-posix_setgid	1	group_id
-posix_setpgid	2	process_id,process_group_id
-posix_setrlimit	3	resource,soft_limit,hard_limit
-posix_setsid	0	
-posix_setuid	1	user_id
-posix_strerror	1	error_code
-posix_sysconf	1	conf_id
-posix_times	0	
-posix_ttyname	1	file_descriptor
-posix_uname	0	
-pow	2	num,exponent
-preg_filter	3	pattern,replacement,subject,limit,&count
-preg_grep	2	pattern,array,flags
-preg_last_error	0	
-preg_last_error_msg	0	
-preg_match	2	pattern,subject,&matches,flags,offset
-preg_match_all	2	pattern,subject,&matches,flags,offset
-preg_quote	1	str,delimiter
-preg_replace	3	pattern,replacement,subject,limit,&count
-preg_replace_callback	3	pattern,callback,subject,limit,&count,flags
-preg_replace_callback_array	2	pattern,subject,limit,&count,flags
-preg_split	2	pattern,subject,limit,flags
-prev	1	&array
-print_r	1	value,return
-printf	1	format,...values
-proc_close	1	process
-proc_get_status	1	process
-proc_nice	1	priority
-proc_open	3	command,descriptor_spec,&pipes,cwd,env_vars,options
-proc_terminate	1	process,signal
-property_exists	2	object_or_class,property
-putenv	1	assignment
-quoted_printable_decode	1	string
-quoted_printable_encode	1	string
-quotemeta	1	string
-rad2deg	1	num
-rand	0	min,max
-random_bytes	1	length
-random_int	2	min,max
-range	2	start,end,step
-rawurldecode	1	string
-rawurlencode	1	string
-readdir	0	dir_handle
-readfile	1	filename,use_include_path,context
-readgzfile	1	filename,use_include_path
-readline	0	prompt
-readline_add_history	1	prompt
-readline_callback_handler_install	2	prompt,callback
-readline_callback_handler_remove	0	
-readline_callback_read_char	0	
-readline_clear_history	0	
-readline_completion_function	1	callback
-readline_info	0	var_name,value
-readline_list_history	0	
-readline_on_new_line	0	
-readline_read_history	0	filename
-readline_redisplay	0	
-readline_write_history	0	filename
-readlink	1	path
-realpath	1	path
-realpath_cache_get	0	
-realpath_cache_size	0	
-register_shutdown_function	1	callback,...args
-register_tick_function	1	callback,...args
-rename	2	from,to,context
-request_parse_body	0	options
-reset	1	&array
-restore_error_handler	0	
-restore_exception_handler	0	
-rewind	1	stream
-rewinddir	0	dir_handle
-rmdir	1	directory,context
-round	1	num,precision,mode
-rsort	1	&array,flags
-rtrim	1	string,characters
-scandir	1	directory,sorting_order,context
-serialize	1	value
-session_abort	0	
-session_cache_expire	0	value
-session_cache_limiter	0	value
-session_commit	0	
-session_create_id	0	prefix
-session_decode	1	data
-session_destroy	0	
-session_encode	0	
-session_gc	0	
-session_get_cookie_params	0	
-session_id	0	id
-session_module_name	0	module
-session_name	0	name
-session_regenerate_id	0	delete_old_session
-session_register_shutdown	0	
-session_reset	0	
-session_save_path	0	path
-session_set_cookie_params	1	lifetime_or_options,path,domain,secure,httponly
-session_set_save_handler	1	open,close,read,write,destroy,gc,create_sid,validate_sid,update_timestamp
-session_start	0	options
-session_status	0	
-session_unset	0	
-session_write_close	0	
-set_error_handler	1	callback,error_levels
-set_exception_handler	1	callback
-set_file_buffer	2	stream,size
-set_include_path	1	include_path
-set_time_limit	1	seconds
-setcookie	1	name,value,expires_or_options,path,domain,secure,httponly
-setlocale	2	category,locales,...rest
-setrawcookie	1	name,value,expires_or_options,path,domain,secure,httponly
-settype	2	&var,type
-sha1	1	string,binary
-sha1_file	1	filename,binary
-shell_exec	1	command
-show_source	1	filename,return
-shuffle	1	&array
-similar_text	2	string1,string2,&percent
-simplexml_import_dom	1	node,class_name
-simplexml_load_file	1	filename,class_name,options,namespace_or_prefix,is_prefix
-simplexml_load_string	1	data,class_name,options,namespace_or_prefix,is_prefix
-sin	1	num
-sinh	1	num
-sizeof	1	value,mode
-sleep	1	seconds
-socket_get_status	1	stream
-socket_set_blocking	2	stream,enable
-socket_set_timeout	2	stream,seconds,microseconds
-sodium_add	2	&string1,string2
-sodium_base642bin	2	string,id,ignore
-sodium_bin2base64	2	string,id
-sodium_bin2hex	1	string
-sodium_compare	2	string1,string2
-sodium_crypto_aead_aes256gcm_decrypt	4	ciphertext,additional_data,nonce,key
-sodium_crypto_aead_aes256gcm_encrypt	4	message,additional_data,nonce,key
-sodium_crypto_aead_aes256gcm_is_available	0	
-sodium_crypto_aead_aes256gcm_keygen	0	
-sodium_crypto_aead_chacha20poly1305_decrypt	4	ciphertext,additional_data,nonce,key
-sodium_crypto_aead_chacha20poly1305_encrypt	4	message,additional_data,nonce,key
-sodium_crypto_aead_chacha20poly1305_ietf_decrypt	4	ciphertext,additional_data,nonce,key
-sodium_crypto_aead_chacha20poly1305_ietf_encrypt	4	message,additional_data,nonce,key
-sodium_crypto_aead_chacha20poly1305_ietf_keygen	0	
-sodium_crypto_aead_chacha20poly1305_keygen	0	
-sodium_crypto_aead_xchacha20poly1305_ietf_decrypt	4	ciphertext,additional_data,nonce,key
-sodium_crypto_aead_xchacha20poly1305_ietf_encrypt	4	message,additional_data,nonce,key
-sodium_crypto_aead_xchacha20poly1305_ietf_keygen	0	
-sodium_crypto_auth	2	message,key
-sodium_crypto_auth_keygen	0	
-sodium_crypto_auth_verify	3	mac,message,key
-sodium_crypto_box	3	message,nonce,key_pair
-sodium_crypto_box_keypair	0	
-sodium_crypto_box_keypair_from_secretkey_and_publickey	2	secret_key,public_key
-sodium_crypto_box_open	3	ciphertext,nonce,key_pair
-sodium_crypto_box_publickey	1	key_pair
-sodium_crypto_box_publickey_from_secretkey	1	secret_key
-sodium_crypto_box_seal	2	message,public_key
-sodium_crypto_box_seal_open	2	ciphertext,key_pair
-sodium_crypto_box_secretkey	1	key_pair
-sodium_crypto_box_seed_keypair	1	seed
-sodium_crypto_core_ristretto255_add	2	p,q
-sodium_crypto_core_ristretto255_from_hash	1	s
-sodium_crypto_core_ristretto255_is_valid_point	1	s
-sodium_crypto_core_ristretto255_random	0	
-sodium_crypto_core_ristretto255_scalar_add	2	x,y
-sodium_crypto_core_ristretto255_scalar_complement	1	s
-sodium_crypto_core_ristretto255_scalar_invert	1	s
-sodium_crypto_core_ristretto255_scalar_mul	2	x,y
-sodium_crypto_core_ristretto255_scalar_negate	1	s
-sodium_crypto_core_ristretto255_scalar_random	0	
-sodium_crypto_core_ristretto255_scalar_reduce	1	s
-sodium_crypto_core_ristretto255_scalar_sub	2	x,y
-sodium_crypto_core_ristretto255_sub	2	p,q
-sodium_crypto_generichash	1	message,key,length
-sodium_crypto_generichash_final	1	&state,length
-sodium_crypto_generichash_init	0	key,length
-sodium_crypto_generichash_keygen	0	
-sodium_crypto_generichash_update	2	&state,message
-sodium_crypto_kdf_derive_from_key	4	subkey_length,subkey_id,context,key
-sodium_crypto_kdf_keygen	0	
-sodium_crypto_kx_client_session_keys	2	client_key_pair,server_key
-sodium_crypto_kx_keypair	0	
-sodium_crypto_kx_publickey	1	key_pair
-sodium_crypto_kx_secretkey	1	key_pair
-sodium_crypto_kx_seed_keypair	1	seed
-sodium_crypto_kx_server_session_keys	2	server_key_pair,client_key
-sodium_crypto_pwhash	5	length,password,salt,opslimit,memlimit,algo
-sodium_crypto_pwhash_scryptsalsa208sha256	5	length,password,salt,opslimit,memlimit
-sodium_crypto_pwhash_scryptsalsa208sha256_str	3	password,opslimit,memlimit
-sodium_crypto_pwhash_scryptsalsa208sha256_str_verify	2	hash,password
-sodium_crypto_pwhash_str	3	password,opslimit,memlimit
-sodium_crypto_pwhash_str_needs_rehash	3	password,opslimit,memlimit
-sodium_crypto_pwhash_str_verify	2	hash,password
-sodium_crypto_scalarmult	2	n,p
-sodium_crypto_scalarmult_base	1	secret_key
-sodium_crypto_scalarmult_ristretto255	2	n,p
-sodium_crypto_scalarmult_ristretto255_base	1	n
-sodium_crypto_secretbox	3	message,nonce,key
-sodium_crypto_secretbox_keygen	0	
-sodium_crypto_secretbox_open	3	ciphertext,nonce,key
-sodium_crypto_secretstream_xchacha20poly1305_init_pull	2	header,key
-sodium_crypto_secretstream_xchacha20poly1305_init_push	1	key
-sodium_crypto_secretstream_xchacha20poly1305_keygen	0	
-sodium_crypto_secretstream_xchacha20poly1305_pull	2	&state,ciphertext,additional_data
-sodium_crypto_secretstream_xchacha20poly1305_push	2	&state,message,additional_data,tag
-sodium_crypto_secretstream_xchacha20poly1305_rekey	1	&state
-sodium_crypto_shorthash	2	message,key
-sodium_crypto_shorthash_keygen	0	
-sodium_crypto_sign	2	message,secret_key
-sodium_crypto_sign_detached	2	message,secret_key
-sodium_crypto_sign_ed25519_pk_to_curve25519	1	public_key
-sodium_crypto_sign_ed25519_sk_to_curve25519	1	secret_key
-sodium_crypto_sign_keypair	0	
-sodium_crypto_sign_keypair_from_secretkey_and_publickey	2	secret_key,public_key
-sodium_crypto_sign_open	2	signed_message,public_key
-sodium_crypto_sign_publickey	1	key_pair
-sodium_crypto_sign_publickey_from_secretkey	1	secret_key
-sodium_crypto_sign_secretkey	1	key_pair
-sodium_crypto_sign_seed_keypair	1	seed
-sodium_crypto_sign_verify_detached	3	signature,message,public_key
-sodium_crypto_stream	3	length,nonce,key
-sodium_crypto_stream_keygen	0	
-sodium_crypto_stream_xchacha20	3	length,nonce,key
-sodium_crypto_stream_xchacha20_keygen	0	
-sodium_crypto_stream_xchacha20_xor	3	message,nonce,key
-sodium_crypto_stream_xchacha20_xor_ic	4	message,nonce,counter,key
-sodium_crypto_stream_xor	3	message,nonce,key
-sodium_hex2bin	1	string,ignore
-sodium_increment	1	&string
-sodium_memcmp	2	string1,string2
-sodium_memzero	1	&string
-sodium_pad	2	string,block_size
-sodium_unpad	2	string,block_size
-sort	1	&array,flags
-soundex	1	string
-spl_autoload	1	class,file_extensions
-spl_autoload_call	1	class
-spl_autoload_extensions	0	file_extensions
-spl_autoload_functions	0	
-spl_autoload_register	0	callback,throw,prepend
-spl_autoload_unregister	1	callback
-spl_classes	0	
-spl_object_hash	1	object
-spl_object_id	1	object
-sprintf	1	format,...values
-sqrt	1	num
-srand	0	seed,mode
-sscanf	2	string,format,&...vars
-stat	1	filename
-str_contains	2	haystack,needle
-str_decrement	1	string
-str_ends_with	2	haystack,needle
-str_getcsv	1	string,separator,enclosure,escape
-str_increment	1	string
-str_ireplace	3	search,replace,subject,&count
-str_pad	2	string,length,pad_string,pad_type
-str_repeat	2	string,times
-str_replace	3	search,replace,subject,&count
-str_rot13	1	string
-str_shuffle	1	string
-str_split	1	string,length
-str_starts_with	2	haystack,needle
-str_word_count	1	string,format,characters
-strcasecmp	2	string1,string2
-strchr	2	haystack,needle,before_needle
-strcmp	2	string1,string2
-strcoll	2	string1,string2
-strcspn	2	string,characters,offset,length
-stream_bucket_append	2	brigade,bucket
-stream_bucket_make_writeable	1	brigade
-stream_bucket_new	2	stream,buffer
-stream_bucket_prepend	2	brigade,bucket
-stream_context_create	0	options,params
-stream_context_get_default	0	options
-stream_context_get_options	1	stream_or_context
-stream_context_get_params	1	context
-stream_context_set_default	1	options
-stream_context_set_option	2	context,wrapper_or_options,option_name,value
-stream_context_set_options	2	context,options
-stream_context_set_params	2	context,params
-stream_copy_to_stream	2	from,to,length,offset
-stream_filter_append	2	stream,filter_name,mode,params
-stream_filter_prepend	2	stream,filter_name,mode,params
-stream_filter_register	2	filter_name,class
-stream_filter_remove	1	stream_filter
-stream_get_contents	1	stream,length,offset
-stream_get_filters	0	
-stream_get_line	2	stream,length,ending
-stream_get_meta_data	1	stream
-stream_get_transports	0	
-stream_get_wrappers	0	
-stream_is_local	1	stream
-stream_isatty	1	stream
-stream_register_wrapper	2	protocol,class,flags
-stream_resolve_include_path	1	filename
-stream_select	4	&read,&write,&except,seconds,microseconds
-stream_set_blocking	2	stream,enable
-stream_set_chunk_size	2	stream,size
-stream_set_read_buffer	2	stream,size
-stream_set_timeout	2	stream,seconds,microseconds
-stream_set_write_buffer	2	stream,size
-stream_socket_accept	1	socket,timeout,&peer_name
-stream_socket_client	1	address,&error_code,&error_message,timeout,flags,context
-stream_socket_enable_crypto	2	stream,enable,crypto_method,session_stream
-stream_socket_get_name	2	socket,remote
-stream_socket_pair	3	domain,type,protocol
-stream_socket_recvfrom	2	socket,length,flags,&address
-stream_socket_sendto	2	socket,data,flags,address
-stream_socket_server	1	address,&error_code,&error_message,flags,context
-stream_socket_shutdown	2	stream,mode
-stream_supports_lock	1	stream
-stream_wrapper_register	2	protocol,class,flags
-stream_wrapper_restore	1	protocol
-stream_wrapper_unregister	1	protocol
-strftime	1	format,timestamp
-strip_tags	1	string,allowed_tags
-stripcslashes	1	string
-stripos	2	haystack,needle,offset
-stripslashes	1	string
-stristr	2	haystack,needle,before_needle
-strlen	1	string
-strnatcasecmp	2	string1,string2
-strnatcmp	2	string1,string2
-strncasecmp	3	string1,string2,length
-strncmp	3	string1,string2,length
-strpbrk	2	string,characters
-strpos	2	haystack,needle,offset
-strptime	2	timestamp,format
-strrchr	2	haystack,needle,before_needle
-strrev	1	string
-strripos	2	haystack,needle,offset
-strrpos	2	haystack,needle,offset
-strspn	2	string,characters,offset,length
-strstr	2	haystack,needle,before_needle
-strtok	1	string,token
-strtolower	1	string
-strtotime	1	datetime,baseTimestamp
-strtoupper	1	string
-strtr	2	string,from,to
-strval	1	value
-substr	2	string,offset,length
-substr_compare	3	haystack,needle,offset,length,case_insensitive
-substr_count	2	haystack,needle,offset,length
-substr_replace	3	string,replace,offset,length
-symlink	2	target,link
-sys_get_temp_dir	0	
-sys_getloadavg	0	
-syslog	2	priority,message
-system	1	command,&result_code
-tan	1	num
-tanh	1	num
-tempnam	2	directory,prefix
-time	0	
-time_nanosleep	2	seconds,nanoseconds
-time_sleep_until	1	timestamp
-timezone_abbreviations_list	0	
-timezone_identifiers_list	0	timezoneGroup,countryCode
-timezone_location_get	1	object
-timezone_name_from_abbr	1	abbr,utcOffset,isDST
-timezone_name_get	1	object
-timezone_offset_get	2	object,datetime
-timezone_open	1	timezone
-timezone_transitions_get	1	object,timestampBegin,timestampEnd
-timezone_version_get	0	
-tmpfile	0	
-token_get_all	1	code,flags
-token_name	1	id
-touch	1	filename,mtime,atime
-trait_exists	1	trait,autoload
-trigger_error	1	message,error_level
-trim	1	string,characters
-uasort	2	&array,callback
-ucfirst	1	string
-ucwords	1	string,separators
-uksort	2	&array,callback
-umask	0	mask
-uniqid	0	prefix,more_entropy
-unlink	1	filename,context
-unpack	2	format,string,offset
-unregister_tick_function	1	callback
-unserialize	1	data,options
-urldecode	1	string
-urlencode	1	string
-user_error	1	message,error_level
-usleep	1	microseconds
-usort	2	&array,callback
-utf8_decode	1	string
-utf8_encode	1	string
-var_dump	1	value,...values
-var_export	1	value,return
-version_compare	2	version1,version2,operator
-vfprintf	3	stream,format,values
-vprintf	2	format,values
-vsprintf	2	format,values
-wordwrap	1	string,width,break,cut_long_words
-xml_error_string	1	error_code
-xml_get_current_byte_index	1	parser
-xml_get_current_column_number	1	parser
-xml_get_current_line_number	1	parser
-xml_get_error_code	1	parser
-xml_parse	2	parser,data,is_final
-xml_parse_into_struct	3	parser,data,&values,&index
-xml_parser_create	0	encoding
-xml_parser_create_ns	0	encoding,separator
-xml_parser_free	1	parser
-xml_parser_get_option	2	parser,option
-xml_parser_set_option	3	parser,option,value
-xml_set_character_data_handler	2	parser,handler
-xml_set_default_handler	2	parser,handler
-xml_set_element_handler	3	parser,start_handler,end_handler
-xml_set_end_namespace_decl_handler	2	parser,handler
-xml_set_external_entity_ref_handler	2	parser,handler
-xml_set_notation_decl_handler	2	parser,handler
-xml_set_object	2	parser,object
-xml_set_processing_instruction_handler	2	parser,handler
-xml_set_start_namespace_decl_handler	2	parser,handler
-xml_set_unparsed_entity_decl_handler	2	parser,handler
-xmlwriter_end_attribute	1	writer
-xmlwriter_end_cdata	1	writer
-xmlwriter_end_comment	1	writer
-xmlwriter_end_document	1	writer
-xmlwriter_end_dtd	1	writer
-xmlwriter_end_dtd_attlist	1	writer
-xmlwriter_end_dtd_element	1	writer
-xmlwriter_end_dtd_entity	1	writer
-xmlwriter_end_element	1	writer
-xmlwriter_end_pi	1	writer
-xmlwriter_flush	1	writer,empty
-xmlwriter_full_end_element	1	writer
-xmlwriter_open_memory	0	
-xmlwriter_open_uri	1	uri
-xmlwriter_output_memory	1	writer,flush
-xmlwriter_set_indent	2	writer,enable
-xmlwriter_set_indent_string	2	writer,indentation
-xmlwriter_start_attribute	2	writer,name
-xmlwriter_start_attribute_ns	4	writer,prefix,name,namespace
-xmlwriter_start_cdata	1	writer
-xmlwriter_start_comment	1	writer
-xmlwriter_start_document	1	writer,version,encoding,standalone
-xmlwriter_start_dtd	2	writer,qualifiedName,publicId,systemId
-xmlwriter_start_dtd_attlist	2	writer,name
-xmlwriter_start_dtd_element	2	writer,qualifiedName
-xmlwriter_start_dtd_entity	3	writer,name,isParam
-xmlwriter_start_element	2	writer,name
-xmlwriter_start_element_ns	4	writer,prefix,name,namespace
-xmlwriter_start_pi	2	writer,target
-xmlwriter_text	2	writer,content
-xmlwriter_write_attribute	3	writer,name,value
-xmlwriter_write_attribute_ns	5	writer,prefix,name,namespace,value
-xmlwriter_write_cdata	2	writer,content
-xmlwriter_write_comment	2	writer,content
-xmlwriter_write_dtd	2	writer,name,publicId,systemId,content
-xmlwriter_write_dtd_attlist	3	writer,name,content
-xmlwriter_write_dtd_element	3	writer,name,content
-xmlwriter_write_dtd_entity	3	writer,name,content,isParam,publicId,systemId,notationData
-xmlwriter_write_element	2	writer,name,content
-xmlwriter_write_element_ns	4	writer,prefix,name,namespace,content
-xmlwriter_write_pi	3	writer,target,content
-xmlwriter_write_raw	2	writer,content
-zend_version	0	
-zlib_decode	1	data,max_length
-zlib_encode	2	data,encoding,level
-zlib_get_coding_type	0	
+clone	object	withProperties=a%3A0%3A%7B%7D
+exit	status=i%3A0%3B
+die	status=i%3A0%3B
+zend_version
+func_num_args
+func_get_arg	position
+func_get_args
+strlen	string
+strcmp	string1	string2
+strncmp	string1	string2	length
+strcasecmp	string1	string2
+strncasecmp	string1	string2	length
+error_reporting	error_level=N%3B
+define	constant_name	value	case_insensitive=b%3A0%3B
+defined	constant_name
+get_class	object=?
+get_called_class
+get_parent_class	object_or_class=?
+is_subclass_of	object_or_class	class	allow_string=b%3A1%3B
+is_a	object_or_class	class	allow_string=b%3A0%3B
+get_class_vars	class
+get_object_vars	object
+get_mangled_object_vars	object
+get_class_methods	object_or_class
+method_exists	object_or_class	method
+property_exists	object_or_class	property
+class_exists	class	autoload=b%3A1%3B
+interface_exists	interface	autoload=b%3A1%3B
+trait_exists	trait	autoload=b%3A1%3B
+enum_exists	enum	autoload=b%3A1%3B
+function_exists	function
+class_alias	class	alias	autoload=b%3A1%3B
+get_included_files
+get_required_files
+trigger_error	message	error_level=i%3A1024%3B
+user_error	message	error_level=i%3A1024%3B
+set_error_handler	callback	error_levels=i%3A30719%3B
+restore_error_handler
+get_error_handler
+set_exception_handler	callback
+restore_exception_handler
+get_exception_handler
+get_declared_classes
+get_declared_traits
+get_declared_interfaces
+get_defined_functions	exclude_disabled=b%3A1%3B
+get_defined_vars
+get_resource_type	resource
+get_resource_id	resource
+get_resources	type=N%3B
+get_loaded_extensions	zend_extensions=b%3A0%3B
+get_defined_constants	categorize=b%3A0%3B
+debug_backtrace	options=i%3A1%3B	limit=i%3A0%3B
+debug_print_backtrace	options=i%3A0%3B	limit=i%3A0%3B
+extension_loaded	extension
+get_extension_funcs	extension
+gc_mem_caches
+gc_collect_cycles
+gc_enabled
+gc_enable
+gc_disable
+gc_status
+IteratorAggregate::getIterator
+Iterator::current
+Iterator::next
+Iterator::key
+Iterator::valid
+Iterator::rewind
+Serializable::serialize
+Serializable::unserialize	data
+ArrayAccess::offsetExists	offset
+ArrayAccess::offsetGet	offset
+ArrayAccess::offsetSet	offset	value
+ArrayAccess::offsetUnset	offset
+Countable::count
+Stringable::__toString
+InternalIterator::__construct
+InternalIterator::current
+InternalIterator::key
+InternalIterator::next
+InternalIterator::valid
+InternalIterator::rewind
+Throwable::getMessage
+Throwable::getCode
+Throwable::getFile
+Throwable::getLine
+Throwable::getTrace
+Throwable::getPrevious
+Throwable::getTraceAsString
+Exception::__clone
+Exception::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Exception::__wakeup
+Exception::getMessage
+Exception::getCode
+Exception::getFile
+Exception::getLine
+Exception::getTrace
+Exception::getPrevious
+Exception::getTraceAsString
+Exception::__toString
+ErrorException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	severity=i%3A1%3B	filename=N%3B	line=N%3B	previous=N%3B
+ErrorException::getSeverity
+ErrorException::__wakeup
+ErrorException::getMessage
+ErrorException::getCode
+ErrorException::getFile
+ErrorException::getLine
+ErrorException::getTrace
+ErrorException::getPrevious
+ErrorException::getTraceAsString
+ErrorException::__toString
+Error::__clone
+Error::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Error::__wakeup
+Error::getMessage
+Error::getCode
+Error::getFile
+Error::getLine
+Error::getTrace
+Error::getPrevious
+Error::getTraceAsString
+Error::__toString
+CompileError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+CompileError::__wakeup
+CompileError::getMessage
+CompileError::getCode
+CompileError::getFile
+CompileError::getLine
+CompileError::getTrace
+CompileError::getPrevious
+CompileError::getTraceAsString
+CompileError::__toString
+ParseError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ParseError::__wakeup
+ParseError::getMessage
+ParseError::getCode
+ParseError::getFile
+ParseError::getLine
+ParseError::getTrace
+ParseError::getPrevious
+ParseError::getTraceAsString
+ParseError::__toString
+TypeError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+TypeError::__wakeup
+TypeError::getMessage
+TypeError::getCode
+TypeError::getFile
+TypeError::getLine
+TypeError::getTrace
+TypeError::getPrevious
+TypeError::getTraceAsString
+TypeError::__toString
+ArgumentCountError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ArgumentCountError::__wakeup
+ArgumentCountError::getMessage
+ArgumentCountError::getCode
+ArgumentCountError::getFile
+ArgumentCountError::getLine
+ArgumentCountError::getTrace
+ArgumentCountError::getPrevious
+ArgumentCountError::getTraceAsString
+ArgumentCountError::__toString
+ValueError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ValueError::__wakeup
+ValueError::getMessage
+ValueError::getCode
+ValueError::getFile
+ValueError::getLine
+ValueError::getTrace
+ValueError::getPrevious
+ValueError::getTraceAsString
+ValueError::__toString
+ArithmeticError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ArithmeticError::__wakeup
+ArithmeticError::getMessage
+ArithmeticError::getCode
+ArithmeticError::getFile
+ArithmeticError::getLine
+ArithmeticError::getTrace
+ArithmeticError::getPrevious
+ArithmeticError::getTraceAsString
+ArithmeticError::__toString
+DivisionByZeroError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DivisionByZeroError::__wakeup
+DivisionByZeroError::getMessage
+DivisionByZeroError::getCode
+DivisionByZeroError::getFile
+DivisionByZeroError::getLine
+DivisionByZeroError::getTrace
+DivisionByZeroError::getPrevious
+DivisionByZeroError::getTraceAsString
+DivisionByZeroError::__toString
+UnhandledMatchError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+UnhandledMatchError::__wakeup
+UnhandledMatchError::getMessage
+UnhandledMatchError::getCode
+UnhandledMatchError::getFile
+UnhandledMatchError::getLine
+UnhandledMatchError::getTrace
+UnhandledMatchError::getPrevious
+UnhandledMatchError::getTraceAsString
+UnhandledMatchError::__toString
+RequestParseBodyException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+RequestParseBodyException::__wakeup
+RequestParseBodyException::getMessage
+RequestParseBodyException::getCode
+RequestParseBodyException::getFile
+RequestParseBodyException::getLine
+RequestParseBodyException::getTrace
+RequestParseBodyException::getPrevious
+RequestParseBodyException::getTraceAsString
+RequestParseBodyException::__toString
+Closure::__construct
+Closure::bind	closure	newThis	newScope=s%3A6%3A%22static%22%3B
+Closure::bindTo	newThis	newScope=s%3A6%3A%22static%22%3B
+Closure::call	newThis	...args
+Closure::fromCallable	callback
+Closure::getCurrent
+Closure::__invoke
+Generator::rewind
+Generator::valid
+Generator::current
+Generator::key
+Generator::next
+Generator::send	value
+Generator::throw	exception
+Generator::getReturn
+Generator::__debugInfo
+ClosedGeneratorException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ClosedGeneratorException::__wakeup
+ClosedGeneratorException::getMessage
+ClosedGeneratorException::getCode
+ClosedGeneratorException::getFile
+ClosedGeneratorException::getLine
+ClosedGeneratorException::getTrace
+ClosedGeneratorException::getPrevious
+ClosedGeneratorException::getTraceAsString
+ClosedGeneratorException::__toString
+WeakReference::__construct
+WeakReference::create	object
+WeakReference::get
+WeakMap::offsetGet	object
+WeakMap::offsetSet	object	value
+WeakMap::offsetExists	object
+WeakMap::offsetUnset	object
+WeakMap::count
+WeakMap::getIterator
+Attribute::__construct	flags=i%3A127%3B
+ReturnTypeWillChange::__construct
+AllowDynamicProperties::__construct
+SensitiveParameter::__construct
+SensitiveParameterValue::__construct	value
+SensitiveParameterValue::getValue
+SensitiveParameterValue::__debugInfo
+Override::__construct
+Deprecated::__construct	message=N%3B	since=N%3B
+NoDiscard::__construct	message=N%3B
+UnitEnum::cases
+BackedEnum::from	value
+BackedEnum::tryFrom	value
+Fiber::__construct	callback
+Fiber::start	...args
+Fiber::resume	value=N%3B
+Fiber::throw	exception
+Fiber::isStarted
+Fiber::isSuspended
+Fiber::isRunning
+Fiber::isTerminated
+Fiber::getReturn
+Fiber::getCurrent
+Fiber::suspend	value=N%3B
+FiberError::__construct
+FiberError::__wakeup
+FiberError::getMessage
+FiberError::getCode
+FiberError::getFile
+FiberError::getLine
+FiberError::getTrace
+FiberError::getPrevious
+FiberError::getTraceAsString
+FiberError::__toString
+set_time_limit	seconds
+header_register_callback	callback
+ob_start	callback=N%3B	chunk_size=i%3A0%3B	flags=i%3A112%3B
+ob_flush
+ob_clean
+ob_end_flush
+ob_end_clean
+ob_get_flush
+ob_get_clean
+ob_get_contents
+ob_get_level
+ob_get_length
+ob_list_handlers
+ob_get_status	full_status=b%3A0%3B
+ob_implicit_flush	enable=b%3A1%3B
+output_reset_rewrite_vars
+output_add_rewrite_var	name	value
+stream_wrapper_register	protocol	class	flags=i%3A0%3B
+stream_register_wrapper	protocol	class	flags=i%3A0%3B
+stream_wrapper_unregister	protocol
+stream_wrapper_restore	protocol
+array_push	&array	...values
+krsort	&array	flags=i%3A0%3B
+ksort	&array	flags=i%3A0%3B
+count	value	mode=i%3A0%3B
+sizeof	value	mode=i%3A0%3B
+natsort	&array
+natcasesort	&array
+asort	&array	flags=i%3A0%3B
+arsort	&array	flags=i%3A0%3B
+sort	&array	flags=i%3A0%3B
+rsort	&array	flags=i%3A0%3B
+usort	&array	callback
+uasort	&array	callback
+uksort	&array	callback
+end	&array
+prev	&array
+next	&array
+reset	&array
+current	array
+pos	array
+key	array
+min	value	...values
+max	value	...values
+array_walk	&array	callback	arg=?
+array_walk_recursive	&array	callback	arg=?
+in_array	needle	haystack	strict=b%3A0%3B
+array_search	needle	haystack	strict=b%3A0%3B
+extract	~array	flags=i%3A0%3B	prefix=s%3A0%3A%22%22%3B
+compact	var_name	...var_names
+array_fill	start_index	count	value
+array_fill_keys	keys	value
+range	start	end	step=i%3A1%3B
+shuffle	&array
+array_pop	&array
+array_shift	&array
+array_unshift	&array	...values
+array_splice	&array	offset	length=N%3B	replacement=a%3A0%3A%7B%7D
+array_slice	array	offset	length=N%3B	preserve_keys=b%3A0%3B
+array_merge	...arrays
+array_merge_recursive	...arrays
+array_replace	array	...replacements
+array_replace_recursive	array	...replacements
+array_keys	array	filter_value=?	strict=b%3A0%3B
+array_key_first	array
+array_key_last	array
+array_first	array
+array_last	array
+array_values	array
+array_count_values	array
+array_column	array	column_key	index_key=N%3B
+array_reverse	array	preserve_keys=b%3A0%3B
+array_pad	array	length	value
+array_flip	array
+array_change_key_case	array	case=i%3A0%3B
+array_unique	array	flags=i%3A2%3B
+array_intersect_key	array	...arrays
+array_intersect_ukey	array	...rest
+array_intersect	array	...arrays
+array_uintersect	array	...rest
+array_intersect_assoc	array	...arrays
+array_uintersect_assoc	array	...rest
+array_intersect_uassoc	array	...rest
+array_uintersect_uassoc	array	...rest
+array_diff_key	array	...arrays
+array_diff_ukey	array	...rest
+array_diff	array	...arrays
+array_udiff	array	...rest
+array_diff_assoc	array	...arrays
+array_diff_uassoc	array	...rest
+array_udiff_assoc	array	...rest
+array_udiff_uassoc	array	...rest
+array_multisort	~array	~...rest
+array_rand	array	num=i%3A1%3B
+array_sum	array
+array_product	array
+array_reduce	array	callback	initial=N%3B
+array_filter	array	callback=N%3B	mode=i%3A0%3B
+array_find	array	callback
+array_find_key	array	callback
+array_any	array	callback
+array_all	array	callback
+array_map	callback	array	...arrays
+array_key_exists	key	array
+key_exists	key	array
+array_chunk	array	length	preserve_keys=b%3A0%3B
+array_combine	keys	values
+array_is_list	array
+base64_encode	string
+base64_decode	string	strict=b%3A0%3B
+constant	name
+ip2long	ip
+long2ip	ip
+getenv	name=N%3B	local_only=b%3A0%3B
+putenv	assignment
+getopt	short_options	long_options=a%3A0%3A%7B%7D	&rest_index=N%3B
+flush
+sleep	seconds
+usleep	microseconds
+time_nanosleep	seconds	nanoseconds
+time_sleep_until	timestamp
+get_current_user
+get_cfg_var	option
+error_log	message	message_type=i%3A0%3B	destination=N%3B	additional_headers=N%3B
+error_get_last
+error_clear_last
+call_user_func	callback	...args
+call_user_func_array	callback	args
+forward_static_call	callback	...args
+forward_static_call_array	callback	args
+register_shutdown_function	callback	...args
+highlight_file	filename	return=b%3A0%3B
+show_source	filename	return=b%3A0%3B
+php_strip_whitespace	filename
+highlight_string	string	return=b%3A0%3B
+ini_get	option
+ini_get_all	extension=N%3B	details=b%3A1%3B
+ini_set	option	value
+ini_alter	option	value
+ini_restore	option
+ini_parse_quantity	shorthand
+set_include_path	include_path
+get_include_path
+print_r	value	return=b%3A0%3B
+connection_aborted
+connection_status
+ignore_user_abort	enable=N%3B
+getservbyname	service	protocol
+getservbyport	port	protocol
+getprotobyname	protocol
+getprotobynumber	protocol
+register_tick_function	callback	...args
+unregister_tick_function	callback
+is_uploaded_file	filename
+move_uploaded_file	from	to
+parse_ini_file	filename	process_sections=b%3A0%3B	scanner_mode=i%3A0%3B
+parse_ini_string	ini_string	process_sections=b%3A0%3B	scanner_mode=i%3A0%3B
+sys_getloadavg
+get_browser	user_agent=N%3B	return_array=b%3A0%3B
+crc32	string
+crypt	string	salt
+strptime	timestamp	format
+gethostname
+gethostbyaddr	ip
+gethostbyname	hostname
+gethostbynamel	hostname
+dns_check_record	hostname	type=s%3A2%3A%22MX%22%3B
+checkdnsrr	hostname	type=s%3A2%3A%22MX%22%3B
+dns_get_record	hostname	type=i%3A268435456%3B	&authoritative_name_servers=N%3B	&additional_records=N%3B	raw=b%3A0%3B
+dns_get_mx	hostname	&hosts	&weights=N%3B
+getmxrr	hostname	&hosts	&weights=N%3B
+net_get_interfaces
+ftok	filename	project_id
+hrtime	as_number=b%3A0%3B
+md5	string	binary=b%3A0%3B
+md5_file	filename	binary=b%3A0%3B
+getmyuid
+getmygid
+getmypid
+getmyinode
+getlastmod
+sha1	string	binary=b%3A0%3B
+sha1_file	filename	binary=b%3A0%3B
+openlog	prefix	flags	facility
+closelog
+syslog	priority	message
+inet_ntop	ip
+inet_pton	ip
+metaphone	string	max_phonemes=i%3A0%3B
+header	header	replace=b%3A1%3B	response_code=i%3A0%3B
+header_remove	name=N%3B
+setrawcookie	name	value=s%3A0%3A%22%22%3B	expires_or_options=i%3A0%3B	path=s%3A0%3A%22%22%3B	domain=s%3A0%3A%22%22%3B	secure=b%3A0%3B	httponly=b%3A0%3B
+setcookie	name	value=s%3A0%3A%22%22%3B	expires_or_options=i%3A0%3B	path=s%3A0%3A%22%22%3B	domain=s%3A0%3A%22%22%3B	secure=b%3A0%3B	httponly=b%3A0%3B
+http_response_code	response_code=i%3A0%3B
+headers_sent	&filename=N%3B	&line=N%3B
+headers_list
+htmlspecialchars	string	flags=i%3A11%3B	encoding=N%3B	double_encode=b%3A1%3B
+htmlspecialchars_decode	string	flags=i%3A11%3B
+html_entity_decode	string	flags=i%3A11%3B	encoding=N%3B
+htmlentities	string	flags=i%3A11%3B	encoding=N%3B	double_encode=b%3A1%3B
+get_html_translation_table	table=i%3A0%3B	flags=i%3A11%3B	encoding=s%3A5%3A%22UTF-8%22%3B
+assert	assertion	description=N%3B
+assert_options	option	value=?
+bin2hex	string
+hex2bin	string
+strspn	string	characters	offset=i%3A0%3B	length=N%3B
+strcspn	string	characters	offset=i%3A0%3B	length=N%3B
+nl_langinfo	item
+strcoll	string1	string2
+trim	string	characters=s%3A6%3A%22%20%0A%0D%09%0B%00%22%3B
+rtrim	string	characters=s%3A6%3A%22%20%0A%0D%09%0B%00%22%3B
+chop	string	characters=s%3A6%3A%22%20%0A%0D%09%0B%00%22%3B
+ltrim	string	characters=s%3A6%3A%22%20%0A%0D%09%0B%00%22%3B
+wordwrap	string	width=i%3A75%3B	break=s%3A1%3A%22%0A%22%3B	cut_long_words=b%3A0%3B
+explode	separator	string	limit=i%3A9223372036854775807%3B
+implode	separator	array=N%3B
+join	separator	array=N%3B
+strtok	string	token=N%3B
+strtoupper	string
+strtolower	string
+str_increment	string
+str_decrement	string
+basename	path	suffix=s%3A0%3A%22%22%3B
+dirname	path	levels=i%3A1%3B
+pathinfo	path	flags=i%3A15%3B
+stristr	haystack	needle	before_needle=b%3A0%3B
+strstr	haystack	needle	before_needle=b%3A0%3B
+strchr	haystack	needle	before_needle=b%3A0%3B
+strpos	haystack	needle	offset=i%3A0%3B
+stripos	haystack	needle	offset=i%3A0%3B
+strrpos	haystack	needle	offset=i%3A0%3B
+strripos	haystack	needle	offset=i%3A0%3B
+strrchr	haystack	needle	before_needle=b%3A0%3B
+str_contains	haystack	needle
+str_starts_with	haystack	needle
+str_ends_with	haystack	needle
+chunk_split	string	length=i%3A76%3B	separator=s%3A2%3A%22%0D%0A%22%3B
+substr	string	offset	length=N%3B
+substr_replace	string	replace	offset	length=N%3B
+quotemeta	string
+ord	character
+chr	codepoint
+ucfirst	string
+lcfirst	string
+ucwords	string	separators=s%3A6%3A%22%20%09%0D%0A%0C%0B%22%3B
+strtr	string	from	to=N%3B
+strrev	string
+similar_text	string1	string2	&percent=N%3B
+addcslashes	string	characters
+addslashes	string
+stripcslashes	string
+stripslashes	string
+str_replace	search	replace	subject	&count=N%3B
+str_ireplace	search	replace	subject	&count=N%3B
+hebrev	string	max_chars_per_line=i%3A0%3B
+nl2br	string	use_xhtml=b%3A1%3B
+strip_tags	string	allowed_tags=N%3B
+setlocale	category	locales	...rest
+parse_str	string	&result
+str_getcsv	string	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+str_repeat	string	times
+count_chars	string	mode=i%3A0%3B
+strnatcmp	string1	string2
+localeconv
+strnatcasecmp	string1	string2
+substr_count	haystack	needle	offset=i%3A0%3B	length=N%3B
+str_pad	string	length	pad_string=s%3A1%3A%22%20%22%3B	pad_type=i%3A1%3B
+sscanf	string	format	&...vars
+str_rot13	string
+str_shuffle	string
+str_word_count	string	format=i%3A0%3B	characters=N%3B
+str_split	string	length=i%3A1%3B
+strpbrk	string	characters
+substr_compare	haystack	needle	offset	length=N%3B	case_insensitive=b%3A0%3B
+utf8_encode	string
+utf8_decode	string
+opendir	directory	context=N%3B
+dir	directory	context=N%3B
+closedir	dir_handle=N%3B
+chdir	directory
+chroot	directory
+getcwd
+rewinddir	dir_handle=N%3B
+readdir	dir_handle=N%3B
+scandir	directory	sorting_order=i%3A0%3B	context=N%3B
+glob	pattern	flags=i%3A0%3B
+exec	command	&output=N%3B	&result_code=N%3B
+system	command	&result_code=N%3B
+passthru	command	&result_code=N%3B
+escapeshellcmd	command
+escapeshellarg	arg
+shell_exec	command
+proc_nice	priority
+flock	stream	operation	&would_block=N%3B
+get_meta_tags	filename	use_include_path=b%3A0%3B
+pclose	handle
+popen	command	mode
+readfile	filename	use_include_path=b%3A0%3B	context=N%3B
+rewind	stream
+rmdir	directory	context=N%3B
+umask	mask=N%3B
+fclose	stream
+feof	stream
+fgetc	stream
+fgets	stream	length=N%3B
+fread	stream	length
+fopen	filename	mode	use_include_path=b%3A0%3B	context=N%3B
+fscanf	stream	format	&...vars
+fpassthru	stream
+ftruncate	stream	size
+fstat	stream
+fseek	stream	offset	whence=i%3A0%3B
+ftell	stream
+fflush	stream
+fsync	stream
+fdatasync	stream
+fwrite	stream	data	length=N%3B
+fputs	stream	data	length=N%3B
+mkdir	directory	permissions=i%3A511%3B	recursive=b%3A0%3B	context=N%3B
+rename	from	to	context=N%3B
+copy	from	to	context=N%3B
+tempnam	directory	prefix
+tmpfile
+file	filename	flags=i%3A0%3B	context=N%3B
+file_get_contents	filename	use_include_path=b%3A0%3B	context=N%3B	offset=i%3A0%3B	length=N%3B
+unlink	filename	context=N%3B
+file_put_contents	filename	data	flags=i%3A0%3B	context=N%3B
+fputcsv	stream	fields	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B	eol=s%3A1%3A%22%0A%22%3B
+fgetcsv	stream	length=N%3B	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+realpath	path
+fnmatch	pattern	filename	flags=i%3A0%3B
+sys_get_temp_dir
+fileatime	filename
+filectime	filename
+filegroup	filename
+fileinode	filename
+filemtime	filename
+fileowner	filename
+fileperms	filename
+filesize	filename
+filetype	filename
+file_exists	filename
+is_writable	filename
+is_writeable	filename
+is_readable	filename
+is_executable	filename
+is_file	filename
+is_dir	filename
+is_link	filename
+stat	filename
+lstat	filename
+chown	filename	user
+chgrp	filename	group
+lchown	filename	user
+lchgrp	filename	group
+chmod	filename	permissions
+touch	filename	mtime=N%3B	atime=N%3B
+clearstatcache	clear_realpath_cache=b%3A0%3B	filename=s%3A0%3A%22%22%3B
+disk_total_space	directory
+disk_free_space	directory
+diskfreespace	directory
+realpath_cache_get
+realpath_cache_size
+sprintf	format	...values
+printf	format	...values
+vprintf	format	values
+vsprintf	format	values
+fprintf	stream	format	...values
+vfprintf	stream	format	values
+fsockopen	hostname	port=i%3A-1%3B	&error_code=N%3B	&error_message=N%3B	timeout=N%3B
+pfsockopen	hostname	port=i%3A-1%3B	&error_code=N%3B	&error_message=N%3B	timeout=N%3B
+http_build_query	data	numeric_prefix=s%3A0%3A%22%22%3B	arg_separator=N%3B	encoding_type=i%3A1%3B
+http_get_last_response_headers
+http_clear_last_response_headers
+request_parse_body	options=N%3B
+image_type_to_mime_type	image_type
+image_type_to_extension	image_type	include_dot=b%3A1%3B
+getimagesize	filename	&image_info=N%3B
+getimagesizefromstring	string	&image_info=N%3B
+phpinfo	flags=i%3A4294967295%3B
+phpversion	extension=N%3B
+phpcredits	flags=i%3A4294967295%3B
+php_sapi_name
+php_uname	mode=s%3A1%3A%22a%22%3B
+php_ini_scanned_files
+php_ini_loaded_file
+iptcembed	iptc_data	filename	spool=i%3A0%3B
+iptcparse	iptc_block
+levenshtein	string1	string2	insertion_cost=i%3A1%3B	replacement_cost=i%3A1%3B	deletion_cost=i%3A1%3B
+readlink	path
+linkinfo	path
+symlink	target	link
+link	target	link
+mail	to	subject	message	additional_headers=a%3A0%3A%7B%7D	additional_params=s%3A0%3A%22%22%3B
+abs	num
+ceil	num
+floor	num
+round	num	precision=i%3A0%3B	mode=E%3A29%3A%22RoundingMode%3AHalfAwayFromZero%22%3B
+sin	num
+cos	num
+tan	num
+asin	num
+acos	num
+atan	num
+atanh	num
+atan2	y	x
+sinh	num
+cosh	num
+tanh	num
+asinh	num
+acosh	num
+expm1	num
+log1p	num
+pi
+is_finite	num
+is_nan	num
+intdiv	num1	num2
+is_infinite	num
+pow	num	exponent
+exp	num
+log	num	base=d%3A2.718281828459045%3B
+log10	num
+sqrt	num
+hypot	x	y
+deg2rad	num
+rad2deg	num
+bindec	binary_string
+hexdec	hex_string
+octdec	octal_string
+decbin	num
+decoct	num
+dechex	num
+base_convert	num	from_base	to_base
+number_format	num	decimals=i%3A0%3B	decimal_separator=s%3A1%3A%22.%22%3B	thousands_separator=s%3A1%3A%22%2C%22%3B
+fmod	num1	num2
+fdiv	num1	num2
+fpow	num	exponent
+microtime	as_float=b%3A0%3B
+gettimeofday	as_float=b%3A0%3B
+getrusage	mode=i%3A0%3B
+pack	format	...values
+unpack	format	string	offset=i%3A0%3B
+password_get_info	hash
+password_hash	password	algo	options=a%3A0%3A%7B%7D
+password_needs_rehash	hash	algo	options=a%3A0%3A%7B%7D
+password_verify	password	hash
+password_algos
+proc_open	command	descriptor_spec	&pipes	cwd=N%3B	env_vars=N%3B	options=N%3B
+proc_close	process
+proc_terminate	process	signal=i%3A15%3B
+proc_get_status	process
+quoted_printable_decode	string
+quoted_printable_encode	string
+soundex	string
+stream_select	&read	&write	&except	seconds	microseconds=N%3B
+stream_context_create	options=N%3B	params=N%3B
+stream_context_set_params	context	params
+stream_context_get_params	context
+stream_context_set_option	context	wrapper_or_options	option_name=N%3B	value=?
+stream_context_set_options	context	options
+stream_context_get_options	stream_or_context
+stream_context_get_default	options=N%3B
+stream_context_set_default	options
+stream_filter_prepend	stream	filter_name	mode=i%3A0%3B	params=?
+stream_filter_append	stream	filter_name	mode=i%3A0%3B	params=?
+stream_filter_remove	stream_filter
+stream_socket_client	address	&error_code=N%3B	&error_message=N%3B	timeout=N%3B	flags=i%3A4%3B	context=N%3B
+stream_socket_server	address	&error_code=N%3B	&error_message=N%3B	flags=i%3A12%3B	context=N%3B
+stream_socket_accept	socket	timeout=N%3B	&peer_name=N%3B
+stream_socket_get_name	socket	remote
+stream_socket_recvfrom	socket	length	flags=i%3A0%3B	&address=N%3B
+stream_socket_sendto	socket	data	flags=i%3A0%3B	address=s%3A0%3A%22%22%3B
+stream_socket_enable_crypto	stream	enable	crypto_method=N%3B	session_stream=N%3B
+stream_socket_shutdown	stream	mode
+stream_socket_pair	domain	type	protocol
+stream_copy_to_stream	from	to	length=N%3B	offset=i%3A0%3B
+stream_get_contents	stream	length=N%3B	offset=i%3A-1%3B
+stream_supports_lock	stream
+stream_set_write_buffer	stream	size
+set_file_buffer	stream	size
+stream_set_read_buffer	stream	size
+stream_set_blocking	stream	enable
+socket_set_blocking	stream	enable
+stream_get_meta_data	stream
+socket_get_status	stream
+stream_get_line	stream	length	ending=s%3A0%3A%22%22%3B
+stream_resolve_include_path	filename
+stream_get_wrappers
+stream_get_transports
+stream_is_local	stream
+stream_isatty	stream
+stream_set_chunk_size	stream	size
+stream_set_timeout	stream	seconds	microseconds=i%3A0%3B
+socket_set_timeout	stream	seconds	microseconds=i%3A0%3B
+gettype	value
+get_debug_type	value
+settype	&var	type
+intval	value	base=i%3A10%3B
+floatval	value
+doubleval	value
+boolval	value
+strval	value
+is_null	value
+is_resource	value
+is_bool	value
+is_int	value
+is_integer	value
+is_long	value
+is_float	value
+is_double	value
+is_numeric	value
+is_string	value
+is_array	value
+is_object	value
+is_scalar	value
+is_callable	value	syntax_only=b%3A0%3B	&callable_name=N%3B
+is_iterable	value
+is_countable	value
+uniqid	prefix=s%3A0%3A%22%22%3B	more_entropy=b%3A0%3B
+parse_url	url	component=i%3A-1%3B
+urlencode	string
+urldecode	string
+rawurlencode	string
+rawurldecode	string
+get_headers	url	associative=b%3A0%3B	context=N%3B
+stream_bucket_make_writeable	brigade
+stream_bucket_prepend	brigade	bucket
+stream_bucket_append	brigade	bucket
+stream_bucket_new	stream	buffer
+stream_get_filters
+stream_filter_register	filter_name	class
+convert_uuencode	string
+convert_uudecode	string
+var_dump	value	...values
+var_export	value	return=b%3A0%3B
+debug_zval_dump	value	...values
+serialize	value
+unserialize	data	options=a%3A0%3A%7B%7D
+memory_get_usage	real_usage=b%3A0%3B
+memory_get_peak_usage	real_usage=b%3A0%3B
+memory_reset_peak_usage
+version_compare	version1	version2	operator=N%3B
+dl	extension_filename
+cli_set_process_title	title
+cli_get_process_title
+AssertionError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+AssertionError::__wakeup
+AssertionError::getMessage
+AssertionError::getCode
+AssertionError::getFile
+AssertionError::getLine
+AssertionError::getTrace
+AssertionError::getPrevious
+AssertionError::getTraceAsString
+AssertionError::__toString
+RoundingMode::cases
+php_user_filter::filter	in	out	&consumed	closing
+php_user_filter::onCreate
+php_user_filter::onClose
+Directory::close
+Directory::rewind
+Directory::read
+strtotime	datetime	baseTimestamp=N%3B
+date	format	timestamp=N%3B
+idate	format	timestamp=N%3B
+gmdate	format	timestamp=N%3B
+mktime	hour	minute=N%3B	second=N%3B	month=N%3B	day=N%3B	year=N%3B
+gmmktime	hour	minute=N%3B	second=N%3B	month=N%3B	day=N%3B	year=N%3B
+checkdate	month	day	year
+strftime	format	timestamp=N%3B
+gmstrftime	format	timestamp=N%3B
+time
+localtime	timestamp=N%3B	associative=b%3A0%3B
+getdate	timestamp=N%3B
+date_create	datetime=s%3A3%3A%22now%22%3B	timezone=N%3B
+date_create_immutable	datetime=s%3A3%3A%22now%22%3B	timezone=N%3B
+date_create_from_format	format	datetime	timezone=N%3B
+date_create_immutable_from_format	format	datetime	timezone=N%3B
+date_parse	datetime
+date_parse_from_format	format	datetime
+date_get_last_errors
+date_format	object	format
+date_modify	object	modifier
+date_add	object	interval
+date_sub	object	interval
+date_timezone_get	object
+date_timezone_set	object	timezone
+date_offset_get	object
+date_diff	baseObject	targetObject	absolute=b%3A0%3B
+date_time_set	object	hour	minute	second=i%3A0%3B	microsecond=i%3A0%3B
+date_date_set	object	year	month	day
+date_isodate_set	object	year	week	dayOfWeek=i%3A1%3B
+date_timestamp_set	object	timestamp
+date_timestamp_get	object
+timezone_open	timezone
+timezone_name_get	object
+timezone_name_from_abbr	abbr	utcOffset=i%3A-1%3B	isDST=i%3A-1%3B
+timezone_offset_get	object	datetime
+timezone_transitions_get	object	timestampBegin=i%3A-9223372036854775808%3B	timestampEnd=i%3A2147483647%3B
+timezone_location_get	object
+timezone_identifiers_list	timezoneGroup=i%3A2047%3B	countryCode=N%3B
+timezone_abbreviations_list
+timezone_version_get
+date_interval_create_from_date_string	datetime
+date_interval_format	object	format
+date_default_timezone_set	timezoneId
+date_default_timezone_get
+date_sunrise
+Deprecated: Constant SUNFUNCS_RET_STRING is deprecated since 8.4, as date_sunrise() and date_sunset() were deprecated in 8.1 in /w/tools/builtin-params.php on line 19
+	timestamp	returnFormat=i%3A1%3B	latitude=N%3B	longitude=N%3B	zenith=N%3B	utcOffset=N%3B
+date_sunset
+Deprecated: Constant SUNFUNCS_RET_STRING is deprecated since 8.4, as date_sunrise() and date_sunset() were deprecated in 8.1 in /w/tools/builtin-params.php on line 19
+	timestamp	returnFormat=i%3A1%3B	latitude=N%3B	longitude=N%3B	zenith=N%3B	utcOffset=N%3B
+date_sun_info	timestamp	latitude	longitude
+DateTimeInterface::format	format
+DateTimeInterface::getTimezone
+DateTimeInterface::getOffset
+DateTimeInterface::getTimestamp
+DateTimeInterface::getMicrosecond
+DateTimeInterface::diff	targetObject	absolute=b%3A0%3B
+DateTimeInterface::__wakeup
+DateTimeInterface::__serialize
+DateTimeInterface::__unserialize	data
+DateTime::__construct	datetime=s%3A3%3A%22now%22%3B	timezone=N%3B
+DateTime::__serialize
+DateTime::__unserialize	data
+DateTime::__wakeup
+DateTime::__set_state	array
+DateTime::createFromImmutable	object
+DateTime::createFromInterface	object
+DateTime::createFromFormat	format	datetime	timezone=N%3B
+DateTime::createFromTimestamp	timestamp
+DateTime::getLastErrors
+DateTime::format	format
+DateTime::modify	modifier
+DateTime::add	interval
+DateTime::sub	interval
+DateTime::getTimezone
+DateTime::setTimezone	timezone
+DateTime::getOffset
+DateTime::getMicrosecond
+DateTime::setTime	hour	minute	second=i%3A0%3B	microsecond=i%3A0%3B
+DateTime::setDate	year	month	day
+DateTime::setISODate	year	week	dayOfWeek=i%3A1%3B
+DateTime::setTimestamp	timestamp
+DateTime::setMicrosecond	microsecond
+DateTime::getTimestamp
+DateTime::diff	targetObject	absolute=b%3A0%3B
+DateTimeImmutable::__construct	datetime=s%3A3%3A%22now%22%3B	timezone=N%3B
+DateTimeImmutable::__serialize
+DateTimeImmutable::__unserialize	data
+DateTimeImmutable::__wakeup
+DateTimeImmutable::__set_state	array
+DateTimeImmutable::createFromFormat	format	datetime	timezone=N%3B
+DateTimeImmutable::createFromTimestamp	timestamp
+DateTimeImmutable::getLastErrors
+DateTimeImmutable::format	format
+DateTimeImmutable::getTimezone
+DateTimeImmutable::getOffset
+DateTimeImmutable::getTimestamp
+DateTimeImmutable::getMicrosecond
+DateTimeImmutable::diff	targetObject	absolute=b%3A0%3B
+DateTimeImmutable::modify	modifier
+DateTimeImmutable::add	interval
+DateTimeImmutable::sub	interval
+DateTimeImmutable::setTimezone	timezone
+DateTimeImmutable::setTime	hour	minute	second=i%3A0%3B	microsecond=i%3A0%3B
+DateTimeImmutable::setDate	year	month	day
+DateTimeImmutable::setISODate	year	week	dayOfWeek=i%3A1%3B
+DateTimeImmutable::setTimestamp	timestamp
+DateTimeImmutable::setMicrosecond	microsecond
+DateTimeImmutable::createFromMutable	object
+DateTimeImmutable::createFromInterface	object
+DateTimeZone::__construct	timezone
+DateTimeZone::getName
+DateTimeZone::getOffset	datetime
+DateTimeZone::getTransitions	timestampBegin=i%3A-9223372036854775808%3B	timestampEnd=i%3A2147483647%3B
+DateTimeZone::getLocation
+DateTimeZone::listAbbreviations
+DateTimeZone::listIdentifiers	timezoneGroup=i%3A2047%3B	countryCode=N%3B
+DateTimeZone::__serialize
+DateTimeZone::__unserialize	data
+DateTimeZone::__wakeup
+DateTimeZone::__set_state	array
+DateInterval::__construct	duration
+DateInterval::createFromDateString	datetime
+DateInterval::format	format
+DateInterval::__serialize
+DateInterval::__unserialize	data
+DateInterval::__wakeup
+DateInterval::__set_state	array
+DatePeriod::createFromISO8601String	specification	options=i%3A0%3B
+DatePeriod::__construct	start	interval=?	end=?	options=?
+DatePeriod::getStartDate
+DatePeriod::getEndDate
+DatePeriod::getDateInterval
+DatePeriod::getRecurrences
+DatePeriod::__serialize
+DatePeriod::__unserialize	data
+DatePeriod::__wakeup
+DatePeriod::__set_state	array
+DatePeriod::getIterator
+DateError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateError::__wakeup
+DateError::getMessage
+DateError::getCode
+DateError::getFile
+DateError::getLine
+DateError::getTrace
+DateError::getPrevious
+DateError::getTraceAsString
+DateError::__toString
+DateObjectError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateObjectError::__wakeup
+DateObjectError::getMessage
+DateObjectError::getCode
+DateObjectError::getFile
+DateObjectError::getLine
+DateObjectError::getTrace
+DateObjectError::getPrevious
+DateObjectError::getTraceAsString
+DateObjectError::__toString
+DateRangeError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateRangeError::__wakeup
+DateRangeError::getMessage
+DateRangeError::getCode
+DateRangeError::getFile
+DateRangeError::getLine
+DateRangeError::getTrace
+DateRangeError::getPrevious
+DateRangeError::getTraceAsString
+DateRangeError::__toString
+DateException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateException::__wakeup
+DateException::getMessage
+DateException::getCode
+DateException::getFile
+DateException::getLine
+DateException::getTrace
+DateException::getPrevious
+DateException::getTraceAsString
+DateException::__toString
+DateInvalidTimeZoneException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateInvalidTimeZoneException::__wakeup
+DateInvalidTimeZoneException::getMessage
+DateInvalidTimeZoneException::getCode
+DateInvalidTimeZoneException::getFile
+DateInvalidTimeZoneException::getLine
+DateInvalidTimeZoneException::getTrace
+DateInvalidTimeZoneException::getPrevious
+DateInvalidTimeZoneException::getTraceAsString
+DateInvalidTimeZoneException::__toString
+DateInvalidOperationException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateInvalidOperationException::__wakeup
+DateInvalidOperationException::getMessage
+DateInvalidOperationException::getCode
+DateInvalidOperationException::getFile
+DateInvalidOperationException::getLine
+DateInvalidOperationException::getTrace
+DateInvalidOperationException::getPrevious
+DateInvalidOperationException::getTraceAsString
+DateInvalidOperationException::__toString
+DateMalformedStringException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateMalformedStringException::__wakeup
+DateMalformedStringException::getMessage
+DateMalformedStringException::getCode
+DateMalformedStringException::getFile
+DateMalformedStringException::getLine
+DateMalformedStringException::getTrace
+DateMalformedStringException::getPrevious
+DateMalformedStringException::getTraceAsString
+DateMalformedStringException::__toString
+DateMalformedIntervalStringException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateMalformedIntervalStringException::__wakeup
+DateMalformedIntervalStringException::getMessage
+DateMalformedIntervalStringException::getCode
+DateMalformedIntervalStringException::getFile
+DateMalformedIntervalStringException::getLine
+DateMalformedIntervalStringException::getTrace
+DateMalformedIntervalStringException::getPrevious
+DateMalformedIntervalStringException::getTraceAsString
+DateMalformedIntervalStringException::__toString
+DateMalformedPeriodStringException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DateMalformedPeriodStringException::__wakeup
+DateMalformedPeriodStringException::getMessage
+DateMalformedPeriodStringException::getCode
+DateMalformedPeriodStringException::getFile
+DateMalformedPeriodStringException::getLine
+DateMalformedPeriodStringException::getTrace
+DateMalformedPeriodStringException::getPrevious
+DateMalformedPeriodStringException::getTraceAsString
+DateMalformedPeriodStringException::__toString
+preg_match	pattern	subject	&matches=N%3B	flags=i%3A0%3B	offset=i%3A0%3B
+preg_match_all	pattern	subject	&matches=N%3B	flags=i%3A0%3B	offset=i%3A0%3B
+preg_replace	pattern	replacement	subject	limit=i%3A-1%3B	&count=N%3B
+preg_filter	pattern	replacement	subject	limit=i%3A-1%3B	&count=N%3B
+preg_replace_callback	pattern	callback	subject	limit=i%3A-1%3B	&count=N%3B	flags=i%3A0%3B
+preg_replace_callback_array	pattern	subject	limit=i%3A-1%3B	&count=N%3B	flags=i%3A0%3B
+preg_split	pattern	subject	limit=i%3A-1%3B	flags=i%3A0%3B
+preg_quote	str	delimiter=N%3B
+preg_grep	pattern	array	flags=i%3A0%3B
+preg_last_error
+preg_last_error_msg
+ctype_alnum	text
+ctype_alpha	text
+ctype_cntrl	text
+ctype_digit	text
+ctype_lower	text
+ctype_graph	text
+ctype_print	text
+ctype_punct	text
+ctype_space	text
+ctype_upper	text
+ctype_xdigit	text
+curl_close	handle
+curl_copy_handle	handle
+curl_errno	handle
+curl_error	handle
+curl_escape	handle	string
+curl_unescape	handle	string
+curl_multi_setopt	multi_handle	option	value
+curl_exec	handle
+curl_file_create	filename	mime_type=N%3B	posted_filename=N%3B
+curl_getinfo	handle	option=N%3B
+curl_init	url=N%3B
+curl_upkeep	handle
+curl_multi_add_handle	multi_handle	handle
+curl_multi_get_handles	multi_handle
+curl_multi_close	multi_handle
+curl_multi_errno	multi_handle
+curl_multi_exec	multi_handle	&still_running
+curl_multi_getcontent	handle
+curl_multi_info_read	multi_handle	&queued_messages=N%3B
+curl_multi_init
+curl_multi_remove_handle	multi_handle	handle
+curl_multi_select	multi_handle	timeout=d%3A1%3B
+curl_multi_strerror	error_code
+curl_pause	handle	flags
+curl_reset	handle
+curl_setopt_array	handle	options
+curl_setopt	handle	option	value
+curl_share_close	share_handle
+curl_share_errno	share_handle
+curl_share_init
+curl_share_setopt	share_handle	option	value
+curl_share_strerror	error_code
+curl_share_init_persistent	share_options
+curl_strerror	error_code
+curl_version
+CURLFile::__construct	filename	mime_type=N%3B	posted_filename=N%3B
+CURLFile::getFilename
+CURLFile::getMimeType
+CURLFile::getPostFilename
+CURLFile::setMimeType	mime_type
+CURLFile::setPostFilename	posted_filename
+CURLStringFile::__construct	data	postname	mime=s%3A24%3A%22application%2Foctet-stream%22%3B
+json_encode	value	flags=i%3A0%3B	depth=i%3A512%3B
+json_decode	json	associative=N%3B	depth=i%3A512%3B	flags=i%3A0%3B
+json_validate	json	depth=i%3A512%3B	flags=i%3A0%3B
+json_last_error
+json_last_error_msg
+JsonSerializable::jsonSerialize
+JsonException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+JsonException::__wakeup
+JsonException::getMessage
+JsonException::getCode
+JsonException::getFile
+JsonException::getLine
+JsonException::getTrace
+JsonException::getPrevious
+JsonException::getTraceAsString
+JsonException::__toString
+filter_has_var	input_type	var_name
+filter_input	type	var_name	filter=i%3A516%3B	options=i%3A0%3B
+filter_var	value	filter=i%3A516%3B	options=i%3A0%3B
+filter_input_array	type	options=i%3A516%3B	add_empty=b%3A1%3B
+filter_var_array	array	options=i%3A516%3B	add_empty=b%3A1%3B
+filter_list
+filter_id	name
+Filter\FilterException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Filter\FilterException::__wakeup
+Filter\FilterException::getMessage
+Filter\FilterException::getCode
+Filter\FilterException::getFile
+Filter\FilterException::getLine
+Filter\FilterException::getTrace
+Filter\FilterException::getPrevious
+Filter\FilterException::getTraceAsString
+Filter\FilterException::__toString
+Filter\FilterFailedException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Filter\FilterFailedException::__wakeup
+Filter\FilterFailedException::getMessage
+Filter\FilterFailedException::getCode
+Filter\FilterFailedException::getFile
+Filter\FilterFailedException::getLine
+Filter\FilterFailedException::getTrace
+Filter\FilterFailedException::getPrevious
+Filter\FilterFailedException::getTraceAsString
+Filter\FilterFailedException::__toString
+hash	algo	data	binary=b%3A0%3B	options=a%3A0%3A%7B%7D
+hash_file	algo	filename	binary=b%3A0%3B	options=a%3A0%3A%7B%7D
+hash_hmac	algo	data	key	binary=b%3A0%3B
+hash_hmac_file	algo	filename	key	binary=b%3A0%3B
+hash_init	algo	flags=i%3A0%3B	key=s%3A0%3A%22%22%3B	options=a%3A0%3A%7B%7D
+hash_update	context	data
+hash_update_stream	context	stream	length=i%3A-1%3B
+hash_update_file	context	filename	stream_context=N%3B
+hash_final	context	binary=b%3A0%3B
+hash_copy	context
+hash_algos
+hash_hmac_algos
+hash_pbkdf2	algo	password	salt	iterations	length=i%3A0%3B	binary=b%3A0%3B	options=a%3A0%3A%7B%7D
+hash_equals	known_string	user_string
+hash_hkdf	algo	key	length=i%3A0%3B	info=s%3A0%3A%22%22%3B	salt=s%3A0%3A%22%22%3B
+mhash_get_block_size	algo
+mhash_get_hash_name	algo
+mhash_keygen_s2k	algo	password	salt	length
+mhash_count
+mhash	algo	data	key=N%3B
+HashContext::__construct
+HashContext::__serialize
+HashContext::__unserialize	data
+HashContext::__debugInfo
+class_implements	object_or_class	autoload=b%3A1%3B
+class_parents	object_or_class	autoload=b%3A1%3B
+class_uses	object_or_class	autoload=b%3A1%3B
+spl_autoload	class	file_extensions=N%3B
+spl_autoload_call	class
+spl_autoload_extensions	file_extensions=N%3B
+spl_autoload_functions
+spl_autoload_register	callback=N%3B	throw=b%3A1%3B	prepend=b%3A0%3B
+spl_autoload_unregister	callback
+spl_classes
+spl_object_hash	object
+spl_object_id	object
+iterator_apply	iterator	callback	args=N%3B
+iterator_count	iterator
+iterator_to_array	iterator	preserve_keys=b%3A1%3B
+LogicException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+LogicException::__wakeup
+LogicException::getMessage
+LogicException::getCode
+LogicException::getFile
+LogicException::getLine
+LogicException::getTrace
+LogicException::getPrevious
+LogicException::getTraceAsString
+LogicException::__toString
+BadFunctionCallException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+BadFunctionCallException::__wakeup
+BadFunctionCallException::getMessage
+BadFunctionCallException::getCode
+BadFunctionCallException::getFile
+BadFunctionCallException::getLine
+BadFunctionCallException::getTrace
+BadFunctionCallException::getPrevious
+BadFunctionCallException::getTraceAsString
+BadFunctionCallException::__toString
+BadMethodCallException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+BadMethodCallException::__wakeup
+BadMethodCallException::getMessage
+BadMethodCallException::getCode
+BadMethodCallException::getFile
+BadMethodCallException::getLine
+BadMethodCallException::getTrace
+BadMethodCallException::getPrevious
+BadMethodCallException::getTraceAsString
+BadMethodCallException::__toString
+DomainException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+DomainException::__wakeup
+DomainException::getMessage
+DomainException::getCode
+DomainException::getFile
+DomainException::getLine
+DomainException::getTrace
+DomainException::getPrevious
+DomainException::getTraceAsString
+DomainException::__toString
+InvalidArgumentException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+InvalidArgumentException::__wakeup
+InvalidArgumentException::getMessage
+InvalidArgumentException::getCode
+InvalidArgumentException::getFile
+InvalidArgumentException::getLine
+InvalidArgumentException::getTrace
+InvalidArgumentException::getPrevious
+InvalidArgumentException::getTraceAsString
+InvalidArgumentException::__toString
+LengthException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+LengthException::__wakeup
+LengthException::getMessage
+LengthException::getCode
+LengthException::getFile
+LengthException::getLine
+LengthException::getTrace
+LengthException::getPrevious
+LengthException::getTraceAsString
+LengthException::__toString
+OutOfRangeException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+OutOfRangeException::__wakeup
+OutOfRangeException::getMessage
+OutOfRangeException::getCode
+OutOfRangeException::getFile
+OutOfRangeException::getLine
+OutOfRangeException::getTrace
+OutOfRangeException::getPrevious
+OutOfRangeException::getTraceAsString
+OutOfRangeException::__toString
+RuntimeException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+RuntimeException::__wakeup
+RuntimeException::getMessage
+RuntimeException::getCode
+RuntimeException::getFile
+RuntimeException::getLine
+RuntimeException::getTrace
+RuntimeException::getPrevious
+RuntimeException::getTraceAsString
+RuntimeException::__toString
+OutOfBoundsException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+OutOfBoundsException::__wakeup
+OutOfBoundsException::getMessage
+OutOfBoundsException::getCode
+OutOfBoundsException::getFile
+OutOfBoundsException::getLine
+OutOfBoundsException::getTrace
+OutOfBoundsException::getPrevious
+OutOfBoundsException::getTraceAsString
+OutOfBoundsException::__toString
+OverflowException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+OverflowException::__wakeup
+OverflowException::getMessage
+OverflowException::getCode
+OverflowException::getFile
+OverflowException::getLine
+OverflowException::getTrace
+OverflowException::getPrevious
+OverflowException::getTraceAsString
+OverflowException::__toString
+RangeException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+RangeException::__wakeup
+RangeException::getMessage
+RangeException::getCode
+RangeException::getFile
+RangeException::getLine
+RangeException::getTrace
+RangeException::getPrevious
+RangeException::getTraceAsString
+RangeException::__toString
+UnderflowException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+UnderflowException::__wakeup
+UnderflowException::getMessage
+UnderflowException::getCode
+UnderflowException::getFile
+UnderflowException::getLine
+UnderflowException::getTrace
+UnderflowException::getPrevious
+UnderflowException::getTraceAsString
+UnderflowException::__toString
+UnexpectedValueException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+UnexpectedValueException::__wakeup
+UnexpectedValueException::getMessage
+UnexpectedValueException::getCode
+UnexpectedValueException::getFile
+UnexpectedValueException::getLine
+UnexpectedValueException::getTrace
+UnexpectedValueException::getPrevious
+UnexpectedValueException::getTraceAsString
+UnexpectedValueException::__toString
+RecursiveIterator::hasChildren
+RecursiveIterator::getChildren
+OuterIterator::getInnerIterator
+RecursiveIteratorIterator::__construct	iterator	mode=i%3A0%3B	flags=i%3A0%3B
+RecursiveIteratorIterator::rewind
+RecursiveIteratorIterator::valid
+RecursiveIteratorIterator::key
+RecursiveIteratorIterator::current
+RecursiveIteratorIterator::next
+RecursiveIteratorIterator::getDepth
+RecursiveIteratorIterator::getSubIterator	level=N%3B
+RecursiveIteratorIterator::getInnerIterator
+RecursiveIteratorIterator::beginIteration
+RecursiveIteratorIterator::endIteration
+RecursiveIteratorIterator::callHasChildren
+RecursiveIteratorIterator::callGetChildren
+RecursiveIteratorIterator::beginChildren
+RecursiveIteratorIterator::endChildren
+RecursiveIteratorIterator::nextElement
+RecursiveIteratorIterator::setMaxDepth	maxDepth=i%3A-1%3B
+RecursiveIteratorIterator::getMaxDepth
+IteratorIterator::__construct	iterator	class=N%3B
+IteratorIterator::getInnerIterator
+IteratorIterator::rewind
+IteratorIterator::valid
+IteratorIterator::key
+IteratorIterator::current
+IteratorIterator::next
+FilterIterator::accept
+FilterIterator::__construct	iterator
+FilterIterator::rewind
+FilterIterator::next
+FilterIterator::getInnerIterator
+FilterIterator::valid
+FilterIterator::key
+FilterIterator::current
+RecursiveFilterIterator::__construct	iterator
+RecursiveFilterIterator::hasChildren
+RecursiveFilterIterator::getChildren
+RecursiveFilterIterator::rewind
+RecursiveFilterIterator::next
+RecursiveFilterIterator::getInnerIterator
+RecursiveFilterIterator::valid
+RecursiveFilterIterator::key
+RecursiveFilterIterator::current
+CallbackFilterIterator::__construct	iterator	callback
+CallbackFilterIterator::accept
+CallbackFilterIterator::rewind
+CallbackFilterIterator::next
+CallbackFilterIterator::getInnerIterator
+CallbackFilterIterator::valid
+CallbackFilterIterator::key
+CallbackFilterIterator::current
+RecursiveCallbackFilterIterator::__construct	iterator	callback
+RecursiveCallbackFilterIterator::hasChildren
+RecursiveCallbackFilterIterator::getChildren
+RecursiveCallbackFilterIterator::accept
+RecursiveCallbackFilterIterator::rewind
+RecursiveCallbackFilterIterator::next
+RecursiveCallbackFilterIterator::getInnerIterator
+RecursiveCallbackFilterIterator::valid
+RecursiveCallbackFilterIterator::key
+RecursiveCallbackFilterIterator::current
+ParentIterator::__construct	iterator
+ParentIterator::accept
+ParentIterator::hasChildren
+ParentIterator::getChildren
+ParentIterator::rewind
+ParentIterator::next
+ParentIterator::getInnerIterator
+ParentIterator::valid
+ParentIterator::key
+ParentIterator::current
+SeekableIterator::seek	offset
+LimitIterator::__construct	iterator	offset=i%3A0%3B	limit=i%3A-1%3B
+LimitIterator::rewind
+LimitIterator::valid
+LimitIterator::next
+LimitIterator::seek	offset
+LimitIterator::getPosition
+LimitIterator::getInnerIterator
+LimitIterator::key
+LimitIterator::current
+CachingIterator::__construct	iterator	flags=i%3A1%3B
+CachingIterator::rewind
+CachingIterator::valid
+CachingIterator::next
+CachingIterator::hasNext
+CachingIterator::__toString
+CachingIterator::getFlags
+CachingIterator::setFlags	flags
+CachingIterator::offsetGet	key
+CachingIterator::offsetSet	key	value
+CachingIterator::offsetUnset	key
+CachingIterator::offsetExists	key
+CachingIterator::getCache
+CachingIterator::count
+CachingIterator::getInnerIterator
+CachingIterator::key
+CachingIterator::current
+RecursiveCachingIterator::__construct	iterator	flags=i%3A1%3B
+RecursiveCachingIterator::hasChildren
+RecursiveCachingIterator::getChildren
+RecursiveCachingIterator::rewind
+RecursiveCachingIterator::valid
+RecursiveCachingIterator::next
+RecursiveCachingIterator::hasNext
+RecursiveCachingIterator::__toString
+RecursiveCachingIterator::getFlags
+RecursiveCachingIterator::setFlags	flags
+RecursiveCachingIterator::offsetGet	key
+RecursiveCachingIterator::offsetSet	key	value
+RecursiveCachingIterator::offsetUnset	key
+RecursiveCachingIterator::offsetExists	key
+RecursiveCachingIterator::getCache
+RecursiveCachingIterator::count
+RecursiveCachingIterator::getInnerIterator
+RecursiveCachingIterator::key
+RecursiveCachingIterator::current
+NoRewindIterator::__construct	iterator
+NoRewindIterator::rewind
+NoRewindIterator::valid
+NoRewindIterator::key
+NoRewindIterator::current
+NoRewindIterator::next
+NoRewindIterator::getInnerIterator
+AppendIterator::__construct
+AppendIterator::append	iterator
+AppendIterator::rewind
+AppendIterator::valid
+AppendIterator::current
+AppendIterator::next
+AppendIterator::getIteratorIndex
+AppendIterator::getArrayIterator
+AppendIterator::getInnerIterator
+AppendIterator::key
+InfiniteIterator::__construct	iterator
+InfiniteIterator::next
+InfiniteIterator::getInnerIterator
+InfiniteIterator::rewind
+InfiniteIterator::valid
+InfiniteIterator::key
+InfiniteIterator::current
+RegexIterator::__construct	iterator	pattern	mode=i%3A0%3B	flags=i%3A0%3B	pregFlags=i%3A0%3B
+RegexIterator::accept
+RegexIterator::getMode
+RegexIterator::setMode	mode
+RegexIterator::getFlags
+RegexIterator::setFlags	flags
+RegexIterator::getRegex
+RegexIterator::getPregFlags
+RegexIterator::setPregFlags	pregFlags
+RegexIterator::rewind
+RegexIterator::next
+RegexIterator::getInnerIterator
+RegexIterator::valid
+RegexIterator::key
+RegexIterator::current
+RecursiveRegexIterator::__construct	iterator	pattern	mode=i%3A0%3B	flags=i%3A0%3B	pregFlags=i%3A0%3B
+RecursiveRegexIterator::accept
+RecursiveRegexIterator::hasChildren
+RecursiveRegexIterator::getChildren
+RecursiveRegexIterator::getMode
+RecursiveRegexIterator::setMode	mode
+RecursiveRegexIterator::getFlags
+RecursiveRegexIterator::setFlags	flags
+RecursiveRegexIterator::getRegex
+RecursiveRegexIterator::getPregFlags
+RecursiveRegexIterator::setPregFlags	pregFlags
+RecursiveRegexIterator::rewind
+RecursiveRegexIterator::next
+RecursiveRegexIterator::getInnerIterator
+RecursiveRegexIterator::valid
+RecursiveRegexIterator::key
+RecursiveRegexIterator::current
+EmptyIterator::current
+EmptyIterator::next
+EmptyIterator::key
+EmptyIterator::valid
+EmptyIterator::rewind
+RecursiveTreeIterator::__construct	iterator	flags=i%3A8%3B	cachingIteratorFlags=i%3A16%3B	mode=i%3A1%3B
+RecursiveTreeIterator::key
+RecursiveTreeIterator::current
+RecursiveTreeIterator::getPrefix
+RecursiveTreeIterator::setPostfix	postfix
+RecursiveTreeIterator::setPrefixPart	part	value
+RecursiveTreeIterator::getEntry
+RecursiveTreeIterator::getPostfix
+RecursiveTreeIterator::rewind
+RecursiveTreeIterator::valid
+RecursiveTreeIterator::next
+RecursiveTreeIterator::getDepth
+RecursiveTreeIterator::getSubIterator	level=N%3B
+RecursiveTreeIterator::getInnerIterator
+RecursiveTreeIterator::beginIteration
+RecursiveTreeIterator::endIteration
+RecursiveTreeIterator::callHasChildren
+RecursiveTreeIterator::callGetChildren
+RecursiveTreeIterator::beginChildren
+RecursiveTreeIterator::endChildren
+RecursiveTreeIterator::nextElement
+RecursiveTreeIterator::setMaxDepth	maxDepth=i%3A-1%3B
+RecursiveTreeIterator::getMaxDepth
+ArrayObject::__construct	array=a%3A0%3A%7B%7D	flags=i%3A0%3B	iteratorClass=s%3A13%3A%22ArrayIterator%22%3B
+ArrayObject::offsetExists	key
+ArrayObject::offsetGet	key
+ArrayObject::offsetSet	key	value
+ArrayObject::offsetUnset	key
+ArrayObject::append	value
+ArrayObject::getArrayCopy
+ArrayObject::count
+ArrayObject::getFlags
+ArrayObject::setFlags	flags
+ArrayObject::asort	flags=i%3A0%3B
+ArrayObject::ksort	flags=i%3A0%3B
+ArrayObject::uasort	callback
+ArrayObject::uksort	callback
+ArrayObject::natsort
+ArrayObject::natcasesort
+ArrayObject::unserialize	data
+ArrayObject::serialize
+ArrayObject::__serialize
+ArrayObject::__unserialize	data
+ArrayObject::getIterator
+ArrayObject::exchangeArray	array
+ArrayObject::setIteratorClass	iteratorClass
+ArrayObject::getIteratorClass
+ArrayObject::__debugInfo
+ArrayIterator::__construct	array=a%3A0%3A%7B%7D	flags=i%3A0%3B
+ArrayIterator::offsetExists	key
+ArrayIterator::offsetGet	key
+ArrayIterator::offsetSet	key	value
+ArrayIterator::offsetUnset	key
+ArrayIterator::append	value
+ArrayIterator::getArrayCopy
+ArrayIterator::count
+ArrayIterator::getFlags
+ArrayIterator::setFlags	flags
+ArrayIterator::asort	flags=i%3A0%3B
+ArrayIterator::ksort	flags=i%3A0%3B
+ArrayIterator::uasort	callback
+ArrayIterator::uksort	callback
+ArrayIterator::natsort
+ArrayIterator::natcasesort
+ArrayIterator::unserialize	data
+ArrayIterator::serialize
+ArrayIterator::__serialize
+ArrayIterator::__unserialize	data
+ArrayIterator::rewind
+ArrayIterator::current
+ArrayIterator::key
+ArrayIterator::next
+ArrayIterator::valid
+ArrayIterator::seek	offset
+ArrayIterator::__debugInfo
+RecursiveArrayIterator::hasChildren
+RecursiveArrayIterator::getChildren
+RecursiveArrayIterator::__construct	array=a%3A0%3A%7B%7D	flags=i%3A0%3B
+RecursiveArrayIterator::offsetExists	key
+RecursiveArrayIterator::offsetGet	key
+RecursiveArrayIterator::offsetSet	key	value
+RecursiveArrayIterator::offsetUnset	key
+RecursiveArrayIterator::append	value
+RecursiveArrayIterator::getArrayCopy
+RecursiveArrayIterator::count
+RecursiveArrayIterator::getFlags
+RecursiveArrayIterator::setFlags	flags
+RecursiveArrayIterator::asort	flags=i%3A0%3B
+RecursiveArrayIterator::ksort	flags=i%3A0%3B
+RecursiveArrayIterator::uasort	callback
+RecursiveArrayIterator::uksort	callback
+RecursiveArrayIterator::natsort
+RecursiveArrayIterator::natcasesort
+RecursiveArrayIterator::unserialize	data
+RecursiveArrayIterator::serialize
+RecursiveArrayIterator::__serialize
+RecursiveArrayIterator::__unserialize	data
+RecursiveArrayIterator::rewind
+RecursiveArrayIterator::current
+RecursiveArrayIterator::key
+RecursiveArrayIterator::next
+RecursiveArrayIterator::valid
+RecursiveArrayIterator::seek	offset
+RecursiveArrayIterator::__debugInfo
+SplFileInfo::__construct	filename
+SplFileInfo::getPath
+SplFileInfo::getFilename
+SplFileInfo::getExtension
+SplFileInfo::getBasename	suffix=s%3A0%3A%22%22%3B
+SplFileInfo::getPathname
+SplFileInfo::getPerms
+SplFileInfo::getInode
+SplFileInfo::getSize
+SplFileInfo::getOwner
+SplFileInfo::getGroup
+SplFileInfo::getATime
+SplFileInfo::getMTime
+SplFileInfo::getCTime
+SplFileInfo::getType
+SplFileInfo::isWritable
+SplFileInfo::isReadable
+SplFileInfo::isExecutable
+SplFileInfo::isFile
+SplFileInfo::isDir
+SplFileInfo::isLink
+SplFileInfo::getLinkTarget
+SplFileInfo::getRealPath
+SplFileInfo::getFileInfo	class=N%3B
+SplFileInfo::getPathInfo	class=N%3B
+SplFileInfo::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+SplFileInfo::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+SplFileInfo::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+SplFileInfo::__toString
+SplFileInfo::__debugInfo
+SplFileInfo::_bad_state_ex
+DirectoryIterator::__construct	directory
+DirectoryIterator::getFilename
+DirectoryIterator::getExtension
+DirectoryIterator::getBasename	suffix=s%3A0%3A%22%22%3B
+DirectoryIterator::isDot
+DirectoryIterator::rewind
+DirectoryIterator::valid
+DirectoryIterator::key
+DirectoryIterator::current
+DirectoryIterator::next
+DirectoryIterator::seek	offset
+DirectoryIterator::__toString
+DirectoryIterator::getPath
+DirectoryIterator::getPathname
+DirectoryIterator::getPerms
+DirectoryIterator::getInode
+DirectoryIterator::getSize
+DirectoryIterator::getOwner
+DirectoryIterator::getGroup
+DirectoryIterator::getATime
+DirectoryIterator::getMTime
+DirectoryIterator::getCTime
+DirectoryIterator::getType
+DirectoryIterator::isWritable
+DirectoryIterator::isReadable
+DirectoryIterator::isExecutable
+DirectoryIterator::isFile
+DirectoryIterator::isDir
+DirectoryIterator::isLink
+DirectoryIterator::getLinkTarget
+DirectoryIterator::getRealPath
+DirectoryIterator::getFileInfo	class=N%3B
+DirectoryIterator::getPathInfo	class=N%3B
+DirectoryIterator::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+DirectoryIterator::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+DirectoryIterator::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+DirectoryIterator::__debugInfo
+DirectoryIterator::_bad_state_ex
+FilesystemIterator::__construct	directory	flags=i%3A4096%3B
+FilesystemIterator::rewind
+FilesystemIterator::key
+FilesystemIterator::current
+FilesystemIterator::getFlags
+FilesystemIterator::setFlags	flags
+FilesystemIterator::getFilename
+FilesystemIterator::getExtension
+FilesystemIterator::getBasename	suffix=s%3A0%3A%22%22%3B
+FilesystemIterator::isDot
+FilesystemIterator::valid
+FilesystemIterator::next
+FilesystemIterator::seek	offset
+FilesystemIterator::__toString
+FilesystemIterator::getPath
+FilesystemIterator::getPathname
+FilesystemIterator::getPerms
+FilesystemIterator::getInode
+FilesystemIterator::getSize
+FilesystemIterator::getOwner
+FilesystemIterator::getGroup
+FilesystemIterator::getATime
+FilesystemIterator::getMTime
+FilesystemIterator::getCTime
+FilesystemIterator::getType
+FilesystemIterator::isWritable
+FilesystemIterator::isReadable
+FilesystemIterator::isExecutable
+FilesystemIterator::isFile
+FilesystemIterator::isDir
+FilesystemIterator::isLink
+FilesystemIterator::getLinkTarget
+FilesystemIterator::getRealPath
+FilesystemIterator::getFileInfo	class=N%3B
+FilesystemIterator::getPathInfo	class=N%3B
+FilesystemIterator::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+FilesystemIterator::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+FilesystemIterator::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+FilesystemIterator::__debugInfo
+FilesystemIterator::_bad_state_ex
+RecursiveDirectoryIterator::__construct	directory	flags=i%3A0%3B
+RecursiveDirectoryIterator::hasChildren	allowLinks=b%3A0%3B
+RecursiveDirectoryIterator::getChildren
+RecursiveDirectoryIterator::getSubPath
+RecursiveDirectoryIterator::getSubPathname
+RecursiveDirectoryIterator::rewind
+RecursiveDirectoryIterator::key
+RecursiveDirectoryIterator::current
+RecursiveDirectoryIterator::getFlags
+RecursiveDirectoryIterator::setFlags	flags
+RecursiveDirectoryIterator::getFilename
+RecursiveDirectoryIterator::getExtension
+RecursiveDirectoryIterator::getBasename	suffix=s%3A0%3A%22%22%3B
+RecursiveDirectoryIterator::isDot
+RecursiveDirectoryIterator::valid
+RecursiveDirectoryIterator::next
+RecursiveDirectoryIterator::seek	offset
+RecursiveDirectoryIterator::__toString
+RecursiveDirectoryIterator::getPath
+RecursiveDirectoryIterator::getPathname
+RecursiveDirectoryIterator::getPerms
+RecursiveDirectoryIterator::getInode
+RecursiveDirectoryIterator::getSize
+RecursiveDirectoryIterator::getOwner
+RecursiveDirectoryIterator::getGroup
+RecursiveDirectoryIterator::getATime
+RecursiveDirectoryIterator::getMTime
+RecursiveDirectoryIterator::getCTime
+RecursiveDirectoryIterator::getType
+RecursiveDirectoryIterator::isWritable
+RecursiveDirectoryIterator::isReadable
+RecursiveDirectoryIterator::isExecutable
+RecursiveDirectoryIterator::isFile
+RecursiveDirectoryIterator::isDir
+RecursiveDirectoryIterator::isLink
+RecursiveDirectoryIterator::getLinkTarget
+RecursiveDirectoryIterator::getRealPath
+RecursiveDirectoryIterator::getFileInfo	class=N%3B
+RecursiveDirectoryIterator::getPathInfo	class=N%3B
+RecursiveDirectoryIterator::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+RecursiveDirectoryIterator::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+RecursiveDirectoryIterator::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+RecursiveDirectoryIterator::__debugInfo
+RecursiveDirectoryIterator::_bad_state_ex
+GlobIterator::__construct	pattern	flags=i%3A0%3B
+GlobIterator::count
+GlobIterator::rewind
+GlobIterator::key
+GlobIterator::current
+GlobIterator::getFlags
+GlobIterator::setFlags	flags
+GlobIterator::getFilename
+GlobIterator::getExtension
+GlobIterator::getBasename	suffix=s%3A0%3A%22%22%3B
+GlobIterator::isDot
+GlobIterator::valid
+GlobIterator::next
+GlobIterator::seek	offset
+GlobIterator::__toString
+GlobIterator::getPath
+GlobIterator::getPathname
+GlobIterator::getPerms
+GlobIterator::getInode
+GlobIterator::getSize
+GlobIterator::getOwner
+GlobIterator::getGroup
+GlobIterator::getATime
+GlobIterator::getMTime
+GlobIterator::getCTime
+GlobIterator::getType
+GlobIterator::isWritable
+GlobIterator::isReadable
+GlobIterator::isExecutable
+GlobIterator::isFile
+GlobIterator::isDir
+GlobIterator::isLink
+GlobIterator::getLinkTarget
+GlobIterator::getRealPath
+GlobIterator::getFileInfo	class=N%3B
+GlobIterator::getPathInfo	class=N%3B
+GlobIterator::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+GlobIterator::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+GlobIterator::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+GlobIterator::__debugInfo
+GlobIterator::_bad_state_ex
+SplFileObject::__construct	filename	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+SplFileObject::rewind
+SplFileObject::eof
+SplFileObject::valid
+SplFileObject::fgets
+SplFileObject::fread	length
+SplFileObject::fgetcsv	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+SplFileObject::fputcsv	fields	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B	eol=s%3A1%3A%22%0A%22%3B
+SplFileObject::setCsvControl	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+SplFileObject::getCsvControl
+SplFileObject::flock	operation	&wouldBlock=N%3B
+SplFileObject::fflush
+SplFileObject::ftell
+SplFileObject::fseek	offset	whence=i%3A0%3B
+SplFileObject::fgetc
+SplFileObject::fpassthru
+SplFileObject::fscanf	format	&...vars
+SplFileObject::fwrite	data	length=N%3B
+SplFileObject::fstat
+SplFileObject::ftruncate	size
+SplFileObject::current
+SplFileObject::key
+SplFileObject::next
+SplFileObject::setFlags	flags
+SplFileObject::getFlags
+SplFileObject::setMaxLineLen	maxLength
+SplFileObject::getMaxLineLen
+SplFileObject::hasChildren
+SplFileObject::getChildren
+SplFileObject::seek	line
+SplFileObject::getCurrentLine
+SplFileObject::__toString
+SplFileObject::getPath
+SplFileObject::getFilename
+SplFileObject::getExtension
+SplFileObject::getBasename	suffix=s%3A0%3A%22%22%3B
+SplFileObject::getPathname
+SplFileObject::getPerms
+SplFileObject::getInode
+SplFileObject::getSize
+SplFileObject::getOwner
+SplFileObject::getGroup
+SplFileObject::getATime
+SplFileObject::getMTime
+SplFileObject::getCTime
+SplFileObject::getType
+SplFileObject::isWritable
+SplFileObject::isReadable
+SplFileObject::isExecutable
+SplFileObject::isFile
+SplFileObject::isDir
+SplFileObject::isLink
+SplFileObject::getLinkTarget
+SplFileObject::getRealPath
+SplFileObject::getFileInfo	class=N%3B
+SplFileObject::getPathInfo	class=N%3B
+SplFileObject::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+SplFileObject::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+SplFileObject::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+SplFileObject::__debugInfo
+SplFileObject::_bad_state_ex
+SplTempFileObject::__construct	maxMemory=i%3A2097152%3B
+SplTempFileObject::rewind
+SplTempFileObject::eof
+SplTempFileObject::valid
+SplTempFileObject::fgets
+SplTempFileObject::fread	length
+SplTempFileObject::fgetcsv	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+SplTempFileObject::fputcsv	fields	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B	eol=s%3A1%3A%22%0A%22%3B
+SplTempFileObject::setCsvControl	separator=s%3A1%3A%22%2C%22%3B	enclosure=s%3A1%3A%22%22%22%3B	escape=s%3A1%3A%22%5C%22%3B
+SplTempFileObject::getCsvControl
+SplTempFileObject::flock	operation	&wouldBlock=N%3B
+SplTempFileObject::fflush
+SplTempFileObject::ftell
+SplTempFileObject::fseek	offset	whence=i%3A0%3B
+SplTempFileObject::fgetc
+SplTempFileObject::fpassthru
+SplTempFileObject::fscanf	format	&...vars
+SplTempFileObject::fwrite	data	length=N%3B
+SplTempFileObject::fstat
+SplTempFileObject::ftruncate	size
+SplTempFileObject::current
+SplTempFileObject::key
+SplTempFileObject::next
+SplTempFileObject::setFlags	flags
+SplTempFileObject::getFlags
+SplTempFileObject::setMaxLineLen	maxLength
+SplTempFileObject::getMaxLineLen
+SplTempFileObject::hasChildren
+SplTempFileObject::getChildren
+SplTempFileObject::seek	line
+SplTempFileObject::getCurrentLine
+SplTempFileObject::__toString
+SplTempFileObject::getPath
+SplTempFileObject::getFilename
+SplTempFileObject::getExtension
+SplTempFileObject::getBasename	suffix=s%3A0%3A%22%22%3B
+SplTempFileObject::getPathname
+SplTempFileObject::getPerms
+SplTempFileObject::getInode
+SplTempFileObject::getSize
+SplTempFileObject::getOwner
+SplTempFileObject::getGroup
+SplTempFileObject::getATime
+SplTempFileObject::getMTime
+SplTempFileObject::getCTime
+SplTempFileObject::getType
+SplTempFileObject::isWritable
+SplTempFileObject::isReadable
+SplTempFileObject::isExecutable
+SplTempFileObject::isFile
+SplTempFileObject::isDir
+SplTempFileObject::isLink
+SplTempFileObject::getLinkTarget
+SplTempFileObject::getRealPath
+SplTempFileObject::getFileInfo	class=N%3B
+SplTempFileObject::getPathInfo	class=N%3B
+SplTempFileObject::openFile	mode=s%3A1%3A%22r%22%3B	useIncludePath=b%3A0%3B	context=N%3B
+SplTempFileObject::setFileClass	class=s%3A13%3A%22SplFileObject%22%3B
+SplTempFileObject::setInfoClass	class=s%3A11%3A%22SplFileInfo%22%3B
+SplTempFileObject::__debugInfo
+SplTempFileObject::_bad_state_ex
+SplDoublyLinkedList::add	index	value
+SplDoublyLinkedList::pop
+SplDoublyLinkedList::shift
+SplDoublyLinkedList::push	value
+SplDoublyLinkedList::unshift	value
+SplDoublyLinkedList::top
+SplDoublyLinkedList::bottom
+SplDoublyLinkedList::__debugInfo
+SplDoublyLinkedList::count
+SplDoublyLinkedList::isEmpty
+SplDoublyLinkedList::setIteratorMode	mode
+SplDoublyLinkedList::getIteratorMode
+SplDoublyLinkedList::offsetExists	index
+SplDoublyLinkedList::offsetGet	index
+SplDoublyLinkedList::offsetSet	index	value
+SplDoublyLinkedList::offsetUnset	index
+SplDoublyLinkedList::rewind
+SplDoublyLinkedList::current
+SplDoublyLinkedList::key
+SplDoublyLinkedList::prev
+SplDoublyLinkedList::next
+SplDoublyLinkedList::valid
+SplDoublyLinkedList::unserialize	data
+SplDoublyLinkedList::serialize
+SplDoublyLinkedList::__serialize
+SplDoublyLinkedList::__unserialize	data
+SplQueue::enqueue	value
+SplQueue::dequeue
+SplQueue::add	index	value
+SplQueue::pop
+SplQueue::shift
+SplQueue::push	value
+SplQueue::unshift	value
+SplQueue::top
+SplQueue::bottom
+SplQueue::__debugInfo
+SplQueue::count
+SplQueue::isEmpty
+SplQueue::setIteratorMode	mode
+SplQueue::getIteratorMode
+SplQueue::offsetExists	index
+SplQueue::offsetGet	index
+SplQueue::offsetSet	index	value
+SplQueue::offsetUnset	index
+SplQueue::rewind
+SplQueue::current
+SplQueue::key
+SplQueue::prev
+SplQueue::next
+SplQueue::valid
+SplQueue::unserialize	data
+SplQueue::serialize
+SplQueue::__serialize
+SplQueue::__unserialize	data
+SplStack::add	index	value
+SplStack::pop
+SplStack::shift
+SplStack::push	value
+SplStack::unshift	value
+SplStack::top
+SplStack::bottom
+SplStack::__debugInfo
+SplStack::count
+SplStack::isEmpty
+SplStack::setIteratorMode	mode
+SplStack::getIteratorMode
+SplStack::offsetExists	index
+SplStack::offsetGet	index
+SplStack::offsetSet	index	value
+SplStack::offsetUnset	index
+SplStack::rewind
+SplStack::current
+SplStack::key
+SplStack::prev
+SplStack::next
+SplStack::valid
+SplStack::unserialize	data
+SplStack::serialize
+SplStack::__serialize
+SplStack::__unserialize	data
+SplHeap::extract
+SplHeap::insert	value
+SplHeap::top
+SplHeap::count
+SplHeap::isEmpty
+SplHeap::rewind
+SplHeap::current
+SplHeap::key
+SplHeap::next
+SplHeap::valid
+SplHeap::recoverFromCorruption
+SplHeap::compare	value1	value2
+SplHeap::isCorrupted
+SplHeap::__debugInfo
+SplHeap::__serialize
+SplHeap::__unserialize	data
+SplMinHeap::compare	value1	value2
+SplMinHeap::extract
+SplMinHeap::insert	value
+SplMinHeap::top
+SplMinHeap::count
+SplMinHeap::isEmpty
+SplMinHeap::rewind
+SplMinHeap::current
+SplMinHeap::key
+SplMinHeap::next
+SplMinHeap::valid
+SplMinHeap::recoverFromCorruption
+SplMinHeap::isCorrupted
+SplMinHeap::__debugInfo
+SplMinHeap::__serialize
+SplMinHeap::__unserialize	data
+SplMaxHeap::compare	value1	value2
+SplMaxHeap::extract
+SplMaxHeap::insert	value
+SplMaxHeap::top
+SplMaxHeap::count
+SplMaxHeap::isEmpty
+SplMaxHeap::rewind
+SplMaxHeap::current
+SplMaxHeap::key
+SplMaxHeap::next
+SplMaxHeap::valid
+SplMaxHeap::recoverFromCorruption
+SplMaxHeap::isCorrupted
+SplMaxHeap::__debugInfo
+SplMaxHeap::__serialize
+SplMaxHeap::__unserialize	data
+SplPriorityQueue::compare	priority1	priority2
+SplPriorityQueue::insert	value	priority
+SplPriorityQueue::setExtractFlags	flags
+SplPriorityQueue::top
+SplPriorityQueue::extract
+SplPriorityQueue::count
+SplPriorityQueue::isEmpty
+SplPriorityQueue::rewind
+SplPriorityQueue::current
+SplPriorityQueue::key
+SplPriorityQueue::next
+SplPriorityQueue::valid
+SplPriorityQueue::recoverFromCorruption
+SplPriorityQueue::isCorrupted
+SplPriorityQueue::getExtractFlags
+SplPriorityQueue::__debugInfo
+SplPriorityQueue::__serialize
+SplPriorityQueue::__unserialize	data
+SplFixedArray::__construct	size=i%3A0%3B
+SplFixedArray::__wakeup
+SplFixedArray::__serialize
+SplFixedArray::__unserialize	data
+SplFixedArray::count
+SplFixedArray::toArray
+SplFixedArray::fromArray	array	preserveKeys=b%3A1%3B
+SplFixedArray::getSize
+SplFixedArray::setSize	size
+SplFixedArray::offsetExists	index
+SplFixedArray::offsetGet	index
+SplFixedArray::offsetSet	index	value
+SplFixedArray::offsetUnset	index
+SplFixedArray::getIterator
+SplFixedArray::jsonSerialize
+SplObserver::update	subject
+SplSubject::attach	observer
+SplSubject::detach	observer
+SplSubject::notify
+SplObjectStorage::attach	object	info=N%3B
+SplObjectStorage::detach	object
+SplObjectStorage::contains	object
+SplObjectStorage::addAll	storage
+SplObjectStorage::removeAll	storage
+SplObjectStorage::removeAllExcept	storage
+SplObjectStorage::getInfo
+SplObjectStorage::setInfo	info
+SplObjectStorage::count	mode=i%3A0%3B
+SplObjectStorage::rewind
+SplObjectStorage::valid
+SplObjectStorage::key
+SplObjectStorage::current
+SplObjectStorage::next
+SplObjectStorage::seek	offset
+SplObjectStorage::unserialize	data
+SplObjectStorage::serialize
+SplObjectStorage::offsetExists	object
+SplObjectStorage::offsetGet	object
+SplObjectStorage::offsetSet	object	info=N%3B
+SplObjectStorage::offsetUnset	object
+SplObjectStorage::getHash	object
+SplObjectStorage::__serialize
+SplObjectStorage::__unserialize	data
+SplObjectStorage::__debugInfo
+MultipleIterator::__construct	flags=i%3A1%3B
+MultipleIterator::getFlags
+MultipleIterator::setFlags	flags
+MultipleIterator::attachIterator	iterator	info=N%3B
+MultipleIterator::detachIterator	iterator
+MultipleIterator::containsIterator	iterator
+MultipleIterator::countIterators
+MultipleIterator::rewind
+MultipleIterator::valid
+MultipleIterator::key
+MultipleIterator::current
+MultipleIterator::next
+MultipleIterator::__debugInfo
+mb_language	language=N%3B
+mb_internal_encoding	encoding=N%3B
+mb_http_input	type=N%3B
+mb_http_output	encoding=N%3B
+mb_detect_order	encoding=N%3B
+mb_substitute_character	substitute_character=N%3B
+mb_preferred_mime_name	encoding
+mb_parse_str	string	&result
+mb_output_handler	string	status
+mb_str_split	string	length=i%3A1%3B	encoding=N%3B
+mb_strlen	string	encoding=N%3B
+mb_strpos	haystack	needle	offset=i%3A0%3B	encoding=N%3B
+mb_strrpos	haystack	needle	offset=i%3A0%3B	encoding=N%3B
+mb_stripos	haystack	needle	offset=i%3A0%3B	encoding=N%3B
+mb_strripos	haystack	needle	offset=i%3A0%3B	encoding=N%3B
+mb_strstr	haystack	needle	before_needle=b%3A0%3B	encoding=N%3B
+mb_strrchr	haystack	needle	before_needle=b%3A0%3B	encoding=N%3B
+mb_stristr	haystack	needle	before_needle=b%3A0%3B	encoding=N%3B
+mb_strrichr	haystack	needle	before_needle=b%3A0%3B	encoding=N%3B
+mb_substr_count	haystack	needle	encoding=N%3B
+mb_substr	string	start	length=N%3B	encoding=N%3B
+mb_strcut	string	start	length=N%3B	encoding=N%3B
+mb_strwidth	string	encoding=N%3B
+mb_strimwidth	string	start	width	trim_marker=s%3A0%3A%22%22%3B	encoding=N%3B
+mb_convert_encoding	string	to_encoding	from_encoding=N%3B
+mb_convert_case	string	mode	encoding=N%3B
+mb_strtoupper	string	encoding=N%3B
+mb_strtolower	string	encoding=N%3B
+mb_ucfirst	string	encoding=N%3B
+mb_lcfirst	string	encoding=N%3B
+mb_trim	string	characters=N%3B	encoding=N%3B
+mb_ltrim	string	characters=N%3B	encoding=N%3B
+mb_rtrim	string	characters=N%3B	encoding=N%3B
+mb_detect_encoding	string	encodings=N%3B	strict=b%3A0%3B
+mb_list_encodings
+mb_encoding_aliases	encoding
+mb_encode_mimeheader	string	charset=N%3B	transfer_encoding=N%3B	newline=s%3A2%3A%22%0D%0A%22%3B	indent=i%3A0%3B
+mb_decode_mimeheader	string
+mb_convert_kana	string	mode=s%3A2%3A%22KV%22%3B	encoding=N%3B
+mb_convert_variables	to_encoding	from_encoding	&var	&...vars
+mb_encode_numericentity	string	map	encoding=N%3B	hex=b%3A0%3B
+mb_decode_numericentity	string	map	encoding=N%3B
+mb_send_mail	to	subject	message	additional_headers=a%3A0%3A%7B%7D	additional_params=N%3B
+mb_get_info	type=s%3A3%3A%22all%22%3B
+mb_check_encoding	value=N%3B	encoding=N%3B
+mb_scrub	string	encoding=N%3B
+mb_ord	string	encoding=N%3B
+mb_chr	codepoint	encoding=N%3B
+mb_str_pad	string	length	pad_string=s%3A1%3A%22%20%22%3B	pad_type=i%3A1%3B	encoding=N%3B
+mb_regex_encoding	encoding=N%3B
+mb_ereg	pattern	string	&matches=N%3B
+mb_eregi	pattern	string	&matches=N%3B
+mb_ereg_replace	pattern	replacement	string	options=N%3B
+mb_eregi_replace	pattern	replacement	string	options=N%3B
+mb_ereg_replace_callback	pattern	callback	string	options=N%3B
+mb_split	pattern	string	limit=i%3A-1%3B
+mb_ereg_match	pattern	string	options=N%3B
+mb_ereg_search	pattern=N%3B	options=N%3B
+mb_ereg_search_pos	pattern=N%3B	options=N%3B
+mb_ereg_search_regs	pattern=N%3B	options=N%3B
+mb_ereg_search_init	string	pattern=N%3B	options=N%3B
+mb_ereg_search_getregs
+mb_ereg_search_getpos
+mb_ereg_search_setpos	offset
+mb_regex_set_options	options=N%3B
+lcg_value
+mt_srand	seed=N%3B	mode=i%3A0%3B
+srand	seed=N%3B	mode=i%3A0%3B
+rand	min=?	max=?
+mt_rand	min=?	max=?
+mt_getrandmax
+getrandmax
+random_bytes	length
+random_int	min	max
+Random\Engine::generate
+Random\RandomError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Random\RandomError::__wakeup
+Random\RandomError::getMessage
+Random\RandomError::getCode
+Random\RandomError::getFile
+Random\RandomError::getLine
+Random\RandomError::getTrace
+Random\RandomError::getPrevious
+Random\RandomError::getTraceAsString
+Random\RandomError::__toString
+Random\BrokenRandomEngineError::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Random\BrokenRandomEngineError::__wakeup
+Random\BrokenRandomEngineError::getMessage
+Random\BrokenRandomEngineError::getCode
+Random\BrokenRandomEngineError::getFile
+Random\BrokenRandomEngineError::getLine
+Random\BrokenRandomEngineError::getTrace
+Random\BrokenRandomEngineError::getPrevious
+Random\BrokenRandomEngineError::getTraceAsString
+Random\BrokenRandomEngineError::__toString
+Random\RandomException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+Random\RandomException::__wakeup
+Random\RandomException::getMessage
+Random\RandomException::getCode
+Random\RandomException::getFile
+Random\RandomException::getLine
+Random\RandomException::getTrace
+Random\RandomException::getPrevious
+Random\RandomException::getTraceAsString
+Random\RandomException::__toString
+Random\Engine\Mt19937::__construct	seed=N%3B	mode=i%3A0%3B
+Random\Engine\Mt19937::generate
+Random\Engine\Mt19937::__serialize
+Random\Engine\Mt19937::__unserialize	data
+Random\Engine\Mt19937::__debugInfo
+Random\Engine\PcgOneseq128XslRr64::__construct	seed=N%3B
+Random\Engine\PcgOneseq128XslRr64::generate
+Random\Engine\PcgOneseq128XslRr64::jump	advance
+Random\Engine\PcgOneseq128XslRr64::__serialize
+Random\Engine\PcgOneseq128XslRr64::__unserialize	data
+Random\Engine\PcgOneseq128XslRr64::__debugInfo
+Random\Engine\Xoshiro256StarStar::__construct	seed=N%3B
+Random\Engine\Xoshiro256StarStar::generate
+Random\Engine\Xoshiro256StarStar::jump
+Random\Engine\Xoshiro256StarStar::jumpLong
+Random\Engine\Xoshiro256StarStar::__serialize
+Random\Engine\Xoshiro256StarStar::__unserialize	data
+Random\Engine\Xoshiro256StarStar::__debugInfo
+Random\Engine\Secure::generate
+Random\Randomizer::__construct	engine=N%3B
+Random\Randomizer::nextInt
+Random\Randomizer::nextFloat
+Random\Randomizer::getFloat	min	max	boundary=E%3A34%3A%22Random%5CIntervalBoundary%3AClosedOpen%22%3B
+Random\Randomizer::getInt	min	max
+Random\Randomizer::getBytes	length
+Random\Randomizer::getBytesFromString	string	length
+Random\Randomizer::shuffleArray	array
+Random\Randomizer::shuffleBytes	bytes
+Random\Randomizer::pickArrayKeys	array	num
+Random\Randomizer::__serialize
+Random\Randomizer::__unserialize	data
+Random\IntervalBoundary::cases
+ReflectionException::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+ReflectionException::__wakeup
+ReflectionException::getMessage
+ReflectionException::getCode
+ReflectionException::getFile
+ReflectionException::getLine
+ReflectionException::getTrace
+ReflectionException::getPrevious
+ReflectionException::getTraceAsString
+ReflectionException::__toString
+Reflection::getModifierNames	modifiers
+ReflectionFunctionAbstract::__clone
+ReflectionFunctionAbstract::inNamespace
+ReflectionFunctionAbstract::isClosure
+ReflectionFunctionAbstract::isDeprecated
+ReflectionFunctionAbstract::isInternal
+ReflectionFunctionAbstract::isUserDefined
+ReflectionFunctionAbstract::isGenerator
+ReflectionFunctionAbstract::isVariadic
+ReflectionFunctionAbstract::isStatic
+ReflectionFunctionAbstract::getClosureThis
+ReflectionFunctionAbstract::getClosureScopeClass
+ReflectionFunctionAbstract::getClosureCalledClass
+ReflectionFunctionAbstract::getClosureUsedVariables
+ReflectionFunctionAbstract::getDocComment
+ReflectionFunctionAbstract::getEndLine
+ReflectionFunctionAbstract::getExtension
+ReflectionFunctionAbstract::getExtensionName
+ReflectionFunctionAbstract::getFileName
+ReflectionFunctionAbstract::getName
+ReflectionFunctionAbstract::getNamespaceName
+ReflectionFunctionAbstract::getNumberOfParameters
+ReflectionFunctionAbstract::getNumberOfRequiredParameters
+ReflectionFunctionAbstract::getParameters
+ReflectionFunctionAbstract::getShortName
+ReflectionFunctionAbstract::getStartLine
+ReflectionFunctionAbstract::getStaticVariables
+ReflectionFunctionAbstract::returnsReference
+ReflectionFunctionAbstract::hasReturnType
+ReflectionFunctionAbstract::getReturnType
+ReflectionFunctionAbstract::hasTentativeReturnType
+ReflectionFunctionAbstract::getTentativeReturnType
+ReflectionFunctionAbstract::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionFunction::__construct	function
+ReflectionFunction::__toString
+ReflectionFunction::isAnonymous
+ReflectionFunction::isDisabled
+ReflectionFunction::invoke	...args
+ReflectionFunction::invokeArgs	args
+ReflectionFunction::getClosure
+ReflectionFunction::inNamespace
+ReflectionFunction::isClosure
+ReflectionFunction::isDeprecated
+ReflectionFunction::isInternal
+ReflectionFunction::isUserDefined
+ReflectionFunction::isGenerator
+ReflectionFunction::isVariadic
+ReflectionFunction::isStatic
+ReflectionFunction::getClosureThis
+ReflectionFunction::getClosureScopeClass
+ReflectionFunction::getClosureCalledClass
+ReflectionFunction::getClosureUsedVariables
+ReflectionFunction::getDocComment
+ReflectionFunction::getEndLine
+ReflectionFunction::getExtension
+ReflectionFunction::getExtensionName
+ReflectionFunction::getFileName
+ReflectionFunction::getName
+ReflectionFunction::getNamespaceName
+ReflectionFunction::getNumberOfParameters
+ReflectionFunction::getNumberOfRequiredParameters
+ReflectionFunction::getParameters
+ReflectionFunction::getShortName
+ReflectionFunction::getStartLine
+ReflectionFunction::getStaticVariables
+ReflectionFunction::returnsReference
+ReflectionFunction::hasReturnType
+ReflectionFunction::getReturnType
+ReflectionFunction::hasTentativeReturnType
+ReflectionFunction::getTentativeReturnType
+ReflectionFunction::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionGenerator::__construct	generator
+ReflectionGenerator::getExecutingLine
+ReflectionGenerator::getExecutingFile
+ReflectionGenerator::getTrace	options=i%3A1%3B
+ReflectionGenerator::getFunction
+ReflectionGenerator::getThis
+ReflectionGenerator::getExecutingGenerator
+ReflectionGenerator::isClosed
+ReflectionParameter::__clone
+ReflectionParameter::__construct	function	param
+ReflectionParameter::__toString
+ReflectionParameter::getName
+ReflectionParameter::isPassedByReference
+ReflectionParameter::canBePassedByValue
+ReflectionParameter::getDeclaringFunction
+ReflectionParameter::getDeclaringClass
+ReflectionParameter::getClass
+ReflectionParameter::hasType
+ReflectionParameter::getType
+ReflectionParameter::isArray
+ReflectionParameter::isCallable
+ReflectionParameter::allowsNull
+ReflectionParameter::getPosition
+ReflectionParameter::isOptional
+ReflectionParameter::isDefaultValueAvailable
+ReflectionParameter::getDefaultValue
+ReflectionParameter::isDefaultValueConstant
+ReflectionParameter::getDefaultValueConstantName
+ReflectionParameter::isVariadic
+ReflectionParameter::isPromoted
+ReflectionParameter::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionType::__clone
+ReflectionType::allowsNull
+ReflectionType::__toString
+ReflectionNamedType::getName
+ReflectionNamedType::isBuiltin
+ReflectionNamedType::allowsNull
+ReflectionNamedType::__toString
+ReflectionUnionType::getTypes
+ReflectionUnionType::allowsNull
+ReflectionUnionType::__toString
+ReflectionIntersectionType::getTypes
+ReflectionIntersectionType::allowsNull
+ReflectionIntersectionType::__toString
+ReflectionMethod::__construct	objectOrMethod	method=N%3B
+ReflectionMethod::createFromMethodName	method
+ReflectionMethod::__toString
+ReflectionMethod::isPublic
+ReflectionMethod::isPrivate
+ReflectionMethod::isProtected
+ReflectionMethod::isAbstract
+ReflectionMethod::isFinal
+ReflectionMethod::isConstructor
+ReflectionMethod::isDestructor
+ReflectionMethod::getClosure	object=N%3B
+ReflectionMethod::getModifiers
+ReflectionMethod::invoke	object	...args
+ReflectionMethod::invokeArgs	object	args
+ReflectionMethod::getDeclaringClass
+ReflectionMethod::getPrototype
+ReflectionMethod::hasPrototype
+ReflectionMethod::setAccessible	accessible
+ReflectionMethod::inNamespace
+ReflectionMethod::isClosure
+ReflectionMethod::isDeprecated
+ReflectionMethod::isInternal
+ReflectionMethod::isUserDefined
+ReflectionMethod::isGenerator
+ReflectionMethod::isVariadic
+ReflectionMethod::isStatic
+ReflectionMethod::getClosureThis
+ReflectionMethod::getClosureScopeClass
+ReflectionMethod::getClosureCalledClass
+ReflectionMethod::getClosureUsedVariables
+ReflectionMethod::getDocComment
+ReflectionMethod::getEndLine
+ReflectionMethod::getExtension
+ReflectionMethod::getExtensionName
+ReflectionMethod::getFileName
+ReflectionMethod::getName
+ReflectionMethod::getNamespaceName
+ReflectionMethod::getNumberOfParameters
+ReflectionMethod::getNumberOfRequiredParameters
+ReflectionMethod::getParameters
+ReflectionMethod::getShortName
+ReflectionMethod::getStartLine
+ReflectionMethod::getStaticVariables
+ReflectionMethod::returnsReference
+ReflectionMethod::hasReturnType
+ReflectionMethod::getReturnType
+ReflectionMethod::hasTentativeReturnType
+ReflectionMethod::getTentativeReturnType
+ReflectionMethod::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionClass::__clone
+ReflectionClass::__construct	objectOrClass
+ReflectionClass::__toString
+ReflectionClass::getName
+ReflectionClass::isInternal
+ReflectionClass::isUserDefined
+ReflectionClass::isAnonymous
+ReflectionClass::isInstantiable
+ReflectionClass::isCloneable
+ReflectionClass::getFileName
+ReflectionClass::getStartLine
+ReflectionClass::getEndLine
+ReflectionClass::getDocComment
+ReflectionClass::getConstructor
+ReflectionClass::hasMethod	name
+ReflectionClass::getMethod	name
+ReflectionClass::getMethods	filter=N%3B
+ReflectionClass::hasProperty	name
+ReflectionClass::getProperty	name
+ReflectionClass::getProperties	filter=N%3B
+ReflectionClass::hasConstant	name
+ReflectionClass::getConstants	filter=N%3B
+ReflectionClass::getReflectionConstants	filter=N%3B
+ReflectionClass::getConstant	name
+ReflectionClass::getReflectionConstant	name
+ReflectionClass::getInterfaces
+ReflectionClass::getInterfaceNames
+ReflectionClass::isInterface
+ReflectionClass::getTraits
+ReflectionClass::getTraitNames
+ReflectionClass::getTraitAliases
+ReflectionClass::isTrait
+ReflectionClass::isEnum
+ReflectionClass::isAbstract
+ReflectionClass::isFinal
+ReflectionClass::isReadOnly
+ReflectionClass::getModifiers
+ReflectionClass::isInstance	object
+ReflectionClass::newInstance	...args
+ReflectionClass::newInstanceWithoutConstructor
+ReflectionClass::newInstanceArgs	args=a%3A0%3A%7B%7D
+ReflectionClass::newLazyGhost	initializer	options=i%3A0%3B
+ReflectionClass::newLazyProxy	factory	options=i%3A0%3B
+ReflectionClass::resetAsLazyGhost	object	initializer	options=i%3A0%3B
+ReflectionClass::resetAsLazyProxy	object	factory	options=i%3A0%3B
+ReflectionClass::initializeLazyObject	object
+ReflectionClass::isUninitializedLazyObject	object
+ReflectionClass::markLazyObjectAsInitialized	object
+ReflectionClass::getLazyInitializer	object
+ReflectionClass::getParentClass
+ReflectionClass::isSubclassOf	class
+ReflectionClass::getStaticProperties
+ReflectionClass::getStaticPropertyValue	name	default=?
+ReflectionClass::setStaticPropertyValue	name	value
+ReflectionClass::getDefaultProperties
+ReflectionClass::isIterable
+ReflectionClass::isIterateable
+ReflectionClass::implementsInterface	interface
+ReflectionClass::getExtension
+ReflectionClass::getExtensionName
+ReflectionClass::inNamespace
+ReflectionClass::getNamespaceName
+ReflectionClass::getShortName
+ReflectionClass::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionObject::__construct	object
+ReflectionObject::__toString
+ReflectionObject::getName
+ReflectionObject::isInternal
+ReflectionObject::isUserDefined
+ReflectionObject::isAnonymous
+ReflectionObject::isInstantiable
+ReflectionObject::isCloneable
+ReflectionObject::getFileName
+ReflectionObject::getStartLine
+ReflectionObject::getEndLine
+ReflectionObject::getDocComment
+ReflectionObject::getConstructor
+ReflectionObject::hasMethod	name
+ReflectionObject::getMethod	name
+ReflectionObject::getMethods	filter=N%3B
+ReflectionObject::hasProperty	name
+ReflectionObject::getProperty	name
+ReflectionObject::getProperties	filter=N%3B
+ReflectionObject::hasConstant	name
+ReflectionObject::getConstants	filter=N%3B
+ReflectionObject::getReflectionConstants	filter=N%3B
+ReflectionObject::getConstant	name
+ReflectionObject::getReflectionConstant	name
+ReflectionObject::getInterfaces
+ReflectionObject::getInterfaceNames
+ReflectionObject::isInterface
+ReflectionObject::getTraits
+ReflectionObject::getTraitNames
+ReflectionObject::getTraitAliases
+ReflectionObject::isTrait
+ReflectionObject::isEnum
+ReflectionObject::isAbstract
+ReflectionObject::isFinal
+ReflectionObject::isReadOnly
+ReflectionObject::getModifiers
+ReflectionObject::isInstance	object
+ReflectionObject::newInstance	...args
+ReflectionObject::newInstanceWithoutConstructor
+ReflectionObject::newInstanceArgs	args=a%3A0%3A%7B%7D
+ReflectionObject::newLazyGhost	initializer	options=i%3A0%3B
+ReflectionObject::newLazyProxy	factory	options=i%3A0%3B
+ReflectionObject::resetAsLazyGhost	object	initializer	options=i%3A0%3B
+ReflectionObject::resetAsLazyProxy	object	factory	options=i%3A0%3B
+ReflectionObject::initializeLazyObject	object
+ReflectionObject::isUninitializedLazyObject	object
+ReflectionObject::markLazyObjectAsInitialized	object
+ReflectionObject::getLazyInitializer	object
+ReflectionObject::getParentClass
+ReflectionObject::isSubclassOf	class
+ReflectionObject::getStaticProperties
+ReflectionObject::getStaticPropertyValue	name	default=?
+ReflectionObject::setStaticPropertyValue	name	value
+ReflectionObject::getDefaultProperties
+ReflectionObject::isIterable
+ReflectionObject::isIterateable
+ReflectionObject::implementsInterface	interface
+ReflectionObject::getExtension
+ReflectionObject::getExtensionName
+ReflectionObject::inNamespace
+ReflectionObject::getNamespaceName
+ReflectionObject::getShortName
+ReflectionObject::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionProperty::__clone
+ReflectionProperty::__construct	class	property
+ReflectionProperty::__toString
+ReflectionProperty::getName
+ReflectionProperty::getMangledName
+ReflectionProperty::getValue	object=N%3B
+ReflectionProperty::setValue	objectOrValue	value=?
+ReflectionProperty::getRawValue	object
+ReflectionProperty::setRawValue	object	value
+ReflectionProperty::setRawValueWithoutLazyInitialization	object	value
+ReflectionProperty::skipLazyInitialization	object
+ReflectionProperty::isLazy	object
+ReflectionProperty::isInitialized	object=N%3B
+ReflectionProperty::isPublic
+ReflectionProperty::isPrivate
+ReflectionProperty::isProtected
+ReflectionProperty::isPrivateSet
+ReflectionProperty::isProtectedSet
+ReflectionProperty::isStatic
+ReflectionProperty::isReadOnly
+ReflectionProperty::isDefault
+ReflectionProperty::isDynamic
+ReflectionProperty::isAbstract
+ReflectionProperty::isVirtual
+ReflectionProperty::isPromoted
+ReflectionProperty::getModifiers
+ReflectionProperty::getDeclaringClass
+ReflectionProperty::getDocComment
+ReflectionProperty::setAccessible	accessible
+ReflectionProperty::getType
+ReflectionProperty::getSettableType
+ReflectionProperty::hasType
+ReflectionProperty::hasDefaultValue
+ReflectionProperty::getDefaultValue
+ReflectionProperty::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionProperty::hasHooks
+ReflectionProperty::getHooks
+ReflectionProperty::hasHook	type
+ReflectionProperty::getHook	type
+ReflectionProperty::isFinal
+ReflectionClassConstant::__clone
+ReflectionClassConstant::__construct	class	constant
+ReflectionClassConstant::__toString
+ReflectionClassConstant::getName
+ReflectionClassConstant::getValue
+ReflectionClassConstant::isPublic
+ReflectionClassConstant::isPrivate
+ReflectionClassConstant::isProtected
+ReflectionClassConstant::isFinal
+ReflectionClassConstant::getModifiers
+ReflectionClassConstant::getDeclaringClass
+ReflectionClassConstant::getDocComment
+ReflectionClassConstant::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionClassConstant::isEnumCase
+ReflectionClassConstant::isDeprecated
+ReflectionClassConstant::hasType
+ReflectionClassConstant::getType
+ReflectionExtension::__clone
+ReflectionExtension::__construct	name
+ReflectionExtension::__toString
+ReflectionExtension::getName
+ReflectionExtension::getVersion
+ReflectionExtension::getFunctions
+ReflectionExtension::getConstants
+ReflectionExtension::getINIEntries
+ReflectionExtension::getClasses
+ReflectionExtension::getClassNames
+ReflectionExtension::getDependencies
+ReflectionExtension::info
+ReflectionExtension::isPersistent
+ReflectionExtension::isTemporary
+ReflectionZendExtension::__clone
+ReflectionZendExtension::__construct	name
+ReflectionZendExtension::__toString
+ReflectionZendExtension::getName
+ReflectionZendExtension::getVersion
+ReflectionZendExtension::getAuthor
+ReflectionZendExtension::getURL
+ReflectionZendExtension::getCopyright
+ReflectionReference::fromArrayElement	array	key
+ReflectionReference::getId
+ReflectionReference::__clone
+ReflectionReference::__construct
+ReflectionAttribute::getName
+ReflectionAttribute::getTarget
+ReflectionAttribute::isRepeated
+ReflectionAttribute::getArguments
+ReflectionAttribute::newInstance
+ReflectionAttribute::__toString
+ReflectionAttribute::__clone
+ReflectionAttribute::__construct
+ReflectionEnum::__construct	objectOrClass
+ReflectionEnum::hasCase	name
+ReflectionEnum::getCase	name
+ReflectionEnum::getCases
+ReflectionEnum::isBacked
+ReflectionEnum::getBackingType
+ReflectionEnum::__toString
+ReflectionEnum::getName
+ReflectionEnum::isInternal
+ReflectionEnum::isUserDefined
+ReflectionEnum::isAnonymous
+ReflectionEnum::isInstantiable
+ReflectionEnum::isCloneable
+ReflectionEnum::getFileName
+ReflectionEnum::getStartLine
+ReflectionEnum::getEndLine
+ReflectionEnum::getDocComment
+ReflectionEnum::getConstructor
+ReflectionEnum::hasMethod	name
+ReflectionEnum::getMethod	name
+ReflectionEnum::getMethods	filter=N%3B
+ReflectionEnum::hasProperty	name
+ReflectionEnum::getProperty	name
+ReflectionEnum::getProperties	filter=N%3B
+ReflectionEnum::hasConstant	name
+ReflectionEnum::getConstants	filter=N%3B
+ReflectionEnum::getReflectionConstants	filter=N%3B
+ReflectionEnum::getConstant	name
+ReflectionEnum::getReflectionConstant	name
+ReflectionEnum::getInterfaces
+ReflectionEnum::getInterfaceNames
+ReflectionEnum::isInterface
+ReflectionEnum::getTraits
+ReflectionEnum::getTraitNames
+ReflectionEnum::getTraitAliases
+ReflectionEnum::isTrait
+ReflectionEnum::isEnum
+ReflectionEnum::isAbstract
+ReflectionEnum::isFinal
+ReflectionEnum::isReadOnly
+ReflectionEnum::getModifiers
+ReflectionEnum::isInstance	object
+ReflectionEnum::newInstance	...args
+ReflectionEnum::newInstanceWithoutConstructor
+ReflectionEnum::newInstanceArgs	args=a%3A0%3A%7B%7D
+ReflectionEnum::newLazyGhost	initializer	options=i%3A0%3B
+ReflectionEnum::newLazyProxy	factory	options=i%3A0%3B
+ReflectionEnum::resetAsLazyGhost	object	initializer	options=i%3A0%3B
+ReflectionEnum::resetAsLazyProxy	object	factory	options=i%3A0%3B
+ReflectionEnum::initializeLazyObject	object
+ReflectionEnum::isUninitializedLazyObject	object
+ReflectionEnum::markLazyObjectAsInitialized	object
+ReflectionEnum::getLazyInitializer	object
+ReflectionEnum::getParentClass
+ReflectionEnum::isSubclassOf	class
+ReflectionEnum::getStaticProperties
+ReflectionEnum::getStaticPropertyValue	name	default=?
+ReflectionEnum::setStaticPropertyValue	name	value
+ReflectionEnum::getDefaultProperties
+ReflectionEnum::isIterable
+ReflectionEnum::isIterateable
+ReflectionEnum::implementsInterface	interface
+ReflectionEnum::getExtension
+ReflectionEnum::getExtensionName
+ReflectionEnum::inNamespace
+ReflectionEnum::getNamespaceName
+ReflectionEnum::getShortName
+ReflectionEnum::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionEnumUnitCase::__construct	class	constant
+ReflectionEnumUnitCase::getEnum
+ReflectionEnumUnitCase::getValue
+ReflectionEnumUnitCase::__toString
+ReflectionEnumUnitCase::getName
+ReflectionEnumUnitCase::isPublic
+ReflectionEnumUnitCase::isPrivate
+ReflectionEnumUnitCase::isProtected
+ReflectionEnumUnitCase::isFinal
+ReflectionEnumUnitCase::getModifiers
+ReflectionEnumUnitCase::getDeclaringClass
+ReflectionEnumUnitCase::getDocComment
+ReflectionEnumUnitCase::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionEnumUnitCase::isEnumCase
+ReflectionEnumUnitCase::isDeprecated
+ReflectionEnumUnitCase::hasType
+ReflectionEnumUnitCase::getType
+ReflectionEnumBackedCase::__construct	class	constant
+ReflectionEnumBackedCase::getBackingValue
+ReflectionEnumBackedCase::getEnum
+ReflectionEnumBackedCase::getValue
+ReflectionEnumBackedCase::__toString
+ReflectionEnumBackedCase::getName
+ReflectionEnumBackedCase::isPublic
+ReflectionEnumBackedCase::isPrivate
+ReflectionEnumBackedCase::isProtected
+ReflectionEnumBackedCase::isFinal
+ReflectionEnumBackedCase::getModifiers
+ReflectionEnumBackedCase::getDeclaringClass
+ReflectionEnumBackedCase::getDocComment
+ReflectionEnumBackedCase::getAttributes	name=N%3B	flags=i%3A0%3B
+ReflectionEnumBackedCase::isEnumCase
+ReflectionEnumBackedCase::isDeprecated
+ReflectionEnumBackedCase::hasType
+ReflectionEnumBackedCase::getType
+ReflectionFiber::__construct	fiber
+ReflectionFiber::getFiber
+ReflectionFiber::getExecutingFile
+ReflectionFiber::getExecutingLine
+ReflectionFiber::getCallable
+ReflectionFiber::getTrace	options=i%3A1%3B
+ReflectionConstant::__construct	name
+ReflectionConstant::getName
+ReflectionConstant::getNamespaceName
+ReflectionConstant::getShortName
+ReflectionConstant::getValue
+ReflectionConstant::isDeprecated
+ReflectionConstant::getFileName
+ReflectionConstant::getExtension
+ReflectionConstant::getExtensionName
+ReflectionConstant::__toString
+ReflectionConstant::getAttributes	name=N%3B	flags=i%3A0%3B
+PropertyHookType::cases
+PropertyHookType::from	value
+PropertyHookType::tryFrom	value
+mysqli_affected_rows	mysql
+mysqli_autocommit	mysql	enable
+mysqli_begin_transaction	mysql	flags=i%3A0%3B	name=N%3B
+mysqli_change_user	mysql	username	password	database
+mysqli_character_set_name	mysql
+mysqli_close	mysql
+mysqli_commit	mysql	flags=i%3A0%3B	name=N%3B
+mysqli_connect	hostname=N%3B	username=N%3B	password=N%3B	database=N%3B	port=N%3B	socket=N%3B
+mysqli_connect_errno
+mysqli_connect_error
+mysqli_data_seek	result	offset
+mysqli_dump_debug_info	mysql
+mysqli_debug	options
+mysqli_errno	mysql
+mysqli_error	mysql
+mysqli_error_list	mysql
+mysqli_stmt_execute	statement	params=N%3B
+mysqli_execute	statement	params=N%3B
+mysqli_execute_query	mysql	query	params=N%3B
+mysqli_fetch_field	result
+mysqli_fetch_fields	result
+mysqli_fetch_field_direct	result	index
+mysqli_fetch_lengths	result
+mysqli_fetch_all	result	mode=i%3A2%3B
+mysqli_fetch_array	result	mode=i%3A3%3B
+mysqli_fetch_assoc	result
+mysqli_fetch_object	result	class=s%3A8%3A%22stdClass%22%3B	constructor_args=a%3A0%3A%7B%7D
+mysqli_fetch_row	result
+mysqli_fetch_column	result	column=i%3A0%3B
+mysqli_field_count	mysql
+mysqli_field_seek	result	index
+mysqli_field_tell	result
+mysqli_free_result	result
+mysqli_get_connection_stats	mysql
+mysqli_get_client_stats
+mysqli_get_charset	mysql
+mysqli_get_client_info	mysql=N%3B
+mysqli_get_client_version
+mysqli_get_links_stats
+mysqli_get_host_info	mysql
+mysqli_get_proto_info	mysql
+mysqli_get_server_info	mysql
+mysqli_get_server_version	mysql
+mysqli_get_warnings	mysql
+mysqli_init
+mysqli_info	mysql
+mysqli_insert_id	mysql
+mysqli_kill	mysql	process_id
+mysqli_more_results	mysql
+mysqli_multi_query	mysql	query
+mysqli_next_result	mysql
+mysqli_num_fields	result
+mysqli_num_rows	result
+mysqli_options	mysql	option	value
+mysqli_set_opt	mysql	option	value
+mysqli_ping	mysql
+mysqli_poll	&read	&error	&reject	seconds	microseconds=i%3A0%3B
+mysqli_prepare	mysql	query
+mysqli_report	flags
+mysqli_query	mysql	query	result_mode=i%3A0%3B
+mysqli_real_connect	mysql	hostname=N%3B	username=N%3B	password=N%3B	database=N%3B	port=N%3B	socket=N%3B	flags=i%3A0%3B
+mysqli_real_escape_string	mysql	string
+mysqli_escape_string	mysql	string
+mysqli_real_query	mysql	query
+mysqli_reap_async_query	mysql
+mysqli_release_savepoint	mysql	name
+mysqli_rollback	mysql	flags=i%3A0%3B	name=N%3B
+mysqli_savepoint	mysql	name
+mysqli_select_db	mysql	database
+mysqli_set_charset	mysql	charset
+mysqli_stmt_affected_rows	statement
+mysqli_stmt_attr_get	statement	attribute
+mysqli_stmt_attr_set	statement	attribute	value
+mysqli_stmt_bind_param	statement	types	&...vars
+mysqli_stmt_bind_result	statement	&...vars
+mysqli_stmt_close	statement
+mysqli_stmt_data_seek	statement	offset
+mysqli_stmt_errno	statement
+mysqli_stmt_error	statement
+mysqli_stmt_error_list	statement
+mysqli_stmt_fetch	statement
+mysqli_stmt_field_count	statement
+mysqli_stmt_free_result	statement
+mysqli_stmt_get_result	statement
+mysqli_stmt_get_warnings	statement
+mysqli_stmt_init	mysql
+mysqli_stmt_insert_id	statement
+mysqli_stmt_more_results	statement
+mysqli_stmt_next_result	statement
+mysqli_stmt_num_rows	statement
+mysqli_stmt_param_count	statement
+mysqli_stmt_prepare	statement	query
+mysqli_stmt_reset	statement
+mysqli_stmt_result_metadata	statement
+mysqli_stmt_send_long_data	statement	param_num	data
+mysqli_stmt_store_result	statement
+mysqli_stmt_sqlstate	statement
+mysqli_sqlstate	mysql
+mysqli_ssl_set	mysql	key	certificate	ca_certificate	ca_path	cipher_algos
+mysqli_stat	mysql
+mysqli_store_result	mysql	mode=i%3A0%3B
+mysqli_thread_id	mysql
+mysqli_thread_safe
+mysqli_use_result	mysql
+mysqli_warning_count	mysql
+mysqli_refresh	mysql	flags
+mysqli_sql_exception::getSqlState
+mysqli_sql_exception::__construct	message=s%3A0%3A%22%22%3B	code=i%3A0%3B	previous=N%3B
+mysqli_sql_exception::__wakeup
+mysqli_sql_exception::getMessage
+mysqli_sql_exception::getCode
+mysqli_sql_exception::getFile
+mysqli_sql_exception::getLine
+mysqli_sql_exception::getTrace
+mysqli_sql_exception::getPrevious
+mysqli_sql_exception::getTraceAsString
+mysqli_sql_exception::__toString
+mysqli::__construct	hostname=N%3B	username=N%3B	password=N%3B	database=N%3B	port=N%3B	socket=N%3B
+mysqli::autocommit	enable
+mysqli::begin_transaction	flags=i%3A0%3B	name=N%3B
+mysqli::change_user	username	password	database
+mysqli::character_set_name
+mysqli::close
+mysqli::commit	flags=i%3A0%3B	name=N%3B
+mysqli::connect	hostname=N%3B	username=N%3B	password=N%3B	database=N%3B	port=N%3B	socket=N%3B
+mysqli::dump_debug_info
+mysqli::debug	options
+mysqli::get_charset
+mysqli::execute_query	query	params=N%3B
+mysqli::get_client_info
+mysqli::get_connection_stats
+mysqli::get_server_info
+mysqli::get_warnings
+mysqli::init
+mysqli::kill	process_id
+mysqli::multi_query	query
+mysqli::more_results
+mysqli::next_result
+mysqli::ping
+mysqli::poll	&read	&error	&reject	seconds	microseconds=i%3A0%3B
+mysqli::prepare	query
+mysqli::query	query	result_mode=i%3A0%3B
+mysqli::real_connect	hostname=N%3B	username=N%3B	password=N%3B	database=N%3B	port=N%3B	socket=N%3B	flags=i%3A0%3B
+mysqli::real_escape_string	string
+mysqli::reap_async_query
+mysqli::escape_string	string
+mysqli::real_query	query
+mysqli::release_savepoint	name
+mysqli::rollback	flags=i%3A0%3B	name=N%3B
+mysqli::savepoint	name
+mysqli::select_db	database
+mysqli::set_charset	charset
+mysqli::options	option	value
+mysqli::set_opt	option	value
+mysqli::ssl_set	key	certificate	ca_certificate	ca_path	cipher_algos
+mysqli::stat
+mysqli::stmt_init
+mysqli::store_result	mode=i%3A0%3B
+mysqli::thread_safe
+mysqli::use_result
+mysqli::refresh	flags
+mysqli_warning::__construct
+mysqli_warning::next
+mysqli_result::__construct	mysql	result_mode=i%3A0%3B
+mysqli_result::close
+mysqli_result::free
+mysqli_result::data_seek	offset
+mysqli_result::fetch_field
+mysqli_result::fetch_fields
+mysqli_result::fetch_field_direct	index
+mysqli_result::fetch_all	mode=i%3A2%3B
+mysqli_result::fetch_array	mode=i%3A3%3B
+mysqli_result::fetch_assoc
+mysqli_result::fetch_object	class=s%3A8%3A%22stdClass%22%3B	constructor_args=a%3A0%3A%7B%7D
+mysqli_result::fetch_row
+mysqli_result::fetch_column	column=i%3A0%3B
+mysqli_result::field_seek	index
+mysqli_result::free_result
+mysqli_result::getIterator
+mysqli_stmt::__construct	mysql	query=N%3B
+mysqli_stmt::attr_get	attribute
+mysqli_stmt::attr_set	attribute	value
+mysqli_stmt::bind_param	types	&...vars
+mysqli_stmt::bind_result	&...vars
+mysqli_stmt::close
+mysqli_stmt::data_seek	offset
+mysqli_stmt::execute	params=N%3B
+mysqli_stmt::fetch
+mysqli_stmt::get_warnings
+mysqli_stmt::result_metadata
+mysqli_stmt::more_results
+mysqli_stmt::next_result
+mysqli_stmt::num_rows
+mysqli_stmt::send_long_data	param_num	data
+mysqli_stmt::free_result
+mysqli_stmt::reset
+mysqli_stmt::prepare	query
+mysqli_stmt::store_result
+mysqli_stmt::get_result
