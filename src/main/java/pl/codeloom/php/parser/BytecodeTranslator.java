@@ -13,6 +13,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.ClassSite;
 import pl.codeloom.php.bytecode.LiteralSite;
@@ -27,6 +28,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -253,6 +255,18 @@ public final class BytecodeTranslator {
         }
 
         // ---- the function ----
+
+        /**
+         * php-src's compile error at node's line (Translator.compileError: reported, the bailout ends the script);
+         * report=all's runs leaving nodes out only note it.
+         */
+        private RuntimeException compileError(Ast node, String message) {
+            if (skip != null) {
+                return new Unsupported(message, node);
+            }
+            return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
+                    new SourceLocation(path, node.line), 0);
+        }
 
         /** A function returning by reference (`function &f()`); a generator's `&` is for its yields. */
         private boolean returnsRef() {
@@ -1110,7 +1124,7 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_DIM":
                     if (node.get("dim") == null) {
-                        throw compileError(node.line, "Cannot use [] for reading");
+                        throw compileError(node, "Cannot use [] for reading");
                     }
                     b.beginReadElement();
                     expression(node.get("expr"));
@@ -2221,7 +2235,7 @@ public final class BytecodeTranslator {
          */
         private Ast delayedProp(Ast target) {
             if (deepestNullsafe(target) != null) {
-                throw compileError(target.line, "Can't use nullsafe operator in write context");
+                throw compileError(target, "Can't use nullsafe operator in write context");
             }
             Object object = delayedObject(target.get("expr"));
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
@@ -2372,7 +2386,7 @@ public final class BytecodeTranslator {
             }
             if (tested instanceof Ast target && target.is("AST_DIM")) {
                 if (target.get("dim") == null) {
-                    throw compileError(target.line, "Cannot use [] for reading");
+                    throw compileError(target, "Cannot use [] for reading");
                 }
                 b.beginIssetElement();
                 readIfSet(target.get("expr"));
@@ -2423,7 +2437,7 @@ public final class BytecodeTranslator {
                 switch (ast.kind) {
                     case "AST_DIM" -> {
                         if (ast.get("dim") == null) {
-                            throw compileError(ast.line, "Cannot use [] for reading");
+                            throw compileError(ast, "Cannot use [] for reading");
                         }
                         b.beginElementIfSet();
                         readIfSet(ast.get("expr"));
@@ -2502,7 +2516,7 @@ public final class BytecodeTranslator {
             }
             if (target.is("AST_DIM")) {
                 if (lastDimAppends(target)) {
-                    throw compileError(target.line, "Cannot use [] for reading");
+                    throw compileError(target, "Cannot use [] for reading");
                 }
                 b.beginBlock();
                 ElementPlace place = elementPlace(target, "??= to");
@@ -2701,7 +2715,7 @@ public final class BytecodeTranslator {
         /** `unset(base[k1]...[kn])` (DimNode.unset). */
         private void nestedUnset(Ast target) {
             if (lastDimAppends(target)) {
-                throw compileError(target.line, "Cannot use [] for unsetting");
+                throw compileError(target, "Cannot use [] for unsetting");
             }
             b.beginBlock();
             ElementPlace place = elementPlace(target, "unset of");
@@ -2962,7 +2976,7 @@ public final class BytecodeTranslator {
                 if (isUnpack(arg)) {
                     unpacked = true;
                 } else if (unpacked) {
-                    throw compileError(arg instanceof Ast ast ? ast.line : args.line,
+                    throw compileError(arg instanceof Ast ast ? ast : args,
                             "Cannot use positional argument after argument unpacking");
                 }
             }
@@ -3008,18 +3022,6 @@ public final class BytecodeTranslator {
                     b.endSpreadValue();
                 }
             }
-        }
-
-        /**
-         * A compile error php-src raises (Translator.compileError): reported at the line, and the bailout returned
-         * ends the script. report=all's search, which translates the function again and again, takes it as a
-         * construct instead.
-         */
-        private RuntimeException compileError(int line, String message) {
-            if (skip != null) {
-                return new Unsupported("compile error: " + message, null);
-            }
-            return Translator.compileError(path, line, message);
         }
 
         /** Whether a call's arguments need the callee (some may go by reference); no unpacking or names. */

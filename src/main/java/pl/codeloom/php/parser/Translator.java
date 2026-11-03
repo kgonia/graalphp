@@ -199,11 +199,6 @@ public final class Translator {
      * runs, as php-src compiles it; a function's body when it is first called.
      */
     private PhpBailout compileError(int line, String message) {
-        return compileError(path, line, message);
-    }
-
-    /** A compile error at a line of a file (see the instance method), for the bytecode translator too. */
-    static PhpBailout compileError(String path, int line, String message) {
         return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
                 new SourceLocation(path, line), 0);
     }
