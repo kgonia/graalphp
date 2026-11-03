@@ -2253,6 +2253,9 @@ public final class Translator {
                 }
                 break;
             case "compact": {
+                if (args.size() == 0) {
+                    break;
+                }
                 List<String> variableNames = new ArrayList<>();
                 if (compactNames(args, variableNames)) {
                     TruffleString[] keys = new TruffleString[variableNames.size()];
@@ -2267,7 +2270,7 @@ public final class Translator {
             }
             case "extract": {
                 ExprNode[] extractArgs = expressionList(args);
-                if (extractArgs.length == 0) {
+                if (extractArgs.length == 0 || extractArgs.length > 3) {
                     break;
                 }
                 if (scope != null && scope.includeScopeSlot < 0) {

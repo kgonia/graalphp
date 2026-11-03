@@ -29,14 +29,14 @@ final class ClosureMethods {
 
     static List<PhpFunction> methods(Registry registry) {
         return List.of(
-                registry.method("bind", true, a -> {
+                registry.method("Closure", "bind", true, a -> {
                     PhpClosure closure = closureArgument(a, 0, "Closure::bind");
                     return bind(closure, thisArgument(a, 1, "Closure::bind"), Args.get(a, 2), "Closure::bind");
                 }),
-                registry.method("bindTo", false, a -> bind((PhpClosure) a[PhpFunction.ARG_THIS],
+                registry.method("Closure", "bindTo", false, a -> bind((PhpClosure) a[PhpFunction.ARG_THIS],
                         thisArgument(a, 0, "Closure::bindTo"), Args.get(a, 1), "Closure::bindTo")),
-                registry.method("call", false, a -> call((PhpClosure) a[PhpFunction.ARG_THIS], a)),
-                registry.method("fromCallable", true, ClosureMethods::fromCallable));
+                registry.method("Closure", "call", false, a -> call((PhpClosure) a[PhpFunction.ARG_THIS], a)),
+                registry.method("Closure", "fromCallable", true, ClosureMethods::fromCallable));
     }
 
     private static PhpClosure closureArgument(Object[] a, int index, String function) {

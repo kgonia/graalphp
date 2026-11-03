@@ -14,6 +14,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.builtins.Registry;
 import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.ClassSite;
 import pl.codeloom.php.bytecode.IncludeSite;
@@ -397,6 +398,10 @@ public final class BytecodeTranslator {
         private void prologue() {
             if (source != null) {
                 b.beginSourceSectionUnavailable();
+            }
+            int[] arity = internal ? Registry.arity(display) : null;
+            if (arity != null) {
+                b.emitCheckArity(Registry.declaredName(display), arity[0], arity[1]);
             }
             Ast paramList = declaration.node("params");
             for (int i = 0; i < params.length; i++) {
@@ -3456,14 +3461,15 @@ public final class BytecodeTranslator {
                     return true;
                 }
                 case "compact" -> {
-                    if (hasUnpackOrNames(args)) {
+                    if (args.size() == 0 || hasUnpackOrNames(args)) {
+                        // the built-in's ArgumentCountError
                         return false;
                     }
                     compact(args);
                     return true;
                 }
                 case "extract" -> {
-                    if (hasUnpackOrNames(args)) {
+                    if (args.size() == 0 || args.size() > 3 || hasUnpackOrNames(args)) {
                         return false;
                     }
                     useCallScope();
@@ -3503,7 +3509,7 @@ public final class BytecodeTranslator {
          */
         private void compact(Ast args) {
             List<String> literal = new ArrayList<>();
-            if (args.size() == 0 || !constants.compactNames(args, literal)) {
+            if (!constants.compactNames(args, literal)) {
                 b.beginCompactDynamic();
                 for (Object arg : args.children()) {
                     expression(arg);

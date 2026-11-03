@@ -326,7 +326,7 @@ public final class Builtins {
 
     private static List<PhpFunction> throwableMethods(Registry registry) {
         return List.of(
-                registry.method("__construct", false, arguments -> {
+                registry.method("Exception", "__construct", false, arguments -> {
                     PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
                     if (Args.has(arguments, 0)) {
                         self.setProperty("message", Args.str(arguments, 0));
@@ -339,15 +339,15 @@ public final class Builtins {
                     }
                     return PhpNull.NULL;
                 }),
-                registry.method("getMessage", false, arguments -> property(arguments, "message")),
-                registry.method("getCode", false, arguments -> property(arguments, "code")),
-                registry.method("getPrevious", false, arguments -> property(arguments, "previous")),
-                registry.method("getFile", false, arguments -> property(arguments, "file")),
-                registry.method("getLine", false, arguments -> property(arguments, "line")),
-                registry.method("getTrace", false, arguments -> property(arguments, "trace")),
-                registry.method("getTraceAsString", false,
+                registry.method("Exception", "getMessage", false, arguments -> property(arguments, "message")),
+                registry.method("Exception", "getCode", false, arguments -> property(arguments, "code")),
+                registry.method("Exception", "getPrevious", false, arguments -> property(arguments, "previous")),
+                registry.method("Exception", "getFile", false, arguments -> property(arguments, "file")),
+                registry.method("Exception", "getLine", false, arguments -> property(arguments, "line")),
+                registry.method("Exception", "getTrace", false, arguments -> property(arguments, "trace")),
+                registry.method("Exception", "getTraceAsString", false,
                         arguments -> traceString((PhpObject) arguments[PhpFunction.ARG_THIS])),
-                registry.method("__toString", false,
+                registry.method("Exception", "__toString", false,
                         arguments -> describe((PhpObject) arguments[PhpFunction.ARG_THIS])));
     }
 
@@ -409,22 +409,23 @@ public final class Builtins {
     /** Generator: the Iterator methods plus send, throw and getReturn, on the object's PhpGenerator. */
     private static List<PhpFunction> generatorMethods(Registry registry) {
         return List.of(
-                registry.method("current", false, arguments -> generator(arguments).current()),
-                registry.method("key", false, arguments -> generator(arguments).key()),
-                registry.method("next", false, arguments -> {
+                registry.method("Generator", "current", false, arguments -> generator(arguments).current()),
+                registry.method("Generator", "key", false, arguments -> generator(arguments).key()),
+                registry.method("Generator", "next", false, arguments -> {
                     generator(arguments).next();
                     return PhpNull.NULL;
                 }),
-                registry.method("valid", false, arguments -> generator(arguments).valid()),
-                registry.method("rewind", false, arguments -> {
+                registry.method("Generator", "valid", false, arguments -> generator(arguments).valid()),
+                registry.method("Generator", "rewind", false, arguments -> {
                     generator(arguments).rewind();
                     return PhpNull.NULL;
                 }),
-                registry.method("send", false, arguments -> generator(arguments).send(Args.get(arguments, 0))),
-                registry.method("getReturn", false, arguments -> generator(arguments).getReturn()),
-                registry.method("throw", false, arguments -> generator(arguments).throwInto(
+                registry.method("Generator", "send", false,
+                        arguments -> generator(arguments).send(Args.get(arguments, 0))),
+                registry.method("Generator", "getReturn", false, arguments -> generator(arguments).getReturn()),
+                registry.method("Generator", "throw", false, arguments -> generator(arguments).throwInto(
                         new pl.codeloom.php.runtime.PhpException((PhpObject) Args.get(arguments, 0)))),
-                registry.method("__debugInfo", false, arguments -> {
+                registry.method("Generator", "__debugInfo", false, arguments -> {
                     PhpArray info = new PhpArray();
                     info.put(Str.of("function"), Str.of(generator(arguments).getFunctionName()));
                     return info;

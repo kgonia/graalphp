@@ -1,0 +1,2999 @@
+clone 1 2
+exit 0 1
+die 0 1
+zend_version 0 0
+func_num_args 0 0
+func_get_arg 1 1
+func_get_args 0 0
+strlen 1 1
+strcmp 2 2
+strncmp 3 3
+strcasecmp 2 2
+strncasecmp 3 3
+error_reporting 0 1
+define 2 3
+defined 1 1
+get_class 0 1
+get_called_class 0 0
+get_parent_class 0 1
+is_subclass_of 2 3
+is_a 2 3
+get_class_vars 1 1
+get_object_vars 1 1
+get_mangled_object_vars 1 1
+get_class_methods 1 1
+method_exists 2 2
+property_exists 2 2
+class_exists 1 2
+interface_exists 1 2
+trait_exists 1 2
+enum_exists 1 2
+function_exists 1 1
+class_alias 2 3
+get_included_files 0 0
+get_required_files 0 0
+trigger_error 1 2
+user_error 1 2
+set_error_handler 1 2
+restore_error_handler 0 0
+get_error_handler 0 0
+set_exception_handler 1 1
+restore_exception_handler 0 0
+get_exception_handler 0 0
+get_declared_classes 0 0
+get_declared_traits 0 0
+get_declared_interfaces 0 0
+get_defined_functions 0 1
+get_defined_vars 0 0
+get_resource_type 1 1
+get_resource_id 1 1
+get_resources 0 1
+get_loaded_extensions 0 1
+get_defined_constants 0 1
+debug_backtrace 0 2
+debug_print_backtrace 0 2
+extension_loaded 1 1
+get_extension_funcs 1 1
+gc_mem_caches 0 0
+gc_collect_cycles 0 0
+gc_enabled 0 0
+gc_enable 0 0
+gc_disable 0 0
+gc_status 0 0
+IteratorAggregate::getIterator 0 0
+Iterator::current 0 0
+Iterator::next 0 0
+Iterator::key 0 0
+Iterator::valid 0 0
+Iterator::rewind 0 0
+Serializable::serialize 0 0
+Serializable::unserialize 1 1
+ArrayAccess::offsetExists 1 1
+ArrayAccess::offsetGet 1 1
+ArrayAccess::offsetSet 2 2
+ArrayAccess::offsetUnset 1 1
+Countable::count 0 0
+Stringable::__toString 0 0
+InternalIterator::__construct 0 0
+InternalIterator::current 0 0
+InternalIterator::key 0 0
+InternalIterator::next 0 0
+InternalIterator::valid 0 0
+InternalIterator::rewind 0 0
+Throwable::getMessage 0 0
+Throwable::getCode 0 0
+Throwable::getFile 0 0
+Throwable::getLine 0 0
+Throwable::getTrace 0 0
+Throwable::getPrevious 0 0
+Throwable::getTraceAsString 0 0
+Exception::__clone 0 0
+Exception::__construct 0 3
+Exception::__wakeup 0 0
+Exception::getMessage 0 0
+Exception::getCode 0 0
+Exception::getFile 0 0
+Exception::getLine 0 0
+Exception::getTrace 0 0
+Exception::getPrevious 0 0
+Exception::getTraceAsString 0 0
+Exception::__toString 0 0
+ErrorException::__construct 0 6
+ErrorException::getSeverity 0 0
+ErrorException::__wakeup 0 0 Exception::__wakeup
+ErrorException::getMessage 0 0 Exception::getMessage
+ErrorException::getCode 0 0 Exception::getCode
+ErrorException::getFile 0 0 Exception::getFile
+ErrorException::getLine 0 0 Exception::getLine
+ErrorException::getTrace 0 0 Exception::getTrace
+ErrorException::getPrevious 0 0 Exception::getPrevious
+ErrorException::getTraceAsString 0 0 Exception::getTraceAsString
+ErrorException::__toString 0 0 Exception::__toString
+Error::__clone 0 0
+Error::__construct 0 3
+Error::__wakeup 0 0
+Error::getMessage 0 0
+Error::getCode 0 0
+Error::getFile 0 0
+Error::getLine 0 0
+Error::getTrace 0 0
+Error::getPrevious 0 0
+Error::getTraceAsString 0 0
+Error::__toString 0 0
+CompileError::__construct 0 3 Error::__construct
+CompileError::__wakeup 0 0 Error::__wakeup
+CompileError::getMessage 0 0 Error::getMessage
+CompileError::getCode 0 0 Error::getCode
+CompileError::getFile 0 0 Error::getFile
+CompileError::getLine 0 0 Error::getLine
+CompileError::getTrace 0 0 Error::getTrace
+CompileError::getPrevious 0 0 Error::getPrevious
+CompileError::getTraceAsString 0 0 Error::getTraceAsString
+CompileError::__toString 0 0 Error::__toString
+ParseError::__construct 0 3 Error::__construct
+ParseError::__wakeup 0 0 Error::__wakeup
+ParseError::getMessage 0 0 Error::getMessage
+ParseError::getCode 0 0 Error::getCode
+ParseError::getFile 0 0 Error::getFile
+ParseError::getLine 0 0 Error::getLine
+ParseError::getTrace 0 0 Error::getTrace
+ParseError::getPrevious 0 0 Error::getPrevious
+ParseError::getTraceAsString 0 0 Error::getTraceAsString
+ParseError::__toString 0 0 Error::__toString
+TypeError::__construct 0 3 Error::__construct
+TypeError::__wakeup 0 0 Error::__wakeup
+TypeError::getMessage 0 0 Error::getMessage
+TypeError::getCode 0 0 Error::getCode
+TypeError::getFile 0 0 Error::getFile
+TypeError::getLine 0 0 Error::getLine
+TypeError::getTrace 0 0 Error::getTrace
+TypeError::getPrevious 0 0 Error::getPrevious
+TypeError::getTraceAsString 0 0 Error::getTraceAsString
+TypeError::__toString 0 0 Error::__toString
+ArgumentCountError::__construct 0 3 Error::__construct
+ArgumentCountError::__wakeup 0 0 Error::__wakeup
+ArgumentCountError::getMessage 0 0 Error::getMessage
+ArgumentCountError::getCode 0 0 Error::getCode
+ArgumentCountError::getFile 0 0 Error::getFile
+ArgumentCountError::getLine 0 0 Error::getLine
+ArgumentCountError::getTrace 0 0 Error::getTrace
+ArgumentCountError::getPrevious 0 0 Error::getPrevious
+ArgumentCountError::getTraceAsString 0 0 Error::getTraceAsString
+ArgumentCountError::__toString 0 0 Error::__toString
+ValueError::__construct 0 3 Error::__construct
+ValueError::__wakeup 0 0 Error::__wakeup
+ValueError::getMessage 0 0 Error::getMessage
+ValueError::getCode 0 0 Error::getCode
+ValueError::getFile 0 0 Error::getFile
+ValueError::getLine 0 0 Error::getLine
+ValueError::getTrace 0 0 Error::getTrace
+ValueError::getPrevious 0 0 Error::getPrevious
+ValueError::getTraceAsString 0 0 Error::getTraceAsString
+ValueError::__toString 0 0 Error::__toString
+ArithmeticError::__construct 0 3 Error::__construct
+ArithmeticError::__wakeup 0 0 Error::__wakeup
+ArithmeticError::getMessage 0 0 Error::getMessage
+ArithmeticError::getCode 0 0 Error::getCode
+ArithmeticError::getFile 0 0 Error::getFile
+ArithmeticError::getLine 0 0 Error::getLine
+ArithmeticError::getTrace 0 0 Error::getTrace
+ArithmeticError::getPrevious 0 0 Error::getPrevious
+ArithmeticError::getTraceAsString 0 0 Error::getTraceAsString
+ArithmeticError::__toString 0 0 Error::__toString
+DivisionByZeroError::__construct 0 3 Error::__construct
+DivisionByZeroError::__wakeup 0 0 Error::__wakeup
+DivisionByZeroError::getMessage 0 0 Error::getMessage
+DivisionByZeroError::getCode 0 0 Error::getCode
+DivisionByZeroError::getFile 0 0 Error::getFile
+DivisionByZeroError::getLine 0 0 Error::getLine
+DivisionByZeroError::getTrace 0 0 Error::getTrace
+DivisionByZeroError::getPrevious 0 0 Error::getPrevious
+DivisionByZeroError::getTraceAsString 0 0 Error::getTraceAsString
+DivisionByZeroError::__toString 0 0 Error::__toString
+UnhandledMatchError::__construct 0 3 Error::__construct
+UnhandledMatchError::__wakeup 0 0 Error::__wakeup
+UnhandledMatchError::getMessage 0 0 Error::getMessage
+UnhandledMatchError::getCode 0 0 Error::getCode
+UnhandledMatchError::getFile 0 0 Error::getFile
+UnhandledMatchError::getLine 0 0 Error::getLine
+UnhandledMatchError::getTrace 0 0 Error::getTrace
+UnhandledMatchError::getPrevious 0 0 Error::getPrevious
+UnhandledMatchError::getTraceAsString 0 0 Error::getTraceAsString
+UnhandledMatchError::__toString 0 0 Error::__toString
+RequestParseBodyException::__construct 0 3 Exception::__construct
+RequestParseBodyException::__wakeup 0 0 Exception::__wakeup
+RequestParseBodyException::getMessage 0 0 Exception::getMessage
+RequestParseBodyException::getCode 0 0 Exception::getCode
+RequestParseBodyException::getFile 0 0 Exception::getFile
+RequestParseBodyException::getLine 0 0 Exception::getLine
+RequestParseBodyException::getTrace 0 0 Exception::getTrace
+RequestParseBodyException::getPrevious 0 0 Exception::getPrevious
+RequestParseBodyException::getTraceAsString 0 0 Exception::getTraceAsString
+RequestParseBodyException::__toString 0 0 Exception::__toString
+Closure::__construct 0 0
+Closure::bind 2 3
+Closure::bindTo 1 2
+Closure::call 1 -1
+Closure::fromCallable 1 1
+Closure::getCurrent 0 0
+Closure::__invoke 0 0
+Generator::rewind 0 0
+Generator::valid 0 0
+Generator::current 0 0
+Generator::key 0 0
+Generator::next 0 0
+Generator::send 1 1
+Generator::throw 1 1
+Generator::getReturn 0 0
+Generator::__debugInfo 0 0
+ClosedGeneratorException::__construct 0 3 Exception::__construct
+ClosedGeneratorException::__wakeup 0 0 Exception::__wakeup
+ClosedGeneratorException::getMessage 0 0 Exception::getMessage
+ClosedGeneratorException::getCode 0 0 Exception::getCode
+ClosedGeneratorException::getFile 0 0 Exception::getFile
+ClosedGeneratorException::getLine 0 0 Exception::getLine
+ClosedGeneratorException::getTrace 0 0 Exception::getTrace
+ClosedGeneratorException::getPrevious 0 0 Exception::getPrevious
+ClosedGeneratorException::getTraceAsString 0 0 Exception::getTraceAsString
+ClosedGeneratorException::__toString 0 0 Exception::__toString
+WeakReference::__construct 0 0
+WeakReference::create 1 1
+WeakReference::get 0 0
+WeakMap::offsetGet 1 1
+WeakMap::offsetSet 2 2
+WeakMap::offsetExists 1 1
+WeakMap::offsetUnset 1 1
+WeakMap::count 0 0
+WeakMap::getIterator 0 0
+Attribute::__construct 0 1
+ReturnTypeWillChange::__construct 0 0
+AllowDynamicProperties::__construct 0 0
+SensitiveParameter::__construct 0 0
+SensitiveParameterValue::__construct 1 1
+SensitiveParameterValue::getValue 0 0
+SensitiveParameterValue::__debugInfo 0 0
+Override::__construct 0 0
+Deprecated::__construct 0 2
+NoDiscard::__construct 0 1
+UnitEnum::cases 0 0
+BackedEnum::from 1 1
+BackedEnum::tryFrom 1 1
+Fiber::__construct 1 1
+Fiber::start 0 -1
+Fiber::resume 0 1
+Fiber::throw 1 1
+Fiber::isStarted 0 0
+Fiber::isSuspended 0 0
+Fiber::isRunning 0 0
+Fiber::isTerminated 0 0
+Fiber::getReturn 0 0
+Fiber::getCurrent 0 0
+Fiber::suspend 0 1
+FiberError::__construct 0 0
+FiberError::__wakeup 0 0 Error::__wakeup
+FiberError::getMessage 0 0 Error::getMessage
+FiberError::getCode 0 0 Error::getCode
+FiberError::getFile 0 0 Error::getFile
+FiberError::getLine 0 0 Error::getLine
+FiberError::getTrace 0 0 Error::getTrace
+FiberError::getPrevious 0 0 Error::getPrevious
+FiberError::getTraceAsString 0 0 Error::getTraceAsString
+FiberError::__toString 0 0 Error::__toString
+set_time_limit 1 1
+header_register_callback 1 1
+ob_start 0 3
+ob_flush 0 0
+ob_clean 0 0
+ob_end_flush 0 0
+ob_end_clean 0 0
+ob_get_flush 0 0
+ob_get_clean 0 0
+ob_get_contents 0 0
+ob_get_level 0 0
+ob_get_length 0 0
+ob_list_handlers 0 0
+ob_get_status 0 1
+ob_implicit_flush 0 1
+output_reset_rewrite_vars 0 0
+output_add_rewrite_var 2 2
+stream_wrapper_register 2 3
+stream_register_wrapper 2 3
+stream_wrapper_unregister 1 1
+stream_wrapper_restore 1 1
+array_push 1 -1
+krsort 1 2
+ksort 1 2
+count 1 2
+sizeof 1 2
+natsort 1 1
+natcasesort 1 1
+asort 1 2
+arsort 1 2
+sort 1 2
+rsort 1 2
+usort 2 2
+uasort 2 2
+uksort 2 2
+end 1 1
+prev 1 1
+next 1 1
+reset 1 1
+current 1 1
+pos 1 1
+key 1 1
+min 1 -1
+max 1 -1
+array_walk 2 3
+array_walk_recursive 2 3
+in_array 2 3
+array_search 2 3
+extract 1 3
+compact 1 -1
+array_fill 3 3
+array_fill_keys 2 2
+range 2 3
+shuffle 1 1
+array_pop 1 1
+array_shift 1 1
+array_unshift 1 -1
+array_splice 2 4
+array_slice 2 4
+array_merge 0 -1
+array_merge_recursive 0 -1
+array_replace 1 -1
+array_replace_recursive 1 -1
+array_keys 1 3
+array_key_first 1 1
+array_key_last 1 1
+array_first 1 1
+array_last 1 1
+array_values 1 1
+array_count_values 1 1
+array_column 2 3
+array_reverse 1 2
+array_pad 3 3
+array_flip 1 1
+array_change_key_case 1 2
+array_unique 1 2
+array_intersect_key 1 -1
+array_intersect_ukey 1 -1
+array_intersect 1 -1
+array_uintersect 1 -1
+array_intersect_assoc 1 -1
+array_uintersect_assoc 1 -1
+array_intersect_uassoc 1 -1
+array_uintersect_uassoc 1 -1
+array_diff_key 1 -1
+array_diff_ukey 1 -1
+array_diff 1 -1
+array_udiff 1 -1
+array_diff_assoc 1 -1
+array_diff_uassoc 1 -1
+array_udiff_assoc 1 -1
+array_udiff_uassoc 1 -1
+array_multisort 1 -1
+array_rand 1 2
+array_sum 1 1
+array_product 1 1
+array_reduce 2 3
+array_filter 1 3
+array_find 2 2
+array_find_key 2 2
+array_any 2 2
+array_all 2 2
+array_map 2 -1
+array_key_exists 2 2
+key_exists 2 2
+array_chunk 2 3
+array_combine 2 2
+array_is_list 1 1
+base64_encode 1 1
+base64_decode 1 2
+constant 1 1
+ip2long 1 1
+long2ip 1 1
+getenv 0 2
+putenv 1 1
+getopt 1 3
+flush 0 0
+sleep 1 1
+usleep 1 1
+time_nanosleep 2 2
+time_sleep_until 1 1
+get_current_user 0 0
+get_cfg_var 1 1
+error_log 1 4
+error_get_last 0 0
+error_clear_last 0 0
+call_user_func 1 -1
+call_user_func_array 2 2
+forward_static_call 1 -1
+forward_static_call_array 2 2
+register_shutdown_function 1 -1
+highlight_file 1 2
+show_source 1 2
+php_strip_whitespace 1 1
+highlight_string 1 2
+ini_get 1 1
+ini_get_all 0 2
+ini_set 2 2
+ini_alter 2 2
+ini_restore 1 1
+ini_parse_quantity 1 1
+set_include_path 1 1
+get_include_path 0 0
+print_r 1 2
+connection_aborted 0 0
+connection_status 0 0
+ignore_user_abort 0 1
+getservbyname 2 2
+getservbyport 2 2
+getprotobyname 1 1
+getprotobynumber 1 1
+register_tick_function 1 -1
+unregister_tick_function 1 1
+is_uploaded_file 1 1
+move_uploaded_file 2 2
+parse_ini_file 1 3
+parse_ini_string 1 3
+sys_getloadavg 0 0
+get_browser 0 2
+crc32 1 1
+crypt 2 2
+strptime 2 2
+gethostname 0 0
+gethostbyaddr 1 1
+gethostbyname 1 1
+gethostbynamel 1 1
+dns_check_record 1 2
+checkdnsrr 1 2
+dns_get_record 1 5
+dns_get_mx 2 3
+getmxrr 2 3
+net_get_interfaces 0 0
+ftok 2 2
+hrtime 0 1
+md5 1 2
+md5_file 1 2
+getmyuid 0 0
+getmygid 0 0
+getmypid 0 0
+getmyinode 0 0
+getlastmod 0 0
+sha1 1 2
+sha1_file 1 2
+openlog 3 3
+closelog 0 0
+syslog 2 2
+inet_ntop 1 1
+inet_pton 1 1
+metaphone 1 2
+header 1 3
+header_remove 0 1
+setrawcookie 1 7
+setcookie 1 7
+http_response_code 0 1
+headers_sent 0 2
+headers_list 0 0
+htmlspecialchars 1 4
+htmlspecialchars_decode 1 2
+html_entity_decode 1 3
+htmlentities 1 4
+get_html_translation_table 0 3
+assert 1 2
+assert_options 1 2
+bin2hex 1 1
+hex2bin 1 1
+strspn 2 4
+strcspn 2 4
+nl_langinfo 1 1
+strcoll 2 2
+trim 1 2
+rtrim 1 2
+chop 1 2
+ltrim 1 2
+wordwrap 1 4
+explode 2 3
+implode 1 2
+join 1 2
+strtok 1 2
+strtoupper 1 1
+strtolower 1 1
+str_increment 1 1
+str_decrement 1 1
+basename 1 2
+dirname 1 2
+pathinfo 1 2
+stristr 2 3
+strstr 2 3
+strchr 2 3
+strpos 2 3
+stripos 2 3
+strrpos 2 3
+strripos 2 3
+strrchr 2 3
+str_contains 2 2
+str_starts_with 2 2
+str_ends_with 2 2
+chunk_split 1 3
+substr 2 3
+substr_replace 3 4
+quotemeta 1 1
+ord 1 1
+chr 1 1
+ucfirst 1 1
+lcfirst 1 1
+ucwords 1 2
+strtr 2 3
+strrev 1 1
+similar_text 2 3
+addcslashes 2 2
+addslashes 1 1
+stripcslashes 1 1
+stripslashes 1 1
+str_replace 3 4
+str_ireplace 3 4
+hebrev 1 2
+nl2br 1 2
+strip_tags 1 2
+setlocale 2 -1
+parse_str 2 2
+str_getcsv 1 4
+str_repeat 2 2
+count_chars 1 2
+strnatcmp 2 2
+localeconv 0 0
+strnatcasecmp 2 2
+substr_count 2 4
+str_pad 2 4
+sscanf 2 -1
+str_rot13 1 1
+str_shuffle 1 1
+str_word_count 1 3
+str_split 1 2
+strpbrk 2 2
+substr_compare 3 5
+utf8_encode 1 1
+utf8_decode 1 1
+opendir 1 2
+dir 1 2
+closedir 0 1
+chdir 1 1
+chroot 1 1
+getcwd 0 0
+rewinddir 0 1
+readdir 0 1
+scandir 1 3
+glob 1 2
+exec 1 3
+system 1 2
+passthru 1 2
+escapeshellcmd 1 1
+escapeshellarg 1 1
+shell_exec 1 1
+proc_nice 1 1
+flock 2 3
+get_meta_tags 1 2
+pclose 1 1
+popen 2 2
+readfile 1 3
+rewind 1 1
+rmdir 1 2
+umask 0 1
+fclose 1 1
+feof 1 1
+fgetc 1 1
+fgets 1 2
+fread 2 2
+fopen 2 4
+fscanf 2 -1
+fpassthru 1 1
+ftruncate 2 2
+fstat 1 1
+fseek 2 3
+ftell 1 1
+fflush 1 1
+fsync 1 1
+fdatasync 1 1
+fwrite 2 3
+fputs 2 3
+mkdir 1 4
+rename 2 3
+copy 2 3
+tempnam 2 2
+tmpfile 0 0
+file 1 3
+file_get_contents 1 5
+unlink 1 2
+file_put_contents 2 4
+fputcsv 2 6
+fgetcsv 1 5
+realpath 1 1
+fnmatch 2 3
+sys_get_temp_dir 0 0
+fileatime 1 1
+filectime 1 1
+filegroup 1 1
+fileinode 1 1
+filemtime 1 1
+fileowner 1 1
+fileperms 1 1
+filesize 1 1
+filetype 1 1
+file_exists 1 1
+is_writable 1 1
+is_writeable 1 1
+is_readable 1 1
+is_executable 1 1
+is_file 1 1
+is_dir 1 1
+is_link 1 1
+stat 1 1
+lstat 1 1
+chown 2 2
+chgrp 2 2
+lchown 2 2
+lchgrp 2 2
+chmod 2 2
+touch 1 3
+clearstatcache 0 2
+disk_total_space 1 1
+disk_free_space 1 1
+diskfreespace 1 1
+realpath_cache_get 0 0
+realpath_cache_size 0 0
+sprintf 1 -1
+printf 1 -1
+vprintf 2 2
+vsprintf 2 2
+fprintf 2 -1
+vfprintf 3 3
+fsockopen 1 5
+pfsockopen 1 5
+http_build_query 1 4
+http_get_last_response_headers 0 0
+http_clear_last_response_headers 0 0
+request_parse_body 0 1
+image_type_to_mime_type 1 1
+image_type_to_extension 1 2
+getimagesize 1 2
+getimagesizefromstring 1 2
+phpinfo 0 1
+phpversion 0 1
+phpcredits 0 1
+php_sapi_name 0 0
+php_uname 0 1
+php_ini_scanned_files 0 0
+php_ini_loaded_file 0 0
+iptcembed 2 3
+iptcparse 1 1
+levenshtein 2 5
+readlink 1 1
+linkinfo 1 1
+symlink 2 2
+link 2 2
+mail 3 5
+abs 1 1
+ceil 1 1
+floor 1 1
+round 1 3
+sin 1 1
+cos 1 1
+tan 1 1
+asin 1 1
+acos 1 1
+atan 1 1
+atanh 1 1
+atan2 2 2
+sinh 1 1
+cosh 1 1
+tanh 1 1
+asinh 1 1
+acosh 1 1
+expm1 1 1
+log1p 1 1
+pi 0 0
+is_finite 1 1
+is_nan 1 1
+intdiv 2 2
+is_infinite 1 1
+pow 2 2
+exp 1 1
+log 1 2
+log10 1 1
+sqrt 1 1
+hypot 2 2
+deg2rad 1 1
+rad2deg 1 1
+bindec 1 1
+hexdec 1 1
+octdec 1 1
+decbin 1 1
+decoct 1 1
+dechex 1 1
+base_convert 3 3
+number_format 1 4
+fmod 2 2
+fdiv 2 2
+fpow 2 2
+microtime 0 1
+gettimeofday 0 1
+getrusage 0 1
+pack 1 -1
+unpack 2 3
+password_get_info 1 1
+password_hash 2 3
+password_needs_rehash 2 3
+password_verify 2 2
+password_algos 0 0
+proc_open 3 6
+proc_close 1 1
+proc_terminate 1 2
+proc_get_status 1 1
+quoted_printable_decode 1 1
+quoted_printable_encode 1 1
+soundex 1 1
+stream_select 4 5
+stream_context_create 0 2
+stream_context_set_params 2 2
+stream_context_get_params 1 1
+stream_context_set_option 2 4
+stream_context_set_options 2 2
+stream_context_get_options 1 1
+stream_context_get_default 0 1
+stream_context_set_default 1 1
+stream_filter_prepend 2 4
+stream_filter_append 2 4
+stream_filter_remove 1 1
+stream_socket_client 1 6
+stream_socket_server 1 5
+stream_socket_accept 1 3
+stream_socket_get_name 2 2
+stream_socket_recvfrom 2 4
+stream_socket_sendto 2 4
+stream_socket_enable_crypto 2 4
+stream_socket_shutdown 2 2
+stream_socket_pair 3 3
+stream_copy_to_stream 2 4
+stream_get_contents 1 3
+stream_supports_lock 1 1
+stream_set_write_buffer 2 2
+set_file_buffer 2 2
+stream_set_read_buffer 2 2
+stream_set_blocking 2 2
+socket_set_blocking 2 2
+stream_get_meta_data 1 1
+socket_get_status 1 1
+stream_get_line 2 3
+stream_resolve_include_path 1 1
+stream_get_wrappers 0 0
+stream_get_transports 0 0
+stream_is_local 1 1
+stream_isatty 1 1
+stream_set_chunk_size 2 2
+stream_set_timeout 2 3
+socket_set_timeout 2 3
+gettype 1 1
+get_debug_type 1 1
+settype 2 2
+intval 1 2
+floatval 1 1
+doubleval 1 1
+boolval 1 1
+strval 1 1
+is_null 1 1
+is_resource 1 1
+is_bool 1 1
+is_int 1 1
+is_integer 1 1
+is_long 1 1
+is_float 1 1
+is_double 1 1
+is_numeric 1 1
+is_string 1 1
+is_array 1 1
+is_object 1 1
+is_scalar 1 1
+is_callable 1 3
+is_iterable 1 1
+is_countable 1 1
+uniqid 0 2
+parse_url 1 2
+urlencode 1 1
+urldecode 1 1
+rawurlencode 1 1
+rawurldecode 1 1
+get_headers 1 3
+stream_bucket_make_writeable 1 1
+stream_bucket_prepend 2 2
+stream_bucket_append 2 2
+stream_bucket_new 2 2
+stream_get_filters 0 0
+stream_filter_register 2 2
+convert_uuencode 1 1
+convert_uudecode 1 1
+var_dump 1 -1
+var_export 1 2
+debug_zval_dump 1 -1
+serialize 1 1
+unserialize 1 2
+memory_get_usage 0 1
+memory_get_peak_usage 0 1
+memory_reset_peak_usage 0 0
+version_compare 2 3
+dl 1 1
+cli_set_process_title 1 1
+cli_get_process_title 0 0
+AssertionError::__construct 0 3 Error::__construct
+AssertionError::__wakeup 0 0 Error::__wakeup
+AssertionError::getMessage 0 0 Error::getMessage
+AssertionError::getCode 0 0 Error::getCode
+AssertionError::getFile 0 0 Error::getFile
+AssertionError::getLine 0 0 Error::getLine
+AssertionError::getTrace 0 0 Error::getTrace
+AssertionError::getPrevious 0 0 Error::getPrevious
+AssertionError::getTraceAsString 0 0 Error::getTraceAsString
+AssertionError::__toString 0 0 Error::__toString
+RoundingMode::cases 0 0
+php_user_filter::filter 4 4
+php_user_filter::onCreate 0 0
+php_user_filter::onClose 0 0
+Directory::close 0 0
+Directory::rewind 0 0
+Directory::read 0 0
+strtotime 1 2
+date 1 2
+idate 1 2
+gmdate 1 2
+mktime 1 6
+gmmktime 1 6
+checkdate 3 3
+strftime 1 2
+gmstrftime 1 2
+time 0 0
+localtime 0 2
+getdate 0 1
+date_create 0 2
+date_create_immutable 0 2
+date_create_from_format 2 3
+date_create_immutable_from_format 2 3
+date_parse 1 1
+date_parse_from_format 2 2
+date_get_last_errors 0 0
+date_format 2 2
+date_modify 2 2
+date_add 2 2
+date_sub 2 2
+date_timezone_get 1 1
+date_timezone_set 2 2
+date_offset_get 1 1
+date_diff 2 3
+date_time_set 3 5
+date_date_set 4 4
+date_isodate_set 3 4
+date_timestamp_set 2 2
+date_timestamp_get 1 1
+timezone_open 1 1
+timezone_name_get 1 1
+timezone_name_from_abbr 1 3
+timezone_offset_get 2 2
+timezone_transitions_get 1 3
+timezone_location_get 1 1
+timezone_identifiers_list 0 2
+timezone_abbreviations_list 0 0
+timezone_version_get 0 0
+date_interval_create_from_date_string 1 1
+date_interval_format 2 2
+date_default_timezone_set 1 1
+date_default_timezone_get 0 0
+date_sunrise 1 6
+date_sunset 1 6
+date_sun_info 3 3
+DateTimeInterface::format 1 1
+DateTimeInterface::getTimezone 0 0
+DateTimeInterface::getOffset 0 0
+DateTimeInterface::getTimestamp 0 0
+DateTimeInterface::getMicrosecond 0 0
+DateTimeInterface::diff 1 2
+DateTimeInterface::__wakeup 0 0
+DateTimeInterface::__serialize 0 0
+DateTimeInterface::__unserialize 1 1
+DateTime::__construct 0 2
+DateTime::__serialize 0 0
+DateTime::__unserialize 1 1
+DateTime::__wakeup 0 0
+DateTime::__set_state 1 1
+DateTime::createFromImmutable 1 1
+DateTime::createFromInterface 1 1
+DateTime::createFromFormat 2 3
+DateTime::createFromTimestamp 1 1
+DateTime::getLastErrors 0 0
+DateTime::format 1 1
+DateTime::modify 1 1
+DateTime::add 1 1
+DateTime::sub 1 1
+DateTime::getTimezone 0 0
+DateTime::setTimezone 1 1
+DateTime::getOffset 0 0
+DateTime::getMicrosecond 0 0
+DateTime::setTime 2 4
+DateTime::setDate 3 3
+DateTime::setISODate 2 3
+DateTime::setTimestamp 1 1
+DateTime::setMicrosecond 1 1
+DateTime::getTimestamp 0 0
+DateTime::diff 1 2
+DateTimeImmutable::__construct 0 2
+DateTimeImmutable::__serialize 0 0
+DateTimeImmutable::__unserialize 1 1
+DateTimeImmutable::__wakeup 0 0
+DateTimeImmutable::__set_state 1 1
+DateTimeImmutable::createFromFormat 2 3
+DateTimeImmutable::createFromTimestamp 1 1
+DateTimeImmutable::getLastErrors 0 0
+DateTimeImmutable::format 1 1
+DateTimeImmutable::getTimezone 0 0
+DateTimeImmutable::getOffset 0 0
+DateTimeImmutable::getTimestamp 0 0
+DateTimeImmutable::getMicrosecond 0 0
+DateTimeImmutable::diff 1 2
+DateTimeImmutable::modify 1 1
+DateTimeImmutable::add 1 1
+DateTimeImmutable::sub 1 1
+DateTimeImmutable::setTimezone 1 1
+DateTimeImmutable::setTime 2 4
+DateTimeImmutable::setDate 3 3
+DateTimeImmutable::setISODate 2 3
+DateTimeImmutable::setTimestamp 1 1
+DateTimeImmutable::setMicrosecond 1 1
+DateTimeImmutable::createFromMutable 1 1
+DateTimeImmutable::createFromInterface 1 1
+DateTimeZone::__construct 1 1
+DateTimeZone::getName 0 0
+DateTimeZone::getOffset 1 1
+DateTimeZone::getTransitions 0 2
+DateTimeZone::getLocation 0 0
+DateTimeZone::listAbbreviations 0 0
+DateTimeZone::listIdentifiers 0 2
+DateTimeZone::__serialize 0 0
+DateTimeZone::__unserialize 1 1
+DateTimeZone::__wakeup 0 0
+DateTimeZone::__set_state 1 1
+DateInterval::__construct 1 1
+DateInterval::createFromDateString 1 1
+DateInterval::format 1 1
+DateInterval::__serialize 0 0
+DateInterval::__unserialize 1 1
+DateInterval::__wakeup 0 0
+DateInterval::__set_state 1 1
+DatePeriod::createFromISO8601String 1 2
+DatePeriod::__construct 1 4
+DatePeriod::getStartDate 0 0
+DatePeriod::getEndDate 0 0
+DatePeriod::getDateInterval 0 0
+DatePeriod::getRecurrences 0 0
+DatePeriod::__serialize 0 0
+DatePeriod::__unserialize 1 1
+DatePeriod::__wakeup 0 0
+DatePeriod::__set_state 1 1
+DatePeriod::getIterator 0 0
+DateError::__construct 0 3 Error::__construct
+DateError::__wakeup 0 0 Error::__wakeup
+DateError::getMessage 0 0 Error::getMessage
+DateError::getCode 0 0 Error::getCode
+DateError::getFile 0 0 Error::getFile
+DateError::getLine 0 0 Error::getLine
+DateError::getTrace 0 0 Error::getTrace
+DateError::getPrevious 0 0 Error::getPrevious
+DateError::getTraceAsString 0 0 Error::getTraceAsString
+DateError::__toString 0 0 Error::__toString
+DateObjectError::__construct 0 3 Error::__construct
+DateObjectError::__wakeup 0 0 Error::__wakeup
+DateObjectError::getMessage 0 0 Error::getMessage
+DateObjectError::getCode 0 0 Error::getCode
+DateObjectError::getFile 0 0 Error::getFile
+DateObjectError::getLine 0 0 Error::getLine
+DateObjectError::getTrace 0 0 Error::getTrace
+DateObjectError::getPrevious 0 0 Error::getPrevious
+DateObjectError::getTraceAsString 0 0 Error::getTraceAsString
+DateObjectError::__toString 0 0 Error::__toString
+DateRangeError::__construct 0 3 Error::__construct
+DateRangeError::__wakeup 0 0 Error::__wakeup
+DateRangeError::getMessage 0 0 Error::getMessage
+DateRangeError::getCode 0 0 Error::getCode
+DateRangeError::getFile 0 0 Error::getFile
+DateRangeError::getLine 0 0 Error::getLine
+DateRangeError::getTrace 0 0 Error::getTrace
+DateRangeError::getPrevious 0 0 Error::getPrevious
+DateRangeError::getTraceAsString 0 0 Error::getTraceAsString
+DateRangeError::__toString 0 0 Error::__toString
+DateException::__construct 0 3 Exception::__construct
+DateException::__wakeup 0 0 Exception::__wakeup
+DateException::getMessage 0 0 Exception::getMessage
+DateException::getCode 0 0 Exception::getCode
+DateException::getFile 0 0 Exception::getFile
+DateException::getLine 0 0 Exception::getLine
+DateException::getTrace 0 0 Exception::getTrace
+DateException::getPrevious 0 0 Exception::getPrevious
+DateException::getTraceAsString 0 0 Exception::getTraceAsString
+DateException::__toString 0 0 Exception::__toString
+DateInvalidTimeZoneException::__construct 0 3 Exception::__construct
+DateInvalidTimeZoneException::__wakeup 0 0 Exception::__wakeup
+DateInvalidTimeZoneException::getMessage 0 0 Exception::getMessage
+DateInvalidTimeZoneException::getCode 0 0 Exception::getCode
+DateInvalidTimeZoneException::getFile 0 0 Exception::getFile
+DateInvalidTimeZoneException::getLine 0 0 Exception::getLine
+DateInvalidTimeZoneException::getTrace 0 0 Exception::getTrace
+DateInvalidTimeZoneException::getPrevious 0 0 Exception::getPrevious
+DateInvalidTimeZoneException::getTraceAsString 0 0 Exception::getTraceAsString
+DateInvalidTimeZoneException::__toString 0 0 Exception::__toString
+DateInvalidOperationException::__construct 0 3 Exception::__construct
+DateInvalidOperationException::__wakeup 0 0 Exception::__wakeup
+DateInvalidOperationException::getMessage 0 0 Exception::getMessage
+DateInvalidOperationException::getCode 0 0 Exception::getCode
+DateInvalidOperationException::getFile 0 0 Exception::getFile
+DateInvalidOperationException::getLine 0 0 Exception::getLine
+DateInvalidOperationException::getTrace 0 0 Exception::getTrace
+DateInvalidOperationException::getPrevious 0 0 Exception::getPrevious
+DateInvalidOperationException::getTraceAsString 0 0 Exception::getTraceAsString
+DateInvalidOperationException::__toString 0 0 Exception::__toString
+DateMalformedStringException::__construct 0 3 Exception::__construct
+DateMalformedStringException::__wakeup 0 0 Exception::__wakeup
+DateMalformedStringException::getMessage 0 0 Exception::getMessage
+DateMalformedStringException::getCode 0 0 Exception::getCode
+DateMalformedStringException::getFile 0 0 Exception::getFile
+DateMalformedStringException::getLine 0 0 Exception::getLine
+DateMalformedStringException::getTrace 0 0 Exception::getTrace
+DateMalformedStringException::getPrevious 0 0 Exception::getPrevious
+DateMalformedStringException::getTraceAsString 0 0 Exception::getTraceAsString
+DateMalformedStringException::__toString 0 0 Exception::__toString
+DateMalformedIntervalStringException::__construct 0 3 Exception::__construct
+DateMalformedIntervalStringException::__wakeup 0 0 Exception::__wakeup
+DateMalformedIntervalStringException::getMessage 0 0 Exception::getMessage
+DateMalformedIntervalStringException::getCode 0 0 Exception::getCode
+DateMalformedIntervalStringException::getFile 0 0 Exception::getFile
+DateMalformedIntervalStringException::getLine 0 0 Exception::getLine
+DateMalformedIntervalStringException::getTrace 0 0 Exception::getTrace
+DateMalformedIntervalStringException::getPrevious 0 0 Exception::getPrevious
+DateMalformedIntervalStringException::getTraceAsString 0 0 Exception::getTraceAsString
+DateMalformedIntervalStringException::__toString 0 0 Exception::__toString
+DateMalformedPeriodStringException::__construct 0 3 Exception::__construct
+DateMalformedPeriodStringException::__wakeup 0 0 Exception::__wakeup
+DateMalformedPeriodStringException::getMessage 0 0 Exception::getMessage
+DateMalformedPeriodStringException::getCode 0 0 Exception::getCode
+DateMalformedPeriodStringException::getFile 0 0 Exception::getFile
+DateMalformedPeriodStringException::getLine 0 0 Exception::getLine
+DateMalformedPeriodStringException::getTrace 0 0 Exception::getTrace
+DateMalformedPeriodStringException::getPrevious 0 0 Exception::getPrevious
+DateMalformedPeriodStringException::getTraceAsString 0 0 Exception::getTraceAsString
+DateMalformedPeriodStringException::__toString 0 0 Exception::__toString
+preg_match 2 5
+preg_match_all 2 5
+preg_replace 3 5
+preg_filter 3 5
+preg_replace_callback 3 6
+preg_replace_callback_array 2 5
+preg_split 2 4
+preg_quote 1 2
+preg_grep 2 3
+preg_last_error 0 0
+preg_last_error_msg 0 0
+ctype_alnum 1 1
+ctype_alpha 1 1
+ctype_cntrl 1 1
+ctype_digit 1 1
+ctype_lower 1 1
+ctype_graph 1 1
+ctype_print 1 1
+ctype_punct 1 1
+ctype_space 1 1
+ctype_upper 1 1
+ctype_xdigit 1 1
+curl_close 1 1
+curl_copy_handle 1 1
+curl_errno 1 1
+curl_error 1 1
+curl_escape 2 2
+curl_unescape 2 2
+curl_multi_setopt 3 3
+curl_exec 1 1
+curl_file_create 1 3
+curl_getinfo 1 2
+curl_init 0 1
+curl_upkeep 1 1
+curl_multi_add_handle 2 2
+curl_multi_get_handles 1 1
+curl_multi_close 1 1
+curl_multi_errno 1 1
+curl_multi_exec 2 2
+curl_multi_getcontent 1 1
+curl_multi_info_read 1 2
+curl_multi_init 0 0
+curl_multi_remove_handle 2 2
+curl_multi_select 1 2
+curl_multi_strerror 1 1
+curl_pause 2 2
+curl_reset 1 1
+curl_setopt_array 2 2
+curl_setopt 3 3
+curl_share_close 1 1
+curl_share_errno 1 1
+curl_share_init 0 0
+curl_share_setopt 3 3
+curl_share_strerror 1 1
+curl_share_init_persistent 1 1
+curl_strerror 1 1
+curl_version 0 0
+CURLFile::__construct 1 3
+CURLFile::getFilename 0 0
+CURLFile::getMimeType 0 0
+CURLFile::getPostFilename 0 0
+CURLFile::setMimeType 1 1
+CURLFile::setPostFilename 1 1
+CURLStringFile::__construct 2 3
+json_encode 1 3
+json_decode 1 4
+json_validate 1 3
+json_last_error 0 0
+json_last_error_msg 0 0
+JsonSerializable::jsonSerialize 0 0
+JsonException::__construct 0 3 Exception::__construct
+JsonException::__wakeup 0 0 Exception::__wakeup
+JsonException::getMessage 0 0 Exception::getMessage
+JsonException::getCode 0 0 Exception::getCode
+JsonException::getFile 0 0 Exception::getFile
+JsonException::getLine 0 0 Exception::getLine
+JsonException::getTrace 0 0 Exception::getTrace
+JsonException::getPrevious 0 0 Exception::getPrevious
+JsonException::getTraceAsString 0 0 Exception::getTraceAsString
+JsonException::__toString 0 0 Exception::__toString
+filter_has_var 2 2
+filter_input 2 4
+filter_var 1 3
+filter_input_array 1 3
+filter_var_array 1 3
+filter_list 0 0
+filter_id 1 1
+Filter\FilterException::__construct 0 3 Exception::__construct
+Filter\FilterException::__wakeup 0 0 Exception::__wakeup
+Filter\FilterException::getMessage 0 0 Exception::getMessage
+Filter\FilterException::getCode 0 0 Exception::getCode
+Filter\FilterException::getFile 0 0 Exception::getFile
+Filter\FilterException::getLine 0 0 Exception::getLine
+Filter\FilterException::getTrace 0 0 Exception::getTrace
+Filter\FilterException::getPrevious 0 0 Exception::getPrevious
+Filter\FilterException::getTraceAsString 0 0 Exception::getTraceAsString
+Filter\FilterException::__toString 0 0 Exception::__toString
+Filter\FilterFailedException::__construct 0 3 Exception::__construct
+Filter\FilterFailedException::__wakeup 0 0 Exception::__wakeup
+Filter\FilterFailedException::getMessage 0 0 Exception::getMessage
+Filter\FilterFailedException::getCode 0 0 Exception::getCode
+Filter\FilterFailedException::getFile 0 0 Exception::getFile
+Filter\FilterFailedException::getLine 0 0 Exception::getLine
+Filter\FilterFailedException::getTrace 0 0 Exception::getTrace
+Filter\FilterFailedException::getPrevious 0 0 Exception::getPrevious
+Filter\FilterFailedException::getTraceAsString 0 0 Exception::getTraceAsString
+Filter\FilterFailedException::__toString 0 0 Exception::__toString
+hash 2 4
+hash_file 2 4
+hash_hmac 3 4
+hash_hmac_file 3 4
+hash_init 1 4
+hash_update 2 2
+hash_update_stream 2 3
+hash_update_file 2 3
+hash_final 1 2
+hash_copy 1 1
+hash_algos 0 0
+hash_hmac_algos 0 0
+hash_pbkdf2 4 7
+hash_equals 2 2
+hash_hkdf 2 5
+mhash_get_block_size 1 1
+mhash_get_hash_name 1 1
+mhash_keygen_s2k 4 4
+mhash_count 0 0
+mhash 2 3
+HashContext::__construct 0 0
+HashContext::__serialize 0 0
+HashContext::__unserialize 1 1
+HashContext::__debugInfo 0 0
+class_implements 1 2
+class_parents 1 2
+class_uses 1 2
+spl_autoload 1 2
+spl_autoload_call 1 1
+spl_autoload_extensions 0 1
+spl_autoload_functions 0 0
+spl_autoload_register 0 3
+spl_autoload_unregister 1 1
+spl_classes 0 0
+spl_object_hash 1 1
+spl_object_id 1 1
+iterator_apply 2 3
+iterator_count 1 1
+iterator_to_array 1 2
+LogicException::__construct 0 3 Exception::__construct
+LogicException::__wakeup 0 0 Exception::__wakeup
+LogicException::getMessage 0 0 Exception::getMessage
+LogicException::getCode 0 0 Exception::getCode
+LogicException::getFile 0 0 Exception::getFile
+LogicException::getLine 0 0 Exception::getLine
+LogicException::getTrace 0 0 Exception::getTrace
+LogicException::getPrevious 0 0 Exception::getPrevious
+LogicException::getTraceAsString 0 0 Exception::getTraceAsString
+LogicException::__toString 0 0 Exception::__toString
+BadFunctionCallException::__construct 0 3 Exception::__construct
+BadFunctionCallException::__wakeup 0 0 Exception::__wakeup
+BadFunctionCallException::getMessage 0 0 Exception::getMessage
+BadFunctionCallException::getCode 0 0 Exception::getCode
+BadFunctionCallException::getFile 0 0 Exception::getFile
+BadFunctionCallException::getLine 0 0 Exception::getLine
+BadFunctionCallException::getTrace 0 0 Exception::getTrace
+BadFunctionCallException::getPrevious 0 0 Exception::getPrevious
+BadFunctionCallException::getTraceAsString 0 0 Exception::getTraceAsString
+BadFunctionCallException::__toString 0 0 Exception::__toString
+BadMethodCallException::__construct 0 3 Exception::__construct
+BadMethodCallException::__wakeup 0 0 Exception::__wakeup
+BadMethodCallException::getMessage 0 0 Exception::getMessage
+BadMethodCallException::getCode 0 0 Exception::getCode
+BadMethodCallException::getFile 0 0 Exception::getFile
+BadMethodCallException::getLine 0 0 Exception::getLine
+BadMethodCallException::getTrace 0 0 Exception::getTrace
+BadMethodCallException::getPrevious 0 0 Exception::getPrevious
+BadMethodCallException::getTraceAsString 0 0 Exception::getTraceAsString
+BadMethodCallException::__toString 0 0 Exception::__toString
+DomainException::__construct 0 3 Exception::__construct
+DomainException::__wakeup 0 0 Exception::__wakeup
+DomainException::getMessage 0 0 Exception::getMessage
+DomainException::getCode 0 0 Exception::getCode
+DomainException::getFile 0 0 Exception::getFile
+DomainException::getLine 0 0 Exception::getLine
+DomainException::getTrace 0 0 Exception::getTrace
+DomainException::getPrevious 0 0 Exception::getPrevious
+DomainException::getTraceAsString 0 0 Exception::getTraceAsString
+DomainException::__toString 0 0 Exception::__toString
+InvalidArgumentException::__construct 0 3 Exception::__construct
+InvalidArgumentException::__wakeup 0 0 Exception::__wakeup
+InvalidArgumentException::getMessage 0 0 Exception::getMessage
+InvalidArgumentException::getCode 0 0 Exception::getCode
+InvalidArgumentException::getFile 0 0 Exception::getFile
+InvalidArgumentException::getLine 0 0 Exception::getLine
+InvalidArgumentException::getTrace 0 0 Exception::getTrace
+InvalidArgumentException::getPrevious 0 0 Exception::getPrevious
+InvalidArgumentException::getTraceAsString 0 0 Exception::getTraceAsString
+InvalidArgumentException::__toString 0 0 Exception::__toString
+LengthException::__construct 0 3 Exception::__construct
+LengthException::__wakeup 0 0 Exception::__wakeup
+LengthException::getMessage 0 0 Exception::getMessage
+LengthException::getCode 0 0 Exception::getCode
+LengthException::getFile 0 0 Exception::getFile
+LengthException::getLine 0 0 Exception::getLine
+LengthException::getTrace 0 0 Exception::getTrace
+LengthException::getPrevious 0 0 Exception::getPrevious
+LengthException::getTraceAsString 0 0 Exception::getTraceAsString
+LengthException::__toString 0 0 Exception::__toString
+OutOfRangeException::__construct 0 3 Exception::__construct
+OutOfRangeException::__wakeup 0 0 Exception::__wakeup
+OutOfRangeException::getMessage 0 0 Exception::getMessage
+OutOfRangeException::getCode 0 0 Exception::getCode
+OutOfRangeException::getFile 0 0 Exception::getFile
+OutOfRangeException::getLine 0 0 Exception::getLine
+OutOfRangeException::getTrace 0 0 Exception::getTrace
+OutOfRangeException::getPrevious 0 0 Exception::getPrevious
+OutOfRangeException::getTraceAsString 0 0 Exception::getTraceAsString
+OutOfRangeException::__toString 0 0 Exception::__toString
+RuntimeException::__construct 0 3 Exception::__construct
+RuntimeException::__wakeup 0 0 Exception::__wakeup
+RuntimeException::getMessage 0 0 Exception::getMessage
+RuntimeException::getCode 0 0 Exception::getCode
+RuntimeException::getFile 0 0 Exception::getFile
+RuntimeException::getLine 0 0 Exception::getLine
+RuntimeException::getTrace 0 0 Exception::getTrace
+RuntimeException::getPrevious 0 0 Exception::getPrevious
+RuntimeException::getTraceAsString 0 0 Exception::getTraceAsString
+RuntimeException::__toString 0 0 Exception::__toString
+OutOfBoundsException::__construct 0 3 Exception::__construct
+OutOfBoundsException::__wakeup 0 0 Exception::__wakeup
+OutOfBoundsException::getMessage 0 0 Exception::getMessage
+OutOfBoundsException::getCode 0 0 Exception::getCode
+OutOfBoundsException::getFile 0 0 Exception::getFile
+OutOfBoundsException::getLine 0 0 Exception::getLine
+OutOfBoundsException::getTrace 0 0 Exception::getTrace
+OutOfBoundsException::getPrevious 0 0 Exception::getPrevious
+OutOfBoundsException::getTraceAsString 0 0 Exception::getTraceAsString
+OutOfBoundsException::__toString 0 0 Exception::__toString
+OverflowException::__construct 0 3 Exception::__construct
+OverflowException::__wakeup 0 0 Exception::__wakeup
+OverflowException::getMessage 0 0 Exception::getMessage
+OverflowException::getCode 0 0 Exception::getCode
+OverflowException::getFile 0 0 Exception::getFile
+OverflowException::getLine 0 0 Exception::getLine
+OverflowException::getTrace 0 0 Exception::getTrace
+OverflowException::getPrevious 0 0 Exception::getPrevious
+OverflowException::getTraceAsString 0 0 Exception::getTraceAsString
+OverflowException::__toString 0 0 Exception::__toString
+RangeException::__construct 0 3 Exception::__construct
+RangeException::__wakeup 0 0 Exception::__wakeup
+RangeException::getMessage 0 0 Exception::getMessage
+RangeException::getCode 0 0 Exception::getCode
+RangeException::getFile 0 0 Exception::getFile
+RangeException::getLine 0 0 Exception::getLine
+RangeException::getTrace 0 0 Exception::getTrace
+RangeException::getPrevious 0 0 Exception::getPrevious
+RangeException::getTraceAsString 0 0 Exception::getTraceAsString
+RangeException::__toString 0 0 Exception::__toString
+UnderflowException::__construct 0 3 Exception::__construct
+UnderflowException::__wakeup 0 0 Exception::__wakeup
+UnderflowException::getMessage 0 0 Exception::getMessage
+UnderflowException::getCode 0 0 Exception::getCode
+UnderflowException::getFile 0 0 Exception::getFile
+UnderflowException::getLine 0 0 Exception::getLine
+UnderflowException::getTrace 0 0 Exception::getTrace
+UnderflowException::getPrevious 0 0 Exception::getPrevious
+UnderflowException::getTraceAsString 0 0 Exception::getTraceAsString
+UnderflowException::__toString 0 0 Exception::__toString
+UnexpectedValueException::__construct 0 3 Exception::__construct
+UnexpectedValueException::__wakeup 0 0 Exception::__wakeup
+UnexpectedValueException::getMessage 0 0 Exception::getMessage
+UnexpectedValueException::getCode 0 0 Exception::getCode
+UnexpectedValueException::getFile 0 0 Exception::getFile
+UnexpectedValueException::getLine 0 0 Exception::getLine
+UnexpectedValueException::getTrace 0 0 Exception::getTrace
+UnexpectedValueException::getPrevious 0 0 Exception::getPrevious
+UnexpectedValueException::getTraceAsString 0 0 Exception::getTraceAsString
+UnexpectedValueException::__toString 0 0 Exception::__toString
+RecursiveIterator::hasChildren 0 0
+RecursiveIterator::getChildren 0 0
+OuterIterator::getInnerIterator 0 0
+RecursiveIteratorIterator::__construct 1 3
+RecursiveIteratorIterator::rewind 0 0
+RecursiveIteratorIterator::valid 0 0
+RecursiveIteratorIterator::key 0 0
+RecursiveIteratorIterator::current 0 0
+RecursiveIteratorIterator::next 0 0
+RecursiveIteratorIterator::getDepth 0 0
+RecursiveIteratorIterator::getSubIterator 0 1
+RecursiveIteratorIterator::getInnerIterator 0 0
+RecursiveIteratorIterator::beginIteration 0 0
+RecursiveIteratorIterator::endIteration 0 0
+RecursiveIteratorIterator::callHasChildren 0 0
+RecursiveIteratorIterator::callGetChildren 0 0
+RecursiveIteratorIterator::beginChildren 0 0
+RecursiveIteratorIterator::endChildren 0 0
+RecursiveIteratorIterator::nextElement 0 0
+RecursiveIteratorIterator::setMaxDepth 0 1
+RecursiveIteratorIterator::getMaxDepth 0 0
+IteratorIterator::__construct 1 2
+IteratorIterator::getInnerIterator 0 0
+IteratorIterator::rewind 0 0
+IteratorIterator::valid 0 0
+IteratorIterator::key 0 0
+IteratorIterator::current 0 0
+IteratorIterator::next 0 0
+FilterIterator::accept 0 0
+FilterIterator::__construct 1 1
+FilterIterator::rewind 0 0
+FilterIterator::next 0 0
+FilterIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+FilterIterator::valid 0 0 IteratorIterator::valid
+FilterIterator::key 0 0 IteratorIterator::key
+FilterIterator::current 0 0 IteratorIterator::current
+RecursiveFilterIterator::__construct 1 1
+RecursiveFilterIterator::hasChildren 0 0
+RecursiveFilterIterator::getChildren 0 0
+RecursiveFilterIterator::rewind 0 0 FilterIterator::rewind
+RecursiveFilterIterator::next 0 0 FilterIterator::next
+RecursiveFilterIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+RecursiveFilterIterator::valid 0 0 IteratorIterator::valid
+RecursiveFilterIterator::key 0 0 IteratorIterator::key
+RecursiveFilterIterator::current 0 0 IteratorIterator::current
+CallbackFilterIterator::__construct 2 2
+CallbackFilterIterator::accept 0 0
+CallbackFilterIterator::rewind 0 0 FilterIterator::rewind
+CallbackFilterIterator::next 0 0 FilterIterator::next
+CallbackFilterIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+CallbackFilterIterator::valid 0 0 IteratorIterator::valid
+CallbackFilterIterator::key 0 0 IteratorIterator::key
+CallbackFilterIterator::current 0 0 IteratorIterator::current
+RecursiveCallbackFilterIterator::__construct 2 2
+RecursiveCallbackFilterIterator::hasChildren 0 0
+RecursiveCallbackFilterIterator::getChildren 0 0
+RecursiveCallbackFilterIterator::accept 0 0 CallbackFilterIterator::accept
+RecursiveCallbackFilterIterator::rewind 0 0 FilterIterator::rewind
+RecursiveCallbackFilterIterator::next 0 0 FilterIterator::next
+RecursiveCallbackFilterIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+RecursiveCallbackFilterIterator::valid 0 0 IteratorIterator::valid
+RecursiveCallbackFilterIterator::key 0 0 IteratorIterator::key
+RecursiveCallbackFilterIterator::current 0 0 IteratorIterator::current
+ParentIterator::__construct 1 1
+ParentIterator::accept 0 0
+ParentIterator::hasChildren 0 0 RecursiveFilterIterator::hasChildren
+ParentIterator::getChildren 0 0 RecursiveFilterIterator::getChildren
+ParentIterator::rewind 0 0 FilterIterator::rewind
+ParentIterator::next 0 0 FilterIterator::next
+ParentIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+ParentIterator::valid 0 0 IteratorIterator::valid
+ParentIterator::key 0 0 IteratorIterator::key
+ParentIterator::current 0 0 IteratorIterator::current
+SeekableIterator::seek 1 1
+LimitIterator::__construct 1 3
+LimitIterator::rewind 0 0
+LimitIterator::valid 0 0
+LimitIterator::next 0 0
+LimitIterator::seek 1 1
+LimitIterator::getPosition 0 0
+LimitIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+LimitIterator::key 0 0 IteratorIterator::key
+LimitIterator::current 0 0 IteratorIterator::current
+CachingIterator::__construct 1 2
+CachingIterator::rewind 0 0
+CachingIterator::valid 0 0
+CachingIterator::next 0 0
+CachingIterator::hasNext 0 0
+CachingIterator::__toString 0 0
+CachingIterator::getFlags 0 0
+CachingIterator::setFlags 1 1
+CachingIterator::offsetGet 1 1
+CachingIterator::offsetSet 2 2
+CachingIterator::offsetUnset 1 1
+CachingIterator::offsetExists 1 1
+CachingIterator::getCache 0 0
+CachingIterator::count 0 0
+CachingIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+CachingIterator::key 0 0 IteratorIterator::key
+CachingIterator::current 0 0 IteratorIterator::current
+RecursiveCachingIterator::__construct 1 2
+RecursiveCachingIterator::hasChildren 0 0
+RecursiveCachingIterator::getChildren 0 0
+RecursiveCachingIterator::rewind 0 0 CachingIterator::rewind
+RecursiveCachingIterator::valid 0 0 CachingIterator::valid
+RecursiveCachingIterator::next 0 0 CachingIterator::next
+RecursiveCachingIterator::hasNext 0 0 CachingIterator::hasNext
+RecursiveCachingIterator::__toString 0 0 CachingIterator::__toString
+RecursiveCachingIterator::getFlags 0 0 CachingIterator::getFlags
+RecursiveCachingIterator::setFlags 1 1 CachingIterator::setFlags
+RecursiveCachingIterator::offsetGet 1 1 CachingIterator::offsetGet
+RecursiveCachingIterator::offsetSet 2 2 CachingIterator::offsetSet
+RecursiveCachingIterator::offsetUnset 1 1 CachingIterator::offsetUnset
+RecursiveCachingIterator::offsetExists 1 1 CachingIterator::offsetExists
+RecursiveCachingIterator::getCache 0 0 CachingIterator::getCache
+RecursiveCachingIterator::count 0 0 CachingIterator::count
+RecursiveCachingIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+RecursiveCachingIterator::key 0 0 IteratorIterator::key
+RecursiveCachingIterator::current 0 0 IteratorIterator::current
+NoRewindIterator::__construct 1 1
+NoRewindIterator::rewind 0 0
+NoRewindIterator::valid 0 0
+NoRewindIterator::key 0 0
+NoRewindIterator::current 0 0
+NoRewindIterator::next 0 0
+NoRewindIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+AppendIterator::__construct 0 0
+AppendIterator::append 1 1
+AppendIterator::rewind 0 0
+AppendIterator::valid 0 0
+AppendIterator::current 0 0
+AppendIterator::next 0 0
+AppendIterator::getIteratorIndex 0 0
+AppendIterator::getArrayIterator 0 0
+AppendIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+AppendIterator::key 0 0 IteratorIterator::key
+InfiniteIterator::__construct 1 1
+InfiniteIterator::next 0 0
+InfiniteIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+InfiniteIterator::rewind 0 0 IteratorIterator::rewind
+InfiniteIterator::valid 0 0 IteratorIterator::valid
+InfiniteIterator::key 0 0 IteratorIterator::key
+InfiniteIterator::current 0 0 IteratorIterator::current
+RegexIterator::__construct 2 5
+RegexIterator::accept 0 0
+RegexIterator::getMode 0 0
+RegexIterator::setMode 1 1
+RegexIterator::getFlags 0 0
+RegexIterator::setFlags 1 1
+RegexIterator::getRegex 0 0
+RegexIterator::getPregFlags 0 0
+RegexIterator::setPregFlags 1 1
+RegexIterator::rewind 0 0 FilterIterator::rewind
+RegexIterator::next 0 0 FilterIterator::next
+RegexIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+RegexIterator::valid 0 0 IteratorIterator::valid
+RegexIterator::key 0 0 IteratorIterator::key
+RegexIterator::current 0 0 IteratorIterator::current
+RecursiveRegexIterator::__construct 2 5
+RecursiveRegexIterator::accept 0 0
+RecursiveRegexIterator::hasChildren 0 0
+RecursiveRegexIterator::getChildren 0 0
+RecursiveRegexIterator::getMode 0 0 RegexIterator::getMode
+RecursiveRegexIterator::setMode 1 1 RegexIterator::setMode
+RecursiveRegexIterator::getFlags 0 0 RegexIterator::getFlags
+RecursiveRegexIterator::setFlags 1 1 RegexIterator::setFlags
+RecursiveRegexIterator::getRegex 0 0 RegexIterator::getRegex
+RecursiveRegexIterator::getPregFlags 0 0 RegexIterator::getPregFlags
+RecursiveRegexIterator::setPregFlags 1 1 RegexIterator::setPregFlags
+RecursiveRegexIterator::rewind 0 0 FilterIterator::rewind
+RecursiveRegexIterator::next 0 0 FilterIterator::next
+RecursiveRegexIterator::getInnerIterator 0 0 IteratorIterator::getInnerIterator
+RecursiveRegexIterator::valid 0 0 IteratorIterator::valid
+RecursiveRegexIterator::key 0 0 IteratorIterator::key
+RecursiveRegexIterator::current 0 0 IteratorIterator::current
+EmptyIterator::current 0 0
+EmptyIterator::next 0 0
+EmptyIterator::key 0 0
+EmptyIterator::valid 0 0
+EmptyIterator::rewind 0 0
+RecursiveTreeIterator::__construct 1 4
+RecursiveTreeIterator::key 0 0
+RecursiveTreeIterator::current 0 0
+RecursiveTreeIterator::getPrefix 0 0
+RecursiveTreeIterator::setPostfix 1 1
+RecursiveTreeIterator::setPrefixPart 2 2
+RecursiveTreeIterator::getEntry 0 0
+RecursiveTreeIterator::getPostfix 0 0
+RecursiveTreeIterator::rewind 0 0 RecursiveIteratorIterator::rewind
+RecursiveTreeIterator::valid 0 0 RecursiveIteratorIterator::valid
+RecursiveTreeIterator::next 0 0 RecursiveIteratorIterator::next
+RecursiveTreeIterator::getDepth 0 0 RecursiveIteratorIterator::getDepth
+RecursiveTreeIterator::getSubIterator 0 1 RecursiveIteratorIterator::getSubIterator
+RecursiveTreeIterator::getInnerIterator 0 0 RecursiveIteratorIterator::getInnerIterator
+RecursiveTreeIterator::beginIteration 0 0 RecursiveIteratorIterator::beginIteration
+RecursiveTreeIterator::endIteration 0 0 RecursiveIteratorIterator::endIteration
+RecursiveTreeIterator::callHasChildren 0 0 RecursiveIteratorIterator::callHasChildren
+RecursiveTreeIterator::callGetChildren 0 0 RecursiveIteratorIterator::callGetChildren
+RecursiveTreeIterator::beginChildren 0 0 RecursiveIteratorIterator::beginChildren
+RecursiveTreeIterator::endChildren 0 0 RecursiveIteratorIterator::endChildren
+RecursiveTreeIterator::nextElement 0 0 RecursiveIteratorIterator::nextElement
+RecursiveTreeIterator::setMaxDepth 0 1 RecursiveIteratorIterator::setMaxDepth
+RecursiveTreeIterator::getMaxDepth 0 0 RecursiveIteratorIterator::getMaxDepth
+ArrayObject::__construct 0 3
+ArrayObject::offsetExists 1 1
+ArrayObject::offsetGet 1 1
+ArrayObject::offsetSet 2 2
+ArrayObject::offsetUnset 1 1
+ArrayObject::append 1 1
+ArrayObject::getArrayCopy 0 0
+ArrayObject::count 0 0
+ArrayObject::getFlags 0 0
+ArrayObject::setFlags 1 1
+ArrayObject::asort 0 1
+ArrayObject::ksort 0 1
+ArrayObject::uasort 1 1
+ArrayObject::uksort 1 1
+ArrayObject::natsort 0 0
+ArrayObject::natcasesort 0 0
+ArrayObject::unserialize 1 1
+ArrayObject::serialize 0 0
+ArrayObject::__serialize 0 0
+ArrayObject::__unserialize 1 1
+ArrayObject::getIterator 0 0
+ArrayObject::exchangeArray 1 1
+ArrayObject::setIteratorClass 1 1
+ArrayObject::getIteratorClass 0 0
+ArrayObject::__debugInfo 0 0
+ArrayIterator::__construct 0 2
+ArrayIterator::offsetExists 1 1
+ArrayIterator::offsetGet 1 1
+ArrayIterator::offsetSet 2 2
+ArrayIterator::offsetUnset 1 1
+ArrayIterator::append 1 1
+ArrayIterator::getArrayCopy 0 0
+ArrayIterator::count 0 0
+ArrayIterator::getFlags 0 0
+ArrayIterator::setFlags 1 1
+ArrayIterator::asort 0 1
+ArrayIterator::ksort 0 1
+ArrayIterator::uasort 1 1
+ArrayIterator::uksort 1 1
+ArrayIterator::natsort 0 0
+ArrayIterator::natcasesort 0 0
+ArrayIterator::unserialize 1 1
+ArrayIterator::serialize 0 0
+ArrayIterator::__serialize 0 0
+ArrayIterator::__unserialize 1 1
+ArrayIterator::rewind 0 0
+ArrayIterator::current 0 0
+ArrayIterator::key 0 0
+ArrayIterator::next 0 0
+ArrayIterator::valid 0 0
+ArrayIterator::seek 1 1
+ArrayIterator::__debugInfo 0 0
+RecursiveArrayIterator::hasChildren 0 0
+RecursiveArrayIterator::getChildren 0 0
+RecursiveArrayIterator::__construct 0 2 ArrayIterator::__construct
+RecursiveArrayIterator::offsetExists 1 1 ArrayIterator::offsetExists
+RecursiveArrayIterator::offsetGet 1 1 ArrayIterator::offsetGet
+RecursiveArrayIterator::offsetSet 2 2 ArrayIterator::offsetSet
+RecursiveArrayIterator::offsetUnset 1 1 ArrayIterator::offsetUnset
+RecursiveArrayIterator::append 1 1 ArrayIterator::append
+RecursiveArrayIterator::getArrayCopy 0 0 ArrayIterator::getArrayCopy
+RecursiveArrayIterator::count 0 0 ArrayIterator::count
+RecursiveArrayIterator::getFlags 0 0 ArrayIterator::getFlags
+RecursiveArrayIterator::setFlags 1 1 ArrayIterator::setFlags
+RecursiveArrayIterator::asort 0 1 ArrayIterator::asort
+RecursiveArrayIterator::ksort 0 1 ArrayIterator::ksort
+RecursiveArrayIterator::uasort 1 1 ArrayIterator::uasort
+RecursiveArrayIterator::uksort 1 1 ArrayIterator::uksort
+RecursiveArrayIterator::natsort 0 0 ArrayIterator::natsort
+RecursiveArrayIterator::natcasesort 0 0 ArrayIterator::natcasesort
+RecursiveArrayIterator::unserialize 1 1 ArrayIterator::unserialize
+RecursiveArrayIterator::serialize 0 0 ArrayIterator::serialize
+RecursiveArrayIterator::__serialize 0 0 ArrayIterator::__serialize
+RecursiveArrayIterator::__unserialize 1 1 ArrayIterator::__unserialize
+RecursiveArrayIterator::rewind 0 0 ArrayIterator::rewind
+RecursiveArrayIterator::current 0 0 ArrayIterator::current
+RecursiveArrayIterator::key 0 0 ArrayIterator::key
+RecursiveArrayIterator::next 0 0 ArrayIterator::next
+RecursiveArrayIterator::valid 0 0 ArrayIterator::valid
+RecursiveArrayIterator::seek 1 1 ArrayIterator::seek
+RecursiveArrayIterator::__debugInfo 0 0 ArrayIterator::__debugInfo
+SplFileInfo::__construct 1 1
+SplFileInfo::getPath 0 0
+SplFileInfo::getFilename 0 0
+SplFileInfo::getExtension 0 0
+SplFileInfo::getBasename 0 1
+SplFileInfo::getPathname 0 0
+SplFileInfo::getPerms 0 0
+SplFileInfo::getInode 0 0
+SplFileInfo::getSize 0 0
+SplFileInfo::getOwner 0 0
+SplFileInfo::getGroup 0 0
+SplFileInfo::getATime 0 0
+SplFileInfo::getMTime 0 0
+SplFileInfo::getCTime 0 0
+SplFileInfo::getType 0 0
+SplFileInfo::isWritable 0 0
+SplFileInfo::isReadable 0 0
+SplFileInfo::isExecutable 0 0
+SplFileInfo::isFile 0 0
+SplFileInfo::isDir 0 0
+SplFileInfo::isLink 0 0
+SplFileInfo::getLinkTarget 0 0
+SplFileInfo::getRealPath 0 0
+SplFileInfo::getFileInfo 0 1
+SplFileInfo::getPathInfo 0 1
+SplFileInfo::openFile 0 3
+SplFileInfo::setFileClass 0 1
+SplFileInfo::setInfoClass 0 1
+SplFileInfo::__toString 0 0
+SplFileInfo::__debugInfo 0 0
+SplFileInfo::_bad_state_ex 0 0
+DirectoryIterator::__construct 1 1
+DirectoryIterator::getFilename 0 0
+DirectoryIterator::getExtension 0 0
+DirectoryIterator::getBasename 0 1
+DirectoryIterator::isDot 0 0
+DirectoryIterator::rewind 0 0
+DirectoryIterator::valid 0 0
+DirectoryIterator::key 0 0
+DirectoryIterator::current 0 0
+DirectoryIterator::next 0 0
+DirectoryIterator::seek 1 1
+DirectoryIterator::__toString 0 0
+DirectoryIterator::getPath 0 0 SplFileInfo::getPath
+DirectoryIterator::getPathname 0 0 SplFileInfo::getPathname
+DirectoryIterator::getPerms 0 0 SplFileInfo::getPerms
+DirectoryIterator::getInode 0 0 SplFileInfo::getInode
+DirectoryIterator::getSize 0 0 SplFileInfo::getSize
+DirectoryIterator::getOwner 0 0 SplFileInfo::getOwner
+DirectoryIterator::getGroup 0 0 SplFileInfo::getGroup
+DirectoryIterator::getATime 0 0 SplFileInfo::getATime
+DirectoryIterator::getMTime 0 0 SplFileInfo::getMTime
+DirectoryIterator::getCTime 0 0 SplFileInfo::getCTime
+DirectoryIterator::getType 0 0 SplFileInfo::getType
+DirectoryIterator::isWritable 0 0 SplFileInfo::isWritable
+DirectoryIterator::isReadable 0 0 SplFileInfo::isReadable
+DirectoryIterator::isExecutable 0 0 SplFileInfo::isExecutable
+DirectoryIterator::isFile 0 0 SplFileInfo::isFile
+DirectoryIterator::isDir 0 0 SplFileInfo::isDir
+DirectoryIterator::isLink 0 0 SplFileInfo::isLink
+DirectoryIterator::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+DirectoryIterator::getRealPath 0 0 SplFileInfo::getRealPath
+DirectoryIterator::getFileInfo 0 1 SplFileInfo::getFileInfo
+DirectoryIterator::getPathInfo 0 1 SplFileInfo::getPathInfo
+DirectoryIterator::openFile 0 3 SplFileInfo::openFile
+DirectoryIterator::setFileClass 0 1 SplFileInfo::setFileClass
+DirectoryIterator::setInfoClass 0 1 SplFileInfo::setInfoClass
+DirectoryIterator::__debugInfo 0 0 SplFileInfo::__debugInfo
+DirectoryIterator::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+FilesystemIterator::__construct 1 2
+FilesystemIterator::rewind 0 0
+FilesystemIterator::key 0 0
+FilesystemIterator::current 0 0
+FilesystemIterator::getFlags 0 0
+FilesystemIterator::setFlags 1 1
+FilesystemIterator::getFilename 0 0 DirectoryIterator::getFilename
+FilesystemIterator::getExtension 0 0 DirectoryIterator::getExtension
+FilesystemIterator::getBasename 0 1 DirectoryIterator::getBasename
+FilesystemIterator::isDot 0 0 DirectoryIterator::isDot
+FilesystemIterator::valid 0 0 DirectoryIterator::valid
+FilesystemIterator::next 0 0 DirectoryIterator::next
+FilesystemIterator::seek 1 1 DirectoryIterator::seek
+FilesystemIterator::__toString 0 0 DirectoryIterator::__toString
+FilesystemIterator::getPath 0 0 SplFileInfo::getPath
+FilesystemIterator::getPathname 0 0 SplFileInfo::getPathname
+FilesystemIterator::getPerms 0 0 SplFileInfo::getPerms
+FilesystemIterator::getInode 0 0 SplFileInfo::getInode
+FilesystemIterator::getSize 0 0 SplFileInfo::getSize
+FilesystemIterator::getOwner 0 0 SplFileInfo::getOwner
+FilesystemIterator::getGroup 0 0 SplFileInfo::getGroup
+FilesystemIterator::getATime 0 0 SplFileInfo::getATime
+FilesystemIterator::getMTime 0 0 SplFileInfo::getMTime
+FilesystemIterator::getCTime 0 0 SplFileInfo::getCTime
+FilesystemIterator::getType 0 0 SplFileInfo::getType
+FilesystemIterator::isWritable 0 0 SplFileInfo::isWritable
+FilesystemIterator::isReadable 0 0 SplFileInfo::isReadable
+FilesystemIterator::isExecutable 0 0 SplFileInfo::isExecutable
+FilesystemIterator::isFile 0 0 SplFileInfo::isFile
+FilesystemIterator::isDir 0 0 SplFileInfo::isDir
+FilesystemIterator::isLink 0 0 SplFileInfo::isLink
+FilesystemIterator::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+FilesystemIterator::getRealPath 0 0 SplFileInfo::getRealPath
+FilesystemIterator::getFileInfo 0 1 SplFileInfo::getFileInfo
+FilesystemIterator::getPathInfo 0 1 SplFileInfo::getPathInfo
+FilesystemIterator::openFile 0 3 SplFileInfo::openFile
+FilesystemIterator::setFileClass 0 1 SplFileInfo::setFileClass
+FilesystemIterator::setInfoClass 0 1 SplFileInfo::setInfoClass
+FilesystemIterator::__debugInfo 0 0 SplFileInfo::__debugInfo
+FilesystemIterator::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+RecursiveDirectoryIterator::__construct 1 2
+RecursiveDirectoryIterator::hasChildren 0 1
+RecursiveDirectoryIterator::getChildren 0 0
+RecursiveDirectoryIterator::getSubPath 0 0
+RecursiveDirectoryIterator::getSubPathname 0 0
+RecursiveDirectoryIterator::rewind 0 0 FilesystemIterator::rewind
+RecursiveDirectoryIterator::key 0 0 FilesystemIterator::key
+RecursiveDirectoryIterator::current 0 0 FilesystemIterator::current
+RecursiveDirectoryIterator::getFlags 0 0 FilesystemIterator::getFlags
+RecursiveDirectoryIterator::setFlags 1 1 FilesystemIterator::setFlags
+RecursiveDirectoryIterator::getFilename 0 0 DirectoryIterator::getFilename
+RecursiveDirectoryIterator::getExtension 0 0 DirectoryIterator::getExtension
+RecursiveDirectoryIterator::getBasename 0 1 DirectoryIterator::getBasename
+RecursiveDirectoryIterator::isDot 0 0 DirectoryIterator::isDot
+RecursiveDirectoryIterator::valid 0 0 DirectoryIterator::valid
+RecursiveDirectoryIterator::next 0 0 DirectoryIterator::next
+RecursiveDirectoryIterator::seek 1 1 DirectoryIterator::seek
+RecursiveDirectoryIterator::__toString 0 0 DirectoryIterator::__toString
+RecursiveDirectoryIterator::getPath 0 0 SplFileInfo::getPath
+RecursiveDirectoryIterator::getPathname 0 0 SplFileInfo::getPathname
+RecursiveDirectoryIterator::getPerms 0 0 SplFileInfo::getPerms
+RecursiveDirectoryIterator::getInode 0 0 SplFileInfo::getInode
+RecursiveDirectoryIterator::getSize 0 0 SplFileInfo::getSize
+RecursiveDirectoryIterator::getOwner 0 0 SplFileInfo::getOwner
+RecursiveDirectoryIterator::getGroup 0 0 SplFileInfo::getGroup
+RecursiveDirectoryIterator::getATime 0 0 SplFileInfo::getATime
+RecursiveDirectoryIterator::getMTime 0 0 SplFileInfo::getMTime
+RecursiveDirectoryIterator::getCTime 0 0 SplFileInfo::getCTime
+RecursiveDirectoryIterator::getType 0 0 SplFileInfo::getType
+RecursiveDirectoryIterator::isWritable 0 0 SplFileInfo::isWritable
+RecursiveDirectoryIterator::isReadable 0 0 SplFileInfo::isReadable
+RecursiveDirectoryIterator::isExecutable 0 0 SplFileInfo::isExecutable
+RecursiveDirectoryIterator::isFile 0 0 SplFileInfo::isFile
+RecursiveDirectoryIterator::isDir 0 0 SplFileInfo::isDir
+RecursiveDirectoryIterator::isLink 0 0 SplFileInfo::isLink
+RecursiveDirectoryIterator::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+RecursiveDirectoryIterator::getRealPath 0 0 SplFileInfo::getRealPath
+RecursiveDirectoryIterator::getFileInfo 0 1 SplFileInfo::getFileInfo
+RecursiveDirectoryIterator::getPathInfo 0 1 SplFileInfo::getPathInfo
+RecursiveDirectoryIterator::openFile 0 3 SplFileInfo::openFile
+RecursiveDirectoryIterator::setFileClass 0 1 SplFileInfo::setFileClass
+RecursiveDirectoryIterator::setInfoClass 0 1 SplFileInfo::setInfoClass
+RecursiveDirectoryIterator::__debugInfo 0 0 SplFileInfo::__debugInfo
+RecursiveDirectoryIterator::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+GlobIterator::__construct 1 2
+GlobIterator::count 0 0
+GlobIterator::rewind 0 0 FilesystemIterator::rewind
+GlobIterator::key 0 0 FilesystemIterator::key
+GlobIterator::current 0 0 FilesystemIterator::current
+GlobIterator::getFlags 0 0 FilesystemIterator::getFlags
+GlobIterator::setFlags 1 1 FilesystemIterator::setFlags
+GlobIterator::getFilename 0 0 DirectoryIterator::getFilename
+GlobIterator::getExtension 0 0 DirectoryIterator::getExtension
+GlobIterator::getBasename 0 1 DirectoryIterator::getBasename
+GlobIterator::isDot 0 0 DirectoryIterator::isDot
+GlobIterator::valid 0 0 DirectoryIterator::valid
+GlobIterator::next 0 0 DirectoryIterator::next
+GlobIterator::seek 1 1 DirectoryIterator::seek
+GlobIterator::__toString 0 0 DirectoryIterator::__toString
+GlobIterator::getPath 0 0 SplFileInfo::getPath
+GlobIterator::getPathname 0 0 SplFileInfo::getPathname
+GlobIterator::getPerms 0 0 SplFileInfo::getPerms
+GlobIterator::getInode 0 0 SplFileInfo::getInode
+GlobIterator::getSize 0 0 SplFileInfo::getSize
+GlobIterator::getOwner 0 0 SplFileInfo::getOwner
+GlobIterator::getGroup 0 0 SplFileInfo::getGroup
+GlobIterator::getATime 0 0 SplFileInfo::getATime
+GlobIterator::getMTime 0 0 SplFileInfo::getMTime
+GlobIterator::getCTime 0 0 SplFileInfo::getCTime
+GlobIterator::getType 0 0 SplFileInfo::getType
+GlobIterator::isWritable 0 0 SplFileInfo::isWritable
+GlobIterator::isReadable 0 0 SplFileInfo::isReadable
+GlobIterator::isExecutable 0 0 SplFileInfo::isExecutable
+GlobIterator::isFile 0 0 SplFileInfo::isFile
+GlobIterator::isDir 0 0 SplFileInfo::isDir
+GlobIterator::isLink 0 0 SplFileInfo::isLink
+GlobIterator::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+GlobIterator::getRealPath 0 0 SplFileInfo::getRealPath
+GlobIterator::getFileInfo 0 1 SplFileInfo::getFileInfo
+GlobIterator::getPathInfo 0 1 SplFileInfo::getPathInfo
+GlobIterator::openFile 0 3 SplFileInfo::openFile
+GlobIterator::setFileClass 0 1 SplFileInfo::setFileClass
+GlobIterator::setInfoClass 0 1 SplFileInfo::setInfoClass
+GlobIterator::__debugInfo 0 0 SplFileInfo::__debugInfo
+GlobIterator::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+SplFileObject::__construct 1 4
+SplFileObject::rewind 0 0
+SplFileObject::eof 0 0
+SplFileObject::valid 0 0
+SplFileObject::fgets 0 0
+SplFileObject::fread 1 1
+SplFileObject::fgetcsv 0 3
+SplFileObject::fputcsv 1 5
+SplFileObject::setCsvControl 0 3
+SplFileObject::getCsvControl 0 0
+SplFileObject::flock 1 2
+SplFileObject::fflush 0 0
+SplFileObject::ftell 0 0
+SplFileObject::fseek 1 2
+SplFileObject::fgetc 0 0
+SplFileObject::fpassthru 0 0
+SplFileObject::fscanf 1 -1
+SplFileObject::fwrite 1 2
+SplFileObject::fstat 0 0
+SplFileObject::ftruncate 1 1
+SplFileObject::current 0 0
+SplFileObject::key 0 0
+SplFileObject::next 0 0
+SplFileObject::setFlags 1 1
+SplFileObject::getFlags 0 0
+SplFileObject::setMaxLineLen 1 1
+SplFileObject::getMaxLineLen 0 0
+SplFileObject::hasChildren 0 0
+SplFileObject::getChildren 0 0
+SplFileObject::seek 1 1
+SplFileObject::getCurrentLine 0 0
+SplFileObject::__toString 0 0
+SplFileObject::getPath 0 0 SplFileInfo::getPath
+SplFileObject::getFilename 0 0 SplFileInfo::getFilename
+SplFileObject::getExtension 0 0 SplFileInfo::getExtension
+SplFileObject::getBasename 0 1 SplFileInfo::getBasename
+SplFileObject::getPathname 0 0 SplFileInfo::getPathname
+SplFileObject::getPerms 0 0 SplFileInfo::getPerms
+SplFileObject::getInode 0 0 SplFileInfo::getInode
+SplFileObject::getSize 0 0 SplFileInfo::getSize
+SplFileObject::getOwner 0 0 SplFileInfo::getOwner
+SplFileObject::getGroup 0 0 SplFileInfo::getGroup
+SplFileObject::getATime 0 0 SplFileInfo::getATime
+SplFileObject::getMTime 0 0 SplFileInfo::getMTime
+SplFileObject::getCTime 0 0 SplFileInfo::getCTime
+SplFileObject::getType 0 0 SplFileInfo::getType
+SplFileObject::isWritable 0 0 SplFileInfo::isWritable
+SplFileObject::isReadable 0 0 SplFileInfo::isReadable
+SplFileObject::isExecutable 0 0 SplFileInfo::isExecutable
+SplFileObject::isFile 0 0 SplFileInfo::isFile
+SplFileObject::isDir 0 0 SplFileInfo::isDir
+SplFileObject::isLink 0 0 SplFileInfo::isLink
+SplFileObject::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+SplFileObject::getRealPath 0 0 SplFileInfo::getRealPath
+SplFileObject::getFileInfo 0 1 SplFileInfo::getFileInfo
+SplFileObject::getPathInfo 0 1 SplFileInfo::getPathInfo
+SplFileObject::openFile 0 3 SplFileInfo::openFile
+SplFileObject::setFileClass 0 1 SplFileInfo::setFileClass
+SplFileObject::setInfoClass 0 1 SplFileInfo::setInfoClass
+SplFileObject::__debugInfo 0 0 SplFileInfo::__debugInfo
+SplFileObject::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+SplTempFileObject::__construct 0 1
+SplTempFileObject::rewind 0 0 SplFileObject::rewind
+SplTempFileObject::eof 0 0 SplFileObject::eof
+SplTempFileObject::valid 0 0 SplFileObject::valid
+SplTempFileObject::fgets 0 0 SplFileObject::fgets
+SplTempFileObject::fread 1 1 SplFileObject::fread
+SplTempFileObject::fgetcsv 0 3 SplFileObject::fgetcsv
+SplTempFileObject::fputcsv 1 5 SplFileObject::fputcsv
+SplTempFileObject::setCsvControl 0 3 SplFileObject::setCsvControl
+SplTempFileObject::getCsvControl 0 0 SplFileObject::getCsvControl
+SplTempFileObject::flock 1 2 SplFileObject::flock
+SplTempFileObject::fflush 0 0 SplFileObject::fflush
+SplTempFileObject::ftell 0 0 SplFileObject::ftell
+SplTempFileObject::fseek 1 2 SplFileObject::fseek
+SplTempFileObject::fgetc 0 0 SplFileObject::fgetc
+SplTempFileObject::fpassthru 0 0 SplFileObject::fpassthru
+SplTempFileObject::fscanf 1 -1 SplFileObject::fscanf
+SplTempFileObject::fwrite 1 2 SplFileObject::fwrite
+SplTempFileObject::fstat 0 0 SplFileObject::fstat
+SplTempFileObject::ftruncate 1 1 SplFileObject::ftruncate
+SplTempFileObject::current 0 0 SplFileObject::current
+SplTempFileObject::key 0 0 SplFileObject::key
+SplTempFileObject::next 0 0 SplFileObject::next
+SplTempFileObject::setFlags 1 1 SplFileObject::setFlags
+SplTempFileObject::getFlags 0 0 SplFileObject::getFlags
+SplTempFileObject::setMaxLineLen 1 1 SplFileObject::setMaxLineLen
+SplTempFileObject::getMaxLineLen 0 0 SplFileObject::getMaxLineLen
+SplTempFileObject::hasChildren 0 0 SplFileObject::hasChildren
+SplTempFileObject::getChildren 0 0 SplFileObject::getChildren
+SplTempFileObject::seek 1 1 SplFileObject::seek
+SplTempFileObject::getCurrentLine 0 0 SplFileObject::getCurrentLine
+SplTempFileObject::__toString 0 0 SplFileObject::__toString
+SplTempFileObject::getPath 0 0 SplFileInfo::getPath
+SplTempFileObject::getFilename 0 0 SplFileInfo::getFilename
+SplTempFileObject::getExtension 0 0 SplFileInfo::getExtension
+SplTempFileObject::getBasename 0 1 SplFileInfo::getBasename
+SplTempFileObject::getPathname 0 0 SplFileInfo::getPathname
+SplTempFileObject::getPerms 0 0 SplFileInfo::getPerms
+SplTempFileObject::getInode 0 0 SplFileInfo::getInode
+SplTempFileObject::getSize 0 0 SplFileInfo::getSize
+SplTempFileObject::getOwner 0 0 SplFileInfo::getOwner
+SplTempFileObject::getGroup 0 0 SplFileInfo::getGroup
+SplTempFileObject::getATime 0 0 SplFileInfo::getATime
+SplTempFileObject::getMTime 0 0 SplFileInfo::getMTime
+SplTempFileObject::getCTime 0 0 SplFileInfo::getCTime
+SplTempFileObject::getType 0 0 SplFileInfo::getType
+SplTempFileObject::isWritable 0 0 SplFileInfo::isWritable
+SplTempFileObject::isReadable 0 0 SplFileInfo::isReadable
+SplTempFileObject::isExecutable 0 0 SplFileInfo::isExecutable
+SplTempFileObject::isFile 0 0 SplFileInfo::isFile
+SplTempFileObject::isDir 0 0 SplFileInfo::isDir
+SplTempFileObject::isLink 0 0 SplFileInfo::isLink
+SplTempFileObject::getLinkTarget 0 0 SplFileInfo::getLinkTarget
+SplTempFileObject::getRealPath 0 0 SplFileInfo::getRealPath
+SplTempFileObject::getFileInfo 0 1 SplFileInfo::getFileInfo
+SplTempFileObject::getPathInfo 0 1 SplFileInfo::getPathInfo
+SplTempFileObject::openFile 0 3 SplFileInfo::openFile
+SplTempFileObject::setFileClass 0 1 SplFileInfo::setFileClass
+SplTempFileObject::setInfoClass 0 1 SplFileInfo::setInfoClass
+SplTempFileObject::__debugInfo 0 0 SplFileInfo::__debugInfo
+SplTempFileObject::_bad_state_ex 0 0 SplFileInfo::_bad_state_ex
+SplDoublyLinkedList::add 2 2
+SplDoublyLinkedList::pop 0 0
+SplDoublyLinkedList::shift 0 0
+SplDoublyLinkedList::push 1 1
+SplDoublyLinkedList::unshift 1 1
+SplDoublyLinkedList::top 0 0
+SplDoublyLinkedList::bottom 0 0
+SplDoublyLinkedList::__debugInfo 0 0
+SplDoublyLinkedList::count 0 0
+SplDoublyLinkedList::isEmpty 0 0
+SplDoublyLinkedList::setIteratorMode 1 1
+SplDoublyLinkedList::getIteratorMode 0 0
+SplDoublyLinkedList::offsetExists 1 1
+SplDoublyLinkedList::offsetGet 1 1
+SplDoublyLinkedList::offsetSet 2 2
+SplDoublyLinkedList::offsetUnset 1 1
+SplDoublyLinkedList::rewind 0 0
+SplDoublyLinkedList::current 0 0
+SplDoublyLinkedList::key 0 0
+SplDoublyLinkedList::prev 0 0
+SplDoublyLinkedList::next 0 0
+SplDoublyLinkedList::valid 0 0
+SplDoublyLinkedList::unserialize 1 1
+SplDoublyLinkedList::serialize 0 0
+SplDoublyLinkedList::__serialize 0 0
+SplDoublyLinkedList::__unserialize 1 1
+SplQueue::enqueue 1 1
+SplQueue::dequeue 0 0
+SplQueue::add 2 2 SplDoublyLinkedList::add
+SplQueue::pop 0 0 SplDoublyLinkedList::pop
+SplQueue::shift 0 0 SplDoublyLinkedList::shift
+SplQueue::push 1 1 SplDoublyLinkedList::push
+SplQueue::unshift 1 1 SplDoublyLinkedList::unshift
+SplQueue::top 0 0 SplDoublyLinkedList::top
+SplQueue::bottom 0 0 SplDoublyLinkedList::bottom
+SplQueue::__debugInfo 0 0 SplDoublyLinkedList::__debugInfo
+SplQueue::count 0 0 SplDoublyLinkedList::count
+SplQueue::isEmpty 0 0 SplDoublyLinkedList::isEmpty
+SplQueue::setIteratorMode 1 1 SplDoublyLinkedList::setIteratorMode
+SplQueue::getIteratorMode 0 0 SplDoublyLinkedList::getIteratorMode
+SplQueue::offsetExists 1 1 SplDoublyLinkedList::offsetExists
+SplQueue::offsetGet 1 1 SplDoublyLinkedList::offsetGet
+SplQueue::offsetSet 2 2 SplDoublyLinkedList::offsetSet
+SplQueue::offsetUnset 1 1 SplDoublyLinkedList::offsetUnset
+SplQueue::rewind 0 0 SplDoublyLinkedList::rewind
+SplQueue::current 0 0 SplDoublyLinkedList::current
+SplQueue::key 0 0 SplDoublyLinkedList::key
+SplQueue::prev 0 0 SplDoublyLinkedList::prev
+SplQueue::next 0 0 SplDoublyLinkedList::next
+SplQueue::valid 0 0 SplDoublyLinkedList::valid
+SplQueue::unserialize 1 1 SplDoublyLinkedList::unserialize
+SplQueue::serialize 0 0 SplDoublyLinkedList::serialize
+SplQueue::__serialize 0 0 SplDoublyLinkedList::__serialize
+SplQueue::__unserialize 1 1 SplDoublyLinkedList::__unserialize
+SplStack::add 2 2 SplDoublyLinkedList::add
+SplStack::pop 0 0 SplDoublyLinkedList::pop
+SplStack::shift 0 0 SplDoublyLinkedList::shift
+SplStack::push 1 1 SplDoublyLinkedList::push
+SplStack::unshift 1 1 SplDoublyLinkedList::unshift
+SplStack::top 0 0 SplDoublyLinkedList::top
+SplStack::bottom 0 0 SplDoublyLinkedList::bottom
+SplStack::__debugInfo 0 0 SplDoublyLinkedList::__debugInfo
+SplStack::count 0 0 SplDoublyLinkedList::count
+SplStack::isEmpty 0 0 SplDoublyLinkedList::isEmpty
+SplStack::setIteratorMode 1 1 SplDoublyLinkedList::setIteratorMode
+SplStack::getIteratorMode 0 0 SplDoublyLinkedList::getIteratorMode
+SplStack::offsetExists 1 1 SplDoublyLinkedList::offsetExists
+SplStack::offsetGet 1 1 SplDoublyLinkedList::offsetGet
+SplStack::offsetSet 2 2 SplDoublyLinkedList::offsetSet
+SplStack::offsetUnset 1 1 SplDoublyLinkedList::offsetUnset
+SplStack::rewind 0 0 SplDoublyLinkedList::rewind
+SplStack::current 0 0 SplDoublyLinkedList::current
+SplStack::key 0 0 SplDoublyLinkedList::key
+SplStack::prev 0 0 SplDoublyLinkedList::prev
+SplStack::next 0 0 SplDoublyLinkedList::next
+SplStack::valid 0 0 SplDoublyLinkedList::valid
+SplStack::unserialize 1 1 SplDoublyLinkedList::unserialize
+SplStack::serialize 0 0 SplDoublyLinkedList::serialize
+SplStack::__serialize 0 0 SplDoublyLinkedList::__serialize
+SplStack::__unserialize 1 1 SplDoublyLinkedList::__unserialize
+SplHeap::extract 0 0
+SplHeap::insert 1 1
+SplHeap::top 0 0
+SplHeap::count 0 0
+SplHeap::isEmpty 0 0
+SplHeap::rewind 0 0
+SplHeap::current 0 0
+SplHeap::key 0 0
+SplHeap::next 0 0
+SplHeap::valid 0 0
+SplHeap::recoverFromCorruption 0 0
+SplHeap::compare 2 2
+SplHeap::isCorrupted 0 0
+SplHeap::__debugInfo 0 0
+SplHeap::__serialize 0 0
+SplHeap::__unserialize 1 1
+SplMinHeap::compare 2 2
+SplMinHeap::extract 0 0 SplHeap::extract
+SplMinHeap::insert 1 1 SplHeap::insert
+SplMinHeap::top 0 0 SplHeap::top
+SplMinHeap::count 0 0 SplHeap::count
+SplMinHeap::isEmpty 0 0 SplHeap::isEmpty
+SplMinHeap::rewind 0 0 SplHeap::rewind
+SplMinHeap::current 0 0 SplHeap::current
+SplMinHeap::key 0 0 SplHeap::key
+SplMinHeap::next 0 0 SplHeap::next
+SplMinHeap::valid 0 0 SplHeap::valid
+SplMinHeap::recoverFromCorruption 0 0 SplHeap::recoverFromCorruption
+SplMinHeap::isCorrupted 0 0 SplHeap::isCorrupted
+SplMinHeap::__debugInfo 0 0 SplHeap::__debugInfo
+SplMinHeap::__serialize 0 0 SplHeap::__serialize
+SplMinHeap::__unserialize 1 1 SplHeap::__unserialize
+SplMaxHeap::compare 2 2
+SplMaxHeap::extract 0 0 SplHeap::extract
+SplMaxHeap::insert 1 1 SplHeap::insert
+SplMaxHeap::top 0 0 SplHeap::top
+SplMaxHeap::count 0 0 SplHeap::count
+SplMaxHeap::isEmpty 0 0 SplHeap::isEmpty
+SplMaxHeap::rewind 0 0 SplHeap::rewind
+SplMaxHeap::current 0 0 SplHeap::current
+SplMaxHeap::key 0 0 SplHeap::key
+SplMaxHeap::next 0 0 SplHeap::next
+SplMaxHeap::valid 0 0 SplHeap::valid
+SplMaxHeap::recoverFromCorruption 0 0 SplHeap::recoverFromCorruption
+SplMaxHeap::isCorrupted 0 0 SplHeap::isCorrupted
+SplMaxHeap::__debugInfo 0 0 SplHeap::__debugInfo
+SplMaxHeap::__serialize 0 0 SplHeap::__serialize
+SplMaxHeap::__unserialize 1 1 SplHeap::__unserialize
+SplPriorityQueue::compare 2 2
+SplPriorityQueue::insert 2 2
+SplPriorityQueue::setExtractFlags 1 1
+SplPriorityQueue::top 0 0
+SplPriorityQueue::extract 0 0
+SplPriorityQueue::count 0 0
+SplPriorityQueue::isEmpty 0 0
+SplPriorityQueue::rewind 0 0
+SplPriorityQueue::current 0 0
+SplPriorityQueue::key 0 0
+SplPriorityQueue::next 0 0
+SplPriorityQueue::valid 0 0
+SplPriorityQueue::recoverFromCorruption 0 0
+SplPriorityQueue::isCorrupted 0 0
+SplPriorityQueue::getExtractFlags 0 0
+SplPriorityQueue::__debugInfo 0 0
+SplPriorityQueue::__serialize 0 0
+SplPriorityQueue::__unserialize 1 1
+SplFixedArray::__construct 0 1
+SplFixedArray::__wakeup 0 0
+SplFixedArray::__serialize 0 0
+SplFixedArray::__unserialize 1 1
+SplFixedArray::count 0 0
+SplFixedArray::toArray 0 0
+SplFixedArray::fromArray 1 2
+SplFixedArray::getSize 0 0
+SplFixedArray::setSize 1 1
+SplFixedArray::offsetExists 1 1
+SplFixedArray::offsetGet 1 1
+SplFixedArray::offsetSet 2 2
+SplFixedArray::offsetUnset 1 1
+SplFixedArray::getIterator 0 0
+SplFixedArray::jsonSerialize 0 0
+SplObserver::update 1 1
+SplSubject::attach 1 1
+SplSubject::detach 1 1
+SplSubject::notify 0 0
+SplObjectStorage::attach 1 2
+SplObjectStorage::detach 1 1
+SplObjectStorage::contains 1 1
+SplObjectStorage::addAll 1 1
+SplObjectStorage::removeAll 1 1
+SplObjectStorage::removeAllExcept 1 1
+SplObjectStorage::getInfo 0 0
+SplObjectStorage::setInfo 1 1
+SplObjectStorage::count 0 1
+SplObjectStorage::rewind 0 0
+SplObjectStorage::valid 0 0
+SplObjectStorage::key 0 0
+SplObjectStorage::current 0 0
+SplObjectStorage::next 0 0
+SplObjectStorage::seek 1 1
+SplObjectStorage::unserialize 1 1
+SplObjectStorage::serialize 0 0
+SplObjectStorage::offsetExists 1 1
+SplObjectStorage::offsetGet 1 1
+SplObjectStorage::offsetSet 1 2
+SplObjectStorage::offsetUnset 1 1
+SplObjectStorage::getHash 1 1
+SplObjectStorage::__serialize 0 0
+SplObjectStorage::__unserialize 1 1
+SplObjectStorage::__debugInfo 0 0
+MultipleIterator::__construct 0 1
+MultipleIterator::getFlags 0 0
+MultipleIterator::setFlags 1 1
+MultipleIterator::attachIterator 1 2
+MultipleIterator::detachIterator 1 1
+MultipleIterator::containsIterator 1 1
+MultipleIterator::countIterators 0 0
+MultipleIterator::rewind 0 0
+MultipleIterator::valid 0 0
+MultipleIterator::key 0 0
+MultipleIterator::current 0 0
+MultipleIterator::next 0 0
+MultipleIterator::__debugInfo 0 0
+mb_language 0 1
+mb_internal_encoding 0 1
+mb_http_input 0 1
+mb_http_output 0 1
+mb_detect_order 0 1
+mb_substitute_character 0 1
+mb_preferred_mime_name 1 1
+mb_parse_str 2 2
+mb_output_handler 2 2
+mb_str_split 1 3
+mb_strlen 1 2
+mb_strpos 2 4
+mb_strrpos 2 4
+mb_stripos 2 4
+mb_strripos 2 4
+mb_strstr 2 4
+mb_strrchr 2 4
+mb_stristr 2 4
+mb_strrichr 2 4
+mb_substr_count 2 3
+mb_substr 2 4
+mb_strcut 2 4
+mb_strwidth 1 2
+mb_strimwidth 3 5
+mb_convert_encoding 2 3
+mb_convert_case 2 3
+mb_strtoupper 1 2
+mb_strtolower 1 2
+mb_ucfirst 1 2
+mb_lcfirst 1 2
+mb_trim 1 3
+mb_ltrim 1 3
+mb_rtrim 1 3
+mb_detect_encoding 1 3
+mb_list_encodings 0 0
+mb_encoding_aliases 1 1
+mb_encode_mimeheader 1 5
+mb_decode_mimeheader 1 1
+mb_convert_kana 1 3
+mb_convert_variables 3 -1
+mb_encode_numericentity 2 4
+mb_decode_numericentity 2 3
+mb_send_mail 3 5
+mb_get_info 0 1
+mb_check_encoding 0 2
+mb_scrub 1 2
+mb_ord 1 2
+mb_chr 1 2
+mb_str_pad 2 5
+mb_regex_encoding 0 1
+mb_ereg 2 3
+mb_eregi 2 3
+mb_ereg_replace 3 4
+mb_eregi_replace 3 4
+mb_ereg_replace_callback 3 4
+mb_split 2 3
+mb_ereg_match 2 3
+mb_ereg_search 0 2
+mb_ereg_search_pos 0 2
+mb_ereg_search_regs 0 2
+mb_ereg_search_init 1 3
+mb_ereg_search_getregs 0 0
+mb_ereg_search_getpos 0 0
+mb_ereg_search_setpos 1 1
+mb_regex_set_options 0 1
+lcg_value 0 0
+mt_srand 0 2
+srand 0 2
+rand 0 -1
+mt_rand 0 -1
+mt_getrandmax 0 0
+getrandmax 0 0
+random_bytes 1 1
+random_int 2 2
+Random\Engine::generate 0 0
+Random\RandomError::__construct 0 3 Error::__construct
+Random\RandomError::__wakeup 0 0 Error::__wakeup
+Random\RandomError::getMessage 0 0 Error::getMessage
+Random\RandomError::getCode 0 0 Error::getCode
+Random\RandomError::getFile 0 0 Error::getFile
+Random\RandomError::getLine 0 0 Error::getLine
+Random\RandomError::getTrace 0 0 Error::getTrace
+Random\RandomError::getPrevious 0 0 Error::getPrevious
+Random\RandomError::getTraceAsString 0 0 Error::getTraceAsString
+Random\RandomError::__toString 0 0 Error::__toString
+Random\BrokenRandomEngineError::__construct 0 3 Error::__construct
+Random\BrokenRandomEngineError::__wakeup 0 0 Error::__wakeup
+Random\BrokenRandomEngineError::getMessage 0 0 Error::getMessage
+Random\BrokenRandomEngineError::getCode 0 0 Error::getCode
+Random\BrokenRandomEngineError::getFile 0 0 Error::getFile
+Random\BrokenRandomEngineError::getLine 0 0 Error::getLine
+Random\BrokenRandomEngineError::getTrace 0 0 Error::getTrace
+Random\BrokenRandomEngineError::getPrevious 0 0 Error::getPrevious
+Random\BrokenRandomEngineError::getTraceAsString 0 0 Error::getTraceAsString
+Random\BrokenRandomEngineError::__toString 0 0 Error::__toString
+Random\RandomException::__construct 0 3 Exception::__construct
+Random\RandomException::__wakeup 0 0 Exception::__wakeup
+Random\RandomException::getMessage 0 0 Exception::getMessage
+Random\RandomException::getCode 0 0 Exception::getCode
+Random\RandomException::getFile 0 0 Exception::getFile
+Random\RandomException::getLine 0 0 Exception::getLine
+Random\RandomException::getTrace 0 0 Exception::getTrace
+Random\RandomException::getPrevious 0 0 Exception::getPrevious
+Random\RandomException::getTraceAsString 0 0 Exception::getTraceAsString
+Random\RandomException::__toString 0 0 Exception::__toString
+Random\Engine\Mt19937::__construct 0 2
+Random\Engine\Mt19937::generate 0 0
+Random\Engine\Mt19937::__serialize 0 0
+Random\Engine\Mt19937::__unserialize 1 1
+Random\Engine\Mt19937::__debugInfo 0 0
+Random\Engine\PcgOneseq128XslRr64::__construct 0 1
+Random\Engine\PcgOneseq128XslRr64::generate 0 0
+Random\Engine\PcgOneseq128XslRr64::jump 1 1
+Random\Engine\PcgOneseq128XslRr64::__serialize 0 0
+Random\Engine\PcgOneseq128XslRr64::__unserialize 1 1
+Random\Engine\PcgOneseq128XslRr64::__debugInfo 0 0
+Random\Engine\Xoshiro256StarStar::__construct 0 1
+Random\Engine\Xoshiro256StarStar::generate 0 0
+Random\Engine\Xoshiro256StarStar::jump 0 0
+Random\Engine\Xoshiro256StarStar::jumpLong 0 0
+Random\Engine\Xoshiro256StarStar::__serialize 0 0
+Random\Engine\Xoshiro256StarStar::__unserialize 1 1
+Random\Engine\Xoshiro256StarStar::__debugInfo 0 0
+Random\Engine\Secure::generate 0 0
+Random\Randomizer::__construct 0 1
+Random\Randomizer::nextInt 0 0
+Random\Randomizer::nextFloat 0 0
+Random\Randomizer::getFloat 2 3
+Random\Randomizer::getInt 2 2
+Random\Randomizer::getBytes 1 1
+Random\Randomizer::getBytesFromString 2 2
+Random\Randomizer::shuffleArray 1 1
+Random\Randomizer::shuffleBytes 1 1
+Random\Randomizer::pickArrayKeys 2 2
+Random\Randomizer::__serialize 0 0
+Random\Randomizer::__unserialize 1 1
+Random\IntervalBoundary::cases 0 0
+ReflectionException::__construct 0 3 Exception::__construct
+ReflectionException::__wakeup 0 0 Exception::__wakeup
+ReflectionException::getMessage 0 0 Exception::getMessage
+ReflectionException::getCode 0 0 Exception::getCode
+ReflectionException::getFile 0 0 Exception::getFile
+ReflectionException::getLine 0 0 Exception::getLine
+ReflectionException::getTrace 0 0 Exception::getTrace
+ReflectionException::getPrevious 0 0 Exception::getPrevious
+ReflectionException::getTraceAsString 0 0 Exception::getTraceAsString
+ReflectionException::__toString 0 0 Exception::__toString
+Reflection::getModifierNames 1 1
+ReflectionFunctionAbstract::__clone 0 0
+ReflectionFunctionAbstract::inNamespace 0 0
+ReflectionFunctionAbstract::isClosure 0 0
+ReflectionFunctionAbstract::isDeprecated 0 0
+ReflectionFunctionAbstract::isInternal 0 0
+ReflectionFunctionAbstract::isUserDefined 0 0
+ReflectionFunctionAbstract::isGenerator 0 0
+ReflectionFunctionAbstract::isVariadic 0 0
+ReflectionFunctionAbstract::isStatic 0 0
+ReflectionFunctionAbstract::getClosureThis 0 0
+ReflectionFunctionAbstract::getClosureScopeClass 0 0
+ReflectionFunctionAbstract::getClosureCalledClass 0 0
+ReflectionFunctionAbstract::getClosureUsedVariables 0 0
+ReflectionFunctionAbstract::getDocComment 0 0
+ReflectionFunctionAbstract::getEndLine 0 0
+ReflectionFunctionAbstract::getExtension 0 0
+ReflectionFunctionAbstract::getExtensionName 0 0
+ReflectionFunctionAbstract::getFileName 0 0
+ReflectionFunctionAbstract::getName 0 0
+ReflectionFunctionAbstract::getNamespaceName 0 0
+ReflectionFunctionAbstract::getNumberOfParameters 0 0
+ReflectionFunctionAbstract::getNumberOfRequiredParameters 0 0
+ReflectionFunctionAbstract::getParameters 0 0
+ReflectionFunctionAbstract::getShortName 0 0
+ReflectionFunctionAbstract::getStartLine 0 0
+ReflectionFunctionAbstract::getStaticVariables 0 0
+ReflectionFunctionAbstract::returnsReference 0 0
+ReflectionFunctionAbstract::hasReturnType 0 0
+ReflectionFunctionAbstract::getReturnType 0 0
+ReflectionFunctionAbstract::hasTentativeReturnType 0 0
+ReflectionFunctionAbstract::getTentativeReturnType 0 0
+ReflectionFunctionAbstract::getAttributes 0 2
+ReflectionFunction::__construct 1 1
+ReflectionFunction::__toString 0 0
+ReflectionFunction::isAnonymous 0 0
+ReflectionFunction::isDisabled 0 0
+ReflectionFunction::invoke 0 -1
+ReflectionFunction::invokeArgs 1 1
+ReflectionFunction::getClosure 0 0
+ReflectionFunction::inNamespace 0 0 ReflectionFunctionAbstract::inNamespace
+ReflectionFunction::isClosure 0 0 ReflectionFunctionAbstract::isClosure
+ReflectionFunction::isDeprecated 0 0 ReflectionFunctionAbstract::isDeprecated
+ReflectionFunction::isInternal 0 0 ReflectionFunctionAbstract::isInternal
+ReflectionFunction::isUserDefined 0 0 ReflectionFunctionAbstract::isUserDefined
+ReflectionFunction::isGenerator 0 0 ReflectionFunctionAbstract::isGenerator
+ReflectionFunction::isVariadic 0 0 ReflectionFunctionAbstract::isVariadic
+ReflectionFunction::isStatic 0 0 ReflectionFunctionAbstract::isStatic
+ReflectionFunction::getClosureThis 0 0 ReflectionFunctionAbstract::getClosureThis
+ReflectionFunction::getClosureScopeClass 0 0 ReflectionFunctionAbstract::getClosureScopeClass
+ReflectionFunction::getClosureCalledClass 0 0 ReflectionFunctionAbstract::getClosureCalledClass
+ReflectionFunction::getClosureUsedVariables 0 0 ReflectionFunctionAbstract::getClosureUsedVariables
+ReflectionFunction::getDocComment 0 0 ReflectionFunctionAbstract::getDocComment
+ReflectionFunction::getEndLine 0 0 ReflectionFunctionAbstract::getEndLine
+ReflectionFunction::getExtension 0 0 ReflectionFunctionAbstract::getExtension
+ReflectionFunction::getExtensionName 0 0 ReflectionFunctionAbstract::getExtensionName
+ReflectionFunction::getFileName 0 0 ReflectionFunctionAbstract::getFileName
+ReflectionFunction::getName 0 0 ReflectionFunctionAbstract::getName
+ReflectionFunction::getNamespaceName 0 0 ReflectionFunctionAbstract::getNamespaceName
+ReflectionFunction::getNumberOfParameters 0 0 ReflectionFunctionAbstract::getNumberOfParameters
+ReflectionFunction::getNumberOfRequiredParameters 0 0 ReflectionFunctionAbstract::getNumberOfRequiredParameters
+ReflectionFunction::getParameters 0 0 ReflectionFunctionAbstract::getParameters
+ReflectionFunction::getShortName 0 0 ReflectionFunctionAbstract::getShortName
+ReflectionFunction::getStartLine 0 0 ReflectionFunctionAbstract::getStartLine
+ReflectionFunction::getStaticVariables 0 0 ReflectionFunctionAbstract::getStaticVariables
+ReflectionFunction::returnsReference 0 0 ReflectionFunctionAbstract::returnsReference
+ReflectionFunction::hasReturnType 0 0 ReflectionFunctionAbstract::hasReturnType
+ReflectionFunction::getReturnType 0 0 ReflectionFunctionAbstract::getReturnType
+ReflectionFunction::hasTentativeReturnType 0 0 ReflectionFunctionAbstract::hasTentativeReturnType
+ReflectionFunction::getTentativeReturnType 0 0 ReflectionFunctionAbstract::getTentativeReturnType
+ReflectionFunction::getAttributes 0 2 ReflectionFunctionAbstract::getAttributes
+ReflectionGenerator::__construct 1 1
+ReflectionGenerator::getExecutingLine 0 0
+ReflectionGenerator::getExecutingFile 0 0
+ReflectionGenerator::getTrace 0 1
+ReflectionGenerator::getFunction 0 0
+ReflectionGenerator::getThis 0 0
+ReflectionGenerator::getExecutingGenerator 0 0
+ReflectionGenerator::isClosed 0 0
+ReflectionParameter::__clone 0 0
+ReflectionParameter::__construct 2 2
+ReflectionParameter::__toString 0 0
+ReflectionParameter::getName 0 0
+ReflectionParameter::isPassedByReference 0 0
+ReflectionParameter::canBePassedByValue 0 0
+ReflectionParameter::getDeclaringFunction 0 0
+ReflectionParameter::getDeclaringClass 0 0
+ReflectionParameter::getClass 0 0
+ReflectionParameter::hasType 0 0
+ReflectionParameter::getType 0 0
+ReflectionParameter::isArray 0 0
+ReflectionParameter::isCallable 0 0
+ReflectionParameter::allowsNull 0 0
+ReflectionParameter::getPosition 0 0
+ReflectionParameter::isOptional 0 0
+ReflectionParameter::isDefaultValueAvailable 0 0
+ReflectionParameter::getDefaultValue 0 0
+ReflectionParameter::isDefaultValueConstant 0 0
+ReflectionParameter::getDefaultValueConstantName 0 0
+ReflectionParameter::isVariadic 0 0
+ReflectionParameter::isPromoted 0 0
+ReflectionParameter::getAttributes 0 2
+ReflectionType::__clone 0 0
+ReflectionType::allowsNull 0 0
+ReflectionType::__toString 0 0
+ReflectionNamedType::getName 0 0
+ReflectionNamedType::isBuiltin 0 0
+ReflectionNamedType::allowsNull 0 0 ReflectionType::allowsNull
+ReflectionNamedType::__toString 0 0 ReflectionType::__toString
+ReflectionUnionType::getTypes 0 0
+ReflectionUnionType::allowsNull 0 0 ReflectionType::allowsNull
+ReflectionUnionType::__toString 0 0 ReflectionType::__toString
+ReflectionIntersectionType::getTypes 0 0
+ReflectionIntersectionType::allowsNull 0 0 ReflectionType::allowsNull
+ReflectionIntersectionType::__toString 0 0 ReflectionType::__toString
+ReflectionMethod::__construct 1 2
+ReflectionMethod::createFromMethodName 1 1
+ReflectionMethod::__toString 0 0
+ReflectionMethod::isPublic 0 0
+ReflectionMethod::isPrivate 0 0
+ReflectionMethod::isProtected 0 0
+ReflectionMethod::isAbstract 0 0
+ReflectionMethod::isFinal 0 0
+ReflectionMethod::isConstructor 0 0
+ReflectionMethod::isDestructor 0 0
+ReflectionMethod::getClosure 0 1
+ReflectionMethod::getModifiers 0 0
+ReflectionMethod::invoke 1 -1
+ReflectionMethod::invokeArgs 2 2
+ReflectionMethod::getDeclaringClass 0 0
+ReflectionMethod::getPrototype 0 0
+ReflectionMethod::hasPrototype 0 0
+ReflectionMethod::setAccessible 1 1
+ReflectionMethod::inNamespace 0 0 ReflectionFunctionAbstract::inNamespace
+ReflectionMethod::isClosure 0 0 ReflectionFunctionAbstract::isClosure
+ReflectionMethod::isDeprecated 0 0 ReflectionFunctionAbstract::isDeprecated
+ReflectionMethod::isInternal 0 0 ReflectionFunctionAbstract::isInternal
+ReflectionMethod::isUserDefined 0 0 ReflectionFunctionAbstract::isUserDefined
+ReflectionMethod::isGenerator 0 0 ReflectionFunctionAbstract::isGenerator
+ReflectionMethod::isVariadic 0 0 ReflectionFunctionAbstract::isVariadic
+ReflectionMethod::isStatic 0 0 ReflectionFunctionAbstract::isStatic
+ReflectionMethod::getClosureThis 0 0 ReflectionFunctionAbstract::getClosureThis
+ReflectionMethod::getClosureScopeClass 0 0 ReflectionFunctionAbstract::getClosureScopeClass
+ReflectionMethod::getClosureCalledClass 0 0 ReflectionFunctionAbstract::getClosureCalledClass
+ReflectionMethod::getClosureUsedVariables 0 0 ReflectionFunctionAbstract::getClosureUsedVariables
+ReflectionMethod::getDocComment 0 0 ReflectionFunctionAbstract::getDocComment
+ReflectionMethod::getEndLine 0 0 ReflectionFunctionAbstract::getEndLine
+ReflectionMethod::getExtension 0 0 ReflectionFunctionAbstract::getExtension
+ReflectionMethod::getExtensionName 0 0 ReflectionFunctionAbstract::getExtensionName
+ReflectionMethod::getFileName 0 0 ReflectionFunctionAbstract::getFileName
+ReflectionMethod::getName 0 0 ReflectionFunctionAbstract::getName
+ReflectionMethod::getNamespaceName 0 0 ReflectionFunctionAbstract::getNamespaceName
+ReflectionMethod::getNumberOfParameters 0 0 ReflectionFunctionAbstract::getNumberOfParameters
+ReflectionMethod::getNumberOfRequiredParameters 0 0 ReflectionFunctionAbstract::getNumberOfRequiredParameters
+ReflectionMethod::getParameters 0 0 ReflectionFunctionAbstract::getParameters
+ReflectionMethod::getShortName 0 0 ReflectionFunctionAbstract::getShortName
+ReflectionMethod::getStartLine 0 0 ReflectionFunctionAbstract::getStartLine
+ReflectionMethod::getStaticVariables 0 0 ReflectionFunctionAbstract::getStaticVariables
+ReflectionMethod::returnsReference 0 0 ReflectionFunctionAbstract::returnsReference
+ReflectionMethod::hasReturnType 0 0 ReflectionFunctionAbstract::hasReturnType
+ReflectionMethod::getReturnType 0 0 ReflectionFunctionAbstract::getReturnType
+ReflectionMethod::hasTentativeReturnType 0 0 ReflectionFunctionAbstract::hasTentativeReturnType
+ReflectionMethod::getTentativeReturnType 0 0 ReflectionFunctionAbstract::getTentativeReturnType
+ReflectionMethod::getAttributes 0 2 ReflectionFunctionAbstract::getAttributes
+ReflectionClass::__clone 0 0
+ReflectionClass::__construct 1 1
+ReflectionClass::__toString 0 0
+ReflectionClass::getName 0 0
+ReflectionClass::isInternal 0 0
+ReflectionClass::isUserDefined 0 0
+ReflectionClass::isAnonymous 0 0
+ReflectionClass::isInstantiable 0 0
+ReflectionClass::isCloneable 0 0
+ReflectionClass::getFileName 0 0
+ReflectionClass::getStartLine 0 0
+ReflectionClass::getEndLine 0 0
+ReflectionClass::getDocComment 0 0
+ReflectionClass::getConstructor 0 0
+ReflectionClass::hasMethod 1 1
+ReflectionClass::getMethod 1 1
+ReflectionClass::getMethods 0 1
+ReflectionClass::hasProperty 1 1
+ReflectionClass::getProperty 1 1
+ReflectionClass::getProperties 0 1
+ReflectionClass::hasConstant 1 1
+ReflectionClass::getConstants 0 1
+ReflectionClass::getReflectionConstants 0 1
+ReflectionClass::getConstant 1 1
+ReflectionClass::getReflectionConstant 1 1
+ReflectionClass::getInterfaces 0 0
+ReflectionClass::getInterfaceNames 0 0
+ReflectionClass::isInterface 0 0
+ReflectionClass::getTraits 0 0
+ReflectionClass::getTraitNames 0 0
+ReflectionClass::getTraitAliases 0 0
+ReflectionClass::isTrait 0 0
+ReflectionClass::isEnum 0 0
+ReflectionClass::isAbstract 0 0
+ReflectionClass::isFinal 0 0
+ReflectionClass::isReadOnly 0 0
+ReflectionClass::getModifiers 0 0
+ReflectionClass::isInstance 1 1
+ReflectionClass::newInstance 0 -1
+ReflectionClass::newInstanceWithoutConstructor 0 0
+ReflectionClass::newInstanceArgs 0 1
+ReflectionClass::newLazyGhost 1 2
+ReflectionClass::newLazyProxy 1 2
+ReflectionClass::resetAsLazyGhost 2 3
+ReflectionClass::resetAsLazyProxy 2 3
+ReflectionClass::initializeLazyObject 1 1
+ReflectionClass::isUninitializedLazyObject 1 1
+ReflectionClass::markLazyObjectAsInitialized 1 1
+ReflectionClass::getLazyInitializer 1 1
+ReflectionClass::getParentClass 0 0
+ReflectionClass::isSubclassOf 1 1
+ReflectionClass::getStaticProperties 0 0
+ReflectionClass::getStaticPropertyValue 1 2
+ReflectionClass::setStaticPropertyValue 2 2
+ReflectionClass::getDefaultProperties 0 0
+ReflectionClass::isIterable 0 0
+ReflectionClass::isIterateable 0 0
+ReflectionClass::implementsInterface 1 1
+ReflectionClass::getExtension 0 0
+ReflectionClass::getExtensionName 0 0
+ReflectionClass::inNamespace 0 0
+ReflectionClass::getNamespaceName 0 0
+ReflectionClass::getShortName 0 0
+ReflectionClass::getAttributes 0 2
+ReflectionObject::__construct 1 1
+ReflectionObject::__toString 0 0 ReflectionClass::__toString
+ReflectionObject::getName 0 0 ReflectionClass::getName
+ReflectionObject::isInternal 0 0 ReflectionClass::isInternal
+ReflectionObject::isUserDefined 0 0 ReflectionClass::isUserDefined
+ReflectionObject::isAnonymous 0 0 ReflectionClass::isAnonymous
+ReflectionObject::isInstantiable 0 0 ReflectionClass::isInstantiable
+ReflectionObject::isCloneable 0 0 ReflectionClass::isCloneable
+ReflectionObject::getFileName 0 0 ReflectionClass::getFileName
+ReflectionObject::getStartLine 0 0 ReflectionClass::getStartLine
+ReflectionObject::getEndLine 0 0 ReflectionClass::getEndLine
+ReflectionObject::getDocComment 0 0 ReflectionClass::getDocComment
+ReflectionObject::getConstructor 0 0 ReflectionClass::getConstructor
+ReflectionObject::hasMethod 1 1 ReflectionClass::hasMethod
+ReflectionObject::getMethod 1 1 ReflectionClass::getMethod
+ReflectionObject::getMethods 0 1 ReflectionClass::getMethods
+ReflectionObject::hasProperty 1 1 ReflectionClass::hasProperty
+ReflectionObject::getProperty 1 1 ReflectionClass::getProperty
+ReflectionObject::getProperties 0 1 ReflectionClass::getProperties
+ReflectionObject::hasConstant 1 1 ReflectionClass::hasConstant
+ReflectionObject::getConstants 0 1 ReflectionClass::getConstants
+ReflectionObject::getReflectionConstants 0 1 ReflectionClass::getReflectionConstants
+ReflectionObject::getConstant 1 1 ReflectionClass::getConstant
+ReflectionObject::getReflectionConstant 1 1 ReflectionClass::getReflectionConstant
+ReflectionObject::getInterfaces 0 0 ReflectionClass::getInterfaces
+ReflectionObject::getInterfaceNames 0 0 ReflectionClass::getInterfaceNames
+ReflectionObject::isInterface 0 0 ReflectionClass::isInterface
+ReflectionObject::getTraits 0 0 ReflectionClass::getTraits
+ReflectionObject::getTraitNames 0 0 ReflectionClass::getTraitNames
+ReflectionObject::getTraitAliases 0 0 ReflectionClass::getTraitAliases
+ReflectionObject::isTrait 0 0 ReflectionClass::isTrait
+ReflectionObject::isEnum 0 0 ReflectionClass::isEnum
+ReflectionObject::isAbstract 0 0 ReflectionClass::isAbstract
+ReflectionObject::isFinal 0 0 ReflectionClass::isFinal
+ReflectionObject::isReadOnly 0 0 ReflectionClass::isReadOnly
+ReflectionObject::getModifiers 0 0 ReflectionClass::getModifiers
+ReflectionObject::isInstance 1 1 ReflectionClass::isInstance
+ReflectionObject::newInstance 0 -1 ReflectionClass::newInstance
+ReflectionObject::newInstanceWithoutConstructor 0 0 ReflectionClass::newInstanceWithoutConstructor
+ReflectionObject::newInstanceArgs 0 1 ReflectionClass::newInstanceArgs
+ReflectionObject::newLazyGhost 1 2 ReflectionClass::newLazyGhost
+ReflectionObject::newLazyProxy 1 2 ReflectionClass::newLazyProxy
+ReflectionObject::resetAsLazyGhost 2 3 ReflectionClass::resetAsLazyGhost
+ReflectionObject::resetAsLazyProxy 2 3 ReflectionClass::resetAsLazyProxy
+ReflectionObject::initializeLazyObject 1 1 ReflectionClass::initializeLazyObject
+ReflectionObject::isUninitializedLazyObject 1 1 ReflectionClass::isUninitializedLazyObject
+ReflectionObject::markLazyObjectAsInitialized 1 1 ReflectionClass::markLazyObjectAsInitialized
+ReflectionObject::getLazyInitializer 1 1 ReflectionClass::getLazyInitializer
+ReflectionObject::getParentClass 0 0 ReflectionClass::getParentClass
+ReflectionObject::isSubclassOf 1 1 ReflectionClass::isSubclassOf
+ReflectionObject::getStaticProperties 0 0 ReflectionClass::getStaticProperties
+ReflectionObject::getStaticPropertyValue 1 2 ReflectionClass::getStaticPropertyValue
+ReflectionObject::setStaticPropertyValue 2 2 ReflectionClass::setStaticPropertyValue
+ReflectionObject::getDefaultProperties 0 0 ReflectionClass::getDefaultProperties
+ReflectionObject::isIterable 0 0 ReflectionClass::isIterable
+ReflectionObject::isIterateable 0 0 ReflectionClass::isIterateable
+ReflectionObject::implementsInterface 1 1 ReflectionClass::implementsInterface
+ReflectionObject::getExtension 0 0 ReflectionClass::getExtension
+ReflectionObject::getExtensionName 0 0 ReflectionClass::getExtensionName
+ReflectionObject::inNamespace 0 0 ReflectionClass::inNamespace
+ReflectionObject::getNamespaceName 0 0 ReflectionClass::getNamespaceName
+ReflectionObject::getShortName 0 0 ReflectionClass::getShortName
+ReflectionObject::getAttributes 0 2 ReflectionClass::getAttributes
+ReflectionProperty::__clone 0 0
+ReflectionProperty::__construct 2 2
+ReflectionProperty::__toString 0 0
+ReflectionProperty::getName 0 0
+ReflectionProperty::getMangledName 0 0
+ReflectionProperty::getValue 0 1
+ReflectionProperty::setValue 1 2
+ReflectionProperty::getRawValue 1 1
+ReflectionProperty::setRawValue 2 2
+ReflectionProperty::setRawValueWithoutLazyInitialization 2 2
+ReflectionProperty::skipLazyInitialization 1 1
+ReflectionProperty::isLazy 1 1
+ReflectionProperty::isInitialized 0 1
+ReflectionProperty::isPublic 0 0
+ReflectionProperty::isPrivate 0 0
+ReflectionProperty::isProtected 0 0
+ReflectionProperty::isPrivateSet 0 0
+ReflectionProperty::isProtectedSet 0 0
+ReflectionProperty::isStatic 0 0
+ReflectionProperty::isReadOnly 0 0
+ReflectionProperty::isDefault 0 0
+ReflectionProperty::isDynamic 0 0
+ReflectionProperty::isAbstract 0 0
+ReflectionProperty::isVirtual 0 0
+ReflectionProperty::isPromoted 0 0
+ReflectionProperty::getModifiers 0 0
+ReflectionProperty::getDeclaringClass 0 0
+ReflectionProperty::getDocComment 0 0
+ReflectionProperty::setAccessible 1 1
+ReflectionProperty::getType 0 0
+ReflectionProperty::getSettableType 0 0
+ReflectionProperty::hasType 0 0
+ReflectionProperty::hasDefaultValue 0 0
+ReflectionProperty::getDefaultValue 0 0
+ReflectionProperty::getAttributes 0 2
+ReflectionProperty::hasHooks 0 0
+ReflectionProperty::getHooks 0 0
+ReflectionProperty::hasHook 1 1
+ReflectionProperty::getHook 1 1
+ReflectionProperty::isFinal 0 0
+ReflectionClassConstant::__clone 0 0
+ReflectionClassConstant::__construct 2 2
+ReflectionClassConstant::__toString 0 0
+ReflectionClassConstant::getName 0 0
+ReflectionClassConstant::getValue 0 0
+ReflectionClassConstant::isPublic 0 0
+ReflectionClassConstant::isPrivate 0 0
+ReflectionClassConstant::isProtected 0 0
+ReflectionClassConstant::isFinal 0 0
+ReflectionClassConstant::getModifiers 0 0
+ReflectionClassConstant::getDeclaringClass 0 0
+ReflectionClassConstant::getDocComment 0 0
+ReflectionClassConstant::getAttributes 0 2
+ReflectionClassConstant::isEnumCase 0 0
+ReflectionClassConstant::isDeprecated 0 0
+ReflectionClassConstant::hasType 0 0
+ReflectionClassConstant::getType 0 0
+ReflectionExtension::__clone 0 0
+ReflectionExtension::__construct 1 1
+ReflectionExtension::__toString 0 0
+ReflectionExtension::getName 0 0
+ReflectionExtension::getVersion 0 0
+ReflectionExtension::getFunctions 0 0
+ReflectionExtension::getConstants 0 0
+ReflectionExtension::getINIEntries 0 0
+ReflectionExtension::getClasses 0 0
+ReflectionExtension::getClassNames 0 0
+ReflectionExtension::getDependencies 0 0
+ReflectionExtension::info 0 0
+ReflectionExtension::isPersistent 0 0
+ReflectionExtension::isTemporary 0 0
+ReflectionZendExtension::__clone 0 0
+ReflectionZendExtension::__construct 1 1
+ReflectionZendExtension::__toString 0 0
+ReflectionZendExtension::getName 0 0
+ReflectionZendExtension::getVersion 0 0
+ReflectionZendExtension::getAuthor 0 0
+ReflectionZendExtension::getURL 0 0
+ReflectionZendExtension::getCopyright 0 0
+ReflectionReference::fromArrayElement 2 2
+ReflectionReference::getId 0 0
+ReflectionReference::__clone 0 0
+ReflectionReference::__construct 0 0
+ReflectionAttribute::getName 0 0
+ReflectionAttribute::getTarget 0 0
+ReflectionAttribute::isRepeated 0 0
+ReflectionAttribute::getArguments 0 0
+ReflectionAttribute::newInstance 0 0
+ReflectionAttribute::__toString 0 0
+ReflectionAttribute::__clone 0 0
+ReflectionAttribute::__construct 0 0
+ReflectionEnum::__construct 1 1
+ReflectionEnum::hasCase 1 1
+ReflectionEnum::getCase 1 1
+ReflectionEnum::getCases 0 0
+ReflectionEnum::isBacked 0 0
+ReflectionEnum::getBackingType 0 0
+ReflectionEnum::__toString 0 0 ReflectionClass::__toString
+ReflectionEnum::getName 0 0 ReflectionClass::getName
+ReflectionEnum::isInternal 0 0 ReflectionClass::isInternal
+ReflectionEnum::isUserDefined 0 0 ReflectionClass::isUserDefined
+ReflectionEnum::isAnonymous 0 0 ReflectionClass::isAnonymous
+ReflectionEnum::isInstantiable 0 0 ReflectionClass::isInstantiable
+ReflectionEnum::isCloneable 0 0 ReflectionClass::isCloneable
+ReflectionEnum::getFileName 0 0 ReflectionClass::getFileName
+ReflectionEnum::getStartLine 0 0 ReflectionClass::getStartLine
+ReflectionEnum::getEndLine 0 0 ReflectionClass::getEndLine
+ReflectionEnum::getDocComment 0 0 ReflectionClass::getDocComment
+ReflectionEnum::getConstructor 0 0 ReflectionClass::getConstructor
+ReflectionEnum::hasMethod 1 1 ReflectionClass::hasMethod
+ReflectionEnum::getMethod 1 1 ReflectionClass::getMethod
+ReflectionEnum::getMethods 0 1 ReflectionClass::getMethods
+ReflectionEnum::hasProperty 1 1 ReflectionClass::hasProperty
+ReflectionEnum::getProperty 1 1 ReflectionClass::getProperty
+ReflectionEnum::getProperties 0 1 ReflectionClass::getProperties
+ReflectionEnum::hasConstant 1 1 ReflectionClass::hasConstant
+ReflectionEnum::getConstants 0 1 ReflectionClass::getConstants
+ReflectionEnum::getReflectionConstants 0 1 ReflectionClass::getReflectionConstants
+ReflectionEnum::getConstant 1 1 ReflectionClass::getConstant
+ReflectionEnum::getReflectionConstant 1 1 ReflectionClass::getReflectionConstant
+ReflectionEnum::getInterfaces 0 0 ReflectionClass::getInterfaces
+ReflectionEnum::getInterfaceNames 0 0 ReflectionClass::getInterfaceNames
+ReflectionEnum::isInterface 0 0 ReflectionClass::isInterface
+ReflectionEnum::getTraits 0 0 ReflectionClass::getTraits
+ReflectionEnum::getTraitNames 0 0 ReflectionClass::getTraitNames
+ReflectionEnum::getTraitAliases 0 0 ReflectionClass::getTraitAliases
+ReflectionEnum::isTrait 0 0 ReflectionClass::isTrait
+ReflectionEnum::isEnum 0 0 ReflectionClass::isEnum
+ReflectionEnum::isAbstract 0 0 ReflectionClass::isAbstract
+ReflectionEnum::isFinal 0 0 ReflectionClass::isFinal
+ReflectionEnum::isReadOnly 0 0 ReflectionClass::isReadOnly
+ReflectionEnum::getModifiers 0 0 ReflectionClass::getModifiers
+ReflectionEnum::isInstance 1 1 ReflectionClass::isInstance
+ReflectionEnum::newInstance 0 -1 ReflectionClass::newInstance
+ReflectionEnum::newInstanceWithoutConstructor 0 0 ReflectionClass::newInstanceWithoutConstructor
+ReflectionEnum::newInstanceArgs 0 1 ReflectionClass::newInstanceArgs
+ReflectionEnum::newLazyGhost 1 2 ReflectionClass::newLazyGhost
+ReflectionEnum::newLazyProxy 1 2 ReflectionClass::newLazyProxy
+ReflectionEnum::resetAsLazyGhost 2 3 ReflectionClass::resetAsLazyGhost
+ReflectionEnum::resetAsLazyProxy 2 3 ReflectionClass::resetAsLazyProxy
+ReflectionEnum::initializeLazyObject 1 1 ReflectionClass::initializeLazyObject
+ReflectionEnum::isUninitializedLazyObject 1 1 ReflectionClass::isUninitializedLazyObject
+ReflectionEnum::markLazyObjectAsInitialized 1 1 ReflectionClass::markLazyObjectAsInitialized
+ReflectionEnum::getLazyInitializer 1 1 ReflectionClass::getLazyInitializer
+ReflectionEnum::getParentClass 0 0 ReflectionClass::getParentClass
+ReflectionEnum::isSubclassOf 1 1 ReflectionClass::isSubclassOf
+ReflectionEnum::getStaticProperties 0 0 ReflectionClass::getStaticProperties
+ReflectionEnum::getStaticPropertyValue 1 2 ReflectionClass::getStaticPropertyValue
+ReflectionEnum::setStaticPropertyValue 2 2 ReflectionClass::setStaticPropertyValue
+ReflectionEnum::getDefaultProperties 0 0 ReflectionClass::getDefaultProperties
+ReflectionEnum::isIterable 0 0 ReflectionClass::isIterable
+ReflectionEnum::isIterateable 0 0 ReflectionClass::isIterateable
+ReflectionEnum::implementsInterface 1 1 ReflectionClass::implementsInterface
+ReflectionEnum::getExtension 0 0 ReflectionClass::getExtension
+ReflectionEnum::getExtensionName 0 0 ReflectionClass::getExtensionName
+ReflectionEnum::inNamespace 0 0 ReflectionClass::inNamespace
+ReflectionEnum::getNamespaceName 0 0 ReflectionClass::getNamespaceName
+ReflectionEnum::getShortName 0 0 ReflectionClass::getShortName
+ReflectionEnum::getAttributes 0 2 ReflectionClass::getAttributes
+ReflectionEnumUnitCase::__construct 2 2
+ReflectionEnumUnitCase::getEnum 0 0
+ReflectionEnumUnitCase::getValue 0 0
+ReflectionEnumUnitCase::__toString 0 0 ReflectionClassConstant::__toString
+ReflectionEnumUnitCase::getName 0 0 ReflectionClassConstant::getName
+ReflectionEnumUnitCase::isPublic 0 0 ReflectionClassConstant::isPublic
+ReflectionEnumUnitCase::isPrivate 0 0 ReflectionClassConstant::isPrivate
+ReflectionEnumUnitCase::isProtected 0 0 ReflectionClassConstant::isProtected
+ReflectionEnumUnitCase::isFinal 0 0 ReflectionClassConstant::isFinal
+ReflectionEnumUnitCase::getModifiers 0 0 ReflectionClassConstant::getModifiers
+ReflectionEnumUnitCase::getDeclaringClass 0 0 ReflectionClassConstant::getDeclaringClass
+ReflectionEnumUnitCase::getDocComment 0 0 ReflectionClassConstant::getDocComment
+ReflectionEnumUnitCase::getAttributes 0 2 ReflectionClassConstant::getAttributes
+ReflectionEnumUnitCase::isEnumCase 0 0 ReflectionClassConstant::isEnumCase
+ReflectionEnumUnitCase::isDeprecated 0 0 ReflectionClassConstant::isDeprecated
+ReflectionEnumUnitCase::hasType 0 0 ReflectionClassConstant::hasType
+ReflectionEnumUnitCase::getType 0 0 ReflectionClassConstant::getType
+ReflectionEnumBackedCase::__construct 2 2
+ReflectionEnumBackedCase::getBackingValue 0 0
+ReflectionEnumBackedCase::getEnum 0 0 ReflectionEnumUnitCase::getEnum
+ReflectionEnumBackedCase::getValue 0 0 ReflectionEnumUnitCase::getValue
+ReflectionEnumBackedCase::__toString 0 0 ReflectionClassConstant::__toString
+ReflectionEnumBackedCase::getName 0 0 ReflectionClassConstant::getName
+ReflectionEnumBackedCase::isPublic 0 0 ReflectionClassConstant::isPublic
+ReflectionEnumBackedCase::isPrivate 0 0 ReflectionClassConstant::isPrivate
+ReflectionEnumBackedCase::isProtected 0 0 ReflectionClassConstant::isProtected
+ReflectionEnumBackedCase::isFinal 0 0 ReflectionClassConstant::isFinal
+ReflectionEnumBackedCase::getModifiers 0 0 ReflectionClassConstant::getModifiers
+ReflectionEnumBackedCase::getDeclaringClass 0 0 ReflectionClassConstant::getDeclaringClass
+ReflectionEnumBackedCase::getDocComment 0 0 ReflectionClassConstant::getDocComment
+ReflectionEnumBackedCase::getAttributes 0 2 ReflectionClassConstant::getAttributes
+ReflectionEnumBackedCase::isEnumCase 0 0 ReflectionClassConstant::isEnumCase
+ReflectionEnumBackedCase::isDeprecated 0 0 ReflectionClassConstant::isDeprecated
+ReflectionEnumBackedCase::hasType 0 0 ReflectionClassConstant::hasType
+ReflectionEnumBackedCase::getType 0 0 ReflectionClassConstant::getType
+ReflectionFiber::__construct 1 1
+ReflectionFiber::getFiber 0 0
+ReflectionFiber::getExecutingFile 0 0
+ReflectionFiber::getExecutingLine 0 0
+ReflectionFiber::getCallable 0 0
+ReflectionFiber::getTrace 0 1
+ReflectionConstant::__construct 1 1
+ReflectionConstant::getName 0 0
+ReflectionConstant::getNamespaceName 0 0
+ReflectionConstant::getShortName 0 0
+ReflectionConstant::getValue 0 0
+ReflectionConstant::isDeprecated 0 0
+ReflectionConstant::getFileName 0 0
+ReflectionConstant::getExtension 0 0
+ReflectionConstant::getExtensionName 0 0
+ReflectionConstant::__toString 0 0
+ReflectionConstant::getAttributes 0 2
+PropertyHookType::cases 0 0
+PropertyHookType::from 1 1
+PropertyHookType::tryFrom 1 1
+mysqli_affected_rows 1 1
+mysqli_autocommit 2 2
+mysqli_begin_transaction 1 3
+mysqli_change_user 4 4
+mysqli_character_set_name 1 1
+mysqli_close 1 1
+mysqli_commit 1 3
+mysqli_connect 0 6
+mysqli_connect_errno 0 0
+mysqli_connect_error 0 0
+mysqli_data_seek 2 2
+mysqli_dump_debug_info 1 1
+mysqli_debug 1 1
+mysqli_errno 1 1
+mysqli_error 1 1
+mysqli_error_list 1 1
+mysqli_stmt_execute 1 2
+mysqli_execute 1 2
+mysqli_execute_query 2 3
+mysqli_fetch_field 1 1
+mysqli_fetch_fields 1 1
+mysqli_fetch_field_direct 2 2
+mysqli_fetch_lengths 1 1
+mysqli_fetch_all 1 2
+mysqli_fetch_array 1 2
+mysqli_fetch_assoc 1 1
+mysqli_fetch_object 1 3
+mysqli_fetch_row 1 1
+mysqli_fetch_column 1 2
+mysqli_field_count 1 1
+mysqli_field_seek 2 2
+mysqli_field_tell 1 1
+mysqli_free_result 1 1
+mysqli_get_connection_stats 1 1
+mysqli_get_client_stats 0 0
+mysqli_get_charset 1 1
+mysqli_get_client_info 0 1
+mysqli_get_client_version 0 0
+mysqli_get_links_stats 0 0
+mysqli_get_host_info 1 1
+mysqli_get_proto_info 1 1
+mysqli_get_server_info 1 1
+mysqli_get_server_version 1 1
+mysqli_get_warnings 1 1
+mysqli_init 0 0
+mysqli_info 1 1
+mysqli_insert_id 1 1
+mysqli_kill 2 2
+mysqli_more_results 1 1
+mysqli_multi_query 2 2
+mysqli_next_result 1 1
+mysqli_num_fields 1 1
+mysqli_num_rows 1 1
+mysqli_options 3 3
+mysqli_set_opt 3 3
+mysqli_ping 1 1
+mysqli_poll 4 5
+mysqli_prepare 2 2
+mysqli_report 1 1
+mysqli_query 2 3
+mysqli_real_connect 1 8
+mysqli_real_escape_string 2 2
+mysqli_escape_string 2 2
+mysqli_real_query 2 2
+mysqli_reap_async_query 1 1
+mysqli_release_savepoint 2 2
+mysqli_rollback 1 3
+mysqli_savepoint 2 2
+mysqli_select_db 2 2
+mysqli_set_charset 2 2
+mysqli_stmt_affected_rows 1 1
+mysqli_stmt_attr_get 2 2
+mysqli_stmt_attr_set 3 3
+mysqli_stmt_bind_param 2 -1
+mysqli_stmt_bind_result 1 -1
+mysqli_stmt_close 1 1
+mysqli_stmt_data_seek 2 2
+mysqli_stmt_errno 1 1
+mysqli_stmt_error 1 1
+mysqli_stmt_error_list 1 1
+mysqli_stmt_fetch 1 1
+mysqli_stmt_field_count 1 1
+mysqli_stmt_free_result 1 1
+mysqli_stmt_get_result 1 1
+mysqli_stmt_get_warnings 1 1
+mysqli_stmt_init 1 1
+mysqli_stmt_insert_id 1 1
+mysqli_stmt_more_results 1 1
+mysqli_stmt_next_result 1 1
+mysqli_stmt_num_rows 1 1
+mysqli_stmt_param_count 1 1
+mysqli_stmt_prepare 2 2
+mysqli_stmt_reset 1 1
+mysqli_stmt_result_metadata 1 1
+mysqli_stmt_send_long_data 3 3
+mysqli_stmt_store_result 1 1
+mysqli_stmt_sqlstate 1 1
+mysqli_sqlstate 1 1
+mysqli_ssl_set 6 6
+mysqli_stat 1 1
+mysqli_store_result 1 2
+mysqli_thread_id 1 1
+mysqli_thread_safe 0 0
+mysqli_use_result 1 1
+mysqli_warning_count 1 1
+mysqli_refresh 2 2
+mysqli_sql_exception::getSqlState 0 0
+mysqli_sql_exception::__construct 0 3 Exception::__construct
+mysqli_sql_exception::__wakeup 0 0 Exception::__wakeup
+mysqli_sql_exception::getMessage 0 0 Exception::getMessage
+mysqli_sql_exception::getCode 0 0 Exception::getCode
+mysqli_sql_exception::getFile 0 0 Exception::getFile
+mysqli_sql_exception::getLine 0 0 Exception::getLine
+mysqli_sql_exception::getTrace 0 0 Exception::getTrace
+mysqli_sql_exception::getPrevious 0 0 Exception::getPrevious
+mysqli_sql_exception::getTraceAsString 0 0 Exception::getTraceAsString
+mysqli_sql_exception::__toString 0 0 Exception::__toString
+mysqli::__construct 0 6
+mysqli::autocommit 1 1
+mysqli::begin_transaction 0 2
+mysqli::change_user 3 3
+mysqli::character_set_name 0 0
+mysqli::close 0 0
+mysqli::commit 0 2
+mysqli::connect 0 6
+mysqli::dump_debug_info 0 0
+mysqli::debug 1 1
+mysqli::get_charset 0 0
+mysqli::execute_query 1 2
+mysqli::get_client_info 0 0
+mysqli::get_connection_stats 0 0
+mysqli::get_server_info 0 0
+mysqli::get_warnings 0 0
+mysqli::init 0 0
+mysqli::kill 1 1
+mysqli::multi_query 1 1
+mysqli::more_results 0 0
+mysqli::next_result 0 0
+mysqli::ping 0 0
+mysqli::poll 4 5
+mysqli::prepare 1 1
+mysqli::query 1 2
+mysqli::real_connect 0 7
+mysqli::real_escape_string 1 1
+mysqli::reap_async_query 0 0
+mysqli::escape_string 1 1
+mysqli::real_query 1 1
+mysqli::release_savepoint 1 1
+mysqli::rollback 0 2
+mysqli::savepoint 1 1
+mysqli::select_db 1 1
+mysqli::set_charset 1 1
+mysqli::options 2 2
+mysqli::set_opt 2 2
+mysqli::ssl_set 5 5
+mysqli::stat 0 0
+mysqli::stmt_init 0 0
+mysqli::store_result 0 1
+mysqli::thread_safe 0 0
+mysqli::use_result 0 0
+mysqli::refresh 1 1
+mysqli_warning::__construct 0 0
+mysqli_warning::next 0 0
+mysqli_result::__construct 1 2
+mysqli_result::close 0 0
+mysqli_result::free 0 0
+mysqli_result::data_seek 1 1
+mysqli_result::fetch_field 0 0
+mysqli_result::fetch_fields 0 0
+mysqli_result::fetch_field_direct 1 1
+mysqli_result::fetch_all 0 1
+mysqli_result::fetch_array 0 1
+mysqli_result::fetch_assoc 0 0
+mysqli_result::fetch_object 0 2
+mysqli_result::fetch_row 0 0
+mysqli_result::fetch_column 0 1
+mysqli_result::field_seek 1 1
+mysqli_result::free_result 0 0
+mysqli_result::getIterator 0 0
+mysqli_stmt::__construct 1 2
+mysqli_stmt::attr_get 1 1
+mysqli_stmt::attr_set 2 2
+mysqli_stmt::bind_param 1 -1
+mysqli_stmt::bind_result 0 -1
+mysqli_stmt::close 0 0
+mysqli_stmt::data_seek 1 1
+mysqli_stmt::execute 0 1
+mysqli_stmt::fetch 0 0
+mysqli_stmt::get_warnings 0 0
+mysqli_stmt::result_metadata 0 0
+mysqli_stmt::more_results 0 0
+mysqli_stmt::next_result 0 0
+mysqli_stmt::num_rows 0 0
+mysqli_stmt::send_long_data 2 2
+mysqli_stmt::free_result 0 0
+mysqli_stmt::reset 0 0
+mysqli_stmt::prepare 1 1
+mysqli_stmt::store_result 0 0
+mysqli_stmt::get_result 0 0
