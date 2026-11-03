@@ -75,6 +75,16 @@ public final class StringFunctions {
             }
             return sim;
         });
+        r.fn("metaphone", (context, a) -> {
+            Args.arity(a, "metaphone", 1, 2);
+            byte[] word = Str.readBytes(Args.string(context, a, 0, "metaphone", "string", false));
+            long max = Args.has(a, 1) ? Args.integer(context, a, 1, "metaphone", "max_phonemes", "int") : 0;
+            if (max < 0) {
+                throw new PhpError("ValueError", "metaphone(): Argument #2 ($max_phonemes) must be greater than or "
+                        + "equal to 0");
+            }
+            return metaphone(word, max);
+        });
         string(r, "soundex", StringFunctions::soundex);
         string(r, "quoted_printable_encode", StringFunctions::quotedPrintableEncode);
         string(r, "quoted_printable_decode", StringFunctions::quotedPrintableDecode);
@@ -2108,5 +2118,186 @@ public final class StringFunctions {
 
     static void langinfoConstants(Map<String, Object> constants) {
         constants.putAll(LANGINFO_NAMES);
+    }
+
+    /** metaphone.c's letter classes: 1 vowel (AEIOU), 2 FJMNR, 4 CGPST (affect H), 8 EIY (soften), 16 BDH. */
+    private static final byte[] METAPHONE_CODES = {1, 16, 4, 16, 9, 2, 4, 16, 9, 2, 0, 2, 2, 2, 1, 4, 0, 2, 4, 4, 1, 0,
+        0, 0, 8, 0};
+
+    private static int encode(int c) {
+        return c >= 'A' && c <= 'Z' ? METAPHONE_CODES[c - 'A'] : 0;
+    }
+
+    private static boolean isAlpha(int c) {
+        return (c | 0x20) >= 'a' && (c | 0x20) <= 'z';
+    }
+
+    private static int upper(int c) {
+        return c >= 'a' && c <= 'z' ? c - 32 : c;
+    }
+
+    /** metaphone.c (Michael G Schwern's), traditional: the word as a C string, to its first NUL. */
+    private static TruffleString metaphone(byte[] word, long max) {
+        int length = 0;
+        while (length < word.length && word[length] != 0) {
+            length++;
+        }
+        byte[] w = Arrays.copyOf(word, length + 3); // NULs after the end, as C reads them
+        ByteBuilder out = new ByteBuilder(length);
+        int i = 0;
+        while (!isAlpha(w[i])) {
+            if (w[i] == 0) {
+                return Str.EMPTY;
+            }
+            i++;
+        }
+        int next = upper(w[i + 1]);
+        switch (upper(w[i])) {
+            case 'A' -> {
+                out.write(next == 'E' ? 'E' : 'A');
+                i += next == 'E' ? 2 : 1;
+            }
+            case 'G', 'K', 'P' -> {
+                if (next == 'N') {
+                    out.write('N');
+                    i += 2;
+                }
+            }
+            case 'W' -> {
+                if (next == 'R') {
+                    out.write('R');
+                    i += 2;
+                } else if (next == 'H' || (encode(next) & 1) != 0) {
+                    out.write('W');
+                    i += 2;
+                }
+            }
+            case 'X' -> {
+                out.write('S');
+                i++;
+            }
+            case 'E', 'I', 'O', 'U' -> {
+                out.write(upper(w[i]));
+                i++;
+            }
+            default -> {
+            }
+        }
+        for (; w[i] != 0 && (max == 0 || out.size() < max); i++) {
+            int c = w[i];
+            if (!isAlpha(c)) {
+                continue;
+            }
+            c = upper(c);
+            int prev = i >= 1 ? upper(w[i - 1]) : 0;
+            if (c == prev && c != 'C') {
+                continue;
+            }
+            next = upper(w[i + 1]);
+            int afterNext = w[i + 1] != 0 ? upper(w[i + 2]) : 0;
+            int skip = 0;
+            switch (c) {
+                case 'B' -> {
+                    if (prev != 'M') {
+                        out.write('B');
+                    }
+                }
+                case 'C' -> {
+                    if ((encode(next) & 8) != 0) {
+                        if (next == 'I' && afterNext == 'A') {
+                            out.write('X');
+                        } else if (prev != 'S') {
+                            out.write('S');
+                        }
+                    } else if (next == 'H') {
+                        out.write('X');
+                        skip++;
+                    } else {
+                        out.write('K');
+                    }
+                }
+                case 'D' -> {
+                    if (next == 'G' && (encode(afterNext) & 8) != 0) {
+                        out.write('J');
+                        skip++;
+                    } else {
+                        out.write('T');
+                    }
+                }
+                case 'G' -> {
+                    if (next == 'H') {
+                        if (!((encode(i >= 3 ? upper(w[i - 3]) : 0) & 16) != 0 || (i >= 4 ? upper(w[i - 4]) : 0) == 'H')) {
+                            out.write('F');
+                            skip++;
+                        }
+                    } else if (next == 'N') {
+                        if (!(!isAlpha(afterNext) || afterNext == 'E' && lookahead(w, i, 3) == 'D')) {
+                            out.write('K');
+                        }
+                    } else if ((encode(next) & 8) != 0 && prev != 'G') {
+                        out.write('J');
+                    } else {
+                        out.write('K');
+                    }
+                }
+                case 'H' -> {
+                    if ((encode(next) & 1) != 0 && (encode(prev) & 4) == 0) {
+                        out.write('H');
+                    }
+                }
+                case 'K' -> {
+                    if (prev != 'C') {
+                        out.write('K');
+                    }
+                }
+                case 'P' -> out.write(next == 'H' ? 'F' : 'P');
+                case 'Q' -> out.write('K');
+                case 'S' -> {
+                    if (next == 'I' && (afterNext == 'O' || afterNext == 'A')) {
+                        out.write('X');
+                    } else if (next == 'H') {
+                        out.write('X');
+                        skip++;
+                    } else {
+                        out.write('S');
+                    }
+                }
+                case 'T' -> {
+                    if (next == 'I' && (afterNext == 'O' || afterNext == 'A')) {
+                        out.write('X');
+                    } else if (next == 'H') {
+                        out.write('0');
+                        skip++;
+                    } else if (!(next == 'C' && afterNext == 'H')) {
+                        out.write('T');
+                    }
+                }
+                case 'V' -> out.write('F');
+                case 'W', 'Y' -> {
+                    if ((encode(next) & 1) != 0) {
+                        out.write(c);
+                    }
+                }
+                case 'X' -> {
+                    out.write('K');
+                    out.write('S');
+                }
+                case 'Z' -> out.write('S');
+                case 'F', 'J', 'L', 'M', 'N', 'R' -> out.write(c);
+                default -> {
+                }
+            }
+            i += skip;
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /** Lookahead: the letter how_far on, or the NUL before it. */
+    private static int lookahead(byte[] w, int from, int howFar) {
+        int i = 0;
+        while (w[from + i] != 0 && i < howFar) {
+            i++;
+        }
+        return upper(w[from + i]);
     }
 }
