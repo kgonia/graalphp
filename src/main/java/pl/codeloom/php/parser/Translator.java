@@ -622,6 +622,7 @@ public final class Translator {
                 continue; // #[attributes] on the declaration
             }
             String name = names.declared((String) element.get("name"));
+            checkConstantExpression(element.get("value"), true, element.line);
             ExprNode value = expression(element.get("value"));
             result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
         }
@@ -688,6 +689,7 @@ public final class Translator {
         PhpFunction.Param[] params = new PhpFunction.Param[paramList.size()];
         for (int i = 0; i < params.length; i++) {
             Ast param = (Ast) paramList.child(i);
+            checkConstantExpression(param.get("default"), true, param.line);
             Ast type = param.node("type");
             Object defaultValue = param.get("default") == null ? null : param.get("default");
             boolean nullable = isNullable(type) || isNullConstant(defaultValue);
@@ -1267,8 +1269,68 @@ public final class Translator {
         }
     }
 
+    /**
+     * zend_compile_const_expr's checks: only zend_is_allowed_in_const_expr's kinds, `new` where the context takes
+     * it (not in a class constant or property default), no object cast, only static closures, calls only as first
+     * class callables.
+     */
+    private void checkConstantExpression(Object expression, boolean newAllowed, int line) {
+        String error = constantExpressionError(expression, newAllowed);
+        if (error != null) {
+            throw compileError(expression instanceof Ast ast ? ast.line : line, error);
+        }
+    }
+
+    private static String constantExpressionError(Object expression, boolean newAllowed) {
+        if (!(expression instanceof Ast ast)) {
+            return null;
+        }
+        switch (ast.kind) {
+            case "AST_CLOSURE":
+                return (ast.flags & MODIFIER_STATIC) == 0 ? "Closures in constant expressions must be static"
+                        : ast.get("uses") != null ? "Cannot use(...) variables in constant expression" : null;
+            case "AST_NEW":
+                if (!newAllowed) {
+                    return "New expressions are not supported in this context";
+                }
+                break;
+            case "AST_CAST":
+                if (ast.flags == TYPE_OBJECT) {
+                    return "Object casts are not supported in this context";
+                }
+                break;
+            case "AST_CALL", "AST_STATIC_CALL":
+                if (!isCallableConvert(ast)) {
+                    return "Constant expression contains invalid operations";
+                }
+                break;
+            case "AST_NAME", "AST_BINARY_OP", "AST_GREATER", "AST_GREATER_EQUAL", "AST_AND", "AST_OR",
+                 "AST_UNARY_OP", "AST_UNARY_PLUS", "AST_UNARY_MINUS", "AST_CONDITIONAL", "AST_DIM", "AST_ARRAY",
+                 "AST_ARRAY_ELEM", "AST_UNPACK", "AST_CONST", "AST_CLASS_CONST", "AST_CLASS_NAME", "AST_MAGIC_CONST",
+                 "AST_COALESCE", "AST_ARG_LIST", "AST_NAMED_ARG", "AST_PROP", "AST_NULLSAFE_PROP",
+                 "AST_CALLABLE_CONVERT":
+                break;
+            default:
+                return "Constant expression contains invalid operations";
+        }
+        for (Object child : ast.children()) {
+            String error = constantExpressionError(child, newAllowed);
+            if (error != null) {
+                return error;
+            }
+        }
+        for (Object child : ast.namedValues()) {
+            String error = constantExpressionError(child, newAllowed);
+            if (error != null) {
+                return error;
+            }
+        }
+        return null;
+    }
+
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
+        checkConstantExpression(expression, false, 0);
         ExprNode node = expression(expression);
         Object value = node.constantValue();
         if (value != null) {
