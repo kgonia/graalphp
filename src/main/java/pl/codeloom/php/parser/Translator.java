@@ -261,6 +261,13 @@ public final class Translator {
     }
 
     public FileRootNode translateFile(Ast file) {
+        if (!internal) {
+            try {
+                JumpChecks.file(file);
+            } catch (JumpChecks.Failure failure) {
+                throw compileError(failure.line, failure.getMessage());
+            }
+        }
         List<StmtNode> prologue = new ArrayList<>();
         List<StmtNode> classes = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();

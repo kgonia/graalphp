@@ -1,0 +1,3 @@
+# the script's directory, which differs: no PHP code runs to strip it, as the file doesn't compile
+s#in /w/tests/smoke/#in DIR/#
+s#in [A-Za-z]:.*[\/]tests[\/]smoke[\/]#in DIR/#
