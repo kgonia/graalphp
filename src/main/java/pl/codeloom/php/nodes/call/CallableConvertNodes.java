@@ -7,12 +7,12 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.Callables;
-import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -75,13 +75,21 @@ public final class CallableConvertNodes {
         @Override
         public Object execute(VirtualFrame frame) {
             Object target = object.execute(frame);
-            String method = name != null ? name : Str.java(Convert.toStr(nameExpr.execute(frame)));
-            return convert(target, method);
+            if (name != null) {
+                return convert(target, name, MethodCallNode.scope(frame, this));
+            }
+            if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return convert(target, Str.java(method), MethodCallNode.scope(frame, this));
         }
 
-        /** The closure of target's method name, bound to it; php-src's Errors for what has none. */
+        /**
+         * The closure of target's method name as `$target->name()` finds it from scope, bound to it; php-src's
+         * Errors for what has none.
+         */
         @TruffleBoundary
-        public static Object convert(Object target, String name) {
+        public static Object convert(Object target, String name, String scope) {
             if (target instanceof PhpClosure closure) {
                 if (Str.lower(name).equals("__invoke")) {
                     return closure;
@@ -89,18 +97,14 @@ public final class CallableConvertNodes {
                 throw new PhpError("Call to undefined method Closure::" + name + "()");
             }
             if (!(target instanceof PhpObject self)) {
-                throw new PhpError("Call to a member function " + name + "() on " + Convert.debugType(target));
+                throw MethodCallNode.memberOnNonObject(name, target);
             }
             PhpClass phpClass = self.getPhpClass();
-            PhpFunction method = phpClass.findMethod(Str.lower(name));
+            PhpFunction method = phpClass.methodFrom(name, scope);
             if (method != null) {
                 return closure(method, method.isStatic() ? null : self, phpClass, null);
             }
-            PhpFunction magic = phpClass.findMethod("__call");
-            if (magic == null) {
-                throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + name + "()");
-            }
-            return closure(magic, self, phpClass, Str.of(name));
+            return closure(phpClass.findMethod("__call"), self, phpClass, Str.of(name));
         }
     }
 
@@ -110,31 +114,45 @@ public final class CallableConvertNodes {
      */
     public static final class StaticMethodNode extends ExprNode {
         @Child private ClassRefNode classRef;
+        @Child private ExprNode nameExpr;
         private final String name;
         private final boolean forwarding;
 
-        public StaticMethodNode(ClassRefNode classRef, String name, boolean forwarding) {
+        /** A constant name, or null and the expression giving it (`Cls::$name(...)`). */
+        public StaticMethodNode(ClassRefNode classRef, String name, ExprNode nameExpr, boolean forwarding) {
             this.classRef = classRef;
             this.name = name;
+            this.nameExpr = nameExpr;
             this.forwarding = forwarding;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
             PhpClass phpClass = classRef.resolve(frame);
+            String method = name;
+            if (method == null) {
+                if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString computed)) {
+                    throw MethodCallNode.nameNotString();
+                }
+                method = Str.java(computed);
+            }
             Object[] callerArgs = frame.getArguments();
             Object caller = callerArgs[PhpFunction.ARG_THIS];
             Object callerStatic = callerArgs[PhpFunction.ARG_STATIC];
             return convert(phpClass, caller, forwarding && callerStatic instanceof PhpClass called ? called : phpClass,
-                    name);
+                    method, MethodCallNode.scope(frame, this));
         }
 
-        /** The closure of phpClass's method name for a caller whose $this is caller, called as staticClass. */
+        /**
+         * The closure of phpClass's method name, as `Cls::name()` finds it from scope, for a caller whose $this is
+         * caller, called as staticClass.
+         */
         @TruffleBoundary
-        public static Object convert(PhpClass phpClass, Object caller, PhpClass staticClass, String name) {
+        public static Object convert(PhpClass phpClass, Object caller, PhpClass staticClass, String name,
+                                     String scope) {
             PhpObject self = caller instanceof PhpObject object
                     && object.getPhpClass().isSubclassOf(phpClass.getLowerName()) ? object : null;
-            PhpFunction method = phpClass.findMethod(Str.lower(name));
+            PhpFunction method = phpClass.staticMethodFrom(name, scope);
             if (method != null) {
                 if (method.isStatic()) {
                     return closure(method, null, staticClass, null);
@@ -153,7 +171,7 @@ public final class CallableConvertNodes {
             if (magicStatic != null) {
                 return closure(magicStatic, null, staticClass, Str.of(name));
             }
-            throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + name + "()");
+            throw phpClass.callError(name, scope);
         }
     }
 
@@ -167,16 +185,16 @@ public final class CallableConvertNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return convert(PhpContext.get(this), callable.execute(frame));
+            return convert(PhpContext.get(this), callable.execute(frame), MethodCallNode.scope(frame, this));
         }
 
-        /** What the call of value would call, as a Closure. */
+        /** What the call of value from scope would call, as a Closure. */
         @TruffleBoundary
-        public static Object convert(PhpContext context, Object value) {
+        public static Object convert(PhpContext context, Object value, String scope) {
             if (value instanceof PhpClosure closure) {
                 return closure;
             }
-            Callables.Target target = Callables.resolveCall(context, value);
+            Callables.Target target = Callables.resolveCall(context, value, scope);
             PhpObject self = target.thisObject() instanceof PhpObject object ? object : null;
             return closure(target.function(), self, target.staticClass(), target.magicName());
         }

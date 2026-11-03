@@ -59,11 +59,7 @@ final class ElementChain {
         }
         Object offset = key == APPEND ? PhpNull.NULL : key;
         if (container instanceof PhpObject object && object.isArrayAccess()) {
-            Object element = PhpRef.deref(object.callMethod(node, "offsetget", offset));
-            if (element instanceof PhpArray) {
-                throw overloaded();
-            }
-            return element;
+            return DimNode.overloadedForWrite(node, object, offset);
         }
         return readQuietly(container, offset);
     }

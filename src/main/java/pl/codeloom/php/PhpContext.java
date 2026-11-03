@@ -425,6 +425,12 @@ public final class PhpContext {
      * ones first (with every prelude class, which php-src has from the start), then the script's in declaration
      * order. Anonymous classes are listed once declared, where php-src binds them at compile time.
      */
+    /** The classes declared so far, in no particular order (aliases repeat theirs). */
+    @TruffleBoundary
+    public java.util.Collection<PhpClass> classValues() {
+        return classes.values();
+    }
+
     @TruffleBoundary
     public List<Map.Entry<String, PhpClass>> declaredClasses() {
         for (String file : language.preludeFiles()) {

@@ -42,6 +42,7 @@ public final class ThunkRootNode extends RootNode implements ClassTemplate.Defer
 
     @Override
     public PhpClass.Thunk bind(PhpClass staticClass) {
-        return () -> getCallTarget().call(null, staticClass, null);
+        // the array, not call(Node, Object...): a leading null would be taken for the call location
+        return () -> getCallTarget().call(new Object[] {null, staticClass, null});
     }
 }

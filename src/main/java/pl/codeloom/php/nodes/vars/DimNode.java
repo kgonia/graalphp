@@ -18,6 +18,7 @@ import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
@@ -167,10 +168,54 @@ public final class DimNode extends LValueNode {
     public PhpRef makeRef(VirtualFrame frame) {
         PhpArray array = place().arrayForWrite(frame);
         if (array == null) {
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Indirect modification of overloaded element");
+            return overloadedRef(this, container.execute(frame), rawKey(frame));
         }
         return isAppend() ? array.appendRef() : array.refAt(normalizedKey(frame));
+    }
+
+    /**
+     * A write fetch of an ArrayAccess element (read_dimension(BP_VAR_W)): offsetGet's result, a reference's array
+     * made writable, an object as it is; any other value with php-src's notice, as a temporary the write doesn't
+     * reach.
+     */
+    @TruffleBoundary
+    public static Object overloadedForWrite(Node site, PhpObject object, Object offset) {
+        Object element = object.callMethodRef(site, "offsetget", offset);
+        if (element instanceof PhpRef ref) {
+            PhpArray array = Places.refArrayForWrite(ref);
+            return array != null ? array : ref.get();
+        }
+        if (element instanceof PhpObject) {
+            return element;
+        }
+        overloadedNotice(site, object);
+        return element instanceof PhpArray array ? array.copy() : new PhpArray();
+    }
+
+    /**
+     * `&$obj[key]` (key null for `[]`) of an ArrayAccess object: the reference `&offsetGet` returns, else a
+     * temporary's with php-src's notice; an Error for a container that is none.
+     */
+    @TruffleBoundary
+    public static PhpRef overloadedRef(Node site, Object container, Object offset) {
+        if (!(container instanceof PhpObject object) || !object.isArrayAccess()) {
+            throw new PhpError(container instanceof PhpObject
+                    ? "Cannot use object of type " + Operators.zvalTypeName(container) + " as array"
+                    : "Indirect modification of overloaded element");
+        }
+        Object element = object.callMethodRef(site, "offsetget", offset);
+        if (element instanceof PhpRef ref) {
+            return ref;
+        }
+        if (!(element instanceof PhpObject)) {
+            overloadedNotice(site, object);
+        }
+        return new PhpRef(element);
+    }
+
+    private static void overloadedNotice(Node site, PhpObject object) {
+        CallNode.notice(site, "Indirect modification of overloaded element of " + object.getPhpClass().getName()
+                + " has no effect");
     }
 
     @Override
@@ -189,11 +234,9 @@ public final class DimNode extends LValueNode {
         if (array == null) {
             Object target = container.execute(frame);
             if (target instanceof PhpObject object && object.isArrayAccess()) {
-                Object element = PhpRef.deref(object.callMethod(this, "offsetget", rawKey(frame)));
-                if (element instanceof PhpArray) {
-                    CompilerDirectives.transferToInterpreter();
-                    throw new PhpError("Indirect modification of overloaded element");
-                }
+                // ponytail: a nested write into an ArrayAccess element of an object a place holds is a write fetch
+                // whose temporary or object the caller doesn't take
+                return overloadedForWrite(this, object, rawKey(frame)) instanceof PhpArray element ? element : null;
             }
             return null;
         }

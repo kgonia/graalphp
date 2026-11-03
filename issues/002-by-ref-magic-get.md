@@ -1,6 +1,6 @@
 # 002: `&__get` and `&offsetGet` aren't written through
 
-**State:** Open
+**State:** Fixed (branch `fix-objects-calls`, commit "&__get and &offsetGet written through...")
 
 **Symptom:** a write into what a by-reference `__get` or `offsetGet` returns doesn't reach the object:
 ```php
@@ -15,4 +15,6 @@ With a by-value `__get` PHP raises "Indirect modification of overloaded property
 
 **Cause:** functions now return references (`ff344d6`), but `PropNode`'s write paths (`makeRef`, `arrayForWrite`) call `__get` through `PhpObject.magicProperty`, which goes through `PhpFunction.invoke` and dereferences the result; for a missing property they don't call `__get` at all. `DimNode` does the same with `offsetGet`. php-src's `zend_std_get_property_ptr_ptr` returns NULL when the class has `__get`, so the write fetch calls `read_property(BP_VAR_W)` and writes through the reference it returns.
 
-**Fix:** a write fetch of a property the scope can't access or that doesn't exist, on a class with `__get`, calls it keeping the reference (a `PhpFunction` call that doesn't dereference) and writes through it, or raises the notice and writes to a temporary; the same for `offsetGet` on an `ArrayAccess` element. WordPress core declares no `&__get`.
+**Fix:** as planned: a write fetch (`PropNode.makeRefOn`, `containerForWriteOn`, which the bytecode's nested writes now take whole instead of reading the property again) of a property that doesn't exist or the scope can't access, on a class with `__get`, calls it keeping the reference (`PhpObject.magicGetRef`, `PhpFunction.invokeRef`): a reference is written through, an object used as it is, any other value raises "Indirect modification of overloaded property C::$p has no effect" and is a temporary. `offsetGet` on an `ArrayAccess` element the same (`DimNode.overloadedForWrite`, `overloadedRef`; `ElementChain`, `SendElement`, `elementRef` on bytecode): php-src's notice "Indirect modification of overloaded element of C has no effect" where Truffle PHP threw an Error "Indirect modification of overloaded element". WordPress core declares no `&__get`. Test: `tests/smoke/by-ref-magic-get.php`.
+
+Simplified (`ponytail:`): on the tree, a nested write into an ArrayAccess element whose offsetGet gives an object or a temporary (`$o->p['k']['x'] = 1` with `$o->p` an ArrayAccess) isn't taken by the caller.
