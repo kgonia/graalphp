@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes;
 import com.oracle.truffle.api.bytecode.OperationProxy;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.Node;
@@ -41,7 +42,7 @@ public abstract class ToBooleanNode extends Node {
 
     /** "" and "0" are false. */
     @Specialization
-    public static boolean string(TruffleString value, @Cached TruffleString.ReadByteNode readByte) {
+    public static boolean string(TruffleString value, @Shared @Cached TruffleString.ReadByteNode readByte) {
         int length = value.byteLength(Str.ENC);
         return !(length == 0 || length == 1 && readByte.execute(value, 0, Str.ENC) == '0');
     }
@@ -56,9 +57,10 @@ public abstract class ToBooleanNode extends Node {
         return value.size() > 0;
     }
 
-    /** Objects and closures. */
+    /** Objects and closures. With string's cache, unused: a split bytecode copy must not take a string here
+     * (PhpBytecodeRootNode#isCloningAllowed). */
     @Fallback
-    public static boolean other(Object value) {
+    public static boolean other(Object value, @Shared @Cached TruffleString.ReadByteNode readByte) {
         return true;
     }
 }

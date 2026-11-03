@@ -8,6 +8,7 @@ import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.LoopNode;
@@ -194,14 +195,14 @@ public final class ElementNodes {
         }
 
         @Specialization
-        public static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
-                                         @Cached SlotCacheNode slots) {
+        public static Object otherKey(PhpArray array, Object key, @Shared @Cached ArrayKeyNode toKey,
+                                         @Shared @Cached SlotCacheNode slots) {
             return slots.lookup(array, toKey.execute(key));
         }
 
         @Specialization
         public static TruffleString stringOffset(TruffleString string, Object key,
-                                                    @Cached TruffleString.ReadByteNode readByte) {
+                                                    @Shared @Cached TruffleString.ReadByteNode readByte) {
             long offset = Convert.toLong(key);
             int length = string.byteLength(Str.ENC);
             if (offset < 0) {
@@ -218,8 +219,14 @@ public final class ElementNodes {
             return PhpRef.deref(object.callMethod(node, "offsetget", key));
         }
 
+        /**
+         * With otherKey's and stringOffset's caches, unused: a split bytecode copy must not take an array or a string
+         * here (PhpBytecodeRootNode#isCloningAllowed).
+         */
         @Fallback
-        public static Object other(Object container, Object key) {
+        public static Object other(Object container, Object key, @Shared @Cached ArrayKeyNode toKey,
+                                   @Shared @Cached SlotCacheNode slots,
+                                   @Shared @Cached TruffleString.ReadByteNode readByte) {
             return PhpNull.NULL;
         }
     }
