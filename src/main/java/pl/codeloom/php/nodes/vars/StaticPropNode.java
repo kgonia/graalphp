@@ -7,6 +7,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
@@ -49,10 +50,11 @@ public final class StaticPropNode extends LValueNode {
         return new PhpError("Attempt to unset static property " + phpClass.getName() + "::$" + Str.keyText(name));
     }
 
-    /** `Cls::$name = &place`, which this runtime doesn't support (the class's reference can't be replaced yet). */
+    /** `Cls::$name = &ref`: the declared property (else its Error) bound to ref (PhpClass.bindStaticProperty). */
     @TruffleBoundary
-    public static PhpError bindError() {
-        return new PhpError("Binding a static property by reference is not supported");
+    public static void bind(Node site, PhpClass phpClass, String name, PhpRef ref) {
+        declared(phpClass.getStaticProperty(name), phpClass, name);
+        phpClass.bindStaticProperty(PhpContext.get(site), name, ref);
     }
 
     @Override
@@ -72,8 +74,7 @@ public final class StaticPropNode extends LValueNode {
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        CompilerDirectives.transferToInterpreter();
-        throw bindError();
+        bind(this, classRef.resolve(frame), name, ref);
     }
 
     @Override
@@ -120,7 +121,8 @@ public final class StaticPropNode extends LValueNode {
 
         public abstract PhpRef execute(PhpClass phpClass);
 
-        @Specialization(guards = "phpClass == cachedClass", limit = "LIMIT", assumptions = "singleContext()")
+        @Specialization(guards = "phpClass == cachedClass", limit = "LIMIT",
+                assumptions = {"singleContext()", "staticPropertyRefs()"})
         protected PhpRef cached(PhpClass phpClass,
                                 @Cached("phpClass") PhpClass cachedClass,
                                 @Cached("cachedClass.getStaticProperty(name)") PhpRef ref) {
@@ -134,6 +136,10 @@ public final class StaticPropNode extends LValueNode {
 
         protected Assumption singleContext() {
             return PhpLanguage.get(this).singleContext();
+        }
+
+        protected Assumption staticPropertyRefs() {
+            return PhpLanguage.get(this).staticPropertyRefs();
         }
     }
 }

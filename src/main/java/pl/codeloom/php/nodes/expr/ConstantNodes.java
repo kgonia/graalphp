@@ -13,6 +13,7 @@ import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.call.MethodCallNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
@@ -252,7 +253,7 @@ public final class ConstantNodes {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            return lookup.execute(classRef.resolve(frame));
+            return lookup.execute(classRef.resolve(frame), MethodCallNode.scope(frame, this));
         }
     }
 
@@ -269,23 +270,25 @@ public final class ConstantNodes {
             this.cacheable = cacheable;
         }
 
-        abstract Object execute(PhpClass phpClass);
+        abstract Object execute(PhpClass phpClass, String scope);
 
-        @Specialization(guards = {"cacheable", "phpClass == cachedClass"}, limit = "1",
+        /** A constant that isn't public is kept for the scope the site saw. */
+        @Specialization(guards = {"cacheable", "phpClass == cachedClass", "scope == cachedScope"}, limit = "1",
                 assumptions = "singleContext()")
-        protected Object single(PhpClass phpClass,
+        protected Object single(PhpClass phpClass, String scope,
                                 @Cached("phpClass") PhpClass cachedClass,
-                                @Cached("find(cachedClass)") Object value) {
+                                @Cached("scope") String cachedScope,
+                                @Cached("find(cachedClass, scope)") Object value) {
             return value;
         }
 
         @Specialization(replaces = "single")
-        protected Object perCall(PhpClass phpClass) {
-            return find(phpClass);
+        protected Object perCall(PhpClass phpClass, String scope) {
+            return find(phpClass, scope);
         }
 
-        protected Object find(PhpClass phpClass) {
-            return classConstant(phpClass, name);
+        protected Object find(PhpClass phpClass, String scope) {
+            return classConstant(phpClass, name, scope);
         }
 
         protected Assumption singleContext() {
@@ -314,12 +317,19 @@ public final class ConstantNodes {
         return value;
     }
 
-    /** The value of a class's constant; an Error if it has none of the name. */
-    public static Object classConstant(PhpClass phpClass, String name) {
+    /**
+     * The value of a class's constant from scope (lowercase, or null); an Error if it has none of the name or the
+     * scope may not access it.
+     */
+    public static Object classConstant(PhpClass phpClass, String name, String scope) {
         Object found = phpClass.getConstant(name);
         if (found == null) {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
+        }
+        if (!phpClass.canAccessConstant(name, scope)) {
+            CompilerDirectives.transferToInterpreter();
+            throw phpClass.constantAccessError(name);
         }
         return found;
     }

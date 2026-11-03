@@ -41,6 +41,16 @@ public final class PhpObject extends DynamicObject {
      */
     @TruffleBoundary
     public Object magicProperty(String lowerMethod, String name, Object... args) {
+        return magic(lowerMethod, name, false, args);
+    }
+
+    /** __get for a write fetch (read_property(BP_VAR_W)): a reference `&__get` returns stays one. */
+    @TruffleBoundary
+    public Object magicGetRef(Node site, String name) {
+        return Backtrace.callFrom(site, () -> magic("__get", name, true));
+    }
+
+    private Object magic(String lowerMethod, String name, boolean keepRef, Object... args) {
         if (phpClass.findMethod(lowerMethod) == null) {
             return NO_MAGIC;
         }
@@ -55,7 +65,8 @@ public final class PhpObject extends DynamicObject {
             Object[] arguments = new Object[args.length + 1];
             arguments[0] = Str.ofKey(name);
             System.arraycopy(args, 0, arguments, 1, args.length);
-            return callMethod(lowerMethod, arguments);
+            return keepRef ? phpClass.findMethod(lowerMethod).invokeRef(this, phpClass, arguments)
+                    : callMethod(lowerMethod, arguments);
         } finally {
             guards.remove(guard);
         }
@@ -412,6 +423,12 @@ public final class PhpObject extends DynamicObject {
             throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
         }
         return method.invoke(this, phpClass, args);
+    }
+
+    /** callMethod keeping a reference the method returns (`&offsetGet` for a write fetch), called from site. */
+    @TruffleBoundary
+    public Object callMethodRef(Node site, String lowerName, Object... args) {
+        return Backtrace.callFrom(site, () -> phpClass.findMethod(lowerName).invokeRef(this, phpClass, args));
     }
 
     /** callMethod for a node's operation (ArrayAccess, iteration): the node is where traces show the call made. */
