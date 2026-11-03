@@ -78,6 +78,12 @@ public final class StringFunctions {
                     !context.builtinState().locales[0].equals("C"));
             return values != null ? values : PhpArray.list(PhpNull.NULL);
         });
+        r.fn("hebrev", (context, a) -> {
+            Args.arity(a, "hebrev", 1, 2);
+            byte[] string = Str.readBytes(Args.string(context, a, 0, "hebrev", "string", false));
+            long max = Args.has(a, 1) ? Args.integer(context, a, 1, "hebrev", "max_chars_per_line", "int") : 0;
+            return string.length == 0 ? Str.EMPTY : Str.of(hebrev(string, max));
+        });
         r.fn("levenshtein", (context, a) -> {
             Args.arity(a, "levenshtein", 2, 5);
             byte[] s1 = Str.readBytes(Args.string(context, a, 0, "levenshtein", "string1", false));
@@ -2496,5 +2502,110 @@ public final class StringFunctions {
             values.append(Str.of(Arrays.copyOf(temp.toByteArray(), compEnd)));
         } while (inc > 0);
         return values;
+    }
+
+    private static boolean isHebrew(int c) {
+        return c >= 224 && c <= 250;
+    }
+
+    private static boolean isBlank(int c) {
+        return c == ' ' || c == '\t';
+    }
+
+    private static boolean isNewline(int c) {
+        return c == '\n' || c == '\r';
+    }
+
+    /** ispunct() in the C locale. */
+    private static boolean isPunct(int c) {
+        return c > ' ' && c < 127 && !(c >= '0' && c <= '9') && !((c | 0x20) >= 'a' && (c | 0x20) <= 'z');
+    }
+
+    /** string.c's hebrev: the Hebrew blocks reversed (brackets mirrored), then the lines broken at max chars. */
+    private static byte[] hebrev(byte[] string, long max) {
+        int n = string.length;
+        byte[] str = Arrays.copyOf(string, n + 1);
+        byte[] heb = new byte[n + 1];
+        int target = n - 1;
+        boolean hebrew = isHebrew(str[0] & 0xFF);
+        int start = 0;
+        int end = 0;
+        do {
+            if (hebrew) {
+                while ((isHebrew(str[end + 1] & 0xFF) || isBlank(str[end + 1]) || isPunct(str[end + 1] & 0xFF)
+                        || str[end + 1] == '\n') && end < n - 1) {
+                    end++;
+                }
+                for (int i = start + 1; i <= end + 1; i++) {
+                    int c = str[i - 1];
+                    int mirrored = "()[]{}<>\\/".indexOf(c);
+                    heb[target--] = (byte) (mirrored < 0 ? c : ")(][}{></\\".charAt(mirrored));
+                }
+            } else {
+                while (!isHebrew(str[end + 1] & 0xFF) && str[end + 1] != '\n' && end < n - 1) {
+                    end++;
+                }
+                while ((isBlank(str[end]) || isPunct(str[end] & 0xFF)) && str[end] != '/' && str[end] != '-'
+                        && end > start) {
+                    end--;
+                }
+                for (int i = end + 1; i >= start + 1; i--) {
+                    heb[target--] = str[i - 1];
+                }
+            }
+            hebrew = !hebrew;
+            start = end + 1;
+        } while (end < n - 1);
+        ByteBuilder broken = new ByteBuilder(n);
+        int begin = n - 1;
+        end = n - 1;
+        while (true) {
+            long count = 0;
+            while ((max == 0 || max > 0 && count < max) && begin > 0) {
+                count++;
+                begin--;
+                if (isNewline(heb[begin])) {
+                    while (begin > 0 && isNewline(heb[begin - 1])) {
+                        begin--;
+                        count++;
+                    }
+                    break;
+                }
+            }
+            if (max >= 0 && count == max) {
+                long newCount = count;
+                int newBegin = begin;
+                while (newCount > 0) {
+                    if (isBlank(heb[newBegin]) || isNewline(heb[newBegin])) {
+                        break;
+                    }
+                    newBegin++;
+                    newCount--;
+                }
+                if (newCount > 0) {
+                    begin = newBegin;
+                }
+            }
+            int origBegin = begin;
+            if (isBlank(heb[begin])) {
+                heb[begin] = '\n';
+            }
+            while (begin <= end && isNewline(heb[begin])) {
+                begin++;
+            }
+            for (int i = begin; i <= end; i++) {
+                broken.write(heb[i]);
+            }
+            for (int i = origBegin; i <= end && isNewline(heb[i]); i++) {
+                broken.write(heb[i]);
+            }
+            begin = origBegin;
+            if (begin == 0) {
+                break;
+            }
+            begin--;
+            end = begin;
+        }
+        return broken.toByteArray();
     }
 }
