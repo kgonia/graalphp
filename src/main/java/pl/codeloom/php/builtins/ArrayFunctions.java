@@ -319,9 +319,9 @@ final class ArrayFunctions {
             Object value = source.valueAt(p);
             Object current = key instanceof Long ? null : target.get(key);
             if (key instanceof Long) {
-                target.append(value);
+                target.appendCopied(source.copiedAt(p));
             } else if (current == null) {
-                target.put(key, value);
+                target.putCopied(key, source.copiedAt(p));
             } else {
                 PhpArray merged = current instanceof PhpArray existing ? existing.copy() : PhpArray.list(current);
                 if (value instanceof PhpArray nested) {
@@ -329,7 +329,8 @@ final class ArrayFunctions {
                 } else {
                     merged.append(value);
                 }
-                target.put(key, merged);
+                // a reference there is replaced by the array, not written through (ZVAL_UNREF or ZVAL_DUP)
+                target.replace(key, merged);
             }
         }
     }
@@ -368,9 +369,9 @@ final class ArrayFunctions {
                 result.append(chunk);
             }
             if (preserveKeys) {
-                chunk.put(array.keyAt(p), array.valueAt(p));
+                chunk.putCopied(array.keyAt(p), array.copiedAt(p));
             } else {
-                chunk.append(array.valueAt(p));
+                chunk.appendCopied(array.copiedAt(p));
             }
         }
         return result;
@@ -394,7 +395,7 @@ final class ArrayFunctions {
                 inAny |= found;
             }
             if (diff ? !inAny : inAll) {
-                result.put(key, first.valueAt(p));
+                result.putCopied(key, first.copiedAt(p));
             }
         }
         return result;
@@ -466,7 +467,7 @@ final class ArrayFunctions {
 
     private static void appendAll(PhpArray target, PhpArray source) {
         for (int p = source.firstPosition(); p >= 0; p = source.nextPosition(p)) {
-            target.append(source.valueAt(p));
+            target.appendCopied(source.copiedAt(p));
         }
     }
 
@@ -521,9 +522,9 @@ final class ArrayFunctions {
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object key = array.keyAt(p);
                 if (key instanceof Long) {
-                    result.append(array.valueAt(p));
+                    result.appendCopied(array.copiedAt(p));
                 } else {
-                    result.put(key, array.valueAt(p));
+                    result.putCopied(key, array.copiedAt(p));
                 }
             }
         }
@@ -546,6 +547,10 @@ final class ArrayFunctions {
         int arrays = Args.count(a) - 1;
         if (arrays == 1) {
             PhpArray array = Args.array(a, 1, "array_map", "array");
+            if (callback == null) {
+                // the array itself (ZVAL_COPY), its references and internal pointer included
+                return array;
+            }
             PhpArray result = PhpArray.ofCapacity(array.size());
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 Object value = callback == null ? array.valueAt(p) : callback.call(array.valueAt(p));
@@ -566,13 +571,21 @@ final class ArrayFunctions {
             Object[] values = new Object[arrays];
             for (int i = 0; i < arrays; i++) {
                 if (positions[i] >= 0) {
-                    values[i] = inputs[i].valueAt(positions[i]);
+                    values[i] = callback == null ? inputs[i].copiedAt(positions[i]) : inputs[i].valueAt(positions[i]);
                     positions[i] = inputs[i].nextPosition(positions[i]);
                 } else {
                     values[i] = PhpNull.NULL;
                 }
             }
-            result.append(callback == null ? PhpArray.list(values) : callback.call(values));
+            if (callback == null) {
+                PhpArray zipped = PhpArray.ofCapacity(arrays);
+                for (Object value : values) {
+                    zipped.appendCopied(value);
+                }
+                result.append(zipped);
+            } else {
+                result.append(callback.call(values));
+            }
         }
         return result;
     }
@@ -596,7 +609,7 @@ final class ArrayFunctions {
                 keep = Convert.toBool(callback.call(value));
             }
             if (keep) {
-                result.put(key, value);
+                result.putCopied(key, array.copiedAt(p));
             }
         }
         return result;
@@ -640,9 +653,9 @@ final class ArrayFunctions {
             }
             Object key = array.keyAt(p);
             if (key instanceof Long && !preserveKeys) {
-                result.append(array.valueAt(p));
+                result.appendCopied(array.copiedAt(p));
             } else {
-                result.put(key, array.valueAt(p));
+                result.putCopied(key, array.copiedAt(p));
             }
         }
         return result;
@@ -703,7 +716,7 @@ final class ArrayFunctions {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object value = array.valueAt(p);
             if (seen.add(Convert.toStr(value))) {
-                result.put(array.keyAt(p), value);
+                result.putCopied(array.keyAt(p), array.copiedAt(p));
             }
         }
         return result;

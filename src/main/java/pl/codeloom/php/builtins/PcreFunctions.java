@@ -51,7 +51,8 @@ public final class PcreFunctions {
     private static final int NOTEMPTY_ATSTART = 0x00000008;
     private static final int JIT_COMPLETE = 1;
     private static final int INFO_CAPTURECOUNT = 4;
-    private static final int INFO_JITSIZE = 13;
+    private static final int INFO_JITSIZE = 10;
+    private static final int NEVER_BACKSLASH_C = 0x00100000;
     private static final int INFO_NAMECOUNT = 17;
     private static final int INFO_NAMEENTRYSIZE = 18;
     private static final int INFO_NAMETABLE = 19;
@@ -479,7 +480,7 @@ public final class PcreFunctions {
                 case 'A' -> options |= ANCHORED;
                 case 'D' -> options |= DOLLAR_ENDONLY;
                 case 'U' -> options |= UNGREEDY;
-                case 'u' -> options |= UTF | UCP;
+                case 'u' -> options |= UTF | UCP | NEVER_BACKSLASH_C;
                 case 'J' -> options |= DUPNAMES;
                 case 'n' -> options |= NO_AUTO_CAPTURE;
                 case 'r' -> extra |= EXTRA_CASELESS_RESTRICT;
@@ -1106,7 +1107,7 @@ public final class PcreFunctions {
                 break;
             }
             if ((rc >= 0) != invert) {
-                result.put(input.keyAt(p), value);
+                result.putCopied(input.keyAt(p), input.copiedAt(p));
             }
         }
         return result;
@@ -1222,9 +1223,11 @@ public final class PcreFunctions {
                         errorCode, errorOffset, context);
                 if (code.equals(MemorySegment.NULL)) {
                     MemorySegment message = arena.allocate(256);
-                    ignored = (int) ERROR_MESSAGE.invokeExact(errorCode.get(ValueLayout.JAVA_INT, 0), message,
-                            256L);
-                    throw new BadPattern("Compilation failed: " + message.getString(0) + " at offset "
+                    int error = errorCode.get(ValueLayout.JAVA_INT, 0);
+                    ignored = (int) ERROR_MESSAGE.invokeExact(error, message, 256L);
+                    // PCRE2_ERROR_BACKSLASH_C_CALLER_DISABLED: /u's PCRE2_NEVER_BACKSLASH_C
+                    throw new BadPattern("Compilation failed: " + (error == 183
+                            ? "using \\C is incompatible with the 'u' modifier" : message.getString(0)) + " at offset "
                             + errorOffset.get(ValueLayout.JAVA_LONG, 0));
                 }
                 return code;
