@@ -22,6 +22,17 @@ public final class PhpFunction {
     public static final int ARG_FIRST = 3;
 
     /**
+     * A frame argument a call by name left out (php-src's UNDEF slot below num_args): the callee's defaults target
+     * replaces it before the callee runs, so no prologue ever reads it. Distinct from PHP's null.
+     */
+    public static final Object NOT_PASSED = new Object() {
+        @Override
+        public String toString() {
+            return "NOT_PASSED";
+        }
+    };
+
+    /**
      * A parameter. defaultValue is null for required parameters, else how a declaration writes it ("= 'a'").
      * declared is the type the argument is checked against, or null. type is the declared type as Reflection
      * writes it ("?Foo", "int|string|null"), or null.
@@ -61,6 +72,12 @@ public final class PhpFunction {
 
     /** Made on first call; volatile because contexts on several threads share the function. */
     @CompilationFinal private volatile RootCallTarget callTarget;
+    /**
+     * Makes the target that fills the arguments a call by name left out with the parameters' defaults (php-src's
+     * zend_handle_undef_args), on the first such call; dropped then. Null for a built-in.
+     */
+    private Supplier<RootCallTarget> defaultsFactory;
+    private volatile RootCallTarget defaultsTarget;
 
     public PhpFunction(String name, Param[] params, boolean returnsRef, boolean isStatic, boolean isPublic,
                        boolean isAbstract, Supplier<RootCallTarget> factory) {
@@ -170,7 +187,27 @@ public final class PhpFunction {
         copy.builtin = builtin;
         copy.usesThis = usesThis;
         copy.declaredReturn = declaredReturn;
+        if (defaultsFactory != null || defaultsTarget != null) {
+            copy.defaultsFactory = this::getDefaultsTarget;
+        }
         return copy;
+    }
+
+    public void setDefaults(Supplier<RootCallTarget> factory) {
+        this.defaultsFactory = factory;
+    }
+
+    /**
+     * The target filling a call's left-out arguments (run on the call's frame arguments before the function's own
+     * target), made on first use; null for a function without one (a built-in).
+     */
+    @TruffleBoundary
+    public synchronized RootCallTarget getDefaultsTarget() {
+        if (defaultsTarget == null && defaultsFactory != null) {
+            defaultsTarget = defaultsFactory.get();
+            defaultsFactory = null;
+        }
+        return defaultsTarget;
     }
 
     public String getReturnType() {

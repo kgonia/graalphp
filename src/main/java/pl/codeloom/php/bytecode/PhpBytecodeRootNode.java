@@ -226,6 +226,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean file;
     /** A constant expression's root (BytecodeTranslator.Thunk): its scope is the class it is bound to. */
     @CompilationFinal private boolean thunk;
+    /**
+     * A function's defaults target (BytecodeTranslator.defaults): it runs on the callee's frame arguments and shows
+     * as the callee in traces, a left-out argument as NULL (php-src's fake frame).
+     */
+    @CompilationFinal private boolean defaults;
     /** A file's top level has a loop, a foreach or a goto label (RunOnceCode). */
     private boolean fileLoops;
     /** {@link RunOnceCode}: 0 not asked yet, 1 compiled as any code, 2 large and without a loop. */
@@ -271,6 +276,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** Makes this a constant expression's root (BytecodeTranslator.Thunk). */
     public void initializeThunk() {
         this.thunk = true;
+    }
+
+    /** Makes this a function's defaults target (BytecodeTranslator.defaults). */
+    public void initializeDefaults() {
+        this.defaults = true;
     }
 
     /** Makes this a file's top level (FileRootNode); loops: whether it has a loop, a foreach or a goto label. */
@@ -5261,6 +5271,442 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    // ---- named arguments (NamedSite, BindingPlan) ----
+
+    /*
+     * A call with `name: value` arguments: the callee is resolved first, as for any call; each argument from the
+     * first name on is sent by a named send, which binds it as the site's plan for that callee says (php-src's
+     * zend_handle_named_arg at its SEND: the Error once its value is evaluated, before the next argument); then the
+     * named call scatters the values to their parameters' positions, fills the holes with the callee's defaults
+     * target, and calls. Each operation caches the plan with its callee, as the positional ones cache the callee.
+     */
+
+    /**
+     * What a named place argument's send (SendElement, SendProp, ArgByRef... at position 0) asks about its
+     * parameter: a stand-in taking it by reference or by value, as the binding says. An unknown name is by value
+     * (CHECK_FUNC_ARG falls back to it): the place is fetched, then SendPlaceNamed throws.
+     */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = int.class, name = "argument")
+    public static final class NamedTarget {
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static PhpFunction cached(NamedSite site, int argument, PhpFunction function,
+                                         @Cached("function") PhpFunction cachedFunction,
+                                         @Cached("site.plan(cachedFunction)") BindingPlan plan) {
+            return plan.sendTarget(argument);
+        }
+
+        @Specialization(replaces = "cached")
+        public static PhpFunction generic(NamedSite site, int argument, PhpFunction function) {
+            return site.plan(function).sendTarget(argument);
+        }
+    }
+
+    /**
+     * A variable as a named argument (SEND_VAR_EX): bound before it is read, so an unknown name throws without the
+     * "Undefined variable" warning; then its reference or its value, as SendVar.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = int.class, name = "argument")
+    public static final class SendVarNamed {
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, LocalAccessor variable, NamedSite site, int argument,
+                                    PhpFunction function, @Bind BytecodeNode bytecode, @Bind Node node,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan,
+                                    @Shared("undefined") @Cached InlinedBranchProfile undefined) {
+            return send(frame, variable, argument, plan, bytecode, node, undefined);
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object generic(VirtualFrame frame, LocalAccessor variable, NamedSite site, int argument,
+                                     PhpFunction function, @Bind BytecodeNode bytecode, @Bind Node node,
+                                     @Shared("undefined") @Cached InlinedBranchProfile undefined) {
+            return send(frame, variable, argument, site.plan(function), bytecode, node, undefined);
+        }
+
+        private static Object send(VirtualFrame frame, LocalAccessor variable, int argument, BindingPlan plan,
+                                   BytecodeNode bytecode, Node node, InlinedBranchProfile undefined) {
+            plan.checkSend(argument);
+            if (plan.takesRef(argument)) {
+                return Locals.makeRef(frame, variable, bytecode);
+            }
+            return readValue(frame, variable, bytecode, node, undefined);
+        }
+    }
+
+    /**
+     * A value as a named argument (SEND_VAL_EX), once it is evaluated: bound, then php-src's Error when its
+     * parameter is by reference, as SendValue.
+     */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = int.class, name = "argument")
+    public static final class SendValueNamed {
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(NamedSite site, int argument, PhpFunction function, Object value,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan) {
+            return send(argument, cachedFunction, plan, value);
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object generic(NamedSite site, int argument, PhpFunction function, Object value) {
+            return send(argument, function, site.plan(function), value);
+        }
+
+        private static Object send(int argument, PhpFunction function, BindingPlan plan, Object value) {
+            plan.checkSend(argument);
+            if (plan.takesRef(argument) && !function.isPreferRef()) {
+                throw CallNode.cannotPassByRef(function, plan.parameter(argument));
+            }
+            return value;
+        }
+    }
+
+    /** A call's result as a named argument (SEND_VAR_NO_REF), once it is evaluated: bound, then as SendCall. */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = int.class, name = "argument")
+    public static final class SendCallNamed {
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(NamedSite site, int argument, PhpFunction function, Object result,
+                                    @Bind Node node, @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan) {
+            return send(argument, cachedFunction, plan, result, node);
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object generic(NamedSite site, int argument, PhpFunction function, Object result,
+                                     @Bind Node node) {
+            return send(argument, function, site.plan(function), result, node);
+        }
+
+        private static Object send(int argument, PhpFunction function, BindingPlan plan, Object result, Node node) {
+            plan.checkSend(argument);
+            if (!plan.takesRef(argument) || function.isPreferRef()) {
+                return PhpRef.deref(result);
+            }
+            if (!(result instanceof PhpRef)) {
+                CallNode.notice(node, CallNode.PASSED_VALUE);
+            }
+            return result;
+        }
+    }
+
+    /**
+     * A place as a named argument (an element, a property, a static property, $this...), once fetched as its
+     * NamedTarget said (FETCH_*_FUNC_ARG, then SEND_FUNC_ARG): bound, so an unknown name's Error comes after the
+     * fetch's warnings.
+     */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = int.class, name = "argument")
+    public static final class SendPlaceNamed {
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(NamedSite site, int argument, PhpFunction function, Object value,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan) {
+            plan.checkSend(argument);
+            return value;
+        }
+
+        @Specialization(replaces = "cached")
+        public static Object generic(NamedSite site, int argument, PhpFunction function, Object value) {
+            site.plan(function).checkSend(argument);
+            return value;
+        }
+    }
+
+    /**
+     * `name(args)` with named arguments, once they are sent: as Call and CallRef (keepRef), the values at their
+     * parameters' positions, the holes filled by the defaults target first (ZEND_CHECK_UNDEF_ARGS).
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallNamed {
+        @Specialization(guards = "function == cachedFunction", limit = "1")
+        public static Object direct(CallInfo call, NamedSite site, boolean keepRef, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Cached(value = "plan.defaultsCall(cachedFunction)", neverDefault = false)
+                                    DirectCallNode defaults) {
+            Object[] frame = plan.frame(arguments);
+            plan.fillHoles(frame, defaults);
+            return result(callNode.call(frame), keepRef);
+        }
+
+        @Specialization(replaces = "direct")
+        public static Object indirect(CallInfo call, NamedSite site, boolean keepRef, PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Cached IndirectCallNode callNode) {
+            BindingPlan plan = site.plan(function);
+            Object[] frame = plan.frame(arguments);
+            plan.fillHoles(frame, function, callNode);
+            return result(callNode.call(function.getCallTarget(), frame), keepRef);
+        }
+    }
+
+    /** `$obj->name(args)` with named arguments: as CallMethod, the frame arguments bound as CallNamed's. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallMethodNamed {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(MethodSite method, NamedSite site, boolean keepRef, PhpObject receiver,
+                                    PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Cached(value = "plan.defaultsCall(cachedFunction)", neverDefault = false)
+                                    DirectCallNode defaults) {
+            Object[] frame = plan.frame(arguments);
+            frame[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : receiver;
+            frame[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
+            plan.fillHoles(frame, defaults);
+            return result(callNode.call(frame), keepRef);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(MethodSite method, NamedSite site, boolean keepRef, PhpObject receiver,
+                                      PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Shared @Cached IndirectCallNode callNode) {
+            BindingPlan plan = site.plan(function);
+            Object[] frame = plan.frame(arguments);
+            frame[PhpFunction.ARG_THIS] = function.isStatic() ? null : receiver;
+            frame[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
+            plan.fillHoles(frame, function, callNode);
+            return result(callNode.call(function.getCallTarget(), frame), keepRef);
+        }
+
+        /** `$closure->__invoke(args)`: the closure's function, as CallMethod.invoke. */
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite method, NamedSite site, boolean keepRef, PhpClosure receiver,
+                                    PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Shared @Cached IndirectCallNode callNode) {
+            BindingPlan plan = site.plan(function);
+            Object[] frame = plan.frame(arguments);
+            PhpObject self = receiver.getBoundThis();
+            frame[PhpFunction.ARG_THIS] = self;
+            frame[PhpFunction.ARG_STATIC] = self != null ? self.getPhpClass() : receiver.getScope();
+            frame[PhpFunction.ARG_CLOSURE] = receiver;
+            plan.fillHoles(frame, function, callNode);
+            return result(callNode.call(function.getCallTarget(), frame), keepRef);
+        }
+
+        /** __call, or a Closure's own methods: every name is an extra (__call's trampoline is variadic). */
+        @Specialization(guards = "isByValue(function)")
+        public static Object byValue(MethodSite method, NamedSite site, boolean keepRef, Object receiver,
+                                     PhpFunction function,
+                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                     @Shared @Cached IndirectCallNode callNode, @Bind Node node) {
+            return CallMethod.byValue(method, keepRef, receiver, function, site.plan(function).frame(arguments),
+                    callNode, node);
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `Cls::name(args)` with named arguments: as CallStatic, the frame arguments bound as CallNamed's. */
+    @Operation
+    @ConstantOperand(type = MethodSite.class)
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallStaticNamed {
+        @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
+        public static Object direct(VirtualFrame frame, MethodSite method, NamedSite site, boolean keepRef,
+                                    PhpClass phpClass, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Cached(value = "plan.defaultsCall(cachedFunction)", neverDefault = false)
+                                    DirectCallNode defaults,
+                                    @Shared @Cached SubclassTestNode subclassTest) {
+            Object[] callee = plan.frame(arguments);
+            Object[] caller = frame.getArguments();
+            callee[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null
+                    : CallStatic.callerThis(caller, phpClass, subclassTest);
+            callee[PhpFunction.ARG_STATIC] = CallStatic.staticClass(method, caller, phpClass);
+            plan.fillHoles(callee, defaults);
+            return result(callNode.call(callee), keepRef);
+        }
+
+        @Specialization(guards = "!isByValue(function)", replaces = "direct")
+        public static Object indirect(VirtualFrame frame, MethodSite method, NamedSite site, boolean keepRef,
+                                      PhpClass phpClass, PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Shared @Cached IndirectCallNode callNode,
+                                      @Shared @Cached SubclassTestNode subclassTest) {
+            BindingPlan plan = site.plan(function);
+            Object[] callee = plan.frame(arguments);
+            Object[] caller = frame.getArguments();
+            callee[PhpFunction.ARG_THIS] = function.isStatic() ? null
+                    : CallStatic.callerThis(caller, phpClass, subclassTest);
+            callee[PhpFunction.ARG_STATIC] = CallStatic.staticClass(method, caller, phpClass);
+            plan.fillHoles(callee, function, callNode);
+            return result(callNode.call(function.getCallTarget(), callee), keepRef);
+        }
+
+        /** __call or __callStatic: every name is an extra. */
+        @Specialization(guards = "isByValue(function)")
+        public static Object magic(VirtualFrame frame, MethodSite method, NamedSite site, boolean keepRef,
+                                   PhpClass phpClass, PhpFunction function,
+                                   @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                   @Shared @Cached IndirectCallNode callNode,
+                                   @Shared @Cached SubclassTestNode subclassTest,
+                                   @Bind PhpBytecodeRootNode root) {
+            return CallStatic.magic(frame, method, keepRef, phpClass, function, site.plan(function).frame(arguments),
+                    callNode, subclassTest, root);
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /** `$f(args)` with named arguments: as CallValue, the frame arguments bound as CallNamed's. */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    @ConstantOperand(type = boolean.class, name = "keepRef")
+    public static final class CallValueNamed {
+        @Specialization(guards = {"target.magicName() == null", "function == cachedFunction"}, limit = "4")
+        public static Object direct(NamedSite site, boolean keepRef, Callables.Target target, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Cached("function") PhpFunction cachedFunction,
+                                    @Cached("site.plan(cachedFunction)") BindingPlan plan,
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Cached(value = "plan.defaultsCall(cachedFunction)", neverDefault = false)
+                                    DirectCallNode defaults) {
+            Object[] frame = targetArguments(target, plan.frame(arguments));
+            plan.fillHoles(frame, defaults);
+            return result(callNode.call(frame), keepRef);
+        }
+
+        @Specialization(guards = "target.magicName() == null", replaces = "direct")
+        public static Object indirect(NamedSite site, boolean keepRef, Callables.Target target, PhpFunction function,
+                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                      @Shared @Cached IndirectCallNode callNode) {
+            BindingPlan plan = site.plan(function);
+            Object[] frame = targetArguments(target, plan.frame(arguments));
+            plan.fillHoles(frame, function, callNode);
+            return result(callNode.call(function.getCallTarget(), frame), keepRef);
+        }
+
+        /** __call or __callStatic standing in for the method: every name is an extra. */
+        @Specialization(guards = "target.magicName() != null")
+        public static Object magic(NamedSite site, boolean keepRef, Callables.Target target, PhpFunction function,
+                                   @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                   @Shared @Cached IndirectCallNode callNode) {
+            return CallValue.indirect(keepRef, target, function, site.plan(function).frame(arguments), callNode);
+        }
+    }
+
+    /**
+     * `new Cls(args)` with named arguments: as Construct, the frame arguments bound as CallNamed's. A class without
+     * a constructor took no name (each send's "Unknown named parameter"); in a constant expression its arguments
+     * are evaluated and dropped, and the binding's errors come once all are evaluated (zend_ast_evaluate).
+     */
+    @Operation
+    @ConstantOperand(type = NamedSite.class)
+    public static final class ConstructNamed {
+        @Specialization(guards = {"!isByValue(constructor)", "constructor == cachedConstructor"}, limit = "4")
+        public static PhpObject direct(NamedSite site, PhpObject object, PhpFunction constructor,
+                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                       @Bind Node node,
+                                       @Cached("constructor") PhpFunction cachedConstructor,
+                                       @Cached("site.plan(cachedConstructor)") BindingPlan plan,
+                                       @Cached("create(cachedConstructor.getCallTarget())") DirectCallNode callNode,
+                                       @Cached(value = "plan.defaultsCall(cachedConstructor)", neverDefault = false)
+                                       DirectCallNode defaults) {
+            if (site.isConstant()) {
+                plan.bindConstant(arguments, cachedConstructor, node);
+            }
+            Object[] frame = plan.frame(arguments);
+            frame[PhpFunction.ARG_THIS] = object;
+            frame[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            plan.fillHoles(frame, defaults);
+            callNode.call(frame);
+            return object;
+        }
+
+        @Specialization(guards = "!isByValue(constructor)", replaces = "direct")
+        public static PhpObject indirect(NamedSite site, PhpObject object, PhpFunction constructor,
+                                         @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                         @Bind Node node, @Cached IndirectCallNode callNode) {
+            BindingPlan plan = site.plan(constructor);
+            if (site.isConstant()) {
+                plan.bindConstant(arguments, constructor, node);
+            }
+            Object[] frame = plan.frame(arguments);
+            frame[PhpFunction.ARG_THIS] = object;
+            frame[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            plan.fillHoles(frame, constructor, callNode);
+            callNode.call(constructor.getCallTarget(), frame);
+            return object;
+        }
+
+        @Specialization(guards = "isByValue(constructor)")
+        public static PhpObject withoutConstructor(NamedSite site, PhpObject object, PhpFunction constructor,
+                                                   @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments) {
+            return object;
+        }
+
+        public static boolean isByValue(PhpFunction function) {
+            return MethodSite.byValue(function);
+        }
+    }
+
+    /*
+     * A user function's defaults target (BytecodeTranslator.defaults): run on the frame arguments of a named call
+     * that left some out, before the callee, as php-src's zend_handle_undef_args runs in a fake frame of the callee.
+     */
+
+    /** Whether the call left the argument of parameter index out (a hole, PhpFunction.NOT_PASSED). */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class IsNotPassed {
+        @Specialization
+        public static boolean notPassed(VirtualFrame frame, int index) {
+            Object[] arguments = frame.getArguments();
+            return PhpFunction.ARG_FIRST + index < arguments.length
+                    && arguments[PhpFunction.ARG_FIRST + index] == PhpFunction.NOT_PASSED;
+        }
+    }
+
+    /** A required parameter left out: php-src's ArgumentCountError "f(): Argument #2 ($b) not passed". */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class NotPassed {
+        @Specialization
+        public static void fail(int index, @Bind PhpBytecodeRootNode root) {
+            throw BindingPlan.notPassed(root.name, root.params, index);
+        }
+    }
+
+    /** A left-out parameter's default, a passed argument from then on (RECV_INIT checks it, func_get_args lists it). */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class SetArgument {
+        @Specialization
+        public static void set(VirtualFrame frame, int index, Object value) {
+            frame.getArguments()[PhpFunction.ARG_FIRST + index] = value;
+        }
+    }
+
     // ---- what the runtime asks of a function's root ----
 
     public CallTarget linkedFrame() {
@@ -5284,6 +5730,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return false;
             }
             Backtrace.describeInclude(entry, kind, path, options);
+            return true;
+        }
+        if (defaults) {
+            Object[] arguments = frame.getArguments();
+            FunctionRootNode.describeCall(name, className, params, arguments, i -> {
+                Object argument = arguments[PhpFunction.ARG_FIRST + i];
+                return argument == PhpFunction.NOT_PASSED ? PhpNull.NULL : argument;
+            }, entry, options);
             return true;
         }
         BytecodeNode bytecode = getBytecodeNode();
