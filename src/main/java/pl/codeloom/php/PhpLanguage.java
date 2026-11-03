@@ -124,6 +124,12 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      * initializeMultipleContexts before a second context shares the instance, which invalidates it.
      */
     private final Assumption singleContext = Truffle.getRuntime().createAssumption("single PHP context");
+    /**
+     * Valid until a static property is bound to another reference (`A::$p = &$x`): sites keep the reference they
+     * found per class until then (StaticPropNode.Lookup).
+     */
+    private final Assumption staticPropertyRefs = Truffle.getRuntime().createAssumption(
+            "static properties keep their references");
 
     /** Ids of function names (lowercase) and constant names: a node resolves its name once, for every context. */
     private final NameIds functionIds = new NameIds();
@@ -227,6 +233,10 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     public static String constantKey(String name) {
         int slash = name.lastIndexOf('\\');
         return slash < 0 ? name : Str.lower(name.substring(0, slash)) + name.substring(slash);
+    }
+
+    public Assumption staticPropertyRefs() {
+        return staticPropertyRefs;
     }
 
     public Assumption singleContext() {
