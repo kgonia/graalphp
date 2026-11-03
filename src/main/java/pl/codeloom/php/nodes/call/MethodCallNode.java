@@ -3,11 +3,17 @@ package pl.codeloom.php.nodes.call;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
+import pl.codeloom.php.nodes.stmt.GeneratorNodes;
+import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.ThunkRootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
@@ -23,14 +29,30 @@ public final class MethodCallNode extends CallNode {
     @Child private ExprNode receiver;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
-    @Child private CallableDispatchNode closureCall;
+    private final String name;
     private final String lowerName;
 
     public MethodCallNode(ExprNode receiver, String methodName, ArgumentsNode args) {
         this.receiver = receiver;
         this.args = args;
+        this.name = methodName;
         this.lowerName = Str.lower(methodName);
-        this.dispatch = new Dispatch(lowerName, Str.of(methodName));
+        this.dispatch = new Dispatch(methodName);
+    }
+
+    /**
+     * php-src's executed scope at a tree node (lowercase, or null): the class bound in the frame (a closure's, an
+     * included file's), else the class of the function the node is in. ponytail: a method run through a closure
+     * made of it takes that closure's class.
+     */
+    public static String scope(VirtualFrame frame, Node site) {
+        RootNode root = site.getRootNode();
+        if (root instanceof ThunkRootNode) {
+            // a constant expression is evaluated in its class's scope, the class it was bound to
+            return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass owner ? owner.getLowerName() : null;
+        }
+        return PropNode.callingScope(frame, root instanceof FunctionRootNode function ? function.getScopeName()
+                : root instanceof GeneratorNodes.BodyRootNode body ? body.getScopeName() : null);
     }
 
     @Override
@@ -41,48 +63,38 @@ public final class MethodCallNode extends CallNode {
         }
         if (target instanceof PhpClosure closure) {
             if (lowerName.equals("__invoke")) {
-                CallableDispatchNode call = closureCall;
-                if (call == null) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    call = closureCall();
-                }
-                return call.execute(closure, closure.getMagicName() == null
-                        ? args.values(frame, closure.getFunction()) : args.values(frame));
+                return CallableCallNode.call(frame, Callables.resolveCall(PhpContext.get(this), closure, null), args,
+                        IndirectCallNode.getUncached());
             }
-            return closureMethod(this, lowerName, closure, args.values(frame));
+            return closureMethod(this, name, closure, args.values(frame));
         }
-        throw memberOnNonObject(lowerName, target);
+        throw memberOnNonObject(name, target);
     }
 
     /** The Closure class's other methods (bindTo, call) on a closure value, called from site. */
     @TruffleBoundary
-    public static Object closureMethod(Node site, String lowerName, PhpClosure closure, Object[] values) {
-        PhpFunction method = PhpContext.get(site).getClass("Closure").findMethod(lowerName);
+    public static Object closureMethod(Node site, String name, PhpClosure closure, Object[] values) {
+        PhpFunction method = PhpContext.get(site).getClass("Closure").findMethod(Str.lower(name));
         if (method == null) {
-            throw new PhpError("Call to undefined method Closure::" + lowerName + "()");
+            throw new PhpError("Call to undefined method Closure::" + name + "()");
         }
         return Backtrace.callFrom(site, () -> method.getCallTarget().call(
                 ArgumentsNode.frameArguments(closure, null, null, values)));
     }
 
-    /** Inserted under the AST lock: the AST is shared by contexts that may run on several threads. */
-    private CallableDispatchNode closureCall() {
-        Lock lock = getLock();
-        lock.lock();
-        try {
-            if (closureCall == null) {
-                closureCall = insert(CallableDispatchNode.create(null, true));
-            }
-            return closureCall;
-        } finally {
-            lock.unlock();
-        }
+    /**
+     * A method called on a value that isn't an object (zend_invalid_method_call): the name as written, the value as
+     * zend_zval_value_name names it.
+     */
+    @TruffleBoundary
+    public static PhpError memberOnNonObject(String name, Object target) {
+        return new PhpError("Call to a member function " + name + "() on " + Args.valueName(target));
     }
 
-    /** A method called on a value that isn't an object: the value as zend_zval_value_name names it. */
+    /** `$obj->$name()` with a name that isn't a string (ZEND_INIT_METHOD_CALL). */
     @TruffleBoundary
-    public static PhpError memberOnNonObject(String lowerName, Object target) {
-        return new PhpError("Call to a member function " + lowerName + "() on " + Args.valueName(target));
+    public static PhpError nameNotString() {
+        return new PhpError("Method name must be a string");
     }
 
     /**
@@ -100,15 +112,15 @@ public final class MethodCallNode extends CallNode {
         @Child private MethodLookupNode magicLookup;
         @Child private MethodDispatchNode magicCall;
 
-        Dispatch(String lowerName, TruffleString calledName) {
-            this.lowerName = lowerName;
-            this.calledName = calledName;
-            this.lookup = MethodLookupNode.create(lowerName);
+        Dispatch(String name) {
+            this.lowerName = Str.lower(name);
+            this.calledName = Str.of(name);
+            this.lookup = MethodLookupNode.create(name, false);
         }
 
         public Object execute(VirtualFrame frame, PhpObject receiver, ArgumentsNode args) {
             PhpClass phpClass = receiver.getPhpClass();
-            PhpFunction method = lookup.execute(phpClass);
+            PhpFunction method = lookup.execute(phpClass, scope(frame, this));
             if (method != null) {
                 return call.execute(frame, method, receiver, phpClass, args);
             }
@@ -116,7 +128,7 @@ public final class MethodCallNode extends CallNode {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 insertMagic();
             }
-            PhpFunction viaCall = magicLookup.execute(phpClass);
+            PhpFunction viaCall = magicLookup.execute(phpClass, null);
             if (viaCall == null) {
                 throw undefined(phpClass);
             }
@@ -129,7 +141,7 @@ public final class MethodCallNode extends CallNode {
             lock.lock();
             try {
                 if (magicCall == null) {
-                    magicLookup = insert(MethodLookupNode.create("__call"));
+                    magicLookup = insert(MethodLookupNode.create("__call", false));
                     magicCall = insert(MethodDispatchNode.createMagic(calledName));
                 }
             } finally {
@@ -137,22 +149,15 @@ public final class MethodCallNode extends CallNode {
             }
         }
 
-        /** The method of a class an object's method call calls, or __call standing in for it; else an Error. */
-        @TruffleBoundary
-        public static PhpFunction findMethod(PhpClass phpClass, String lowerName) {
-            PhpFunction method = phpClass.findMethod(lowerName);
-            if (method == null) {
-                method = phpClass.findMethod("__call");
-            }
-            if (method == null) {
-                throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
-            }
-            return method;
-        }
-
         @TruffleBoundary
         private PhpError undefined(PhpClass phpClass) {
-            return new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+            return undefinedMethod(phpClass, Str.java(calledName));
         }
+    }
+
+    /** zend_undefined_method: the class and the method name as written. */
+    @TruffleBoundary
+    public static PhpError undefinedMethod(PhpClass phpClass, String name) {
+        return new PhpError("Call to undefined method " + phpClass.getName() + "::" + name + "()");
     }
 }

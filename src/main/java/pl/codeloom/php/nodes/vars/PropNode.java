@@ -17,6 +17,7 @@ import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
@@ -339,11 +340,17 @@ public final class PropNode extends LValueNode {
     public PhpRef makeRefOn(VirtualFrame frame, Object target, String name) {
         PhpObject phpObject = target(target, name, "modify");
         if (!accessible(frame, phpObject, name)) {
-            return new PhpRef(inaccessibleRead(phpObject, name));
+            return magicRef(inaccessibleForWrite(phpObject, name));
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             return ref;
+        }
+        if (old == null) {
+            Object magic = magicForWrite(phpObject, name);
+            if (magic != PhpObject.NO_MAGIC) {
+                return magicRef(magic);
+            }
         }
         PhpRef ref = new PhpRef(old == null ? PhpNull.NULL : old);
         if (old instanceof PhpArray array) {
@@ -390,11 +397,25 @@ public final class PropNode extends LValueNode {
 
     /** arrayForWrite of property name of target, evaluated: an error if it isn't an object. */
     public PhpArray arrayForWriteOn(VirtualFrame frame, Object target, String name) {
+        return containerForWriteOn(frame, target, name) instanceof PhpArray array ? array : null;
+    }
+
+    /**
+     * The container a write into property name of target goes to (FETCH_OBJ_W): arrayForWriteOn's array, else the
+     * object the property holds (or __get gives).
+     */
+    public Object containerForWriteOn(VirtualFrame frame, Object target, String name) {
         PhpObject phpObject = target(target, name, "modify");
         if (!accessible(frame, phpObject, name)) {
-            return overloadedArray(inaccessibleRead(phpObject, name));
+            return overloadedContainer(inaccessibleForWrite(phpObject, name));
         }
         Object old = objects.getOrDefault(phpObject, name, null);
+        if (old == null) {
+            Object magic = magicForWrite(phpObject, name);
+            if (magic != PhpObject.NO_MAGIC) {
+                return overloadedContainer(magic);
+            }
+        }
         if (old instanceof PhpArray array) {
             if (array.isShared()) {
                 PhpArray copy = array.copy();
@@ -415,16 +436,51 @@ public final class PropNode extends LValueNode {
             return created;
         }
         if (old instanceof PhpObject) {
-            return null;
+            return old;
         }
         throw scalarAsArray();
     }
 
-    /** An array write through __get's value: to a copy, which the write leaves behind (null for an object). */
+    /**
+     * A write fetch (BP_VAR_W) of a property that doesn't exist, on a class with __get (zend_std_get_property_ptr_ptr
+     * gives NULL, the fetch calls read_property(BP_VAR_W)): what __get returns, a reference as it is; another value
+     * but an object with php-src's notice, as a temporary the write doesn't reach. NO_MAGIC: __get wasn't called (the
+     * class has none, or it is running for this property).
+     */
     @TruffleBoundary
-    private static PhpArray overloadedArray(Object value) {
+    private Object magicForWrite(PhpObject phpObject, String name) {
+        Object magic = phpObject.magicGetRef(this, name);
+        if (magic != PhpObject.NO_MAGIC && !(magic instanceof PhpRef) && !(magic instanceof PhpObject)) {
+            CallNode.notice(this, "Indirect modification of overloaded property " + phpObject.getPhpClass().getName()
+                    + "::$" + Str.keyText(name) + " has no effect");
+        }
+        return magic;
+    }
+
+    /** magicForWrite of a property the scope may not access: zend_bad_property_access without __get. */
+    @TruffleBoundary
+    private Object inaccessibleForWrite(PhpObject phpObject, String name) {
+        Object magic = magicForWrite(phpObject, name);
+        if (magic == PhpObject.NO_MAGIC) {
+            throw inaccessible(phpObject, name);
+        }
+        return magic;
+    }
+
+    /** What a reference to __get's result binds: its reference, or a temporary's. */
+    private static PhpRef magicRef(Object magic) {
+        return magic instanceof PhpRef ref ? ref : new PhpRef(magic);
+    }
+
+    /** The container a write goes to through __get's result: a reference's array, an object, else a temporary. */
+    @TruffleBoundary
+    private static Object overloadedContainer(Object value) {
+        if (value instanceof PhpRef ref) {
+            PhpArray array = Places.refArrayForWrite(ref);
+            return array != null ? array : ref.get();
+        }
         if (value instanceof PhpObject) {
-            return null;
+            return value;
         }
         return value instanceof PhpArray array ? array.copy() : new PhpArray();
     }

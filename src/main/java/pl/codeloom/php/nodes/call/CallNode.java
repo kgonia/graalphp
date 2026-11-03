@@ -37,19 +37,17 @@ public abstract class CallNode extends ExprNode {
         notice(site, message, SourceLocation.of(site));
     }
 
-    /** A temporary value sent to a by-reference parameter (zend_cannot_pass_by_reference). */
-    @TruffleBoundary
-    public static PhpError notReferenceable(PhpFunction function, int index) {
-        PhpFunction.Param[] params = function.getParams();
-        int last = params.length - 1;
-        String name = index < params.length ? params[index].name()
-                : last >= 0 && params[last].variadic() ? params[last].name() : null;
-        return new PhpError(function.displayName() + "(): Argument #" + (index + 1)
-                + (name == null ? "" : " ($" + name + ")") + " could not be passed by reference");
-    }
-
     @TruffleBoundary
     public static void notice(Node site, String message, SourceLocation at) {
         ErrorFunctions.raise(PhpContext.get(site), ErrorFunctions.E_NOTICE, Str.of(message), at);
+    }
+
+    /** A value that isn't a variable or a call sent to a by-reference parameter (SEND_VAL_EX's Error). */
+    @TruffleBoundary
+    public static PhpError cannotPassByRef(PhpFunction callee, int index) {
+        PhpFunction.Param[] params = callee.getParams();
+        String name = params[Math.min(index, params.length - 1)].name();
+        return new PhpError(callee.displayName() + "(): Argument #" + (index + 1) + " ($" + name
+                + ") could not be passed by reference");
     }
 }

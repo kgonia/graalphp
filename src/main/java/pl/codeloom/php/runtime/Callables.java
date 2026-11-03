@@ -46,25 +46,26 @@ public final class Callables {
     /** The target of a callable given to a built-in (zend_is_callable), or null if the value isn't callable. */
     @TruffleBoundary
     public static Target resolve(PhpContext context, Object callable) {
-        return resolve(context, callable, false);
+        return resolve(context, callable, false, null);
     }
 
     /**
-     * direct: the target of a call `$f()` (zend_init_dynamic_call_*), which takes class and method names
-     * literally ("self", "parent::m" mean nothing there) and binds no $this; else of a callable given to a
-     * built-in, which resolves them against the calling code and takes its $this.
+     * direct: the target of a call `$f()` (zend_init_dynamic_call_*) made from scope (the calling class,
+     * lowercase, or null), which takes class and method names literally ("self", "parent::m" mean nothing there)
+     * and binds no $this; else of a callable given to a built-in, which resolves them against the calling code,
+     * checks visibility from its scope and takes its $this.
      */
-    private static Target resolve(PhpContext context, Object callable, boolean direct) {
+    private static Target resolve(PhpContext context, Object callable, boolean direct, String scope) {
         if (callable instanceof PhpClosure closure) {
-            PhpClass scope = closure.staticClass();
-            return new Target(closure.getFunction(), closure.getBoundThis(), scope, closure, closure.getMagicName());
+            PhpClass bound = closure.staticClass();
+            return new Target(closure.getFunction(), closure.getBoundThis(), bound, closure, closure.getMagicName());
         }
         if (callable instanceof TruffleString name) {
             String text = Str.name(name);
             int separator = text.indexOf("::");
             if (separator > 0) {
                 return method(namedClass(context, text.substring(0, separator), direct, true), null,
-                        text.substring(separator + 2), direct);
+                        text.substring(separator + 2), direct, scope);
             }
             PhpFunction function = context.findFunction(Str.lower(stripNamespace(text)));
             return function == null ? null : new Target(function, null, null, null);
@@ -76,13 +77,14 @@ public final class Callables {
                 return null;
             }
             if (first instanceof PhpObject object) {
-                return method(object.getPhpClass(), object, Str.name(methodName), direct);
+                return method(object.getPhpClass(), object, Str.name(methodName), direct, scope);
             }
             if (first instanceof PhpClosure closure && Str.lower(Str.name(methodName)).equals("__invoke")) {
-                return resolve(context, closure, direct);
+                return resolve(context, closure, direct, scope);
             }
             if (first instanceof TruffleString className) {
-                return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName), direct);
+                return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName),
+                        direct, scope);
             }
             return null;
         }
@@ -91,6 +93,20 @@ public final class Callables {
             return invoke == null ? null : new Target(invoke, object, object.getPhpClass(), null);
         }
         return null;
+    }
+
+    /** A missing or inaccessible method: __call on an object, __callStatic on a class (zend_is_callable_check_func). */
+    private static Target magic(PhpClass phpClass, PhpObject object, String methodName, boolean direct) {
+        if (object != null) {
+            PhpFunction magicCall = phpClass.findMethod("__call");
+            return magicCall == null ? null
+                    : new Target(magicCall, object, object.getPhpClass(), null, Str.of(methodName));
+        }
+        if (direct && callsNonStaticMagic(phpClass)) {
+            return null;
+        }
+        PhpFunction magicStatic = phpClass.findMethod("__callstatic");
+        return magicStatic == null ? null : new Target(magicStatic, null, phpClass, null, Str.of(methodName));
     }
 
     /** __call / __callStatic's arguments: the method name as it was called, and the arguments as an array. */
@@ -109,7 +125,13 @@ public final class Callables {
         return Str.lower(stripNamespace(Str.name(name)));
     }
 
-    private static Target method(PhpClass phpClass, PhpObject object, String methodName, boolean direct) {
+    /**
+     * A method callable's target: an object's method as zend_std_get_method finds it from the scope, a class's as
+     * zend_std_get_static_method; an inaccessible one is a missing one (__call, __callStatic), and a direct call
+     * of it without them is zend_bad_method_call's Error.
+     */
+    private static Target method(PhpClass phpClass, PhpObject object, String methodName, boolean direct,
+                                 String scope) {
         if (phpClass == null) {
             return null;
         }
@@ -120,25 +142,24 @@ public final class Callables {
                 return null;
             }
         }
-        PhpFunction method = phpClass.findMethod(Str.lower(methodName));
+        String lower = Str.lower(methodName);
+        if (!direct && phpClass.methodDependsOnScope(lower)) {
+            Caller caller = caller();
+            scope = caller == null ? null : caller.scopeName();
+        }
+        PhpFunction method = object != null ? phpClass.accessibleMethod(lower, scope)
+                : phpClass.accessibleStaticMethod(lower, scope);
         if (!direct && object == null && (method == null || !method.isStatic())) {
             // a class callable reached from code running on an instance of the class binds that $this
             // (zend_is_callable_check_func), for a non-static method or __call
             object = callerThisOf(phpClass);
         }
         if (method == null) {
-            // a missing method: __call on an object, __callStatic on a class (zend_is_callable_check_func)
-            if (object != null) {
-                PhpFunction magicCall = phpClass.findMethod("__call");
-                return magicCall == null ? null
-                        : new Target(magicCall, object, object.getPhpClass(), null, Str.of(methodName));
+            Target magic = magic(phpClass, object, methodName, direct);
+            if (magic == null && direct && phpClass.findMethod(lower) != null) {
+                throw phpClass.callError(methodName, scope);
             }
-            if (direct && callsNonStaticMagic(phpClass)) {
-                return null;
-            }
-            PhpFunction magicStatic = phpClass.findMethod("__callstatic");
-            return magicStatic == null ? null
-                    : new Target(magicStatic, null, phpClass, null, Str.of(methodName));
+            return magic;
         }
         if (!method.isStatic() && object == null) {
             // "non-static method Cls::m() cannot be called statically"
@@ -249,10 +270,10 @@ public final class Callables {
     public record Parameter(String function, int position, boolean nullable) {
     }
 
-    /** The target of a direct call `$f()`, or the Error php-src raises for it. */
+    /** The target of a direct call `$f()` from scope (lowercase, or null), or the Error php-src raises for it. */
     @TruffleBoundary
-    public static Target resolveCall(PhpContext context, Object callable) {
-        Target target = resolve(context, callable, true);
+    public static Target resolveCall(PhpContext context, Object callable, String scope) {
+        Target target = resolve(context, callable, true, scope);
         if (target == null) {
             throw new PhpError(directCallError(context, callable));
         }
@@ -265,7 +286,7 @@ public final class Callables {
      */
     @TruffleBoundary
     public static Target resolveOrThrow(PhpContext context, Object callable, Parameter parameter) {
-        Target target = resolve(context, callable, false);
+        Target target = resolve(context, callable, false, null);
         if (target == null) {
             if (parameter == null) {
                 throw new PhpError(invalidReason(context, callable));
@@ -300,7 +321,9 @@ public final class Callables {
                 return "second array member is not a valid method";
             }
             if (first instanceof PhpObject object) {
-                return "class " + object.getPhpClass().getName() + " does not have a method \"" + Str.java(method)
+                PhpFunction found = object.getPhpClass().findMethod(Str.lower(Str.java(method)));
+                return found != null ? cannotAccess(object.getPhpClass(), found)
+                        : "class " + object.getPhpClass().getName() + " does not have a method \"" + Str.java(method)
                         + "\"";
             }
             return methodReason(context, Str.java((TruffleString) first), Str.java(method));
@@ -318,7 +341,14 @@ public final class Callables {
             return "non-static method " + phpClass.getName() + "::" + method.getName() + "() cannot be called "
                     + "statically";
         }
-        return "class " + phpClass.getName() + " does not have a method \"" + methodName + "\"";
+        return method != null ? cannotAccess(phpClass, method)
+                : "class " + phpClass.getName() + " does not have a method \"" + methodName + "\"";
+    }
+
+    /** zend_is_callable_check_func's reason for a method the calling scope may not call. */
+    private static String cannotAccess(PhpClass phpClass, PhpFunction method) {
+        return "cannot access " + PhpClass.visibility(method) + " method " + phpClass.getName() + "::"
+                + method.getName() + "()";
     }
 
     /** The Error a direct call `$f()` of a value that isn't callable raises (zend_init_dynamic_call_*). */
@@ -409,6 +439,17 @@ public final class Callables {
         return target(context, callable, parameter);
     }
 
+    /** Whether what a method callable resolves to depends on the calling scope (PhpClass.methodDependsOnScope). */
+    public static boolean scoped(Object callable, Target target) {
+        PhpClass phpClass = target.staticClass();
+        String name = callable instanceof PhpArray array && array.get(1L) instanceof TruffleString method
+                ? Str.java(method) : callable instanceof TruffleString text ? Str.java(text) : null;
+        if (phpClass == null || callable instanceof PhpClosure || name == null) {
+            return false;
+        }
+        return phpClass.methodDependsOnScope(Str.lower(name.substring(name.indexOf("::") + 2)));
+    }
+
     private static Target target(PhpContext context, Object callable, Parameter parameter) {
         LastCall last = context.lastCall();
         if (callable == last.callable && (!(callable instanceof PhpArray array)
@@ -431,10 +472,11 @@ public final class Callables {
         } else {
             target = resolveOrThrow(context, callable, parameter);
         }
-        // a class callable bound to the caller's $this depends on the caller: not kept
+        // a class callable bound to the caller's $this, or a method whose visibility the caller's scope decides,
+        // depends on the caller: not kept
         boolean boundByCaller = target.thisObject() != null && !(callable instanceof PhpClosure)
                 && !(callable instanceof PhpArray array && array.get(0L) instanceof PhpObject);
-        last.callable = boundByCaller ? null : callable;
+        last.callable = boundByCaller || scoped(callable, target) ? null : callable;
         last.target = target;
         if (callable instanceof PhpArray array) {
             last.first = array.get(0L);

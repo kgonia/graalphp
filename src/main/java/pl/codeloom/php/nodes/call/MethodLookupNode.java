@@ -6,6 +6,7 @@ import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.Str;
 
 /**
  * The method a class has under a name (declared, inherited or imported from a trait), or null: inline-cached on
@@ -23,27 +24,34 @@ public abstract class MethodLookupNode extends Node {
      */
     static final int CLASSES = 8;
 
+    /** The name as written; isStatic: a static call's lookup (zend_std_get_static_method). */
+    protected final String name;
     protected final String lowerName;
+    private final boolean isStatic;
 
-    protected MethodLookupNode(String lowerName) {
-        this.lowerName = lowerName;
+    protected MethodLookupNode(String name, boolean isStatic) {
+        this.name = name;
+        this.lowerName = Str.lower(name);
+        this.isStatic = isStatic;
     }
 
-    public static MethodLookupNode create(String lowerName) {
-        return MethodLookupNodeGen.create(lowerName);
+    public static MethodLookupNode create(String name, boolean isStatic) {
+        return MethodLookupNodeGen.create(name, isStatic);
     }
 
-    public abstract PhpFunction execute(PhpClass phpClass);
+    /** The method from the calling scope (lowercase, or null), null when __call or __callStatic stands in. */
+    public abstract PhpFunction execute(PhpClass phpClass, String scope);
 
-    @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "CLASSES")
-    protected static PhpFunction cached(PhpClass phpClass,
-                                        @Cached("phpClass.getKey()") ClassKey cachedKey,
-                                        @Cached("phpClass.findMethod(lowerName)") PhpFunction method) {
+    @Specialization(guards = {"phpClass.getKey() == cachedKey", "!scoped"}, limit = "CLASSES")
+    protected PhpFunction cached(PhpClass phpClass, String scope,
+                                 @Cached("phpClass.getKey()") ClassKey cachedKey,
+                                 @Cached("phpClass.methodDependsOnScope(lowerName)") boolean scoped,
+                                 @Cached("lookUp(phpClass, scope)") PhpFunction method) {
         return method;
     }
 
     @Specialization(replaces = "cached")
-    protected PhpFunction lookUp(PhpClass phpClass) {
-        return phpClass.findMethod(lowerName);
+    protected PhpFunction lookUp(PhpClass phpClass, String scope) {
+        return isStatic ? phpClass.staticMethodFrom(name, scope) : phpClass.methodFrom(name, scope);
     }
 }
