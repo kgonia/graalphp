@@ -37,7 +37,7 @@ case ${1:-} in
     until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
     echo "claude-wordpress-pe4impl: Gate 1 A/B base t3 t2 t1 (bench/pe-round4/runs.sh gate1), since $(date '+%F %T')" > $CPU_LOCK/note
     trap 'rm -rf $CPU_LOCK; release gate1' EXIT
-    AB_OUT=target/pe4i/gate1 bash bench/gate1/ab.sh all 400 ${ROUNDS:-4} base t3 t2 t1 ;;
+    AB_OUT=target/pe4i/${GATE1_OUT:-gate1} bash bench/gate1/ab.sh all 400 ${ROUNDS:-4} ${GATE1_BUILDS:-base t3 t2 t1} ;;
   ab)
     export WPN_NAME=p4i WPN_NET=172.31.91 WPN_DB_PORT=3361 DEV=1
     a=$2 b=$3 rounds=$4
