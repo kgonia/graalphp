@@ -12,9 +12,12 @@ final class ZendSort<T> {
     private final int[] order;
     private final Comparator<? super T> compare;
 
-    private ZendSort(T[] items, Comparator<? super T> compare) {
+    private final boolean stable;
+
+    private ZendSort(T[] items, Comparator<? super T> compare, boolean stable) {
         this.items = items;
         this.compare = compare;
+        this.stable = stable;
         order = new int[items.length];
         for (int i = 0; i < order.length; i++) {
             order[i] = i;
@@ -22,13 +25,18 @@ final class ZendSort<T> {
     }
 
     static <T> void sort(T[] items, Comparator<? super T> compare) {
-        new ZendSort<>(items, compare).sort(0, items.length);
+        new ZendSort<>(items, compare, true).sort(0, items.length);
     }
 
-    /** cmp(a, b) > 0, with the fallback to the original order. */
+    /** zend_sort with the comparison alone, as php_array_diff and php_array_intersect call it. */
+    static <T> void sortUnstable(T[] items, Comparator<? super T> compare) {
+        new ZendSort<>(items, compare, false).sort(0, items.length);
+    }
+
+    /** cmp(a, b) > 0, with the fallback to the original order when stable. */
     private boolean greater(int a, int b) {
         int result = compare.compare(items[a], items[b]);
-        return result != 0 ? result > 0 : order[a] > order[b];
+        return result != 0 ? result > 0 : stable && order[a] > order[b];
     }
 
     private void swap(int a, int b) {
