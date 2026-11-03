@@ -1416,7 +1416,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          neverDefault = true) PropNode access,
                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                  @Cached ElementNodes.ElementIfSetNode read) {
-            Object container = ElementChain.read(access.readForUnsetOn(frame, object, site.name), keys, read);
+            Object container = ElementChain.read(access.readForUnsetOn(frame.getArguments(), object, site.name), keys, read);
             Object key = ElementChain.removed(node, container, keys, toKey);
             if (key != null) {
                 ElementChain.remove(node, propertyForWrite(frame, access, object, site.name), keys, key, toKey);
@@ -1567,7 +1567,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
     private static Object propertyForWrite(VirtualFrame frame, PropNode access, Object object, String name) {
-        return access.containerForWriteOn(frame, object, name);
+        return access.containerForWriteOn(frame.getArguments(), object, name);
     }
 
     /**
@@ -1615,7 +1615,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.read(frame, object, site.name);
+            return access.read(frame.getArguments(), object, site.name);
         }
     }
 
@@ -1631,7 +1631,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, boolean rw, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.readForWriteOn(frame, object, site.name, rw);
+            return access.readForWriteOn(frame.getArguments(), object, site.name, rw);
         }
     }
 
@@ -1653,7 +1653,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.readForUnsetOn(frame, object, site.name);
+            return access.readForUnsetOn(frame.getArguments(), object, site.name);
         }
     }
 
@@ -1665,7 +1665,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object, String name,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.read(frame, object, name);
+            return access.read(frame.getArguments(), object, name);
         }
     }
 
@@ -1680,7 +1680,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            return access.writeOn(frame, object, site.name, value);
+            return access.writeOn(frame.getArguments(), object, site.name, value);
         }
     }
 
@@ -1692,7 +1692,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, String name, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            return access.writeOn(frame, object, name, value);
+            return access.writeOn(frame.getArguments(), object, name, value);
         }
     }
 
@@ -1712,9 +1712,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                     @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
                                     @Cached TruffleString.ConcatNode concat) {
             PhpObject target = propertyTarget(object, site.name, "assign");
-            TruffleString left = currentToStr.execute(access.readOn(frame, target, site.name));
+            TruffleString left = currentToStr.execute(access.readOn(frame.getArguments(), target, site.name));
             TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
-            return access.writeOn(frame, target, site.name, result);
+            return access.writeOn(frame.getArguments(), target, site.name, result);
         }
 
         @Specialization(guards = "op != 8")
@@ -1722,9 +1722,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                      @Cached(value = "site.create()", uncached = "site.uncached()",
                                              neverDefault = true) PropNode access, @Bind Node node) {
             PhpObject target = propertyTarget(object, site.name, "assign");
-            Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame, target, site.name),
+            Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame.getArguments(), target, site.name),
                     operand);
-            return access.writeOn(frame, target, site.name, result);
+            return access.writeOn(frame.getArguments(), target, site.name, result);
         }
     }
 
@@ -1742,21 +1742,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access, @Bind Node node) {
             PhpObject target = propertyTarget(object, site.name, "increment/decrement");
-            Object old = access.readOn(frame, target, site.name);
+            Object old = access.readOn(frame.getArguments(), target, site.name);
             Object updated;
             try {
                 updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             } catch (PhpError e) {
                 // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
                 if (target.isReadonly(site.name)) {
-                    access.writeOn(frame, target, site.name, old);
+                    access.writeOn(frame.getArguments(), target, site.name, old);
                 }
                 throw e;
             }
             if (old instanceof Long && updated instanceof Double) {
                 PropNode.incDecOverflow(target, site.name, increment);
             }
-            updated = access.writeOn(frame, target, site.name, updated);
+            updated = access.writeOn(frame.getArguments(), target, site.name, updated);
             return prefix ? updated : old;
         }
     }
@@ -1777,7 +1777,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void unset(VirtualFrame frame, PropSite site, Object object,
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access) {
-            access.unsetOn(frame, object, site.name);
+            access.unsetOn(frame.getArguments(), object, site.name);
         }
     }
 
@@ -1788,7 +1788,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void unset(VirtualFrame frame, PropSite site, Object object, String name,
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access) {
-            access.unsetOn(frame, object, name);
+            access.unsetOn(frame.getArguments(), object, name);
         }
     }
 
@@ -1800,7 +1800,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static boolean isSet(VirtualFrame frame, PropSite site, Object object,
                                     @Cached(value = "site.create()", uncached = "site.uncached()",
                                             neverDefault = true) PropNode access) {
-            return access.isSetOn(frame, object, site.name);
+            return access.isSetOn(frame.getArguments(), object, site.name);
         }
     }
 
@@ -1811,7 +1811,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static boolean isSet(VirtualFrame frame, PropSite site, Object object, String name,
                                     @Cached(value = "site.create()", uncached = "site.uncached()",
                                             neverDefault = true) PropNode access) {
-            return access.isSetOn(frame, object, name);
+            return access.isSetOn(frame.getArguments(), object, name);
         }
     }
 
@@ -1826,7 +1826,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            Object value = access.readIfSetOn(frame, object, site.name);
+            Object value = access.readIfSetOn(frame.getArguments(), object, site.name);
             return value == null ? PhpNull.NULL : value;
         }
     }
@@ -1839,7 +1839,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object read(VirtualFrame frame, PropSite site, Object object, String name,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            Object value = access.readIfSetOn(frame, object, name);
+            Object value = access.readIfSetOn(frame.getArguments(), object, name);
             return value == null ? PhpNull.NULL : value;
         }
     }
@@ -1882,9 +1882,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             held.addHolder();
         }
         try {
-            PhpArray array = access.arrayForWriteOn(frame, object, name);
+            PhpArray array = access.arrayForWriteOn(frame.getArguments(), object, name);
             if (array == null) {
-                DimNode.writeToObject(node, access.readOn(frame, object, name), key, value);
+                DimNode.writeToObject(node, access.readOn(frame.getArguments(), object, name), key, value);
             } else {
                 write.execute(array, key, value);
             }
@@ -2078,9 +2078,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             held.addHolder();
         }
         try {
-            PhpArray array = access.arrayForWriteOn(frame, object, name);
+            PhpArray array = access.arrayForWriteOn(frame.getArguments(), object, name);
             if (array == null) {
-                DimNode.writeToObject(node, access.readOn(frame, object, name), PhpNull.NULL, value);
+                DimNode.writeToObject(node, access.readOn(frame.getArguments(), object, name), PhpNull.NULL, value);
             } else {
                 array.append(value);
             }
@@ -2403,9 +2403,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
             if (function.isByRef(index)) {
-                return access.makeRefOn(frame, object, site.name);
+                return access.makeRefOn(frame.getArguments(), object, site.name);
             }
-            return access.read(frame, object, site.name);
+            return access.read(frame.getArguments(), object, site.name);
         }
     }
 
@@ -2420,9 +2420,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
             if (function.isByRef(index)) {
-                return access.makeRefOn(frame, object, name);
+                return access.makeRefOn(frame.getArguments(), object, name);
             }
-            return access.read(frame, object, name);
+            return access.read(frame.getArguments(), object, name);
         }
     }
 
@@ -2473,7 +2473,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (append) {
                     throw appendRead();
                 }
-                return readChain(access.read(frame, object, site.name), keys, read);
+                return readChain(access.read(frame.getArguments(), object, site.name), keys, read);
             }
             return elementRef(node, propertyForWrite(frame, access, object, site.name), keys, append, toKey);
         }
@@ -4131,8 +4131,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object subject(VirtualFrame frame, PropSite site, Object object,
                                      @Cached(value = "site.create()", uncached = "site.uncached()",
                                              neverDefault = true) PropNode access) {
-            Object value = access.readOn(frame, object, site.name);
-            return value instanceof PhpArray ? access.makeRefOn(frame, object, site.name) : value;
+            Object value = access.readOn(frame.getArguments(), object, site.name);
+            return value instanceof PhpArray ? access.makeRefOn(frame.getArguments(), object, site.name) : value;
         }
     }
 
@@ -4146,13 +4146,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class ForeachRefStart {
         @Specialization
         public static void start(VirtualFrame frame, LocalAccessor state, Object subject,
-                                 @Bind BytecodeNode bytecode, @Bind Node node) {
+                                 @Bind BytecodeNode bytecode, @Bind Node node, @Bind PhpBytecodeRootNode root) {
             Object value = subject instanceof PhpRef ref ? ref.get() : subject;
             if (value instanceof PhpArray) {
                 PhpRef ref = subject instanceof PhpRef held ? held : PhpRef.unbound(value);
                 state.setObject(bytecode, frame, RefIteration.start(PhpContext.get(node), ref));
             } else if (value instanceof PhpObject object) {
-                state.setObject(bytecode, frame, GeneratorRefIteration.start(node, object));
+                state.setObject(bytecode, frame, GeneratorRefIteration.start(node, object,
+                        PropNode.callingScope(frame, root.scopeName)));
             } else {
                 ForeachNode.notIterable(node, value);
                 state.setObject(bytecode, frame, PhpNull.NULL);
@@ -4366,7 +4367,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static PhpRef ref(VirtualFrame frame, PropSite site, Object object,
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access) {
-            return access.makeRefOn(frame, object, site.name);
+            return access.makeRefOn(frame.getArguments(), object, site.name);
         }
     }
 
@@ -4378,7 +4379,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static PhpRef ref(VirtualFrame frame, PropSite site, Object object, String name,
                                  @Cached(value = "site.create()", uncached = "site.uncached()",
                                          neverDefault = true) PropNode access) {
-            return access.makeRefOn(frame, object, name);
+            return access.makeRefOn(frame.getArguments(), object, name);
         }
     }
 
@@ -4464,7 +4465,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object bind(VirtualFrame frame, PropSite site, PhpRef ref, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            access.bindRefOn(frame, object, site.name, ref);
+            access.bindRefOn(frame.getArguments(), object, site.name, ref);
             return ref.get();
         }
     }
@@ -4859,6 +4860,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void declare(ClassTemplate template, @Bind Node node) {
             DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template,
                     Str.lower(template.getName()));
+        }
+    }
+
+    /**
+     * `parent::$name::get()`, `parent::$name::set($value)` in a property hook (ZEND_INIT_PARENT_PROPERTY_HOOK_CALL):
+     * the parent's hook, or its trampoline's access to the backing value.
+     */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class, name = "set")
+    public static final class ParentHook {
+        @Specialization
+        public static Object call(VirtualFrame frame, PropSite site, boolean set, @Variadic Object[] args,
+                                  @Bind Node node) {
+            return PropNode.parentHook(node, frame.getArguments(), site.lexicalClass, site.name, set, args);
         }
     }
 

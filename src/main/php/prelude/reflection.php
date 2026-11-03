@@ -938,9 +938,270 @@ class ReflectionClass implements Reflector
         return \Truffle\reflection_new(TruffleReflection::of($this)['name']);
     }
 
+    public function hasProperty(string $name): bool
+    {
+        return \Truffle\reflection_property(TruffleReflection::of($this)['name'], $name) !== false;
+    }
+
+    public function getProperty(string $name): ReflectionProperty
+    {
+        return new ReflectionProperty(TruffleReflection::of($this)['name'], $name);
+    }
+
+    /** @return list<ReflectionProperty> */
+    public function getProperties(?int $filter = null): array
+    {
+        $class = TruffleReflection::of($this)['name'];
+        $result = [];
+        foreach (\Truffle\reflection_properties($class) as $name) {
+            $property = new ReflectionProperty($class, $name);
+            if ($filter === null || ($property->getModifiers() & $filter) !== 0) {
+                $result[] = $property;
+            }
+        }
+        return $result;
+    }
+
+    // ---- lazy objects (zend_lazy_objects.c) ----
+
+    const SKIP_INITIALIZATION_ON_SERIALIZE = 8;
+    const SKIP_DESTRUCTOR = 16;
+
+    public function newLazyGhost(callable $initializer, int $options = 0): object
+    {
+        $this->lazyOptions('newLazyGhost', $options, 2, false);
+        return \Truffle\lazy_new(TruffleReflection::of($this)['name'], $initializer, $options, false);
+    }
+
+    public function newLazyProxy(callable $factory, int $options = 0): object
+    {
+        $this->lazyOptions('newLazyProxy', $options, 2, false);
+        return \Truffle\lazy_new(TruffleReflection::of($this)['name'], $factory, $options, true);
+    }
+
+    public function resetAsLazyGhost(object $object, callable $initializer, int $options = 0): void
+    {
+        $this->lazyReset('resetAsLazyGhost', $object, $initializer, $options, false);
+    }
+
+    public function resetAsLazyProxy(object $object, callable $factory, int $options = 0): void
+    {
+        $this->lazyReset('resetAsLazyProxy', $object, $factory, $options, true);
+    }
+
+    public function isUninitializedLazyObject(object $object): bool
+    {
+        $this->lazyObject('isUninitializedLazyObject', $object);
+        return \Truffle\lazy_state($object, 'uninitialized');
+    }
+
+    public function initializeLazyObject(object $object): object
+    {
+        $this->lazyObject('initializeLazyObject', $object);
+        return \Truffle\lazy_state($object, 'initialize');
+    }
+
+    public function markLazyObjectAsInitialized(object $object): object
+    {
+        $this->lazyObject('markLazyObjectAsInitialized', $object);
+        return \Truffle\lazy_state($object, 'mark');
+    }
+
+    public function getLazyInitializer(object $object): ?callable
+    {
+        $this->lazyObject('getLazyInitializer', $object);
+        return \Truffle\lazy_state($object, 'initializer');
+    }
+
+    private function lazyOptions(string $method, int $options, int $position, bool $reset): void
+    {
+        if (($options & ~(self::SKIP_INITIALIZATION_ON_SERIALIZE | self::SKIP_DESTRUCTOR)) !== 0) {
+            throw new ReflectionException("ReflectionClass::$method(): Argument #$position (\$options) contains invalid flags");
+        }
+        if (!$reset && ($options & self::SKIP_DESTRUCTOR) !== 0) {
+            throw new ReflectionException("ReflectionClass::$method(): Argument #$position (\$options) does not accept "
+                . 'ReflectionClass::SKIP_DESTRUCTOR');
+        }
+    }
+
+    private function lazyReset(string $method, object $object, callable $initializer, int $options, bool $proxy): void
+    {
+        $this->lazyObject($method, $object);
+        $this->lazyOptions($method, $options, 3, true);
+        if (\Truffle\lazy_state($object, 'uninitialized')) {
+            throw new ReflectionException('Object is already lazy');
+        }
+        \Truffle\lazy_reset(TruffleReflection::of($this)['name'], $object, $initializer, $options, $proxy);
+    }
+
+    /** Z_PARAM_OBJ_OF_CLASS: the object must be of the reflected class. */
+    private function lazyObject(string $method, object $object): void
+    {
+        $class = TruffleReflection::of($this)['name'];
+        if (!$object instanceof $class) {
+            throw new TypeError("ReflectionClass::$method(): Argument #1 (\$object) must be of type $class, "
+                . get_debug_type($object) . ' given');
+        }
+    }
+
     public function __toString(): string
     {
         TruffleReflection::notImplemented('ReflectionClass::__toString()');
+    }
+}
+
+class ReflectionProperty implements Reflector
+{
+    const IS_STATIC = 16;
+    const IS_READONLY = 128;
+    const IS_PUBLIC = 1;
+    const IS_PROTECTED = 2;
+    const IS_PRIVATE = 4;
+    const IS_ABSTRACT = 64;
+    const IS_PROTECTED_SET = 2048;
+    const IS_PRIVATE_SET = 4096;
+    const IS_VIRTUAL = 512;
+    const IS_FINAL = 32;
+
+    public string $name = '';
+    public string $class = '';
+
+    public function __construct(object|string $class, string $property)
+    {
+        $info = \Truffle\reflection_property($class, $property);
+        if ($info === false) {
+            $name = is_object($class) ? get_class($class) : $class;
+            if (!class_exists($name) && !interface_exists($name) && !trait_exists($name)) {
+                throw new ReflectionException("Class \"$name\" does not exist", -1);
+            }
+            throw new ReflectionException("Property $name::\$$property does not exist");
+        }
+        TruffleReflection::$state[spl_object_id($this)] = $info;
+        $this->name = $info['name'];
+        $this->class = $info['class'];
+    }
+
+    public function getName(): string
+    {
+        return TruffleReflection::of($this)['name'];
+    }
+
+    public function getModifiers(): int
+    {
+        return TruffleReflection::of($this)['modifiers'];
+    }
+
+    public function isPublic(): bool
+    {
+        return ($this->getModifiers() & self::IS_PUBLIC) !== 0;
+    }
+
+    public function isProtected(): bool
+    {
+        return ($this->getModifiers() & self::IS_PROTECTED) !== 0;
+    }
+
+    public function isPrivate(): bool
+    {
+        return ($this->getModifiers() & self::IS_PRIVATE) !== 0;
+    }
+
+    public function isStatic(): bool
+    {
+        return ($this->getModifiers() & self::IS_STATIC) !== 0;
+    }
+
+    public function isVirtual(): bool
+    {
+        return ($this->getModifiers() & self::IS_VIRTUAL) !== 0;
+    }
+
+    public function isFinal(): bool
+    {
+        return ($this->getModifiers() & self::IS_FINAL) !== 0;
+    }
+
+    public function getDeclaringClass(): ReflectionClass
+    {
+        return new ReflectionClass(TruffleReflection::of($this)['class']);
+    }
+
+    public function setAccessible(bool $accessible): void
+    {
+    }
+
+    /** The property's value as code in the reflected class reads it: hooks run, a lazy object initializes. */
+    public function getValue(?object $object = null): mixed
+    {
+        $info = TruffleReflection::of($this);
+        $name = $info['name'];
+        if ($this->isStatic()) {
+            return \Truffle\static_property($info['class'], $name);
+        }
+        if ($object === null) {
+            throw new TypeError('ReflectionProperty::getValue(): Argument #1 ($object) must be provided for instance properties');
+        }
+        if (!$object instanceof $info['class']) {
+            throw new ReflectionException('Given object is not an instance of the class this property was declared in');
+        }
+        return isset($info['dynamic']) ? $object->$name
+            : \Closure::bind(fn() => $this->$name, $object, $info['reflected'])();
+    }
+
+    /** The property written as code in the reflected class writes it: a set hook runs, a lazy object initializes. */
+    public function setValue(mixed $objectOrValue = null, mixed $value = null): void
+    {
+        $info = TruffleReflection::of($this);
+        $name = $info['name'];
+        if ($this->isStatic()) {
+            $value = func_num_args() === 1 ? $objectOrValue : $value;
+            \Truffle\set_static_property($info['class'], $name, $value);
+            return;
+        }
+        if (!is_object($objectOrValue)) {
+            throw new TypeError('ReflectionProperty::setValue(): Argument #1 ($objectOrValue) must be of type object, '
+                . get_debug_type($objectOrValue) . ' given');
+        }
+        if (isset($info['dynamic'])) {
+            $objectOrValue->$name = $value;
+            return;
+        }
+        \Closure::bind(function () use ($name, $value) {
+            $this->$name = $value;
+        }, $objectOrValue, $info['reflected'])();
+    }
+
+    public function skipLazyInitialization(object $object): void
+    {
+        $this->lazyObject('skipLazyInitialization', $object);
+        \Truffle\property_lazy($object, TruffleReflection::of($this)['name'], 'skip');
+    }
+
+    public function setRawValueWithoutLazyInitialization(object $object, mixed $value): void
+    {
+        $this->lazyObject('setRawValueWithoutLazyInitialization', $object);
+        \Truffle\property_lazy($object, TruffleReflection::of($this)['name'], 'raw', $value);
+    }
+
+    public function isLazy(object $object): bool
+    {
+        $this->lazyObject('isLazy', $object);
+        return \Truffle\property_lazy($object, TruffleReflection::of($this)['name'], 'isLazy');
+    }
+
+    /** Z_PARAM_OBJ_OF_CLASS: the object must be of the property's class. */
+    private function lazyObject(string $method, object $object): void
+    {
+        $class = TruffleReflection::of($this)['reflected'];
+        if (!$object instanceof $class) {
+            throw new TypeError("ReflectionProperty::$method(): Argument #1 (\$object) must be of type $class, "
+                . get_debug_type($object) . ' given');
+        }
+    }
+
+    public function __toString(): string
+    {
+        TruffleReflection::notImplemented('ReflectionProperty::__toString()');
     }
 }
 

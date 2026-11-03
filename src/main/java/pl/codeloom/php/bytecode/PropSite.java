@@ -9,14 +9,17 @@ import pl.codeloom.php.nodes.vars.PropNode;
 public final class PropSite {
     /** The interned property name, or null when the instruction computes it. */
     final String name;
-    private final String lexicalClass;
+    final String lexicalClass;
     private final boolean scopeInFrame;
     private final boolean thisInMethod;
+    /** In a property hook, the hooked property's name (PropNode's hookOf); else null. */
+    private final String hookOf;
     /** The uncached interpreter's access, made once. */
     private PropNode uncached;
 
-    public PropSite(String name, String lexicalClass, boolean scopeInFrame, boolean thisInMethod) {
+    public PropSite(String name, String lexicalClass, boolean scopeInFrame, boolean thisInMethod, String hookOf) {
         this.name = name;
+        this.hookOf = hookOf;
         this.lexicalClass = lexicalClass;
         this.scopeInFrame = scopeInFrame;
         this.thisInMethod = thisInMethod;
@@ -24,13 +27,13 @@ public final class PropSite {
 
     /** A cached instruction's own access node. */
     PropNode create() {
-        return PropNode.forOperands(name, lexicalClass, scopeInFrame, thisInMethod, false);
+        return PropNode.forOperands(name, lexicalClass, scopeInFrame, thisInMethod, hookOf, false);
     }
 
     PropNode uncached() {
         PropNode access = uncached;
         if (access == null) {
-            access = PropNode.forOperands(name, lexicalClass, scopeInFrame, thisInMethod, true);
+            access = PropNode.forOperands(name, lexicalClass, scopeInFrame, thisInMethod, hookOf, true);
             uncached = access;
         }
         return access;

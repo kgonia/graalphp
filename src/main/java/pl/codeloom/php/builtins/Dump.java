@@ -137,6 +137,22 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
+            // a lazy object as it is (zend_lazy_object_debug_info): an initialized proxy shows its instance
+            PhpObject.Lazy lazy = object.isInitializingLazy() ? null : object.lazy();
+            if (lazy != null) {
+                common += lazy.isProxy() ? "lazy proxy " : "lazy ghost ";
+            }
+            if (lazy != null && lazy.instance() != null) {
+                ascii(common + "object(");
+                utf8(object.getPhpClass().getName());
+                ascii(")#" + object.id() + " (1) {\n");
+                spaces(level + 1);
+                ascii("[\"instance\"]=>\n");
+                varDump(lazy.instance(), level + 2);
+                leave(object);
+                closeBrace(level);
+                return;
+            }
             // php_var_dump: the property table, with an uninitialized typed property's type in its place
             PhpClass phpClass = object.getPhpClass();
             Object[] table = object.propertyTable();
@@ -149,7 +165,8 @@ final class Dump {
                 if (t < table.length && mangled.equals(table[t])) {
                     dumpProperty(mangled, table[t + 1], level);
                     t += 2;
-                } else if (decl.type() != null) {
+                } else if (decl.type() != null && !(phpClass.findHooks(decl.name()) instanceof PhpClass.Hooks hooks
+                        && hooks.virtual())) {
                     spaces(level + 1);
                     property(mangled, true);
                     ascii("]=>\n");
@@ -318,7 +335,10 @@ final class Dump {
                 utf8(object.getPhpClass().getName());
                 ascii("::__set_state(array(\n");
             }
-            Object[] table = object.propertyTable();
+            // a lazy object initialized; a class with hooks has its get hooks called (readableProperties)
+            PhpObject real = object.initialized();
+            Object[] table = real.getPhpClass().hasHooks() ? real.readableProperties(false).toArray()
+                    : real.propertyTable();
             for (int i = 0; i < table.length; i += 2) {
                 // the name unmangled
                 String key = (String) table[i];

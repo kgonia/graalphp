@@ -306,7 +306,8 @@ public final class ForeachNode extends StmtNode {
      * the key is written.
      */
     private void iterateObjectByRef(VirtualFrame frame, PhpObject subject) {
-        GeneratorRefIteration iteration = GeneratorRefIteration.start(this, subject);
+        GeneratorRefIteration iteration = GeneratorRefIteration.start(this, subject,
+                PropNode.callingScope(frame, lexicalClass));
         while (iteration.advance(this)) {
             bind.bindRef(frame, iteration.currentRef(this));
             if (bind.hasKey()) {
@@ -323,7 +324,7 @@ public final class ForeachNode extends StmtNode {
      * calls are made from this statement, as traces show them.
      */
     private void iterateObject(VirtualFrame frame, PhpObject subject) {
-        PhpObject object = unwrapAggregates(subject);
+        PhpObject object = unwrapAggregates(subject).initialized();
         if (object.getPhpClass().isSubclassOf("iterator")) {
             step(object, "rewind");
             while (Convert.toBool(step(object, "valid"))) {
@@ -341,26 +342,22 @@ public final class ForeachNode extends StmtNode {
         }
         // the properties the scope may access; their values as they are when the loop reaches them, as php-src
         // walks the object's property table (one unset meanwhile is skipped)
-        String[] properties = visiblePropertyNames(object, PropNode.callingScope(frame, lexicalClass));
-        for (int i = 0; i < properties.length; i++) {
-            String property = properties[i];
-            Object value = object.getProperty(property);
+        String scope = PropNode.callingScope(frame, lexicalClass);
+        java.util.List<String> properties = object.visiblePropertyNames(scope);
+        String property;
+        for (int i = 0; (property = object.visiblePropertyAt(properties, i, scope)) != null; i++) {
+            Object value = object.visibleValue(property);
             if (value == null) {
                 continue;
             }
             bind.writeKey(frame, Str.ofKey(property));
-            bind.assignValue(frame, PhpRef.deref(value));
+            bind.assignValue(frame, value);
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;
             }
         }
     }
 
-    /** The names as an array: a JDK list's iterator is no code for partial evaluation. */
-    @TruffleBoundary
-    private static String[] visiblePropertyNames(PhpObject object, String scope) {
-        return object.visiblePropertyNames(scope).toArray(new String[0]);
-    }
 
     /** An iteration step: the Iterator's method, or the Generator's own operation for it. */
     private Object step(PhpObject object, String method) {

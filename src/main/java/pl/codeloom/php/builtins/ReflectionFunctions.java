@@ -55,6 +55,45 @@ final class ReflectionFunctions {
         r.fn("truffle\\reflection_closure", (context, a) -> closure(context, Args.get(a, 0), Args.str(a, 1),
                 Args.str(a, 2)));
         r.fn("truffle\\reflection_new", (context, a) -> phpClass(context, Args.get(a, 0), false).instantiate());
+        r.fn("truffle\\lazy_new", (context, a) -> lazy(context, phpClass(context, Args.get(a, 0), false), null,
+                Args.get(a, 1), (int) Args.lng(a, 2, 0), Args.bool(a, 3, false)));
+        r.fn("truffle\\lazy_reset", (context, a) -> lazy(context, phpClass(context, Args.get(a, 0), false),
+                (PhpObject) Args.get(a, 1), Args.get(a, 2), (int) Args.lng(a, 3, 0), Args.bool(a, 4, false)));
+        r.fn("truffle\\lazy_state", (context, a) -> lazyState((PhpObject) Args.get(a, 0), Str.java(Args.str(a, 1))));
+        r.fn("truffle\\reflection_property", (context, a) -> {
+            PhpClass phpClass = phpClass(context, Args.get(a, 0), false);
+            String name = Str.key(Args.str(a, 1));
+            Object info = phpClass == null ? Boolean.FALSE : propertyInfo(phpClass, name);
+            if (info == Boolean.FALSE && Args.get(a, 0) instanceof PhpObject object
+                    && object.initialized().getProperty(name) != null) {
+                // an object's dynamic property (ReflectionProperty's dynam_prop)
+                PhpArray dynamic = new PhpArray();
+                put(dynamic, "name", Str.ofKey(name));
+                put(dynamic, "class", Str.of(phpClass.getName()));
+                put(dynamic, "reflected", Str.of(phpClass.getName()));
+                put(dynamic, "modifiers", 1L);
+                put(dynamic, "dynamic", Boolean.TRUE);
+                return dynamic;
+            }
+            return info;
+        });
+        r.fn("truffle\\reflection_properties", (context, a) -> {
+            PhpClass phpClass = phpClass(context, Args.get(a, 0), false);
+            PhpArray names = new PhpArray();
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                names.append(Str.ofKey(decl.name()));
+            }
+            return names;
+        });
+        // ReflectionProperty::getValue() and setValue() of a static property
+        r.fn("truffle\\static_property", (context, a) ->
+                phpClass(context, Args.get(a, 0), false).getStaticProperty(Str.key(Args.str(a, 1))).get());
+        r.fn("truffle\\set_static_property", (context, a) -> {
+            phpClass(context, Args.get(a, 0), false).getStaticProperty(Str.key(Args.str(a, 1))).set(Args.get(a, 2));
+            return PhpNull.NULL;
+        });
+        r.fn("truffle\\property_lazy", (context, a) -> propertyLazy(context, (PhpObject) Args.get(a, 0),
+                Str.key(Args.str(a, 1)), Str.java(Args.str(a, 2)), Args.get(a, 3, PhpNull.NULL)));
         // an error of the reflection method's own (E_DEPRECATED), placed at the calling user code
         r.fn("truffle\\reflection_raise", (context, a) -> {
             ErrorFunctions.raise(context, (int) Args.lng(a, 0, ErrorFunctions.E_WARNING), Args.str(a, 1),
@@ -102,6 +141,149 @@ final class ReflectionFunctions {
             }
         }
         return result;
+    }
+
+    /**
+     * ReflectionClass::newLazyGhost(), newLazyProxy() (object null) and resetAsLazyGhost(), resetAsLazyProxy()
+     * (zend_object_make_lazy): the lazy object, or null for a reset.
+     */
+    @TruffleBoundary
+    private static Object lazy(PhpContext context, PhpClass phpClass, PhpObject object, Object initializer,
+                               int options, boolean proxy) {
+        if (internal(phpClass)) {
+            throw new PhpError("Cannot make instance of internal class lazy: " + phpClass.getName() + " is internal");
+        }
+        for (PhpClass parent = phpClass.getParent(); parent != null; parent = parent.getParent()) {
+            if (internal(parent)) {
+                throw new PhpError("Cannot make instance of internal class lazy: " + phpClass.getName()
+                        + " inherits internal class " + parent.getName());
+            }
+        }
+        if (object == null) {
+            if (!phpClass.isInstantiable()) {
+                phpClass.instantiate();
+            }
+            object = new PhpObject(phpClass.getRootShape(), phpClass, context.nextObjectId());
+            object.makeLazy(initializer, proxy, options);
+            // without properties to make lazy, an object as `new` makes it
+            return object;
+        }
+        if (object.isInitializingLazy()) {
+            throw new PhpError("Can not reset an object while it is being initialized");
+        }
+        object.makeLazy(initializer, proxy, options);
+        return PhpNull.NULL;
+    }
+
+    /** A built-in class (the prelude's too, declared nowhere), which can't be lazy; stdClass can. */
+    private static boolean internal(PhpClass phpClass) {
+        ClassTemplate template = template(phpClass);
+        return (template == null || template.getDeclaredAt() == null) && !phpClass.getLowerName().equals("stdclass");
+    }
+
+    /** ReflectionClass's questions and orders about a lazy object (by what), as php-src answers them. */
+    @TruffleBoundary
+    private static Object lazyState(PhpObject object, String what) {
+        boolean uninitialized = object.isUninitializedLazy();
+        switch (what) {
+            case "uninitialized":
+                return uninitialized;
+            case "initializer":
+                return uninitialized ? object.lazy().initializer() : PhpNull.NULL;
+            case "initialize":
+                if (uninitialized) {
+                    object.initializeLazy();
+                }
+                break;
+            case "mark":
+                if (uninitialized) {
+                    object.markLazyInitialized();
+                }
+                break;
+            default:
+                throw new PhpError("unknown lazy state " + what);
+        }
+        PhpObject instance = object;
+        while (instance.lazy() != null && instance.lazy().instance() != null) {
+            instance = instance.lazy().instance();
+        }
+        return instance;
+    }
+
+    /** What ReflectionProperty reads of a declared property, or false for a name the class doesn't declare. */
+    @TruffleBoundary
+    private static Object propertyInfo(PhpClass phpClass, String name) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        boolean isStatic = decl == null && phpClass.isStaticProperty(name);
+        if (decl == null && !isStatic) {
+            return Boolean.FALSE;
+        }
+        PhpArray info = new PhpArray();
+        put(info, "name", Str.ofKey(name));
+        String declaring = phpClass.getName();
+        if (decl != null) {
+            for (PhpClass c = phpClass; c != null; c = c.getParent()) {
+                if (c.getLowerName().equals(decl.declaringClass())) {
+                    declaring = c.getName();
+                }
+            }
+        }
+        put(info, "class", Str.of(declaring));
+        put(info, "reflected", Str.of(phpClass.getName()));
+        int visibility = decl == null ? 0 : decl.visibility();
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        long modifiers = (visibility == PhpClass.PropertyDecl.PRIVATE ? 4 : visibility == PhpClass.PropertyDecl.PROTECTED
+                ? 2 : 1) | (isStatic ? 16 : 0) | (hooks != null && hooks.virtual() ? 512 : 0)
+                | (phpClass.isFinalProperty(name) ? 32 : 0);
+        put(info, "modifiers", modifiers);
+        return info;
+    }
+
+    /**
+     * ReflectionProperty's lazy-object methods (by what): skipLazyInitialization(), setRawValueWithoutLazyInitialization()
+     * and isLazy() on the object (an initialized proxy's instance), and getValue()/setValue() through the hooks.
+     */
+    @TruffleBoundary
+    private static Object propertyLazy(PhpContext context, PhpObject object, String name, String what, Object value) {
+        while (object.lazy() != null && object.lazy().instance() != null) {
+            object = object.lazy().instance();
+        }
+        PhpClass phpClass = object.getPhpClass();
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        boolean declared = phpClass.isDeclaredProperty(name);
+        if (what.equals("isLazy")) {
+            return declared && (hooks == null || !hooks.virtual()) && object.isUninitializedLazy()
+                    && object.getProperty(name) == null;
+        }
+        String method = what.equals("skip") ? "skipLazyInitialization" : "setRawValueWithoutLazyInitialization";
+        if (!declared) {
+            throw new PhpError("ReflectionException", "Can not use " + method + " on "
+                    + (phpClass.isStaticProperty(name) ? "static" : "dynamic") + " property " + phpClass.getName()
+                    + "::$" + Str.keyText(name));
+        }
+        if (hooks != null && hooks.virtual()) {
+            throw new PhpError("ReflectionException", "Can not use " + method + " on virtual property "
+                    + phpClass.getName() + "::$" + Str.keyText(name));
+        }
+        boolean lazy = object.isUninitializedLazy() && object.getProperty(name) == null;
+        if (what.equals("skip")) {
+            if (!lazy) {
+                return PhpNull.NULL;
+            }
+            String[] names = phpClass.declaredNames();
+            Object[] defaults = phpClass.defaults();
+            for (int i = 0; i < names.length; i++) {
+                if (names[i].equals(name)) {
+                    object.writeRaw(name, defaults[i]);
+                }
+            }
+        } else {
+            object.writeRaw(name, value);
+        }
+        if (lazy) {
+            object.lazyPropertyInitialized();
+        }
+        return PhpNull.NULL;
     }
 
     /** The class an argument names (a name, autoloaded if asked, or an object's class), or null. */

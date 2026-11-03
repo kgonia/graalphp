@@ -82,6 +82,15 @@ public final class PhpClass {
     public static final int PROPERTY_TYPED = 4;
     /** A readonly or protected(set)/private(set) property: writes check it (PhpObject.checkModify). */
     public static final int PROPERTY_SET_CHECKED = 8;
+    /** A backed property with hooks: every access takes the site's slow path, which calls them. */
+    public static final int PROPERTY_HOOKED = 16;
+
+    /**
+     * A hooked property's hooks (php-src's prop_info->hooks), get and set, null where it has none; virtual when no
+     * hook uses its backing value, so objects have no slot for it (ZEND_ACC_VIRTUAL).
+     */
+    public record Hooks(PhpFunction get, PhpFunction set, boolean virtual) {
+    }
 
     private final String name;
     private final String lowerName;
@@ -109,15 +118,9 @@ public final class PhpClass {
         return unsetKeys.computeIfAbsent(propertyName, HiddenKey::new);
     }
 
-    /** The properties declared with hooks, inherited ones included (their inheritance isn't checked yet). */
-    private final Set<String> hooked = new HashSet<>();
-
-    public void addHooked(String propertyName) {
-        hooked.add(propertyName);
-    }
-
+    /** Whether the property has hooks, declared or inherited (Variance doesn't check their types yet). */
     public boolean isHooked(String propertyName) {
-        return hooked.contains(propertyName);
+        return findHooks(propertyName) != null;
     }
 
     public ConstantType constantType(String constantName) {
@@ -156,6 +159,10 @@ public final class PhpClass {
     private Object[] defaults;
     /** mangledName's results for the non-public properties, made on first use. */
     private Map<String, String> mangledNames;
+    /** The hooked properties' hooks by name, or null when the class has none. */
+    private Map<String, Hooks> hooks;
+    /** The final properties (declared or inherited), or null for none. */
+    private Set<String> finalProperties;
     /**
      * An enum's cases in declaration order: name to the backing value (a Thunk until checked, null for a pure
      * enum's case); null for a class that isn't an enum. Each case is a class constant holding its one object.
@@ -195,7 +202,6 @@ public final class PhpClass {
             methods.putAll(parent.methods);
             constants.putAll(parent.constants);
             constantTypes.putAll(parent.constantTypes);
-            hooked.addAll(parent.hooked);
             for (Map.Entry<String, PropertyDecl> restricted : parent.restrictedConstants.entrySet()) {
                 // a private constant isn't inherited (do_inherit_constant_check)
                 if (restricted.getValue().visibility() == PropertyDecl.PRIVATE) {
@@ -208,6 +214,8 @@ public final class PhpClass {
             restrictedStatics.putAll(parent.restrictedStatics);
             staticDefaults.putAll(parent.staticDefaults);
             properties.putAll(parent.properties);
+            hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
+            finalProperties = parent.finalProperties == null ? null : new HashSet<>(parent.finalProperties);
             constructor = parent.constructor;
         }
     }
@@ -740,6 +748,50 @@ public final class PhpClass {
         properties.put(decl.name(), decl.declaringClass() != null ? decl : decl.withDefault(decl.defaultValue(), lowerName));
     }
 
+    /** The property's hooks, or null for a property without (or one the class doesn't declare). */
+    @TruffleBoundary
+    public Hooks findHooks(String propertyName) {
+        return hooks == null ? null : hooks.get(propertyName);
+    }
+
+    /** Whether the class declares or inherits a hooked property (ce->num_hooked_props). */
+    public boolean hasHooks() {
+        return hooks != null;
+    }
+
+    /** Gives a declared property hooks (null removes them). */
+    public void setHooks(String propertyName, Hooks propertyHooks) {
+        if (propertyHooks == null) {
+            if (hooks != null) {
+                hooks.remove(propertyName);
+                hooks = hooks.isEmpty() ? null : hooks;
+            }
+            return;
+        }
+        if (hooks == null) {
+            hooks = new LinkedHashMap<>();
+        }
+        hooks.put(propertyName, propertyHooks);
+    }
+
+    /** Whether the property is declared final (here or in an ancestor). */
+    public boolean isFinalProperty(String propertyName) {
+        return finalProperties != null && finalProperties.contains(propertyName);
+    }
+
+    public void setFinalProperty(String propertyName) {
+        if (finalProperties == null) {
+            finalProperties = new HashSet<>();
+        }
+        finalProperties.add(propertyName);
+    }
+
+    /** A hooked property without a backing value: objects have no slot for it. */
+    private boolean isVirtual(String propertyName) {
+        Hooks h = findHooks(propertyName);
+        return h != null && h.virtual();
+    }
+
     /** The declared (or inherited) instance property, or null for an undeclared one. */
     @TruffleBoundary
     public PropertyDecl findProperty(String propertyName) {
@@ -1035,26 +1087,47 @@ public final class PhpClass {
     /** Declared (and inherited) instance property names, in declaration order. */
     @TruffleBoundary
     public String[] declaredNames() {
-        return properties.keySet().toArray(new String[0]);
+        List<String> names = new ArrayList<>(properties.size());
+        for (String propertyName : properties.keySet()) {
+            if (!isVirtual(propertyName)) {
+                names.add(propertyName);
+            }
+        }
+        return names.toArray(new String[0]);
     }
 
     /** The properties' shape flags (PROPERTY_PROTECTED, PROPERTY_PRIVATE) in an object of this class. */
     @TruffleBoundary
     public int[] declaredFlags() {
-        int[] flags = new int[properties.size()];
+        int[] flags = new int[declaredNames().length];
         int i = 0;
         for (PropertyDecl decl : properties.values()) {
-            flags[i++] = propertyFlags(decl);
+            if (!isVirtual(decl.name())) {
+                flags[i++] = propertyFlags(decl);
+            }
         }
         return flags;
     }
 
-    /** The shape flags of a declared property in an object of this class. */
+    /**
+     * The shape flags of a declared property in an object of this class: PROPERTY_PROTECTED, PROPERTY_PRIVATE,
+     * PROPERTY_TYPED, PROPERTY_SET_CHECKED, PROPERTY_HOOKED.
+     */
+    @TruffleBoundary
     public int propertyFlags(PropertyDecl decl) {
-        return (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+        String propertyName = decl.name();
+        int flags = (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
                 : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
                 ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0)
                 | (decl.isReadonly() || decl.restrictsSet() ? PROPERTY_SET_CHECKED : 0);
+        return findHooks(propertyName) != null ? flags | PROPERTY_HOOKED : flags;
+    }
+
+    /** propertyFlags of the declared property named propertyName, 0 for an undeclared one. */
+    @TruffleBoundary
+    public int propertyFlags(String propertyName) {
+        PropertyDecl decl = properties.get(propertyName);
+        return decl == null ? 0 : propertyFlags(decl);
     }
 
     /**
@@ -1063,9 +1136,12 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public Object[] declaredDefaults() {
-        Object[] values = new Object[properties.size()];
+        Object[] values = new Object[declaredNames().length];
         int i = 0;
         for (Map.Entry<String, PropertyDecl> entry : properties.entrySet()) {
+            if (isVirtual(entry.getKey())) {
+                continue;
+            }
             Object value = entry.getValue().defaultValue();
             if (value instanceof Thunk thunk) {
                 value = thunk.evaluate();

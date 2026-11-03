@@ -469,7 +469,7 @@ public final class BytecodeTranslator {
             // a constructor's promoted parameters, stored before its body runs (Translator's PromoteNodes)
             if (owner != null && "__construct".equalsIgnoreCase((String) declaration.get("name"))) {
                 for (int i = 0; i < params.length; i++) {
-                    if ((((Ast) paramList.child(i)).flags & PROMOTED) != 0) {
+                    if (Translator.isPromoted((Ast) paramList.child(i))) {
                         b.beginPromote(Str.sourceKey(params[i].name()));
                         b.emitReadVar(variables.get(params[i].name()));
                         b.endPromote();
@@ -2766,8 +2766,12 @@ public final class BytecodeTranslator {
         private PropSite propSite(Ast node, String name) {
             boolean scopeInFrame = function.getName().startsWith(CLOSURE_PREFIX);
             boolean thisInMethod = isThis(node.get("expr")) && !scopeInFrame;
+            // a hook is named "$property::get" or "$property::set"
+            String hookOf = function.getName().startsWith("$")
+                    ? function.getName().substring(1, function.getName().lastIndexOf("::")) : null;
             return (PropSite) made(() -> new PropSite(name == null ? null : Str.sourceKey(name),
-                    owner == null ? null : Str.lower(owner.name()), scopeInFrame, thisInMethod));
+                    owner == null ? null : Str.lower(owner.name()), scopeInFrame, thisInMethod,
+                    hookOf == null ? null : Str.sourceKey(hookOf)));
         }
 
         /**
@@ -4078,6 +4082,10 @@ public final class BytecodeTranslator {
          */
         private void staticCall(Ast node, boolean byRefContext) {
             Ast classNode = node.node("class");
+            if (Translator.isParentHookCall(node)) {
+                parentHook(node, Translator.parentHookProperty(node), (String) node.get("method"));
+                return;
+            }
             String lower = classNode != null && classNode.is("AST_NAME") ? Str.lower(classNameOf(classNode)) : "";
             boolean forwarding = lower.equals("self") || lower.equals("parent") || lower.equals("static");
             if (!(node.get("method") instanceof String name)) {
@@ -4114,6 +4122,32 @@ public final class BytecodeTranslator {
             } else {
                 b.endCallStatic();
             }
+        }
+
+        /**
+         * `parent::$property::get()` or `::set(...)` (zend_compile_parent_property_hook_call): only in that hook of
+         * that property; its arguments by value.
+         */
+        private void parentHook(Ast node, String property, String method) {
+            if (Translator.isCallableConvert(node)) {
+                throw compileError(node, "Cannot create Closure for parent property hook call");
+            }
+            String hook = function.getName();
+            String error = Translator.parentHookError(node, hook);
+            if (error != null) {
+                throw compileError(node, error);
+            }
+            String kind = hook.substring(hook.lastIndexOf("::") + 2);
+            PropSite site = (PropSite) made(() -> new PropSite(Str.sourceKey(property), Str.lower(owner.name()),
+                    false, false, null));
+            b.beginParentHook(site, kind.equals("set"));
+            for (Object arg : node.node("args").children()) {
+                if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG"))) {
+                    throw new Unsupported("unpacked or named argument of a parent hook call", ast);
+                }
+                expression(arg);
+            }
+            b.endParentHook();
         }
 
         /**
