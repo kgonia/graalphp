@@ -1,7 +1,9 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
@@ -16,6 +18,8 @@ public final class CallableCallNode extends CallNode {
     @Child private ArgumentsNode args;
     @Child private ExprNode argsArray;
     @Child private CallableDispatchNode dispatch;
+    /** call_user_func's: the arguments are values. */
+    private final boolean parameter;
 
     /**
      * parameter: call_user_func(_array)'s callback parameter, null for `$f(args)`. keepRef: the callee's result
@@ -28,13 +32,30 @@ public final class CallableCallNode extends CallNode {
         this.args = args;
         this.argsArray = argsArray;
         this.dispatch = CallableDispatchNode.create(parameter, keepRef);
+        this.parameter = parameter != null;
     }
 
+    /**
+     * `$f(args)` resolves its callee before the arguments, which go by reference where its parameters do
+     * (INIT_DYNAMIC_CALL, then SEND_VAR_EX); a method __call stands in for takes them by value.
+     */
     @Override
     public Object executeRef(VirtualFrame frame) {
         Object target = callable.execute(frame);
-        Object[] values = argsArray != null ? arrayArguments(argsArray.execute(frame)) : args.values(frame);
-        return dispatch.execute(target, values);
+        if (argsArray != null) {
+            return dispatch.execute(target, arrayArguments(argsArray.execute(frame)));
+        }
+        if (parameter) {
+            return dispatch.execute(target, args.values(frame));
+        }
+        Callables.Target resolved = resolve(target);
+        return dispatch.execute(target, resolved.magicName() != null ? args.values(frame)
+                : args.values(frame, resolved.function()));
+    }
+
+    @TruffleBoundary
+    private Callables.Target resolve(Object target) {
+        return Callables.resolveCall(PhpContext.get(this), target);
     }
 
     /** call_user_func_array()'s arguments: the array's elements (see toValues); anything else is a TypeError. */

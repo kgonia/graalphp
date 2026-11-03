@@ -18,6 +18,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -87,6 +88,12 @@ public final class ArgumentsNode extends Node {
             CallNode.notice(this, CallNode.PASSED_VALUE);
         }
         return result;
+    }
+
+    /** The values for a callee known before them: by reference where its parameters are, as build passes them. */
+    public Object[] values(VirtualFrame frame, PhpFunction callee) {
+        Object[] arguments = build(frame, callee, null, null, null);
+        return Arrays.copyOfRange(arguments, PhpFunction.ARG_FIRST, arguments.length);
     }
 
     /** Values only (no references): for callables whose target isn't known until the values are. */
