@@ -107,6 +107,7 @@ public final class Translator {
     private static final int CLASS_INTERFACE = 1;
     private static final int CLASS_TRAIT = 2;
     private static final int CLASS_ABSTRACT = 64;
+    private static final int CLASS_ENUM = 268435456;
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
     private static final int ARRAY_SYNTAX_LIST = 1;
@@ -207,10 +208,12 @@ public final class Translator {
     // ---- files ----
 
     /**
-     * A file's top-level statements: function declarations are hoisted into the prologue, namespace and use
-     * statements change how the following names resolve, and a braced namespace's statements come in place.
+     * A file's top-level statements: function declarations are hoisted into the prologue, and the classes php-src
+     * binds before the file runs into classes (see {@link #topLevelClass}); namespace and use statements change
+     * how the following names resolve, and a braced namespace's or block's statements come in place, at the top
+     * level still (zend_compile_top_stmt).
      */
-    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> body) {
+    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> classes, List<StmtNode> body) {
         for (Object child : list.children()) {
             if (!(child instanceof Ast statement)) {
                 continue;
@@ -222,10 +225,16 @@ public final class Translator {
                     prologue.add(declaration);
                     break;
                 }
+                case "AST_CLASS":
+                    topLevelClass(statement, classes, body);
+                    break;
+                case "AST_STMT_LIST":
+                    fileStatements(statement, prologue, classes, body);
+                    break;
                 case "AST_NAMESPACE":
                     names = Names.namespace((String) statement.get("name"));
                     if (statement.get("stmts") != null) {
-                        fileStatements(statement.node("stmts"), prologue, body);
+                        fileStatements(statement.node("stmts"), prologue, classes, body);
                         names = Names.GLOBAL;
                     }
                     break;
@@ -253,10 +262,68 @@ public final class Translator {
 
     public FileRootNode translateFile(Ast file) {
         List<StmtNode> prologue = new ArrayList<>();
+        List<StmtNode> classes = new ArrayList<>();
         List<StmtNode> body = new ArrayList<>();
-        fileStatements(file, prologue, body);
+        fileStatements(file, prologue, classes, body);
+        // the classes the compile linked, then those bound if their parent is declared by then (EarlyClassNode)
+        classes.sort(java.util.Comparator.comparing(early -> ((DeclareNodes.EarlyClassNode) early).isDelayed()));
+        prologue.addAll(classes);
         return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), block(body),
                 source == null ? null : source.createSection(0, source.getLength()));
+    }
+
+
+    /** The names of the classes this file's compile has linked so far (lowercase), for {@link #topLevelClass}. */
+    private final Set<String> linkedClasses = new HashSet<>();
+
+    /**
+     * A top-level class, bound as php-src with opcache (the reference's CLI has it) binds it. The compile links one
+     * that implements no interface and uses no trait (zend_compile_class_decl) if it has no parent or one linked
+     * then: a built-in or a class linked earlier in this file (ZEND_COMPILE_IGNORE_OTHER_FILES), and if the name
+     * isn't a built-in's; it is bound when the file is loaded, and has no statement. Such a class with another
+     * parent is bound at the load if the parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its
+     * statement. Every other class is declared by its statement.
+     */
+    private void topLevelClass(Ast node, List<StmtNode> classes, List<StmtNode> body) {
+        ClassTemplate template = classTemplate(node, names.declared((String) node.get("name")));
+        String lower = Str.lower(template.getName());
+        String parent = template.getParentName();
+        int boundSlot = -1;
+        if (template.getInterfaceNames().isEmpty() && !usesTrait(node) && (node.flags & CLASS_ENUM) == 0) {
+            if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
+                    && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
+                linkedClasses.add(lower);
+                classes.add(new DeclareNodes.EarlyClassNode(template, -1));
+                return;
+            }
+            if (parent != null) {
+                boundSlot = hiddenSlot("bound");
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot));
+            }
+        }
+        StmtNode declaration = new DeclareNodes.DeclareClassNode(template, boundSlot);
+        declaration.setLine(node.line);
+        body.add(declaration);
+    }
+
+    private static boolean usesTrait(Ast node) {
+        for (Object member : node.node("stmts").children()) {
+            if (member instanceof Ast ast && ast.is("AST_USE_TRAIT")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A built-in class (php-src's internal ones, which every compile sees), not one a script declared. */
+    private boolean isInternalClass(String name) {
+        String lower = Str.lower(name);
+        if (language.preludeFile(lower) != null) {
+            return true;
+        }
+        PhpClass phpClass = PhpContext.get(null).findClass(lower);
+        return phpClass != null && !(phpClass.getDeclaration() instanceof ClassTemplate template
+                && template.getDeclaredAt() != null);
     }
 
     /** Where a function or class is declared: null in internal code, as php-src's internal ones have no file. */
@@ -1021,7 +1088,7 @@ public final class Translator {
     // ---- classes ----
 
     private StmtNode classDeclaration(Ast node) {
-        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))));
+        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))), -1);
     }
 
     /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */

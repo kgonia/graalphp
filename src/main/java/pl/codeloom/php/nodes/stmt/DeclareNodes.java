@@ -61,18 +61,17 @@ public final class DeclareNodes {
     }
 
     /**
-     * zend_class_redeclaration_error when the name is taken (E_COMPILE_ERROR), before the class is linked: named
-     * by what the declared one is (class, interface, trait).
+     * zend_class_redeclaration_error when the name is taken, before the class is linked: named by what the declared
+     * one is (class, interface, trait) and its name.
      */
-    private static PhpBailout redeclared(PhpContext context, PhpClass previous, ClassTemplate template,
-                                         Node site) {
+    private static PhpBailout redeclared(PhpContext context, int type, PhpClass previous, SourceLocation at,
+                                         int skip) {
         ClassTemplate old = previous.getDeclaration() instanceof ClassTemplate declaration ? declaration : null;
         SourceLocation declared = old == null ? null : old.getDeclaredAt();
         String kind = previous.isInterface() ? "interface" : old != null && old.isTrait() ? "trait" : "class";
-        String message = "Cannot redeclare " + kind + " " + template.getName() + (declared != null
+        String message = "Cannot redeclare " + kind + " " + previous.getName() + (declared != null
                 ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
-        return ErrorFunctions.fatal(context, ErrorFunctions.E_COMPILE_ERROR, Str.of(message), SourceLocation.of(site),
-                0);
+        return ErrorFunctions.fatal(context, type, Str.of(message), at, skip);
     }
 
     /**
@@ -94,9 +93,12 @@ public final class DeclareNodes {
 
     public static final class DeclareClassNode extends StmtNode {
         private final ClassTemplate template;
+        /** The file's frame slot an {@link EarlyClassNode} sets when it bound the class; -1 for none. */
+        private final int boundSlot;
 
-        public DeclareClassNode(ClassTemplate template) {
+        public DeclareClassNode(ClassTemplate template, int boundSlot) {
             this.template = template;
+            this.boundSlot = boundSlot;
         }
 
         public ClassTemplate getTemplate() {
@@ -105,16 +107,68 @@ public final class DeclareNodes {
 
         @Override
         public void execute(VirtualFrame frame) {
-            declare(PhpContext.get(this), template, this);
+            if (boundSlot < 0 || !frame.isBoolean(boundSlot)) {
+                declare(PhpContext.get(this), template, this);
+            }
         }
 
+        /** ZEND_DECLARE_CLASS: a name taken is an E_COMPILE_ERROR here (zend_bind_class_in_slot). */
         @TruffleBoundary
         public static void declare(PhpContext context, ClassTemplate template, Node site) {
             PhpClass previous = context.findClass(Str.lower(template.getName()));
             if (previous != null) {
-                throw redeclared(context, previous, template, site);
+                throw redeclared(context, ErrorFunctions.E_COMPILE_ERROR, previous, SourceLocation.of(site), 0);
             }
             context.declareClass(linked(context, template.instantiate(context), site));
+        }
+    }
+
+    /**
+     * A top-level class bound before its file runs, as php-src with opcache binds it when it loads the compiled
+     * file (zend_accel_load_script). One the compile linked (boundSlot -1) is copied into the class table, a name
+     * taken an E_ERROR at the class's line before any of the file runs (zend_accel_class_hash_copy). The others,
+     * after them, are bound if their name is free and their parent declared by now
+     * (zend_accel_do_delayed_early_binding), which the class's statement then skips (ZEND_DECLARE_CLASS_DELAYED).
+     */
+    public static final class EarlyClassNode extends StmtNode {
+        private final ClassTemplate template;
+        private final int boundSlot;
+
+        public EarlyClassNode(ClassTemplate template, int boundSlot) {
+            this.template = template;
+            this.boundSlot = boundSlot;
+        }
+
+        public ClassTemplate getTemplate() {
+            return template;
+        }
+
+        public boolean isDelayed() {
+            return boundSlot >= 0;
+        }
+
+        @Override
+        public void execute(VirtualFrame frame) {
+            if (bind(PhpContext.get(this), template, isDelayed(), this) && isDelayed()) {
+                frame.setBoolean(boundSlot, true);
+            }
+        }
+
+        @TruffleBoundary
+        private static boolean bind(PhpContext context, ClassTemplate template, boolean delayed, Node site) {
+            PhpClass previous = context.findClass(Str.lower(template.getName()));
+            if (delayed) {
+                if (previous != null || context.findClass(Str.lower(template.getParentName())) == null) {
+                    return false;
+                }
+            } else if (previous != null) {
+                // the trace starts below the file, which hasn't started
+                SourceLocation at = template.getDeclaredAt();
+                throw redeclared(context, ErrorFunctions.E_ERROR, previous, at != null ? at : SourceLocation.of(site),
+                        1);
+            }
+            context.declareClass(linked(context, template.instantiate(context), site));
+            return true;
         }
     }
 
