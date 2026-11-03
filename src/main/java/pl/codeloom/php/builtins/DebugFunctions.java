@@ -1,13 +1,10 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.NodeUtil;
+import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.Instruction;
 import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.nodes.call.ClosureNode;
-import pl.codeloom.php.nodes.call.FunctionRootNode;
-import pl.codeloom.php.nodes.stmt.DeclareNodes;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
@@ -31,7 +28,8 @@ final class DebugFunctions {
 
     /**
      * Translates a file and every function, method and closure body in it, without running anything (bodies
-     * are otherwise translated on first call). Returns the translator's errors, one per body that failed.
+     * are otherwise translated on first call): the declarations are the constant operands of each root's
+     * instructions. Returns the translator's errors, one per body that failed.
      */
     @TruffleBoundary
     private static PhpArray translate(PhpContext context, String path) {
@@ -43,27 +41,29 @@ final class DebugFunctions {
             errors.append(Str.of(e.getMessage()));
             return errors;
         }
-        Deque<Node> roots = new ArrayDeque<>();
-        Set<PhpFunction> seen = new HashSet<>();
+        Deque<RootNode> roots = new ArrayDeque<>();
+        Set<Object> seen = new HashSet<>();
         roots.add(file);
         while (!roots.isEmpty()) {
-            Node root = roots.pop();
-            for (Node node : NodeUtil.findAllNodeInstances(root, Node.class)) {
-                if (node instanceof DeclareNodes.DeclareFunctionNode declaration) {
-                    body(declaration.getFunction(), seen, roots, errors);
-                } else if (node instanceof ClosureNode closure) {
-                    body(closure.getFunction(), seen, roots, errors);
-                } else if (node instanceof DeclareNodes.DeclareClassNode || node instanceof DeclareNodes.EarlyClassNode
-                        || node instanceof DeclareNodes.NewAnonymousClassNode) {
-                    ClassTemplate template = node instanceof DeclareNodes.DeclareClassNode declaration
-                            ? declaration.getTemplate() : node instanceof DeclareNodes.EarlyClassNode early
-                            ? early.getTemplate() : ((DeclareNodes.NewAnonymousClassNode) node).getTemplate();
-                    if (template.getUnsupported() != null) {
-                        errors.append(Str.of(template.getUnsupported()));
+            if (!(roots.pop() instanceof BytecodeRootNode root)) {
+                continue;
+            }
+            for (Instruction instruction : root.getBytecodeNode().getInstructions()) {
+                for (Instruction.Argument argument : instruction.getArguments()) {
+                    if (argument.getKind() != Instruction.Argument.Kind.CONSTANT) {
+                        continue;
                     }
-                    for (ClassTemplate.Member member : template.getMembers()) {
-                        if (member instanceof ClassTemplate.Method method) {
-                            body(method.function(), seen, roots, errors);
+                    Object constant = argument.asConstant();
+                    if (constant instanceof PhpFunction function) {
+                        body(function, seen, roots, errors);
+                    } else if (constant instanceof ClassTemplate template && seen.add(template)) {
+                        if (template.getUnsupported() != null) {
+                            errors.append(Str.of(template.getUnsupported()));
+                        }
+                        for (ClassTemplate.Member member : template.getMembers()) {
+                            if (member instanceof ClassTemplate.Method method) {
+                                body(method.function(), seen, roots, errors);
+                            }
                         }
                     }
                 }
@@ -72,17 +72,12 @@ final class DebugFunctions {
         return errors;
     }
 
-    private static void body(PhpFunction function, Set<PhpFunction> seen, Deque<Node> roots, PhpArray errors) {
+    private static void body(PhpFunction function, Set<Object> seen, Deque<RootNode> roots, PhpArray errors) {
         if (function.isAbstract() || !seen.add(function)) {
             return;
         }
         try {
-            RootNode root = function.getCallTarget().getRootNode();
-            roots.add(root);
-            // a generator's body is a root of its own
-            if (root instanceof FunctionRootNode tree && tree.getGeneratorBody() != null) {
-                roots.add(tree.getGeneratorBody().getRootNode());
-            }
+            roots.add(function.getCallTarget().getRootNode());
         } catch (PhpError e) {
             errors.append(Str.of(e.getMessage()));
         }

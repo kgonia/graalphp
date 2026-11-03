@@ -2,13 +2,10 @@ package pl.codeloom.php;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
-import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import pl.codeloom.php.builtins.ErrorFunctions;
-import pl.codeloom.php.nodes.FileRootNode;
-import pl.codeloom.php.nodes.StmtNode;
-import pl.codeloom.php.nodes.stmt.BasicStmts;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.parser.Translator;
 import pl.codeloom.php.parser.zend.CompilerGlobals;
 import pl.codeloom.php.parser.zend.ScriptText;
@@ -22,6 +19,7 @@ import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
+import com.oracle.truffle.api.strings.TruffleString;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -44,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * reported as php-src reports it, uncaught, and the request ends as after any fatal error.
  * </ul>
  */
-final class SourceFiles {
+public final class SourceFiles {
     /** Where php-src's error says it is when there is no running code to take the location from. */
     private static final SourceLocation NO_ACTIVE_FILE = new SourceLocation("[no active file]", 0);
 
@@ -53,10 +51,10 @@ final class SourceFiles {
 
     /** The translated top-level code of the file at canonical (path as the script named it). */
     @TruffleBoundary
-    static FileRootNode load(PhpContext context, String path, String canonical) {
+    static RootNode load(PhpContext context, String path, String canonical) {
         // the lookup and a translation it makes; the parse's diagnostics, which may run PHP's error handler, after
         AtomicReference<List<CompilerGlobals.Diagnostic>> parsed = new AtomicReference<>();
-        FileRootNode root;
+        RootNode root;
         int outer = Phases.enter(Phases.INCLUDE);
         try {
             root = lookUp(context, path, canonical, parsed);
@@ -73,8 +71,48 @@ final class SourceFiles {
         return root;
     }
 
+    /**
+     * eval(code) at location (zend_eval_stringl): the code compiled as a file named "FILE(LINE) : eval()'d code"
+     * that starts in PHP mode, every time (php-src caches no eval); a parse error is php-src's ParseError at the
+     * eval, the parse's warnings raised in the eval'd code. Empty code compiles to nothing (compile_string): null.
+     */
+    @TruffleBoundary
+    public static RootNode eval(PhpContext context, SourceLocation location, TruffleString code) {
+        String name = location.file() + "(" + location.line() + ") : eval()'d code";
+        byte[] body = Str.bytes(code);
+        if (body.length == 0) {
+            return null;
+        }
+        byte[] script = new byte[6 + body.length];
+        System.arraycopy("<?php ".getBytes(StandardCharsets.ISO_8859_1), 0, script, 0, 6);
+        System.arraycopy(body, 0, script, 6, body.length);
+        ScriptText text = ScriptText.decode(script);
+        Source source = Source.newBuilder(PhpLanguage.ID, text.text(), name).build();
+        boolean shortTags = context.ini().shortOpenTag();
+        ZendParser.Result parsed;
+        int outer = Phases.enter(Phases.PARSE);
+        try {
+            parsed = ZendParser.parse(script, text, shortTags);
+        } catch (ZendCompileError error) {
+            throw thrown(context, name, error, true);
+        } finally {
+            Phases.exit(outer);
+        }
+        for (CompilerGlobals.Diagnostic diagnostic : parsed.diagnostics()) {
+            ErrorFunctions.raise(context, diagnostic.type(), Str.of(diagnostic.message()),
+                    new SourceLocation(name, diagnostic.line()));
+        }
+        outer = Phases.enter(Phases.FILE_TRANSLATE);
+        try {
+            return new Translator(context.getLanguage(), name, source, false).translateEval(parsed.ast(),
+                    () -> ZendParser.parse(script, text, shortTags).ast());
+        } finally {
+            Phases.exit(outer);
+        }
+    }
+
     /** The file's translation: the cached one for its version, else a new one, whose diagnostics go to parsed. */
-    private static FileRootNode lookUp(PhpContext context, String path, String canonical,
+    private static RootNode lookUp(PhpContext context, String path, String canonical,
                                        AtomicReference<List<CompilerGlobals.Diagnostic>> parsed) {
         TruffleFile file = context.getEnv().getPublicTruffleFile(canonical);
         long modified;
@@ -100,7 +138,7 @@ final class SourceFiles {
         }
     }
 
-    private static FileRootNode translate(PhpLanguage language, String path, String canonical, TruffleFile file,
+    private static RootNode translate(PhpLanguage language, String path, String canonical, TruffleFile file,
                                           boolean shortTags,
                                           AtomicReference<List<CompilerGlobals.Diagnostic>> diagnostics) {
         byte[] script;
@@ -127,7 +165,8 @@ final class SourceFiles {
         diagnostics.set(parsed.diagnostics());
         outer = Phases.enter(Phases.FILE_TRANSLATE);
         try {
-            return new Translator(language, canonical, source, false).translateFile(parsed.ast());
+            return new Translator(language, canonical, source, false).translateFile(parsed.ast(),
+                    () -> ZendParser.parse(text.text().getBytes(text.charset()), text, shortTags).ast());
         } finally {
             Phases.exit(outer);
         }
@@ -164,23 +203,12 @@ final class SourceFiles {
     }
 
     /** The script's file when it doesn't parse: running it throws the error, which nothing catches. */
-    private static FileRootNode failing(PhpLanguage language, String canonical, ZendCompileError error) {
-        return new FileRootNode(language, FrameDescriptor.newBuilder().build(), canonical, false,
-                new BasicStmts.BlockNode(new StmtNode[0]), new CompileErrorNode(canonical, error), null);
-    }
-
-    private static final class CompileErrorNode extends StmtNode {
-        private final String canonical;
-        private final ZendCompileError error;
-
-        CompileErrorNode(String canonical, ZendCompileError error) {
-            this.canonical = canonical;
-            this.error = error;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            throw thrown(PhpContext.get(this), canonical, error, false);
-        }
+    private static RootNode failing(PhpLanguage language, String canonical, ZendCompileError error) {
+        return new RootNode(language) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                throw thrown(PhpContext.get(this), canonical, error, false);
+            }
+        };
     }
 }

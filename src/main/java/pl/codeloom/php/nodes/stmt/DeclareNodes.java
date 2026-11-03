@@ -158,7 +158,7 @@ public final class DeclareNodes {
         }
 
         @TruffleBoundary
-        private static boolean bind(PhpContext context, ClassTemplate template, boolean delayed, Node site) {
+        public static boolean bind(PhpContext context, ClassTemplate template, boolean delayed, Node site) {
             PhpClass previous = context.findClass(Str.lower(template.getName()));
             // a parent not bound early (its own checks unresolved) leaves the class to the delayed binding too
             String parent = template.getParentName();

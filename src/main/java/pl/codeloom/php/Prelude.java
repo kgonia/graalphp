@@ -1,6 +1,6 @@
 package pl.codeloom.php;
 
-import pl.codeloom.php.nodes.FileRootNode;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
@@ -58,14 +58,16 @@ final class Prelude {
         return "prelude/" + file;
     }
 
-    static FileRootNode translate(PhpLanguage language, String file) {
+    static RootNode translate(PhpLanguage language, String file) {
         Ast ast;
+        byte[] export;
         int outer = Phases.enter(Phases.PARSE);
         try (InputStream in = Prelude.class.getResourceAsStream(RESOURCES + file + ".json")) {
             if (in == null) {
                 throw new PhpError("prelude file " + file + " has no AST export");
             }
-            ast = AstReader.read(in);
+            export = in.readAllBytes();
+            ast = AstReader.read(export);
         } catch (IOException e) {
             throw new PhpError("reading prelude file " + file + " failed: " + e.getMessage());
         } finally {
@@ -73,7 +75,7 @@ final class Prelude {
         }
         outer = Phases.enter(Phases.FILE_TRANSLATE);
         try {
-            return new Translator(language, path(file), null, true).translateFile(ast);
+            return new Translator(language, path(file), null, true).translateFile(ast, () -> AstReader.read(export));
         } finally {
             Phases.exit(outer);
         }

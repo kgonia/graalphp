@@ -1,6 +1,6 @@
 # 003: Top-level classes aren't bound early
 
-**State:** Fixed (`517557e`)
+**State:** Fixed (`517557e`; the compile's visibility of other files' classes `f85d4c9`), no deviation left
 
 **Symptom:** a class used in a file above its own declaration isn't found:
 ```php
@@ -25,10 +25,11 @@ decides at the file's translation, `DeclareNodes.EarlyClassNode` binds in the fi
 - Either binding is skipped when an inheritance check (a method's signature, a redeclared property's or typed
   constant's type) needs a class not declared yet (`zend_can_early_bind`'s `INHERITANCE_UNRESOLVED`); an error
   still binds, to raise it. A class the compile would link that is skipped so is tried again with the delayed ones
-  (`ZEND_DECLARE_CLASS_DELAYED`), then left to its statement. Left out: the compile's attempt sees only the classes
-  of the same file (`ZEND_COMPILE_IGNORE_OTHER_FILES`), Truffle PHP's every class declared by then; the delayed
-  retry sees them all on both, so only a name already taken differs (`E_ERROR` at the load, where php-src
-  declares at the statement with "Cannot declare class").
+  (`ZEND_DECLARE_CLASS_DELAYED`), then left to its statement. The compile's attempt sees only the built-ins and the
+  classes of the file being compiled (`class_visible` with `ZEND_COMPILE_IGNORE_OTHER_FILES`): `Variance.canEarlyBind` looks classes up as the file's
+  compile does (`PhpContext.compiledFile`), so a check that needs another file's class leaves the class to the
+  delayed binding, which skips a name already taken; the statement then raises the redeclaration
+  (`class-early-binding-files`, bytecode-only `f85d4c9`).
 - Every other class is declared by its statement, as before.
 
 "Cannot redeclare" now names the class already declared (php-src's `old_ce->name`), not the new declaration's

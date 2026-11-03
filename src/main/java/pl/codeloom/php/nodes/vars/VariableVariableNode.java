@@ -34,6 +34,8 @@ public final class VariableVariableNode extends LValueNode {
     public static final int IS = 3;
     public static final int UNSET = 4;
     public static final int ISSET = 5;
+    /** A read that leaves an undefined variable Java null: an arrow function's capture (ReadVarIfDefined). */
+    public static final int DEFINED = 6;
 
     @Child private ExprNode name;
     /** How readIfSet fetches: IS (`??`, a container's isset()), or ISSET for empty($$name). */
@@ -63,6 +65,9 @@ public final class VariableVariableNode extends LValueNode {
         Object value = scope != null ? scope.get(name) : globalValue(node, name);
         if (value != null) {
             return value;
+        }
+        if (type == DEFINED) {
+            return null;
         }
         if (type != ISSET && name.equals("this")) {
             if (thisObject instanceof PhpObject) {
