@@ -1,0 +1,58 @@
+diag g2-on/engine.log
+splits 1497 of 29 roots; copies compiled 135 (9%), inlined somewhere 5 (0%), neither 1361 (91%); polymorphic again 31 (2%)
+compilations 1838, 729 s; of copies 135 targets, 29 s (4%); inlining traces 1853
+refused splits: {'Not enough budget': 289, 'Target too big': 145}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| add_filter | - | 0/0 | 531 | 49 (0) | 2 | 481 | 0 | <Unknown> 347, wp-includes/default-filters.php 146 |
+| WP_Hook::add_filter | ElementReadNode 1 | 1/0 | 519 | 50 (0) | 1 | 469 | 19 (ElementReadNode) | <Unknown> 519 |
+| add_action | - | 0/0 | 305 | 6 (0) | 0 | 299 | 0 | wp-includes/default-filters.php 127, <Unknown> 45 |
+| is_wp_error | SubclassTestNode 2 | 1/0 | 56 | 10 (0) | 2 | 46 | 0 | <Unknown> 56 |
+| WP_Widget_Factory::register | InstantiateNode 1 | 0/1 | 19 | 0 (0) | 0 | 19 | 1 (InstantiateNode) | <Unknown> 19 |
+| register_widget | - | 0/0 | 18 | 0 (0) | 0 | 18 | 0 | <Unknown> 18 |
+| map_deep | CallableDispatchNode 1 | 1/0 | 7 | 6 (0) | 0 | 1 | 0 | <Unknown> 7 |
+| WP_Post_Type::get_rest_controller | InstantiateNode 1 | 1/0 | 6 | 0 (0) | 0 | 6 | 1 (InstantiateNode) | <Unknown> 6 |
+| WP_Metadata_Lazyloader::queue_objects | ElementReadNode 1 | 1/0 | 5 | 1 (0) | 0 | 4 | 3 (ElementReadNode) | <Unknown> 5 |
+| WP_Widget_Media::__construct | SubclassTestNode 2 | 1/0 | 4 | 0 (0) | 0 | 4 | 0 | <Unknown> 4 |
+| WP_Post_Type::get_revisions_rest_controller | InstantiateNode 1 | 1/0 | 3 | 0 (0) | 0 | 3 | 1 (InstantiateNode) | <Unknown> 3 |
+| WP_REST_Revisions_Controller::get_collection_params | SubclassTestNode 1 | 1/0 | 3 | 0 (0) | 0 | 3 | 0 | <Unknown> 3 |
+| WP_Sitemaps_Registry::add_provider | SubclassTestNode 2 | 0/2 | 2 | 1 (0) | 0 | 1 | 1 (SubclassTestNode) | <Unknown> 2 |
+| WP_Block_Bindings_Source::get_value | CallableDispatchNode 1 | 1/0 | 2 | 0 (0) | 0 | 2 | 0 | <Unknown> 2 |
+| wp_lazyload_term_meta | - | 0/0 | 2 | 1 (0) | 0 | 1 | 0 | <Unknown> 2 |
+| wp_lazyload_comment_meta | - | 0/0 | 2 | 0 (0) | 0 | 2 | 0 | <Unknown> 2 |
+| WP_Post_Type::add_hooks | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Taxonomy::add_hooks | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Widget::_register | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Widget_Media::_register_one | SubclassTestNode 1 | 0/1 | 1 | 1 (0) | 0 | 0 | 1 (SubclassTestNode) | <Unknown> 1 |
+| kses_init_filters | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Font_Utils::apply_sanitizer | CallableDispatchNode 1 | 0/1 | 1 | 1 (0) | 0 | 0 | 1 (CallableDispatchNode) | <Unknown> 1 |
+| WP_Post::get_instance | SubclassTestNode 1 | 1/0 | 1 | 1 (0) | 0 | 0 | 1 (SubclassTestNode) | <Unknown> 1 |
+| traverse_and_serialize_blocks | CallableDispatchNode 2, ToStrNode 1 | 0/3 | 1 | 1 (0) | 0 | 0 | 1 (CallableDispatchNode, ToStrNode) | <Unknown> 1 |
+| wp_interactivity_process_directives | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Interactivity_API::process_directives | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Sitemaps::init | - | 0/0 | 1 | 0 (0) | 0 | 1 | 0 | <Unknown> 1 |
+| WP_Sitemaps::register_sitemaps | - | 0/0 | 1 | 1 (0) | 0 | 0 | 0 | <Unknown> 1 |
+| WP_Post_Type::get_autosave_rest_controller | InstantiateNode 1 | 1/0 | 1 | 0 (0) | 0 | 1 | 1 (InstantiateNode) | <Unknown> 1 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| for a callee | 13 | 866 | 63 (7%) | 2 | 802 | 0 |
+| ElementReadNode | 2 | 524 | 51 (10%) | 1 | 473 | 22 |
+| SubclassTestNode | 6 | 67 | 13 (19%) | 2 | 54 | 3 |
+| InstantiateNode | 4 | 29 | 0 (0%) | 0 | 29 | 4 |
+| CallableDispatchNode | 4 | 11 | 8 (73%) | 0 | 3 | 2 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :      69333
+Split limit (limit for the number of nodes to create through splitting)           :     379744
+Splits (number of targets created through splitting)                              :       1503
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :      69477
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     253719
+Increase in nodes                                                                 :     27.38%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :          0
+Percent of split nodes wasted                                                     :      0.00%
+Targets wasted due to splitting                                                   :          0
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS

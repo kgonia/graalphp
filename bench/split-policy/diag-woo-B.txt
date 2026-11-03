@@ -1,0 +1,61 @@
+diag woo-B/engine.log
+splits 2444 of 228 roots; copies compiled 107 (4%), inlined somewhere 0 (0%), neither 2337 (96%); polymorphic again 170 (7%)
+compilations 1516, 724 s; of copies 107 targets, 14 s (2%); inlining traces 0
+refused splits: {'Target too big': 1366}
+
+| root | why (own nodes reporting in the original) | needs: own/via parent | copies | compiled (T2) | inlined | neither | polymorphic again | call sites |
+|---|---|---|---|---|---|---|---|---|
+| absint | - | 1/0 | 189 | 10 (0) | 0 | 179 | 0 | <Unknown> 187, wp-content/plugins/woocommerce/templates/single-product/product-image.php 2 |
+| esc_attr | CastString_Node 1 | 1/0 | 157 | 1 (0) | 0 | 156 | 3 (CastString_Node) | <Unknown> 117, wp-content/plugins/woocommerce/templates/global/quantity-input.php 13 |
+| wp_parse_args | - | 0/0 | 105 | 11 (0) | 0 | 94 | 0 | <Unknown> 105 |
+| Automattic\WooCommerce\Blocks\Registry\SharedType::get | ToBool_Node 1 | 1/0 | 96 | 0 (0) | 0 | 96 | 5 (ToBool_Node) | <Unknown> 96 |
+| Automattic\WooCommerce\Blocks\Registry\Container::get | - | 0/0 | 95 | 0 (0) | 0 | 95 | 0 | <Unknown> 95 |
+| is_wp_error | SubclassTestNode 4 | 1/0 | 83 | 8 (0) | 0 | 75 | 0 | <Unknown> 83 |
+| esc_html | CastString_Node 1 | 1/0 | 53 | 0 (0) | 0 | 53 | 0 | <Unknown> 41, wp-includes/block-patterns/navigation-overlay-centered-with-extras.php 3 |
+| Automattic\WooCommerce\StoreApi\SchemaController::get | InstantiateNode 1 | 1/0 | 47 | 0 (0) | 0 | 47 | 2 (InstantiateNode) | <Unknown> 47 |
+| get_post_type_object | ToBool_Node 1 | 1/0 | 45 | 2 (0) | 0 | 43 | 1 (ToBool_Node) | <Unknown> 45 |
+| wp_normalize_path | CastString_Node 2 | 2/0 | 41 | 12 (0) | 0 | 29 | 2 (CastString_Node) | <Unknown> 41 |
+| Automattic\WooCommerce\Internal\Features\FeaturesController::feature_enable_option_name | ToBool_Node 1 | 0/1 | 41 | 3 (0) | 0 | 38 | 1 (ToBool_Node) | <Unknown> 41 |
+| Automattic\WooCommerce\Internal\Features\FeaturesController::feature_is_enabled | - | 0/0 | 40 | 3 (0) | 0 | 37 | 0 | <Unknown> 40 |
+| wc_get_page_id | ToBool_Node 1 | 1/0 | 40 | 0 (0) | 0 | 40 | 1 (ToBool_Node) | <Unknown> 40 |
+| WP_Widget_Factory::register | InstantiateNode 1 | 0/1 | 34 | 0 (0) | 0 | 34 | 1 (InstantiateNode) | <Unknown> 34 |
+| Automattic\WooCommerce\Utilities\FeaturesUtil::feature_is_enabled | - | 0/0 | 34 | 2 (0) | 0 | 32 | 0 | <Unknown> 34 |
+| register_widget | - | 0/0 | 33 | 0 (0) | 0 | 33 | 0 | <Unknown> 33 |
+| wp_parse_url | CastString_Node 1 | 1/0 | 33 | 1 (0) | 0 | 32 | 1 (CastString_Node) | <Unknown> 33 |
+| wc_remove_number_precision_deep | - | 0/0 | 28 | 0 (0) | 0 | 28 | 0 | <Unknown> 28 |
+| _wp_get_current_user | ToBool_Node 1 | 1/0 | 26 | 0 (0) | 0 | 26 | 2 (ToBool_Node) | <Unknown> 26 |
+| wp_filter_object_list | ToBool_Node 1 | 1/0 | 26 | 1 (0) | 0 | 25 | 2 (ToBool_Node) | <Unknown> 26 |
+| WP_Query::is_singular | ToBool_Node 1 | 1/0 | 26 | 1 (0) | 0 | 25 | 1 (ToBool_Node) | <Unknown> 26 |
+| WP_REST_Controller::get_endpoint_args_for_item_schema | - | 0/0 | 26 | 0 (0) | 0 | 26 | 0 | <Unknown> 26 |
+| Automattic\WooCommerce\Blocks\Domain\Package::get_url | ToBool_Node 1 | 0/1 | 25 | 0 (0) | 0 | 25 | 1 (ToBool_Node) | <Unknown> 25 |
+| wp_get_current_user | - | 0/0 | 25 | 0 (0) | 0 | 25 | 0 | <Unknown> 25 |
+| Automattic\WooCommerce\Blocks\Assets\Api::get_asset_url | - | 0/0 | 24 | 0 (0) | 0 | 24 | 0 | <Unknown> 24 |
+| Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::initialize | - | 0/0 | 24 | 0 (0) | 0 | 24 | 0 | <Unknown> 24 |
+| is_singular | - | 0/0 | 24 | 1 (0) | 0 | 23 | 0 | <Unknown> 24 |
+| Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::register_block_type | ToBool_Node 3 | 0/1 | 23 | 1 (0) | 0 | 22 | 2 (ToBool_Node) | <Unknown> 23 |
+| Automattic\WooCommerce\Blocks\BlockTypes\AbstractBlock::get_block_type_editor_script | ToBool_Node 1 | 1/0 | 23 | 1 (0) | 0 | 22 | 0 | <Unknown> 23 |
+| WP_Query::is_tax | ToBool_Node 1 | 1/0 | 23 | 0 (0) | 0 | 23 | 1 (ToBool_Node) | <Unknown> 23 |
+
+| reporting node class (the root's own, or for a callee) | roots | copies | compiled | inlined | neither | polymorphic again |
+|---|---|---|---|---|---|---|
+| for a callee | 96 | 1051 | 43 (4%) | 0 | 1008 | 0 |
+| ToBool_Node | 87 | 779 | 33 (4%) | 0 | 746 | 131 |
+| CastString_Node | 8 | 303 | 15 (5%) | 0 | 288 | 8 |
+| SubclassTestNode | 22 | 187 | 11 (6%) | 0 | 176 | 15 |
+| InstantiateNode | 6 | 93 | 1 (1%) | 0 | 92 | 6 |
+| CallableDispatchNode | 8 | 27 | 4 (15%) | 0 | 23 | 9 |
+| Concat_Node | 1 | 4 | 0 (0%) | 0 | 4 | 1 |
+
+[engine] Splitting Statistics
+Split count (sum of uninitializedNodeCount for all split targets)                 :      96571
+Split limit (limit for the number of nodes to create through splitting)           :     790506
+Splits (number of targets created through splitting)                              :       2447
+Forced splits (number of targets created through DirectCallNode#cloneCallTarget)  :          0
+Nodes created through splitting (sum of uninitializedNodeCount for split targets) :      96698
+Nodes created without splitting (sum of uninitializedNodeCount for source targets):     528532
+Increase in nodes                                                                 :     18.30%
+Split nodes wasted (callee split nodes wasted due to splitting the caller later)  :          0
+Percent of split nodes wasted                                                     :      0.00%
+Targets wasted due to splitting                                                   :          0
+Total nodes executed                                                              :          0
+--- SPLIT TARGETS

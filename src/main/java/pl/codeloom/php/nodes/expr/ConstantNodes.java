@@ -2,7 +2,6 @@ package pl.codeloom.php.nodes.expr;
 
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -184,8 +183,10 @@ public final class ConstantNodes {
     /**
      * The value itself, as a compile-time constant while it is always the same object. Only immutable scalars and
      * strings are kept: the AST is shared by contexts, and an array or object belongs to the context that made it.
+     * It reports no polymorphism: a second value comes from another context or a redefinition, not from the caller,
+     * so a copy per caller meets it too (get_theme_root's and wp_get_theme's copies on the tree: 47 of 47 went
+     * generic again, wiki/bytecode-dsl.md "Which splits pay").
      */
-    @ReportPolymorphism
     public abstract static class StableValueNode extends Node {
         public static StableValueNode create() {
             return ConstantNodesFactory.StableValueNodeGen.create();
