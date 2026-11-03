@@ -12,6 +12,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -71,11 +72,16 @@ final class ArrayFunctions {
             PhpArray keys = Args.array(a, 0, "array_fill_keys", "keys");
             PhpArray result = new PhpArray();
             for (int p = keys.firstPosition(); p >= 0; p = keys.nextPosition(p)) {
-                result.put(ArrayKey.of(keys.valueAt(p)), Args.get(a, 1));
+                result.put(stringKey(keys.valueAt(p)), Args.get(a, 1));
             }
             return result;
         });
-        r.fn("array_column", a -> column(Args.array(a, 0, "array_column"), Args.get(a, 1), Args.get(a, 2)));
+        r.fn("array_column", (context, a) -> {
+            Args.arity(a, "array_column", 2, 3);
+            PhpArray rows = Args.array(a, 0, "array_column");
+            return column(context, rows, stringOrLong(context, a, 1, "column_key"),
+                    Args.has(a, 2) ? stringOrLong(context, a, 2, "index_key") : null);
+        });
         r.fn("array_pop", "1", a -> pop(Args.ref(a, 0)));
         r.fn("array_push", "1", a -> {
             PhpArray array = writable(Args.ref(a, 0), "array_push");
@@ -124,7 +130,13 @@ final class ArrayFunctions {
             PhpArray array = Args.array(a, 0, "array_flip");
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                result.put(ArrayKey.of(array.valueAt(p)), array.keyAt(p));
+                Object value = array.valueAt(p);
+                if (value instanceof Long || value instanceof TruffleString) {
+                    result.put(ArrayKey.of(value), array.keyAt(p));
+                } else {
+                    ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING, Str.of("array_flip(): Can "
+                            + "only flip string and integer values, entry skipped"), SourceLocation.current());
+                }
             }
             return result;
         });
@@ -139,7 +151,7 @@ final class ArrayFunctions {
             PhpArray result = new PhpArray();
             int q = values.firstPosition();
             for (int p = keys.firstPosition(); p >= 0; p = keys.nextPosition(p)) {
-                result.put(ArrayKey.of(keys.valueAt(p)), values.valueAt(q));
+                result.put(stringKey(keys.valueAt(p)), values.valueAt(q));
                 q = values.nextPosition(q);
             }
             return result;
@@ -178,7 +190,13 @@ final class ArrayFunctions {
             PhpArray array = Args.array(a, 0, "array_count_values");
             PhpArray result = new PhpArray();
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                Object key = ArrayKey.of(array.valueAt(p));
+                Object value = array.valueAt(p);
+                if (!(value instanceof Long || value instanceof TruffleString)) {
+                    ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING, Str.of("array_count_values(): "
+                            + "Can only count string and integer values, entry skipped"), SourceLocation.current());
+                    continue;
+                }
+                Object key = ArrayKey.of(value);
                 Object current = result.get(key);
                 result.put(key, current == null ? 1L : (Long) current + 1);
             }
@@ -777,37 +795,73 @@ final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static PhpArray column(PhpArray rows, Object columnKey, Object indexKey) {
+    private static PhpArray column(PhpContext context, PhpArray rows, Object columnKey, Object indexKey) {
         PhpArray result = new PhpArray();
         for (int p = rows.firstPosition(); p >= 0; p = rows.nextPosition(p)) {
             Object row = rows.valueAt(p);
-            Object value;
-            if (columnKey == null || columnKey == PhpNull.NULL) {
-                value = row;
-            } else {
-                value = field(row, columnKey);
-                if (value == null) {
-                    continue;
-                }
+            Object value = columnKey == null ? row : field(row, columnKey);
+            if (value == null) {
+                continue;
             }
-            Object index = indexKey == null || indexKey == PhpNull.NULL ? null : field(row, indexKey);
+            Object index = indexKey == null ? null : field(row, indexKey);
             if (index == null) {
                 result.append(value);
             } else {
-                result.put(ArrayKey.of(index), value);
+                result.put(zvalKey(context, index), value);
             }
         }
         return result;
     }
 
+    /** Z_PARAM_STR_OR_LONG_OR_NULL: a TruffleString, a Long, or null. */
+    private static Object stringOrLong(PhpContext context, Object[] a, int index, String name) {
+        Object value = Args.get(a, index, PhpNull.NULL);
+        if (value == PhpNull.NULL || value instanceof Long || value instanceof TruffleString) {
+            return value == PhpNull.NULL ? null : value;
+        }
+        if (value instanceof Double || value instanceof Boolean) {
+            return Args.integer(context, a, index, "array_column", name, "string|int|null");
+        }
+        if (value instanceof PhpObject object && object.getPhpClass().findMethod("__tostring") != null) {
+            return object.toPhpString();
+        }
+        throw Args.typeError("array_column", index + 1, name, "string|int|null", value);
+    }
+
+    /** array_column_fetch_prop: an array's element, or an object's property that exists or __isset says is set. */
     private static Object field(Object row, Object key) {
         if (row instanceof PhpArray array) {
             return array.get(ArrayKey.of(key));
         }
         if (row instanceof PhpObject object) {
-            return PhpRef.deref(object.getProperty(Str.key(Convert.toStr(key))));
+            String name = Str.key(Convert.toStr(key));
+            boolean visible = object.getProperty(name) != null && object.getPhpClass().canAccessProperty(name, null);
+            if (!visible) {
+                Object isset = object.magicProperty("__isset", name);
+                if (isset == PhpObject.NO_MAGIC || !Convert.toBool(PhpRef.deref(isset))) {
+                    return null;
+                }
+                Object value = object.magicProperty("__get", name);
+                return value == PhpObject.NO_MAGIC ? null : PhpRef.deref(value);
+            }
+            return PhpRef.deref(object.getProperty(name));
         }
         return null;
+    }
+
+    /** array_set_zval_key's key: a resource as its id (warned), else as an array offset. */
+    private static Object zvalKey(PhpContext context, Object key) {
+        if (key instanceof PhpResource resource) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("Resource ID#" + resource.getId()
+                    + " used as offset, casting to integer (" + resource.getId() + ")"), SourceLocation.current());
+            return (long) resource.getId();
+        }
+        return ArrayKey.of(key);
+    }
+
+    /** An int key, else the value as a string key (zval_get_string, then zend_symtable_update). */
+    private static Object stringKey(Object key) {
+        return key instanceof Long ? key : ArrayKey.of(Convert.toStr(key));
     }
 
     @TruffleBoundary
