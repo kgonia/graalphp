@@ -1,0 +1,7 @@
+== 2026-11-03 11:34:11 gate1 200 4
+s27      hooks 16.41  escape 2.72  slugs 2.12  wpautop 6.28  wptexturize 4.70  blocks 7.30  kses 39.06  peak memory 1565 MB
+fix      hooks 17.70  escape 2.72  slugs 2.25  wpautop 7.07  wptexturize 4.90  blocks 7.49  kses 39.06  peak memory 1587 MB
+s27@-Dpolyglot.engine.Splitting=false hooks 17.97  escape 2.64  slugs 2.16  wpautop 7.03  wptexturize 4.71  blocks 6.71  kses 38.35  peak memory 1556 MB
+s27->fix: hooks 1.10 (IQR 1.08-1.11)  escape 1.00 (IQR 0.99-1.01)  slugs 1.01 (IQR 0.99-1.03)  wpautop 1.14 (IQR 1.14-1.14)  wptexturize 1.04 (IQR 1.03-1.05)  blocks 1.01 (IQR 1.00-1.01)  kses 0.98 (IQR 0.92-1.04)  memory 1.02 (IQR 1.00-1.04)
+s27->s27@-Dpolyglot.engine.Splitting=false: hooks 1.10 (IQR 1.04-1.16)  escape 0.98 (IQR 0.96-1.00)  slugs 1.14 (IQR 1.14-1.14)  wpautop 1.12 (IQR 1.10-1.15)  wptexturize 1.00 (IQR 1.00-1.00)  blocks 0.92 (IQR 0.84-0.99)  kses 0.99 (IQR 0.87-1.10)  memory 0.99 (IQR 0.96-1.02)
+== 2026-11-03 11:42:07 done gate1 200 4 (0)
