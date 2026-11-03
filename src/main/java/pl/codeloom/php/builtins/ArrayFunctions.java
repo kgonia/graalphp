@@ -12,6 +12,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -253,15 +254,15 @@ final class ArrayFunctions {
         r.fn("iterator_to_array", a -> iteratorToArray(Args.get(a, 0), Args.bool(a, 1, true)));
 
         // ---- sorting ----
-        r.fn("sort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, false));
-        r.fn("rsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, false));
-        r.fn("usort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, false));
-        r.fn("asort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, false, true));
-        r.fn("arsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, false, true, true));
-        r.fn("uasort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), false, false, true));
-        r.fn("ksort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, false, true));
-        r.fn("krsort", "1", (context, a) -> sort(context, Args.ref(a, 0), null, true, true, true));
-        r.fn("uksort", "1", (context, a) -> sort(context, Args.ref(a, 0), Args.get(a, 1), true, false, true));
+        r.fn("sort", "1", (context, a) -> sort(context, a, false, false, false, false));
+        r.fn("rsort", "1", (context, a) -> sort(context, a, false, false, true, false));
+        r.fn("usort", "1", (context, a) -> sort(context, a, true, false, false, false));
+        r.fn("asort", "1", (context, a) -> sort(context, a, false, false, false, true));
+        r.fn("arsort", "1", (context, a) -> sort(context, a, false, false, true, true));
+        r.fn("uasort", "1", (context, a) -> sort(context, a, true, false, false, true));
+        r.fn("ksort", "1", (context, a) -> sort(context, a, false, true, false, true));
+        r.fn("krsort", "1", (context, a) -> sort(context, a, false, true, true, true));
+        r.fn("uksort", "1", (context, a) -> sort(context, a, true, true, false, true));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));
@@ -961,45 +962,318 @@ final class ArrayFunctions {
         return result;
     }
 
+    /** A bucket being sorted: its key, raw value and original position (Z_EXTRA, for the stable fallback). */
+    private record Sorted(Object key, Object value, int order) {
+    }
+
+    /**
+     * sort, rsort, asort, arsort, ksort, krsort and the u* variants: zend_hash_sort with php_get_data_compare_func's
+     * or php_get_key_compare_func's comparison, or the callback's (php_array_user_compare), ties in their original
+     * order (RETURN_STABLE_SORT), through zend_sort so the comparisons happen in php-src's order.
+     */
     @TruffleBoundary
-    private static Object sort(PhpContext context, PhpRef ref, Object callback, boolean byKey, boolean reverse,
+    private static Object sort(PhpContext context, Object[] a, boolean user, boolean byKey, boolean reverse,
                                boolean keepKeys) {
-        String name = callback != null ? (byKey ? "uksort" : keepKeys ? "uasort" : "usort")
+        String name = user ? (byKey ? "uksort" : keepKeys ? "uasort" : "usort")
                 : (reverse ? (byKey ? "krsort" : keepKeys ? "arsort" : "rsort")
                 : (byKey ? "ksort" : keepKeys ? "asort" : "sort"));
+        Args.arity(a, name, user ? 2 : 1, 2);
+        PhpRef ref = Args.ref(a, 0);
         if (!(ref.get() instanceof PhpArray array)) {
-            throw new PhpError("TypeError", name + "(): Argument #1 ($array) must be of type array, "
-                    + Convert.debugType(ref.get()) + " given");
+            throw Args.typeError(name, 1, "array", "array", ref.get());
         }
-        List<Entry> entries = new ArrayList<>(array.size());
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            entries.add(new Entry(array.keyAt(p), array.rawAt(p)));
-        }
-        Comparator<Entry> order;
-        if (callback != null) {
-            Callables.Target compare = Callables.parameter(context, callback, new Callables.Parameter(name, 2, false));
-            order = (x, y) -> (int) Math.signum(Convert.toDouble(Convert.toNumber(compare.call(
-                    byKey ? x.key() : PhpRef.deref(x.value()), byKey ? y.key() : PhpRef.deref(y.value())))));
-        } else if (byKey) {
-            order = (x, y) -> Convert.compare(x.key(), y.key());
+        Comparator<Sorted> compare;
+        if (user) {
+            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+                    new Callables.Parameter(name, 2, false));
+            if (array.size() == 0) {
+                return true;
+            }
+            boolean[] deprecated = {false};
+            compare = (x, y) -> {
+                Object first = byKey ? x.key() : PhpRef.deref(x.value());
+                Object second = byKey ? y.key() : PhpRef.deref(y.value());
+                Object result = PhpRef.deref(callback.call(first, second));
+                if (result instanceof Boolean b) {
+                    if (!deprecated[0]) {
+                        deprecated[0] = true;
+                        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + "(): Returning bool "
+                                + "from comparison function is deprecated, return an integer less than, equal to, "
+                                + "or greater than zero"), SourceLocation.current());
+                    }
+                    if (!b) {
+                        // retried with the operands swapped
+                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.call(second, first))));
+                    }
+                }
+                return Long.signum(Convert.toLong(result));
+            };
         } else {
-            order = (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
+            long flags = Args.has(a, 1) ? Args.integer(context, a, 1, name, "flags", "int") : 0;
+            Comparator<Sorted> base = byKey ? keyCompare(flags) : dataCompare(flags);
+            compare = reverse ? (x, y) -> -base.compare(x, y) : base;
         }
-        if (reverse) {
-            order = order.reversed();
+        Comparator<Sorted> unstable = compare;
+        Comparator<Sorted> stable = (x, y) -> {
+            int result = unstable.compare(x, y);
+            return result != 0 ? result : Integer.compare(x.order(), y.order());
+        };
+        Sorted[] buckets = new Sorted[array.size()];
+        int n = 0;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            buckets[n] = new Sorted(array.keyAt(p), array.rawAt(p), n);
+            n++;
         }
-        entries.sort(order);
-        PhpArray result = PhpArray.ofCapacity(entries.size());
-        for (Entry entry : entries) {
-            Object key = keepKeys ? entry.key() : (Object) result.nextIndex();
-            if (entry.value() instanceof PhpRef r) {
+        zendSort(buckets, 0, n, stable);
+        PhpArray result = PhpArray.ofCapacity(n);
+        for (Sorted bucket : buckets) {
+            Object key = keepKeys ? bucket.key() : (Object) result.nextIndex();
+            if (bucket.value() instanceof PhpRef r) {
                 result.putRef(key, r);
             } else {
-                result.put(key, entry.value());
+                result.put(key, bucket.value());
             }
         }
         ref.set(result);
         return true;
+    }
+
+    /** php_get_data_compare_func's comparisons (unstable, ascending). */
+    private static Comparator<Sorted> dataCompare(long flags) {
+        boolean fold = (flags & 8) != 0;
+        return switch ((int) (flags & ~8L)) {
+            case 1 -> (x, y) -> threeWay(Convert.toDouble(PhpRef.deref(x.value())),
+                    Convert.toDouble(PhpRef.deref(y.value())));
+            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(PhpRef.deref(x.value())),
+                    Convert.toStr(PhpRef.deref(y.value())), fold && (flags & 7) == 2);
+            case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(PhpRef.deref(x.value()))),
+                    Str.bytes(Convert.toStr(PhpRef.deref(y.value()))), fold);
+            default -> (x, y) -> Convert.compare(PhpRef.deref(x.value()), PhpRef.deref(y.value()));
+        };
+    }
+
+    /** php_get_key_compare_func's comparisons (unstable, ascending). */
+    private static Comparator<Sorted> keyCompare(long flags) {
+        boolean fold = (flags & 8) != 0;
+        return switch ((int) (flags & ~8L)) {
+            case 1 -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
+                    : threeWay(keyDouble(x.key()), keyDouble(y.key()));
+            case 2, 5 -> (x, y) -> stringCompare(Convert.toStr(x.key()), Convert.toStr(y.key()), fold && (flags & 7) == 2);
+            case 6 -> (x, y) -> StringFunctions.naturalCompare(Str.bytes(Convert.toStr(x.key())),
+                    Str.bytes(Convert.toStr(y.key())), fold);
+            default -> (x, y) -> x.key() instanceof Long l && y.key() instanceof Long m ? (l > m ? 1 : -1)
+                    : Convert.compare(x.key(), y.key());
+        };
+    }
+
+    /** zend_strtod of a string key, an int key as a double. */
+    private static double keyDouble(Object key) {
+        return key instanceof Long l ? (double) l : Convert.toDouble(Convert.parseNumber(Str.readBytes(
+                (TruffleString) key), true) instanceof Object number ? number : 0L);
+    }
+
+    /** ZEND_THREEWAY_COMPARE. */
+    private static int threeWay(double a, double b) {
+        return a == b ? 0 : a < b ? -1 : 1;
+    }
+
+    /** zend_binary_strcmp, or zend_binary_strcasecmp_l (ASCII case folded, the C locale's). */
+    private static int stringCompare(TruffleString a, TruffleString b, boolean fold) {
+        byte[] x = Str.readBytes(a);
+        byte[] y = Str.readBytes(b);
+        int lx = Str.length(a);
+        int ly = Str.length(b);
+        for (int i = 0; i < Math.min(lx, ly); i++) {
+            int c = x[i] & 0xFF;
+            int d = y[i] & 0xFF;
+            if (fold) {
+                c = c >= 'A' && c <= 'Z' ? c + 32 : c;
+                d = d >= 'A' && d <= 'Z' ? d + 32 : d;
+            }
+            if (c != d) {
+                return c - d;
+            }
+        }
+        return Integer.compare(lx, ly);
+    }
+
+    // ---- zend_sort (Zend/zend_sort.c): insertion sort up to 16 elements, else a pivoted partition ----
+
+    private static <T> void swap(T[] a, int i, int j) {
+        T t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+    }
+
+    private static <T> void sort3(T[] a, int i, int j, int k, Comparator<T> cmp) {
+        if (!(cmp.compare(a[i], a[j]) > 0)) {
+            if (!(cmp.compare(a[j], a[k]) > 0)) {
+                return;
+            }
+            swap(a, j, k);
+            if (cmp.compare(a[i], a[j]) > 0) {
+                swap(a, i, j);
+            }
+            return;
+        }
+        if (!(cmp.compare(a[k], a[j]) > 0)) {
+            swap(a, i, k);
+            return;
+        }
+        swap(a, i, j);
+        if (cmp.compare(a[j], a[k]) > 0) {
+            swap(a, j, k);
+        }
+    }
+
+    private static <T> void sort4(T[] a, int i, int j, int k, int l, Comparator<T> cmp) {
+        sort3(a, i, j, k, cmp);
+        if (cmp.compare(a[k], a[l]) > 0) {
+            swap(a, k, l);
+            if (cmp.compare(a[j], a[k]) > 0) {
+                swap(a, j, k);
+                if (cmp.compare(a[i], a[j]) > 0) {
+                    swap(a, i, j);
+                }
+            }
+        }
+    }
+
+    private static <T> void sort5(T[] a, int i, int j, int k, int l, int m, Comparator<T> cmp) {
+        sort4(a, i, j, k, l, cmp);
+        if (cmp.compare(a[l], a[m]) > 0) {
+            swap(a, l, m);
+            if (cmp.compare(a[k], a[l]) > 0) {
+                swap(a, k, l);
+                if (cmp.compare(a[j], a[k]) > 0) {
+                    swap(a, j, k);
+                    if (cmp.compare(a[i], a[j]) > 0) {
+                        swap(a, i, j);
+                    }
+                }
+            }
+        }
+    }
+
+    /** zend_insert_sort; elements move by successive swaps, as php-src's swp calls. */
+    private static <T> void insertSort(T[] a, int start, int n, Comparator<T> cmp) {
+        switch (n) {
+            case 0, 1 -> {
+            }
+            case 2 -> {
+                if (cmp.compare(a[start], a[start + 1]) > 0) {
+                    swap(a, start, start + 1);
+                }
+            }
+            case 3 -> sort3(a, start, start + 1, start + 2, cmp);
+            case 4 -> sort4(a, start, start + 1, start + 2, start + 3, cmp);
+            case 5 -> sort5(a, start, start + 1, start + 2, start + 3, start + 4, cmp);
+            default -> {
+                int end = start + n;
+                int sentry = start + 6;
+                for (int i = start + 1; i < sentry; i++) {
+                    int j = i - 1;
+                    if (!(cmp.compare(a[j], a[i]) > 0)) {
+                        continue;
+                    }
+                    while (j != start) {
+                        j--;
+                        if (!(cmp.compare(a[j], a[i]) > 0)) {
+                            j++;
+                            break;
+                        }
+                    }
+                    for (int k = i; k > j; k--) {
+                        swap(a, k, k - 1);
+                    }
+                }
+                for (int i = sentry; i < end; i++) {
+                    int j = i - 1;
+                    if (!(cmp.compare(a[j], a[i]) > 0)) {
+                        continue;
+                    }
+                    while (true) {
+                        j -= 2;
+                        if (!(cmp.compare(a[j], a[i]) > 0)) {
+                            j++;
+                            if (!(cmp.compare(a[j], a[i]) > 0)) {
+                                j++;
+                            }
+                            break;
+                        }
+                        if (j == start) {
+                            break;
+                        }
+                        if (j == start + 1) {
+                            j--;
+                            if (cmp.compare(a[i], a[j]) > 0) {
+                                j++;
+                            }
+                            break;
+                        }
+                    }
+                    for (int k = i; k > j; k--) {
+                        swap(a, k, k - 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /** zend_sort. */
+    private static <T> void zendSort(T[] a, int start, int n, Comparator<T> cmp) {
+        while (true) {
+            if (n <= 16) {
+                insertSort(a, start, n, cmp);
+                return;
+            }
+            int end = start + n;
+            int offset = n >> 1;
+            int pivot = start + offset;
+            if ((n >> 10) != 0) {
+                int delta = offset >> 1;
+                sort5(a, start, start + delta, pivot, pivot + delta, end - 1, cmp);
+            } else {
+                sort3(a, start, pivot, end - 1, cmp);
+            }
+            swap(a, start + 1, pivot);
+            pivot = start + 1;
+            int i = pivot + 1;
+            int j = end - 1;
+            partition:
+            while (true) {
+                while (cmp.compare(a[pivot], a[i]) > 0) {
+                    i++;
+                    if (i == j) {
+                        break partition;
+                    }
+                }
+                j--;
+                if (j == i) {
+                    break;
+                }
+                while (cmp.compare(a[j], a[pivot]) > 0) {
+                    j--;
+                    if (j == i) {
+                        break partition;
+                    }
+                }
+                swap(a, i, j);
+                i++;
+                if (i == j) {
+                    break;
+                }
+            }
+            swap(a, pivot, i - 1);
+            if ((i - 1) - start < end - i) {
+                zendSort(a, start, i - start - 1, cmp);
+                n = end - i;
+                start = i;
+            } else {
+                zendSort(a, i, end - i, cmp);
+                n = i - start - 1;
+            }
+        }
     }
 
     private static Object current(Object value) {
