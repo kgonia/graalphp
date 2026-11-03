@@ -73,8 +73,14 @@ final class JsonFunctions {
                     Args.lng(a, 3, 0));
         });
         r.fn("json_encode", (context, a) -> encode(state(context), Args.get(a, 0), Args.lng(a, 1, 0), Args.lng(a, 2, 512)));
-        r.fn("json_last_error", (context, a) -> (long) state(context).lastError);
-        r.fn("json_last_error_msg", (context, a) -> Str.of(message(state(context).lastError)));
+        r.fn("json_last_error", (context, a) -> {
+            Args.arity(a, "json_last_error", 0, 0);
+            return (long) state(context).lastError;
+        });
+        r.fn("json_last_error_msg", (context, a) -> {
+            Args.arity(a, "json_last_error_msg", 0, 0);
+            return Str.of(message(state(context).lastError));
+        });
     }
 
     private static String message(int code) {

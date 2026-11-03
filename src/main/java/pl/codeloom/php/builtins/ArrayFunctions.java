@@ -36,7 +36,10 @@ final class ArrayFunctions {
                 Args.bool(a, 2, false)));
         r.fn("array_values", a -> values(Args.array(a, 0, "array_values")));
         r.fn("array_merge", a -> merge(a));
-        r.fn("array_map", (context, a) -> map(context, a));
+        r.fn("array_map", (context, a) -> {
+            Args.arity(a, "array_map", 2, Integer.MAX_VALUE);
+            return map(context, a);
+        });
         r.fn("array_filter", (context, a) -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
         r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
@@ -181,6 +184,7 @@ final class ArrayFunctions {
             return result;
         });
         r.fn("array_walk", "1", (context, a) -> {
+            Args.arity(a, "array_walk", 2, 3);
             PhpArray array = writable(Args.ref(a, 0), "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
@@ -205,6 +209,7 @@ final class ArrayFunctions {
             return carry;
         });
         r.fn("array_walk_recursive", "1", (context, a) -> {
+            Args.arity(a, "array_walk_recursive", 2, 3);
             PhpArray array = writable(Args.ref(a, 0), "array_walk_recursive");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));

@@ -47,10 +47,10 @@ public final class StringFunctions {
         r.fn("explode", a -> explode(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, Long.MAX_VALUE)));
         r.fn("implode", a -> implode(a));
         r.fn("join", a -> implode(a));
-        r.fn("sprintf", a -> Sprintf.format(a, 0));
+        r.fn("sprintf", a -> Sprintf.format(a, 0, "sprintf"));
         r.fn("vsprintf", a -> Sprintf.formatArray(Args.str(a, 0), Args.array(a, 1, "vsprintf", "values")));
         r.fn("printf", (context, a) -> {
-            TruffleString text = Sprintf.format(a, 0);
+            TruffleString text = Sprintf.format(a, 0, "printf");
             context.write(text);
             return (long) Str.length(text);
         });
@@ -147,7 +147,10 @@ public final class StringFunctions {
         r.fn("rawurldecode", a -> urldecode(Args.str(a, 0), false));
         r.fn("urldecode", a -> urldecode(Args.str(a, 0), true));
         r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.readBytes(Args.str(a, 0)))));
-        r.fn("chr", a -> Str.singleByte((int) Math.floorMod(Args.lng(a, 0, 0), 256)));
+        r.fn("chr", (context, a) -> {
+            Args.arity(a, "chr", 1, 1);
+            return Str.singleByte((int) Math.floorMod(Args.integer(context, a, 0, "chr", "codepoint", "int"), 256));
+        });
         r.fn("ord", a -> {
             TruffleString s = Args.str(a, 0);
             return Str.length(s) == 0 ? 0L : (long) Str.byteAt(s, 0);
@@ -168,8 +171,16 @@ public final class StringFunctions {
             conventions.put(ArrayKey.of(Str.of("mon_grouping")), new PhpArray());
             return conventions;
         });
-        r.fn("number_format", a -> numberFormat(Convert.toDouble(Args.get(a, 0)), Args.lng(a, 1, 0),
-                Args.str(a, 2, Str.of(".")), Args.str(a, 3, Str.of(","))));
+        r.fn("number_format", (context, a) -> {
+            Object number = Args.number(context, a, 0, "number_format", "num");
+            long decimals = Args.has(a, 1) ? Args.integer(context, a, 1, "number_format", "decimals", "int") : 0;
+            TruffleString point = Args.has(a, 2) ? Args.string(context, a, 2, "number_format", "decimal_separator",
+                    true) : null;
+            TruffleString separator = Args.has(a, 3) ? Args.string(context, a, 3, "number_format",
+                    "thousands_separator", true) : null;
+            return numberFormat(number, decimals, point == null ? "." : Str.java(point),
+                    separator == null ? "," : Str.java(separator));
+        });
         r.fn("wordwrap", a -> wordwrap(Args.str(a, 0), Args.lng(a, 1, 75), Args.str(a, 2, Str.of("\n")),
                 Args.bool(a, 3, false)));
         r.fn("parse_str", "01", (context, a) -> {
@@ -1180,21 +1191,58 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString numberFormat(double value, long decimals, TruffleString point, TruffleString sep) {
-        java.math.BigDecimal rounded = new java.math.BigDecimal(Double.toString(Math.abs(value)))
-                .setScale((int) Math.max(0, decimals), java.math.RoundingMode.HALF_UP);
-        String plain = rounded.toPlainString();
-        String integer = plain.contains(".") ? plain.substring(0, plain.indexOf('.')) : plain;
-        String fraction = plain.contains(".") ? plain.substring(plain.indexOf('.') + 1) : "";
-        StringBuilder grouped = new StringBuilder();
-        for (int i = 0; i < integer.length(); i++) {
-            if (i > 0 && (integer.length() - i) % 3 == 0) {
-                grouped.append(Str.java(sep));
-            }
-            grouped.append(integer.charAt(i));
+    private static TruffleString numberFormat(Object number, long decimals, String point, String separator) {
+        // a float of 2^52 or more has no fraction: formatted as the int it is (zend's own check)
+        if (number instanceof Double d && Math.abs(d) >= 4503599627370496.0 && d >= -9.223372036854775808E18
+                && d < 9.223372036854775807E18) {
+            number = (long) (double) d;
         }
-        String sign = value < 0 && rounded.signum() != 0 ? "-" : "";
-        return Str.of(sign + grouped + (decimals > 0 ? Str.java(point) + fraction : ""));
+        boolean negative;
+        String digits;
+        String fraction = "";
+        if (number instanceof Long l) {
+            // _php_math_number_format_long: an unsigned magnitude, rounded half up to a negative place
+            negative = l < 0;
+            java.math.BigInteger magnitude = java.math.BigInteger.valueOf(l).abs();
+            if (decimals < 0) {
+                java.math.BigInteger power = java.math.BigInteger.TEN.pow((int) Math.min(-decimals, 20));
+                java.math.BigInteger[] parts = magnitude.divideAndRemainder(power);
+                magnitude = decimals < -19 ? java.math.BigInteger.ZERO : parts[0].multiply(power).add(
+                        parts[1].compareTo(power.shiftRight(1)) >= 0 ? power : java.math.BigInteger.ZERO);
+                negative &= magnitude.signum() != 0;
+            }
+            digits = magnitude.toString();
+            if (decimals > 0) {
+                fraction = "0".repeat((int) decimals);
+            }
+        } else {
+            // _php_math_number_format_ex: rounded half up, then printed as %.*F
+            double d = (Double) number;
+            negative = d < 0;
+            int places = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, decimals));
+            d = CoreFunctions.round(Math.abs(d), places, 1);
+            places = Math.max(0, places);
+            if (!Double.isFinite(d)) {
+                return Str.of(Double.isNaN(d) ? "NAN" : "INF");
+            }
+            negative &= d != 0;
+            String printed = new java.math.BigDecimal(d).setScale(places, java.math.RoundingMode.HALF_EVEN)
+                    .toPlainString();
+            int dot = printed.indexOf('.');
+            digits = dot < 0 ? printed : printed.substring(0, dot);
+            fraction = dot < 0 ? "" : printed.substring(dot + 1);
+        }
+        StringBuilder out = new StringBuilder(negative ? "-" : "");
+        for (int i = 0; i < digits.length(); i++) {
+            if (i > 0 && (digits.length() - i) % 3 == 0) {
+                out.append(separator);
+            }
+            out.append(digits.charAt(i));
+        }
+        if (decimals > 0) {
+            out.append(point).append(fraction);
+        }
+        return Str.of(out.toString());
     }
 
     @TruffleBoundary
