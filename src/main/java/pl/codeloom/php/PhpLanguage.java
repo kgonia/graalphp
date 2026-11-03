@@ -71,10 +71,10 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<Boolean> Debug = new OptionKey<>(false);
 
-    @Option(help = "How functions run: tree (the AST interpreter) or bytecode (the Bytecode DSL interpreter, for the "
-            + "functions it supports; the others stay on the tree).", category = OptionCategory.EXPERT,
+    @Option(help = "How functions run: bytecode (the Bytecode DSL interpreter, for the functions it supports; the "
+            + "others stay on the tree) or tree (the AST interpreter).", category = OptionCategory.EXPERT,
             stability = OptionStability.EXPERIMENTAL)
-    static final OptionKey<String> Interpreter = new OptionKey<>("tree");
+    static final OptionKey<String> Interpreter = new OptionKey<>("bytecode");
 
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 

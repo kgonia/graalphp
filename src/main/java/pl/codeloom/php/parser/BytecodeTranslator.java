@@ -13,20 +13,26 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.bytecode.CallInfo;
 import pl.codeloom.php.bytecode.ClassSite;
+import pl.codeloom.php.bytecode.IncludeSite;
 import pl.codeloom.php.bytecode.LiteralSite;
 import pl.codeloom.php.bytecode.MethodSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
+import pl.codeloom.php.bytecode.StaticPropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
+import pl.codeloom.php.nodes.vars.GlobalsDimNode;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -60,6 +66,11 @@ public final class BytecodeTranslator {
     private static final int COLLECT_LIMIT = 500;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
+    /**
+     * For finding a function the bytecode runs differently by halving: php.bytecode.only=BITS:VALUE keeps on the
+     * tree every function whose name's hash doesn't end in VALUE's BITS bits.
+     */
+    private static final String ONLY = System.getProperty("php.bytecode.only");
 
     /** A construct the translator doesn't cover: the function stays on the tree. */
     static final class Unsupported extends RuntimeException {
@@ -92,6 +103,10 @@ public final class BytecodeTranslator {
     private final List<Object> made = new ArrayList<>();
     /** The variables' locals, made by the first run (later runs number them alike). */
     private LocalAccessor[] variableLocals;
+    /** The variables' names, in the order of their locals. */
+    private String[] variableNames;
+    /** The hidden local keeping the call's variables by name (an include, extract()), or null if none needs it. */
+    private LocalAccessor scopeLocal;
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
     private boolean firstRun = true;
@@ -128,6 +143,14 @@ public final class BytecodeTranslator {
                                     Ast declaration, Ast body, Translator.ClassInfo owner, PhpFunction function,
                                     String display, PhpFunction.Param[] params, String[] captures,
                                     boolean[] captureByRef, Names names, boolean generator) {
+        if (ONLY != null) {
+            int bits = Integer.parseInt(ONLY.split(":")[0]);
+            int value = Integer.parseInt(ONLY.split(":")[1]);
+            if ((display.hashCode() & ((1 << bits) - 1)) != value) {
+                report("tree     " + display + ": php.bytecode.only");
+                return null;
+            }
+        }
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration, body,
                 owner, function, display, params, captures, captureByRef, names, generator);
         BytecodeParser<PhpBytecodeRootNodeGen.Builder> parser = translator::parse;
@@ -157,6 +180,7 @@ public final class BytecodeTranslator {
                 Translator.coerceType(returnType), Translator.isNullable(returnType), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
+        root.initializeNames(translator.variableNames, translator.scopeLocal);
         if (generator) {
             root.initializeGenerator(function.returnsRef(), hasFinally(body == null ? declaration.body() : body));
         } else if (function.returnsRef()) {
@@ -232,6 +256,16 @@ public final class BytecodeTranslator {
         private final List<Loop> loops = new ArrayList<>();
         /** In a finally block, how many of loops are outside it: break and continue may not leave it. */
         private int loopsOutsideFinally;
+        /** The labels of the statement lists around the code being emitted, outermost first (goto's targets). */
+        private final List<LabelScope> labelScopes = new ArrayList<>();
+        /** In a finally block, how many of labelScopes are outside it: a goto may not leave it either. */
+        private int labelScopesOutsideFinally;
+        /**
+         * The labels inside an if or a block, where a goto from outside may jump in: each one's number, which such a
+         * goto leaves in entering for the ifs and lists on the way to take it there (see entries).
+         */
+        private final Map<String, Long> entries = new HashMap<>();
+        private BytecodeLocal entering;
         /**
          * Values evaluated once into a local, by the node standing for each where it is used: the objects of `?->`s
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
@@ -239,6 +273,8 @@ public final class BytecodeTranslator {
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
         /** A generator's local holding its PhpGenerator. */
         private BytecodeLocal generatorLocal;
+        /** The local keeping the call's variables by name, made where the body first needs it. */
+        private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
         /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
@@ -254,6 +290,18 @@ public final class BytecodeTranslator {
 
         // ---- the function ----
 
+        /**
+         * php-src's compile error at node's line (Translator.compileError: reported, the bailout ends the script);
+         * report=all's runs leaving nodes out only note it.
+         */
+        private RuntimeException compileError(Ast node, String message) {
+            if (skip != null) {
+                return new Unsupported(message, node);
+            }
+            return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
+                    new SourceLocation(path, node.line), 0);
+        }
+
         /** A function returning by reference (`function &f()`); a generator's `&` is for its yields. */
         private boolean returnsRef() {
             return function.returnsRef() && !generator;
@@ -267,16 +315,29 @@ public final class BytecodeTranslator {
                 names.add(param.name());
             }
             if (names.size() != params.length) {
-                throw new Unsupported("parameters with the same name", declaration);
-            }
-            for (String capture : captures) {
-                names.add(capture);
+                Set<String> seen = new java.util.HashSet<>();
+                for (PhpFunction.Param param : params) {
+                    if (!seen.add(param.name())) {
+                        throw compileError(declaration, "Redefinition of parameter $" + param.name());
+                    }
+                }
             }
             for (String name : names) {
-                if (!plainVariable(name)) {
-                    // PHP refuses these at compile time; the tree has its own handling of the names
-                    throw new Unsupported("$" + name + " as a parameter or capture", declaration);
+                if (name.equals("this")) {
+                    throw compileError(declaration, "Cannot use $this as parameter");
                 }
+                if (!plainVariable(name)) {
+                    throw compileError(declaration, "Cannot re-assign auto-global variable " + name);
+                }
+            }
+            for (String capture : captures) {
+                if (capture.equals("this")) {
+                    throw compileError(declaration, "Cannot use $this as lexical variable");
+                }
+                if (!plainVariable(capture)) {
+                    throw compileError(declaration, "Cannot use auto-global as lexical variable");
+                }
+                names.add(capture);
             }
             collectVariables(body, names);
             List<LocalAccessor> locals = new ArrayList<>();
@@ -287,6 +348,7 @@ public final class BytecodeTranslator {
             }
             if (variableLocals == null) {
                 variableLocals = locals.toArray(new LocalAccessor[0]);
+                variableNames = names.toArray(new String[0]);
             }
             if (source != null) {
                 b.beginSource(source);
@@ -295,6 +357,12 @@ public final class BytecodeTranslator {
                 throw new Unsupported("no source text for lines", declaration);
             }
             prologue();
+            entries(body);
+            if (entering != null) {
+                b.beginStoreLocal(entering);
+                b.emitLoadConstant(0L);
+                b.endStoreLocal();
+            }
             if (declaration.is("AST_ARROW_FUNC")) {
                 if (body.is("AST_RETURN")) {
                     statement(body);
@@ -326,9 +394,6 @@ public final class BytecodeTranslator {
             Ast paramList = declaration.node("params");
             for (int i = 0; i < params.length; i++) {
                 Ast param = (Ast) paramList.child(i);
-                if ((param.flags & PROMOTED) != 0) {
-                    throw new Unsupported("promoted constructor parameter", param);
-                }
                 BytecodeLocal local = variables.get(params[i].name());
                 if (params[i].variadic()) {
                     b.emitBindVariadic(local, i);
@@ -355,6 +420,16 @@ public final class BytecodeTranslator {
             }
             for (int i = 0; i < captures.length; i++) {
                 b.emitBindCapture(variables.get(captures[i]), i, captureByRef[i]);
+            }
+            // a constructor's promoted parameters, stored before its body runs (Translator's PromoteNodes)
+            if (owner != null && "__construct".equalsIgnoreCase((String) declaration.get("name"))) {
+                for (int i = 0; i < params.length; i++) {
+                    if ((((Ast) paramList.child(i)).flags & PROMOTED) != 0) {
+                        b.beginPromote(Str.sourceKey(params[i].name()));
+                        b.emitReadVar(variables.get(params[i].name()));
+                        b.endPromote();
+                    }
+                }
             }
             if (generator) {
                 generatorLocal = b.createLocal();
@@ -396,19 +471,14 @@ public final class BytecodeTranslator {
                 statement(list);
                 return;
             }
+            LabelScope scope = labelScope(list);
+            if (scope != null) {
+                labeledStatements(list, scope);
+                return;
+            }
             b.beginBlock();
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
-                    if (statement.is("AST_LABEL")) {
-                        if (skip != null) {
-                            String key = key(statement);
-                            if (skip.contains(key)) {
-                                continue;
-                            }
-                            dispatched.addLast(key);
-                        }
-                        throw new Unsupported("goto label", statement);
-                    }
                     statement(statement);
                 }
             }
@@ -520,12 +590,19 @@ public final class BytecodeTranslator {
                 case "AST_BREAK":
                 case "AST_CONTINUE": {
                     int depth = node.get("depth") instanceof Long d ? d.intValue() : 1;
-                    if (depth < 1 || depth > loops.size()) {
-                        throw new Unsupported("break out of " + depth + " levels", node);
+                    String keyword = node.is("AST_CONTINUE") ? "continue" : "break";
+                    if (depth < 1) {
+                        throw compileError(node, "'" + keyword + "' operator accepts only positive integers");
+                    }
+                    if (loops.isEmpty()) {
+                        throw compileError(node, "'" + keyword + "' not in the 'loop' or 'switch' context");
+                    }
+                    if (depth > loops.size()) {
+                        throw compileError(node, "Cannot '" + keyword + "' " + depth + " level"
+                                + (depth == 1 ? "" : "s"));
                     }
                     if (loops.size() - depth < loopsOutsideFinally) {
-                        // php-src's compile error "jump out of a finally block is disallowed"
-                        throw new Unsupported("break or continue out of a finally block", node);
+                        throw compileError(node, "jump out of a finally block is disallowed");
                     }
                     Loop loop = loops.get(loops.size() - depth);
                     b.emitBranch(node.is("AST_CONTINUE") ? loop.continueLabel() : loop.breakLabel());
@@ -534,8 +611,13 @@ public final class BytecodeTranslator {
                 case "AST_RETURN":
                     returnValue(node.get("expr"), node);
                     break;
+                case "AST_GOTO":
+                    gotoStatement(node);
+                    break;
                 case "AST_UNSET":
-                    if (node.node("var").is("AST_PROP")) {
+                    if (refPlace(node.node("var")) instanceof RefPlace place) {
+                        place.unset();
+                    } else if (node.node("var").is("AST_PROP")) {
                         unsetProp(node.node("var"));
                     } else if (node.node("var").is("AST_DIM")) {
                         nestedUnset(node.node("var"));
@@ -552,6 +634,14 @@ public final class BytecodeTranslator {
                 case "AST_STATIC":
                     staticStatement(node);
                     break;
+                case "AST_FUNC_DECL":
+                    // declared when the statement runs (DeclareFunctionNode); made by the first run
+                    b.emitDeclareFunction((PhpFunction) made(() -> constants.declareFunction(node, null)));
+                    break;
+                case "AST_CLASS":
+                    b.emitDeclareClass((ClassTemplate) made(() -> constants.classTemplate(node,
+                            names.declared((String) node.get("name")))));
+                    break;
                 default:
                     expressionStatement(node);
             }
@@ -559,7 +649,7 @@ public final class BytecodeTranslator {
 
         /** An expression whose value is dropped: a variable's assignment or step without the result. */
         private void expressionStatement(Object value) {
-            if (value instanceof Ast node && node.get("var") instanceof Ast target && target.is("AST_VAR")) {
+            if (value instanceof Ast node && node.get("var") instanceof Ast target && isVariable(target)) {
                 switch (node.kind) {
                     case "AST_ASSIGN" -> {
                         b.beginWriteVarStatement(variable(target, "assignment to"));
@@ -585,6 +675,230 @@ public final class BytecodeTranslator {
                 }
             }
             expression(value);
+        }
+
+        /**
+         * `goto label`: a branch to the label in the innermost enclosing statement list naming it, or to the
+         * statement there the label is inside of, an if or a block (php-src jumps in; the tree's goto doesn't). A
+         * label inside a loop, a switch or a try stays the tree's.
+         */
+        private void gotoStatement(Ast node) {
+            String name = (String) node.get("label");
+            for (int i = labelScopes.size() - 1; i >= 0; i--) {
+                LabelScope scope = labelScopes.get(i);
+                Integer index = scope.indexes().get(name);
+                if (index == null) {
+                    continue;
+                }
+                if (i < labelScopesOutsideFinally) {
+                    throw compileError(node, "jump out of a finally block is disallowed");
+                }
+                if (scope.nested().contains(name)) {
+                    // into an if or a block: the label's number shows the way in (labeledStatements, ifChain)
+                    b.beginStoreLocal(entering);
+                    b.emitLoadConstant(entries.get(name));
+                    b.endStoreLocal();
+                }
+                if (scope.emitted().contains(name)) {
+                    // backward: the list's loop goes round, and its top branches on to the label
+                    b.beginStoreLocal(scope.target());
+                    b.emitLoadConstant((long) index);
+                    b.endStoreLocal();
+                    b.emitBranch(scope.again());
+                } else {
+                    b.emitBranch(scope.labels()[index]);
+                }
+                return;
+            }
+            throw new Unsupported("goto into a statement list around it", node);
+        }
+
+        /** A statement list's goto labels, or null when it has none. */
+        private LabelScope labelScope(Ast list) {
+            Map<String, Integer> indexes = new HashMap<>();
+            Set<String> nested = new java.util.HashSet<>();
+            boolean backward = false;
+            for (Object child : list.children()) {
+                if (child instanceof Ast statement) {
+                    if (statement.is("AST_LABEL")) {
+                        indexes.put((String) statement.get("name"), indexes.size());
+                        continue;
+                    }
+                    for (String name : labelsInside(statement)) {
+                        indexes.put(name, indexes.size());
+                        nested.add(name);
+                    }
+                    if (!indexes.isEmpty()) {
+                        backward |= gotoTo(statement, indexes.keySet());
+                    }
+                }
+            }
+            return indexes.isEmpty() ? null : new LabelScope(indexes, new BytecodeLabel[indexes.size()],
+                    new java.util.HashSet<>(), nested, backward ? b.createLocal() : null, null);
+        }
+
+        /**
+         * The labels a goto may jump in to inside statement, an if or a block, at any depth through ifs and blocks
+         * (zend_resolve_goto_label forbids only loops, switches and finally); none for any other statement.
+         */
+        private Set<String> labelsInside(Ast statement) {
+            Set<String> labels = new LinkedHashSet<>();
+            if (statement.is("AST_IF")) {
+                for (Object clause : statement.children()) {
+                    labels.addAll(labelsInside(((Ast) clause).node("stmts")));
+                }
+            } else if (statement.is("AST_STMT_LIST")) {
+                for (Object child : statement.children()) {
+                    if (child instanceof Ast inner) {
+                        if (inner.is("AST_LABEL")) {
+                            labels.add((String) inner.get("name"));
+                        } else {
+                            labels.addAll(labelsInside(inner));
+                        }
+                    }
+                }
+            }
+            return labels;
+        }
+
+        /**
+         * Numbers the labels a goto may jump in to (labelsInside) in the statement lists of code, outside nested
+         * functions and classes; with any, entering holds the number of the one being jumped to, else 0.
+         */
+        private void entries(Object code) {
+            if (!(code instanceof Ast node) || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC")
+                    || node.is("AST_FUNC_DECL") || node.is("AST_CLASS")) {
+                return;
+            }
+            if (node.is("AST_STMT_LIST")) {
+                for (Object child : node.children()) {
+                    if (child instanceof Ast statement && !statement.is("AST_LABEL")) {
+                        for (String name : labelsInside(statement)) {
+                            entries.putIfAbsent(name, (long) entries.size() + 1);
+                        }
+                    }
+                }
+            }
+            for (Object child : node.children()) {
+                entries(child);
+            }
+            Map<String, Object> named = node.namedOrNull();
+            if (named != null) {
+                for (Object child : named.values()) {
+                    entries(child);
+                }
+            }
+            if (entering == null && !entries.isEmpty()) {
+                entering = b.createLocal();
+            }
+        }
+
+        /** Whether code has a goto to one of the labels, not counting nested functions and classes. */
+        private boolean gotoTo(Object code, Set<String> labels) {
+            if (!(code instanceof Ast node)) {
+                return false;
+            }
+            switch (node.kind) {
+                case "AST_GOTO":
+                    return labels.contains((String) node.get("label"));
+                case "AST_CLOSURE", "AST_ARROW_FUNC", "AST_FUNC_DECL", "AST_CLASS":
+                    return false;
+                default:
+                    for (Object child : node.children()) {
+                        if (gotoTo(child, labels)) {
+                            return true;
+                        }
+                    }
+                    Map<String, Object> named = node.namedOrNull();
+                    if (named != null) {
+                        for (Object child : named.values()) {
+                            if (gotoTo(child, labels)) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+            }
+        }
+
+        /**
+         * A statement list with goto labels (GotoNodes.LabeledBlockNode): a goto in it, or in a statement nested in
+         * it, branches to the label's place. The DSL branches only forward, so a list a goto jumps back in is a
+         * loop that runs once: a backward goto sets the label's number and goes round, and the loop's top branches
+         * on to that label.
+         */
+        private void labeledStatements(Ast list, LabelScope plain) {
+            b.beginBlock();
+            BytecodeLabel done = null;
+            if (plain.target() != null) {
+                done = b.createLabel();
+                b.beginStoreLocal(plain.target());
+                b.emitLoadConstant(-1L);
+                b.endStoreLocal();
+                b.beginWhile();
+                b.emitLoadConstant(Boolean.TRUE);
+                b.beginBlock();
+            }
+            LabelScope scope = new LabelScope(plain.indexes(), plain.labels(), plain.emitted(), plain.nested(),
+                    plain.target(), plain.target() == null ? null : b.createLabel());
+            for (int i = 0; i < scope.labels().length; i++) {
+                scope.labels()[i] = b.createLabel();
+            }
+            if (scope.target() != null) {
+                for (int i = 0; i < scope.labels().length; i++) {
+                    b.beginIfThen();
+                    b.beginIdentical();
+                    b.emitLoadLocal(scope.target());
+                    b.emitLoadConstant((long) i);
+                    b.endIdentical();
+                    b.emitBranch(scope.labels()[i]);
+                    b.endIfThen();
+                }
+            }
+            // a goto from outside jumping in to a label here, or inside a statement here: on to it
+            for (Map.Entry<String, Integer> label : scope.indexes().entrySet()) {
+                if (entries.containsKey(label.getKey())) {
+                    b.beginIfThen();
+                    b.beginIdentical();
+                    b.emitLoadLocal(entering);
+                    b.emitLoadConstant(entries.get(label.getKey()));
+                    b.endIdentical();
+                    b.beginBlock();
+                    if (!scope.nested().contains(label.getKey())) {
+                        b.beginStoreLocal(entering);
+                        b.emitLoadConstant(0L);
+                        b.endStoreLocal();
+                    }
+                    b.emitBranch(scope.labels()[label.getValue()]);
+                    b.endBlock();
+                    b.endIfThen();
+                }
+            }
+            labelScopes.add(scope);
+            for (Object child : list.children()) {
+                if (child instanceof Ast statement) {
+                    if (statement.is("AST_LABEL")) {
+                        String name = (String) statement.get("name");
+                        b.emitLabel(scope.labels()[scope.indexes().get(name)]);
+                        scope.emitted().add(name);
+                        continue;
+                    }
+                    for (String name : labelsInside(statement)) {
+                        b.emitLabel(scope.labels()[scope.indexes().get(name)]);
+                        scope.emitted().add(name);
+                    }
+                    statement(statement);
+                }
+            }
+            labelScopes.remove(labelScopes.size() - 1);
+            if (scope.target() != null) {
+                b.emitBranch(done);
+                b.emitLabel(scope.again());
+                b.endBlock();
+                b.endWhile();
+                b.emitLabel(done);
+            }
+            b.endBlock();
         }
 
         private void returnValue(Object value, Ast node) {
@@ -627,7 +941,29 @@ public final class BytecodeTranslator {
             } else {
                 b.beginIfThen();
             }
+            // a goto jumping in to a label in this clause takes it, one to a later clause passes it by
+            Set<String> into = entering == null ? Set.of() : labelsInside(element.node("stmts"));
+            Set<String> later = new LinkedHashSet<>();
+            for (int i = index + 1; entering != null && i < node.size(); i++) {
+                later.addAll(labelsInside(((Ast) node.child(i)).node("stmts")));
+            }
+            if (!into.isEmpty()) {
+                b.beginOr();
+                enteringOneOf(into);
+            }
+            if (!later.isEmpty()) {
+                b.beginAnd();
+                b.beginNot();
+                enteringOneOf(later);
+                b.endNot();
+            }
             condition(condition);
+            if (!later.isEmpty()) {
+                b.endAnd();
+            }
+            if (!into.isEmpty()) {
+                b.endOr();
+            }
             statements(element.node("stmts"));
             if (more) {
                 ifChain(node, index + 1);
@@ -635,6 +971,19 @@ public final class BytecodeTranslator {
             } else {
                 b.endIfThen();
             }
+        }
+
+        /** Whether entering holds the number of one of labels. */
+        private void enteringOneOf(Set<String> labels) {
+            b.beginOr();
+            for (String label : labels) {
+                b.beginIdentical();
+                b.emitLoadLocal(entering);
+                b.emitLoadConstant(entries.get(label));
+                b.endIdentical();
+            }
+            b.emitLoadConstant(Boolean.FALSE);
+            b.endOr();
         }
 
         private void whileLoop(Ast node) {
@@ -738,8 +1087,7 @@ public final class BytecodeTranslator {
                 Ast switchCase = (Ast) list.child(i);
                 if (switchCase.get("cond") == null) {
                     if (defaultIndex >= 0) {
-                        // php-src's compile error "Switch statements may only contain one default clause"
-                        throw new Unsupported("switch with two default clauses", switchCase);
+                        throw compileError(switchCase, "Switch statements may only contain one default clause");
                     }
                     defaultIndex = i;
                 }
@@ -892,14 +1240,22 @@ public final class BytecodeTranslator {
                     b.emitForeachRefVar(variable(ast, "foreach by reference over"));
                     return;
                 }
-                if (ast.is("AST_DIM") || ast.is("AST_STATIC_PROP")) {
+                if (refPlace(ast) instanceof RefPlace place) {
+                    // FE_RESET_RW reads a global without creating it: a missing one isn't iterable
+                    place.ref(false);
+                    return;
+                }
+                if (ast.is("AST_DIM")) {
                     refOf(ast);
                     return;
                 }
                 if (ast.is("AST_PROP")) {
-                    b.beginForeachRefProp(writtenPropSite(ast));
-                    expression(ast.get("expr"));
+                    b.beginBlock();
+                    Ast property = delayedProp(ast);
+                    b.beginForeachRefProp(writtenPropSite(property));
+                    expression(property.get("expr"));
                     b.endForeachRefProp();
+                    b.endBlock();
                     return;
                 }
                 if (Translator.isCall(ast)) {
@@ -933,16 +1289,25 @@ public final class BytecodeTranslator {
             }
             // the loops in the finally block are its own, wherever it is emitted
             List<Loop> around = new ArrayList<>(loops);
+            List<LabelScope> labelsAround = new ArrayList<>(labelScopes);
             Runnable finallyCode = () -> {
                 List<Loop> inner = new ArrayList<>(loops);
+                List<LabelScope> innerLabels = new ArrayList<>(labelScopes);
                 int outside = loopsOutsideFinally;
+                int labelsOutside = labelScopesOutsideFinally;
                 loops.clear();
                 loops.addAll(around);
                 loopsOutsideFinally = around.size();
+                labelScopes.clear();
+                labelScopes.addAll(labelsAround);
+                labelScopesOutsideFinally = labelsAround.size();
                 statements(finallyBody);
                 loopsOutsideFinally = outside;
+                labelScopesOutsideFinally = labelsOutside;
                 loops.clear();
                 loops.addAll(inner);
+                labelScopes.clear();
+                labelScopes.addAll(innerLabels);
             };
             b.beginTryCatchOtherwise(finallyCode);
             tryCatch(node);
@@ -1092,9 +1457,16 @@ public final class BytecodeTranslator {
                 case "AST_VAR":
                     if (isThis(node)) {
                         b.emitReadThis();
+                    } else if (isGlobals(node)) {
+                        b.emitGlobalsArray();
+                    } else if (refPlace(node) instanceof RefPlace place) {
+                        place.read();
                     } else {
                         b.emitReadVar(variable(node, "read of"));
                     }
+                    break;
+                case "AST_STATIC_PROP":
+                    refPlace(node).read();
                     break;
                 case "AST_PROP":
                     readProp(node);
@@ -1107,7 +1479,11 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_DIM":
                     if (node.get("dim") == null) {
-                        throw new Unsupported("[] for reading", node);
+                        throw compileError(node, "Cannot use [] for reading");
+                    }
+                    if (isGlobals(node.get("expr"))) {
+                        refPlace(node).read();
+                        break;
                     }
                     b.beginReadElement();
                     expression(node.get("expr"));
@@ -1125,16 +1501,29 @@ public final class BytecodeTranslator {
                         coalesceAssignment(node);
                         break;
                     }
+                    if (refPlace(node.node("var")) instanceof RefPlace place) {
+                        // CompoundAssignNode: the value, then the place read and written
+                        b.beginBlock();
+                        place.prepare();
+                        b.beginCompoundRef(node.flags);
+                        expression(node.get("expr"));
+                        place.ref(true);
+                        b.endCompoundRef();
+                        b.endBlock();
+                        break;
+                    }
                     if (node.node("var").is("AST_DIM")) {
                         nestedCompound(node.node("var"), node.get("expr"), node.flags);
                         break;
                     }
                     if (node.node("var").is("AST_PROP")) {
-                        Ast target = node.node("var");
+                        b.beginBlock();
+                        Ast target = delayedProp(node.node("var"));
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
                         expression(target.get("expr"));
                         b.endCompoundProp();
+                        b.endBlock();
                         break;
                     }
                     b.beginCompoundVar(variable(node.node("var"), "compound assignment to"), node.flags);
@@ -1147,15 +1536,23 @@ public final class BytecodeTranslator {
                 case "AST_POST_DEC": {
                     boolean increment = node.is("AST_PRE_INC") || node.is("AST_POST_INC");
                     boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
+                    if (refPlace(node.node("var")) instanceof RefPlace place) {
+                        b.beginIncDecRef(increment, prefix);
+                        place.ref(true);
+                        b.endIncDecRef();
+                        break;
+                    }
                     if (node.node("var").is("AST_DIM")) {
                         nestedIncDec(node.node("var"), increment, prefix);
                         break;
                     }
                     if (node.node("var").is("AST_PROP")) {
-                        Ast target = node.node("var");
+                        b.beginBlock();
+                        Ast target = delayedProp(node.node("var"));
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
                         expression(target.get("expr"));
                         b.endIncDecProp();
+                        b.endBlock();
                         break;
                     }
                     b.emitIncDecVar(variable(node.node("var"), "increment of"), increment, prefix);
@@ -1237,6 +1634,9 @@ public final class BytecodeTranslator {
                 case "AST_ARROW_FUNC":
                     closure(node);
                     break;
+                case "AST_INCLUDE_OR_EVAL":
+                    include(node);
+                    break;
                 default:
                     throw new Unsupported("expression", node);
             }
@@ -1247,9 +1647,9 @@ public final class BytecodeTranslator {
          * to the subject (`===`, until one is identical); after the last, the default arm or UnhandledMatchError.
          */
         private void match(Ast node) {
-            if (Translator.secondDefaultArm(node) != null) {
-                // a compile error, which the tree's translation raises
-                throw new Unsupported("match with two default arms", node);
+            Ast secondDefault = Translator.secondDefaultArm(node);
+            if (secondDefault != null) {
+                throw compileError(secondDefault, "Match expressions may only contain one default arm");
             }
             Ast armList = node.node("stmts");
             List<Ast> arms = new ArrayList<>();
@@ -1344,11 +1744,12 @@ public final class BytecodeTranslator {
          * as a value, with php-src's notice.
          */
         private void yieldedReference(Object value) {
-            if (value instanceof Ast ast && ast.is("AST_VAR")) {
+            if (value instanceof Ast ast && ast.is("AST_VAR") && !PhpContext.SUPERGLOBALS.contains(ast.get("name"))) {
                 b.emitRefVar(variable(ast, "yield by reference of"));
                 return;
             }
-            if (value instanceof Ast ast && (ast.is("AST_DIM") || ast.is("AST_PROP") || ast.is("AST_STATIC_PROP"))) {
+            if (value instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
+                    || ast.is("AST_STATIC_PROP"))) {
                 refOf(ast);
                 return;
             }
@@ -1393,6 +1794,17 @@ public final class BytecodeTranslator {
                 listAssignment(target, node.get("expr"));
                 return;
             }
+            if (refPlace(target) instanceof RefPlace place) {
+                // StaticPropNode, GlobalVarNode, GlobalsDimNode write: the value, then the place's reference
+                b.beginBlock();
+                place.prepare();
+                b.beginWriteRef();
+                expression(node.get("expr"));
+                place.ref(true);
+                b.endWriteRef();
+                b.endBlock();
+                return;
+            }
             if (target.is("AST_PROP")) {
                 writeProp(target, node.get("expr"));
                 return;
@@ -1407,7 +1819,7 @@ public final class BytecodeTranslator {
                 b.endWriteVar();
                 return;
             }
-            if (target.is("AST_DIM") && target.node("expr").is("AST_VAR") && !isThis(target.node("expr"))) {
+            if (target.is("AST_DIM") && isVariable(target.node("expr"))) {
                 BytecodeLocal container = variable(target.node("expr"), "element of");
                 if (target.get("dim") == null) {
                     b.beginAppendElement(container);
@@ -1484,16 +1896,25 @@ public final class BytecodeTranslator {
          * property chain, by a constant name). A key that isn't a constant or a variable is evaluated first.
          */
         private void refOf(Ast place) {
+            if (refPlace(place) instanceof RefPlace kept) {
+                kept.ref(true);
+                return;
+            }
             switch (place.kind) {
                 case "AST_VAR" -> b.emitRefVar(variable(place, "reference to"));
                 // a reference a foreach by reference bound a hidden local to
                 case "BYTECODE_OBJECT" -> b.emitRefVar(nullsafeObjects.get(place));
                 case "AST_DIM" -> {
+                    b.beginBlock();
                     ElementPlace element = elementPlace(place, "assignment to");
                     boolean append = element.appends();
-                    b.beginBlock();
                     List<Object> keys = placeKeys(element, !append);
-                    if (element.variable() != null) {
+                    if (element.ref() != null) {
+                        b.beginRefRefNested(append);
+                        element.ref().ref(true);
+                        emitKeys(keys);
+                        b.endRefRefNested();
+                    } else if (element.variable() != null) {
                         b.beginRefNested(element.variable(), append);
                         emitKeys(keys);
                         b.endRefNested();
@@ -1506,10 +1927,19 @@ public final class BytecodeTranslator {
                     b.endBlock();
                 }
                 case "AST_PROP" -> {
-                    PropSite site = writtenPropSite(place);
-                    b.beginRefProp(site);
-                    expression(place.get("expr"));
-                    b.endRefProp();
+                    b.beginBlock();
+                    Ast property = delayedProp(place);
+                    if (property.get("prop") instanceof String name) {
+                        b.beginRefProp(propSite(property, name));
+                        expression(property.get("expr"));
+                        b.endRefProp();
+                    } else {
+                        b.beginRefPropNamed(propSite(property, null));
+                        expression(property.get("expr"));
+                        propName(property.get("prop"));
+                        b.endRefPropNamed();
+                    }
+                    b.endBlock();
                 }
                 default -> throw new Unsupported("reference to", place);
             }
@@ -1547,6 +1977,14 @@ public final class BytecodeTranslator {
                 // php-src's compile errors (a value, $this, $GLOBALS)
                 throw new Unsupported("reference to", source instanceof Ast ast ? ast : node);
             }
+            if (refPlace(target) instanceof RefPlace kept) {
+                // a class or a key of the target first (zend_delayed_compile_var), then the source's reference
+                b.beginBlock();
+                kept.prepare();
+                kept.bind(() -> refOf(place));
+                b.endBlock();
+                return;
+            }
             switch (target.kind) {
                 case "AST_VAR" -> {
                     b.beginBindVar(variable(target, "assignment to"));
@@ -1554,11 +1992,17 @@ public final class BytecodeTranslator {
                     b.endBindVar();
                 }
                 case "AST_DIM" -> {
+                    b.beginBlock();
                     ElementPlace element = elementPlace(target, "assignment to");
                     boolean append = element.appends();
-                    b.beginBlock();
                     List<Object> keys = placeKeys(element, !append);
-                    if (element.variable() != null) {
+                    if (element.ref() != null) {
+                        b.beginBindRefNested(append);
+                        refOf(place);
+                        element.ref().ref(true);
+                        emitKeys(keys);
+                        b.endBindRefNested();
+                    } else if (element.variable() != null) {
                         b.beginBindNested(element.variable(), append);
                         refOf(place);
                         emitKeys(keys);
@@ -1573,11 +2017,13 @@ public final class BytecodeTranslator {
                     b.endBlock();
                 }
                 case "AST_PROP" -> {
-                    PropSite site = writtenPropSite(target);
-                    b.beginBindProp(site);
+                    b.beginBlock();
+                    Ast property = delayedProp(target);
+                    b.beginBindProp(writtenPropSite(property));
                     refOf(place);
-                    expression(target.get("expr"));
+                    expression(property.get("expr"));
                     b.endBindProp();
+                    b.endBlock();
                 }
                 default -> throw new Unsupported("reference assigned to", target);
             }
@@ -1665,8 +2111,7 @@ public final class BytecodeTranslator {
                 }
                 any = true;
                 if (element.is("AST_UNPACK")) {
-                    // "Spread operator is not supported in assignments"
-                    throw new Unsupported("spread in list()", element);
+                    throw compileError(element, "Spread operator is not supported in assignments");
                 }
                 if ((element.flags & ARRAY_ELEM_REF) != 0) {
                     throw new Unsupported("reference in list()", element);
@@ -1681,12 +2126,10 @@ public final class BytecodeTranslator {
                 }
             }
             if (!any) {
-                // "Cannot use empty list"
-                throw new Unsupported("empty list()", list);
+                throw compileError(list, "Cannot use empty list");
             }
             if (keyed && unkeyed) {
-                // "Cannot mix keyed and unkeyed array entries in assignments"
-                throw new Unsupported("list() with keyed and unkeyed entries", list);
+                throw compileError(list, "Cannot mix keyed and unkeyed array entries in assignments");
             }
         }
 
@@ -1798,7 +2241,21 @@ public final class BytecodeTranslator {
                     b.endCoalesce();
                     return;
                 }
-                case 15 -> throw new Unsupported("binary operator " + node.flags, node);
+                case 15 -> {
+                    // `xor` (LogicNodes.XorNode): both operands evaluated, then compared as booleans
+                    b.beginNotIdentical();
+                    condition(node.get("left"));
+                    condition(node.get("right"));
+                    b.endNotIdentical();
+                    return;
+                }
+                case 8 -> {
+                    List<Object> parts = concatOperands(node);
+                    if (parts.size() >= 3) {
+                        concatChain(parts);
+                        return;
+                    }
+                }
                 default -> {
                 }
             }
@@ -1806,6 +2263,52 @@ public final class BytecodeTranslator {
             expression(node.get("left"));
             expression(node.get("right"));
             endBinary(node);
+        }
+
+        /**
+         * The operands of `a . b . c ...` (Translator.foldConcat): a left operand that is itself a concatenation
+         * extends the chain, unless it folds to a literal.
+         */
+        private List<Object> concatOperands(Ast node) {
+            List<Object> parts = new ArrayList<>();
+            if (node.get("left") instanceof Ast left && left.is("AST_BINARY_OP") && left.flags == 8
+                    && !constantShaped(left)) {
+                parts.addAll(concatOperands(left));
+            } else {
+                parts.add(node.get("left"));
+            }
+            parts.add(node.get("right"));
+            return parts;
+        }
+
+        /**
+         * Three or more operands (ConcatChainNode): one join, where a `.` per pair compiled a concatenation each.
+         * As php-src's chain of ZEND_CONCAT, the first two are evaluated, then converted (the second waits in a
+         * local), and each next one is evaluated and converted in turn.
+         */
+        private void concatChain(List<Object> parts) {
+            BytecodeLocal second = b.createLocal();
+            b.beginInterpolate();
+            b.beginInterpolationPart();
+            b.beginFirstOfTwo();
+            expression(parts.get(0));
+            b.beginBlock();
+            b.beginStoreLocal(second);
+            expression(parts.get(1));
+            b.endStoreLocal();
+            b.emitLoadConstant(PhpNull.NULL);
+            b.endBlock();
+            b.endFirstOfTwo();
+            b.endInterpolationPart();
+            b.beginInterpolationPart();
+            b.emitLoadLocal(second);
+            b.endInterpolationPart();
+            for (int i = 2; i < parts.size(); i++) {
+                b.beginInterpolationPart();
+                expression(parts.get(i));
+                b.endInterpolationPart();
+            }
+            b.endInterpolate();
         }
 
         private void beginBinary(Ast node) {
@@ -1884,8 +2387,34 @@ public final class BytecodeTranslator {
                     expression(node.get("expr"));
                     b.endNegate();
                 }
+                case 260 -> silence(node.get("expr"));
                 default -> throw new Unsupported("unary operator " + node.flags, node);
             }
+        }
+
+        /**
+         * `@expr` (SilenceNode, BEGIN_SILENCE / END_SILENCE): error_reporting saved into a local and reduced to the
+         * fatal errors, the expression's value into another; the finally restores error_reporting on every way out,
+         * an exception's too (php-src's live range of the saved value).
+         */
+        private void silence(Object operand) {
+            b.beginBlock();
+            BytecodeLocal saved = b.createLocal();
+            BytecodeLocal value = b.createLocal();
+            b.beginStoreLocal(saved);
+            b.emitSilenceStart();
+            b.endStoreLocal();
+            b.beginTryFinally(() -> {
+                b.beginSilenceEnd();
+                b.emitLoadLocal(saved);
+                b.endSilenceEnd();
+            });
+            b.beginStoreLocal(value);
+            expression(operand);
+            b.endStoreLocal();
+            b.endTryFinally();
+            b.emitLoadLocal(value);
+            b.endBlock();
         }
 
         /**
@@ -2008,9 +2537,12 @@ public final class BytecodeTranslator {
         private void globalConstant(Ast node) {
             Ast nameNode = node.node("name");
             String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
-            if (language.builtins().deprecation(resolved[1] != null ? resolved[1] : resolved[0]) != null) {
-                // the tree's DeprecatedConstNode raises the deprecation at every fetch; no operation here does
-                throw new Unsupported("deprecated constant", node);
+            String deprecation = language.builtins().deprecation(resolved[1] != null ? resolved[1] : resolved[0]);
+            if (deprecation != null) {
+                b.emitDeprecatedConstant(resolved[0], language.constantId(resolved[0]),
+                        resolved[1] == null ? -1 : language.constantId(resolved[1]),
+                        (TruffleString) made(() -> Str.of(deprecation)), node.line);
+                return;
             }
             b.emitGlobalConstant(resolved[0], language.constantId(resolved[0]),
                     resolved[1] == null ? -1 : language.constantId(resolved[1]));
@@ -2106,55 +2638,89 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The site of a property written by a compound assignment, an increment or an element write, whose object
-         * is evaluated after the value (php-src delays fetching it): a constant name, and an object that is a
-         * variable, $this or a property of one; other forms stay on the tree.
+         * The site of a property written by a compound assignment, an increment, an element write or a reference
+         * (a place {@link #delayedProp} gave): a constant name; a computed one stays on the tree.
          */
         private PropSite writtenPropSite(Ast target) {
             if (!(target.get("prop") instanceof String name)) {
                 throw new Unsupported("write to a property by a computed name", target);
             }
-            if (!delayedObject(target.get("expr"))) {
-                throw new Unsupported("write to a property of an expression", target);
-            }
             return propSite(target, name);
         }
 
-        /** An object php-src fetches as the write runs (zend_delayed_compile_var): a variable or a property chain. */
-        private boolean delayedObject(Object object) {
-            if (!(object instanceof Ast ast)) {
-                return false;
+        /**
+         * A property written, read and written, or bound (zend_delayed_compile_prop): what php-src evaluates before
+         * the value is evaluated now into hidden locals, the object's parts (see {@link #delayedObject}) then a
+         * computed name; the node returned stands for the place, its object the chain fetched as the write runs.
+         * Emits into the block the caller opened. `?->` on the way is php-src's compile error.
+         */
+        private Ast delayedProp(Ast target) {
+            if (deepestNullsafe(target) != null) {
+                throw compileError(target, "Can't use nullsafe operator in write context");
             }
-            if (ast.is("AST_VAR")) {
-                return ast.get("name") instanceof String;
-            }
-            return ast.is("AST_PROP") && ast.get("prop") instanceof String && delayedObject(ast.get("expr"));
+            Object object = delayedObject(target.get("expr"));
+            Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
+            return withParts(target, "expr", object, "prop", prop);
         }
 
         /**
-         * `$obj->name = value` (AssignNode on a PropNode): the value, then the name, then the object, as the tree
-         * evaluates them; with a delayed object (a variable, a property chain) that is php-src's order too. A
-         * computed name that isn't a variable is evaluated before the value, as php-src compiles it with the
-         * delayed property (zend_delayed_compile_prop), and converted when the write runs.
+         * The object of a property place as php-src fetches it (zend_delayed_compile_var): a variable, a property,
+         * an element or a static property is read as the write runs, after the value, down a chain whose keys and
+         * computed names are evaluated now; anything else (a call, `new`) is evaluated now.
+         */
+        private Object delayedObject(Object object) {
+            if (!(object instanceof Ast ast)) {
+                return object;
+            }
+            switch (ast.kind) {
+                case "AST_VAR", "AST_STATIC_PROP", "BYTECODE_OBJECT":
+                    return ast;
+                case "AST_PROP":
+                    return delayedProp(ast);
+                case "AST_DIM": {
+                    if (ast.get("dim") == null) {
+                        // php-src appends a null to write to; read, the tree's error
+                        throw new Unsupported("[] as the object of a property written", ast);
+                    }
+                    Object container = delayedObject(ast.get("expr"));
+                    return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
+                }
+                default:
+                    return onceKey(ast);
+            }
+        }
+
+        /** A copy of node with two of its parts replaced; node itself when they are the same. */
+        private Ast withParts(Ast node, String first, Object firstValue, String second, Object secondValue) {
+            if (node.get(first) == firstValue && node.get(second) == secondValue) {
+                return node;
+            }
+            Map<String, Object> parts = new java.util.LinkedHashMap<>(node.namedOrNull());
+            parts.put(first, firstValue);
+            parts.put(second, secondValue);
+            return new Ast(node.kind, node.flags, node.line, node.endLine, null, parts);
+        }
+
+        /**
+         * `$obj->name = value` (AssignNode on a PropNode), in php-src's order (zend_compile_assign): what it
+         * evaluates before the value (a call as the object, a computed name; see {@link #delayedProp}), the value,
+         * then the object's chain and the write; a computed name is converted as the write runs.
          */
         private void writeProp(Ast target, Object value) {
-            if (!delayedObject(target.get("expr"))) {
-                throw new Unsupported("write to a property of an expression", target);
-            }
-            if (target.get("prop") instanceof String name) {
-                b.beginWriteProp(propSite(target, name));
-                expression(value);
-                expression(target.get("expr"));
-                b.endWriteProp();
-                return;
-            }
             b.beginBlock();
-            Object prop = onceKey(target.get("prop"));
-            b.beginWritePropNamed(propSite(target, null));
-            expression(value);
-            propName(prop);
-            expression(target.get("expr"));
-            b.endWritePropNamed();
+            Ast place = delayedProp(target);
+            if (place.get("prop") instanceof String name) {
+                b.beginWriteProp(propSite(place, name));
+                expression(value);
+                expression(place.get("expr"));
+                b.endWriteProp();
+            } else {
+                b.beginWritePropNamed(propSite(place, null));
+                expression(value);
+                propName(place.get("prop"));
+                expression(place.get("expr"));
+                b.endWritePropNamed();
+            }
             b.endBlock();
         }
 
@@ -2163,21 +2729,42 @@ public final class BytecodeTranslator {
          * key; a key that is a constant or a variable, which the tree evaluates after making the property writable.
          */
         private void writePropElement(Ast target, Object value) {
-            Ast property = target.node("expr");
-            PropSite site = writtenPropSite(property);
+            b.beginBlock();
+            Ast property = delayedProp(target.node("expr"));
             Object dim = target.get("dim");
+            if (!(property.get("prop") instanceof String)) {
+                // `$obj->$name[...] = value`: the name, evaluated now unless a variable, converted after the value
+                if (dim == null) {
+                    b.beginAppendPropElementNamed(propSite(property, null));
+                    expression(value);
+                    propName(property.get("prop"));
+                    expression(property.get("expr"));
+                    b.endAppendPropElementNamed();
+                } else {
+                    b.beginWritePropElementNamed(propSite(property, null));
+                    expression(value);
+                    propName(property.get("prop"));
+                    expression(property.get("expr"));
+                    key(dim);
+                    b.endWritePropElementNamed();
+                }
+                b.endBlock();
+                return;
+            }
+            PropSite site = writtenPropSite(property);
             if (dim == null) {
                 b.beginAppendPropElement(site);
                 expression(value);
                 expression(property.get("expr"));
                 b.endAppendPropElement();
-                return;
+            } else {
+                b.beginWritePropElement(site);
+                expression(value);
+                expression(property.get("expr"));
+                key(dim);
+                b.endWritePropElement();
             }
-            b.beginWritePropElement(site);
-            expression(value);
-            expression(property.get("expr"));
-            key(dim);
-            b.endWritePropElement();
+            b.endBlock();
         }
 
         /** `unset($obj->name)` (PropNode.unset): the object, then the name (a constant or a variable). */
@@ -2212,6 +2799,17 @@ public final class BytecodeTranslator {
                 b.emitIssetThis();
                 return;
             }
+            if (isGlobals(tested)) {
+                // zend_compile_isset_or_empty: $GLOBALS is set
+                b.emitLoadConstant(Boolean.TRUE);
+                return;
+            }
+            if (refPlace(tested) instanceof RefPlace place) {
+                b.beginIsSetValue();
+                place.readIfSet();
+                b.endIsSetValue();
+                return;
+            }
             if (tested instanceof Ast target && target.is("AST_VAR")) {
                 b.beginIsSetValue();
                 b.emitReadVar(variable(target, "isset of"));
@@ -2220,8 +2818,7 @@ public final class BytecodeTranslator {
             }
             if (tested instanceof Ast target && target.is("AST_DIM")) {
                 if (target.get("dim") == null) {
-                    // php-src's compile error "Cannot use [] for reading"
-                    throw new Unsupported("isset of []", target);
+                    throw compileError(target, "Cannot use [] for reading");
                 }
                 b.beginIssetElement();
                 readIfSet(target.get("expr"));
@@ -2251,6 +2848,11 @@ public final class BytecodeTranslator {
          * is, then its falsiness; empty($this) is !isset($this).
          */
         private void empty(Object tested) {
+            if (isGlobals(tested)) {
+                // zend_compile_isset_or_empty: $GLOBALS is not empty
+                b.emitLoadConstant(Boolean.FALSE);
+                return;
+            }
             b.beginNot();
             if (isThis(tested)) {
                 b.emitIssetThis();
@@ -2272,8 +2874,11 @@ public final class BytecodeTranslator {
                 switch (ast.kind) {
                     case "AST_DIM" -> {
                         if (ast.get("dim") == null) {
-                            // php-src's compile error "Cannot use [] for reading"
-                            throw new Unsupported("[] for reading", ast);
+                            throw compileError(ast, "Cannot use [] for reading");
+                        }
+                        if (isGlobals(ast.get("expr"))) {
+                            refPlace(ast).readIfSet();
+                            return;
                         }
                         b.beginElementIfSet();
                         readIfSet(ast.get("expr"));
@@ -2295,7 +2900,11 @@ public final class BytecodeTranslator {
                         b.endReadPropIfSet();
                         return;
                     }
-                    case "AST_NULLSAFE_PROP", "AST_STATIC_PROP" -> throw new Unsupported("isset of", ast);
+                    case "AST_STATIC_PROP" -> {
+                        refPlace(ast).readIfSet();
+                        return;
+                    }
+                    case "AST_NULLSAFE_PROP" -> throw new Unsupported("isset of", ast);
                     default -> {
                     }
                 }
@@ -2311,6 +2920,20 @@ public final class BytecodeTranslator {
         private void coalesceAssignment(Ast node) {
             Ast target = node.node("var");
             Object value = node.get("expr");
+            if (refPlace(target) instanceof RefPlace place) {
+                // CoalesceAssignNode: read as isset() reads it, else the value, then the place's reference
+                b.beginBlock();
+                place.prepare();
+                b.beginCoalesce();
+                place.readIfSet();
+                b.beginWriteRef();
+                expression(value);
+                place.ref(true);
+                b.endWriteRef();
+                b.endCoalesce();
+                b.endBlock();
+                return;
+            }
             if (target.is("AST_VAR")) {
                 BytecodeLocal variable = variable(target, "??= to");
                 b.beginCoalesce();
@@ -2322,27 +2945,40 @@ public final class BytecodeTranslator {
                 return;
             }
             if (target.is("AST_PROP")) {
-                if (!delayedObject(target.get("expr")) || !(target.get("prop") instanceof String name)) {
-                    throw new Unsupported("??= to a property of an expression or by a computed name", target);
-                }
+                // the object's parts evaluated once (php-src's memoized ones), its chain read as isset() reads it,
+                // then fetched again for the write
+                b.beginBlock();
+                Ast place = delayedProp(target);
                 b.beginCoalesce();
-                b.beginReadPropIfSet(propSite(target, name));
-                readIfSet(target.get("expr"));
-                b.endReadPropIfSet();
-                b.beginWriteProp(propSite(target, name));
-                expression(value);
-                expression(target.get("expr"));
-                b.endWriteProp();
+                if (place.get("prop") instanceof String name) {
+                    b.beginReadPropIfSet(propSite(place, name));
+                    readIfSet(place.get("expr"));
+                    b.endReadPropIfSet();
+                    b.beginWriteProp(propSite(place, name));
+                    expression(value);
+                    expression(place.get("expr"));
+                    b.endWriteProp();
+                } else {
+                    b.beginReadPropIfSetNamed(propSite(place, null));
+                    readIfSet(place.get("expr"));
+                    propName(place.get("prop"));
+                    b.endReadPropIfSetNamed();
+                    b.beginWritePropNamed(propSite(place, null));
+                    expression(value);
+                    propName(place.get("prop"));
+                    expression(place.get("expr"));
+                    b.endWritePropNamed();
+                }
                 b.endCoalesce();
+                b.endBlock();
                 return;
             }
             if (target.is("AST_DIM")) {
-                ElementPlace place = elementPlace(target, "??= to");
-                if (place.appends()) {
-                    // php-src's compile error "Cannot use [] for reading"
-                    throw new Unsupported("??= to []", target);
+                if (lastDimAppends(target)) {
+                    throw compileError(target, "Cannot use [] for reading");
                 }
                 b.beginBlock();
+                ElementPlace place = elementPlace(target, "??= to");
                 List<Object> keys = placeKeys(place, true);
                 b.beginCoalesce();
                 emitReadIfSet(place, keys);
@@ -2378,31 +3014,46 @@ public final class BytecodeTranslator {
          * A place `base[k1]...[kn]` written, read and written, or unset: its base, a variable or a property (of a
          * variable or a property chain, by a constant name), and its keys from the base down, null for an `[]`.
          */
-        private record ElementPlace(BytecodeLocal variable, Ast property, PropSite site, List<Object> dims) {
+        private record ElementPlace(BytecodeLocal variable, Ast property, PropSite site, RefPlace ref,
+                                    List<Object> dims) {
             boolean appends() {
                 return dims.get(dims.size() - 1) == null;
             }
         }
 
+        /**
+         * The place an element chain is: a variable's, or a property's whose object's parts php-src evaluates first
+         * are evaluated now ({@link #delayedProp}), into the block the caller opened.
+         */
         private ElementPlace elementPlace(Ast target, String what) {
             List<Object> dims = new ArrayList<>();
             Ast base = target;
-            while (base.is("AST_DIM")) {
+            // down to the base; `$GLOBALS[name]` is a place of its own (a global), the base of the keys below it
+            while (base.is("AST_DIM") && !isGlobals(base.get("expr"))) {
                 dims.add(0, base.get("dim"));
                 base = base.node("expr");
             }
             for (int i = 0; i < dims.size() - 1; i++) {
                 if (dims.get(i) == null && !what.equals("assignment to")) {
-                    throw new Unsupported("[] for reading", target);
+                    throw new Unsupported("[] inside a place read", target);
                 }
             }
+            if (refPlace(base) instanceof RefPlace kept) {
+                return new ElementPlace(null, null, null, kept, dims);
+            }
             if (base.is("AST_VAR") && !isThis(base)) {
-                return new ElementPlace(variable(base, what + " an element of"), null, null, dims);
+                return new ElementPlace(variable(base, what + " an element of"), null, null, null, dims);
             }
             if (base.is("AST_PROP")) {
-                return new ElementPlace(null, base, writtenPropSite(base), dims);
+                Ast property = delayedProp(base);
+                return new ElementPlace(null, property, writtenPropSite(property), null, dims);
             }
             throw new Unsupported(what + " an element of an expression", target);
+        }
+
+        /** `place[]`: an append, which php-src refuses to read (its compile error "Cannot use [] for reading"). */
+        private boolean lastDimAppends(Ast target) {
+            return target.is("AST_DIM") && target.get("dim") == null;
         }
 
         /**
@@ -2411,6 +3062,9 @@ public final class BytecodeTranslator {
          * value assigned, zend_delayed_compile_dim); an `[]` on the way as ElementChain's APPEND.
          */
         private List<Object> placeKeys(ElementPlace place, boolean withLast) {
+            if (place.ref() != null) {
+                place.ref().prepare();
+            }
             List<Object> keys = new ArrayList<>();
             int count = withLast ? place.dims().size() : place.dims().size() - 1;
             for (int i = 0; i < count; i++) {
@@ -2435,16 +3089,22 @@ public final class BytecodeTranslator {
          * constants or variables, then the value, then the containers made writable (ElementChain).
          */
         private void nestedWrite(Ast target, Object value) {
+            b.beginBlock();
             ElementPlace place = elementPlace(target, "assignment to");
             boolean append = place.appends();
-            b.beginBlock();
             emitWrite(place, placeKeys(place, !append), value, append);
             b.endBlock();
         }
 
         /** The write of a nested element once its keys are evaluated: the value, a property's object, the keys. */
         private void emitWrite(ElementPlace place, List<Object> keys, Object value, boolean append) {
-            if (place.variable() != null) {
+            if (place.ref() != null) {
+                b.beginWriteRefNested(append);
+                expression(value);
+                place.ref().ref(true);
+                emitKeys(keys);
+                b.endWriteRefNested();
+            } else if (place.variable() != null) {
                 b.beginWriteNested(place.variable(), append);
                 expression(value);
                 emitKeys(keys);
@@ -2466,7 +3126,9 @@ public final class BytecodeTranslator {
             for (int i = 0; i < keys.size(); i++) {
                 b.beginElementIfSet();
             }
-            if (place.variable() != null) {
+            if (place.ref() != null) {
+                place.ref().readIfSet();
+            } else if (place.variable() != null) {
                 b.emitReadVar(place.variable());
             } else {
                 b.beginReadPropIfSet(place.site());
@@ -2481,13 +3143,20 @@ public final class BytecodeTranslator {
 
         /** `base[k1]...[kn] op= value` (CompoundAssignNode on a DimNode): the keys, the value, then the element. */
         private void nestedCompound(Ast target, Object value, int op) {
-            ElementPlace place = elementPlace(target, "compound assignment to");
-            if (place.appends()) {
-                throw new Unsupported("[] for reading", target);
+            if (lastDimAppends(target)) {
+                // php-src appends a null and combines it; the tree's DimNode can't read the new element
+                throw new Unsupported("compound assignment to []", target);
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "compound assignment to");
             List<Object> keys = placeKeys(place, true);
-            if (place.variable() != null) {
+            if (place.ref() != null) {
+                b.beginCompoundRefNested(op);
+                expression(value);
+                place.ref().ref(true);
+                emitKeys(keys);
+                b.endCompoundRefNested();
+            } else if (place.variable() != null) {
                 b.beginCompoundNested(place.variable(), op);
                 expression(value);
                 emitKeys(keys);
@@ -2504,13 +3173,19 @@ public final class BytecodeTranslator {
 
         /** `++base[k1]...[kn]`, `base[k]--`... (IncDecNode on a DimNode). */
         private void nestedIncDec(Ast target, boolean increment, boolean prefix) {
-            ElementPlace place = elementPlace(target, "increment of");
-            if (place.appends()) {
-                throw new Unsupported("[] for reading", target);
+            if (lastDimAppends(target)) {
+                // php-src appends a null and steps it; the tree's DimNode can't read the new element
+                throw new Unsupported("increment of []", target);
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "increment of");
             List<Object> keys = placeKeys(place, true);
-            if (place.variable() != null) {
+            if (place.ref() != null) {
+                b.beginIncDecRefNested(increment, prefix);
+                place.ref().ref(true);
+                emitKeys(keys);
+                b.endIncDecRefNested();
+            } else if (place.variable() != null) {
                 b.beginIncDecNested(place.variable(), increment, prefix);
                 emitKeys(keys);
                 b.endIncDecNested();
@@ -2525,14 +3200,19 @@ public final class BytecodeTranslator {
 
         /** `unset(base[k1]...[kn])` (DimNode.unset). */
         private void nestedUnset(Ast target) {
-            ElementPlace place = elementPlace(target, "unset of");
-            if (place.appends()) {
-                // php-src's compile error "Cannot use [] for unsetting"
-                throw new Unsupported("unset of []", target);
+            if (lastDimAppends(target)) {
+                throw compileError(target, "Cannot use [] for unsetting");
             }
             b.beginBlock();
+            ElementPlace place = elementPlace(target, "unset of");
             List<Object> keys = placeKeys(place, true);
-            if (place.variable() != null) {
+            if (place.ref() != null) {
+                // DimNode.unset reads the chain: a global that doesn't exist isn't created
+                b.beginUnsetRefNested();
+                place.ref().ref(false);
+                emitKeys(keys);
+                b.endUnsetRefNested();
+            } else if (place.variable() != null) {
                 b.beginUnsetNested(place.variable());
                 emitKeys(keys);
                 b.endUnsetNested();
@@ -2592,14 +3272,16 @@ public final class BytecodeTranslator {
             }
             CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0], language.functionId(Str.lower(resolved[0])),
                     resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])), special));
-            boolean needsCallee = false;
-            for (Object arg : args.children()) {
-                if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
-                        || ast.is("AST_CALLABLE_CONVERT"))) {
-                    throw new Unsupported("argument", ast);
-                }
-                needsCallee |= !plainArgument(arg);
+            if (unpacks(args)) {
+                b.beginCallSpread(info, byRefContext);
+                b.beginBindStackValue();
+                b.emitResolveFunction(info);
+                StackValue spreadCallee = b.endBindStackValue();
+                spreadArguments(args, spreadCallee);
+                b.endCallSpread();
+                return;
             }
+            boolean needsCallee = argumentsNeedCallee(args);
             if (byRefContext) {
                 b.beginCallRef(info);
             } else {
@@ -2642,8 +3324,8 @@ public final class BytecodeTranslator {
             switch (lower) {
                 case "func_get_args", "func_num_args" -> {
                     if (args.size() != 0) {
-                        // php-src's ArgumentCountError
-                        throw new Unsupported(lower + "() with arguments", node);
+                        // php-src compiles a call with arguments as any other: the built-in's ArgumentCountError
+                        return false;
                     }
                     if (lower.equals("func_get_args")) {
                         b.emitFuncGetArgs();
@@ -2654,7 +3336,8 @@ public final class BytecodeTranslator {
                 }
                 case "call_user_func" -> {
                     if (args.size() == 0 || hasUnpackOrNames(args)) {
-                        throw new Unsupported("call_user_func() without a callable or with unpacking", node);
+                        // php-src compiles it as a call of the built-in (zend_compile_func_cuf)
+                        return false;
                     }
                     b.beginCallUserFunc(compiled);
                     for (Object arg : args.children()) {
@@ -2665,7 +3348,8 @@ public final class BytecodeTranslator {
                 }
                 case "call_user_func_array" -> {
                     if (args.size() != 2 || hasUnpackOrNames(args)) {
-                        throw new Unsupported("call_user_func_array() but with two arguments", node);
+                        // php-src compiles it as a call of the built-in (zend_compile_func_cufa)
+                        return false;
                     }
                     b.beginCallUserFuncArray(compiled);
                     expression(args.child(0));
@@ -2694,12 +3378,112 @@ public final class BytecodeTranslator {
                     }
                     return true;
                 }
-                case "func_get_arg", "compact", "extract", "get_object_vars", "get_defined_vars" ->
-                        throw new Unsupported(lower + "()", node);
+                case "func_get_arg" -> {
+                    if (args.size() != 1 || hasUnpackOrNames(args)) {
+                        // the built-in, called as any function (the tree's): its ArgumentCountError
+                        return false;
+                    }
+                    b.beginFuncGetArg();
+                    expression(args.child(0));
+                    b.endFuncGetArg();
+                    return true;
+                }
+                case "compact" -> {
+                    if (hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    compact(args);
+                    return true;
+                }
+                case "extract" -> {
+                    if (hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    useCallScope();
+                    b.beginExtract();
+                    for (Object arg : args.children()) {
+                        expression(arg);
+                    }
+                    b.endExtract();
+                    return true;
+                }
+                case "get_object_vars" -> {
+                    if (args.size() != 1 || hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    b.beginObjectVars();
+                    expression(args.child(0));
+                    b.endObjectVars();
+                    return true;
+                }
+                case "get_defined_vars" -> throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;
                 }
             }
+        }
+
+        /**
+         * compact() (Translator's CompactNode, DynamicCompactNode): names given as literals are read where the
+         * function has their variables, else looked up by name (an include's or extract()'s variable, $this); names
+         * computed at run time are all looked up by name.
+         */
+        private void compact(Ast args) {
+            List<String> literal = new ArrayList<>();
+            if (args.size() == 0 || !constants.compactNames(args, literal)) {
+                b.beginCompactDynamic();
+                for (Object arg : args.children()) {
+                    expression(arg);
+                }
+                b.endCompactDynamic();
+                return;
+            }
+            for (int i = literal.size() - 1; i >= 0; i--) {
+                String name = literal.get(i);
+                TruffleString key = (TruffleString) made(() -> language.intern(Str.of(name)));
+                BytecodeLocal local = variables.get(name);
+                if (local != null) {
+                    b.beginCompactVar(local, key);
+                } else {
+                    b.beginCompactName(key);
+                }
+            }
+            b.emitCompactStart();
+            for (String name : literal) {
+                if (variables.containsKey(name)) {
+                    b.endCompactVar();
+                } else {
+                    b.endCompactName();
+                }
+            }
+        }
+
+        /** The call's variables by name are kept in a hidden local, made where the body first needs them. */
+        private void useCallScope() {
+            if (callScope == null) {
+                callScope = b.createLocal();
+                if (firstRun) {
+                    scopeLocal = LocalAccessor.constantOf(callScope);
+                }
+            }
+        }
+
+        /**
+         * include / require (_once) (Translator's IncludeNode): the path, then the file run in the call's
+         * variables. eval stays on the tree, which doesn't cover it either.
+         */
+        private void include(Ast node) {
+            String kind = switch (node.flags) {
+                case EXEC_EVAL -> throw new Unsupported("eval", node);
+                case EXEC_INCLUDE_ONCE -> "include_once";
+                case EXEC_REQUIRE -> "require";
+                case EXEC_REQUIRE_ONCE -> "require_once";
+                default -> "include";
+            };
+            useCallScope();
+            b.beginInclude((IncludeSite) made(() -> new IncludeSite(kind)));
+            expression(node.get("expr"));
+            b.endInclude();
         }
 
         private boolean hasUnpackOrNames(Ast args) {
@@ -2719,26 +3503,106 @@ public final class BytecodeTranslator {
          */
         private void callValue(Ast node, Object calleeValue, boolean keepRef) {
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
-            b.beginCallValue(keepRef);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
+            if (spread) {
+                b.beginCallValueSpread(keepRef);
+            } else {
+                b.beginCallValue(keepRef);
+            }
             b.beginBindStackValue();
             b.beginResolveCallable();
             calleeValue(calleeValue);
             b.endResolveCallable();
             StackValue target = b.endBindStackValue();
-            callableArguments(args, target, needsCallee);
-            b.endCallValue();
+            callableArguments(args, target, needsCallee, spread);
+            if (spread) {
+                b.endCallValueSpread();
+            } else {
+                b.endCallValue();
+            }
         }
 
-        /** The function operand of a CallValue (its arguments' callee) and the arguments. */
-        private void callableArguments(Ast args, StackValue target, boolean needsCallee) {
+        /** The function operand of a CallValue (its arguments' callee) and the arguments, a list if spread. */
+        private void callableArguments(Ast args, StackValue target, boolean needsCallee, boolean spread) {
             StackValue calleeValue = callee(needsCallee, () -> {
                 b.beginTargetFunction();
                 b.emitLoadStackValue(target);
                 b.endTargetFunction();
             });
+            arguments(args, calleeValue, spread);
+        }
+
+        /** A call's arguments sent once its callee is known: each an operand, or the list a call unpacking takes. */
+        private void arguments(Ast args, StackValue callee, boolean spread) {
+            if (spread) {
+                spreadArguments(args, callee);
+                return;
+            }
             for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+                argument(args.child(i), i, callee);
+            }
+        }
+
+        /**
+         * Whether a call unpacks arguments (`f($a, ...$b)`), checked as php-src's zend_compile_args does: no
+         * positional argument after an unpacked one (its compile error); named arguments stay on the tree, whose
+         * translation doesn't cover them either.
+         */
+        private boolean unpacks(Ast args) {
+            boolean unpacked = false;
+            for (Object arg : args.children()) {
+                if (arg instanceof Ast ast && (ast.is("AST_NAMED_ARG") || ast.is("AST_CALLABLE_CONVERT"))) {
+                    throw new Unsupported("argument", ast);
+                }
+                if (isUnpack(arg)) {
+                    unpacked = true;
+                } else if (unpacked) {
+                    throw compileError(arg instanceof Ast ast ? ast : args,
+                            "Cannot use positional argument after argument unpacking");
+                }
+            }
+            return unpacked;
+        }
+
+        private static boolean isUnpack(Object arg) {
+            return arg instanceof Ast ast && ast.is("AST_UNPACK");
+        }
+
+        /**
+         * The arguments of a call that unpacks, as the list its call takes (SpreadStart, ArgumentsNode's spread):
+         * the arguments before the first `...` sent as any call's, at their constant positions; then each unpacked
+         * array's elements, by reference where they land on the callee's by-reference parameters (a variable's
+         * array separated for it, SpreadVar).
+         */
+        private void spreadArguments(Ast args, StackValue callee) {
+            int count = args.size();
+            for (int i = count - 1; i >= 0; i--) {
+                Object arg = args.child(i);
+                if (!isUnpack(arg)) {
+                    b.beginSpreadAdd();
+                } else if (((Ast) arg).get("expr") instanceof Ast unpacked && isVariable(unpacked)) {
+                    b.beginSpreadVar(variable(unpacked, "unpacking of"));
+                } else {
+                    b.beginSpreadValue();
+                }
+            }
+            b.emitSpreadStart();
+            for (int i = 0; i < count; i++) {
+                Object arg = args.child(i);
+                if (!isUnpack(arg)) {
+                    argument(arg, i, callee);
+                    b.endSpreadAdd();
+                    continue;
+                }
+                b.emitLoadStackValue(callee);
+                Object unpacked = ((Ast) arg).get("expr");
+                if (unpacked instanceof Ast ast && isVariable(ast)) {
+                    b.endSpreadVar();
+                } else {
+                    expression(unpacked);
+                    b.endSpreadValue();
+                }
             }
         }
 
@@ -2790,22 +3654,36 @@ public final class BytecodeTranslator {
             if (!(node.get("method") instanceof String name)) {
                 // `$obj->$name(args)` (DynamicMethodCallNode): the callable [$obj, name], then the arguments
                 Ast args = node.node("args");
-                boolean needsCallee = argumentsNeedCallee(args);
-                b.beginCallValue(byRefContext);
+                boolean spread = unpacks(args);
+                boolean needsCallee = spread || argumentsNeedCallee(args);
+                if (spread) {
+                    b.beginCallValueSpread(byRefContext);
+                } else {
+                    b.beginCallValue(byRefContext);
+                }
                 b.beginBindStackValue();
                 b.beginResolveDynamicMethod();
                 expression(node.get("expr"));
                 expression(node.get("method"));
                 b.endResolveDynamicMethod();
                 StackValue target = b.endBindStackValue();
-                callableArguments(args, target, needsCallee);
-                b.endCallValue();
+                callableArguments(args, target, needsCallee, spread);
+                if (spread) {
+                    b.endCallValueSpread();
+                } else {
+                    b.endCallValue();
+                }
                 return;
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
-            b.beginCallMethod(site, byRefContext);
+            if (spread) {
+                b.beginCallMethodSpread(site, byRefContext);
+            } else {
+                b.beginCallMethod(site, byRefContext);
+            }
             b.beginBindStackValue();
             expression(node.get("expr"));
             StackValue receiver = b.endBindStackValue();
@@ -2814,10 +3692,12 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(receiver);
                 b.endResolveMethod();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endCallMethodSpread();
+            } else {
+                b.endCallMethod();
             }
-            b.endCallMethod();
         }
 
         /**
@@ -2839,9 +3719,14 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
-            b.beginCallStatic(site, byRefContext);
+            if (spread) {
+                b.beginCallStaticSpread(site, byRefContext);
+            } else {
+                b.beginCallStatic(site, byRefContext);
+            }
             b.beginBindStackValue();
             classRef(node.get("class"));
             StackValue phpClass = b.endBindStackValue();
@@ -2850,10 +3735,12 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(phpClass);
                 b.endResolveStaticMethod();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endCallStaticSpread();
+            } else {
+                b.endCallStatic();
             }
-            b.endCallStatic();
         }
 
         /**
@@ -2862,15 +3749,28 @@ public final class BytecodeTranslator {
          * evaluated by value and dropped (zend_pass_function). The object is the value.
          */
         private void newObject(Ast node) {
+            ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
-                throw new Unsupported("anonymous class", node);
+                // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs
+                anonymous = (ClassTemplate) made(() -> constants.anonymousClass(classNode));
+                b.beginBlock();
+                b.emitDeclareAnonymousClass(anonymous);
             }
             Ast args = node.node("args");
-            boolean needsCallee = argumentsNeedCallee(args);
-            b.beginConstruct();
+            boolean spread = unpacks(args);
+            boolean needsCallee = spread || argumentsNeedCallee(args);
+            if (spread) {
+                b.beginConstructSpread();
+            } else {
+                b.beginConstruct();
+            }
             b.beginBindStackValue();
             b.beginInstantiate();
-            classRef(node.get("class"));
+            if (anonymous != null) {
+                b.emitResolveClass(classSite(anonymous.getName()));
+            } else {
+                classRef(node.get("class"));
+            }
             b.endInstantiate();
             StackValue object = b.endBindStackValue();
             StackValue calleeValue = callee(needsCallee, () -> {
@@ -2878,10 +3778,15 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(object);
                 b.endResolveConstructor();
             });
-            for (int i = 0; i < args.size(); i++) {
-                argument(args.child(i), i, calleeValue);
+            arguments(args, calleeValue, spread);
+            if (spread) {
+                b.endConstructSpread();
+            } else {
+                b.endConstruct();
             }
-            b.endConstruct();
+            if (anonymous != null) {
+                b.endBlock();
+            }
         }
 
         /**
@@ -2903,7 +3808,9 @@ public final class BytecodeTranslator {
             switch (Str.lower(name)) {
                 case "self" -> b.emitResolveClass(classSite(enclosingClass(ast).name()));
                 case "parent" -> b.emitResolveClass(classSite(parentClass(ast)));
-                case "static" -> b.emitResolveLateStatic(classSite(enclosingClass(ast).name()));
+                // outside a class, a closure's called class is the scope it is bound to, if any
+                case "static" -> b.emitResolveLateStatic(owner == null ? (ClassSite) made(ClassSite::noScope)
+                        : classSite(owner.name()));
                 default -> b.emitResolveClass(classSite(name));
             }
         }
@@ -3000,7 +3907,7 @@ public final class BytecodeTranslator {
             if (!(arg instanceof Ast ast)) {
                 return true;
             }
-            if (isThis(ast)) {
+            if (isThis(ast) || isGlobals(ast)) {
                 // passed as a value, as the tree's arguments pass it
                 return true;
             }
@@ -3020,31 +3927,61 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast ast = (Ast) arg;
-            if (ast.is("AST_VAR")) {
+            if (refPlace(ast) instanceof RefPlace kept) {
+                // ArgumentsNode: the place's reference for a by-reference parameter, else its value
+                b.beginBlock();
+                kept.prepare();
+                b.beginConditional();
+                argByRef(index, callee);
+                kept.ref(true);
+                kept.read();
+                b.endConditional();
+                b.endBlock();
+            } else if (ast.is("AST_VAR")) {
                 b.beginSendVar(variable(ast, "argument"), index);
                 b.emitLoadStackValue(callee);
                 b.endSendVar();
-            } else if (ast.is("AST_DIM") && ast.node("expr").is("AST_VAR") && ast.get("dim") != null) {
+            } else if (ast.is("AST_DIM") && temporaryBase(ast) != null) {
+                temporaryElementArgument(ast, temporaryBase(ast), index, callee);
+            } else if (ast.is("AST_DIM") && isVariable(ast.node("expr")) && ast.get("dim") != null) {
                 b.beginSendElement(variable(ast.node("expr"), "argument element of"), index);
                 b.emitLoadStackValue(callee);
                 key(ast.get("dim"));
                 b.endSendElement();
             } else if (ast.is("AST_DIM")) {
-                // a nested element, or an element of a property: its reference or its value
-                ElementPlace place = elementPlace(ast, "argument");
-                if (place.dims().contains(null)) {
-                    // `[]` takes a reference only, else php-src's "Cannot use [] for reading"
-                    throw new Unsupported("argument []", ast);
-                }
+                // a nested element, or an element of a property: its reference or its value; `[]` last takes a
+                // reference only, else the tree's Error "Cannot use [] for reading"
                 b.beginBlock();
-                List<Object> keys = placeKeys(place, true);
-                if (place.variable() != null) {
-                    b.beginSendNested(place.variable(), index);
+                ElementPlace place = elementPlace(ast, "argument");
+                boolean append = place.appends();
+                List<Object> keys = placeKeys(place, !append);
+                if (place.ref() != null) {
+                    if (append) {
+                        throw new Unsupported("argument [] of a reference place", ast);
+                    }
+                    // the element's reference (DimNode.makeRef) or its value (DimNode.execute down the chain)
+                    b.beginConditional();
+                    argByRef(index, callee);
+                    b.beginRefRefNested(false);
+                    place.ref().ref(true);
+                    emitKeys(keys);
+                    b.endRefRefNested();
+                    for (int i = 0; i < keys.size(); i++) {
+                        b.beginReadElement();
+                    }
+                    place.ref().read();
+                    for (Object dim : keys) {
+                        key(dim);
+                        b.endReadElement();
+                    }
+                    b.endConditional();
+                } else if (place.variable() != null) {
+                    b.beginSendNested(place.variable(), index, append);
                     b.emitLoadStackValue(callee);
                     emitKeys(keys);
                     b.endSendNested();
                 } else {
-                    b.beginSendPropNested(place.site(), index);
+                    b.beginSendPropNested(place.site(), index, append);
                     b.emitLoadStackValue(callee);
                     expression(place.property().get("expr"));
                     emitKeys(keys);
@@ -3056,6 +3993,13 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(callee);
                 expression(ast.get("expr"));
                 b.endSendProp();
+            } else if (ast.is("AST_PROP")) {
+                // `$obj->$name`: the object, then the name (FETCH_OBJ_FUNC_ARG's operands)
+                b.beginSendPropNamed(propSite(ast, null), index);
+                b.emitLoadStackValue(callee);
+                expression(ast.get("expr"));
+                propName(ast.get("prop"));
+                b.endSendPropNamed();
             } else if (ast.is("AST_CALL") || ast.is("AST_METHOD_CALL") || ast.is("AST_STATIC_CALL")) {
                 b.beginSendCall(index);
                 b.emitLoadStackValue(callee);
@@ -3072,6 +4016,234 @@ public final class BytecodeTranslator {
             }
         }
 
+        private void argByRef(int index, StackValue callee) {
+            b.beginArgByRef(index);
+            b.emitLoadStackValue(callee);
+            b.endArgByRef();
+        }
+
+        // ---- static properties, superglobals and $GLOBALS: places kept in a reference ----
+
+        /**
+         * A place whose storage is a reference (Translator.place's StaticPropNode, GlobalVarNode, GlobalsDimNode):
+         * `Cls::$name`, of a class reference (a name, self, parent, static, an expression); a global by name, a
+         * superglobal or `$GLOBALS['name']` by a constant key (php-src's ZEND_FETCH_GLOBAL of a CONST); or
+         * `$GLOBALS[key]` by a computed key, which names the global when the place is used.
+         */
+        private final class RefPlace {
+            private final Object classNode;
+            private final StaticPropSite site;
+            private final String global;
+            private Object key;
+            /** A class that is an expression, evaluated by prepare (zend_compile_class_ref fetches it at once). */
+            private BytecodeLocal classLocal;
+            private boolean prepared;
+
+            RefPlace(Object classNode, StaticPropSite site, String global, Object key) {
+                this.classNode = classNode;
+                this.site = site;
+                this.global = global;
+                this.key = key;
+            }
+
+            /**
+             * Before a value assigned to the place, or a second use of it: what php-src evaluates first, a class
+             * that is an expression, and a key that isn't a constant or a variable (zend_delayed_compile_var).
+             */
+            void prepare() {
+                if (prepared) {
+                    return;
+                }
+                prepared = true;
+                if (site != null && !(classNode instanceof Ast name && name.is("AST_NAME"))) {
+                    classLocal = b.createLocal();
+                    b.beginStoreLocal(classLocal);
+                    classRef(classNode);
+                    b.endStoreLocal();
+                }
+                if (key != null) {
+                    key = onceKey(key);
+                }
+            }
+
+            private void emitClass() {
+                if (classLocal != null) {
+                    b.emitLoadLocal(classLocal);
+                } else {
+                    classRef(classNode);
+                }
+            }
+
+            /** The place's value (execute): a missing global is null, a missing static property an Error. */
+            void read() {
+                if (site != null) {
+                    b.beginReadStaticProp(site);
+                    emitClass();
+                    b.endReadStaticProp();
+                } else if (global != null) {
+                    b.emitGlobalValue(global);
+                } else {
+                    b.beginGlobalsElementValue();
+                    expression(key);
+                    b.endGlobalsElementValue();
+                }
+            }
+
+            /** The value as isset() reads it (readIfSet): null for a missing static property too. */
+            void readIfSet() {
+                if (site == null) {
+                    read();
+                    return;
+                }
+                b.beginStaticPropIfSet(site);
+                emitClass();
+                b.endStaticPropIfSet();
+            }
+
+            /** The place's reference (makeRef); a missing global made (null) when create says so, else null. */
+            void ref(boolean create) {
+                if (site != null) {
+                    b.beginStaticPropRef(site);
+                    emitClass();
+                    b.endStaticPropRef();
+                } else if (global != null) {
+                    b.emitGlobalRef(global, create);
+                } else {
+                    b.beginGlobalsElementRef(create);
+                    expression(key);
+                    b.endGlobalsElementRef();
+                }
+            }
+
+            void unset() {
+                if (site != null) {
+                    b.beginUnsetStaticProp(site);
+                    emitClass();
+                    b.endUnsetStaticProp();
+                    return;
+                }
+                b.beginUnsetGlobal();
+                name();
+                b.endUnsetGlobal();
+            }
+
+            /** `place = &source` (bindRef): the source's reference, then the place bound to it. */
+            void bind(Runnable source) {
+                if (site != null) {
+                    b.beginBindStaticProp(site);
+                    source.run();
+                    b.endBindStaticProp();
+                    return;
+                }
+                b.beginBindGlobal();
+                source.run();
+                name();
+                b.endBindGlobal();
+            }
+
+            /** A global's name, as UnsetGlobal and BindGlobal take it. */
+            private void name() {
+                if (global != null) {
+                    b.emitLoadConstant(made(() -> Str.of(global)));
+                } else {
+                    expression(key);
+                }
+            }
+        }
+
+        /** The place kept in a reference that node is, or null for any other node. */
+        private RefPlace refPlace(Object value) {
+            if (!(value instanceof Ast node)) {
+                return null;
+            }
+            switch (node.kind) {
+                case "AST_STATIC_PROP" -> {
+                    if (!(node.get("prop") instanceof String name)) {
+                        throw new Unsupported("static property by a computed name", node);
+                    }
+                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name)));
+                    return new RefPlace(node.get("class"), site, null, null);
+                }
+                case "AST_VAR" -> {
+                    return node.get("name") instanceof String name && PhpContext.SUPERGLOBALS.contains(name)
+                            ? new RefPlace(null, null, name, null) : null;
+                }
+                case "AST_DIM" -> {
+                    if (!isGlobals(node.get("expr"))) {
+                        return null;
+                    }
+                    Object dim = node.get("dim");
+                    if (dim == null) {
+                        // php-src's compile errors "Cannot append to $GLOBALS", "Cannot use [] for reading"
+                        throw new Unsupported("[] of $GLOBALS", node);
+                    }
+                    String name = constantGlobalName(dim);
+                    return name != null ? new RefPlace(null, null, name, null) : new RefPlace(null, null, null, dim);
+                }
+                default -> {
+                    return null;
+                }
+            }
+        }
+
+        /** The global a constant string or int key of $GLOBALS names (GlobalsDimNode.toName), else null. */
+        private String constantGlobalName(Object dim) {
+            if (!constantShaped(dim)) {
+                return null;
+            }
+            Object constant = constantValue(dim);
+            return constant instanceof TruffleString || constant instanceof Long ? GlobalsDimNode.toName(constant)
+                    : null;
+        }
+
+        /**
+         * The base of an element chain that is no variable (zend_is_variable): a call's result, a constant, a literal
+         * or `new` (not $this, whose ArrayAccess the tree has no place for); null for a variable, a property or a
+         * static property.
+         */
+        private Object temporaryBase(Ast dim) {
+            Object base = dim;
+            while (base instanceof Ast ast && ast.is("AST_DIM")) {
+                base = ast.get("expr");
+            }
+            if (base instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_PROP") || ast.is("AST_NULLSAFE_PROP")
+                    || ast.is("AST_STATIC_PROP"))) {
+                return null;
+            }
+            return base;
+        }
+
+        /**
+         * `f()[k1]...[kn]` as an argument (FETCH_DIM_FUNC_ARG on a temporary, SendTemporary): the base and the keys
+         * evaluated, then the value read down the chain, or for a by-reference parameter the element's reference in
+         * a separated copy of a call's array, through the reference a call returned (zend_separate_if_call_and_write);
+         * php-src can't write to any other temporary ("Cannot use temporary expression in write context").
+         */
+        private void temporaryElementArgument(Ast ast, Object base, int index, StackValue callee) {
+            List<Object> dims = new ArrayList<>();
+            for (Object link = ast; link != base; link = ((Ast) link).get("expr")) {
+                dims.add(0, ((Ast) link).get("dim"));
+            }
+            for (int i = 0; i < dims.size() - 1; i++) {
+                if (dims.get(i) == null) {
+                    throw new Unsupported("[] inside a place read", ast);
+                }
+            }
+            boolean append = dims.get(dims.size() - 1) == null;
+            boolean call = Translator.isCall(base) && !constants.compiledInPlace((Ast) base);
+            b.beginSendTemporary(index, append, call);
+            b.emitLoadStackValue(callee);
+            if (call) {
+                callForRef((Ast) base);
+            } else {
+                expression(base);
+            }
+            for (int i = 0; i < (append ? dims.size() - 1 : dims.size()); i++) {
+                key(dims.get(i));
+            }
+            b.endSendTemporary();
+        }
+
         // ---- variables and constants ----
 
         /** A plain variable's local; $this, superglobals and variable variables aren't covered. */
@@ -3086,9 +4258,9 @@ public final class BytecodeTranslator {
             return local;
         }
 
-        /** A plain variable (a CV): no $this, no variable variable. */
+        /** A plain variable (a CV): no $this, $GLOBALS or superglobal, no variable variable. */
         private boolean isVariable(Ast node) {
-            return node.is("AST_VAR") && node.get("name") instanceof String && !isThis(node);
+            return node.is("AST_VAR") && node.get("name") instanceof String name && plainVariable(name);
         }
 
         /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */
@@ -3161,8 +4333,21 @@ public final class BytecodeTranslator {
     private record Loop(BytecodeLabel breakLabel, BytecodeLabel continueLabel) {
     }
 
+    /**
+     * A statement list's goto labels: their numbers by name, their places, those emitted so far (a goto to one is
+     * backward), those inside a statement of the list (an if or a block; their place is before it), and for a
+     * list a goto jumps back in, the local holding the label to go on to and the branch round.
+     */
+    private record LabelScope(Map<String, Integer> indexes, BytecodeLabel[] labels, Set<String> emitted,
+                              Set<String> nested, BytecodeLocal target, BytecodeLabel again) {
+    }
+
     // php-ast flag values (Translator's)
     private static final int ARRAY_ELEM_REF = 1;
+    private static final int EXEC_EVAL = 1;
+    private static final int EXEC_INCLUDE_ONCE = 4;
+    private static final int EXEC_REQUIRE = 8;
+    private static final int EXEC_REQUIRE_ONCE = 16;
     private static final int PROMOTED = 7 | 128;
 
     /** Whether a body has a finally block, outside the functions and classes declared in it. */
@@ -3199,6 +4384,11 @@ public final class BytecodeTranslator {
 
     private static boolean isThis(Object value) {
         return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
+    }
+
+    /** `$GLOBALS` itself (Translator.isGlobals). */
+    private static boolean isGlobals(Object value) {
+        return value instanceof Ast node && node.is("AST_VAR") && "GLOBALS".equals(node.get("name"));
     }
 
     /** Whether a variable of this name is a local: $this, $GLOBALS and the superglobals are not. */

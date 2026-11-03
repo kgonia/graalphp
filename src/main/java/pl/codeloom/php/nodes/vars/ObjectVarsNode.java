@@ -23,9 +23,13 @@ public final class ObjectVarsNode extends ExprNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        return objectVars(object.execute(frame), PropNode.callingScope(frame, lexicalClass));
+    }
+
+    /** The properties of value scope (a class, lowercase, or null) may access; also get_object_vars() on bytecode. */
+    public static Object objectVars(Object value, String scope) {
         if (value instanceof PhpObject phpObject) {
-            return phpObject.visibleProperties(PropNode.callingScope(frame, lexicalClass));
+            return phpObject.visibleProperties(scope);
         }
         throw notAnObject(value);
     }

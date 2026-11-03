@@ -2,6 +2,7 @@ package pl.codeloom.php.bytecode;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.runtime.PhpArray;
@@ -73,7 +74,8 @@ final class ElementChain {
     }
 
     /** `container[key] = value` once the container is writable: an array's element, else offsetSet(). */
-    static void write(Node node, Object container, Object key, Object value, ElementNodes.ElementWriteNode write) {
+    static void write(Node node, Object container, Object key, Object value, ElementNodes.ElementWriteNode write,
+                      InlinedBranchProfile objectWrite) {
         if (container instanceof PhpArray array) {
             if (key == APPEND) {
                 array.append(value);
@@ -82,6 +84,7 @@ final class ElementChain {
             }
             return;
         }
+        objectWrite.enter(node);
         DimNode.writeToObject(node, container, key == APPEND ? PhpNull.NULL : key, value);
     }
 

@@ -13,8 +13,11 @@ import pl.codeloom.php.nodes.vars.ElementNodes;
  * (inherited, one copy) that leaves polymorphism reporting out. The tree's nodes report polymorphism (ExprNode,
  * ToBooleanNode, ElementReadNode), and from Truffle 25.1 on, a proxied node that does generates code that doesn't
  * compile: the specialization state moved into the bytecode array, and the generated checkForPolymorphicSpecialize
- * reads it without the array in scope. The comparisons have their own classes ({@link
- * pl.codeloom.php.nodes.expr.Comparisons}).
+ * reads it without the array in scope (GR-61293; reported as https://github.com/oracle/graal/issues/14871, reproducer
+ * https://github.com/kgonia/truffle-bytecode-reportpolymorphism-repro; plain {@code @Operation}s hit it too). An
+ * operation that should report polymorphism can do it through a small {@code @Cached} child node that has
+ * {@code @ReportPolymorphism} (ToStrNode, CallableDispatchNode), or by calling {@code reportPolymorphicSpecialize()}
+ * on its {@code @Bind Node}. The comparisons have their own classes ({@link pl.codeloom.php.nodes.expr.Comparisons}).
  */
 final class Proxies {
     private Proxies() {

@@ -135,8 +135,8 @@ public final class ElementNodes {
         }
 
         /**
-         * The call alone in a large tree-interpreter function outside any loop, else the inline check (the
-         * bytecode interpreter's loops are no nodes, so its sites keep it).
+         * The call alone in a large function outside any loop, else the inline check. ponytail: the bytecode
+         * interpreter's loops are no nodes, so in a large bytecode function every site is the call, in loops too.
          */
         private byte decideForm() {
             RootNode root = getRootNode();

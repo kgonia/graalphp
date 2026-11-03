@@ -637,7 +637,7 @@ public final class Translator {
     // ---- functions ----
 
     /** Builds a PhpFunction whose body is translated on first call. */
-    private PhpFunction declareFunction(Ast node, ClassInfo owner) {
+    PhpFunction declareFunction(Ast node, ClassInfo owner) {
         String name = owner == null ? names.declared((String) node.get("name")) : (String) node.get("name");
         Names declaredNames = names;
         Ast paramList = node.node("params");
@@ -851,9 +851,7 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
-        // a generator runs on bytecode whenever its body translates, whichever interpreter is chosen: its
-        // continuations resume it where it stopped, which the tree's resumable statements can't (issue 004)
-        if (language.bytecode() || generator) {
+        if (language.bytecode()) {
             RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
                     owner, target, display, params, captures, captureByRef, declaredNames, generator);
             if (bytecode != null) {
@@ -954,7 +952,9 @@ public final class Translator {
             }
             used.remove("this");
             for (String name : used) {
-                if (enclosingVariable.test(name)) {
+                // find_implicit_binds: auto-globals ($GLOBALS, the superglobals) are no captures
+                if (enclosingVariable.test(name) && !name.equals("GLOBALS")
+                        && !PhpContext.SUPERGLOBALS.contains(name)) {
                     captureNames.add(name);
                     captureRefs.add(false);
                 }
@@ -1026,15 +1026,20 @@ public final class Translator {
 
     /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
     private ExprNode newAnonymousClass(Ast node, Ast classNode) {
+        ClassTemplate template = anonymousClass(classNode);
+        return new DeclareNodes.NewAnonymousClassNode(template,
+                new NewNode(ClassRefNode.named(template.getName()), arguments(node.node("args"))));
+    }
+
+    /** An anonymous class's template, under a name of its own (the bytecode translator's too). */
+    ClassTemplate anonymousClass(Ast classNode) {
         String parent = classNode.get("extends") == null ? "class" : className(classNode.node("extends"));
         String name = parent + "@anonymous\0" + path + ":" + classNode.line + "$"
                 + Integer.toHexString(language.nextAnonymousClass());
-        ClassTemplate template = classTemplate(classNode, name);
-        return new DeclareNodes.NewAnonymousClassNode(template,
-                new NewNode(ClassRefNode.named(name), arguments(node.node("args"))));
+        return classTemplate(classNode, name);
     }
 
-    private ClassTemplate classTemplate(Ast node, String name) {
+    ClassTemplate classTemplate(Ast node, String name) {
         if ((node.flags & CLASS_TRAIT) != 0) {
             return traitTemplate(node, name);
         }
@@ -2273,7 +2278,7 @@ public final class Translator {
     }
 
     /** compact()'s variable names when they are string literals or arrays of them; false otherwise. */
-    private boolean compactNames(Ast list, List<String> out) {
+    boolean compactNames(Ast list, List<String> out) {
         for (Object child : list.children()) {
             if (child instanceof String name) {
                 out.add(name);

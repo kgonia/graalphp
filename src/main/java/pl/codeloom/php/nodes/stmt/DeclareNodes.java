@@ -2,6 +2,7 @@ package pl.codeloom.php.nodes.stmt;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.StmtNode;
@@ -37,15 +38,15 @@ public final class DeclareNodes {
 
         @Override
         public void execute(VirtualFrame frame) {
-            declare(PhpContext.get(this));
+            declare(PhpContext.get(this), function, compileTime, this);
         }
 
         /**
          * do_bind_function_error when the name is taken: E_COMPILE_ERROR for a top-level declaration (before the
-         * file runs: its trace starts below the file), E_ERROR for one that runs later.
+         * file runs: its trace starts below the file), E_ERROR for one that runs later; at site.
          */
         @TruffleBoundary
-        private void declare(PhpContext context) {
+        public static void declare(PhpContext context, PhpFunction function, boolean compileTime, Node site) {
             PhpFunction previous = context.findFunction(Str.lower(function.getName()));
             if (previous == null) {
                 context.declareFunction(function);
@@ -55,7 +56,7 @@ public final class DeclareNodes {
             String message = "Cannot redeclare function " + function.getName() + "()" + (declared != null
                     ? " (previously declared in " + declared.file() + ":" + declared.line() + ")" : "");
             throw ErrorFunctions.fatal(context, compileTime ? ErrorFunctions.E_COMPILE_ERROR : ErrorFunctions.E_ERROR,
-                    Str.of(message), SourceLocation.of(this), compileTime ? 1 : 0);
+                    Str.of(message), SourceLocation.of(site), compileTime ? 1 : 0);
         }
     }
 
@@ -64,7 +65,7 @@ public final class DeclareNodes {
      * by what the declared one is (class, interface, trait).
      */
     private static PhpBailout redeclared(PhpContext context, PhpClass previous, ClassTemplate template,
-                                         StmtNode site) {
+                                         Node site) {
         ClassTemplate old = previous.getDeclaration() instanceof ClassTemplate declaration ? declaration : null;
         SourceLocation declared = old == null ? null : old.getDeclaredAt();
         String kind = previous.isInterface() ? "interface" : old != null && old.isTrait() ? "trait" : "class";
@@ -78,7 +79,7 @@ public final class DeclareNodes {
      * What linking a class reports (zend_do_link_class): implementing Serializable without both __serialize() and
      * __unserialize() is deprecated (zend_implement_serializable), unless the class is declared abstract.
      */
-    private static PhpClass linked(PhpContext context, PhpClass phpClass, StmtNode site) {
+    private static PhpClass linked(PhpContext context, PhpClass phpClass, Node site) {
         if (!phpClass.isInterface() && !phpClass.isAbstract() && phpClass.isDeclaredSubclassOf("serializable")
                 && (phpClass.findMethod("__serialize") == null || phpClass.findMethod("__unserialize") == null)) {
             // the name as %s prints it: an anonymous class's up to its NUL
@@ -104,16 +105,16 @@ public final class DeclareNodes {
 
         @Override
         public void execute(VirtualFrame frame) {
-            declare(PhpContext.get(this));
+            declare(PhpContext.get(this), template, this);
         }
 
         @TruffleBoundary
-        private void declare(PhpContext context) {
+        public static void declare(PhpContext context, ClassTemplate template, Node site) {
             PhpClass previous = context.findClass(Str.lower(template.getName()));
             if (previous != null) {
-                throw redeclared(context, previous, template, this);
+                throw redeclared(context, previous, template, site);
             }
-            context.declareClass(linked(context, template.instantiate(context), this));
+            context.declareClass(linked(context, template.instantiate(context), site));
         }
     }
 
@@ -143,7 +144,7 @@ public final class DeclareNodes {
         }
 
         @TruffleBoundary
-        private static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
+        public static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
             if (context.findClass(lowerName) == null) {
                 context.declareClass(linked(context, template.instantiate(context), null));
             }

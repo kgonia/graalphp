@@ -292,7 +292,7 @@ public final class BasicStmts {
         }
 
         @TruffleBoundary
-        private static void store(PhpObject self, String name, Object value) {
+        public static void store(PhpObject self, String name, Object value) {
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }

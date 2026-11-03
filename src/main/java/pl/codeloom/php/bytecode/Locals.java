@@ -1,5 +1,7 @@
 package pl.codeloom.php.bytecode;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -9,6 +11,7 @@ import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import pl.codeloom.php.nodes.vars.LocalVarNode;
 import pl.codeloom.php.nodes.vars.Places;
+import pl.codeloom.php.nodes.vars.RefWrites;
 import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpObject;
@@ -76,46 +79,96 @@ final class Locals {
         }
     }
 
-    static void writeLong(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, long value) {
-        Object old = stored(frame, variable, bytecode);
-        if (old instanceof PhpRef ref) {
-            ref.set(value);
-            return;
-        }
-        variable.setLong(bytecode, frame, value);
-        Variables.released(old);
-    }
+    /**
+     * A site's writes, profiled as {@link LocalVarNode}'s: without a profile, a write of a value of unknown type
+     * compiled a long's, a double's and an Object's store, each with a reference's write and the old value's
+     * release, at every site (a method of 100 statements `$a = $n[1];` passed HotSpot's 640 KB install limit).
+     * A case not met yet deoptimizes once.
+     */
+    static final class Writes extends Node {
+        /** For the uncached interpreter, which is never compiled: one for every site. */
+        private static final Writes UNCACHED = new Writes();
+        private static final int LONG = 1;
+        private static final int DOUBLE = 1 << 1;
+        private static final int OBJECT = 1 << 2;
+        private static final int REF = 1 << 3;
+        private static final int NEW_ARRAY = 1 << 4;
+        private static final int OLD_ARRAY = 1 << 5;
+        @CompilationFinal private int seen;
+        private final RefWrites refWrites = RefWrites.create();
 
-    static void writeDouble(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, double value) {
-        Object old = stored(frame, variable, bytecode);
-        if (old instanceof PhpRef ref) {
-            ref.set(value);
-            return;
+        static Writes create() {
+            return new Writes();
         }
-        variable.setDouble(bytecode, frame, value);
-        Variables.released(old);
-    }
 
-    static void writeObject(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
-        Object old = stored(frame, variable, bytecode);
-        if (old instanceof PhpRef ref) {
-            ref.set(value);
-            return;
+        static Writes getUncached() {
+            return UNCACHED;
         }
-        if (value instanceof PhpArray array) {
-            array.addHolder();
-        }
-        variable.setObject(bytecode, frame, value);
-        Variables.replaced(old, value);
-    }
 
-    static void write(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
-        if (value instanceof Long l) {
-            writeLong(frame, variable, bytecode, l);
-        } else if (value instanceof Double d) {
-            writeDouble(frame, variable, bytecode, d);
-        } else {
-            writeObject(frame, variable, bytecode, value);
+        private void met(int bit) {
+            if ((seen & bit) == 0) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                seen |= bit;
+            }
+        }
+
+        void write(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
+            if (value instanceof Long l) {
+                met(LONG);
+                writeLong(frame, variable, bytecode, l);
+            } else if (value instanceof Double d) {
+                met(DOUBLE);
+                writeDouble(frame, variable, bytecode, d);
+            } else {
+                met(OBJECT);
+                writeObject(frame, variable, bytecode, value);
+            }
+        }
+
+        void writeLong(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, long value) {
+            Object old = stored(frame, variable, bytecode);
+            if (old instanceof PhpRef ref) {
+                met(REF);
+                refWrites.setScalar(ref, value);
+                return;
+            }
+            variable.setLong(bytecode, frame, value);
+            releaseArray(old);
+        }
+
+        void writeDouble(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, double value) {
+            Object old = stored(frame, variable, bytecode);
+            if (old instanceof PhpRef ref) {
+                met(REF);
+                refWrites.setScalar(ref, value);
+                return;
+            }
+            variable.setDouble(bytecode, frame, value);
+            releaseArray(old);
+        }
+
+        void writeObject(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
+            Object old = stored(frame, variable, bytecode);
+            if (old instanceof PhpRef ref) {
+                met(REF);
+                refWrites.set(ref, value);
+                return;
+            }
+            if (value instanceof PhpArray array) {
+                met(NEW_ARRAY);
+                array.addHolder();
+            }
+            variable.setObject(bytecode, frame, value);
+            if (old != value) {
+                releaseArray(old);
+            }
+        }
+
+        private void releaseArray(Object old) {
+            if (old instanceof PhpArray array) {
+                met(OLD_ARRAY);
+                array.removeHolder();
+            }
         }
     }
 
