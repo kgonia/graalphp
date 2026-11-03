@@ -60,8 +60,9 @@ public final class ClosureNode extends ExprNode {
                 captured[i] = value;
             }
         }
-        Object self = isStatic ? null : frame.getArguments()[PhpFunction.ARG_THIS];
+        Object self = frame.getArguments()[PhpFunction.ARG_THIS];
         PhpClass scopeClass = scope == null ? null : scope.resolve(frame);
-        return new PhpClosure(function, self instanceof PhpObject object ? object : null, scopeClass, captured);
+        return PhpClosure.declared(function, isStatic, self, frame.getArguments()[PhpFunction.ARG_STATIC], scopeClass,
+                captured);
     }
 }

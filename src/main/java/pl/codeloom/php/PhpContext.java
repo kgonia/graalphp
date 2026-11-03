@@ -16,11 +16,13 @@ import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
+import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
@@ -69,6 +71,21 @@ public final class PhpContext {
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
     private final List<Object> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
+    /** The classes being declared (instantiated, not yet in the class table), by lowercase name. */
+    private final Map<String, ClassTemplate> linking = new HashMap<>();
+
+    /** A class being declared: its template, found by inheritance checks (ZEND_FETCH_CLASS_ALLOW_UNLINKED). */
+    public ClassTemplate linkingClass(String lowerName) {
+        return linking.get(lowerName);
+    }
+
+    public void setLinking(String lowerName, ClassTemplate template) {
+        if (template == null) {
+            linking.remove(lowerName);
+        } else {
+            linking.put(lowerName, template);
+        }
+    }
     /** The declared classes by their lowercase name's language-level id (null: not declared here). */
     private PhpClass[] classSlots = new PhpClass[256];
     /**
@@ -231,6 +248,17 @@ public final class PhpContext {
     public PhpRef findStaticVariable(PhpFunction function, String name) {
         Map<String, PhpRef> variables = staticVariables.get(function);
         return variables == null ? null : variables.get(name);
+    }
+
+    /** `static $name` in a call whose frame's closure is closure: a closure object's own, else the function's. */
+    public PhpRef findStaticVariable(PhpFunction function, Object closure, String name) {
+        return closure instanceof PhpClosure c && c.hasStatics() ? c.findStatic(name)
+                : findStaticVariable(function, name);
+    }
+
+    public PhpRef createStaticVariable(PhpFunction function, Object closure, String name, Object initial) {
+        return closure instanceof PhpClosure c && c.hasStatics() ? c.createStatic(name, initial)
+                : createStaticVariable(function, name, initial);
     }
 
     @TruffleBoundary
@@ -545,7 +573,12 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void declareClass(PhpClass phpClass) {
-        if (classes.putIfAbsent(phpClass.getLowerName(), phpClass) != null) {
+        PhpClass previous = classes.putIfAbsent(phpClass.getLowerName(), phpClass);
+        if (previous == phpClass) {
+            // declared while it was linked (Variance's delayed autoloads)
+            return;
+        }
+        if (previous != null) {
             throw new PhpError("Cannot declare class " + phpClass.getName() + ", because the name is already in use");
         }
         phpClass.setContextAliases(classAliases);

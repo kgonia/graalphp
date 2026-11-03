@@ -5,6 +5,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
@@ -108,11 +109,7 @@ final class Dump {
                 return;
             }
             ascii(common + "array(" + array.size() + ") {\n");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                spaces(level + 1);
-                dumpKey(array.keyAt(p));
-                varDump(array.rawAt(p), level + 2);
-            }
+            dumpEntries(array, level);
             leave(array);
             closeBrace(level);
         } else if (value instanceof PhpObject object) {
@@ -127,37 +124,70 @@ final class Dump {
                     throw new PhpError("__debuginfo() must return an array");
                 }
                 ascii(common + "object(");
-                utf8(object.getPhpClass().getName());
+                utf8(object.getPhpClass().getName().split("\0", 2)[0]);
                 ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
-                for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
-                    spaces(level + 1);
-                    dumpKey(debug.keyAt(p));
-                    varDump(debug.rawAt(p), level + 2);
-                }
+                dumpEntries(debug, level);
                 leave(object);
                 closeBrace(level);
                 return;
             }
+            // php_var_dump: the property table, with an uninitialized typed property's type in its place
+            PhpClass phpClass = object.getPhpClass();
             Object[] table = object.propertyTable();
             ascii(common + "object(");
-            utf8(object.getPhpClass().getName());
+            utf8(phpClass.getName().split("\0", 2)[0]);
             ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
-            for (int i = 0; i < table.length; i += 2) {
-                spaces(level + 1);
-                property((String) table[i], true);
-                ascii("]=>\n");
-                varDump(table[i + 1], level + 2);
+            int t = 0;
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                String mangled = phpClass.mangledName(decl.name());
+                if (t < table.length && mangled.equals(table[t])) {
+                    dumpProperty(mangled, table[t + 1], level);
+                    t += 2;
+                } else if (decl.type() != null) {
+                    spaces(level + 1);
+                    property(mangled, true);
+                    ascii("]=>\n");
+                    spaces(level + 1);
+                    ascii("uninitialized(");
+                    utf8(decl.type().text(null));
+                    ascii(")\n");
+                }
+            }
+            for (; t < table.length; t += 2) {
+                dumpProperty((String) table[t], table[t + 1], level);
             }
             leave(object);
             closeBrace(level);
-        } else if (value instanceof PhpClosure) {
-            ascii(common + "object(Closure)#0 (0) {\n");
+        } else if (value instanceof PhpClosure closure) {
+            if (!enter(closure)) {
+                ascii("*RECURSION*\n");
+                return;
+            }
+            PhpArray debug = ClosureMethods.debugInfo(closure);
+            ascii(common + "object(Closure)#" + closure.id() + " (" + debug.size() + ") {\n");
+            dumpEntries(debug, level);
+            leave(closure);
             closeBrace(level);
         } else if (value instanceof PhpResource resource) {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
         } else {
             ascii(common + "UNKNOWN:0\n");
         }
+    }
+
+    private void dumpEntries(PhpArray entries, int level) {
+        for (int p = entries.firstPosition(); p >= 0; p = entries.nextPosition(p)) {
+            spaces(level + 1);
+            dumpKey(entries.keyAt(p));
+            varDump(entries.rawAt(p), level + 2);
+        }
+    }
+
+    private void dumpProperty(String key, Object value, int level) {
+        spaces(level + 1);
+        property(key, true);
+        ascii("]=>\n");
+        varDump(value, level + 2);
     }
 
     /** __debugInfo()'s array as a property table (zend_std_get_debug_info), its keys as strings. */
@@ -329,24 +359,8 @@ final class Dump {
                 ascii(" *RECURSION*");
                 return;
             }
-            spaces(indent);
-            ascii("(\n");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                spaces(indent + 4);
-                out.write('[');
-                Object key = array.keyAt(p);
-                if (key instanceof Long l) {
-                    ascii(Long.toString(l));
-                } else {
-                    out.write((TruffleString) key);
-                }
-                ascii("] => ");
-                printR(array.rawAt(p), indent + 8);
-                out.write('\n');
-            }
+            printEntries(array, indent);
             leave(array);
-            spaces(indent);
-            ascii(")\n");
         } else if (value instanceof PhpObject object) {
             utf8(object.getPhpClass().getName());
             ascii(" Object\n");
@@ -368,14 +382,36 @@ final class Dump {
             leave(object);
             spaces(indent);
             ascii(")\n");
-        } else if (value instanceof PhpClosure) {
+        } else if (value instanceof PhpClosure closure) {
             ascii("Closure Object\n");
-            spaces(indent);
-            ascii("(\n");
-            spaces(indent);
-            ascii(")\n");
+            if (!enter(closure)) {
+                ascii(" *RECURSION*");
+                return;
+            }
+            printEntries(ClosureMethods.debugInfo(closure), indent);
+            leave(closure);
         } else {
             out.write(Convert.toStr(value == null ? PhpNull.NULL : value));
         }
+    }
+
+    private void printEntries(PhpArray entries, int indent) {
+        spaces(indent);
+        ascii("(\n");
+        for (int p = entries.firstPosition(); p >= 0; p = entries.nextPosition(p)) {
+            spaces(indent + 4);
+            out.write('[');
+            Object key = entries.keyAt(p);
+            if (key instanceof Long l) {
+                ascii(Long.toString(l));
+            } else {
+                out.write((TruffleString) key);
+            }
+            ascii("] => ");
+            printR(entries.rawAt(p), indent + 8);
+            out.write('\n');
+        }
+        spaces(indent);
+        ascii(")\n");
     }
 }

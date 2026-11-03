@@ -15,6 +15,7 @@ import pl.codeloom.php.builtins.Builtin;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
@@ -84,7 +85,8 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
             return false;
         }
         Object[] arguments = frame.getArguments();
-        PhpObject self = method && arguments[PhpFunction.ARG_THIS] instanceof PhpObject object ? object : null;
+        Object self = method && (arguments[PhpFunction.ARG_THIS] instanceof PhpObject
+                || arguments[PhpFunction.ARG_THIS] instanceof PhpClosure) ? arguments[PhpFunction.ARG_THIS] : null;
         String className = method ? declaringClass(arguments) : null;
         PhpArray args = new PhpArray();
         for (int i = PhpFunction.ARG_FIRST; i < arguments.length; i++) {
@@ -94,8 +96,11 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         return true;
     }
 
-    /** The topmost class of the call's object (or static class) with this implementation, or null. */
+    /** The topmost class of the call's object (or static class) with this implementation, or null; a closure's is Closure. */
     private String declaringClass(Object[] arguments) {
+        if (arguments[PhpFunction.ARG_THIS] instanceof PhpClosure) {
+            return "Closure";
+        }
         PhpClass called = arguments[PhpFunction.ARG_THIS] instanceof PhpObject self ? self.getPhpClass()
                 : arguments[PhpFunction.ARG_STATIC] instanceof PhpClass phpClass ? phpClass : null;
         String lowerName = Str.lower(name);

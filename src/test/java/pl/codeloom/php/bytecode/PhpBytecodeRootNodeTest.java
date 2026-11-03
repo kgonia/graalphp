@@ -19,6 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpType;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 
@@ -30,9 +31,10 @@ import java.util.function.Consumer;
  * the move between them, also in the middle of a loop) are covered.
  */
 class PhpBytecodeRootNodeTest {
-    private static final PhpFunction.Param VALUE = new PhpFunction.Param("p", false, false, null, (char) 0, false, null);
-    private static final PhpFunction.Param BY_REF = new PhpFunction.Param("p", true, false, null, (char) 0, false, null);
-    private static final PhpFunction.Param INT = new PhpFunction.Param("p", false, false, null, 'i', false, null);
+    private static final PhpFunction.Param VALUE = new PhpFunction.Param("p", false, false, null, null, false, null);
+    private static final PhpFunction.Param BY_REF = new PhpFunction.Param("p", true, false, null, null, false, null);
+    private static final PhpFunction.Param INT = new PhpFunction.Param("p", false, false, null,
+            new PhpType(PhpType.INT, new String[0], new String[0][], new String[0]), false, "int");
 
     /**
      * A context with the launchers' engine defaults (PhpMain.compilerDefaults). Graal reads FirstTierUseEconomy once
@@ -68,8 +70,8 @@ class PhpBytecodeRootNodeTest {
     private static RootCallTarget function(PhpLanguage language, PhpFunction.Param param, int variables, int uncached,
                                            BytecodeParser<PhpBytecodeRootNodeGen.Builder> body) {
         PhpBytecodeRootNode root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, body).getNode(0);
-        root.initialize("test", "test.php", false, null, new PhpFunction.Param[] {param}, new int[] {0}, (char) 0,
-                false, lastVariables, new LocalAccessor[0], null);
+        root.initialize("test", "test.php", false, null, new PhpFunction.Param[] {param}, new int[] {0}, null,
+                lastVariables, new LocalAccessor[0], null);
         root.getBytecodeNode().setUncachedThreshold(uncached);
         return root.getCallTarget();
     }
@@ -83,6 +85,11 @@ class PhpBytecodeRootNodeTest {
 
     /** beginRoot, the variables, the parameter's binding; the caller emits the rest and ends the root. */
     private static BytecodeLocal[] prologue(PhpBytecodeRootNodeGen.Builder b, int variables) {
+        return prologue(b, variables, false);
+    }
+
+    /** typed: the parameter's argument checked against its type (CheckParameter), as for a declared type. */
+    private static BytecodeLocal[] prologue(PhpBytecodeRootNodeGen.Builder b, int variables, boolean typed) {
         b.beginRoot();
         BytecodeLocal[] locals = new BytecodeLocal[variables];
         lastVariables = new LocalAccessor[variables];
@@ -91,7 +98,13 @@ class PhpBytecodeRootNodeTest {
             lastVariables[i] = LocalAccessor.constantOf(locals[i]);
         }
         b.beginBindParameter(locals[0], 0);
+        if (typed) {
+            b.beginCheckParameter(0);
+        }
         b.emitArgument(0);
+        if (typed) {
+            b.endCheckParameter();
+        }
         b.endBindParameter();
         return locals;
     }
@@ -124,7 +137,7 @@ class PhpBytecodeRootNodeTest {
                 b.endReturn();
                 b.endRoot();
             }).getNode(0);
-            root.initialize("test", "test.php", false, null, new PhpFunction.Param[0], new int[0], (char) 0, false,
+            root.initialize("test", "test.php", false, null, new PhpFunction.Param[0], new int[0], null,
                     new LocalAccessor[0], new LocalAccessor[0], null);
             root.getBytecodeNode().setUncachedThreshold(16);
             RootCallTarget target = root.getCallTarget();
@@ -246,7 +259,7 @@ class PhpBytecodeRootNodeTest {
     void typedParameterCoerces() {
         inContext(language -> {
             RootCallTarget target = function(language, INT, 1, b -> {
-                BytecodeLocal[] v = prologue(b, 1);
+                BytecodeLocal[] v = prologue(b, 1, true);
                 b.beginReturn();
                 b.emitReadVar(v[0]);
                 b.endReturn();

@@ -163,6 +163,21 @@ public final class RefIteration {
         }
     }
 
+    /** zend_hash_iterators_advance: array_unshift put step elements before every position into array. */
+    @TruffleBoundary
+    static void advanced(PhpArray array, int step) {
+        for (RefIteration it = PhpContext.get(null).innermostRefIteration(); it != null; it = it.outer) {
+            if (it.array == array && it.position != END) {
+                it.position += step;
+            }
+            for (int i = 0; i < it.copyCount; i++) {
+                if (it.copies[i] == array && it.copyPositions[i] != END) {
+                    it.copyPositions[i] += step;
+                }
+            }
+        }
+    }
+
     /**
      * A hash store compacted its deleted slots (oldKeys, oldUsed: the store before): positions into it move to
      * where their slot went, as zend_hash_rehash moves the iterators.

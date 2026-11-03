@@ -12,11 +12,17 @@ import pl.codeloom.php.parser.zend.generated.ZendLanguageParser;
 import pl.codeloom.php.parser.zend.generated.ZendLanguageScanner;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static pl.codeloom.php.parser.zend.derived.ZendConstants.ZEND_AST_ARROW_FUNC;
+import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_ATTRIBUTE;
+import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_FN;
 import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_FUNCTION;
+import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_PIPE;
+import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_STATIC;
 import static pl.codeloom.php.parser.zend.generated.ZendLanguageParser.Lexer.T_STRING;
 
 /**
@@ -68,6 +74,30 @@ public final class ZendParser {
             throw CG.exception;
         }
         return CG.ast;
+    }
+
+    /**
+     * The lines of the arrow functions right of a `|>` without parentheses (the parser's
+     * ZEND_PARENTHESIZED_ARROW_FUNC unset): `|>`, attribute groups, `static`, then `fn`.
+     */
+    public static Set<Integer> unparenthesizedPipeArrows(byte[] script) {
+        CompilerGlobals CG = new CompilerGlobals();
+        ZendLexer lexer = new ZendLexer(CG, new ZendLanguageScanner(CG, script));
+        Set<Integer> lines = new HashSet<>();
+        boolean afterPipe = false;
+        int brackets = 0;
+        for (int token = lexer.yylex(); token > 0; token = lexer.yylex()) {
+            if (brackets > 0) {
+                brackets += token == '[' || token == T_ATTRIBUTE ? 1 : token == ']' ? -1 : 0;
+                continue;
+            }
+            if (afterPipe && token == T_FN) {
+                lines.add(CG.zend_lineno);
+            }
+            brackets = afterPipe && token == T_ATTRIBUTE ? 1 : 0;
+            afterPipe = token == T_PIPE || afterPipe && (token == T_STATIC || token == T_ATTRIBUTE);
+        }
+        return lines;
     }
 
     /** The tree php-ast's parse_file gives for a script, every function body in it. */
