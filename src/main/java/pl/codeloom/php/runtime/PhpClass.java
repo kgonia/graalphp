@@ -61,6 +61,11 @@ public final class PhpClass {
     private final Set<String> ancestors = new HashSet<>();
     private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
+    /**
+     * The constants that aren't public: their visibility (PropertyDecl's) and the class that declared them
+     * (lowercase), which zend_verify_const_access checks against.
+     */
+    private final Map<String, PropertyDecl> restrictedConstants = new HashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
@@ -112,6 +117,14 @@ public final class PhpClass {
             ancestors.addAll(parent.ancestors);
             methods.putAll(parent.methods);
             constants.putAll(parent.constants);
+            for (Map.Entry<String, PropertyDecl> restricted : parent.restrictedConstants.entrySet()) {
+                // a private constant isn't inherited (do_inherit_constant_check)
+                if (restricted.getValue().visibility() == PropertyDecl.PRIVATE) {
+                    constants.remove(restricted.getKey());
+                } else {
+                    restrictedConstants.put(restricted.getKey(), restricted.getValue());
+                }
+            }
             staticProperties.putAll(parent.staticProperties);
             properties.putAll(parent.properties);
             constructor = parent.constructor;
@@ -416,7 +429,54 @@ public final class PhpClass {
     }
 
     public void addConstant(String constantName, Object valueOrThunk) {
+        addConstant(constantName, valueOrThunk, PropertyDecl.PUBLIC);
+    }
+
+    /** A constant this class declares, with its visibility (PropertyDecl's). */
+    public void addConstant(String constantName, Object valueOrThunk, int visibility) {
         constants.put(constantName, valueOrThunk);
+        if (visibility == PropertyDecl.PUBLIC) {
+            restrictedConstants.remove(constantName);
+        } else {
+            restrictedConstants.put(constantName, new PropertyDecl(constantName, null, visibility, lowerName));
+        }
+    }
+
+    /**
+     * Whether scope (lowercase, or null) may access the constant (zend_verify_const_access): a private one from its
+     * class only, a protected one from a class related to the class that declared it.
+     */
+    @TruffleBoundary
+    public boolean canAccessConstant(String constantName, String scope) {
+        PropertyDecl decl = restrictedConstants.get(constantName);
+        if (decl == null || decl.declaringClass().equals(scope)) {
+            return true;
+        }
+        if (decl.visibility() == PropertyDecl.PRIVATE || scope == null) {
+            return false;
+        }
+        PhpClass declaring = this;
+        while (!declaring.lowerName.equals(decl.declaringClass())) {
+            declaring = declaring.parent;
+        }
+        if (declaring.ancestors.contains(scope)) {
+            return true;
+        }
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return scopeClass != null && scopeClass.isDeclaredSubclassOf(declaring.lowerName);
+    }
+
+    /** "Cannot access private constant A::P" (FETCH_CLASS_CONSTANT's Error). */
+    @TruffleBoundary
+    public PhpError constantAccessError(String constantName) {
+        return new PhpError("Cannot access " + (restrictedConstants.get(constantName).visibility()
+                == PropertyDecl.PRIVATE ? "private" : "protected") + " constant " + name + "::" + constantName);
+    }
+
+    /** Whether the constant isn't public: a site's cached value then holds for its scope only. */
+    @TruffleBoundary
+    public boolean isRestrictedConstant(String constantName) {
+        return restrictedConstants.containsKey(constantName);
     }
 
     /** A class constant's value, evaluating its initializer on first use; null if the constant doesn't exist. */

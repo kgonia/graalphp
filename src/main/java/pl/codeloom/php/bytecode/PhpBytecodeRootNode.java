@@ -3291,21 +3291,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = boolean.class, name = "cacheable")
     public static final class ClassConstant {
-        @Specialization(guards = {"cacheable", "phpClass == cachedClass"}, limit = "1",
+        /** A constant that isn't public, read in a closure (whose bound scope may change), is looked up per call. */
+        @Specialization(guards = {"cacheable", "phpClass == cachedClass", "!scoped"}, limit = "1",
                 assumptions = "singleContext()", excludeForUncached = true)
-        public static Object single(String name, boolean cacheable, PhpClass phpClass,
+        public static Object single(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("phpClass") PhpClass cachedClass,
-                                    @Cached("classConstant(cachedClass, name)") Object value) {
+                                    @Cached("scoped(root, cachedClass, name)") boolean scoped,
+                                    @Cached("classConstant(cachedClass, name, root.callingScope(frame))") Object value) {
             return value;
         }
 
         @Specialization(replaces = "single")
-        public static Object perCall(String name, boolean cacheable, PhpClass phpClass) {
-            return ConstantNodes.classConstant(phpClass, name);
+        public static Object perCall(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
+                                     @Bind PhpBytecodeRootNode root) {
+            return ConstantNodes.classConstant(phpClass, name, root.callingScope(frame));
         }
 
-        public static Object classConstant(PhpClass phpClass, String name) {
-            return ConstantNodes.classConstant(phpClass, name);
+        public static Object classConstant(PhpClass phpClass, String name, String scope) {
+            return ConstantNodes.classConstant(phpClass, name, scope);
+        }
+
+        public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
+            return root.isClosure() && phpClass.isRestrictedConstant(name);
         }
 
         public static Assumption singleContext() {

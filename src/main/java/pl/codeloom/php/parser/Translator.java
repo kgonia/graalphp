@@ -1147,7 +1147,8 @@ public final class Translator {
                 for (Object child : member.node("const").children()) {
                     Ast element = (Ast) child;
                     members.add(new ClassTemplate.Constant((String) element.get("name"),
-                            constantOrDeferred(element.get("value"))));
+                            constantOrDeferred(element.get("value")),
+                            PhpClass.PropertyDecl.visibilityOf(member.flags)));
                 }
                 break;
             }

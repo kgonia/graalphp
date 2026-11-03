@@ -30,7 +30,7 @@ public final class ClassTemplate {
     }
 
     /** A class constant: its value, or a {@link Deferred} initializer. */
-    public record Constant(String name, Object value) implements Member {
+    public record Constant(String name, Object value, int visibility) implements Member {
     }
 
     /** A property: its default value, or a {@link Deferred} initializer. */
@@ -193,7 +193,7 @@ public final class ClassTemplate {
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
-            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass));
+            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass), constant.visibility());
         } else if (member instanceof Property property) {
             Object initial = bind(property.initial(), phpClass);
             if (property.isStatic()) {

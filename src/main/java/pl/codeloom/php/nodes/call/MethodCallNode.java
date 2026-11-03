@@ -9,6 +9,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.nodes.stmt.GeneratorNodes;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.ThunkRootNode;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.builtins.Args;
@@ -46,6 +47,10 @@ public final class MethodCallNode extends CallNode {
      */
     public static String scope(VirtualFrame frame, Node site) {
         RootNode root = site.getRootNode();
+        if (root instanceof ThunkRootNode) {
+            // a constant expression is evaluated in its class's scope, the class it was bound to
+            return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass owner ? owner.getLowerName() : null;
+        }
         return PropNode.callingScope(frame, root instanceof FunctionRootNode function ? function.getScopeName()
                 : root instanceof GeneratorNodes.BodyRootNode body ? body.getScopeName() : null);
     }
