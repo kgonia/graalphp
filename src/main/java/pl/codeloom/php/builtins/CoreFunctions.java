@@ -3,6 +3,7 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
@@ -77,10 +78,12 @@ final class CoreFunctions {
                 case "float", "double" -> ref.set(Convert.toDouble(v));
                 case "string" -> ref.set(Convert.toStr(v));
                 case "bool", "boolean" -> ref.set(Convert.toBool(v));
-                case "array" -> ref.set(v instanceof PhpArray ? v : v == PhpNull.NULL ? new PhpArray()
-                        : PhpArray.list(v));
+                case "array" -> ref.set(v instanceof PhpArray ? v : UnaryNodes.ToOtherNode.toArray(null, v));
+                case "object" -> ref.set(v instanceof PhpObject || v instanceof PhpClosure ? v
+                        : UnaryNodes.ToOtherNode.toObject(null, v));
                 case "null" -> ref.set(PhpNull.NULL);
-                default -> throw new PhpError("settype(): Invalid type");
+                case "resource" -> throw new PhpError("ValueError", "Cannot convert to resource type");
+                default -> throw new PhpError("ValueError", "settype(): Argument #2 ($type) must be a valid type");
             }
             return true;
         });
