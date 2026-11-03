@@ -59,6 +59,11 @@ public final class Ini {
         directives.put("fatal_error_backtraces", new Directive("1", ALL));
         directives.put("expose_php", new Directive("1", SYSTEM));
         directives.put("file_uploads", new Directive("1", SYSTEM));
+        directives.put("highlight.comment", new Directive("#FF8000", ALL));
+        directives.put("highlight.default", new Directive("#0000BB", ALL));
+        directives.put("highlight.html", new Directive("#000000", ALL));
+        directives.put("highlight.keyword", new Directive("#007700", ALL));
+        directives.put("highlight.string", new Directive("#DD0000", ALL));
         directives.put("html_errors", new Directive("1", ALL));
         directives.put("ignore_repeated_errors", new Directive("0", ALL));
         directives.put("ignore_repeated_source", new Directive("0", ALL));
@@ -99,6 +104,8 @@ public final class Ini {
     }
 
     private final Map<String, String> startup = new HashMap<>();
+    /** The settings as php.ini and -d gave them, known directives or not: php-src's configuration_hash. */
+    private final Map<String, String> configuration;
     private final Map<String, String> values = new HashMap<>();
 
     private DisplayMode displayErrors;
@@ -142,6 +149,7 @@ public final class Ini {
      * the settings; a setting its directive rejects leaves the default, as at php-src's startup.
      */
     Ini(boolean cgi, Map<String, String> settings) {
+        configuration = settings;
         for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
             boolean accepted = set(directive.getKey(), directive.getValue().value());
             assert accepted : directive;
@@ -164,6 +172,11 @@ public final class Ini {
     private static boolean userCanChange(String name) {
         Directive directive = DIRECTIVES.get(name);
         return directive != null && (directive.access() & USER) != 0;
+    }
+
+    /** zend_get_configuration_directive's table. */
+    public Map<String, String> configuration() {
+        return configuration;
     }
 
     /** The value; null if it has none. */

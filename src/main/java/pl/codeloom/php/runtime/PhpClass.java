@@ -69,6 +69,7 @@ public final class PhpClass {
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
     /** The non-public static properties, declared or inherited: their visibility and declaring class. */
     private final Map<String, PropertyDecl> restrictedStatics = new HashMap<>();
+    private final Map<String, Object> staticDefaults = new HashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
     /** What declared this class: its ClassTemplate, or a built-in class's name (see {@link ClassKey}). */
@@ -129,6 +130,7 @@ public final class PhpClass {
             }
             staticProperties.putAll(parent.staticProperties);
             restrictedStatics.putAll(parent.restrictedStatics);
+            staticDefaults.putAll(parent.staticDefaults);
             properties.putAll(parent.properties);
             constructor = parent.constructor;
         }
@@ -504,6 +506,11 @@ public final class PhpClass {
                     visibility == PropertyDecl.PROTECTED && inherited != null
                             && inherited.visibility() == PropertyDecl.PROTECTED ? inherited.declaringClass() : lowerName));
         }
+        if (initial instanceof PhpArray array) {
+            // the default holds the array too, so writes to the property copy it first
+            array.addHolder();
+        }
+        staticDefaults.put(propertyName, initial);
     }
 
     /** Whether the static property is private or protected. */
@@ -537,6 +544,17 @@ public final class PhpClass {
     public PhpError inaccessibleStatic(String propertyName) {
         return new PhpError("Cannot access " + (restrictedStatics.get(propertyName).visibility() == PropertyDecl.PRIVATE
                 ? "private" : "protected") + " property " + name + "::$" + Str.keyText(propertyName));
+    }
+
+    /** A static property's declared default (default_static_members_table), whatever it holds now. */
+    @TruffleBoundary
+    public Object getStaticDefault(String propertyName) {
+        Object value = staticDefaults.get(propertyName);
+        if (value instanceof Thunk thunk) {
+            value = thunk.evaluate();
+            staticDefaults.put(propertyName, value);
+        }
+        return value;
     }
 
     /**
