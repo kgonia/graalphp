@@ -10,6 +10,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -1208,6 +1209,40 @@ final class FileFunctions {
             context.write(Str.of(bytes));
             return (long) bytes.length;
         });
+        r.fn("parse_ini_string", (context, a) -> {
+            Args.arity(a, "parse_ini_string", 1, 3);
+            TruffleString ini = Args.string(context, a, 0, "parse_ini_string", "ini_string", false);
+            return IniParser.parse(context, Str.bytes(ini), iniSections(context, a, "parse_ini_string"),
+                    iniMode(context, a, "parse_ini_string"), null);
+        });
+        r.fn("parse_ini_file", (context, a) -> {
+            Args.arity(a, "parse_ini_file", 1, 3);
+            String name = Str.java(Args.string(context, a, 0, "parse_ini_file", "filename", false));
+            if (name.indexOf(0) >= 0) {
+                throw new PhpError("TypeError", "parse_ini_file(): Argument #1 ($filename) must not contain any null "
+                        + "bytes");
+            }
+            boolean sections = iniSections(context, a, "parse_ini_file");
+            long mode = iniMode(context, a, "parse_ini_file");
+            if (name.isEmpty()) {
+                throw new PhpError("ValueError", "parse_ini_file(): Argument #1 ($filename) must not be empty");
+            }
+            byte[] text;
+            try {
+                // php_resolve_path: through the include path ("."), then beside the running script
+                TruffleFile file = file(context, name);
+                if (!file.exists() && !file.isAbsolute() && !name.startsWith("./") && !name.startsWith("../")) {
+                    TruffleFile beside = file(context, SourceLocation.current().file()).resolveSibling(name);
+                    file = beside.exists() ? beside : file;
+                }
+                text = file.readAllBytes();
+            } catch (IOException e) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("parse_ini_file(" + name
+                        + "): Failed to open stream: " + MailFunctions.reason(e)), SourceLocation.current());
+                return Boolean.FALSE;
+            }
+            return IniParser.parse(context, text, sections, mode, name);
+        });
         r.fn("md5_file", (context, a) -> digestFile(context, "MD5", a));
         r.fn("sha1_file", (context, a) -> digestFile(context, "SHA-1", a));
 
@@ -1351,6 +1386,14 @@ final class FileFunctions {
 
     private static TruffleFile file(PhpContext context, String name) {
         return context.getEnv().getPublicTruffleFile(name);
+    }
+
+    private static boolean iniSections(PhpContext context, Object[] a, String function) {
+        return Args.has(a, 1) && Args.bool(context, a, 1, function, "process_sections");
+    }
+
+    private static long iniMode(PhpContext context, Object[] a, String function) {
+        return Args.has(a, 2) ? Args.integer(context, a, 2, function, "scanner_mode", "int") : IniParser.NORMAL;
     }
 
     private static long seconds(FileTime time) {

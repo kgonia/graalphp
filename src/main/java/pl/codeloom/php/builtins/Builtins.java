@@ -179,6 +179,7 @@ public final class Builtins {
                 {"JSON_ERROR_NONE", 0L}, {"JSON_ERROR_DEPTH", 1L}, {"JSON_ERROR_SYNTAX", 4L},
                 {"JSON_ERROR_UTF8", 5L},
                 {"SORT_REGULAR", 0L}, {"SORT_NUMERIC", 1L}, {"SORT_STRING", 2L}, {"SORT_LOCALE_STRING", 5L},
+                {"INI_SCANNER_NORMAL", 0L}, {"INI_SCANNER_RAW", 1L}, {"INI_SCANNER_TYPED", 2L},
                 {"SORT_NATURAL", 6L}, {"SORT_FLAG_CASE", 8L}, {"SORT_ASC", 4L}, {"SORT_DESC", 3L},
                 {"COUNT_NORMAL", 0L}, {"COUNT_RECURSIVE", 1L},
                 {"ARRAY_FILTER_USE_BOTH", 1L}, {"ARRAY_FILTER_USE_KEY", 2L},

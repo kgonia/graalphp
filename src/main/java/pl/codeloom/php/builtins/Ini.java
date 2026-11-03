@@ -99,6 +99,8 @@ public final class Ini {
     }
 
     private final Map<String, String> startup = new HashMap<>();
+    /** The settings as php.ini and -d gave them, known directives or not: php-src's configuration_hash. */
+    private final Map<String, String> configuration;
     private final Map<String, String> values = new HashMap<>();
 
     private DisplayMode displayErrors;
@@ -142,6 +144,7 @@ public final class Ini {
      * the settings; a setting its directive rejects leaves the default, as at php-src's startup.
      */
     Ini(boolean cgi, Map<String, String> settings) {
+        configuration = settings;
         for (Map.Entry<String, Directive> directive : DIRECTIVES.entrySet()) {
             boolean accepted = set(directive.getKey(), directive.getValue().value());
             assert accepted : directive;
@@ -164,6 +167,11 @@ public final class Ini {
     private static boolean userCanChange(String name) {
         Directive directive = DIRECTIVES.get(name);
         return directive != null && (directive.access() & USER) != 0;
+    }
+
+    /** zend_get_configuration_directive's table. */
+    public Map<String, String> configuration() {
+        return configuration;
     }
 
     /** The value; null if it has none. */
