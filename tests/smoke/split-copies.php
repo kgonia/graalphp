@@ -3,7 +3,7 @@
 // Truffle splits it, a copy per caller; each copy must answer as the original did. A bytecode copy kept the
 // original's specialization state but not its caches, and answered as if the value were of none of the kinds it
 // had met: `instanceof` false for an object of the class (wp_signon() went on with a WP_Error), a string truthy
-// however empty, an element or list() element null, a foreach with no steps.
+// however empty, an element or a list() element null, isset() false, a foreach with no steps.
 set_error_handler(fn() => true);
 
 class WP_Error {}
@@ -33,6 +33,20 @@ final class ElementTest {
 }
 final class OffsetTest {
     static function test($x, $o) { $o instanceof WP_Error; return $x[1]; }
+    static function site1($x, $o) { return self::test($x, $o); }
+    static function site2($x, $o) { return self::test($x, $o); }
+    static function site3($x, $o) { return self::test($x, $o); }
+    static function site4($x, $o) { return self::test($x, $o); }
+}
+final class IssetTest {
+    static function test($x, $o) { $o instanceof WP_Error; return isset($x['key']); }
+    static function site1($x, $o) { return self::test($x, $o); }
+    static function site2($x, $o) { return self::test($x, $o); }
+    static function site3($x, $o) { return self::test($x, $o); }
+    static function site4($x, $o) { return self::test($x, $o); }
+}
+final class CoalesceTest {
+    static function test($x, $o) { $o instanceof WP_Error; return $x['key'] ?? 'none'; }
     static function site1($x, $o) { return self::test($x, $o); }
     static function site2($x, $o) { return self::test($x, $o); }
     static function site3($x, $o) { return self::test($x, $o); }
@@ -115,6 +129,8 @@ function run(string $test, $other, array $values) {
 run('TruthyTest', new Post(), ['x', '0', '']);
 run('ElementTest', null, [['key' => 'a'], ['key' => 'b']]);
 run('OffsetTest', null, ['ab', 'cd']);
+run('IssetTest', null, [['key' => 'a'], ['key' => 'b']]);
+run('CoalesceTest', null, [['key' => 'a'], ['key' => 'b']]);
 run('ListTest', null, [['a'], ['b']]);
 run('ForeachTest', null, [new Named(), new Named()]);
 run('ForeachRefTest', null, [['v'], [1, 2]]);
