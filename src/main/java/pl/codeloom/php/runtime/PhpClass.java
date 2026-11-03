@@ -496,6 +496,25 @@ public final class PhpClass {
         staticProperties.put(propertyName, ref);
     }
 
+    /**
+     * `Cls::$name = &ref` (zend_assign_to_variable_reference on the static member): every class sharing the
+     * property's slot (the declaring class, the subclasses that inherit it) holds ref from now on; references taken
+     * of the old one keep it. Sites that kept the old reference look it up again.
+     */
+    @TruffleBoundary
+    public void bindStaticProperty(PhpContext context, String propertyName, PhpRef ref) {
+        PhpRef old = staticProperties.get(propertyName);
+        for (PhpClass phpClass : context.classValues()) {
+            if (phpClass.staticProperties.get(propertyName) == old) {
+                phpClass.staticProperties.put(propertyName, ref);
+            }
+        }
+        staticProperties.put(propertyName, ref);
+        ref.bind();
+        old.unbind();
+        context.getLanguage().staticPropertyRefs().invalidate();
+    }
+
     @TruffleBoundary
     public PhpRef getStaticProperty(String propertyName) {
         PhpRef ref = staticProperties.get(propertyName);

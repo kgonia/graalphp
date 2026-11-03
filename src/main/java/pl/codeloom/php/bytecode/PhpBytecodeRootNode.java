@@ -1685,13 +1685,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `Cls::$name = &place` (StaticPropNode.bindRef): the reference made, then the tree's Error. */
+    /** `Cls::$name = &place` (StaticPropNode.bindRef): the reference made, then the class's property bound to it. */
     @Operation
     @ConstantOperand(type = StaticPropSite.class)
     public static final class BindStaticProp {
         @Specialization
-        public static Object bind(StaticPropSite site, PhpRef ref) {
-            throw StaticPropNode.bindError();
+        public static Object bind(StaticPropSite site, PhpRef ref, PhpClass phpClass, @Bind Node node) {
+            StaticPropNode.bind(node, phpClass, site.name, ref);
+            return ref.get();
         }
     }
 

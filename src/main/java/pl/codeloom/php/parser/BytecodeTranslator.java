@@ -4230,6 +4230,7 @@ public final class BytecodeTranslator {
                 if (site != null) {
                     b.beginBindStaticProp(site);
                     source.run();
+                    emitClass();
                     b.endBindStaticProp();
                     return;
                 }
