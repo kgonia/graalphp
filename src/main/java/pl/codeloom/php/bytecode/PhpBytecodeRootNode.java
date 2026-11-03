@@ -1353,15 +1353,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `$obj->name` as the object of a write to its properties or elements (PropNode.readForWriteOn). */
+    /**
+     * `$obj->name` as the object of a write to its properties or elements, rw for a compound assignment
+     * (PropNode.readForWriteOn).
+     */
     @Operation
     @ConstantOperand(type = PropSite.class)
+    @ConstantOperand(type = boolean.class)
     public static final class ReadPropForWrite {
         @Specialization
-        public static Object read(VirtualFrame frame, PropSite site, Object object,
+        public static Object read(VirtualFrame frame, PropSite site, boolean rw, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
-            return access.readForWriteOn(frame, object, site.name);
+            return access.readForWriteOn(frame, object, site.name, rw);
         }
     }
 

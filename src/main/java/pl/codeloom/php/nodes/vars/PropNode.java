@@ -113,7 +113,7 @@ public final class PropNode extends LValueNode {
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
         return target(object instanceof PropNode property ? property.readForWriteOn(frame,
-                property.object.execute(frame), property.name(frame)) : object.execute(frame), name, action);
+                property.object.execute(frame), property.name(frame), false) : object.execute(frame), name, action);
     }
 
     private static PhpObject target(Object value, String name, String action) {
@@ -297,15 +297,16 @@ public final class PropNode extends LValueNode {
     }
 
     /**
-     * The property as the object of a write to one of its own properties or elements (BP_VAR_W): a readonly one
-     * that holds no object, initialized or not, is an Error.
+     * The property as the object of a write to one of its own properties or elements (BP_VAR_W, or BP_VAR_RW for
+     * a compound assignment): a readonly one that holds no object is an Error, an uninitialized one too unless rw
+     * (whose read is the "must not be accessed" Error).
      */
-    public Object readForWriteOn(VirtualFrame frame, Object value, String name) {
+    public Object readForWriteOn(VirtualFrame frame, Object value, String name, boolean rw) {
         if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
             Object property = objects.getOrDefault(phpObject, name, null);
             if (property != null) {
                 readonlyIndirect(phpObject, name, property);
-            } else if (phpObject.isReadonly(name) && phpObject.isUninitialized(name)) {
+            } else if (!rw && phpObject.isReadonly(name) && phpObject.isUninitialized(name)) {
                 throw phpObject.indirectModification(name);
             }
         }
