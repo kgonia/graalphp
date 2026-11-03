@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -206,6 +207,12 @@ public final class ClassTemplate {
             }
             phpClass.addInterface(declared);
         }
+        // zend_implement_traversable
+        if (!isInterface && implemented.contains("traversable") && !phpClass.isSubclassOf("iterator")
+                && !phpClass.isSubclassOf("iteratoraggregate")) {
+            throw linkError(context, (isEnum() ? "Enum " : "Class ") + name
+                    + " must implement interface Traversable as part of either Iterator or IteratorAggregate");
+        }
         if (unsupported != null) {
             throw new PhpError(unsupported);
         }
@@ -247,7 +254,29 @@ public final class ClassTemplate {
         if (isEnum()) {
             checkEnum(context, phpClass);
         }
+        if (!isInterface && !isAbstract && !isTrait()) {
+            checkAbstract(context, phpClass);
+        }
         return phpClass;
+    }
+
+    /** zend_verify_abstract_class: a class that can be instantiated has no abstract methods left. */
+    private void checkAbstract(PhpContext context, PhpClass phpClass) {
+        List<String> names = new ArrayList<>();
+        for (PhpFunction method : phpClass.methods().values()) {
+            if (method.isAbstract()) {
+                names.add(method.displayName());
+            }
+        }
+        if (names.isEmpty()) {
+            return;
+        }
+        int count = names.size();
+        String list = String.join(", ", names.subList(0, Math.min(3, count))) + (count > 3 ? ", ..." : "");
+        String s = count == 1 ? "" : "s";
+        throw linkError(context, isEnum() ? "Enum " + name + " must implement " + count + " abstract method" + s
+                + " (" + list + ")" : "Class " + name + " contains " + count + " abstract method" + s
+                + " and must therefore be declared abstract or implement the remaining method" + s + " (" + list + ")");
     }
 
     /** A compile error of the class's linking (zend_do_inheritance, zend_enum's checks) at its declaration. */

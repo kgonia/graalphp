@@ -2723,7 +2723,7 @@ public final class BytecodeTranslator {
         /**
          * The object of a property place as php-src fetches it (zend_delayed_compile_var): a variable, a property,
          * an element or a static property is read as the write runs, after the value, down a chain whose keys and
-         * computed names are evaluated now; anything else (a call, `new`) is evaluated now.
+         * computed names are evaluated now; a call is evaluated now, anything else is a compile error.
          */
         private Object delayedObject(Object object) {
             if (!(object instanceof Ast ast)) {
@@ -2743,6 +2743,9 @@ public final class BytecodeTranslator {
                     return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
                 }
                 default:
+                    if (!Translator.isWritableBase(ast)) {
+                        throw compileError(ast, "Cannot use temporary expression in write context");
+                    }
                     return onceKey(ast);
             }
         }

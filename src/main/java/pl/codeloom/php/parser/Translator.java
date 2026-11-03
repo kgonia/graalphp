@@ -475,6 +475,15 @@ public final class Translator {
     }
 
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
+    /**
+     * The object or array of a place written, read for writing (zend_delayed_compile_var): a variable, a place or a
+     * call; anything else is php-src's compile error.
+     */
+    static boolean isWritableBase(Object value) {
+        return isCall(value) || value instanceof Ast node && (node.is("AST_VAR") || node.is("AST_DIM")
+                || node.is("AST_PROP") || node.is("AST_NULLSAFE_PROP") || node.is("AST_STATIC_PROP"));
+    }
+
     static boolean isCall(Object value) {
         return value instanceof Ast node && (node.is("AST_CALL") || node.is("AST_METHOD_CALL")
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
@@ -1704,6 +1713,9 @@ public final class Translator {
             }
             case "AST_PROP":
             case "AST_NULLSAFE_PROP": {
+                if (!isWritableBase(node.get("expr"))) {
+                    throw compileError(node.line, "Cannot use temporary expression in write context");
+                }
                 ExprNode object = placeOrExpression(node.get("expr"));
                 Object prop = node.get("prop");
                 if (prop instanceof String name) {
