@@ -40,3 +40,11 @@ $plain = ['m' => 1];
 extract($plain);
 $m = 2;
 var_dump($plain);
+// $GLOBALS goes by value (ZEND_FETCH_GLOBALS): php-src's bug33989, bug25708
+$g = 'global';
+function fromGlobals() {
+    var_dump(extract($GLOBALS, EXTR_REFS) > 0, $g);
+    $g = 'changed in function';
+}
+fromGlobals();
+var_dump($g);

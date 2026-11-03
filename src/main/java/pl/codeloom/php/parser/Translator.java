@@ -2312,12 +2312,12 @@ public final class Translator {
     /**
      * Whether extract()'s array goes by reference: its parameter prefers one (ZEND_SEND_PREFER_REF), which a
      * variable or other place takes, and only EXTR_REFS uses (php_extract_ref_*): unless the flags are a constant
-     * without it, a place is passed by reference.
+     * without it, a place is passed by reference ($GLOBALS is a value, ZEND_FETCH_GLOBALS).
      */
     boolean extractTakesRef(Ast args) {
         if (args.size() < 2 || !(args.child(0) instanceof Ast array) || !(array.is("AST_DIM") || array.is("AST_PROP")
                 || array.is("AST_STATIC_PROP") || array.is("AST_VAR") && array.get("name") instanceof String name
-                && !name.equals("this"))) {
+                && !name.equals("this") && !name.equals("GLOBALS"))) {
             return false;
         }
         Object flags = args.child(1);
