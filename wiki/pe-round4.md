@@ -26,8 +26,7 @@ Then whether the Bytecode DSL interpreter has the same problems.
 5. **Correctness:** 4 new smoke tests pinning PHP 8.5 (the dispatch's and `defined()`'s cases), every smoke test equal,
    Gate 2's pages 19 of 21 (the known oEmbed link), the WooCommerce walk as the base's, php-src `.phpt` no new failure
    (7 more passing from this branch, 64 with main's merge), Gate 1's checksums equal (its timing is open:
-   section 5). Found on the way: `issues/012-014`
-   (class constant and method visibility, namespaced intrinsics).
+   section 5). Found on the way: `issues/012-014` (class constant and method visibility, namespaced intrinsics).
 6. **The bytecode interpreter** already dispatches per method and reports no polymorphism there, and keeps file
    tops and thunks on the tree (target 1 applies); `defined()` would need porting to it.
 
