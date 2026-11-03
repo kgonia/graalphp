@@ -103,6 +103,12 @@ public class IncludeScope {
         return place != null ? place.isDefined(frame) : others.containsKey(name);
     }
 
+    /** Whether the function names the variable: php-src's CV, in the symbol table also while it is unset. */
+    @TruffleBoundary
+    public boolean isFunctionVariable(String name) {
+        return place(name) != null;
+    }
+
     @TruffleBoundary
     public void set(String name, Object value) {
         LocalVarNode place = place(name);

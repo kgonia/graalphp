@@ -72,6 +72,7 @@ import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.nodes.vars.DimNode;
 import pl.codeloom.php.nodes.vars.ElementNodes;
 import pl.codeloom.php.nodes.vars.GlobalRefNode;
+import pl.codeloom.php.nodes.vars.ExtractNode;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.nodes.vars.Variables;
@@ -2014,6 +2015,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             return IncludeNode.run(node, file, frame.getArguments(), root.callScope(frame, bytecode));
         }
+    }
+
+    /**
+     * extract($array, $flags, $prefix) (ExtractNode): the array's entries become the call's variables, a name
+     * the function doesn't name one of the call's other variables (BytecodeScope).
+     */
+    @Operation
+    public static final class Extract {
+        @Specialization
+        public static long extract(VirtualFrame frame, @Variadic Object[] arguments,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            if (arguments.length == 0 || arguments.length > 3) {
+                throw extractArity(arguments.length);
+            }
+            return ExtractNode.extract(arguments[0], arguments.length > 1 ? arguments[1] : null,
+                    arguments.length > 2 ? arguments[2] : null, root.callScope(frame, bytecode), null);
+        }
+    }
+
+    @TruffleBoundary
+    private static PhpError extractArity(int count) {
+        return new PhpError("ArgumentCountError", "extract() expects " + (count == 0 ? "at least 1 argument"
+                : "at most 3 arguments") + ", " + count + " given");
     }
 
     /** `f(...)` (CallableConvertNodes.FunctionNode): a Closure of the function the name resolves to. */

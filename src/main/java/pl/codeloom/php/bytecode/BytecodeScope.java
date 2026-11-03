@@ -57,6 +57,12 @@ final class BytecodeScope extends IncludeScope {
 
     @Override
     @TruffleBoundary
+    public boolean isFunctionVariable(String name) {
+        return root.variableNamed(name) != null;
+    }
+
+    @Override
+    @TruffleBoundary
     public void set(String name, Object value) {
         LocalAccessor variable = root.variableNamed(name);
         if (variable == null) {

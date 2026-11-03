@@ -2759,7 +2759,19 @@ public final class BytecodeTranslator {
                     }
                     return true;
                 }
-                case "func_get_arg", "compact", "extract", "get_object_vars", "get_defined_vars" ->
+                case "extract" -> {
+                    if (hasUnpackOrNames(args)) {
+                        return false;
+                    }
+                    useCallScope();
+                    b.beginExtract();
+                    for (Object arg : args.children()) {
+                        expression(arg);
+                    }
+                    b.endExtract();
+                    return true;
+                }
+                case "func_get_arg", "compact", "get_object_vars", "get_defined_vars" ->
                         throw new Unsupported(lower + "()", node);
                 default -> {
                     return false;
