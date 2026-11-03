@@ -2941,7 +2941,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return method;
         }
 
-        @Specialization
+        @Specialization(replaces = "cached")
         public static PhpFunction object(VirtualFrame frame, MethodSite site, PhpObject receiver,
                                          @Bind PhpBytecodeRootNode root) {
             return find(site, receiver.getPhpClass(), root.callingScope(frame));
@@ -3108,7 +3108,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             return checked(frame, site, phpClass, method, subclassTest);
         }
 
-        @Specialization
+        @Specialization(replaces = "cached")
         public static PhpFunction generic(VirtualFrame frame, MethodSite site, PhpClass phpClass,
                                           @Bind PhpBytecodeRootNode root,
                                           @Shared @Cached SubclassTestNode subclassTest) {
