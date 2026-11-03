@@ -781,8 +781,10 @@ final class CoreFunctions {
         for (boolean statics : new boolean[] {false, true}) {
             for (Map.Entry<String, PropertyInfo> entry : infos.entrySet()) {
                 PropertyInfo info = entry.getValue();
-                if (info.isStatic() != statics || !visible(info.visibility() & 1, info.visibility() & 2,
-                        info.declaring(), scope)) {
+                PhpClass.Hooks hooks = statics ? null : phpClass.findHooks(entry.getKey());
+                // a virtual property has no default (ZEND_ACC_VIRTUAL)
+                if (info.isStatic() != statics || hooks != null && hooks.virtual()
+                        || !visible(info.visibility() & 1, info.visibility() & 2, info.declaring(), scope)) {
                     continue;
                 }
                 Object value = statics ? phpClass.getStaticDefault(entry.getKey())
@@ -812,8 +814,8 @@ final class CoreFunctions {
                 infos.putIfAbsent(property.name(), new PropertyInfo(property.visibility(), property.isStatic(),
                         declaring));
             } else if (member instanceof ClassTemplate.Method method) {
-                for (PhpClass.PropertyDecl decl : method.promoted()) {
-                    infos.putIfAbsent(decl.name(), new PropertyInfo(decl.visibility(), false, declaring));
+                for (ClassTemplate.Property promoted : method.promoted()) {
+                    infos.putIfAbsent(promoted.name(), new PropertyInfo(promoted.visibility(), false, declaring));
                 }
             }
         }
