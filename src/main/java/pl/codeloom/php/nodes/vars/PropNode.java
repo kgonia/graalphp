@@ -128,15 +128,22 @@ public final class PropNode extends LValueNode {
      * `$$name` by that fetch's rules.
      */
     private Object writtenObject(VirtualFrame frame, int fetch) {
-        if (object instanceof VariableVariableNode variable) {
+        return written(frame, object, fetch);
+    }
+
+    /** A place as that fetch fetches it; a property read as a read does (FETCH_OBJ_W falls back to __get, no __isset). */
+    static Object written(VirtualFrame frame, ExprNode node, int fetch) {
+        if (node instanceof VariableVariableNode variable) {
             return variable.fetch(frame, fetch);
         }
-        // a property is read as a read does (FETCH_OBJ_W falls back to __get, with no __isset)
-        if (object instanceof LValueNode place && !(object instanceof PropNode)) {
+        if (node instanceof DimNode dim) {
+            return dim.writtenIn(frame, written(frame, dim.container(), fetch));
+        }
+        if (node instanceof LValueNode place && !(node instanceof PropNode)) {
             Object value = place.readIfSet(frame);
             return value == null ? PhpNull.NULL : value;
         }
-        return object.execute(frame);
+        return node.execute(frame);
     }
 
     private static PhpObject target(Object value, String name, String action) {

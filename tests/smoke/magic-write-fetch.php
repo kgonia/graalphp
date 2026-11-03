@@ -23,5 +23,26 @@ function inFunction() {
     var_dump($m->a->b);
 }
 inFunction();
+// through an element: FETCH_DIM_W of the __get result, an ArrayAccess's offsetGet() alone (no offsetExists)
+class Holder {
+    public $e = [];
+    function __construct() { $this->e[] = $this; }
+    function __get($n) { echo "__get($n)
+"; return $this; }
+    function __set($n, $v) { echo "__set($n)
+"; }
+}
+$h = new Holder;
+$h->d->e[0]->f = 2;
+class Offsets implements ArrayAccess {
+    function offsetExists($o): bool { echo "offsetExists($o)
+"; return true; }
+    function offsetGet($o): mixed { echo "offsetGet($o)
+"; return new stdClass; }
+    function offsetSet($o, $v): void {}
+    function offsetUnset($o): void {}
+}
+$o = new Offsets;
+$o['k']->p = 1;
 $s = "";
 var_dump($s[PHP_INT_MAX], $s[PHP_INT_MIN]);

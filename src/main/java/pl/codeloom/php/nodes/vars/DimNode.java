@@ -269,6 +269,16 @@ public final class DimNode extends LValueNode {
         }
     }
 
+    ExprNode container() {
+        return container;
+    }
+
+    /** The element of value as FETCH_DIM_W fetches it for a property write: an unset key quietly null, offsetGet() alone. */
+    Object writtenIn(VirtualFrame frame, Object value) {
+        Object offset = rawKey(frame);
+        return value == null ? PhpNull.NULL : lookup.execute(value, offset);
+    }
+
     /** The key is evaluated whatever the container holds, as php-src evaluates it before ISSET_ISEMPTY_DIM_OBJ. */
     @Override
     public boolean isSet(VirtualFrame frame) {
