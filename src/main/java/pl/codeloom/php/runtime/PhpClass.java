@@ -653,7 +653,7 @@ public final class PhpClass {
                 PropertyDecl decl = entry.getValue();
                 if (decl.type() != null) {
                     // checked as evaluated, in strict mode (zend_update_class_constants)
-                    value = decl.type().assign(value, true, decl);
+                    value = decl.type().assign(value, true, decl, null);
                 }
                 entry.setValue(new PropertyDecl(entry.getKey(), value, decl.visibility(), decl.declaringClass(),
                         decl.type()));

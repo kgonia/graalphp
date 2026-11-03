@@ -264,9 +264,9 @@ public final class PropNode extends LValueNode {
 
     /** A value for a typed property: converted in the writing code's mode, or the TypeError. */
     @TruffleBoundary
-    private static Object checked(PhpObject phpObject, String name, Object value) {
+    private Object checked(PhpObject phpObject, String name, Object value) {
         PhpClass.PropertyDecl decl = phpObject.getPhpClass().findProperty(name);
-        return decl.type().assign(PhpRef.deref(value), strict(), decl);
+        return decl.type().assign(PhpRef.deref(value), strict(), decl, this);
     }
 
     /** Whether the user code running now is in a strict_types file. */
@@ -294,7 +294,7 @@ public final class PropNode extends LValueNode {
             }
             phpObject.setUnset(name, false);
         }
-        Object converted = decl.type().assign(PhpRef.deref(value), strict(), decl);
+        Object converted = decl.type().assign(PhpRef.deref(value), strict(), decl, this);
         if (converted instanceof PhpArray array) {
             array.addHolder();
         }
@@ -559,7 +559,7 @@ public final class PropNode extends LValueNode {
     private static void autoInitialize(PhpObject phpObject, String name) {
         PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
         if (decl != null && !decl.type().has(PhpType.ARRAY)) {
-            throw new PhpError("Cannot auto-initialize an array inside property " + PhpType.declaringName(decl)
+            throw new PhpError("TypeError", "Cannot auto-initialize an array inside property " + PhpType.declaringName(decl)
                     + "::$" + Str.keyText(name) + " of type " + decl.type().text(null));
         }
     }

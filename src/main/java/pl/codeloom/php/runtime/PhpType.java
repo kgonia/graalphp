@@ -161,7 +161,10 @@ public final class PhpType {
         if (value instanceof PhpObject object) {
             PhpClass phpClass = object.getPhpClass();
             for (String name : classes) {
-                if (phpClass.isSubclassOf(name)) {
+                // a closure's self and parent are its scope's, known when it runs
+                PhpClass relative = calledClass == null ? null : name.equals("self") ? calledClass
+                        : name.equals("parent") ? calledClass.getParent() : null;
+                if (phpClass.isSubclassOf(relative != null ? relative.getLowerName() : name)) {
                     return value;
                 }
             }
@@ -261,11 +264,11 @@ public final class PhpType {
 
     /**
      * zend_verify_property_type: the value as the property takes it (converted in coercive mode), or the
-     * TypeError.
+     * TypeError; site is where a deprecation is (null: the running code).
      */
     @TruffleBoundary
-    public Object assign(Object value, boolean strict, PhpClass.PropertyDecl decl) {
-        Object accepted = slow(value, strict, null, null);
+    public Object assign(Object value, boolean strict, PhpClass.PropertyDecl decl, Node site) {
+        Object accepted = slow(value, strict, null, site);
         if (accepted == null) {
             throw new PhpError("TypeError", "Cannot assign " + valueName(value) + " to property "
                     + declaringName(decl) + "::$" + Str.keyText(decl.name()) + " of type " + text(null));
