@@ -73,6 +73,57 @@ final class Variance {
         }
     }
 
+    /**
+     * zend_can_early_bind: false when the first check that doesn't succeed, of the parent's methods, then its
+     * typed properties, then its typed constants, needs a class not declared yet (an error still binds, to raise it).
+     */
+    static boolean canEarlyBind(PhpContext context, PhpClass phpClass) {
+        PhpClass parent = phpClass.getParent();
+        if (parent == null) {
+            return true;
+        }
+        Set<String> unresolved = new LinkedHashSet<>();
+        for (Map.Entry<String, PhpFunction> entry : parent.methods().entrySet()) {
+            PhpFunction child = phpClass.findMethod(entry.getKey());
+            PhpFunction proto = entry.getValue();
+            if (child != null && child != proto && phpClass.getName().equalsIgnoreCase(child.getClassName())
+                    && checked(proto, entry.getKey(), false)) {
+                int status = compatible(context, phpClass, child, proto, unresolved);
+                if (status != SUCCESS) {
+                    return status != UNRESOLVED;
+                }
+            }
+        }
+        for (PhpClass.PropertyDecl parentDecl : parent.getProperties()) {
+            PhpClass.PropertyDecl decl = phpClass.findProperty(parentDecl.name());
+            if (parentDecl.type() == null || decl == parentDecl || decl == null
+                    || !phpClass.getLowerName().equals(decl.declaringClass())
+                    || parentDecl.visibility() == PhpClass.PropertyDecl.PRIVATE || phpClass.isHooked(decl.name())
+                    || decl.type() == null || parentDecl.type().text(null).equals(decl.type().text(null))) {
+                continue;
+            }
+            // property_types_compatible: an error either way wins over an unresolved class
+            int down = covariant(context, phpClass, decl.type(), parentDecl.type(), unresolved);
+            int up = covariant(context, phpClass, parentDecl.type(), decl.type(), unresolved);
+            if (down != SUCCESS || up != SUCCESS) {
+                return down == ERROR || up == ERROR;
+            }
+        }
+        for (Map.Entry<String, PhpClass.ConstantType> entry : parent.constantTypes().entrySet()) {
+            PhpClass.ConstantType parentType = entry.getValue();
+            PhpClass.ConstantType own = phpClass.constantType(entry.getKey());
+            if (parentType.type() == null || parentType.isPrivate() || own == parentType || own == null
+                    || own.declaringClass() != phpClass || own.type() == null) {
+                continue;
+            }
+            int status = covariant(context, phpClass, own.type(), parentType.type(), unresolved);
+            if (status != SUCCESS) {
+                return status != UNRESOLVED;
+            }
+        }
+        return true;
+    }
+
     /** do_inherit_property: a redeclared property keeps the parent's type (property_types_compatible). */
     private static void properties(PhpContext context, PhpClass phpClass, PhpClass parent, Set<String> unresolved) {
         for (PhpClass.PropertyDecl parentDecl : parent.getProperties()) {

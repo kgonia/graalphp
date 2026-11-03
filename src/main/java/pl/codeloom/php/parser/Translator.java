@@ -368,12 +368,18 @@ public final class Translator {
             if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
                     && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
                 linkedClasses.add(lower);
-                classes.add(new DeclareNodes.EarlyClassNode(template, -1));
-                return;
-            }
-            if (parent != null) {
+                if (parent == null) {
+                    classes.add(new DeclareNodes.EarlyClassNode(template, -1, false));
+                    return;
+                }
+                // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
+                // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
                 boundSlot = hiddenSlot("bound");
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot));
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, false));
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
+            } else if (parent != null) {
+                boundSlot = hiddenSlot("bound");
+                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
             }
         }
         StmtNode declaration = new DeclareNodes.DeclareClassNode(template, boundSlot);

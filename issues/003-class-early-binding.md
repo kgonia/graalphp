@@ -22,7 +22,15 @@ decides at the file's translation, `DeclareNodes.EarlyClassNode` binds in the fi
 - Such a class with another parent is bound at the load, after those, if its name is free and its parent declared
   by then (`zend_accel_do_delayed_early_binding`); its statement then does nothing (`ZEND_DECLARE_CLASS_DELAYED`),
   else declares it as before (autoloading the parent).
+- Either binding is skipped when an inheritance check (a method's signature, a redeclared property's or typed
+  constant's type) needs a class not declared yet (`zend_can_early_bind`'s `INHERITANCE_UNRESOLVED`); an error
+  still binds, to raise it. A class the compile would link that is skipped so is tried again with the delayed ones
+  (`ZEND_DECLARE_CLASS_DELAYED`), then left to its statement. Left out: the compile's attempt sees only the classes
+  of the same file (`ZEND_COMPILE_IGNORE_OTHER_FILES`), Truffle PHP's every class declared by then; the delayed
+  retry sees them all on both, so only a name already taken differs (`E_ERROR` at the load, where php-src
+  declares at the statement with "Cannot declare class").
 - Every other class is declared by its statement, as before.
 
 "Cannot redeclare" now names the class already declared (php-src's `old_ce->name`), not the new declaration's
-spelling. Test: `tests/smoke/class-early-binding.php` (with `class-early-binding.inc`, `class-early-binding-ns.inc`).
+spelling. Tests: `tests/smoke/class-early-binding.php` (with `class-early-binding.inc`, `class-early-binding-ns.inc`),
+`class-early-binding-variance.php`.

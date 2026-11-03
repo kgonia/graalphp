@@ -168,16 +168,25 @@ public final class ClassTemplate {
     /** This context's class for the declaration: parent and interfaces resolved by name in the context. */
     @TruffleBoundary
     public PhpClass instantiate(PhpContext context) {
+        return instantiate(context, false);
+    }
+
+    /**
+     * instantiate, or for an early binding (zend_try_early_bind) null when an inheritance check needs a class not
+     * declared yet: the class is then declared where its statement runs.
+     */
+    @TruffleBoundary
+    public PhpClass instantiate(PhpContext context, boolean early) {
         String lowerName = Str.lower(name);
         context.setLinking(lowerName, this);
         try {
-            return link(context);
+            return link(context, early);
         } finally {
             context.setLinking(lowerName, null);
         }
     }
 
-    private PhpClass link(PhpContext context) {
+    private PhpClass link(PhpContext context, boolean early) {
         PhpClass parent = parentName == null ? null : context.getClass(parentName);
         PhpClass phpClass = new PhpClass(name, parent, isInterface, isAbstract, context.getLanguage().rootShape(),
                 this);
@@ -207,6 +216,9 @@ public final class ClassTemplate {
         // a trait's __toString implements Stringable too (zend_do_bind_traits)
         if (traitBody == null && phpClass.findMethod("__tostring") != null && !phpClass.isSubclassOf("stringable")) {
             phpClass.addInterface(context.getClass("Stringable"));
+        }
+        if (early && !Variance.canEarlyBind(context, phpClass)) {
+            return null;
         }
         Variance.check(context, phpClass);
         return phpClass;

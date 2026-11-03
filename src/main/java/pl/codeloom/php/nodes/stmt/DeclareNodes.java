@@ -132,11 +132,14 @@ public final class DeclareNodes {
      */
     public static final class EarlyClassNode extends StmtNode {
         private final ClassTemplate template;
+        /** The slot set when the class is bound (its DeclareClassNode's), -1 for a class with no parent. */
         private final int boundSlot;
+        private final boolean delayed;
 
-        public EarlyClassNode(ClassTemplate template, int boundSlot) {
+        public EarlyClassNode(ClassTemplate template, int boundSlot, boolean delayed) {
             this.template = template;
             this.boundSlot = boundSlot;
+            this.delayed = delayed;
         }
 
         public ClassTemplate getTemplate() {
@@ -144,12 +147,12 @@ public final class DeclareNodes {
         }
 
         public boolean isDelayed() {
-            return boundSlot >= 0;
+            return delayed;
         }
 
         @Override
         public void execute(VirtualFrame frame) {
-            if (bind(PhpContext.get(this), template, isDelayed(), this) && isDelayed()) {
+            if (bind(PhpContext.get(this), template, delayed, this) && boundSlot >= 0) {
                 frame.setBoolean(boundSlot, true);
             }
         }
@@ -157,17 +160,20 @@ public final class DeclareNodes {
         @TruffleBoundary
         private static boolean bind(PhpContext context, ClassTemplate template, boolean delayed, Node site) {
             PhpClass previous = context.findClass(Str.lower(template.getName()));
-            if (delayed) {
-                if (previous != null || context.findClass(Str.lower(template.getParentName())) == null) {
-                    return false;
-                }
-            } else if (previous != null) {
+            if (delayed && (previous != null || context.findClass(Str.lower(template.getParentName())) == null)) {
+                return false;
+            }
+            PhpClass phpClass = template.instantiate(context, true);
+            if (phpClass == null) {
+                return false;
+            }
+            if (previous != null) {
                 // the trace starts below the file, which hasn't started
                 SourceLocation at = template.getDeclaredAt();
                 throw redeclared(context, ErrorFunctions.E_ERROR, previous, at != null ? at : SourceLocation.of(site),
                         1);
             }
-            context.declareClass(linked(context, template.instantiate(context), site));
+            context.declareClass(linked(context, phpClass, site));
             return true;
         }
     }
