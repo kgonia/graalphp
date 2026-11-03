@@ -1,6 +1,6 @@
 # 008: Built-in functions don't check their argument count
 
-**State:** Fixed (2026-11-03, branch `fix-builtin-arity`, commit COMMIT)
+**State:** Fixed (2026-11-03, branch `fix-builtin-arity`, commit fdcadf3; the table's generator in the next)
 
 **Symptom:** a built-in called with too few (or too many) arguments runs with the missing ones as null instead of throwing:
 ```php
