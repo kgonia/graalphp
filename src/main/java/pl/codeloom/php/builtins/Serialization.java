@@ -379,7 +379,7 @@ final class Serialization {
                 return;
             }
             writeClassName(object);
-            Object[] table = object.propertyTable();
+            Object[] table = object.forSerialize().propertyTable();
             Object[] entries = new Object[table.length];
             for (int i = 0; i < table.length; i += 2) {
                 entries[i] = Str.ofKey((String) table[i]);
@@ -456,7 +456,7 @@ final class Serialization {
          */
         private Object[] sleepProperties(PhpObject object, PhpArray names) {
             PhpClass phpClass = object.getPhpClass();
-            Object[] table = object.propertyTable();
+            Object[] table = object.forSerialize().propertyTable();
             Map<String, Object> properties = new LinkedHashMap<>();
             for (int i = 0; i < table.length; i += 2) {
                 properties.putIfAbsent((String) table[i], table[i + 1]);
@@ -932,6 +932,13 @@ final class Serialization {
                 return FAIL;
             }
             String property = propertyFor(frame.phpClass, Str.key(name));
+            PhpClass.Hooks hooks = property == null ? null : frame.phpClass.findHooks(property);
+            if (hooks != null && hooks.virtual()) {
+                warning(context, "unserialize(): Cannot unserialize value for virtual property "
+                        + frame.phpClass.declaringClassName(frame.phpClass.findProperty(property)) + "::$"
+                        + Str.keyText(property));
+                return FAIL;
+            }
             return property == null ? FAIL : value(frame.object, property);
         }
 

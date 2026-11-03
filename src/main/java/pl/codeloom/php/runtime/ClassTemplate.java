@@ -28,7 +28,7 @@ public final class ClassTemplate {
     }
 
     /** A method, with the properties its constructor promotes (`public function __construct(private $x)`). */
-    public record Method(PhpFunction function, List<PhpClass.PropertyDecl> promoted) implements Member {
+    public record Method(PhpFunction function, List<Property> promoted) implements Member {
     }
 
     /** A class constant: its value, or a {@link Deferred} initializer; its visibility; its type, or null. */
@@ -37,15 +37,23 @@ public final class ClassTemplate {
 
     /**
      * A property: its default value, or a {@link Deferred} initializer (null: typed, uninitialized), its php-ast
-     * modifiers as PhpClass.PropertyDecl's, its type, whether it has hooks.
+     * modifiers as PhpClass.PropertyDecl's, its type, its php-ast flags, its hooks as declared (null for none), and
+     * whether it has a default written.
      */
     public record Property(String name, Object initial, int visibility, boolean isStatic, int modifiers,
-                           PhpType type, boolean hooked) implements Member {
+                           PhpType type, int flags, PhpClass.Hooks hooks, boolean hasDefault) implements Member {
+        public Property(String name, Object initial, int visibility, boolean isStatic) {
+            this(name, initial, visibility, isStatic, 0, null, 0, null, false);
+        }
     }
 
     /** An enum case: its backing value, a {@link Deferred} one, or null in a pure enum. */
     public record Case(String name, Object value) implements Member {
     }
+
+    /** php-ast's public(set), protected(set), private(set). */
+    private static final int SET_VISIBILITY = PhpClass.PropertyDecl.PUBLIC_SET | PhpClass.PropertyDecl.PROTECTED_SET
+            | PhpClass.PropertyDecl.PRIVATE_SET;
 
     /**
      * `use A, B { A::m insteadof B; m as n; }`: traits by resolved name, aliases and exclusions. Method names are
@@ -268,6 +276,9 @@ public final class ClassTemplate {
                 useTraits(context, phpClass, use, own);
             }
         }
+        for (PhpClass iface : phpClass.directInterfaces()) {
+            inheritInterfaceProperties(context, phpClass, iface);
+        }
         if (isEnum()) {
             checkEnum(context, phpClass);
         }
@@ -290,14 +301,28 @@ public final class ClassTemplate {
                 names.add(method.displayName());
             }
         }
+        // and abstract property hooks
+        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+            PhpClass.Hooks hooks = phpClass.findHooks(decl.name());
+            if (hooks != null) {
+                for (PhpFunction hook : new PhpFunction[] {hooks.get(), hooks.set()}) {
+                    if (hook != null && hook.isAbstract()) {
+                        names.add(hook.displayName());
+                    }
+                }
+            }
+        }
         if (names.isEmpty()) {
             return;
         }
         int count = names.size();
         String list = String.join(", ", names.subList(0, Math.min(3, count))) + (count > 3 ? ", ..." : "");
         String s = count == 1 ? "" : "s";
-        throw linkError(context, isEnum() ? "Enum " + name + " must implement " + count + " abstract method" + s
-                + " (" + list + ")" : "Class " + name + " contains " + count + " abstract method" + s
+        // an enum or an anonymous class can't be declared abstract (can_be_abstract)
+        String printed = name.split("\0", 2)[0];
+        throw linkError(context, isEnum() || name.contains("@anonymous") ? (isEnum() ? "Enum " : "Class ") + printed
+                + " must implement " + count + " abstract method" + s + " (" + list + ")" : "Class " + printed
+                + " contains " + count + " abstract method" + s
                 + " and must therefore be declared abstract or implement the remaining method" + s + " (" + list + ")");
     }
 
@@ -374,8 +399,8 @@ public final class ClassTemplate {
 
     private void add(PhpClass phpClass, Member member) {
         if (member instanceof Method method) {
-            for (PhpClass.PropertyDecl property : method.promoted()) {
-                phpClass.addProperty(property);
+            for (Property property : method.promoted()) {
+                add(phpClass, property);
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
@@ -402,15 +427,125 @@ public final class ClassTemplate {
                             + (readonly ? "readonly " : "non-readonly ") + phpClass.getName() + "::$"
                             + property.name());
                 }
+                inheritHooks(phpClass, property);
                 phpClass.addProperty(new PhpClass.PropertyDecl(property.name(), initial, property.visibility(), null,
                         property.modifiers(), property.type()));
-                if (property.hooked()) {
-                    phpClass.addHooked(property.name());
-                }
             }
         } else if (member instanceof Case enumCase) {
             phpClass.addCase(enumCase.name(), bind(enumCase.value(), phpClass));
         }
+    }
+
+    /**
+     * A property declared over an inherited one (do_inherit_property): a final one can't be; the child is backed
+     * if the parent's is; the hooks it doesn't declare are the parent's (inherit_property_hook), but an abstract
+     * one that a backed property implements, and a final hook can't be overridden.
+     */
+    private void inheritHooks(PhpClass phpClass, Property property) {
+        String name = property.name();
+        PhpClass.PropertyDecl inherited = phpClass.findProperty(name);
+        if (inherited != null && inherited.visibility() == PhpClass.PropertyDecl.PRIVATE) {
+            inherited = null;
+        }
+        if (inherited != null && phpClass.isFinalProperty(name)) {
+            throw fatal("Cannot override final property " + className(phpClass, inherited) + "::$" + Str.keyText(name));
+        }
+        int childSet = property.modifiers() & SET_VISIBILITY;
+        PhpClass.Hooks inheritedHooks = inherited == null ? null : phpClass.findHooks(name);
+        if (inherited != null && childSet != 0
+                && !(inheritedHooks != null && inheritedHooks.virtual() && inheritedHooks.set() == null)) {
+            // a set visibility no stricter than the parent's (its read visibility's, if it has none)
+            int parentSet = inherited.modifiers() & SET_VISIBILITY;
+            int visibility = inherited.visibility();
+            int effective = parentSet != 0 ? parentSet : visibility == PhpClass.PropertyDecl.PRIVATE ? 4096
+                    : visibility == PhpClass.PropertyDecl.PROTECTED ? 2048 : 1024;
+            if (childSet > effective) {
+                throw fatal("Set access level of " + phpClass.getName() + "::$" + Str.keyText(name) + " must be "
+                        + (parentSet == 0 ? "omitted" : parentSet == 4096 ? "private(set)" : parentSet == 2048
+                        ? "protected(set)" : "public(set)") + " (as in class " + className(phpClass, inherited) + ")"
+                        + (parentSet == 0 ? "" : " or weaker"));
+            }
+        }
+        // private(set) is implicitly final
+        if ((property.flags() & FINAL) != 0 || (property.modifiers() & PhpClass.PropertyDecl.PRIVATE_SET) != 0) {
+            phpClass.setFinalProperty(name);
+        }
+        PhpClass.Hooks parent = inherited == null ? null : phpClass.findHooks(name);
+        PhpClass.Hooks own = property.hooks();
+        if (own == null && parent == null) {
+            phpClass.setHooks(name, null);
+            return;
+        }
+        boolean virtual = own != null && own.virtual() && (inherited == null || parent != null && parent.virtual());
+        PhpFunction get = own == null ? null : own.get();
+        PhpFunction set = own == null ? null : own.set();
+        if (parent != null) {
+            get = inheritHook(get, parent.get(), !virtual);
+            set = inheritHook(set, parent.set(), !virtual);
+        }
+        if (virtual && property.hasDefault()) {
+            throw fatal("Cannot specify default value for virtual hooked property " + phpClass.getName() + "::$"
+                    + Str.keyText(name));
+        }
+        if (!virtual && get != null && get.returnsRef() && set != null && !get.isAbstract()) {
+            throw fatal("Get hook of backed property " + phpClass.getName() + "::" + Str.keyText(name)
+                    + " with set hook may not return by reference");
+        }
+        phpClass.setHooks(name, new PhpClass.Hooks(get, set, virtual));
+    }
+
+    /** One hook of a property declared over an inherited one: the child's, else the parent's (see inheritHooks). */
+    private PhpFunction inheritHook(PhpFunction child, PhpFunction parent, boolean backed) {
+        if (parent == null) {
+            return child;
+        }
+        if (child == null) {
+            return parent.isAbstract() && backed ? null : parent;
+        }
+        if ((parent.getModifiers() & PhpFunction.ACC_FINAL) != 0 && (parent.getModifiers() & PhpFunction.ACC_PRIVATE) == 0) {
+            throw fatal("Cannot override final property hook " + parent.getClassName() + "::" + parent.getName() + "()");
+        }
+        return child;
+    }
+
+    /**
+     * An interface's properties (do_inherit_iface... do_inherit_property): those the class doesn't declare are its
+     * own then, abstract; for those it does, the interface's hooks it doesn't implement.
+     */
+    private void inheritInterfaceProperties(PhpContext context, PhpClass phpClass, PhpClass iface) {
+        for (PhpClass.PropertyDecl decl : iface.getProperties()) {
+            PhpClass.Hooks required = iface.findHooks(decl.name());
+            if (phpClass.findProperty(decl.name()) == null) {
+                phpClass.addProperty(decl);
+                phpClass.setHooks(decl.name(), required);
+            } else if (required != null) {
+                PhpClass.Hooks hooks = phpClass.findHooks(decl.name());
+                boolean backed = hooks == null || !hooks.virtual();
+                PhpFunction get = hooks == null ? null : hooks.get();
+                PhpFunction set = hooks == null ? null : hooks.set();
+                get = get != null ? get : inheritHook(null, required.get(), backed);
+                set = set != null ? set : inheritHook(null, required.set(), backed);
+                if (get != null || set != null) {
+                    phpClass.setHooks(decl.name(), new PhpClass.Hooks(get, set, !backed));
+                }
+            }
+        }
+    }
+
+    /** A compile error of the declaration's (zend_error_noreturn(E_COMPILE_ERROR)), at its line. */
+    private RuntimeException fatal(String message) {
+        return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
+                declaredAt != null ? declaredAt : SourceLocation.current(), 0);
+    }
+
+    /** The name, as written, of the class that declared an inherited property. */
+    private static String className(PhpClass phpClass, PhpClass.PropertyDecl decl) {
+        for (PhpClass c = phpClass; c != null; c = c.getParent()) {
+            if (c.getLowerName().equals(decl.declaringClass())) {
+                return c.getName();
+            }
+        }
+        return decl.declaringClass();
     }
 
     /**

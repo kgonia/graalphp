@@ -1,6 +1,7 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.vars.PropNode;
@@ -260,6 +261,14 @@ final class RuntimeFunctions {
             // a built-in class's clone_obj
             return handlers.cloneObject().apply(object);
         }
+        PhpObject real = object.initialized();
+        if (real != object) {
+            // an initialized proxy's clone proxies its instance's clone; no __clone() on the proxy
+            PhpObject proxy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
+                    context.nextObjectId());
+            proxy.proxyFor((PhpObject) cloneObject(context, real, PhpNull.NULL));
+            return proxy;
+        }
         PhpObject copy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
                 context.nextObjectId());
         for (Object name : object.propertyNames()) {
@@ -283,7 +292,7 @@ final class RuntimeFunctions {
         if (withProperties instanceof PhpArray properties && properties.size() > 0) {
             PhpClass scope = Callables.callerClass(context, "self");
             PropNode write = PropNode.forOperands(null, scope == null ? null : scope.getLowerName(), false, false,
-                    true);
+                    null, true);
             reinitable(copy, () -> {
                 for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
                     Object property = properties.rawAt(p);

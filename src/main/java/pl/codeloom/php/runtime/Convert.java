@@ -888,6 +888,12 @@ public final class Convert {
             // different classes, or DateInterval (php-src warns "Cannot compare DateInterval objects")
             return 1;
         }
+        // lazy objects of one class compare as initialized, a proxy as its instance (zend_std_compare_objects)
+        PhpObject realX = x.initialized();
+        PhpObject realY = y.initialized();
+        if (realX != x || realY != y) {
+            return compareObjects(objectLeft ? realX : realY, objectLeft ? realY : realX, objectLeft, guard);
+        }
         if (Guard.contains(guard, x)) {
             throw nestingTooDeep();
         }

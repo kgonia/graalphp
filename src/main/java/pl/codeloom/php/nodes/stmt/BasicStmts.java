@@ -24,6 +24,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 
@@ -293,8 +294,14 @@ public final class BasicStmts {
             store((PhpObject) frame.getArguments()[PhpFunction.ARG_THIS], name, value.execute(frame));
         }
 
+        /** As `$this->name = $name` (ZEND_ASSIGN_OBJ): a hooked property's set hook takes it. */
         @TruffleBoundary
         public static void store(PhpObject self, String name, Object value) {
+            PhpClass.Hooks hooks = self.getPhpClass().findHooks(name);
+            if (hooks != null && hooks.set() != null) {
+                hooks.set().invoke(self, self.getPhpClass(), value);
+                return;
+            }
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }

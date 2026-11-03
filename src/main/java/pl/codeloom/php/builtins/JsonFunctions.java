@@ -688,7 +688,10 @@ final class JsonFunctions {
                     }
                 }
             } else if (object != null) {
-                Object[] table = object.propertyTable();
+                // a lazy object initialized; a class with hooks has its get hooks called (readableProperties)
+                PhpObject real = object.initialized();
+                Object[] table = real.getPhpClass().hasHooks() ? real.readableProperties(true).toArray()
+                        : real.propertyTable();
                 for (int i = 0; i < table.length; i += 2) {
                     String name = (String) table[i];
                     if (name.startsWith("\0")) {
