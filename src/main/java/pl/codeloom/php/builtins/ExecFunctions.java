@@ -254,7 +254,7 @@ final class ExecFunctions {
         if (context.response() == null) {
             context.flush();
         }
-        Map<String, String> environment = context.getEnv().getEnvironment();
+        Map<String, String> environment = RuntimeFunctions.environment(context);
         TruffleFile cwd = context.getEnv().getCurrentWorkingDirectory();
         if (LINUX) {
             return Spawn.pipeTo(command, input, environment, cwd.getPath());

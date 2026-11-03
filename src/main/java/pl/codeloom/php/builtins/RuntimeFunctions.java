@@ -119,6 +119,7 @@ final class RuntimeFunctions {
 
         // ---- environment and self-description ----
         r.fn("getenv", (context, a) -> getenv(context, a));
+        r.fn("putenv", (context, a) -> putenv(context, a));
         r.fn("phpversion", a -> Args.has(a, 0) ? (Object) Boolean.FALSE : Str.of("8.5.12"));
         r.fn("php_uname", a -> Str.of(Args.str(a, 0, Str.of("a")).equals(Str.of("s")) ? "Linux"
                 : "Linux localhost 6.0 #1 SMP x86_64"));
@@ -220,8 +221,35 @@ final class RuntimeFunctions {
     }
 
     @TruffleBoundary
+    /** The environment variables, as putenv() left them. */
+    static Map<String, String> environment(PhpContext context) {
+        Map<String, String> changed = context.builtinState().environment;
+        return changed != null ? changed : context.getEnv().getEnvironment();
+    }
+
+    /** putenv(): "NAME=value" sets, "NAME" unsets. */
+    @TruffleBoundary
+    private static Object putenv(PhpContext context, Object[] a) {
+        Args.arity(a, "putenv", 1, 1);
+        String setting = Str.java(Args.string(context, a, 0, "putenv", "assignment", false));
+        if (setting.isEmpty() || setting.charAt(0) == '=') {
+            throw new PhpError("ValueError", "putenv(): Argument #1 ($assignment) must have a valid syntax");
+        }
+        BuiltinState state = context.builtinState();
+        if (state.environment == null) {
+            state.environment = new java.util.HashMap<>(context.getEnv().getEnvironment());
+        }
+        int equals = setting.indexOf('=');
+        if (equals < 0) {
+            state.environment.remove(setting);
+        } else {
+            state.environment.put(setting.substring(0, equals), setting.substring(equals + 1));
+        }
+        return Boolean.TRUE;
+    }
+
     private static Object getenv(PhpContext context, Object[] a) {
-        Map<String, String> environment = context.getEnv().getEnvironment();
+        Map<String, String> environment = environment(context);
         if (!Args.has(a, 0) || Args.get(a, 0) == PhpNull.NULL) {
             PhpArray all = new PhpArray();
             for (Map.Entry<String, String> variable : new TreeMap<>(environment).entrySet()) {

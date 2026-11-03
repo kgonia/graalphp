@@ -28,6 +28,8 @@ public final class BuiltinState {
      * C.UTF-8 from startup (zend_reset_lc_ctype_locale), the others C.
      */
     final String[] locales = {"C.UTF-8", "C", "C", "C", "C", "C", "", "C", "C", "C", "C", "C", "C"};
+    /** The environment once putenv() changed it (null before: the process's). */
+    java.util.Map<String, String> environment;
     /** strtok()'s string and position between calls. */
     byte[] strtok;
     int strtokPosition;

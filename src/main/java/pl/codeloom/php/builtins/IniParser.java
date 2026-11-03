@@ -896,7 +896,7 @@ final class IniParser {
     private Object variable(String name, String fallback) {
         String setting = context.ini().configuration().get(name);
         if (setting == null) {
-            setting = context.getEnv().getEnvironment().get(name);
+            setting = RuntimeFunctions.environment(context).get(name);
             if (setting != null) {
                 setting = new String(setting.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1);
             }

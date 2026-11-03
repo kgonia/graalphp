@@ -2040,7 +2040,7 @@ public final class StringFunctions {
                 String wanted = name;
                 if (wanted.isEmpty()) {
                     // the environment: LC_ALL, then the category's variable, then LANG
-                    Map<String, String> environment = context.getEnv().getEnvironment();
+                    Map<String, String> environment = RuntimeFunctions.environment(context);
                     for (String variable : new String[]{"LC_ALL", LOCALE_CATEGORIES[c], "LANG"}) {
                         String value = environment.get(variable);
                         if (value != null && !value.isEmpty()) {
