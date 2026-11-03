@@ -26,10 +26,14 @@ public final class StringFunctions {
 
     static void register(Registry r) {
         r.fn("substr", a -> substr(Args.str(a, 0), Args.lng(a, 1, 0), lengthArg(a, 2)));
-        r.fn("strpos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("stripos", a -> strpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
-        r.fn("strrpos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), false));
-        r.fn("strripos", a -> strrpos(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), true));
+        r.fn("strpos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strpos", "offset", "int") : 0, false));
+        r.fn("stripos", (context, a) -> strpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "stripos", "offset", "int") : 0, true));
+        r.fn("strrpos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strrpos", "offset", "int") : 0, false));
+        r.fn("strripos", (context, a) -> strrpos(Args.str(a, 0), Args.str(a, 1),
+                Args.has(a, 2) ? Args.integer(context, a, 2, "strripos", "offset", "int") : 0, true));
         r.fn("str_contains", a -> indexOf(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1)), 0, false) >= 0);
         r.fn("str_starts_with", a -> startsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
         r.fn("str_ends_with", a -> endsWith(Str.readBytes(Args.str(a, 0)), Str.readBytes(Args.str(a, 1))));
@@ -63,8 +67,7 @@ public final class StringFunctions {
         r.fn("strcspn", a -> span(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3), false));
         r.fn("substr_count", a -> substrCount(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0), lengthArg(a, 3)));
         r.fn("substr_compare", a -> substrCompare(a));
-        r.fn("substr_replace", a -> substrReplace(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, 0),
-                lengthArg(a, 3)));
+        r.fn("substr_replace", (context, a) -> substrReplace(context, a));
         r.fn("strcmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
                 Long.MAX_VALUE, false));
         r.fn("strcasecmp", a -> (long) compare(Str.readBytes(Args.str(a, 0)), 0, Str.readBytes(Args.str(a, 1)),
@@ -303,8 +306,7 @@ public final class StringFunctions {
             offset += h.length;
         }
         if (offset < 0 || offset > h.length) {
-            throw new PhpError("ValueError", "strpos(): Argument #3 ($offset) must be contained in argument #1 "
-                    + "($haystack)");
+            throw offsetError(ignoreCase ? "stripos" : "strpos", 3, "offset");
         }
         int index = indexOf(h, Str.readBytes(needle), (int) offset, ignoreCase);
         return index < 0 ? (Object) Boolean.FALSE : (Object) (long) index;
@@ -314,6 +316,9 @@ public final class StringFunctions {
     private static Object strrpos(TruffleString haystack, TruffleString needle, long offset, boolean ignoreCase) {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
+        if (offset > h.length || offset < -h.length) {
+            throw offsetError(ignoreCase ? "strripos" : "strrpos", 3, "offset");
+        }
         int start;
         int limit;
         if (offset >= 0) {
@@ -329,6 +334,12 @@ public final class StringFunctions {
             }
         }
         return Boolean.FALSE;
+    }
+
+    /** zend_argument_value_error's "must be contained in argument #1 ($haystack)". */
+    private static PhpError offsetError(String function, int position, String name) {
+        return new PhpError("ValueError", function + "(): Argument #" + position + " ($" + name + ") must be "
+                + "contained in argument #1 ($haystack)");
     }
 
     private static boolean regionMatches(byte[] h, int at, byte[] n, boolean ignoreCase) {
@@ -589,24 +600,85 @@ public final class StringFunctions {
     }
 
     @TruffleBoundary
-    private static TruffleString substrReplace(TruffleString s, TruffleString replacement, long offset,
-                                               Long length) {
+    private static Object substrReplace(PhpContext context, Object[] a) {
+        Args.arity(a, "substr_replace", 3, 4);
+        Object string = Args.arrayOrString(context, a, 0, "substr_replace", "string");
+        Object replace = Args.arrayOrString(context, a, 1, "substr_replace", "replace");
+        Object offset = arrayOrLong(context, a, 2, "offset", "array|int");
+        Object length = Args.has(a, 3) && Args.get(a, 3) != PhpNull.NULL
+                ? arrayOrLong(context, a, 3, "length", "array|int|null") : null;
+        if (string instanceof TruffleString s) {
+            if (offset instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #3 ($offset) cannot be an array when "
+                        + "working on a single string");
+            }
+            if (length instanceof PhpArray) {
+                throw new PhpError("TypeError", "substr_replace(): Argument #4 ($length) cannot be an array when "
+                        + "working on a single string");
+            }
+            TruffleString with = replace instanceof PhpArray r ? (r.size() > 0 ? Convert.toStr(r.valueAt(
+                    r.firstPosition())) : Str.EMPTY) : (TruffleString) replace;
+            return spliced(s, with, (Long) offset, (Long) length);
+        }
+        PhpArray strings = (PhpArray) string;
+        PhpArray result = new PhpArray();
+        int offsets = offset instanceof PhpArray o ? o.firstPosition() : -1;
+        int lengths = length instanceof PhpArray l ? l.firstPosition() : -1;
+        int replaces = replace instanceof PhpArray r ? r.firstPosition() : -1;
+        for (int p = strings.firstPosition(); p >= 0; p = strings.nextPosition(p)) {
+            TruffleString s = Convert.toStr(strings.valueAt(p));
+            long f = 0;
+            if (offset instanceof PhpArray o) {
+                if (offsets >= 0) {
+                    f = Convert.toLong(o.valueAt(offsets));
+                    offsets = o.nextPosition(offsets);
+                }
+            } else {
+                f = (Long) offset;
+            }
+            Long l = null;
+            if (length instanceof PhpArray lengthArray) {
+                if (lengths >= 0) {
+                    l = Convert.toLong(lengthArray.valueAt(lengths));
+                    lengths = lengthArray.nextPosition(lengths);
+                }
+            } else {
+                l = (Long) length;
+            }
+            TruffleString with = (TruffleString) (replace instanceof PhpArray ? Str.EMPTY : replace);
+            if (replace instanceof PhpArray r && replaces >= 0) {
+                with = Convert.toStr(r.valueAt(replaces));
+                replaces = r.nextPosition(replaces);
+            }
+            result.put(strings.keyAt(p), spliced(s, with, f, l));
+        }
+        return result;
+    }
+
+    /** Z_PARAM_ARRAY_HT_OR_LONG(_OR_NULL): the array, or the argument as an int. */
+    private static Object arrayOrLong(PhpContext context, Object[] a, int index, String name, String type) {
+        return Args.get(a, index) instanceof PhpArray array ? array
+                : (Object) Args.integer(context, a, index, "substr_replace", name, type);
+    }
+
+    /** The string with length bytes from offset replaced (substr_replace's clamping; a null length: to the end). */
+    private static TruffleString spliced(TruffleString s, TruffleString replacement, long offset, Long length) {
         byte[] b = Str.readBytes(s);
-        int n = b.length;
-        long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
-        long end;
-        if (length == null) {
-            end = n;
-        } else if (length < 0) {
-            end = Math.max(start, n + length);
-        } else {
-            end = Math.min(n, start + length);
+        long n = Str.length(s);
+        long f = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+        long l = length == null ? n : length;
+        if (l < 0) {
+            l = Math.max(0, n - f + l);
+        }
+        if (l > n - f) {
+            l = n - f;
         }
         byte[] r = Str.readBytes(replacement);
-        byte[] out = new byte[(int) (start + r.length + (n - end))];
-        System.arraycopy(b, 0, out, 0, (int) start);
-        System.arraycopy(r, 0, out, (int) start, r.length);
-        System.arraycopy(b, (int) end, out, (int) start + r.length, (int) (n - end));
+        int rl = Str.length(replacement);
+        byte[] out = new byte[(int) (n - l + rl)];
+        System.arraycopy(b, 0, out, 0, (int) f);
+        System.arraycopy(r, 0, out, (int) f, rl);
+        System.arraycopy(b, (int) (f + l), out, (int) f + rl, (int) (n - f - l));
         return Str.of(out);
     }
 
@@ -956,10 +1028,23 @@ public final class StringFunctions {
         byte[] h = Str.readBytes(haystack);
         byte[] n = Str.readBytes(needle);
         if (n.length == 0) {
-            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) cannot be empty");
+            throw new PhpError("ValueError", "substr_count(): Argument #2 ($needle) must not be empty");
         }
-        int start = (int) (offset < 0 ? h.length + offset : offset);
-        int end = length == null ? h.length : (int) (length < 0 ? h.length + length : start + length);
+        if (offset < 0) {
+            offset += h.length;
+        }
+        if (offset < 0 || offset > h.length) {
+            throw offsetError("substr_count", 3, "offset");
+        }
+        int start = (int) offset;
+        int end = h.length;
+        if (length != null) {
+            long l = length < 0 ? length + (h.length - offset) : length;
+            if (l < 0 || l > h.length - offset) {
+                throw offsetError("substr_count", 4, "length");
+            }
+            end = (int) (start + l);
+        }
         long count = 0;
         int i = indexOf(h, n, start, false);
         while (i >= 0 && i + n.length <= end) {
