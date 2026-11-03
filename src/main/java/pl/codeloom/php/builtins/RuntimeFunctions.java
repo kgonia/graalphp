@@ -3,6 +3,7 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
@@ -166,12 +167,19 @@ final class RuntimeFunctions {
         }
     }
 
-    /** `clone $object`:a shallow copy (arrays copy on write), then __clone() on the copy. */
+    /**
+     * clone(): a shallow copy (arrays copy on write), __clone() on the copy, then each of withProperties written
+     * as the calling scope writes it (zend_objects_clone_obj_with), readonly ones writable once more.
+     */
     @TruffleBoundary
     private static Object cloneObject(PhpContext context, Object value, Object withProperties) {
         if (!(value instanceof PhpObject object)) {
-            throw new PhpError("clone(): Argument #1 ($object) must be of type object, "
-                    + Convert.typeName(value) + " given");
+            throw new PhpError("TypeError", "clone(): Argument #1 ($object) must be of type object, "
+                    + Convert.debugType(value) + " given");
+        }
+        if (withProperties != PhpNull.NULL && !(withProperties instanceof PhpArray)) {
+            throw new PhpError("TypeError", "clone(): Argument #2 ($withProperties) must be of type array, "
+                    + Convert.debugType(withProperties) + " given");
         }
         PhpClass.ObjectHandlers handlers = object.getPhpClass().getHandlers();
         if (handlers != null && handlers.uncloneable()) {
@@ -198,27 +206,44 @@ final class RuntimeFunctions {
             }
             copy.initProperty((String) name, property);
         }
-        if (withProperties instanceof PhpArray properties) {
-            for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
-                copy.setProperty(Str.key(Convert.toStr(properties.keyAt(p))), properties.valueAt(p));
-            }
-        }
         if (copy.getPhpClass().findMethod("__clone") != null) {
-            // zend_objects_clone_members: __clone may set each readonly property once more (IS_PROP_REINITABLE)
-            for (Object name : copy.propertyNames()) {
-                if (copy.isReadonly((String) name)) {
-                    copy.mark("reinit:" + name);
+            reinitable(copy, () -> copy.callMethod("__clone"));
+        }
+        if (withProperties instanceof PhpArray properties && properties.size() > 0) {
+            PhpClass scope = Callables.callerClass(context, "self");
+            PropNode write = PropNode.forOperands(null, scope == null ? null : scope.getLowerName(), false, false,
+                    true);
+            reinitable(copy, () -> {
+                for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {
+                    Object property = properties.rawAt(p);
+                    if (property instanceof PhpRef ref) {
+                        if (ref.isShared()) {
+                            throw new PhpError("Cannot assign by reference when cloning with updated properties");
+                        }
+                        property = ref.get();
+                    }
+                    write.writeOn(null, copy, Str.key(Convert.toStr(properties.keyAt(p))), property);
                 }
-            }
-            try {
-                copy.callMethod("__clone");
-            } finally {
-                for (Object name : copy.propertyNames()) {
-                    copy.unmark("reinit:" + name);
-                }
-            }
+                return null;
+            });
         }
         return copy;
+    }
+
+    /** Runs code while each readonly property of the copy may be set once more (IS_PROP_REINITABLE). */
+    private static void reinitable(PhpObject copy, java.util.function.Supplier<Object> code) {
+        for (Object name : copy.propertyNames()) {
+            if (copy.isReadonly((String) name)) {
+                copy.mark("reinit:" + name);
+            }
+        }
+        try {
+            code.get();
+        } finally {
+            for (Object name : copy.propertyNames()) {
+                copy.unmark("reinit:" + name);
+            }
+        }
     }
 
     /** The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. */
