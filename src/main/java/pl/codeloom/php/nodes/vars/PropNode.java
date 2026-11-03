@@ -401,7 +401,7 @@ public final class PropNode extends LValueNode {
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         String name = name(frame);
-        bindRefOn(frame, writtenObject(frame), name, ref);
+        bindRefOn(frame, writtenObject(frame, VariableVariableNode.W), name, ref);
     }
 
     /** bindRef of property name of target, evaluated: an error if it isn't an object. */
