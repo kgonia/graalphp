@@ -55,6 +55,103 @@ public final class StringFunctions {
             TruffleString format = Args.string(context, a, 1, "sscanf", "format", false);
             return Scanf.scan(Str.readBytes(string), Str.readBytes(format), a, 2);
         });
+        r.fn("levenshtein", (context, a) -> {
+            Args.arity(a, "levenshtein", 2, 5);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "levenshtein", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "levenshtein", "string2", false));
+            long ins = Args.has(a, 2) ? Args.integer(context, a, 2, "levenshtein", "insertion_cost", "int") : 1;
+            long rep = Args.has(a, 3) ? Args.integer(context, a, 3, "levenshtein", "replacement_cost", "int") : 1;
+            long del = Args.has(a, 4) ? Args.integer(context, a, 4, "levenshtein", "deletion_cost", "int") : 1;
+            return levenshtein(s1, s2, ins, rep, del);
+        });
+        r.fn("similar_text", "001", (context, a) -> {
+            Args.arity(a, "similar_text", 2, 3);
+            byte[] s1 = Str.readBytes(Args.string(context, a, 0, "similar_text", "string1", false));
+            byte[] s2 = Str.readBytes(Args.string(context, a, 1, "similar_text", "string2", false));
+            long sim = s1.length + s2.length == 0 ? 0 : similar(s1, 0, s1.length, s2, 0, s2.length);
+            if (Args.has(a, 2)) {
+                Args.ref(a, 2).set(s1.length + s2.length == 0 ? 0.0 : sim * 200.0 / (s1.length + s2.length));
+            }
+            return sim;
+        });
+        string(r, "soundex", StringFunctions::soundex);
+        string(r, "quoted_printable_encode", StringFunctions::quotedPrintableEncode);
+        string(r, "quoted_printable_decode", StringFunctions::quotedPrintableDecode);
+        string(r, "convert_uuencode", StringFunctions::uuencode);
+        string(r, "convert_uudecode", StringFunctions::uudecode);
+        string(r, "str_rot13", s -> {
+            for (int i = 0; i < s.length; i++) {
+                int c = s[i] | 0x20;
+                if (c >= 'a' && c <= 'z') {
+                    s[i] = (byte) (s[i] + (c <= 'm' ? 13 : -13));
+                }
+            }
+            return Str.of(s);
+        });
+        string(r, "str_shuffle", s -> {
+            java.util.Random random = java.util.concurrent.ThreadLocalRandom.current();
+            for (int left = s.length - 1; left > 0; left--) {
+                int j = random.nextInt(left + 1);
+                byte t = s[left];
+                s[left] = s[j];
+                s[j] = t;
+            }
+            return Str.of(s);
+        });
+        r.fn("utf8_encode", (context, a) -> {
+            deprecated(context, "utf8_encode", "8.2, visit the php.net documentation for various alternatives");
+            Args.arity(a, "utf8_encode", 1, 1);
+            ByteBuilder out = new ByteBuilder();
+            for (byte b : Str.readBytes(Args.string(context, a, 0, "utf8_encode", "string", false))) {
+                if (b >= 0) {
+                    out.write(b);
+                } else {
+                    out.write(0xC0 | (b & 0xFF) >> 6);
+                    out.write(0x80 | b & 0x3F);
+                }
+            }
+            return Str.of(out.toByteArray());
+        });
+        r.fn("utf8_decode", (context, a) -> {
+            deprecated(context, "utf8_decode", "8.2, visit the php.net documentation for various alternatives");
+            Args.arity(a, "utf8_decode", 1, 1);
+            return Html.utf8Decode(Str.readBytes(Args.string(context, a, 0, "utf8_decode", "string", false)));
+        });
+        r.fn("count_chars", (context, a) -> {
+            Args.arity(a, "count_chars", 1, 2);
+            byte[] s = Str.readBytes(Args.string(context, a, 0, "count_chars", "string", false));
+            long mode = Args.has(a, 1) ? Args.integer(context, a, 1, "count_chars", "mode", "int") : 0;
+            if (mode < 0 || mode > 4) {
+                throw new PhpError("ValueError", "count_chars(): Argument #2 ($mode) must be between 0 and 4 "
+                        + "(inclusive)");
+            }
+            long[] counts = new long[256];
+            for (byte b : s) {
+                counts[b & 0xFF]++;
+            }
+            PhpArray result = new PhpArray();
+            ByteBuilder chars = new ByteBuilder();
+            for (int c = 0; c < 256; c++) {
+                if (mode == 0 || mode == 1 && counts[c] != 0 || mode == 2 && counts[c] == 0) {
+                    result.put((long) c, counts[c]);
+                } else if (mode == 3 && counts[c] != 0 || mode == 4 && counts[c] == 0) {
+                    chars.write(c);
+                }
+            }
+            return mode < 3 ? result : Str.of(chars.toByteArray());
+        });
+        r.fn("str_word_count", (context, a) -> {
+            Args.arity(a, "str_word_count", 1, 3);
+            byte[] s = Str.readBytes(Args.string(context, a, 0, "str_word_count", "string", false));
+            long format = Args.has(a, 1) ? Args.integer(context, a, 1, "str_word_count", "format", "int") : 0;
+            TruffleString list = Args.has(a, 2) ? Args.string(context, a, 2, "str_word_count", "characters", true)
+                    : null;
+            if (format < 0 || format > 2) {
+                throw new PhpError("ValueError", "str_word_count(): Argument #2 ($format) must be a valid format "
+                        + "value");
+            }
+            return wordCount(s, format, list == null ? null : charMask(Str.readBytes(list), "str_word_count"));
+        });
         r.fn("vprintf", (context, a) -> {
             TruffleString text = Sprintf.formatArray(context, a, 0, "vprintf");
             context.write(text);
@@ -1507,5 +1604,310 @@ public final class StringFunctions {
             }
         }
         return false;
+    }
+
+    /** A function of one string, $string (Z_PARAM_STR), given its bytes (a copy the function may change). */
+    private static void string(Registry r, String name, java.util.function.Function<byte[], Object> body) {
+        r.fn(name, (context, a) -> {
+            Args.arity(a, name, 1, 1);
+            return body.apply(Str.bytes(Args.string(context, a, 0, name, "string", false)));
+        });
+    }
+
+    /** zend_deprecated_function for a function declared #[\Deprecated(since, message)]. */
+    private static void deprecated(PhpContext context, String function, String sinceAndMessage) {
+        ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Function " + function
+                + "() is deprecated since " + sinceAndMessage), SourceLocation.current());
+    }
+
+    /** levenshtein.c's reference_levdist. */
+    private static long levenshtein(byte[] s1, byte[] s2, long ins, long rep, long del) {
+        if (s1.length == 0) {
+            return s2.length * ins;
+        }
+        if (s2.length == 0) {
+            return s1.length * del;
+        }
+        if (s1.length < s2.length && ins == rep && rep == del) {
+            byte[] t = s1;
+            s1 = s2;
+            s2 = t;
+        }
+        long[] p1 = new long[s2.length + 1];
+        long[] p2 = new long[s2.length + 1];
+        for (int i2 = 0; i2 <= s2.length; i2++) {
+            p1[i2] = i2 * ins;
+        }
+        for (byte c : s1) {
+            p2[0] = p1[0] + del;
+            for (int i2 = 0; i2 < s2.length; i2++) {
+                long c0 = p1[i2] + (c == s2[i2] ? 0 : rep);
+                c0 = Math.min(c0, p1[i2 + 1] + del);
+                p2[i2 + 1] = Math.min(c0, p2[i2] + ins);
+            }
+            long[] t = p1;
+            p1 = p2;
+            p2 = t;
+        }
+        return p1[s2.length];
+    }
+
+    /** php_similar_char: the longest common substring, then the same left and right of it. */
+    private static long similar(byte[] t1, int from1, int len1, byte[] t2, int from2, int len2) {
+        int max = 0;
+        int count = 0;
+        int pos1 = 0;
+        int pos2 = 0;
+        for (int p = 0; p < len1; p++) {
+            for (int q = 0; q < len2; q++) {
+                int l = 0;
+                while (p + l < len1 && q + l < len2 && t1[from1 + p + l] == t2[from2 + q + l]) {
+                    l++;
+                }
+                if (l > max) {
+                    max = l;
+                    count++;
+                    pos1 = p;
+                    pos2 = q;
+                }
+            }
+        }
+        long sum = max;
+        if (sum > 0) {
+            if (pos1 > 0 && pos2 > 0 && count > 1) {
+                sum += similar(t1, from1, pos1, t2, from2, pos2);
+            }
+            if (pos1 + max < len1 && pos2 + max < len2) {
+                sum += similar(t1, from1 + pos1 + max, len1 - pos1 - max, t2, from2 + pos2 + max, len2 - pos2 - max);
+            }
+        }
+        return sum;
+    }
+
+    /** soundex.c: Knuth's soundex, of the ASCII letters. */
+    private static Object soundex(byte[] s) {
+        String table = "01230120022455012623010202";
+        byte[] out = {'0', '0', '0', '0'};
+        int small = 0;
+        int last = -1;
+        for (int i = 0; i < s.length && small < 4; i++) {
+            int code = s[i] >= 'a' && s[i] <= 'z' ? s[i] - 32 : s[i];
+            if (code >= 'A' && code <= 'Z') {
+                int digit = table.charAt(code - 'A') == '0' ? 0 : table.charAt(code - 'A');
+                if (small == 0) {
+                    out[small++] = (byte) code;
+                    last = digit;
+                } else if (digit != last) {
+                    if (digit != 0) {
+                        out[small++] = (byte) digit;
+                    }
+                    last = digit;
+                }
+            }
+        }
+        return Str.of(out);
+    }
+
+    /** php_quot_print_encode: lines of at most 75, CRLF kept, a multibyte sequence's encoding on one line. */
+    private static Object quotedPrintableEncode(byte[] s) {
+        ByteBuilder d = new ByteBuilder(s.length * 3);
+        long lp = 0;
+        for (int i = 0; i < s.length; i++) {
+            int c = s[i] & 0xFF;
+            if (c == '\r' && at(s, i + 1) == '\n' && i + 1 < s.length) {
+                d.write('\r');
+                d.write('\n');
+                i++;
+                lp = 0;
+            } else if (c < 0x20 || c == 0x7f || c >= 0x80 || c == '=' || c == ' ' && at(s, i + 1) == '\r') {
+                if ((lp += 3) > 75 && c <= 0x7f || c > 0x7f && c <= 0xdf && lp + 3 > 75
+                        || c > 0xdf && c <= 0xef && lp + 6 > 75 || c > 0xef && c <= 0xf4 && lp + 9 > 75) {
+                    d.writeAscii("=\r\n");
+                    lp = 3;
+                }
+                d.write('=');
+                d.write("0123456789ABCDEF".charAt(c >> 4));
+                d.write("0123456789ABCDEF".charAt(c & 0xf));
+            } else {
+                if (++lp > 75) {
+                    d.writeAscii("=\r\n");
+                    lp = 1;
+                }
+                d.write(c);
+            }
+        }
+        return Str.of(d.toByteArray());
+    }
+
+    /** quoted_printable_decode: =XX, and soft line breaks (= then spaces or tabs then a line end); to a NUL. */
+    private static Object quotedPrintableDecode(byte[] s) {
+        ByteBuilder out = new ByteBuilder(s.length);
+        int i = 0;
+        while (at(s, i) != 0) {
+            if (at(s, i) == '=' && Character.digit(at(s, i + 1), 16) >= 0 && Character.digit(at(s, i + 2), 16) >= 0
+                    && at(s, i + 1) < 128 && at(s, i + 2) < 128) {
+                out.write(Character.digit(at(s, i + 1), 16) << 4 | Character.digit(at(s, i + 2), 16));
+                i += 3;
+            } else if (at(s, i) == '=') {
+                int k = 1;
+                while (at(s, i + k) == ' ' || at(s, i + k) == '\t') {
+                    k++;
+                }
+                if (at(s, i + k) == 0) {
+                    i += k;
+                } else if (at(s, i + k) == '\r' && at(s, i + k + 1) == '\n') {
+                    i += k + 2;
+                } else if (at(s, i + k) == '\r' || at(s, i + k) == '\n') {
+                    i += k + 1;
+                } else {
+                    out.write(s[i++]);
+                }
+            } else {
+                out.write(s[i++]);
+            }
+        }
+        return Str.of(out.toByteArray());
+    }
+
+    /** PHP_UU_ENC. */
+    private static int uu(int c) {
+        return c != 0 ? (c & 077) + ' ' : '`';
+    }
+
+    /** php_uuencode: lines of 45 bytes. */
+    private static Object uuencode(byte[] src) {
+        ByteBuilder p = new ByteBuilder(src.length * 3 / 2 + 46);
+        int len = 45;
+        int s = 0;
+        int e = src.length;
+        while (s + 3 < e) {
+            int ee = s + len;
+            if (ee > e) {
+                ee = e;
+                len = ee - s;
+                if (len % 3 != 0) {
+                    ee = s + len / 3 * 3;
+                }
+            }
+            p.write(uu(len));
+            while (s < ee) {
+                p.write(uu(at(src, s) >> 2));
+                p.write(uu(at(src, s) << 4 & 060 | at(src, s + 1) >> 4 & 017));
+                p.write(uu(at(src, s + 1) << 2 & 074 | at(src, s + 2) >> 6 & 03));
+                p.write(uu(at(src, s + 2) & 077));
+                s += 3;
+            }
+            if (len == 45) {
+                p.write('\n');
+            }
+        }
+        if (s < e) {
+            if (len == 45) {
+                p.write(uu(e - s));
+                len = 0;
+            }
+            p.write(uu(at(src, s) >> 2));
+            p.write(uu(at(src, s) << 4 & 060 | at(src, s + 1) >> 4 & 017));
+            p.write(e - s > 1 ? uu(at(src, s + 1) << 2 & 074 | at(src, s + 2) >> 6 & 03) : uu(0));
+            p.write(e - s > 2 ? uu(at(src, s + 2) & 077) : uu(0));
+        }
+        if (len < 45) {
+            p.write('\n');
+        }
+        p.write(uu(0));
+        p.write('\n');
+        return Str.of(p.toByteArray());
+    }
+
+    /** PHP_UU_DEC. */
+    private static int unuu(byte[] s, int i) {
+        return at(s, i) - ' ' & 077;
+    }
+
+    /** php_uudecode; false, with a warning, for a string that isn't uuencoded. */
+    private static Object uudecode(byte[] src) {
+        ByteBuilder p = new ByteBuilder(src.length);
+        int totalLen = 0;
+        int s = 0;
+        int e = src.length;
+        boolean valid = src.length > 0;
+        while (valid && s < e) {
+            int len = unuu(src, s++);
+            if (len == 0) {
+                break;
+            }
+            totalLen += len;
+            int ee = s + (len == 45 ? 60 : (int) Math.floor(len * 1.33));
+            if (len > src.length || ee > e) {
+                valid = false;
+                break;
+            }
+            while (s < ee) {
+                if (s + 4 > e) {
+                    valid = false;
+                    break;
+                }
+                p.write(unuu(src, s) << 2 | unuu(src, s + 1) >> 4);
+                p.write(unuu(src, s + 1) << 4 | unuu(src, s + 2) >> 2);
+                p.write(unuu(src, s + 2) << 6 | unuu(src, s + 3));
+                s += 4;
+            }
+            if (len < 45) {
+                break;
+            }
+            s++;
+        }
+        if (!valid) {
+            ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING,
+                    Str.of("convert_uudecode(): Argument #1 ($data) is not a valid uuencoded string"),
+                    SourceLocation.current());
+            return Boolean.FALSE;
+        }
+        if (totalLen > p.size()) {
+            p.write(unuu(src, s) << 2 | unuu(src, s + 1) >> 4);
+            if (totalLen > 1) {
+                p.write(unuu(src, s + 1) << 4 | unuu(src, s + 2) >> 2);
+                if (totalLen > 2) {
+                    p.write(unuu(src, s + 2) << 6 | unuu(src, s + 3));
+                }
+            }
+        }
+        byte[] out = p.toByteArray();
+        return Str.of(out.length > totalLen ? Arrays.copyOf(out, totalLen) : out);
+    }
+
+    /** str_word_count: words of letters (C locale), ' and - (neither first, nor - last), and the given bytes. */
+    private static Object wordCount(byte[] s, long format, boolean[] mask) {
+        PhpArray words = new PhpArray();
+        if (s.length == 0) {
+            return format == 0 ? (Object) 0L : words;
+        }
+        int p = 0;
+        int e = s.length;
+        if (s[0] == '\'' && (mask == null || !mask['\'']) || s[0] == '-' && (mask == null || !mask['-'])) {
+            p++;
+        }
+        if (s[e - 1] == '-' && (mask == null || !mask['-'])) {
+            e--;
+        }
+        long count = 0;
+        while (p < e) {
+            int start = p;
+            while (p < e && ((s[p] | 0x20) >= 'a' && (s[p] | 0x20) <= 'z' || mask != null && mask[s[p] & 0xFF]
+                    || s[p] == '\'' || s[p] == '-')) {
+                p++;
+            }
+            if (p > start) {
+                if (format == 1) {
+                    words.append(Str.of(s, start, p - start));
+                } else if (format == 2) {
+                    words.put((long) start, Str.of(s, start, p - start));
+                } else {
+                    count++;
+                }
+            }
+            p++;
+        }
+        return format == 0 ? (Object) count : words;
     }
 }
