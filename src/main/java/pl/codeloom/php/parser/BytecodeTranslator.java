@@ -1522,7 +1522,7 @@ public final class BytecodeTranslator {
                         Ast target = delayedProp(node.node("var"));
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
-                        expression(target.get("expr"));
+                        writtenObject(target.get("expr"), false);
                         b.endCompoundProp();
                         b.endBlock();
                         break;
@@ -1551,7 +1551,7 @@ public final class BytecodeTranslator {
                         b.beginBlock();
                         Ast target = delayedProp(node.node("var"));
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
-                        expression(target.get("expr"));
+                        writtenObject(target.get("expr"), false);
                         b.endIncDecProp();
                         b.endBlock();
                         break;
@@ -2665,6 +2665,24 @@ public final class BytecodeTranslator {
             b.endReadPropNamed();
         }
 
+        /**
+         * The object of a write to one of its properties or elements: a property is fetched for writing (BP_VAR_W,
+         * PropNode.readForWriteOn), or for unset() (BP_VAR_UNSET); anything else is evaluated.
+         */
+        private void writtenObject(Object object, boolean unset) {
+            if (!(object instanceof Ast node && node.is("AST_PROP") && node.get("prop") instanceof String name)) {
+                expression(object);
+            } else if (unset) {
+                b.beginReadPropForUnset(propSite(node, name));
+                writtenObject(node.get("expr"), true);
+                b.endReadPropForUnset();
+            } else {
+                b.beginReadPropForWrite(propSite(node, name));
+                writtenObject(node.get("expr"), false);
+                b.endReadPropForWrite();
+            }
+        }
+
         private void propName(Object prop) {
             b.beginPropName();
             expression(prop);
@@ -2746,13 +2764,13 @@ public final class BytecodeTranslator {
             if (place.get("prop") instanceof String name) {
                 b.beginWriteProp(propSite(place, name));
                 expression(value);
-                expression(place.get("expr"));
+                writtenObject(place.get("expr"), false);
                 b.endWriteProp();
             } else {
                 b.beginWritePropNamed(propSite(place, null));
                 expression(value);
                 propName(place.get("prop"));
-                expression(place.get("expr"));
+                writtenObject(place.get("expr"), false);
                 b.endWritePropNamed();
             }
             b.endBlock();
@@ -2810,7 +2828,7 @@ public final class BytecodeTranslator {
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
-                expression(target.get("expr"));
+                writtenObject(target.get("expr"), true);
                 b.endUnsetProp();
                 return;
             }
@@ -3146,7 +3164,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginWritePropNested(place.site(), append);
                 expression(value);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), false);
                 emitKeys(keys);
                 b.endWritePropNested();
             }
@@ -3198,7 +3216,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginCompoundPropNested(place.site(), op);
                 expression(value);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), false);
                 emitKeys(keys);
                 b.endCompoundPropNested();
             }
@@ -3225,7 +3243,7 @@ public final class BytecodeTranslator {
                 b.endIncDecNested();
             } else {
                 b.beginIncDecPropNested(place.site(), increment, prefix);
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), false);
                 emitKeys(keys);
                 b.endIncDecPropNested();
             }
@@ -3252,7 +3270,7 @@ public final class BytecodeTranslator {
                 b.endUnsetNested();
             } else {
                 b.beginUnsetPropNested(place.site());
-                expression(place.property().get("expr"));
+                writtenObject(place.property().get("expr"), true);
                 emitKeys(keys);
                 b.endUnsetPropNested();
             }

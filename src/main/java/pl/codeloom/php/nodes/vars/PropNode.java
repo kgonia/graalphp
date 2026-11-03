@@ -112,7 +112,8 @@ public final class PropNode extends LValueNode {
     }
 
     private PhpObject target(VirtualFrame frame, String name, String action) {
-        return target(object.execute(frame), name, action);
+        return target(object instanceof PropNode property ? property.readForWriteOn(frame,
+                property.object.execute(frame), property.name(frame)) : object.execute(frame), name, action);
     }
 
     private static PhpObject target(Object value, String name, String action) {
@@ -136,8 +137,12 @@ public final class PropNode extends LValueNode {
 
     /** Whether the calling scope may access the property: public and undeclared ones need no check. */
     private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name) {
-        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0)
-                & (PhpClass.PROPERTY_PROTECTED | PhpClass.PROPERTY_PRIVATE);
+        return accessible(frame, phpObject, name, objects.getPropertyFlagsOrDefault(phpObject, name, 0));
+    }
+
+    /** accessible() of a property with these shape flags. */
+    private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name, int shapeFlags) {
+        int flags = shapeFlags & (PhpClass.PROPERTY_PROTECTED | PhpClass.PROPERTY_PRIVATE);
         if (flags == 0 || thisInMethod && flags == PhpClass.PROPERTY_PROTECTED) {
             return true;
         }
@@ -160,11 +165,19 @@ public final class PropNode extends LValueNode {
         return callingScope(scopeInFrame ? frame.getArguments()[PhpFunction.ARG_CLOSURE] : null, lexicalClass);
     }
 
-    /** A write or unset of a readonly or protected(set) property (PROPERTY_SET_CHECKED): PhpObject.checkModify. */
-    private void checkSet(VirtualFrame frame, PhpObject phpObject, String name, String operation) {
-        if ((objects.getPropertyFlagsOrDefault(phpObject, name, 0) & PhpClass.PROPERTY_SET_CHECKED) != 0) {
+    /**
+     * Whether code here may write the property with these shape flags: after the visibility, a readonly or
+     * protected(set) property's checks (PROPERTY_SET_CHECKED: PhpObject.checkModify, an Error if not).
+     */
+    private boolean writable(VirtualFrame frame, PhpObject phpObject, String name, String operation) {
+        int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
+        if (!accessible(frame, phpObject, name, flags)) {
+            return false;
+        }
+        if ((flags & PhpClass.PROPERTY_SET_CHECKED) != 0) {
             phpObject.checkModify(name, scope(frame), operation);
         }
+        return true;
     }
 
     /**
@@ -283,6 +296,22 @@ public final class PropNode extends LValueNode {
         return readForUnsetOn(frame, value, name(frame));
     }
 
+    /**
+     * The property as the object of a write to one of its own properties or elements (BP_VAR_W): a readonly one
+     * that holds no object, initialized or not, is an Error.
+     */
+    public Object readForWriteOn(VirtualFrame frame, Object value, String name) {
+        if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
+            Object property = objects.getOrDefault(phpObject, name, null);
+            if (property != null) {
+                readonlyIndirect(phpObject, name, property);
+            } else if (phpObject.isReadonly(name) && phpObject.isUninitialized(name)) {
+                throw phpObject.indirectModification(name);
+            }
+        }
+        return readOn(frame, value, name);
+    }
+
     public Object readForUnsetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject && accessible(frame, phpObject, name)) {
             Object property = objects.getOrDefault(phpObject, name, null);
@@ -303,11 +332,10 @@ public final class PropNode extends LValueNode {
     public void writeLong(VirtualFrame frame, long value) {
         String name = name(frame);
         PhpObject phpObject = target(frame, name, "assign");
-        if (!accessible(frame, phpObject, name)) {
+        if (!writable(frame, phpObject, name, "modify")) {
             inaccessibleWrite(phpObject, name, value);
             return;
         }
-        checkSet(frame, phpObject, name, "modify");
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
@@ -336,11 +364,10 @@ public final class PropNode extends LValueNode {
     /** `object->name = value`, the object evaluated: an error if it isn't one. */
     public void writeOn(VirtualFrame frame, Object target, String name, Object value) {
         PhpObject phpObject = target(target, name, "assign");
-        if (!accessible(frame, phpObject, name)) {
+        if (!writable(frame, phpObject, name, "modify")) {
             inaccessibleWrite(phpObject, name, value);
             return;
         }
-        checkSet(frame, phpObject, name, "modify");
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
@@ -490,7 +517,7 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        Object value = object instanceof PropNode property ? property.readForUnset(frame) : object.execute(frame);
         if (value instanceof PhpObject) {
             unsetOn(frame, value, name(frame));
         }
@@ -499,7 +526,7 @@ public final class PropNode extends LValueNode {
     /** unset() of property name of value, evaluated (nothing for a value that isn't an object). */
     public void unsetOn(VirtualFrame frame, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            if (!accessible(frame, phpObject, name)) {
+            if (!writable(frame, phpObject, name, "unset")) {
                 inaccessibleUnset(phpObject, name);
                 return;
             }
@@ -510,7 +537,6 @@ public final class PropNode extends LValueNode {
                 }
                 return;
             }
-            checkSet(frame, phpObject, name, "unset");
             if (old instanceof PhpArray array) {
                 array.removeHolder();
             }

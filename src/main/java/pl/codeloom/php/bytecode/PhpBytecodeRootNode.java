@@ -1353,6 +1353,30 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** `$obj->name` as the object of a write to its properties or elements (PropNode.readForWriteOn). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropForWrite {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readForWriteOn(frame, object, site.name);
+        }
+    }
+
+    /** `$obj->name` as the object of an unset() of its properties or elements (PropNode.readForUnsetOn). */
+    @Operation
+    @ConstantOperand(type = PropSite.class)
+    public static final class ReadPropForUnset {
+        @Specialization
+        public static Object read(VirtualFrame frame, PropSite site, Object object,
+                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                          neverDefault = true) PropNode access) {
+            return access.readForUnsetOn(frame, object, site.name);
+        }
+    }
+
     /** `$obj->$name`: the object, then the name (PropName). */
     @Operation
     @ConstantOperand(type = PropSite.class)
