@@ -94,6 +94,7 @@ public final class PhpClass {
      */
     private final Map<String, PropertyDecl> restrictedConstants = new HashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
+    private final Map<String, Object> staticDefaults = new HashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
     /** What declared this class: its ClassTemplate, or a built-in class's name (see {@link ClassKey}). */
@@ -160,6 +161,7 @@ public final class PhpClass {
                 }
             }
             staticProperties.putAll(parent.staticProperties);
+            staticDefaults.putAll(parent.staticDefaults);
             properties.putAll(parent.properties);
             constructor = parent.constructor;
         }
@@ -597,6 +599,22 @@ public final class PhpClass {
         PhpRef ref = new PhpRef(initial);
         ref.bind();
         staticProperties.put(propertyName, ref);
+        if (initial instanceof PhpArray array) {
+            // the default holds the array too, so writes to the property copy it first
+            array.addHolder();
+        }
+        staticDefaults.put(propertyName, initial);
+    }
+
+    /** A static property's declared default (default_static_members_table), whatever it holds now. */
+    @TruffleBoundary
+    public Object getStaticDefault(String propertyName) {
+        Object value = staticDefaults.get(propertyName);
+        if (value instanceof Thunk thunk) {
+            value = thunk.evaluate();
+            staticDefaults.put(propertyName, value);
+        }
+        return value;
     }
 
     /**

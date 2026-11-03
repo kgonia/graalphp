@@ -575,28 +575,6 @@ final class CurlFunctions {
         return l;
     }
 
-    /** Z_PARAM_DOUBLE in coercive mode. */
-    private static double doubleArg(PhpContext context, Object[] a, int index, String function, String name) {
-        Object value = Args.get(a, index, PhpNull.NULL);
-        if (value instanceof Double d) {
-            return d;
-        }
-        if (value instanceof Long l) {
-            return l;
-        }
-        if (value == PhpNull.NULL) {
-            deprecateNull(context, function, index, name, "float");
-            return 0;
-        }
-        if (value instanceof Boolean b) {
-            return b ? 1 : 0;
-        }
-        if (value instanceof TruffleString s && Convert.numericValue(s) instanceof Number n) {
-            return n.doubleValue();
-        }
-        throw typeError(function, index + 1, name, "float", value);
-    }
-
     /** Z_PARAM_STR(_OR_NULL) in coercive mode; null for a null the type allows. */
     private static TruffleString stringArg(PhpContext context, Object[] a, int index, String function, String name,
                                            boolean nullable) {
@@ -1955,7 +1933,7 @@ final class CurlFunctions {
     private static Object curlMultiSelect(PhpContext context, Object[] a) {
         arity(a, "curl_multi_select", 1, 2);
         Multi mh = multi(a, "curl_multi_select");
-        double timeout = Args.has(a, 1) ? doubleArg(context, a, 1, "curl_multi_select", "timeout") : 1.0;
+        double timeout = Args.has(a, 1) ? Args.dbl(context, a, 1, "curl_multi_select", "timeout") : 1.0;
         state(context);
         if (!(timeout >= 0.0 && timeout <= Integer.MAX_VALUE / 1000.0)) {
             throw new PhpError("ValueError", "curl_multi_select(): Argument #2 ($timeout) must be between 0 and "

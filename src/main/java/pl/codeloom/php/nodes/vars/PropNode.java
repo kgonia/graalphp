@@ -204,7 +204,7 @@ public final class PropNode extends LValueNode {
         return callingScope(frame.getArguments()[PhpFunction.ARG_CLOSURE], lexicalClass);
     }
 
-    private static String callingScope(Object scope, String lexicalClass) {
+    public static String callingScope(Object scope, String lexicalClass) {
         if (scope instanceof PhpClosure closure) {
             return closure.getScope() == null ? null : closure.getScope().getLowerName();
         }
