@@ -4,6 +4,7 @@
 #   on   bytecode, its roots split (the default since #27)
 #   off  bytecode, -Dpolyglot.engine.Splitting=false
 #   tree -Dpolyglot.php.Interpreter=tree
+#   fix  on, the build with ElementReadNode reporting no polymorphism (target/classes-fix)
 # - stack NAME NET PORT DBCPUS SEEDS: a database (MariaDB, on DBCPUS) and a site volume of its own (NAME-site: the
 #   site, the jars, every target/classes-*), seeded from SEEDS (a directory with woo.sh's seed.sql, seed-load.sql and
 #   gate2-seed.sql). Stacks: ba-d (diagnosis, server on 6-13, database on 12-13), ba-t (the WooCommerce A/B, server on
@@ -16,6 +17,7 @@
 #   of 14-21 per server. Each server's compilations logged (TraceCompilation) to target/ba-t/abl/TAG/engine.log.
 # - g2 ROUNDS VISITS VARIANT...: native.sh measure 1 VISITS 1 on ba-g (jvm-java.VARIANT) per round, the order
 #   reversed every round, holding the CPU lock; compilations logged to target/ba-g/out/rROUND/engine-VARIANT.log.
+# - gate1 ITERATIONS ROUNDS: Gate 1's kernels, BUILD, fix and BUILD without splitting (bench/gate1/ab.sh).
 # - watch: beside ab and g2, the servers' compiler-thread CPU and code cache (jcmd), target/STACK/watch/ID.txt;
 #   stops when target/ba-watch.stop exists.
 # Every server waits for a memlock reservation of its own.
@@ -31,9 +33,12 @@ hold() { # KIND GB TTL-minutes NOTE: a reservation, or stop
 release() { $MEMLOCK release claude-wordpress-bcaudit-$1 > /dev/null 2>&1 || true; }
 CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
 BUILD=${BUILD:-s27}
+# the classes of a variant: fix (BUILD=s27's tree with ElementReadNode reporting no polymorphism) is a build of its
+# own, target/classes-fix, run as on
+classes() { case $1 in fix) echo target/classes-fix ;; *) echo target/classes-$BUILD ;; esac; }
 vopts() {
   case $1 in
-    on) echo ;;
+    on|fix) echo ;;
     off) echo -Dpolyglot.engine.Splitting=false ;;
     tree) echo -Dpolyglot.php.Interpreter=tree ;;
     *) echo "unknown variant $1" >&2; exit 2 ;;
@@ -67,7 +72,7 @@ case ${1:-} in
     hold diag 6 $((seconds / 60 + 30)) "wordpress-bcsplit-audit: diagnosis server $tag (CPUs 6-13)"
     seed=
     [ "${5:-}" != g2 ] || seed=gate2-seed
-    DEV=1 DEV_CLASSES=target/classes-$BUILD DIAG_SEED=$seed JAVA_OPTS="$TRACES $(vopts $v)" \
+    DEV=1 DEV_CLASSES=$(classes $v) DIAG_SEED=$seed JAVA_OPTS="$TRACES $(vopts $v)" \
       bash tests/gate2/woo.sh diag $tag ${seconds}s
     release diag ;;
   ab)
@@ -80,7 +85,7 @@ case ${1:-} in
         tag=$BUILD-$v-r$r
         hold ab 7 30 "wordpress-bcsplit-audit: WooCommerce load A/B, $tag (JVM server on 14-21)"
         mkdir -p target/ba-t/abl/$tag
-        DEV=1 DEV_CLASSES=target/classes-$BUILD WC_DOCKER_ARGS="-v $(pwd -W)/target/ba-t/abl/$tag:/out" \
+        DEV=1 DEV_CLASSES=$(classes $v) WC_DOCKER_ARGS="-v $(pwd -W)/target/ba-t/abl/$tag:/out" \
           JAVA_OPTS="$(vopts $v) -Dpolyglot.engine.TraceCompilation=true -Dpolyglot.log.file=/out/engine.log" \
           MIXES=1 WARM=300s DURATION=120s bash tests/gate2/woo.sh load jvm 16 $tag 16
         release ab
@@ -94,23 +99,35 @@ case ${1:-} in
     until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
     echo "claude-wordpress-bcaudit (wordpress-bcsplit-audit): Gate 2 visits ${variants[*]}, since $(date '+%F %T')" > $CPU_LOCK/note
     trap 'rm -rf $CPU_LOCK; release g2' EXIT
-    # a round at a time (measure 1 ...), so each round's servers log their compilations to a directory of its own
-    for r in $(seq "$rounds"); do
-      if [ $((r % 2)) = 1 ]; then order="${variants[*]}"; else order=$(printf '%s
+    # one run at a time (measure 1 VISITS 1 VARIANT), renamed to its round at once: each round's servers log their
+    # compilations to a directory of their own. RUNS (VARIANT:ROUND ...) replaces the interleaved order, to finish
+    # a series that stopped.
+    runs=${RUNS:-}
+    if [ -z "$runs" ]; then
+      for r in $(seq "$rounds"); do
+        if [ $((r % 2)) = 1 ]; then order="${variants[*]}"; else order=$(printf '%s
 ' "${variants[@]}" | tac | tr '
 ' ' '); fi
-      names=()
-      for v in $order; do
-        names+=(jvm-java.$v)
-        export CLASSES_$v=target/classes-$BUILD
-        export JAVA_OPTS_$v="$(vopts $v) -Dpolyglot.engine.TraceCompilation=true -Dpolyglot.log.file=/out/engine-$v.log"
+        for v in $order; do runs+=" $v:$r"; done
       done
+    fi
+    for run in $runs; do
+      v=${run%:*} r=${run#*:}
+      export CLASSES_$v=$(classes $v)
+      export JAVA_OPTS_$v="$(vopts $v) -Dpolyglot.engine.TraceCompilation=true -Dpolyglot.log.file=/out/engine-$v.log"
       mkdir -p target/ba-g/out/r$r
-      OUT_DIR=target/ba-g/out/r$r CPU_LOCK_HELD=1 HOST_QUIET=${HOST_QUIET:-40}         bash tests/gate2/native.sh measure 1 "$visits" 1 "${names[@]}"
-      for v in $order; do
-        for f in target/ba-g/runs/jvm-java.$v-1.*; do mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-$r.}"; done
-      done
-    done ;;
+      OUT_DIR=target/ba-g/out/r$r CPU_LOCK_HELD=1 HOST_QUIET=${HOST_QUIET:-40} bash tests/gate2/native.sh measure 1 "$visits" 1 jvm-java.$v
+      # measure names the run VARIANT-1 and deletes that name's files first: parked as VARIANT-1ROUND until the end
+      for f in target/ba-g/runs/jvm-java.$v-1.*; do mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-1$r.}"; done
+    done
+    for f in target/ba-g/runs/jvm-java.*-1[0-9].*; do mv "$f" "$(echo "$f" | sed -E 's/-1([0-9])\./-\1./')"; done ;;
+  gate1)
+    # Gate 1's kernels (bench/gate1/ab.sh all ITERATIONS ROUNDS): on, fix and off, interleaved, under the CPU lock
+    hold gate1 5 240 "wordpress-bcsplit-audit: Gate 1 A/B on CPUs 14-21 (CPU lock held)"
+    until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
+    echo "claude-wordpress-bcaudit (wordpress-bcsplit-audit): Gate 1 A/B, since $(date '+%F %T')" > $CPU_LOCK/note
+    trap 'rm -rf $CPU_LOCK; release gate1' EXIT
+    AB_OUT=target/ba-gate1 bash bench/gate1/ab.sh all $2 $3 $BUILD fix $BUILD@-Dpolyglot.engine.Splitting=false ;;
   watch)
     # every 30 s, for each running server of ba-t and ba-g: its compiler threads' CPU seconds and (every other
     # time) its code cache (jcmd Compiler.codecache), the last snapshot kept per container ID in target/STACK/watch/
