@@ -542,8 +542,9 @@ public final class PropNode extends LValueNode {
             if (old == null) {
                 if (!phpObject.getPhpClass().canAccessProperty(name, scope(frame))) {
                     inaccessibleUnset(phpObject, name);
-                } else if (!phpObject.unsetUninitialized(scope(frame), name)) {
-                    phpObject.magicProperty(this, "__unset", name);
+                } else if (!phpObject.unsetUninitialized(scope(frame), name)
+                        && phpObject.magicProperty(this, "__unset", name) == PhpObject.NO_MAGIC) {
+                    phpObject.unsetMissing(scope(frame), name);
                 }
                 return;
             }

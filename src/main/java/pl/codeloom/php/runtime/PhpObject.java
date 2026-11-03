@@ -259,6 +259,15 @@ public final class PhpObject extends DynamicObject {
         }
     }
 
+    /** unset() of a declared property this object doesn't have and no __unset took: its set visibility. */
+    @TruffleBoundary
+    public void unsetMissing(String scope, String name) {
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl != null) {
+            checkSetAccess(decl, scope, "unset");
+        }
+    }
+
     /** unset() of a property this object doesn't have: true when it was uninitialized, which it no longer is. */
     @TruffleBoundary
     public boolean unsetUninitialized(String scope, String name) {
