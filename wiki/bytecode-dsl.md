@@ -1016,7 +1016,7 @@ logged the load on 14-21 and on the other cores, and the busiest processes; a lo
 
 **The host was loaded through all of it.** About ten other sessions' builds, `.phpt` runs and servers were going.
 - Before the runs, the cores outside 14-21 were 11-100 % busy (median 61 %), and 14-21 themselves 28-100 %.
-  Sampled every minute during the runs, the median outside 14-21 was 87 % (our database and load driver included).
+  Sampled every minute during the runs (until 18:41, WooCommerce round 5), the median outside 14-21 was 87 % (our database and load driver included).
 - The CPU lock kept other sessions' timed runs off 14-21, but not this load. Docker's cpusets pin inside the WSL
   VM, while `vmmemWSL` (up to 7 cores), Defender (`MsMpEng`, 2-3 cores), `node` and other sessions' `java` ran on
   any host core.
