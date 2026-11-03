@@ -7,6 +7,9 @@ import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.object.Shape;
 import com.oracle.truffle.api.strings.TruffleString;
 
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.Args;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +24,50 @@ public final class PhpObject extends DynamicObject {
     private Object internal;
     /** The magic property accesses in progress ("get:name", ...): inside __get('x'), $this->x is the real one. */
     private java.util.Set<String> magicGuards;
+    /** A lazy object's state, or null for an object that isn't lazy (any more). */
+    private Lazy lazy;
+
+    /**
+     * A lazy object's state (zend_lazy_object_info, PHP 8.4's ReflectionClass::newLazyGhost() and newLazyProxy()):
+     * its initializer, and once a proxy is initialized its real instance. An uninitialized one's shape has only
+     * the properties made non-lazy (skipLazyInitialization()...), an initialized proxy's none, so every other
+     * access takes the property sites' slow paths, which initialize it or forward to the instance.
+     */
+    public static final class Lazy {
+        /** ReflectionClass's options: SKIP_INITIALIZATION_ON_SERIALIZE, SKIP_DESTRUCTOR. */
+        public static final int SKIP_INITIALIZATION_ON_SERIALIZE = 8;
+        public static final int SKIP_DESTRUCTOR = 16;
+
+        private final Object initializer;
+        private final boolean proxy;
+        private final int options;
+        /** An initialized proxy's real instance. */
+        private PhpObject instance;
+        /** While the initializer runs, when the object isn't uninitialized (IS_OBJ_LAZY_UNINITIALIZED is off). */
+        private boolean initializing;
+
+        Lazy(Object initializer, boolean proxy, int options) {
+            this.initializer = initializer;
+            this.proxy = proxy;
+            this.options = options;
+        }
+
+        public Object initializer() {
+            return initializer;
+        }
+
+        public boolean isProxy() {
+            return proxy;
+        }
+
+        public int options() {
+            return options;
+        }
+
+        public PhpObject instance() {
+            return instance;
+        }
+    }
 
     /** id: var_dump's #n and spl_object_id(), from {@code PhpContext.nextObjectId()}. */
     public PhpObject(Shape shape, PhpClass phpClass, int id) {
@@ -67,11 +114,31 @@ public final class PhpObject extends DynamicObject {
      */
     @TruffleBoundary
     public PhpArray visibleProperties(String scope) {
+        PhpObject real = initialized();
+        if (real != this) {
+            return real.visibleProperties(scope);
+        }
         PhpArray result = new PhpArray();
         for (String property : visiblePropertyNames(scope)) {
-            result.put(ArrayKey.of(Str.ofKey(property)), PhpRef.deref(getProperty(property)));
+            Object value = visibleValue(property);
+            if (value != null) {
+                result.put(ArrayKey.of(Str.ofKey(property)), value);
+            }
         }
         return result;
+    }
+
+    /**
+     * A property's value as get_object_vars() and foreach see it, dereferenced: a hooked one's get hook's
+     * (zend_read_property_ex), else its own; null when unset.
+     */
+    @TruffleBoundary
+    public Object visibleValue(String name) {
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        if (hooks != null && hooks.get() != null) {
+            return hooks.get().invoke(this, phpClass);
+        }
+        return PhpRef.deref(getProperty(name));
     }
 
     /**
@@ -133,7 +200,7 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public List<String> visiblePropertyNames(String scope) {
         List<String> names = new ArrayList<>();
-        for (Object name : propertyNames()) {
+        for (Object name : phpClass.hasHooks() ? hookedPropertyNames() : propertyNames()) {
             String property = (String) name;
             PhpClass.PropertyDecl decl = phpClass.findProperty(property);
             if (decl != null && decl.visibility() == PhpClass.PropertyDecl.PRIVATE
@@ -145,6 +212,246 @@ public final class PhpObject extends DynamicObject {
             }
         }
         return names;
+    }
+
+    /**
+     * The properties of an object whose class has hooks, as zho_build_properties lists them: the declared ones in
+     * declaration order (a virtual one with a get hook too), then the dynamic ones.
+     */
+    private Object[] hookedPropertyNames() {
+        List<Object> names = new ArrayList<>();
+        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+            PhpClass.Hooks hooks = phpClass.findHooks(decl.name());
+            if (hooks != null ? !hooks.virtual() || hooks.get() != null : getProperty(decl.name()) != null) {
+                names.add(decl.name());
+            }
+        }
+        for (Object name : propertyNames()) {
+            if (!phpClass.isDeclaredProperty((String) name)) {
+                names.add(name);
+            }
+        }
+        return names.toArray();
+    }
+
+    /** The lazy state: null for an object that isn't lazy, an initialized ghost included. */
+    public Lazy lazy() {
+        return lazy;
+    }
+
+    /** ReflectionClass::isUninitializedLazyObject(): lazy, and neither initialized nor initializing. */
+    public boolean isUninitializedLazy() {
+        return lazy != null && lazy.instance == null && !lazy.initializing;
+    }
+
+    /**
+     * Makes the object lazy (zend_object_make_lazy): every declared property loses its value, but a skipped
+     * readonly one... (not modelled); its dynamic ones go. An object without declared properties stays as it is.
+     */
+    @TruffleBoundary
+    public void makeLazy(Object initializer, boolean proxy, int options) {
+        for (Object name : propertyNames()) {
+            Object old = getProperty((String) name);
+            if (old instanceof PhpArray array) {
+                array.removeHolder();
+            }
+            removeProperty((String) name);
+        }
+        lazy = phpClass.declaredNames().length == 0 ? null : new Lazy(initializer, proxy, options);
+    }
+
+    /** Whether reset can't apply: the object's initializer is running (a stale info, in php-src). */
+    public boolean isInitializingLazy() {
+        return lazy != null && lazy.initializing;
+    }
+
+    /**
+     * The object a property access on this lazy one goes to (zend_lazy_object_init): an uninitialized ghost is
+     * initialized in place, a proxy's factory makes its real instance; an initialized proxy's instance. An
+     * initializer's exception leaves the object as it was.
+     */
+    @TruffleBoundary
+    public PhpObject initializeLazy() {
+        Lazy state = lazy;
+        if (state.instance != null) {
+            return state.instance.lazy != null ? state.instance.initializeLazy() : state.instance;
+        }
+        PhpContext context = PhpContext.get(null);
+        state.initializing = true;
+        if (state.proxy) {
+            Object made;
+            try {
+                made = Callables.call(context, state.initializer, this);
+            } finally {
+                state.initializing = false;
+            }
+            if (!(made instanceof PhpObject real)) {
+                throw new PhpError("TypeError", "Lazy proxy factory must return an instance of a class compatible with "
+                        + phpClass.getName() + ", " + Args.valueName(made) + " returned");
+            }
+            if (!compatibleInstance(real)) {
+                throw new PhpError("TypeError", "The real instance class " + real.phpClass.getName() + " is not "
+                        + "compatible with the proxy class " + phpClass.getName() + ". The proxy must be a instance of "
+                        + "the same class as the real instance, or a sub-class with no additional properties, and no "
+                        + "overrides of the __destructor or __clone methods.");
+            }
+            if (real == this || real.lazy != null) {
+                throw new PhpError("Lazy proxy factory must return a non-lazy object");
+            }
+            state.instance = real;
+            makeLazy(null, true, 0);
+            lazy = state;
+            return real;
+        }
+        // the properties as they are (the skipped ones), then each lazy one at its default
+        Object[] snapshot = snapshot();
+        String[] names = phpClass.declaredNames();
+        Object[] defaults = phpClass.defaults();
+        Object[] values = new Object[names.length];
+        for (int i = 0; i < names.length; i++) {
+            Object value = getProperty(names[i]);
+            if (value == null) {
+                value = defaults[i];
+                if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+            }
+            values[i] = value;
+        }
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        for (String name : names) {
+            library.removeKey(this, name);
+        }
+        for (int i = 0; i < names.length; i++) {
+            library.putWithFlags(this, names[i], values[i], phpClass.propertyFlags(names[i]));
+        }
+        Object result;
+        try {
+            result = Callables.call(context, state.initializer, this);
+        } catch (RuntimeException e) {
+            restore(snapshot, state);
+            throw e;
+        }
+        if (result != PhpNull.NULL) {
+            restore(snapshot, state);
+            throw new PhpError("TypeError", "Lazy object initializer must return NULL or no value");
+        }
+        lazy = null;
+        return this;
+    }
+
+    /** A proxy's real instance must be of its class, or of a parent with the same properties (zend_lazy_object_compatible). */
+    private boolean compatibleInstance(PhpObject real) {
+        PhpClass realClass = real.phpClass;
+        if (realClass == phpClass) {
+            return true;
+        }
+        if (!phpClass.isSubclassOf(realClass.getLowerName())) {
+            return false;
+        }
+        int own = 0;
+        int theirs = 0;
+        for (PhpClass.PropertyDecl ignored : phpClass.getProperties()) {
+            own++;
+        }
+        for (PhpClass.PropertyDecl ignored : realClass.getProperties()) {
+            theirs++;
+        }
+        return own == theirs && phpClass.findMethod("__destruct") == realClass.findMethod("__destruct")
+                && phpClass.findMethod("__clone") == realClass.findMethod("__clone");
+    }
+
+    /** The properties with their flags, in order: name, value, flags... */
+    private Object[] snapshot() {
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        Object[] names = propertyNames();
+        Object[] snapshot = new Object[names.length * 3];
+        for (int i = 0; i < names.length; i++) {
+            Object value = getProperty((String) names[i]);
+            if (value instanceof PhpArray array) {
+                array.addHolder();
+            }
+            snapshot[3 * i] = names[i];
+            snapshot[3 * i + 1] = value;
+            snapshot[3 * i + 2] = library.getPropertyFlagsOrDefault(this, names[i], 0);
+        }
+        return snapshot;
+    }
+
+    /** zend_lazy_object_revert_init: the properties as the snapshot has them, the object lazy again. */
+    private void restore(Object[] snapshot, Lazy state) {
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        for (Object name : propertyNames()) {
+            if (getProperty((String) name) instanceof PhpArray array) {
+                array.removeHolder();
+            }
+            library.removeKey(this, name);
+        }
+        for (int i = 0; i < snapshot.length; i += 3) {
+            library.putWithFlags(this, snapshot[i], snapshot[i + 1], (int) snapshot[i + 2]);
+        }
+        state.initializing = false;
+        lazy = state;
+    }
+
+    /**
+     * zend_lazy_object_mark_as_initialized: the lazy properties at their defaults, without calling the initializer;
+     * also when the last lazy property is initialized another way (zend_lazy_object_realize).
+     */
+    @TruffleBoundary
+    public void markLazyInitialized() {
+        String[] names = phpClass.declaredNames();
+        Object[] defaults = phpClass.defaults();
+        Object[] values = new Object[names.length];
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        for (int i = 0; i < names.length; i++) {
+            Object value = getProperty(names[i]);
+            if (value == null) {
+                value = defaults[i];
+                if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
+            }
+            values[i] = value;
+            library.removeKey(this, names[i]);
+        }
+        for (int i = 0; i < names.length; i++) {
+            library.putWithFlags(this, names[i], values[i], phpClass.propertyFlags(names[i]));
+        }
+        lazy = null;
+    }
+
+    /**
+     * A declared property of an uninitialized lazy object made non-lazy (skipLazyInitialization(),
+     * setRawValueWithoutLazyInitialization()): when none is left lazy, the object isn't lazy any more.
+     */
+    @TruffleBoundary
+    public void lazyPropertyInitialized() {
+        for (String name : phpClass.declaredNames()) {
+            if (getProperty(name) == null) {
+                return;
+            }
+        }
+        lazy = null;
+    }
+
+    /** The object whose properties serialize() writes: a lazy one initialized, unless its options skip that. */
+    public PhpObject forSerialize() {
+        return lazy != null && lazy.instance == null && (lazy.options & Lazy.SKIP_INITIALIZATION_ON_SERIALIZE) != 0
+                ? this : initialized();
+    }
+
+    /** A clone of an initialized lazy proxy (zend_lazy_object_clone): a proxy of its own, of the instance's clone. */
+    public void proxyFor(PhpObject instance) {
+        Lazy state = new Lazy(null, true, 0);
+        state.instance = instance;
+        lazy = state;
+    }
+
+    /** The object whose properties reads see: an uninitialized lazy one initialized, a proxy's instance. */
+    @TruffleBoundary
+    public PhpObject initialized() {
+        return lazy == null || lazy.initializing ? this : initializeLazy();
     }
 
     /** What magicProperty returns when it called no method. */
@@ -175,6 +482,26 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public void setProperty(String name, Object value) {
         DynamicObjectLibrary.getUncached().put(this, name, value);
+    }
+
+    /**
+     * A write of the property's own value, as a plain one (a hooked property's backing value): through a reference
+     * it holds, else stored with the slot's flags, the holders of the arrays moved.
+     */
+    @TruffleBoundary
+    public void writeRaw(String name, Object value) {
+        Object old = getProperty(name);
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        if (value instanceof PhpArray array) {
+            array.addHolder();
+        }
+        DynamicObjectLibrary.getUncached().putWithFlags(this, name, value, phpClass.propertyFlags(name));
+        if (old instanceof PhpArray array && old != value) {
+            array.removeHolder();
+        }
     }
 
     @TruffleBoundary

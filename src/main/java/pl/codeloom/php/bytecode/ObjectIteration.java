@@ -35,7 +35,7 @@ final class ObjectIteration {
     /** The iteration of subject for code whose calling scope is scope: an Iterator is rewound here. */
     @TruffleBoundary
     static ObjectIteration start(Node site, PhpObject subject, String scope) {
-        PhpObject object = ForeachNode.unwrapAggregates(site, subject);
+        PhpObject object = ForeachNode.unwrapAggregates(site, subject).initialized();
         if (object.getPhpClass().isSubclassOf("iterator")) {
             ForeachNode.step(site, object, "rewind");
             return new ObjectIteration(object, null, null);
@@ -77,9 +77,9 @@ final class ObjectIteration {
     private Object[] nextProperty() {
         while (index < properties.size()) {
             String name = properties.get(index++);
-            Object current = object.getProperty(name);
+            Object current = object.visibleValue(name);
             if (current != null) {
-                return new Object[] {Str.ofKey(name), PhpRef.deref(current)};
+                return new Object[] {Str.ofKey(name), current};
             }
         }
         return null;

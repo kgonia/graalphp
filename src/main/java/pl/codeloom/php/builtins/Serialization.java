@@ -374,7 +374,7 @@ final class Serialization {
                 return;
             }
             writeClassName(object);
-            Object[] table = object.propertyTable();
+            Object[] table = object.forSerialize().propertyTable();
             Object[] entries = new Object[table.length];
             for (int i = 0; i < table.length; i += 2) {
                 entries[i] = Str.ofKey((String) table[i]);
@@ -451,7 +451,7 @@ final class Serialization {
          */
         private Object[] sleepProperties(PhpObject object, PhpArray names) {
             PhpClass phpClass = object.getPhpClass();
-            Object[] table = object.propertyTable();
+            Object[] table = object.forSerialize().propertyTable();
             Map<String, Object> properties = new LinkedHashMap<>();
             for (int i = 0; i < table.length; i += 2) {
                 properties.putIfAbsent((String) table[i], table[i + 1]);

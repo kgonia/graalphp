@@ -863,6 +863,12 @@ public final class Convert {
             // closures compare only to themselves
             return 1;
         }
+        // lazy objects compare as initialized, a proxy as its instance
+        PhpObject realX = x.initialized();
+        PhpObject realY = y.initialized();
+        if (realX != x || realY != y) {
+            return compareObjects(objectLeft ? realX : realY, objectLeft ? realY : realX, objectLeft, guard);
+        }
         PhpClass classX = x.getPhpClass();
         if (classX.isSubclassOf("datetimeinterface") && y.getPhpClass().isSubclassOf("datetimeinterface")) {
             // date_object_compare_date: the instants (prelude/date.php's timestamp and microseconds)

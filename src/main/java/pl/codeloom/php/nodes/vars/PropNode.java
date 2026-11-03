@@ -4,11 +4,14 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -45,6 +48,10 @@ public final class PropNode extends LValueNode {
      * class that declared the property are both ancestors of $this's.
      */
     private final boolean thisInMethod;
+    /** In a property hook's body, the hooked property's name: there `$this->name` is its backing value. */
+    private final String hookOf;
+    /** The uncached access lazy objects' accesses are made again with (twin()). */
+    private PropNode twin;
     /**
      * The key of classes whose non-public property (the constant name) the site's lexical scope may access. A key,
      * not the PhpClass: the AST is shared by contexts, and a context's class must neither stay reachable from it
@@ -68,12 +75,13 @@ public final class PropNode extends LValueNode {
     public PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
                     boolean scopeInFrame) {
         this(object, constantName, nameExpr, lexicalClass, scopeInFrame, object instanceof ThisNode && !scopeInFrame,
-                DynamicObjectLibrary.getFactory().createDispatched(4));
+                null, DynamicObjectLibrary.getFactory().createDispatched(4));
     }
 
     private PropNode(ExprNode object, String constantName, ExprNode nameExpr, String lexicalClass,
-                     boolean scopeInFrame, boolean thisInMethod, DynamicObjectLibrary objects) {
+                     boolean scopeInFrame, boolean thisInMethod, String hookOf, DynamicObjectLibrary objects) {
         this.object = object;
+        this.hookOf = hookOf;
         this.constantName = constantName;
         this.nameExpr = nameExpr;
         this.lexicalClass = lexicalClass;
@@ -85,11 +93,12 @@ public final class PropNode extends LValueNode {
     /**
      * The property access of a site whose object and name a bytecode instruction evaluates, which the *On methods
      * take. constantName is null for a name computed per access ({@link #dynamicName}); thisInMethod as the
-     * tree's (`$this->name` in a method); uncached for the uncached interpreter, which doesn't adopt the node.
+     * tree's (`$this->name` in a method); hookOf the property whose hook the site is in, or null; uncached for the
+     * uncached interpreter, which doesn't adopt the node.
      */
     public static PropNode forOperands(String constantName, String lexicalClass, boolean scopeInFrame,
-                                       boolean thisInMethod, boolean uncached) {
-        return new PropNode(null, constantName, null, lexicalClass, scopeInFrame, thisInMethod,
+                                       boolean thisInMethod, String hookOf, boolean uncached) {
+        return new PropNode(null, constantName, null, lexicalClass, scopeInFrame, thisInMethod, hookOf,
                 uncached ? DynamicObjectLibrary.getUncached() : DynamicObjectLibrary.getFactory().createDispatched(4));
     }
 
@@ -134,13 +143,19 @@ public final class PropNode extends LValueNode {
 
     // ---- visibility ----
 
-    /** Whether the calling scope may access the property: public and undeclared ones need no check. */
-    private boolean accessible(VirtualFrame frame, PhpObject phpObject, String name) {
+    /**
+     * Whether the calling scope may access the property as a plain one: public and undeclared ones need no check;
+     * a hooked one only in its own hook on its own object, where it is its backing value.
+     */
+    private boolean accessible(Object[] arguments, PhpObject phpObject, String name) {
         int flags = objects.getPropertyFlagsOrDefault(phpObject, name, 0);
         if (flags == 0 || thisInMethod && flags == PhpClass.PROPERTY_PROTECTED) {
             return true;
         }
-        Object scope = scopeInFrame ? frame.getArguments()[PhpFunction.ARG_CLOSURE] : null;
+        if ((flags & PhpClass.PROPERTY_HOOKED) != 0 && !inOwnHook(arguments, phpObject, name)) {
+            return false;
+        }
+        Object scope = scopeInFrame ? arguments[PhpFunction.ARG_CLOSURE] : null;
         boolean lexical = scope == null && constantName != null;
         PhpClass phpClass = phpObject.getPhpClass();
         if (lexical && phpClass.getKey() == accessibleKey) {
@@ -172,9 +187,104 @@ public final class PropNode extends LValueNode {
         return lexicalClass;
     }
 
-    /** Reading a property the scope may not access: __get's result, else zend_bad_property_access. */
+    /** zend_should_call_hook's other side: in the property's own hook, on the hook's $this, the backing value. */
+    private boolean inOwnHook(Object[] arguments, PhpObject phpObject, String name) {
+        return hookOf != null && hookOf.equals(name) && arguments[PhpFunction.ARG_THIS] == phpObject;
+    }
+
+    /** The calling scope, as accessible() finds it. */
+    private String scope(Object[] arguments) {
+        return callingScope(scopeInFrame ? arguments[PhpFunction.ARG_CLOSURE] : null, lexicalClass);
+    }
+
+    /**
+     * The hooks of a property the fast path didn't take (accessible() said no, or the object hasn't the property):
+     * null for one without; from a scope that may not access it, null when the class has the magic method to call
+     * instead, else the Error (zend_get_property_offset checks the scope before the hooks).
+     */
+    private PhpClass.Hooks hooks(Object[] arguments, PhpObject phpObject, String name, String magic) {
+        PhpClass phpClass = phpObject.getPhpClass();
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        if (hooks == null || phpClass.canAccessProperty(name, scope(arguments))) {
+            return hooks;
+        }
+        if (phpClass.findMethod(magic) == null) {
+            throw inaccessible(phpObject, name);
+        }
+        return null;
+    }
+
+    /** A hook's call on the object: a by-reference get hook's result stays a PhpRef. */
+    private Object callHook(PhpFunction hook, PhpObject phpObject, Object... args) {
+        return Backtrace.callFrom(this, () -> hook.invokeRef(phpObject, phpObject.getPhpClass(), args));
+    }
+
+    /** A hooked property's value (zend_std_read_property's hooked case), dereferenced. */
+    private Object hookedRead(Object[] arguments, PhpObject phpObject, String name, PhpClass.Hooks hooks) {
+        boolean own = inOwnHook(arguments, phpObject, name);
+        if (hooks.get() == null || own) {
+            if (hooks.virtual()) {
+                throw new PhpError((own ? "Must not read from virtual property " : "Property ")
+                        + phpObject.getPhpClass().getName() + "::$" + Str.keyText(name) + (own ? "" : " is write-only"));
+            }
+            Object value = PhpRef.deref(phpObject.getProperty(name));
+            if (value == null && phpObject.lazy() != null && !phpObject.isInitializingLazy()) {
+                // the backing value of an uninitialized lazy object
+                value = PhpRef.deref(phpObject.initializeLazy().getProperty(name));
+            }
+            return value == null ? PhpNull.NULL : value;
+        }
+        return PhpRef.deref(callHook(hooks.get(), phpObject));
+    }
+
+    /**
+     * A write to a hooked property (zend_std_write_property's hooked case), the set hook's call: true when done,
+     * false for a backed property without one, which the caller writes as a plain one.
+     */
+    private boolean hookedWrite(Object[] arguments, PhpObject phpObject, String name, Object value,
+                                PhpClass.Hooks hooks) {
+        boolean own = inOwnHook(arguments, phpObject, name);
+        if (hooks.set() == null || own) {
+            if (hooks.virtual()) {
+                throw new PhpError((own ? "Must not write to virtual property " : "Property ")
+                        + phpObject.getPhpClass().getName() + "::$" + Str.keyText(name) + (own ? "" : " is read-only"));
+            }
+            if (phpObject.getProperty(name) != null) {
+                return false;
+            }
+            // an uninitialized backing value: written with the slot's flags, which a plain put wouldn't give it
+            phpObject.writeRaw(name, value);
+            return true;
+        }
+        callHook(hooks.set(), phpObject, value);
+        return true;
+    }
+
+    /**
+     * A hooked property as a place to modify (zend_std_get_property_ptr_ptr gives none, so read_property's BP_VAR_W):
+     * a by-reference get hook's reference, an object in a reference of its own (its modification goes through
+     * the object), else php-src's Error.
+     */
+    private PhpRef hookedRef(Object[] arguments, PhpObject phpObject, String name, PhpClass.Hooks hooks) {
+        Object value = hooks.get() != null && !inOwnHook(arguments, phpObject, name)
+                ? callHook(hooks.get(), phpObject) : hookedRead(arguments, phpObject, name, hooks);
+        if (value instanceof PhpRef ref) {
+            return ref;
+        }
+        if (value instanceof PhpObject) {
+            return new PhpRef(value);
+        }
+        throw new PhpError("Indirect modification of " + phpObject.getPhpClass().getName() + "::$"
+                + Str.keyText(name) + " is not allowed");
+    }
+
+    /** Reading a property the fast path didn't take: its hooks, __get's result, else zend_bad_property_access. */
     @TruffleBoundary
-    private Object inaccessibleRead(PhpObject phpObject, String name) {
+    private Object inaccessibleRead(Object[] arguments, PhpObject phpObject, String name) {
+        PhpClass.Hooks hooks = hooks(arguments, phpObject, name, "__get");
+        if (hooks != null) {
+            return hookedRead(arguments, phpObject, name, hooks);
+        }
         Object magic = phpObject.magicProperty(this, "__get", name);
         if (magic == PhpObject.NO_MAGIC) {
             throw inaccessible(phpObject, name);
@@ -182,11 +292,91 @@ public final class PropNode extends LValueNode {
         return magic;
     }
 
+    /** A write the fast path didn't take: false for a hooked one the caller writes as a plain property after all. */
     @TruffleBoundary
-    private void inaccessibleWrite(PhpObject phpObject, String name, Object value) {
+    private boolean inaccessibleWrite(Object[] arguments, PhpObject phpObject, String name, Object value) {
+        PhpClass.Hooks hooks = hooks(arguments, phpObject, name, "__set");
+        if (hooks != null) {
+            return hookedWrite(arguments, phpObject, name, value, hooks);
+        }
         if (phpObject.magicProperty(this, "__set", name, value) == PhpObject.NO_MAGIC) {
             throw inaccessible(phpObject, name);
         }
+        return true;
+    }
+
+    /**
+     * Writing a property the object hasn't: a virtual one's hooks, a lazy object's initialization, else __set();
+     * false when none took it.
+     */
+    @TruffleBoundary
+    private boolean missingWrite(Object[] arguments, PhpObject phpObject, String name, Object value) {
+        PhpClass.Hooks hooks = missingHooks(arguments, phpObject, name, "__set");
+        if (hooks != null) {
+            return hookedWrite(arguments, phpObject, name, value, hooks);
+        }
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__set");
+        if (target != null) {
+            twin().writeOn(arguments, target, name, value);
+            return true;
+        }
+        return phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC;
+    }
+
+    /**
+     * The object a lazy one forwards an access to a property it hasn't to (zend_lazy_object_init): itself
+     * initialized, a proxy's real instance. Null when the access goes on as on any object: it isn't lazy (or is
+     * being initialized), or the class's magic method takes a property the scope may not access or an undeclared
+     * one first; a declared one the scope may not access is the Error.
+     */
+    private PhpObject lazyTarget(Object[] arguments, PhpObject phpObject, String name, String magic) {
+        if (phpObject.lazy() == null || phpObject.isInitializingLazy() || phpObject.getProperty(name) != null) {
+            return null;
+        }
+        PhpClass phpClass = phpObject.getPhpClass();
+        boolean declared = phpClass.isDeclaredProperty(name);
+        if (declared && !phpClass.canAccessProperty(name, scope(arguments))) {
+            if (phpClass.findMethod(magic) == null) {
+                throw inaccessible(phpObject, name);
+            }
+            return null;
+        }
+        return !declared && phpClass.findMethod(magic) != null ? null : phpObject.initializeLazy();
+    }
+
+    /** The access made again on a lazy object's target (lazyTarget), from runtime code: the uncached twin's. */
+    private PropNode twin() {
+        PropNode access = twin;
+        if (access == null) {
+            access = new PropNode(null, constantName, null, lexicalClass, scopeInFrame, thisInMethod, hookOf,
+                    DynamicObjectLibrary.getUncached());
+            twin = access;
+        }
+        return access;
+    }
+
+    /** A modification's place the fast path didn't take: a hooked property's (hookedRef), or __get's value's. */
+    @TruffleBoundary
+    private PhpRef inaccessibleRef(Object[] arguments, PhpObject phpObject, String name) {
+        PhpClass.Hooks hooks = hooks(arguments, phpObject, name, "__get");
+        return hooks != null ? hookedRef(arguments, phpObject, name, hooks)
+                : new PhpRef(inaccessibleRead(arguments, phpObject, name));
+    }
+
+    /** makeRef of a property the object hasn't: a virtual one's place, a lazy object's target's; else null. */
+    @TruffleBoundary
+    private PhpRef missingRef(Object[] arguments, PhpObject phpObject, String name) {
+        if (missingHooks(arguments, phpObject, name, "__get") != null) {
+            return inaccessibleRef(arguments, phpObject, name);
+        }
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__get");
+        return target == null ? null : twin().makeRefOn(arguments, target, name);
+    }
+
+    /** The hooks of a virtual property, which the object hasn't (hooks()); null for another missing one. */
+    @TruffleBoundary
+    private PhpClass.Hooks missingHooks(Object[] arguments, PhpObject phpObject, String name, String magic) {
+        return phpObject.getPhpClass().hasHooks() ? hooks(arguments, phpObject, name, magic) : null;
     }
 
     @TruffleBoundary
@@ -204,14 +394,14 @@ public final class PropNode extends LValueNode {
         Object value = object.execute(frame);
         if (value instanceof PhpObject phpObject) {
             String name = name(frame);
-            if (!accessible(frame, phpObject, name)) {
-                throw new UnexpectedResultException(inaccessibleRead(phpObject, name));
+            if (!accessible(frame.getArguments(), phpObject, name)) {
+                throw new UnexpectedResultException(inaccessibleRead(frame.getArguments(), phpObject, name));
             }
             try {
                 return objects.getLongOrDefault(phpObject, name, ABSENT);
             } catch (UnexpectedResultException e) {
                 Object result = e.getResult();
-                throw new UnexpectedResultException(result == ABSENT ? missing(phpObject, name)
+                throw new UnexpectedResultException(result == ABSENT ? missing(frame.getArguments(), phpObject, name)
                         : PhpRef.deref(result));
             }
         }
@@ -221,9 +411,17 @@ public final class PropNode extends LValueNode {
     /** The default of a property lookup: the property doesn't exist (declared ones exist until unset). */
     private static final Object ABSENT = new Object();
 
-    /** Reading a property that doesn't exist: __get's result if the class has one, else null. */
+    /** Reading a property the object hasn't: a virtual one's hooks, __get's result if the class has one, else null. */
     @TruffleBoundary
-    private Object missing(PhpObject phpObject, String name) {
+    private Object missing(Object[] arguments, PhpObject phpObject, String name) {
+        PhpClass.Hooks hooks = missingHooks(arguments, phpObject, name, "__get");
+        if (hooks != null) {
+            return hookedRead(arguments, phpObject, name, hooks);
+        }
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__get");
+        if (target != null) {
+            return twin().readOn(arguments, target, name);
+        }
         Object magic = phpObject.magicProperty(this, "__get", name);
         return magic == PhpObject.NO_MAGIC ? PhpNull.NULL : magic;
     }
@@ -231,20 +429,20 @@ public final class PropNode extends LValueNode {
     @Override
     public Object execute(VirtualFrame frame) {
         Object value = object.execute(frame);
-        return readOn(frame, value, name(frame));
+        return readOn(frame.getArguments(), value, name(frame));
     }
 
     /** The read of property name of value, evaluated (null for a value that isn't an object). */
-    public Object readOn(VirtualFrame frame, Object value, String name) {
+    public Object readOn(Object[] arguments, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            if (!accessible(frame, phpObject, name)) {
-                return inaccessibleRead(phpObject, name);
+            if (!accessible(arguments, phpObject, name)) {
+                return inaccessibleRead(arguments, phpObject, name);
             }
             Object property = objects.getOrDefault(phpObject, name, null);
             if (property instanceof PhpRef ref) {
                 return ref.get();
             }
-            return property == null ? missing(phpObject, name) : property;
+            return property == null ? missing(arguments, phpObject, name) : property;
         }
         return PhpNull.NULL;
     }
@@ -256,8 +454,7 @@ public final class PropNode extends LValueNode {
     public void writeLong(VirtualFrame frame, long value) {
         String name = name(frame);
         PhpObject phpObject = target(frame, name, "assign");
-        if (!accessible(frame, phpObject, name)) {
-            inaccessibleWrite(phpObject, name, value);
+        if (!accessible(frame.getArguments(), phpObject, name) && inaccessibleWrite(frame.getArguments(), phpObject, name, value)) {
             return;
         }
         Object old = objects.getOrDefault(phpObject, name, null);
@@ -268,7 +465,7 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+            if (missingWrite(frame.getArguments(), phpObject, name, value)) {
                 return;
             }
         }
@@ -282,14 +479,13 @@ public final class PropNode extends LValueNode {
     @Override
     public void write(VirtualFrame frame, Object value) {
         String name = name(frame);
-        writeOn(frame, target(frame, name, "assign"), name, value);
+        writeOn(frame.getArguments(), target(frame, name, "assign"), name, value);
     }
 
     /** `object->name = value`, the object evaluated: an error if it isn't one. */
-    public void writeOn(VirtualFrame frame, Object target, String name, Object value) {
+    public void writeOn(Object[] arguments, Object target, String name, Object value) {
         PhpObject phpObject = target(target, name, "assign");
-        if (!accessible(frame, phpObject, name)) {
-            inaccessibleWrite(phpObject, name, value);
+        if (!accessible(arguments, phpObject, name) && inaccessibleWrite(arguments, phpObject, name, value)) {
             return;
         }
         Object old = objects.getOrDefault(phpObject, name, null);
@@ -300,7 +496,7 @@ public final class PropNode extends LValueNode {
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+            if (missingWrite(arguments, phpObject, name, value)) {
                 return;
             }
         }
@@ -328,18 +524,24 @@ public final class PropNode extends LValueNode {
     @Override
     public PhpRef makeRef(VirtualFrame frame) {
         String name = name(frame);
-        return makeRefOn(frame, target(frame, name, "modify"), name);
+        return makeRefOn(frame.getArguments(), target(frame, name, "modify"), name);
     }
 
     /** makeRef of property name of target, evaluated: an error if it isn't an object. */
-    public PhpRef makeRefOn(VirtualFrame frame, Object target, String name) {
+    public PhpRef makeRefOn(Object[] arguments, Object target, String name) {
         PhpObject phpObject = target(target, name, "modify");
-        if (!accessible(frame, phpObject, name)) {
-            return new PhpRef(inaccessibleRead(phpObject, name));
+        if (!accessible(arguments, phpObject, name)) {
+            return inaccessibleRef(arguments, phpObject, name);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpRef ref) {
             return ref;
+        }
+        if (old == null) {
+            PhpRef forwarded = missingRef(arguments, phpObject, name);
+            if (forwarded != null) {
+                return forwarded;
+            }
         }
         PhpRef ref = new PhpRef(old == null ? PhpNull.NULL : old);
         if (old instanceof PhpArray array) {
@@ -353,14 +555,19 @@ public final class PropNode extends LValueNode {
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
         String name = name(frame);
-        bindRefOn(frame, object.execute(frame), name, ref);
+        bindRefOn(frame.getArguments(), object.execute(frame), name, ref);
     }
 
     /** bindRef of property name of target, evaluated: an error if it isn't an object. */
-    public void bindRefOn(VirtualFrame frame, Object target, String name, PhpRef ref) {
+    public void bindRefOn(Object[] arguments, Object target, String name, PhpRef ref) {
         PhpObject phpObject = target(target, name, "modify");
-        if (!accessible(frame, phpObject, name)) {
-            throw boundToInaccessible(phpObject, name);
+        if (!accessible(arguments, phpObject, name) || objects.getOrDefault(phpObject, name, null) == null
+                && (phpObject.getPhpClass().hasHooks() || phpObject.lazy() != null)) {
+            PhpObject target = boundToHooked(arguments, phpObject, name);
+            if (target != null) {
+                twin().bindRefOn(arguments, target, name, ref);
+                return;
+            }
         }
         Object old = objects.getOrDefault(phpObject, name, null);
         if (old instanceof PhpArray array) {
@@ -372,6 +579,27 @@ public final class PropNode extends LValueNode {
         objects.put(phpObject, name, ref);
     }
 
+    /**
+     * `$o->name = &$x` the fast path didn't take: a hooked property's and an inaccessible one's Errors; a lazy
+     * object's target (lazyTarget) to bind on, else null.
+     */
+    @TruffleBoundary
+    private PhpObject boundToHooked(Object[] arguments, PhpObject phpObject, String name) {
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__set");
+        if (target != null) {
+            return target;
+        }
+        PhpClass.Hooks hooks = phpObject.getPhpClass().findHooks(name);
+        if (hooks != null && phpObject.getPhpClass().canAccessProperty(name, scope(arguments))) {
+            hookedRef(arguments, phpObject, name, hooks);
+            throw new PhpError("Cannot assign by reference to overloaded object");
+        }
+        if (!phpObject.getPhpClass().canAccessProperty(name, scope(arguments))) {
+            throw boundToInaccessible(phpObject, name);
+        }
+        return null;
+    }
+
     @TruffleBoundary
     private static PhpError boundToInaccessible(PhpObject phpObject, String name) {
         return phpObject.getPhpClass().findMethod("__set") != null
@@ -381,16 +609,22 @@ public final class PropNode extends LValueNode {
     @Override
     public PhpArray arrayForWrite(VirtualFrame frame) {
         String name = name(frame);
-        return arrayForWriteOn(frame, target(frame, name, "modify"), name);
+        return arrayForWriteOn(frame.getArguments(), target(frame, name, "modify"), name);
     }
 
     /** arrayForWrite of property name of target, evaluated: an error if it isn't an object. */
-    public PhpArray arrayForWriteOn(VirtualFrame frame, Object target, String name) {
+    public PhpArray arrayForWriteOn(Object[] arguments, Object target, String name) {
         PhpObject phpObject = target(target, name, "modify");
-        if (!accessible(frame, phpObject, name)) {
-            return overloadedArray(inaccessibleRead(phpObject, name));
+        if (!accessible(arguments, phpObject, name)) {
+            return inaccessibleArray(arguments, phpObject, name);
         }
         Object old = objects.getOrDefault(phpObject, name, null);
+        if (old == null && (phpObject.getPhpClass().hasHooks() || phpObject.lazy() != null)) {
+            PhpArray forwarded = missingArray(arguments, phpObject, name);
+            if (forwarded != MISSING_ARRAY) {
+                return forwarded;
+            }
+        }
         if (old instanceof PhpArray array) {
             if (array.isShared()) {
                 PhpArray copy = array.copy();
@@ -416,6 +650,67 @@ public final class PropNode extends LValueNode {
         throw scalarAsArray();
     }
 
+    /** What missingArray returns when the write goes on as for any missing property. */
+    private static final PhpArray MISSING_ARRAY = new PhpArray();
+
+    /** arrayForWrite of a property the object hasn't: a virtual one's, a lazy object's target's; else MISSING_ARRAY. */
+    @TruffleBoundary
+    private PhpArray missingArray(Object[] arguments, PhpObject phpObject, String name) {
+        if (missingHooks(arguments, phpObject, name, "__get") != null) {
+            return inaccessibleArray(arguments, phpObject, name);
+        }
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__get");
+        return target == null ? MISSING_ARRAY : twin().arrayForWriteOn(arguments, target, name);
+    }
+
+    /** An array write the fast path didn't take: into a hooked property's place (hookedRef), or __get's value. */
+    @TruffleBoundary
+    private PhpArray inaccessibleArray(Object[] arguments, PhpObject phpObject, String name) {
+        PhpClass.Hooks hooks = hooks(arguments, phpObject, name, "__get");
+        if (hooks == null) {
+            return overloadedArray(inaccessibleRead(arguments, phpObject, name));
+        }
+        PhpRef place = hookedRef(arguments, phpObject, name, hooks);
+        return place.get() instanceof PhpObject ? null : Places.refArrayForWrite(place);
+    }
+
+    /**
+     * `parent::$name::get()` / `::set($value)` from a hook of the class lexicalClass: the parent's hook on $this, or
+     * where the parent's property has none, its trampoline's access to the backing value.
+     */
+    @TruffleBoundary
+    public static Object parentHook(Node site, Object[] arguments, String lexicalClass, String name, boolean set,
+                                    Object[] args) {
+        PhpClass parent = PhpContext.get(null).findClass(lexicalClass).getParent();
+        if (parent == null) {
+            throw new PhpError("Cannot use \"parent\" when current class scope has no parent");
+        }
+        PhpClass.PropertyDecl decl = parent.findProperty(name);
+        if (decl == null) {
+            throw new PhpError("Undefined property " + parent.getName() + "::$" + Str.keyText(name));
+        }
+        if (decl.visibility() == PhpClass.PropertyDecl.PRIVATE) {
+            throw new PhpError("Cannot access private property " + parent.getName() + "::$" + Str.keyText(name));
+        }
+        PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
+        PhpClass.Hooks hooks = parent.findHooks(name);
+        PhpFunction hook = hooks == null ? null : set ? hooks.set() : hooks.get();
+        if (hook != null) {
+            return Backtrace.callFrom(site, () -> hook.invoke(self, (PhpClass) arguments[PhpFunction.ARG_STATIC], args));
+        }
+        String function = parent.getName() + "::$" + Str.keyText(name) + (set ? "::set" : "::get");
+        if (args.length != (set ? 1 : 0)) {
+            throw new PhpError("ArgumentCountError", function + "() expects exactly " + (set ? 1 : 0) + " argument"
+                    + (set ? "" : "s") + ", " + args.length + " given");
+        }
+        if (set) {
+            self.writeRaw(name, args[0]);
+            return args[0];
+        }
+        Object value = PhpRef.deref(self.getProperty(name));
+        return value == null ? PhpNull.NULL : value;
+    }
+
     /** An array write through __get's value: to a copy, which the write leaves behind (null for an object). */
     @TruffleBoundary
     private static PhpArray overloadedArray(Object value) {
@@ -434,20 +729,20 @@ public final class PropNode extends LValueNode {
     public void unset(VirtualFrame frame) {
         Object value = object.execute(frame);
         if (value instanceof PhpObject) {
-            unsetOn(frame, value, name(frame));
+            unsetOn(frame.getArguments(), value, name(frame));
         }
     }
 
     /** unset() of property name of value, evaluated (nothing for a value that isn't an object). */
-    public void unsetOn(VirtualFrame frame, Object value, String name) {
+    public void unsetOn(Object[] arguments, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            if (!accessible(frame, phpObject, name)) {
-                inaccessibleUnset(phpObject, name);
+            if (!accessible(arguments, phpObject, name)) {
+                inaccessibleUnset(arguments, phpObject, name);
                 return;
             }
             Object old = objects.getOrDefault(phpObject, name, null);
             if (old == null) {
-                phpObject.magicProperty(this, "__unset", name);
+                missingUnset(arguments, phpObject, name);
                 return;
             }
             if (old instanceof PhpArray array) {
@@ -458,10 +753,32 @@ public final class PropNode extends LValueNode {
     }
 
     @TruffleBoundary
-    private void inaccessibleUnset(PhpObject phpObject, String name) {
+    private void inaccessibleUnset(Object[] arguments, PhpObject phpObject, String name) {
+        if (hooks(arguments, phpObject, name, "__unset") != null) {
+            throw cannotUnsetHooked(phpObject, name);
+        }
         if (phpObject.magicProperty(this, "__unset", name) == PhpObject.NO_MAGIC) {
             throw inaccessible(phpObject, name);
         }
+    }
+
+    /** unset() of a property the object hasn't: a virtual one's Error, a lazy object's target's, else __unset(). */
+    @TruffleBoundary
+    private void missingUnset(Object[] arguments, PhpObject phpObject, String name) {
+        if (missingHooks(arguments, phpObject, name, "__unset") != null) {
+            throw cannotUnsetHooked(phpObject, name);
+        }
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__unset");
+        if (target != null) {
+            twin().unsetOn(arguments, target, name);
+            return;
+        }
+        phpObject.magicProperty(this, "__unset", name);
+    }
+
+    private static PhpError cannotUnsetHooked(PhpObject phpObject, String name) {
+        return new PhpError("Cannot unset hooked property " + phpObject.getPhpClass().getName() + "::$"
+                + Str.keyText(name));
     }
 
     // ---- isset ----
@@ -469,25 +786,48 @@ public final class PropNode extends LValueNode {
     @Override
     public boolean isSet(VirtualFrame frame) {
         Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
-        return value instanceof PhpObject && isSetOn(frame, value, name(frame));
+        return value instanceof PhpObject && isSetOn(frame.getArguments(), value, name(frame));
     }
 
     /** isset() of property name of value, as readIfSet evaluated it (null when unset). */
-    public boolean isSetOn(VirtualFrame frame, Object value, String name) {
+    public boolean isSetOn(Object[] arguments, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
-            if (!accessible(frame, phpObject, name)) {
-                return magicIsset(phpObject, name);
+            if (!accessible(arguments, phpObject, name)) {
+                return slowIsset(arguments, phpObject, name);
             }
             Object property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             if (property == null) {
-                return magicIsset(phpObject, name);
+                return slowIsset(arguments, phpObject, name);
             }
             return property != PhpNull.NULL;
         }
         return false;
     }
 
-    /** isset() of a property that doesn't exist or the scope may not access: __isset's answer if there is one. */
+    /**
+     * isset() of a property that doesn't exist, the scope may not access or that has hooks: the hooked value isn't
+     * null, else __isset's answer if there is one.
+     */
+    @TruffleBoundary
+    private boolean slowIsset(Object[] arguments, PhpObject phpObject, String name) {
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__isset");
+        if (target != null) {
+            return twin().isSetOn(arguments, target, name);
+        }
+        Object hooked = hookedIfSet(arguments, phpObject, name);
+        return hooked != null ? hooked != PhpNull.NULL : magicIsset(phpObject, name);
+    }
+
+    /** A hooked property's value as isset() reads it (zend_std_has_property's hooked case); null for another. */
+    private Object hookedIfSet(Object[] arguments, PhpObject phpObject, String name) {
+        PhpClass phpClass = phpObject.getPhpClass();
+        PhpClass.Hooks hooks = phpClass.findHooks(name);
+        if (hooks == null || !phpClass.canAccessProperty(name, scope(arguments))) {
+            return null;
+        }
+        return hookedRead(arguments, phpObject, name, hooks);
+    }
+
     @TruffleBoundary
     private boolean magicIsset(PhpObject phpObject, String name) {
         Object magic = phpObject.magicProperty(this, "__isset", name);
@@ -497,28 +837,42 @@ public final class PropNode extends LValueNode {
     @Override
     public Object readIfSet(VirtualFrame frame) {
         Object value = object instanceof LValueNode place ? place.readIfSet(frame) : object.execute(frame);
-        return value instanceof PhpObject ? readIfSetOn(frame, value, name(frame)) : null;
+        return value instanceof PhpObject ? readIfSetOn(frame.getArguments(), value, name(frame)) : null;
     }
 
     /** readIfSet of property name of value, as readIfSet evaluated it (null when unset). */
-    public Object readIfSetOn(VirtualFrame frame, Object value, String name) {
+    public Object readIfSetOn(Object[] arguments, Object value, String name) {
         if (value instanceof PhpObject phpObject) {
             Object property;
-            if (!accessible(frame, phpObject, name)) {
+            if (!accessible(arguments, phpObject, name)) {
                 property = null;
             } else {
                 property = PhpRef.deref(objects.getOrDefault(phpObject, name, null));
             }
             if (property == null) {
-                // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value
-                if (!magicIsset(phpObject, name)) {
+                property = readIfSetSlow(arguments, phpObject, name);
+                if (property == null) {
                     return null;
                 }
-                property = missing(phpObject, name);
             }
             return property == PhpNull.NULL ? null : property;
         }
         return null;
+    }
+
+    /** readIfSet's slow path: a hooked property's value, else __isset decides and __get gives it; null when unset. */
+    @TruffleBoundary
+    private Object readIfSetSlow(Object[] arguments, PhpObject phpObject, String name) {
+        PhpObject target = lazyTarget(arguments, phpObject, name, "__isset");
+        if (target != null) {
+            return twin().readIfSetOn(arguments, target, name);
+        }
+        Object hooked = hookedIfSet(arguments, phpObject, name);
+        if (hooked != null) {
+            return hooked;
+        }
+        // isset($o->x[...]) / $o->x ?? ...: __isset decides, then __get gives the value
+        return magicIsset(phpObject, name) ? missing(arguments, phpObject, name) : null;
     }
 
     @Override

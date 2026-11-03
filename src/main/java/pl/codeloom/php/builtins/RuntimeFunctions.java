@@ -1,6 +1,7 @@
 package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
@@ -181,6 +182,14 @@ final class RuntimeFunctions {
             // a built-in class's clone_obj
             return handlers.cloneObject().apply(object);
         }
+        PhpObject real = object.initialized();
+        if (real != object) {
+            // an initialized proxy's clone proxies its instance's clone; no __clone() on the proxy
+            PhpObject proxy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
+                    context.nextObjectId());
+            proxy.proxyFor((PhpObject) cloneObject(context, real, PhpNull.NULL));
+            return proxy;
+        }
         PhpObject copy = new PhpObject(object.getPhpClass().getRootShape(), object.getPhpClass(),
                 context.nextObjectId());
         for (Object name : object.propertyNames()) {
@@ -196,7 +205,9 @@ final class RuntimeFunctions {
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }
-            copy.setProperty((String) name, property);
+            // with the slot's flags: a protected, private or hooked property stays one
+            DynamicObjectLibrary.getUncached().putWithFlags(copy, (String) name, property,
+                    DynamicObjectLibrary.getUncached().getPropertyFlagsOrDefault(object, (String) name, 0));
         }
         if (withProperties instanceof PhpArray properties) {
             for (int p = properties.firstPosition(); p >= 0; p = properties.nextPosition(p)) {

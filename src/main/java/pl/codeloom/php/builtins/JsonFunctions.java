@@ -547,7 +547,8 @@ final class JsonFunctions {
             }
         }
 
-        void object(PhpObject object) {
+        void object(PhpObject lazy) {
+            PhpObject object = lazy.initialized();
             if (object.getPhpClass().isSubclassOf("jsonserializable")) {
                 value(object.callMethod("jsonserialize"));
                 return;

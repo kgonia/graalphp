@@ -52,6 +52,15 @@ public final class PhpClass {
      */
     public static final int PROPERTY_PROTECTED = 1;
     public static final int PROPERTY_PRIVATE = 2;
+    /** A backed property with hooks: every access takes the site's slow path, which calls them. */
+    public static final int PROPERTY_HOOKED = 4;
+
+    /**
+     * A hooked property's hooks (php-src's prop_info->hooks), get and set, null where it has none; virtual when no
+     * hook uses its backing value, so objects have no slot for it (ZEND_ACC_VIRTUAL).
+     */
+    public record Hooks(PhpFunction get, PhpFunction set, boolean virtual) {
+    }
 
     private final String name;
     private final String lowerName;
@@ -81,6 +90,10 @@ public final class PhpClass {
     private Object[] defaults;
     /** mangledName's results for the non-public properties, made on first use. */
     private Map<String, String> mangledNames;
+    /** The hooked properties' hooks by name, or null when the class has none. */
+    private Map<String, Hooks> hooks;
+    /** The final properties (declared or inherited), or null for none. */
+    private Set<String> finalProperties;
 
     @CompilationFinal private PhpFunction constructor;
 
@@ -114,6 +127,8 @@ public final class PhpClass {
             constants.putAll(parent.constants);
             staticProperties.putAll(parent.staticProperties);
             properties.putAll(parent.properties);
+            hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
+            finalProperties = parent.finalProperties == null ? null : new HashSet<>(parent.finalProperties);
             constructor = parent.constructor;
         }
     }
@@ -283,6 +298,50 @@ public final class PhpClass {
         }
         properties.put(decl.name(), decl.declaringClass() != null ? decl
                 : new PropertyDecl(decl.name(), decl.defaultValue(), decl.visibility(), lowerName));
+    }
+
+    /** The property's hooks, or null for a property without (or one the class doesn't declare). */
+    @TruffleBoundary
+    public Hooks findHooks(String propertyName) {
+        return hooks == null ? null : hooks.get(propertyName);
+    }
+
+    /** Whether the class declares or inherits a hooked property (ce->num_hooked_props). */
+    public boolean hasHooks() {
+        return hooks != null;
+    }
+
+    /** Gives a declared property hooks (null removes them). */
+    public void setHooks(String propertyName, Hooks propertyHooks) {
+        if (propertyHooks == null) {
+            if (hooks != null) {
+                hooks.remove(propertyName);
+                hooks = hooks.isEmpty() ? null : hooks;
+            }
+            return;
+        }
+        if (hooks == null) {
+            hooks = new LinkedHashMap<>();
+        }
+        hooks.put(propertyName, propertyHooks);
+    }
+
+    /** Whether the property is declared final (here or in an ancestor). */
+    public boolean isFinalProperty(String propertyName) {
+        return finalProperties != null && finalProperties.contains(propertyName);
+    }
+
+    public void setFinalProperty(String propertyName) {
+        if (finalProperties == null) {
+            finalProperties = new HashSet<>();
+        }
+        finalProperties.add(propertyName);
+    }
+
+    /** A hooked property without a backing value: objects have no slot for it. */
+    private boolean isVirtual(String propertyName) {
+        Hooks h = findHooks(propertyName);
+        return h != null && h.virtual();
     }
 
     /** The declared (or inherited) instance property, or null for an undeclared one. */
@@ -561,20 +620,37 @@ public final class PhpClass {
     /** Declared (and inherited) instance property names, in declaration order. */
     @TruffleBoundary
     public String[] declaredNames() {
-        return properties.keySet().toArray(new String[0]);
+        List<String> names = new ArrayList<>(properties.size());
+        for (String propertyName : properties.keySet()) {
+            if (!isVirtual(propertyName)) {
+                names.add(propertyName);
+            }
+        }
+        return names.toArray(new String[0]);
     }
 
     /** The properties' shape flags (PROPERTY_PROTECTED, PROPERTY_PRIVATE) in an object of this class. */
     @TruffleBoundary
     public int[] declaredFlags() {
-        int[] flags = new int[properties.size()];
-        int i = 0;
-        for (PropertyDecl decl : properties.values()) {
-            flags[i++] = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
-                    : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
-                    ? PROPERTY_PRIVATE : 0;
+        String[] names = declaredNames();
+        int[] flags = new int[names.length];
+        for (int i = 0; i < names.length; i++) {
+            flags[i] = propertyFlags(names[i]);
         }
         return flags;
+    }
+
+    /** A declared property's flags in an object's shape (PROPERTY_PROTECTED, PROPERTY_PRIVATE, PROPERTY_HOOKED). */
+    @TruffleBoundary
+    public int propertyFlags(String propertyName) {
+        PropertyDecl decl = properties.get(propertyName);
+        if (decl == null) {
+            return 0;
+        }
+        int flags = decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+                : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
+                ? PROPERTY_PRIVATE : 0;
+        return findHooks(propertyName) != null ? flags | PROPERTY_HOOKED : flags;
     }
 
     /**
@@ -583,9 +659,12 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public Object[] declaredDefaults() {
-        Object[] values = new Object[properties.size()];
+        Object[] values = new Object[declaredNames().length];
         int i = 0;
         for (Map.Entry<String, PropertyDecl> entry : properties.entrySet()) {
+            if (isVirtual(entry.getKey())) {
+                continue;
+            }
             Object value = entry.getValue().defaultValue();
             if (value instanceof Thunk thunk) {
                 value = thunk.evaluate();

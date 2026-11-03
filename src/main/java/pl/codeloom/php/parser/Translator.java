@@ -99,6 +99,8 @@ public final class Translator {
     private static final int MODIFIER_PUBLIC = 1;
     private static final int MODIFIER_STATIC = 16;
     private static final int MODIFIER_ABSTRACT = 64;
+    private static final int MODIFIER_FINAL = 32;
+    private static final int MODIFIER_READONLY = 128;
     private static final int PARAM_REF = 8;
     private static final int PARAM_VARIADIC = 16;
     /** Visibility or readonly on a constructor parameter: a promoted property. */
@@ -157,6 +159,8 @@ public final class Translator {
     private final Scope fileSlots = new Scope();
     /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
     private Names names;
+    /** In a class's members: the class's php-ast flags (interface, trait...). */
+    private int classFlags;
 
     /** internal: the file is the prelude's, which stands for php-src's internal code (RootNode.isInternal). */
     public Translator(PhpLanguage language, String path, Source source, boolean internal) {
@@ -887,7 +891,7 @@ public final class Translator {
         if (owner != null && name.equalsIgnoreCase("__construct")) {
             List<StmtNode> promoted = new ArrayList<>();
             for (int i = 0; i < params.length; i++) {
-                if ((((Ast) paramList.child(i)).flags & PROMOTED) != 0) {
+                if (isPromoted((Ast) paramList.child(i))) {
                     promoted.add(new BasicStmts.PromoteNode(Str.sourceKey(params[i].name()),
                             new LocalVarNode(paramSlots[i], params[i].name())));
                 }
@@ -1054,6 +1058,7 @@ public final class Translator {
         boolean isAbstract = (node.flags & CLASS_ABSTRACT) != 0;
         ClassInfo info = new ClassInfo(name, parentName);
         Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
+        inClass.classFlags = node.flags;
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
         try {
@@ -1079,6 +1084,7 @@ public final class Translator {
             ClassInfo info = new ClassInfo(className, parentName);
             Translator inClass = new Translator(language, path, source, internal, info, "", null, null,
                     declaredNames);
+            inClass.classFlags = CLASS_TRAIT;
             List<ClassTemplate.Member> members = new ArrayList<>();
             for (Object child : statements.children()) {
                 inClass.addMember(members, (Ast) child, className, info);
@@ -1123,13 +1129,16 @@ public final class Translator {
         switch (member.kind) {
             case "AST_METHOD": {
                 PhpFunction method = declareFunction(member, info);
-                List<PhpClass.PropertyDecl> promoted = new ArrayList<>();
+                List<ClassTemplate.Property> promoted = new ArrayList<>();
                 if (method.getName().equalsIgnoreCase("__construct")) {
                     for (Object child : member.node("params").children()) {
                         Ast param = (Ast) child;
-                        if ((param.flags & PROMOTED) != 0) {
-                            promoted.add(new PhpClass.PropertyDecl(Str.sourceKey((String) param.get("name")),
-                                    PhpNull.NULL, PhpClass.PropertyDecl.visibilityOf(param.flags)));
+                        if (isPromoted(param)) {
+                            String name = (String) param.get("name");
+                            promoted.add(new ClassTemplate.Property(Str.sourceKey(name), PhpNull.NULL,
+                                    PhpClass.PropertyDecl.visibilityOf(param.flags), false, param.flags,
+                                    propertyHooks(param.node("hooks"), name, param.node("type"), param.flags, false,
+                                            className, info, param.line), false));
                         }
                     }
                 }
@@ -1146,14 +1155,34 @@ public final class Translator {
                 break;
             }
             case "AST_PROP_GROUP": {
-                boolean isStatic = (member.flags & MODIFIER_STATIC) != 0;
-                int visibility = PhpClass.PropertyDecl.visibilityOf(member.flags);
+                int flags = member.flags;
+                boolean isStatic = (flags & MODIFIER_STATIC) != 0;
+                int visibility = PhpClass.PropertyDecl.visibilityOf(flags);
+                // zend_compile_prop_decl
+                if ((flags & MODIFIER_FINAL) != 0 && visibility == PhpClass.PropertyDecl.PRIVATE) {
+                    throw compileError(member.line, "Property cannot be both final and private");
+                }
+                if ((classFlags & CLASS_INTERFACE) != 0) {
+                    if ((flags & MODIFIER_FINAL) != 0) {
+                        throw compileError(member.line, "Property in interface cannot be final");
+                    }
+                    if (visibility != PhpClass.PropertyDecl.PUBLIC) {
+                        throw compileError(member.line, "Property in interface cannot be protected or private");
+                    }
+                    if ((flags & MODIFIER_ABSTRACT) != 0) {
+                        throw compileError(member.line, "Property in interface cannot be explicitly abstract. "
+                                + "All interface members are implicitly abstract");
+                    }
+                }
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
                     Object initial = element.get("default") == null ? PhpNull.NULL
                             : constantOrDeferred(element.get("default"));
-                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic));
+                    members.add(new ClassTemplate.Property(propertyName, initial, visibility, isStatic, flags,
+                            propertyHooks(element.node("hooks"), (String) element.get("name"), member.node("type"),
+                                    flags, isStatic, className, info, element.line),
+                            element.get("default") != null));
                 }
                 break;
             }
@@ -1163,6 +1192,196 @@ public final class Translator {
             default:
                 throw unsupported(member, "class member");
         }
+    }
+
+    /** `parent::$name::get()` or `::set()`, a parent property hook's call (zend_compile_parent_property_hook_call). */
+    static boolean isParentHookCall(Ast call) {
+        return call.node("class") instanceof Ast prop && prop.is("AST_STATIC_PROP") && prop.get("prop") instanceof String
+                && prop.node("class") instanceof Ast parent && parent.is("AST_NAME")
+                && "parent".equalsIgnoreCase((String) parent.get("name")) && call.get("method") instanceof String method
+                && (method.equalsIgnoreCase("get") || method.equalsIgnoreCase("set"));
+    }
+
+    /** A constructor parameter that declares a property: a visibility, readonly or final modifier, or hooks. */
+    static boolean isPromoted(Ast param) {
+        return (param.flags & (PROMOTED | MODIFIER_FINAL)) != 0 || param.get("hooks") != null;
+    }
+
+    /**
+     * A property's hooks (zend_compile_property_hooks), each a method named "$name::get" or "$name::set" as
+     * php-src makes it: a short get body returns its expression, a short set body assigns it to the property, a set
+     * hook without a parameter list takes $value of the property's type, and a get hook returns that type. Null for
+     * a property without; php-src's compile errors.
+     */
+    private PhpClass.Hooks propertyHooks(Ast hookList, String name, Ast type, int flags, boolean isStatic,
+                                         String className, ClassInfo info, int line) {
+        boolean isInterface = (classFlags & CLASS_INTERFACE) != 0;
+        String property = className + "::$" + name;
+        if (hookList == null) {
+            if (isInterface) {
+                throw compileError(line, "Interfaces may only include hooked properties");
+            }
+            if ((flags & MODIFIER_ABSTRACT) != 0) {
+                throw compileError(line, "Only hooked properties may be declared abstract");
+            }
+            return null;
+        }
+        if ((flags & MODIFIER_READONLY) != 0) {
+            throw compileError(line, "Hooked properties cannot be readonly");
+        }
+        if (hookList.size() == 0) {
+            throw compileError(line, "Property hook list must not be empty");
+        }
+        boolean isPrivate = PhpClass.PropertyDecl.visibilityOf(flags) == PhpClass.PropertyDecl.PRIVATE;
+        boolean virtual = true;
+        boolean anyAbstract = false;
+        PhpFunction get = null;
+        PhpFunction set = null;
+        for (Object child : hookList.children()) {
+            Ast hook = (Ast) child;
+            Object body = hook.get("stmts");
+            if (isStatic) {
+                throw compileError(hook.line, "Cannot declare hooks for static property");
+            }
+            if ((hook.flags & MODIFIER_FINAL) != 0 && isPrivate) {
+                throw compileError(hook.line, "Property hook cannot be both final and private");
+            }
+            boolean isAbstract = isInterface || (flags & MODIFIER_ABSTRACT) != 0 && body == null;
+            if (isAbstract) {
+                if (body != null) {
+                    throw compileError(hook.line, "Abstract property hook cannot have body");
+                }
+                if (isPrivate) {
+                    throw compileError(hook.line, "Property hook cannot be both abstract and private");
+                }
+                if ((hook.flags & MODIFIER_FINAL) != 0) {
+                    throw compileError(hook.line, "Property hook cannot be both abstract and final");
+                }
+                anyAbstract = true;
+            } else if (body == null) {
+                throw compileError(hook.line, "Non-abstract property hook must have a body");
+            }
+            String hookName = (String) hook.get("name");
+            String kind = Str.lower(hookName);
+            if (!kind.equals("get") && !kind.equals("set")) {
+                throw compileError(hook.line, "Unknown hook \"" + hookName + "\" for property " + property
+                        + ", expected \"get\" or \"set\"");
+            }
+            Ast params = hook.node("params");
+            boolean shortBody = body instanceof Ast ast && ast.is("AST_PROPERTY_HOOK_SHORT_BODY");
+            if (body != null && (shortBody && kind.equals("set") || usesProperty(body, name))) {
+                virtual = false;
+            }
+            if (kind.equals("get")) {
+                if (params != null) {
+                    throw compileError(hook.line, "get hook of property " + property
+                            + " must not have a parameter list");
+                }
+                params = new Ast("AST_PARAM_LIST", 0, hook.line, hook.line, List.of(), null);
+            } else if (params != null) {
+                if (params.size() != 1) {
+                    throw compileError(hook.line, hookName + " hook of property " + property
+                            + " must accept exactly one parameters");
+                }
+                Ast param = (Ast) params.child(0);
+                String of = " of " + hookName + " hook " + property;
+                if ((param.flags & PARAM_REF) != 0) {
+                    throw compileError(hook.line, "Parameter $" + param.get("name") + of
+                            + " must not be pass-by-reference");
+                }
+                if ((param.flags & PARAM_VARIADIC) != 0) {
+                    throw compileError(hook.line, "Parameter $" + param.get("name") + of + " must not be variadic");
+                }
+                if (param.get("default") != null) {
+                    throw compileError(hook.line, "Parameter $" + param.get("name") + of
+                            + " must not have a default value");
+                }
+                if ((type != null) != (param.get("type") != null)) {
+                    throw compileError(hook.line, "Type of parameter $" + param.get("name") + " of hook " + property
+                            + "::set must be compatible with property type");
+                }
+            } else {
+                Map<String, Object> value = new java.util.LinkedHashMap<>();
+                value.put("type", type);
+                value.put("name", "value");
+                params = new Ast("AST_PARAM_LIST", 0, hook.line, hook.line,
+                        List.of(new Ast("AST_PARAM", 0, hook.line, hook.line, null, value)), null);
+            }
+            if (shortBody) {
+                Object value = ((Ast) body).get("expr");
+                Ast statement;
+                if (kind.equals("get")) {
+                    statement = new Ast("AST_RETURN", 0, hook.line, hook.line, null, Map.of("expr", value));
+                } else {
+                    Ast self = new Ast("AST_VAR", 0, hook.line, hook.line, null, Map.of("name", "this"));
+                    Map<String, Object> target = new java.util.LinkedHashMap<>();
+                    target.put("expr", self);
+                    target.put("prop", name);
+                    Map<String, Object> assign = new java.util.LinkedHashMap<>();
+                    assign.put("var", new Ast("AST_PROP", 0, hook.line, hook.line, null, target));
+                    assign.put("expr", value);
+                    statement = new Ast("AST_ASSIGN", 0, hook.line, hook.line, null, assign);
+                }
+                body = new Ast("AST_STMT_LIST", 0, hook.line, hook.line, List.of(statement), null);
+            }
+            Map<String, Object> method = new java.util.LinkedHashMap<>();
+            method.put("name", "$" + name + "::" + kind);
+            method.put("docComment", hook.get("docComment"));
+            method.put("params", params);
+            method.put("stmts", body);
+            method.put("returnType", kind.equals("get") ? type : null);
+            // non-private hooks are public (zend_compile_property_hooks)
+            int methodFlags = (hook.flags & (MODIFIER_FINAL | FUNC_RETURNS_REF)) | (isPrivate ? 4 : MODIFIER_PUBLIC)
+                    | (isAbstract ? MODIFIER_ABSTRACT : 0);
+            PhpFunction function = declareFunction(new Ast("AST_METHOD", methodFlags, hook.line, hook.endLine, null,
+                    method), info);
+            function.setClassName(className);
+            if (kind.equals("get") ? get != null : set != null) {
+                throw compileError(hook.line, "Cannot redeclare property hook \"" + hookName + "\"");
+            }
+            if (kind.equals("get")) {
+                get = function;
+            } else {
+                set = function;
+            }
+        }
+        if (isInterface) {
+            virtual = true;
+        }
+        // zend_verify_hooked_property's checks that don't depend on a parent
+        if ((flags & MODIFIER_ABSTRACT) != 0 && !anyAbstract) {
+            throw compileError(line, "Abstract property " + property + " must specify at least one abstract hook");
+        }
+        return new PhpClass.Hooks(get, set, virtual);
+    }
+
+    /**
+     * Whether a hook's body uses the property's backing value, `$this->name` (zend_property_hook_find_property_usage),
+     * not looking into nested functions and classes.
+     */
+    private static boolean usesProperty(Object node, String name) {
+        if (!(node instanceof Ast ast)) {
+            return false;
+        }
+        if ((ast.is("AST_PROP") || ast.is("AST_NULLSAFE_PROP")) && ast.get("expr") instanceof Ast object
+                && object.is("AST_VAR") && "this".equals(object.get("name")) && name.equals(ast.get("prop"))) {
+            return true;
+        }
+        if (ast.is("AST_CLOSURE") || ast.is("AST_ARROW_FUNC") || ast.is("AST_CLASS") || ast.is("AST_FUNC_DECL")
+                || ast.is("AST_METHOD")) {
+            return false;
+        }
+        for (Object child : ast.children()) {
+            if (usesProperty(child, name)) {
+                return true;
+            }
+        }
+        for (Object child : ast.namedValues()) {
+            if (usesProperty(child, name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
@@ -1340,6 +1559,9 @@ public final class Translator {
                 return new MethodCallNode(expression(node.get("expr")), methodName(node), arguments(node.node("args")));
             case "AST_STATIC_CALL": {
                 Ast classNode = node.node("class");
+                if (isParentHookCall(node) && classInfo == null) {
+                    throw compileError(node.line, "Cannot use \"parent\" when no class scope is active");
+                }
                 String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
                 boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
                 if (isCallableConvert(node)) {
@@ -1976,6 +2198,11 @@ public final class Translator {
                 String name = functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
                         : functionName;
                 return new ConstNode(Str.of(name));
+            }
+            case 353: {
+                // __PROPERTY__: in a property hook ("$name::get"), the property's name
+                String hook = function == null ? "" : function.getName();
+                return new ConstNode(Str.of(hook.startsWith("$") ? hook.substring(1, hook.lastIndexOf("::")) : ""));
             }
             case 354:
                 return new ConstNode(Str.of(names.namespace()));

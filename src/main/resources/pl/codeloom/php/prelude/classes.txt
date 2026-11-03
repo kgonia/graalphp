@@ -27,6 +27,7 @@ reflectionfunction	reflection.php
 reflectionmethod	reflection.php
 reflectionparameter	reflection.php
 reflectionclass	reflection.php
+reflectionproperty	reflection.php
 reflectionobject	reflection.php
 recursiveiterator	spl.php
 outeriterator	spl.php

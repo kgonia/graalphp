@@ -139,6 +139,22 @@ final class Dump {
                 closeBrace(level);
                 return;
             }
+            // a lazy object as it is (zend_lazy_object_debug_info): an initialized proxy shows its instance
+            PhpObject.Lazy lazy = object.isInitializingLazy() ? null : object.lazy();
+            if (lazy != null) {
+                common += lazy.isProxy() ? "lazy proxy " : "lazy ghost ";
+            }
+            if (lazy != null && lazy.instance() != null) {
+                ascii(common + "object(");
+                utf8(object.getPhpClass().getName());
+                ascii(")#" + object.id() + " (1) {\n");
+                spaces(level + 1);
+                ascii("[\"instance\"]=>\n");
+                varDump(lazy.instance(), level + 2);
+                leave(object);
+                closeBrace(level);
+                return;
+            }
             Object[] names = object.propertyNames();
             ascii(common + "object(");
             utf8(object.getPhpClass().getName());
@@ -237,11 +253,13 @@ final class Dump {
                 utf8(object.getPhpClass().getName());
                 ascii("::__set_state(array(\n");
             }
-            for (Object name : object.propertyNames()) {
+            // a lazy object initialized, a proxy's instance's properties
+            PhpObject real = object.initialized();
+            for (Object name : real.propertyNames()) {
                 spaces(level + 2);
                 exportString(Str.ofKey((String) name));
                 ascii(" => ");
-                varExport(object.getProperty((String) name), level + 2);
+                varExport(real.getProperty((String) name), level + 2);
                 ascii(",\n");
             }
             leave(object);

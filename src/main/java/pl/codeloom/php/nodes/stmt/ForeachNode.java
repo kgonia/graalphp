@@ -323,7 +323,7 @@ public final class ForeachNode extends StmtNode {
      * calls are made from this statement, as traces show them.
      */
     private void iterateObject(VirtualFrame frame, PhpObject subject) {
-        PhpObject object = unwrapAggregates(subject);
+        PhpObject object = unwrapAggregates(subject).initialized();
         if (object.getPhpClass().isSubclassOf("iterator")) {
             step(object, "rewind");
             while (Convert.toBool(step(object, "valid"))) {
@@ -344,12 +344,12 @@ public final class ForeachNode extends StmtNode {
         String[] properties = visiblePropertyNames(object, PropNode.callingScope(frame, lexicalClass));
         for (int i = 0; i < properties.length; i++) {
             String property = properties[i];
-            Object value = object.getProperty(property);
+            Object value = object.visibleValue(property);
             if (value == null) {
                 continue;
             }
             bind.writeKey(frame, Str.ofKey(property));
-            bind.assignValue(frame, PhpRef.deref(value));
+            bind.assignValue(frame, value);
             if (LoopNodes.runBody(body, frame) == LoopNodes.EXIT) {
                 return;
             }
