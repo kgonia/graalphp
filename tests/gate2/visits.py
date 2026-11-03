@@ -128,7 +128,7 @@ def main():
     cpu0, began = server.cpu(), time.time()
     pages, ok = visit(base)
     result["cold"] = {"pages": pages, "ok": ok, "wait": sum(p[2] for p in pages) / 1000, "cpu": server.cpu() - cpu0,
-                      "start_to_first_page": began - server.started() + pages[0][2] / 1000}
+                      "start_to_first_page": began - server.started() + pages[0][2] / 1000, "t": time.time()}
     result["memory"]["cold"] = server.memory()
     warm = []
     cpu = server.cpu()
@@ -138,7 +138,8 @@ def main():
         if n % 25 == 0:
             result["memory"][f"visit{n}"] = server.memory()
         now = server.cpu()
-        warm.append({"pages": pages, "ok": ok, "wait": sum(p[2] for p in pages) / 1000, "cpu": now - cpu})
+        warm.append({"pages": pages, "ok": ok, "wait": sum(p[2] for p in pages) / 1000, "cpu": now - cpu,
+                     "t": time.time()})
         cpu = now
     result["warm"] = warm
     result["memory"]["warm"] = server.memory()
