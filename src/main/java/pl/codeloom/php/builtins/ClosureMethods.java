@@ -16,8 +16,11 @@ import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The Closure class's methods (Zend/zend_closures.c): bind, bindTo, call, fromCallable and getCurrent. A closure value is a
@@ -263,21 +266,46 @@ final class ClosureMethods {
         PhpFunction.Param[] params = closure.getMagicName() != null
                 ? new PhpFunction.Param[] {new PhpFunction.Param("arguments", false, true, null, (char) 0, false, null)}
                 : function.getParams();
-        if (params.length > 0 && function.getBuiltin() == null) {
-            int required = 0;
+        String[] paramNames;
+        int required = 0;
+        if (function.getBuiltin() == null) {
+            paramNames = new String[params.length];
             for (int i = 0; i < params.length; i++) {
+                paramNames[i] = (params[i].byRef() ? "&$" : "$") + params[i].name();
                 if (params[i].defaultValue() == null && !params[i].variadic()) {
                     required = i + 1;
                 }
             }
+        } else {
+            // a built-in function's arginfo, which this runtime's built-ins don't declare
+            String[] known = closure.getMagicName() == null ? builtinParams(function.getName()) : null;
+            paramNames = known == null || known[2].isEmpty() ? new String[0] : known[2].replace("...", "")
+                    .replaceAll("(^|,)(&?)", "$1$2\\$").split(",");
+            required = known == null ? 0 : Integer.parseInt(known[1]);
+        }
+        if (paramNames.length > 0) {
             PhpArray parameters = new PhpArray();
-            for (int i = 0; i < params.length; i++) {
-                parameters.put(Str.of((params[i].byRef() ? "&$" : "$") + params[i].name()),
-                        Str.of(i < required ? "<required>" : "<optional>"));
+            for (int i = 0; i < paramNames.length; i++) {
+                parameters.put(Str.of(paramNames[i]), Str.of(i < required ? "<required>" : "<optional>"));
             }
             info.put(Str.of("parameter"), parameters);
         }
         return info;
+    }
+
+    /** PHP's internal functions' parameters (params.txt, tools/builtin-params.php), by lowercase name. */
+    private static Map<String, String[]> builtinParams;
+
+    private static synchronized String[] builtinParams(String name) {
+        if (builtinParams == null) {
+            Map<String, String[]> table = new HashMap<>();
+            for (String line : new String(StringFunctions.resource("params.txt"), StandardCharsets.UTF_8).split("\n")) {
+                String[] fields = line.split("\t", -1);
+                table.put(fields[0], fields);
+            }
+            builtinParams = table;
+        }
+        return builtinParams.get(Str.lower(name));
     }
 
     private static void warn(PhpContext context, String message) {
