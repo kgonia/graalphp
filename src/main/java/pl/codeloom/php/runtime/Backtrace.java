@@ -130,9 +130,10 @@ public final class Backtrace {
     public static SourceLocation userCaller() {
         List<Level> levels = new ArrayList<>();
         Truffle.getRuntime().iterateFrames(frame -> {
-            levels.add(new Level(((RootCallTarget) frame.getCallTarget()).getRootNode(),
-                    frame.getFrame(FrameInstance.FrameAccess.READ_ONLY), frame.getCallNode(),
-                    SourceLocation.callingInstruction(frame)));
+            RootNode root = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+            levels.add(new Level(SourceLocation.codeRoot(root),
+                    SourceLocation.codeFrame(root, frame.getFrame(FrameInstance.FrameAccess.READ_ONLY)),
+                    frame.getCallNode(), SourceLocation.callingInstruction(frame)));
             return levels.size() < 4 ? null : levels;
         });
         int caller = isFrameless(levels, 1) ? 2 : 1;

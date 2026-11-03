@@ -209,6 +209,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * has made them; null when the body has neither.
      */
     @CompilationFinal private LocalAccessor scopeLocal;
+    /** A generator function's frame in a `yield from` chain ({@link PhpGenerator.LinkedFrame}), made at first use. */
+    private CallTarget linkedFrame;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -4359,6 +4361,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     // ---- what the runtime asks of a function's root ----
+
+    public CallTarget linkedFrame() {
+        CallTarget target = linkedFrame;
+        if (target == null) {
+            target = new PhpGenerator.LinkedFrame(getLanguage(PhpLanguage.class), this).getCallTarget();
+            linkedFrame = target;
+        }
+        return target;
+    }
 
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {
