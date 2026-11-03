@@ -1,5 +1,6 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
@@ -30,6 +31,9 @@ public final class NewNode extends ExprNode {
         PhpClass phpClass = classRef.resolve(frame);
         PhpObject object = instantiate.execute(phpClass);
         PhpFunction constructor = phpClass.getConstructor();
+        if (constructor != null && !constructor.isPublic()) {
+            checkConstructor(phpClass, constructor, MethodCallNode.scope(frame, this));
+        }
         if (constructor != null) {
             construct.execute(frame, constructor, object, phpClass, args);
         } else if (args.count() > 0) {
@@ -37,5 +41,13 @@ public final class NewNode extends ExprNode {
             args.values(frame);
         }
         return object;
+    }
+
+    /** zend_std_get_constructor: a constructor that isn't public, which the scope may not call, is an Error. */
+    @TruffleBoundary
+    public static void checkConstructor(PhpClass phpClass, PhpFunction constructor, String scope) {
+        if (!phpClass.canCall(constructor, "__construct", scope)) {
+            throw PhpClass.constructorError(constructor, scope);
+        }
     }
 }

@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.PhpClass;
@@ -26,6 +27,8 @@ public final class StaticCallNode extends CallNode {
     @Child private ClassRefNode classRef;
     @Child private ArgumentsNode args;
     @Child private Dispatch dispatch;
+    /** `Cls::$name(args)`: the name's expression; dispatch is null then. */
+    @Child private ExprNode nameExpr;
     @Child private SubclassTestNode subclassTest = SubclassTestNode.create();
     private final boolean forwarding;
 
@@ -33,13 +36,28 @@ public final class StaticCallNode extends CallNode {
         this.classRef = classRef;
         this.args = args;
         this.forwarding = forwarding;
-        this.dispatch = new Dispatch(Str.lower(methodName), Str.of(methodName));
+        this.dispatch = new Dispatch(methodName);
+    }
+
+    /** `Cls::$name(args)`. */
+    public StaticCallNode(ClassRefNode classRef, ExprNode nameExpr, ArgumentsNode args, boolean forwarding) {
+        this.classRef = classRef;
+        this.args = args;
+        this.forwarding = forwarding;
+        this.nameExpr = nameExpr;
     }
 
     @Override
     public Object executeRef(VirtualFrame frame) {
         PhpClass phpClass = classRef.resolve(frame);
         Object[] callerArgs = frame.getArguments();
+        if (nameExpr != null) {
+            PhpClass called = forwarding && callerArgs[PhpFunction.ARG_STATIC] instanceof PhpClass callerStatic
+                    ? callerStatic : phpClass;
+            return CallableCallNode.call(frame, target(phpClass, nameExpr.execute(frame),
+                    callerArgs[PhpFunction.ARG_THIS], called, MethodCallNode.scope(frame, this)), args,
+                    IndirectCallNode.getUncached());
+        }
         Object self = callerArgs[PhpFunction.ARG_THIS];
         if (self instanceof PhpObject object && !subclassTest.execute(object.getPhpClass(), phpClass)) {
             self = null;
@@ -65,16 +83,25 @@ public final class StaticCallNode extends CallNode {
         /** For a missing method: __call and __callStatic called indirectly, made when first needed. */
         @Child private IndirectCallNode magicCall;
 
-        Dispatch(String lowerName, TruffleString calledName) {
-            this.lowerName = lowerName;
-            this.calledName = calledName;
-            this.lookup = MethodLookupNode.create(lowerName);
+        Dispatch(String name) {
+            this.lowerName = Str.lower(name);
+            this.calledName = Str.of(name);
+            this.lookup = MethodLookupNode.create(name, true);
         }
 
         public Object execute(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
                               ArgumentsNode args) {
-            PhpFunction method = lookup.execute(phpClass);
+            PhpFunction method = lowerName.equals("__construct") ? constructorOf(phpClass)
+                    : lookup.execute(phpClass, MethodCallNode.scope(frame, this));
             if (method != null) {
+                if (!method.isStatic()) {
+                    if (lowerName.equals("__construct")) {
+                        checkPrivateConstructor(phpClass, method, frame.getArguments()[PhpFunction.ARG_THIS]);
+                    }
+                    if (self == null) {
+                        throw PhpClass.nonStaticCall(method);
+                    }
+                }
                 return call.execute(frame, method, self, staticClass, args);
             }
             if (magicCall == null) {
@@ -90,7 +117,7 @@ public final class StaticCallNode extends CallNode {
             PhpFunction viaCall = self != null ? magicMethod(phpClass, "__call") : null;
             PhpFunction viaStatic = viaCall == null ? magicMethod(phpClass, "__callstatic") : null;
             if (viaCall == null && viaStatic == null) {
-                throw undefined(phpClass);
+                throw phpClass.callError(Str.java(calledName), MethodCallNode.scope(frame, this));
             }
             Object[] values = Callables.magicValues(calledName, args.values(frame));
             if (viaCall != null) {
@@ -119,24 +146,59 @@ public final class StaticCallNode extends CallNode {
             return phpClass.findMethod(lowerName);
         }
 
-        /** A static call's method in a class, or null when __call or __callStatic stands in for it; else an Error. */
-        @TruffleBoundary
-        public static PhpFunction findStatic(PhpClass phpClass, String lowerName) {
-            PhpFunction method = phpClass.findMethod(lowerName);
-            if (method == null && phpClass.findMethod("__call") == null
-                    && phpClass.findMethod("__callstatic") == null) {
-                throw undefined(phpClass, lowerName);
+    }
+
+    /**
+     * What `Cls::$name(args)` calls (INIT_STATIC_METHOD_CALL of a name computed at run time): the method as
+     * zend_std_get_static_method finds it from scope, a non-static one on the caller's $this (an instance of the
+     * class), else __call on that $this or __callStatic standing in; staticClass is the call's called class.
+     */
+    @TruffleBoundary
+    public static Callables.Target target(PhpClass phpClass, Object name, Object callerThis, PhpClass staticClass,
+                                          String scope) {
+        if (!(name instanceof TruffleString method)) {
+            throw MethodCallNode.nameNotString();
+        }
+        String text = Str.java(method);
+        PhpObject self = callerThis instanceof PhpObject object
+                && object.getPhpClass().isSubclassOf(phpClass.getLowerName()) ? object : null;
+        PhpFunction function = phpClass.staticMethodFrom(text, scope);
+        if (function == null) {
+            PhpFunction viaCall = self != null ? phpClass.findMethod("__call") : null;
+            if (viaCall != null) {
+                return new Callables.Target(viaCall, self, self.getPhpClass(), null, method);
             }
-            return method;
+            PhpFunction viaStatic = phpClass.findMethod("__callstatic");
+            if (viaStatic == null) {
+                throw phpClass.callError(text, scope);
+            }
+            return new Callables.Target(viaStatic, null, staticClass, null, method);
         }
-
-        private PhpError undefined(PhpClass phpClass) {
-            return undefined(phpClass, lowerName);
+        if (function.isStatic()) {
+            return new Callables.Target(function, null, staticClass, null);
         }
+        if (self == null) {
+            throw PhpClass.nonStaticCall(function);
+        }
+        return new Callables.Target(function, self, self.getPhpClass(), null);
+    }
 
-        @TruffleBoundary
-        public static PhpError undefined(PhpClass phpClass, String lowerName) {
-            return new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+    /** `Cls::__construct()`: the class's constructor, or php-src's Error for a class without one. */
+    @TruffleBoundary
+    public static PhpFunction constructorOf(PhpClass phpClass) {
+        PhpFunction constructor = phpClass.getConstructor();
+        if (constructor == null) {
+            throw new PhpError("Cannot call constructor");
+        }
+        return constructor;
+    }
+
+    /** A private constructor called through `Cls::__construct()` on an object of another class. */
+    @TruffleBoundary
+    public static void checkPrivateConstructor(PhpClass phpClass, PhpFunction constructor, Object self) {
+        if ((constructor.getModifiers() & PhpFunction.ACC_PRIVATE) != 0 && self instanceof PhpObject object
+                && !object.getPhpClass().getName().equalsIgnoreCase(constructor.getClassName())) {
+            throw new PhpError("Cannot call private " + phpClass.getName() + "::__construct()");
         }
     }
 }

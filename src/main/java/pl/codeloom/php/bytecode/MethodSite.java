@@ -1,6 +1,7 @@
 package pl.codeloom.php.bytecode;
 
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.Str;
 
@@ -17,15 +18,30 @@ public final class MethodSite {
     static final PhpFunction BY_VALUE = new PhpFunction("{by value}", new PhpFunction.Param[0], false, false, true,
             false, () -> null);
 
+    /** The name as written, for messages; calledName, as __call and __callStatic are given it. */
+    final String name;
     final String lowerName;
-    /** The name as written, which __call and __callStatic are given. */
     final TruffleString calledName;
     final boolean forwarding;
+    /** `Cls::__construct()`, which php-src calls without a lookup. */
+    final boolean constructor;
 
     public MethodSite(String name, boolean forwarding) {
+        this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);
         this.forwarding = forwarding;
+        this.constructor = lowerName.equals("__construct");
+    }
+
+    /** Whether the lookup's answer from scope follows from the class's key (PhpClass.isMethodAccessKeyed). */
+    public boolean isKeyed(PhpClass phpClass, String scope) {
+        return phpClass.isMethodAccessKeyed(lowerName, scope);
+    }
+
+    /** Whether the lookup in a closure, whose bound scope may change, depends on the scope. */
+    public boolean isScoped(PhpBytecodeRootNode root, PhpClass phpClass) {
+        return root.isClosure() && phpClass.methodDependsOnScope(lowerName);
     }
 
     static boolean byValue(PhpFunction function) {
