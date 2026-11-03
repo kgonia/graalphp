@@ -14,6 +14,9 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <graalvm.version>25.4.4.1.1</graalvm.version>
+        <!-- the Truffle DSL processor with two unreleased Bytecode DSL fixes, built by truffle-dsl-processor/build.sh;
+             not in any remote repository, so a machine without it fails to resolve it -->
+        <dsl.processor.version>${graalvm.version}-patched</dsl.processor.version>
         <jackson.version>2.22.4</jackson.version>
         <junit.version>6.1.3</junit.version>
     </properties>
@@ -72,7 +75,7 @@
                         <path>
                             <groupId>org.graalvm.truffle</groupId>
                             <artifactId>truffle-dsl-processor</artifactId>
-                            <version>${graalvm.version}</version>
+                            <version>${dsl.processor.version}</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
