@@ -111,8 +111,10 @@ public final class PropNode extends LValueNode {
         return Str.key(Convert.toStr(value));
     }
 
+    /** The object written to: a `$$name` is fetched for W (made if undefined, no warning), as php-src does. */
     private PhpObject target(VirtualFrame frame, String name, String action) {
-        return target(object.execute(frame), name, action);
+        return target(object instanceof VariableVariableNode variable ? variable.fetch(frame, VariableVariableNode.W)
+                : object.execute(frame), name, action);
     }
 
     private static PhpObject target(Object value, String name, String action) {
@@ -432,7 +434,8 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Object value = object.execute(frame);
+        Object value = object instanceof VariableVariableNode variable
+                ? variable.fetch(frame, VariableVariableNode.UNSET) : object.execute(frame);
         if (value instanceof PhpObject) {
             unsetOn(frame, value, name(frame));
         }

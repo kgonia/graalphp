@@ -21,3 +21,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Open: a decision |
 | [018](018-unpack-traversable.md) | Unpacking a Traversable fails | Fixed |
 | [019](019-extract-refs.md) | extract() with EXTR_REFS binds values | Fixed |
+| [020](020-variable-variables.md) | Variable variables (`$$name`, `${expr}`) aren't supported | Fixed |

@@ -83,6 +83,7 @@ import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.vars.RefWrites;
 import pl.codeloom.php.nodes.vars.StaticPropNode;
 import pl.codeloom.php.nodes.vars.ThisNode;
+import pl.codeloom.php.nodes.vars.VariableVariableNode;
 import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
@@ -2787,6 +2788,71 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object vars(VirtualFrame frame, Object object, @Bind PhpBytecodeRootNode root) {
             return ObjectVarsNode.objectVars(object, PropNode.callingScope(frame, root.scopeName));
+        }
+    }
+
+    /**
+     * `$$name` fetched for a read (VariableVariableNode.read: R, IS, W for a property's object, ISSET): the call's
+     * variable by name, through its BytecodeScope, made at the first such fetch as an include's.
+     */
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    public static final class VariableValue {
+        @Specialization
+        public static Object read(VirtualFrame frame, int type, Object name, @Bind PhpBytecodeRootNode root,
+                                  @Bind BytecodeNode bytecode, @Bind Node node) {
+            return VariableVariableNode.read(node, root.callScope(frame, bytecode),
+                    frame.getArguments()[PhpFunction.ARG_THIS], VariableVariableNode.name(node, name), type);
+        }
+    }
+
+    /** `$$name` as a place (VariableVariableNode.ref: W, RW, UNSET): its reference, or null for a missing UNSET. */
+    @Operation
+    @ConstantOperand(type = int.class, name = "type")
+    public static final class VariableRef {
+        @Specialization
+        public static Object ref(VirtualFrame frame, int type, Object name, @Bind PhpBytecodeRootNode root,
+                                 @Bind BytecodeNode bytecode, @Bind Node node) {
+            return VariableVariableNode.ref(node, root.callScope(frame, bytecode),
+                    VariableVariableNode.name(node, name), type);
+        }
+    }
+
+    /** `unset($$name)` (ZEND_UNSET_VAR). */
+    @Operation
+    public static final class UnsetVariable {
+        @Specialization
+        public static void unset(VirtualFrame frame, Object name, @Bind PhpBytecodeRootNode root,
+                                 @Bind BytecodeNode bytecode, @Bind Node node) {
+            VariableVariableNode.unset(node, root.callScope(frame, bytecode), VariableVariableNode.name(node, name));
+        }
+    }
+
+    /** `$$name = &place`: the reference, then the variable named bound to it (as BindGlobal). */
+    @Operation
+    public static final class BindVariable {
+        @Specialization
+        public static Object bind(VirtualFrame frame, PhpRef ref, Object name, @Bind PhpBytecodeRootNode root,
+                                  @Bind BytecodeNode bytecode, @Bind Node node) {
+            VariableVariableNode.bind(node, root.callScope(frame, bytecode), VariableVariableNode.name(node, name),
+                    ref);
+            return ref.get();
+        }
+    }
+
+    /**
+     * `global $$name` (zend_compile_global_var of a name that isn't a constant): FETCH_W of the global, then
+     * ASSIGN_REF of the call's variable, each converting the name.
+     */
+    @Operation
+    public static final class GlobalVariable {
+        @Specialization
+        public static void bind(VirtualFrame frame, Object name, @Bind PhpBytecodeRootNode root,
+                                @Bind BytecodeNode bytecode, @Bind Node node) {
+            PhpRef global = (PhpRef) VariableVariableNode.ref(node, null, VariableVariableNode.name(node, name),
+                    VariableVariableNode.W);
+            VariableVariableNode.bind(node, root.callScope(frame, bytecode), VariableVariableNode.name(node, name),
+                    global);
         }
     }
 

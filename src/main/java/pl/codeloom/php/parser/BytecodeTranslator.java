@@ -26,6 +26,7 @@ import pl.codeloom.php.bytecode.PropSite;
 import pl.codeloom.php.bytecode.StaticPropSite;
 import pl.codeloom.php.nodes.expr.UnaryNodes.CastNode;
 import pl.codeloom.php.nodes.vars.GlobalsDimNode;
+import pl.codeloom.php.nodes.vars.VariableVariableNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
@@ -1253,8 +1254,9 @@ public final class BytecodeTranslator {
                     return;
                 }
                 if (refPlace(ast) instanceof RefPlace place) {
-                    // FE_RESET_RW reads a global without creating it: a missing one isn't iterable
-                    place.ref(false);
+                    // FE_RESET_RW reads a global without creating it: a missing one isn't iterable; `$$name`
+                    // is fetched for W, which makes it
+                    place.ref(place.variable);
                     return;
                 }
                 if (ast.is("AST_DIM")) {
@@ -1263,7 +1265,7 @@ public final class BytecodeTranslator {
                 }
                 if (ast.is("AST_PROP")) {
                     b.beginBlock();
-                    Ast property = delayedProp(ast);
+                    Ast property = delayedProp(ast, VariableVariableNode.W);
                     b.beginForeachRefProp(writtenPropSite(property));
                     expression(property.get("expr"));
                     b.endForeachRefProp();
@@ -1519,7 +1521,7 @@ public final class BytecodeTranslator {
                         place.prepare();
                         b.beginCompoundRef(node.flags);
                         expression(node.get("expr"));
-                        place.ref(true);
+                        place.refForUpdate();
                         b.endCompoundRef();
                         b.endBlock();
                         break;
@@ -1530,7 +1532,7 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"));
+                        Ast target = delayedProp(node.node("var"), VariableVariableNode.RW);
                         b.beginCompoundProp(writtenPropSite(target), node.flags);
                         expression(node.get("expr"));
                         expression(target.get("expr"));
@@ -1550,7 +1552,7 @@ public final class BytecodeTranslator {
                     boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
                     if (refPlace(node.node("var")) instanceof RefPlace place) {
                         b.beginIncDecRef(increment, prefix);
-                        place.ref(true);
+                        place.refForUpdate();
                         b.endIncDecRef();
                         break;
                     }
@@ -1560,7 +1562,7 @@ public final class BytecodeTranslator {
                     }
                     if (node.node("var").is("AST_PROP")) {
                         b.beginBlock();
-                        Ast target = delayedProp(node.node("var"));
+                        Ast target = delayedProp(node.node("var"), VariableVariableNode.RW);
                         b.beginIncDecProp(writtenPropSite(target), increment, prefix);
                         expression(target.get("expr"));
                         b.endIncDecProp();
@@ -1940,7 +1942,7 @@ public final class BytecodeTranslator {
                 }
                 case "AST_PROP" -> {
                     b.beginBlock();
-                    Ast property = delayedProp(place);
+                    Ast property = delayedProp(place, VariableVariableNode.W);
                     if (property.get("prop") instanceof String name) {
                         b.beginRefProp(propSite(property, name));
                         expression(property.get("expr"));
@@ -2030,7 +2032,7 @@ public final class BytecodeTranslator {
                 }
                 case "AST_PROP" -> {
                     b.beginBlock();
-                    Ast property = delayedProp(target);
+                    Ast property = delayedProp(target, VariableVariableNode.W);
                     b.beginBindProp(writtenPropSite(property));
                     refOf(place);
                     expression(property.get("expr"));
@@ -2045,7 +2047,11 @@ public final class BytecodeTranslator {
         private void globalStatement(Ast node) {
             Ast target = node.node("var");
             if (!(target.get("name") instanceof String name)) {
-                throw new Unsupported("global by a computed name", node);
+                useCallScope();
+                b.beginGlobalVariable();
+                expression(target.get("name"));
+                b.endGlobalVariable();
+                return;
             }
             b.emitGlobal(variable(target, "global"), name);
         }
@@ -2699,11 +2705,11 @@ public final class BytecodeTranslator {
          * computed name; the node returned stands for the place, its object the chain fetched as the write runs.
          * Emits into the block the caller opened. `?->` on the way is php-src's compile error.
          */
-        private Ast delayedProp(Ast target) {
+        private Ast delayedProp(Ast target, int fetch) {
             if (deepestNullsafe(target) != null) {
                 throw compileError(target, "Can't use nullsafe operator in write context");
             }
-            Object object = delayedObject(target.get("expr"));
+            Object object = delayedObject(target.get("expr"), fetch);
             Object prop = target.get("prop") instanceof String ? target.get("prop") : onceKey(target.get("prop"));
             return withParts(target, "expr", object, "prop", prop);
         }
@@ -2711,23 +2717,27 @@ public final class BytecodeTranslator {
         /**
          * The object of a property place as php-src fetches it (zend_delayed_compile_var): a variable, a property,
          * an element or a static property is read as the write runs, after the value, down a chain whose keys and
-         * computed names are evaluated now; anything else (a call, `new`) is evaluated now.
+         * computed names are evaluated now; anything else (a call, `new`) is evaluated now. A `$$name` is fetched
+         * as the place is (fetch: W, RW or UNSET), its name evaluated now unless a constant or a variable.
          */
-        private Object delayedObject(Object object) {
+        private Object delayedObject(Object object, int fetch) {
             if (!(object instanceof Ast ast)) {
                 return object;
             }
             switch (ast.kind) {
-                case "AST_VAR", "AST_STATIC_PROP", "BYTECODE_OBJECT":
+                case "AST_VAR":
+                    return isVariableVariable(ast) ? new Ast("AST_VAR", fetch, ast.line, ast.endLine, null,
+                            Map.of("name", onceKey(ast.get("name")))) : ast;
+                case "AST_STATIC_PROP", "BYTECODE_OBJECT":
                     return ast;
                 case "AST_PROP":
-                    return delayedProp(ast);
+                    return delayedProp(ast, fetch);
                 case "AST_DIM": {
                     if (ast.get("dim") == null) {
                         // php-src appends a null to write to; read, the tree's error
                         throw new Unsupported("[] as the object of a property written", ast);
                     }
-                    Object container = delayedObject(ast.get("expr"));
+                    Object container = delayedObject(ast.get("expr"), fetch);
                     return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
                 }
                 default:
@@ -2753,7 +2763,7 @@ public final class BytecodeTranslator {
          */
         private void writeProp(Ast target, Object value) {
             b.beginBlock();
-            Ast place = delayedProp(target);
+            Ast place = delayedProp(target, VariableVariableNode.W);
             if (place.get("prop") instanceof String name) {
                 b.beginWriteProp(propSite(place, name));
                 expression(value);
@@ -2775,7 +2785,7 @@ public final class BytecodeTranslator {
          */
         private void writePropElement(Ast target, Object value) {
             b.beginBlock();
-            Ast property = delayedProp(target.node("expr"));
+            Ast property = delayedProp(target.node("expr"), VariableVariableNode.W);
             Object dim = target.get("dim");
             if (!(property.get("prop") instanceof String)) {
                 // `$obj->$name[...] = value`: the name, evaluated now unless a variable, converted after the value
@@ -2818,6 +2828,11 @@ public final class BytecodeTranslator {
                 // php-src's compile error: ?-> in a write context
                 throw new Unsupported("unset with ?->", target);
             }
+            if (isVariableVariable(target.get("expr"))) {
+                target = withParts(target, "expr", new Ast("AST_VAR", VariableVariableNode.UNSET, target.line,
+                        target.endLine, null, Map.of("name", target.node("expr").get("name"))), "prop",
+                        target.get("prop"));
+            }
             Object prop = target.get("prop");
             if (prop instanceof String name) {
                 b.beginUnsetProp(propSite(target, name));
@@ -2851,7 +2866,7 @@ public final class BytecodeTranslator {
             }
             if (refPlace(tested) instanceof RefPlace place) {
                 b.beginIsSetValue();
-                place.readIfSet();
+                place.tested();
                 b.endIsSetValue();
                 return;
             }
@@ -2903,7 +2918,11 @@ public final class BytecodeTranslator {
                 b.emitIssetThis();
             } else {
                 b.beginToBool();
-                readIfSet(tested);
+                if (isVariableVariable(tested)) {
+                    refPlace(tested).tested();
+                } else {
+                    readIfSet(tested);
+                }
                 b.endToBool();
             }
             b.endNot();
@@ -2949,6 +2968,12 @@ public final class BytecodeTranslator {
                         refPlace(ast).readIfSet();
                         return;
                     }
+                    case "AST_VAR" -> {
+                        if (isVariableVariable(ast)) {
+                            refPlace(ast).readIfSet();
+                            return;
+                        }
+                    }
                     case "AST_NULLSAFE_PROP" -> throw new Unsupported("isset of", ast);
                     default -> {
                     }
@@ -2993,7 +3018,7 @@ public final class BytecodeTranslator {
                 // the object's parts evaluated once (php-src's memoized ones), its chain read as isset() reads it,
                 // then fetched again for the write
                 b.beginBlock();
-                Ast place = delayedProp(target);
+                Ast place = delayedProp(target, VariableVariableNode.W);
                 b.beginCoalesce();
                 if (place.get("prop") instanceof String name) {
                     b.beginReadPropIfSet(propSite(place, name));
@@ -3090,7 +3115,11 @@ public final class BytecodeTranslator {
                 return new ElementPlace(variable(base, what + " an element of"), null, null, null, dims);
             }
             if (base.is("AST_PROP")) {
-                Ast property = delayedProp(base);
+                Ast property = delayedProp(base, switch (what) {
+                    case "compound assignment to", "increment of" -> VariableVariableNode.RW;
+                    case "unset of" -> VariableVariableNode.UNSET;
+                    default -> VariableVariableNode.W;
+                });
                 return new ElementPlace(null, property, writtenPropSite(property), null, dims);
             }
             throw new Unsupported(what + " an element of an expression", target);
@@ -3198,7 +3227,7 @@ public final class BytecodeTranslator {
             if (place.ref() != null) {
                 b.beginCompoundRefNested(op);
                 expression(value);
-                place.ref().ref(true);
+                place.ref().refForUpdate();
                 emitKeys(keys);
                 b.endCompoundRefNested();
             } else if (place.variable() != null) {
@@ -3227,7 +3256,7 @@ public final class BytecodeTranslator {
             List<Object> keys = placeKeys(place, true);
             if (place.ref() != null) {
                 b.beginIncDecRefNested(increment, prefix);
-                place.ref().ref(true);
+                place.ref().refForUpdate();
                 emitKeys(keys);
                 b.endIncDecRefNested();
             } else if (place.variable() != null) {
@@ -4106,23 +4135,43 @@ public final class BytecodeTranslator {
         /**
          * A place whose storage is a reference (Translator.place's StaticPropNode, GlobalVarNode, GlobalsDimNode):
          * `Cls::$name`, of a class reference (a name, self, parent, static, an expression); a global by name, a
-         * superglobal or `$GLOBALS['name']` by a constant key (php-src's ZEND_FETCH_GLOBAL of a CONST); or
-         * `$GLOBALS[key]` by a computed key, which names the global when the place is used.
+         * superglobal or `$GLOBALS['name']` by a constant key (php-src's ZEND_FETCH_GLOBAL of a CONST);
+         * `$GLOBALS[key]` by a computed key, which names the global when the place is used; or `$$key`, the call's
+         * variable the key names when the place is used (VariableVariableNode).
          */
         private final class RefPlace {
             private final Object classNode;
             private final StaticPropSite site;
             private final String global;
             private Object key;
+            /** `$$key`, and the fetch type its read has (R, or what the object of a property place gave it). */
+            private final boolean variable;
+            private final int fetch;
             /** A class that is an expression, evaluated by prepare (zend_compile_class_ref fetches it at once). */
             private BytecodeLocal classLocal;
             private boolean prepared;
 
             RefPlace(Object classNode, StaticPropSite site, String global, Object key) {
+                this(classNode, site, global, key, false, VariableVariableNode.R);
+            }
+
+            RefPlace(Object classNode, StaticPropSite site, String global, Object key, boolean variable, int fetch) {
                 this.classNode = classNode;
                 this.site = site;
                 this.global = global;
                 this.key = key;
+                this.variable = variable;
+                this.fetch = fetch;
+                if (variable) {
+                    useCallScope();
+                }
+            }
+
+            /** `$$key` fetched as type says (VariableValue). */
+            private void variableValue(int type) {
+                b.beginVariableValue(type);
+                expression(key);
+                b.endVariableValue();
             }
 
             /**
@@ -4155,7 +4204,9 @@ public final class BytecodeTranslator {
 
             /** The place's value (execute): a missing global is null, a missing static property an Error. */
             void read() {
-                if (site != null) {
+                if (variable) {
+                    variableValue(fetch);
+                } else if (site != null) {
                     b.beginReadStaticProp(site);
                     emitClass();
                     b.endReadStaticProp();
@@ -4170,6 +4221,10 @@ public final class BytecodeTranslator {
 
             /** The value as isset() reads it (readIfSet): null for a missing static property too. */
             void readIfSet() {
+                if (variable) {
+                    variableValue(VariableVariableNode.IS);
+                    return;
+                }
                 if (site == null) {
                     read();
                     return;
@@ -4179,9 +4234,36 @@ public final class BytecodeTranslator {
                 b.endStaticPropIfSet();
             }
 
-            /** The place's reference (makeRef); a missing global made (null) when create says so, else null. */
+            /** isset($place), empty($place): as readIfSet, but `$$key` is looked up only (ISSET_ISEMPTY_VAR). */
+            void tested() {
+                if (variable) {
+                    variableValue(VariableVariableNode.ISSET);
+                } else {
+                    readIfSet();
+                }
+            }
+
+            /** A place read and written (`op=`, `++`): its reference, an undefined `$$key` made after the warning. */
+            void refForUpdate() {
+                if (variable) {
+                    b.beginVariableRef(VariableVariableNode.RW);
+                    expression(key);
+                    b.endVariableRef();
+                } else {
+                    ref(true);
+                }
+            }
+
+            /**
+             * The place's reference (makeRef); a missing global made (null) when create says so, else null; a
+             * `$$key` fetched for W, else for UNSET.
+             */
             void ref(boolean create) {
-                if (site != null) {
+                if (variable) {
+                    b.beginVariableRef(create ? VariableVariableNode.W : VariableVariableNode.UNSET);
+                    expression(key);
+                    b.endVariableRef();
+                } else if (site != null) {
                     b.beginStaticPropRef(site);
                     emitClass();
                     b.endStaticPropRef();
@@ -4195,6 +4277,12 @@ public final class BytecodeTranslator {
             }
 
             void unset() {
+                if (variable) {
+                    b.beginUnsetVariable();
+                    expression(key);
+                    b.endUnsetVariable();
+                    return;
+                }
                 if (site != null) {
                     b.beginUnsetStaticProp(site);
                     emitClass();
@@ -4208,6 +4296,13 @@ public final class BytecodeTranslator {
 
             /** `place = &source` (bindRef): the source's reference, then the place bound to it. */
             void bind(Runnable source) {
+                if (variable) {
+                    b.beginBindVariable();
+                    source.run();
+                    expression(key);
+                    b.endBindVariable();
+                    return;
+                }
                 if (site != null) {
                     b.beginBindStaticProp(site);
                     source.run();
@@ -4244,8 +4339,10 @@ public final class BytecodeTranslator {
                     return new RefPlace(node.get("class"), site, null, null);
                 }
                 case "AST_VAR" -> {
-                    return node.get("name") instanceof String name && PhpContext.SUPERGLOBALS.contains(name)
-                            ? new RefPlace(null, null, name, null) : null;
+                    if (!(node.get("name") instanceof String name)) {
+                        return new RefPlace(null, null, null, node.get("name"), true, node.flags);
+                    }
+                    return PhpContext.SUPERGLOBALS.contains(name) ? new RefPlace(null, null, name, null) : null;
                 }
                 case "AST_DIM" -> {
                     if (!isGlobals(node.get("expr"))) {
@@ -4335,6 +4432,11 @@ public final class BytecodeTranslator {
                 throw new Unsupported(what + " $" + name, node);
             }
             return local;
+        }
+
+        /** `$$name`, `${expr}`: a variable by a name that isn't a constant (no CV). */
+        private boolean isVariableVariable(Object node) {
+            return node instanceof Ast ast && ast.is("AST_VAR") && !(ast.get("name") instanceof String);
         }
 
         /** A plain variable (a CV): no $this, $GLOBALS or superglobal, no variable variable. */
