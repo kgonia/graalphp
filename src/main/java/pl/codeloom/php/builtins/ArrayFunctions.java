@@ -29,10 +29,6 @@ final class ArrayFunctions {
     private ArrayFunctions() {
     }
 
-    /** A key/value pair taken out of an array for sorting. */
-    private record Entry(Object key, Object value) {
-    }
-
     static void register(Registry r) {
         r.fn("array_keys", a -> keys(Args.array(a, 0, "array_keys"), Args.has(a, 1) ? Args.get(a, 1) : null,
                 Args.bool(a, 2, false)));
@@ -243,6 +239,24 @@ final class ArrayFunctions {
         r.fn("array_product", (context, a) -> binop(context, a, "array_product", false));
         r.fn("array_diff_assoc", a -> diffAssoc(a, true));
         r.fn("array_intersect_assoc", a -> diffAssoc(a, false));
+        r.fn("array_udiff", (context, a) -> sortedUserDiff(context, a, "array_udiff", true, true, false, true,
+                false));
+        r.fn("array_uintersect", (context, a) -> sortedUserDiff(context, a, "array_uintersect", false, true, false,
+                true, false));
+        r.fn("array_diff_ukey", (context, a) -> sortedUserDiff(context, a, "array_diff_ukey", true, false, false,
+                false, true));
+        r.fn("array_intersect_ukey", (context, a) -> sortedUserDiff(context, a, "array_intersect_ukey", false, false,
+                false, false, true));
+        r.fn("array_diff_uassoc", (context, a) -> sortedUserDiff(context, a, "array_diff_uassoc", true, false, true,
+                false, true));
+        r.fn("array_intersect_uassoc", (context, a) -> sortedUserDiff(context, a, "array_intersect_uassoc", false,
+                false, true, false, true));
+        r.fn("array_udiff_uassoc", (context, a) -> sortedUserDiff(context, a, "array_udiff_uassoc", true, false,
+                true, true, true));
+        r.fn("array_uintersect_uassoc", (context, a) -> sortedUserDiff(context, a, "array_uintersect_uassoc", false,
+                false, true, true, true));
+        r.fn("array_udiff_assoc", (context, a) -> keyedUserDiff(context, a, "array_udiff_assoc", true));
+        r.fn("array_uintersect_assoc", (context, a) -> keyedUserDiff(context, a, "array_uintersect_assoc", false));
         r.fn("array_rand", a -> rand(Args.array(a, 0, "array_rand"), Args.lng(a, 1, 1)));
         r.fn("shuffle", "1", a -> {
             PhpRef ref = Args.ref(a, 0);
@@ -267,6 +281,9 @@ final class ArrayFunctions {
         r.fn("ksort", "1", (context, a) -> sort(context, a, false, true, false, true));
         r.fn("krsort", "1", (context, a) -> sort(context, a, false, true, true, true));
         r.fn("uksort", "1", (context, a) -> sort(context, a, true, true, false, true));
+        r.fn("natsort", "1", (context, a) -> natsort(context, a, "natsort"));
+        r.fn("natcasesort", "1", (context, a) -> natsort(context, a, "natcasesort"));
+        r.fn("array_multisort", "2*", (context, a) -> multisort(a));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));
@@ -1033,6 +1050,15 @@ final class ArrayFunctions {
         return result;
     }
 
+    private static final long SORT_REGULAR = 0;
+    private static final long SORT_NUMERIC = 1;
+    private static final long SORT_STRING = 2;
+    private static final long SORT_DESC = 3;
+    private static final long SORT_ASC = 4;
+    private static final long SORT_LOCALE_STRING = 5;
+    private static final long SORT_NATURAL = 6;
+    private static final long SORT_FLAG_CASE = 8;
+
     /** A bucket being sorted: its key, raw value and original position (Z_EXTRA, for the stable fallback). */
     private record Sorted(Object key, Object value, int order) {
     }
@@ -1084,18 +1110,30 @@ final class ArrayFunctions {
             Comparator<Sorted> base = byKey ? keyCompare(flags) : dataCompare(flags);
             compare = reverse ? (x, y) -> -base.compare(x, y) : base;
         }
-        Comparator<Sorted> unstable = compare;
-        Comparator<Sorted> stable = (x, y) -> {
+        sortBuckets(ref, array, compare, keepKeys);
+        return true;
+    }
+
+    /** natsort and natcasesort: php_natsort, zend_hash_sort with php_array_natural_compare, the keys kept. */
+    @TruffleBoundary
+    private static Object natsort(PhpContext context, Object[] a, String name) {
+        Args.arity(a, name, 1, 1);
+        PhpRef ref = Args.ref(a, 0);
+        if (!(ref.get() instanceof PhpArray array)) {
+            throw Args.typeError(name, 1, "array", "array", ref.get());
+        }
+        sortBuckets(ref, array, dataCompare(SORT_NATURAL | (name.equals("natcasesort") ? SORT_FLAG_CASE : 0)), true);
+        return true;
+    }
+
+    /** zend_hash_sort: the buckets sorted, ties in their original order, renumbered unless keepKeys. */
+    private static void sortBuckets(PhpRef ref, PhpArray array, Comparator<Sorted> unstable, boolean keepKeys) {
+        Sorted[] buckets = buckets(array);
+        int n = buckets.length;
+        zendSort(buckets, 0, n, (x, y) -> {
             int result = unstable.compare(x, y);
             return result != 0 ? result : Integer.compare(x.order(), y.order());
-        };
-        Sorted[] buckets = new Sorted[array.size()];
-        int n = 0;
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            buckets[n] = new Sorted(array.keyAt(p), array.rawAt(p), n);
-            n++;
-        }
-        zendSort(buckets, 0, n, stable);
+        });
         PhpArray result = PhpArray.ofCapacity(n);
         for (Sorted bucket : buckets) {
             Object key = keepKeys ? bucket.key() : (Object) result.nextIndex();
@@ -1105,8 +1143,341 @@ final class ArrayFunctions {
                 result.put(key, bucket.value());
             }
         }
+        if (keepKeys) {
+            result.setNextIndex(array.nextIndex());
+        }
         ref.set(result);
+    }
+
+    /** The array's buckets in order, with their positions. */
+    private static Sorted[] buckets(PhpArray array) {
+        Sorted[] buckets = new Sorted[array.size()];
+        int n = 0;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            buckets[n] = new Sorted(array.keyAt(p), array.rawAt(p), n);
+            n++;
+        }
+        return buckets;
+    }
+
+    /**
+     * php_array_user_compare_unstable (and its key twin): the callback's result as zval_get_long, its sign; a
+     * false is retried with the operands swapped, a bool deprecated once per call of the built-in.
+     */
+    private static int userCompare(PhpContext context, String name, Callables.Target callback, Object first,
+                                   Object second, boolean[] deprecated) {
+        Object result = callback.call(first, second);
+        if (result instanceof Boolean b) {
+            if (!deprecated[0]) {
+                deprecated[0] = true;
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(name + "(): Returning bool from "
+                        + "comparison function is deprecated, return an integer less than, equal to, or greater than "
+                        + "zero"), SourceLocation.current());
+            }
+            if (!b) {
+                return -Long.signum(Convert.toLong(callback.call(second, first)));
+            }
+        }
+        return Long.signum(Convert.toLong(result));
+    }
+
+    /** An array argument of the diff and intersect functions, whose others are variadic and unnamed. */
+    private static PhpArray arrayArgument(Object[] a, int index, String name) {
+        Object value = Args.get(a, index);
+        if (value instanceof PhpArray array) {
+            return array;
+        }
+        throw new PhpError("TypeError", name + "(): Argument #" + (index + 1) + (index == 0 ? " ($array)" : "")
+                + " must be of type array, " + Args.valueName(value) + " given");
+    }
+
+    /**
+     * php_array_diff_key and php_array_intersect_key with a data callback (array_udiff_assoc,
+     * array_uintersect_assoc): the first array's entries whose key is in (none of / all) the others with a value
+     * the callback finds equal (zval_user_compare).
+     */
+    @TruffleBoundary
+    private static PhpArray keyedUserDiff(PhpContext context, Object[] a, String name, boolean diff) {
+        Args.arity(a, name, 2, Integer.MAX_VALUE);
+        int count = Args.count(a) - 1;
+        Callables.Target callback = Callables.parameter(context, Args.get(a, count),
+                new Callables.Parameter(name, count + 1, false, null));
+        PhpArray[] arrays = new PhpArray[count];
+        for (int i = 0; i < count; i++) {
+            arrays[i] = arrayArgument(a, i, name);
+        }
+        PhpArray result = new PhpArray();
+        for (int p = arrays[0].firstPosition(); p >= 0; p = arrays[0].nextPosition(p)) {
+            Object key = arrays[0].keyAt(p);
+            Object value = arrays[0].valueAt(p);
+            boolean ok = true;
+            for (int i = 1; i < count && ok; i++) {
+                Object data = arrays[i].get(key);
+                boolean equal = data != null
+                        && Long.signum(Convert.toLong(callback.call(value, PhpRef.deref(data)))) == 0;
+                ok = diff ? !equal : equal;
+            }
+            if (ok) {
+                result.put(key, value);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * php_array_diff and php_array_intersect, for the forms with callbacks (array_udiff, array_diff_ukey,
+     * array_diff_uassoc, array_udiff_uassoc and their intersect twins): each array sorted by zend_sort, without
+     * the stable fallback, then the lists walked together. byValue compares values (array_udiff), else keys
+     * first, and with assoc the values of equal keys too. The comparisons go to the "current" callback as
+     * php-src's BG(user_compare_fci), which these functions switch between the two callbacks as php-src does.
+     */
+    @TruffleBoundary
+    private static PhpArray sortedUserDiff(PhpContext context, Object[] a, String name, boolean diff,
+                                           boolean byValue, boolean assoc, boolean userData, boolean userKey) {
+        int callbacks = (userData ? 1 : 0) + (userKey ? 1 : 0);
+        Args.arity(a, name, 1 + callbacks, Integer.MAX_VALUE);
+        int count = Args.count(a) - callbacks;
+        Callables.Target first = Callables.parameter(context, Args.get(a, count),
+                new Callables.Parameter(name, count + 1, false, null));
+        Callables.Target second = callbacks == 2 ? Callables.parameter(context, Args.get(a, count + 1),
+                new Callables.Parameter(name, count + 2, false, null)) : null;
+        Callables.Target dataCallback = userData ? first : null;
+        Callables.Target keyCallback = userKey ? (userData ? second : first) : null;
+        Callables.Target[] active = {byValue ? dataCallback : keyCallback};
+        boolean[] deprecated = {false};
+        Comparator<Sorted> data = userData
+                ? (x, y) -> userCompare(context, name, active[0], PhpRef.deref(x.value()), PhpRef.deref(y.value()),
+                        deprecated)
+                : (x, y) -> Str.compare(Convert.toStr(PhpRef.deref(x.value())), Convert.toStr(PhpRef.deref(y.value())));
+        Comparator<Sorted> key = userKey
+                ? (x, y) -> userCompare(context, name, active[0], x.key(), y.key(), deprecated)
+                : (x, y) -> Str.compare(Convert.toStr(x.key()), Convert.toStr(y.key()));
+        Sorted[][] lists = new Sorted[count][];
+        for (int i = 0; i < count; i++) {
+            lists[i] = buckets(arrayArgument(a, i, name));
+            if (lists[i].length > 1) {
+                zendSort(lists[i], 0, lists[i].length, byValue ? data : key);
+            }
+        }
+        PhpArray result = ((PhpArray) Args.get(a, 0)).copy();
+        Sorted[] list = lists[0];
+        int[] ptrs = new int[count];
+        int c = 0;
+        walk:
+        while (ptrs[0] < list.length) {
+            if (!byValue && userKey) {
+                active[0] = keyCallback;
+            }
+            int i;
+            if (diff) {
+                c = 1;
+                for (i = 1; i < count; i++) {
+                    Sorted[] other = lists[i];
+                    int ptr = ptrs[i];
+                    if (byValue) {
+                        while (ptrs[i] < other.length && 0 < (c = data.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                    } else {
+                        while (ptr < other.length && 0 != (c = key.compare(list[ptrs[0]], other[ptr]))) {
+                            ptr++;
+                        }
+                    }
+                    if (c == 0) {
+                        if (byValue) {
+                            if (ptrs[i] < other.length) {
+                                ptrs[i]++;
+                            }
+                            break;
+                        } else if (assoc) {
+                            if (ptr < other.length) {
+                                if (userData) {
+                                    active[0] = dataCallback;
+                                }
+                                if (data.compare(list[ptrs[0]], other[ptr]) != 0) {
+                                    c = -1;
+                                    if (userKey) {
+                                        active[0] = keyCallback;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                for (i = 1; i < count; i++) {
+                    Sorted[] other = lists[i];
+                    if (byValue) {
+                        while (ptrs[i] < other.length && 0 < (c = data.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                    } else {
+                        while (ptrs[i] < other.length && 0 < (c = key.compare(list[ptrs[0]], other[ptrs[i]]))) {
+                            ptrs[i]++;
+                        }
+                        if (c == 0 && ptrs[i] < other.length && assoc) {
+                            if (userData) {
+                                active[0] = dataCallback;
+                            }
+                            if (data.compare(list[ptrs[0]], other[ptrs[i]]) != 0) {
+                                c = 1;
+                                if (userKey) {
+                                    active[0] = keyCallback;
+                                }
+                            }
+                        }
+                    }
+                    if (ptrs[i] >= other.length) {
+                        // the rest of the first list is missing from this array
+                        while (ptrs[0] < list.length) {
+                            result.remove(list[ptrs[0]++].key());
+                        }
+                        break walk;
+                    }
+                    if (c != 0) {
+                        break;
+                    }
+                    ptrs[i]++;
+                }
+                if (c != 0) {
+                    // not in every array: drop it, and with values the entries ordered before the other's
+                    while (true) {
+                        result.remove(list[ptrs[0]].key());
+                        if (++ptrs[0] >= list.length) {
+                            break walk;
+                        }
+                        if (!byValue || 0 <= data.compare(list[ptrs[0]], lists[i][ptrs[i]])) {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+            if (diff && c == 0) {
+                // in another array: drop it and the entries equal to it
+                while (true) {
+                    result.remove(list[ptrs[0]].key());
+                    if (++ptrs[0] >= list.length) {
+                        break walk;
+                    }
+                    if (!byValue || data.compare(list[ptrs[0] - 1], list[ptrs[0]]) != 0) {
+                        break;
+                    }
+                }
+            } else {
+                // kept: skip the entries equal to it
+                while (true) {
+                    if (++ptrs[0] >= list.length) {
+                        break walk;
+                    }
+                    if (!byValue || data.compare(list[ptrs[0] - 1], list[ptrs[0]]) != 0) {
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * array_multisort(): the arrays sorted together row by row, as SQL's ORDER BY, each in the order and type of
+     * the flags after it; string keys stay, int keys are renumbered.
+     */
+    @TruffleBoundary
+    private static Object multisort(Object[] a) {
+        Args.arity(a, "array_multisort", 1, Integer.MAX_VALUE);
+        List<PhpRef> arrays = new ArrayList<>();
+        List<Comparator<Sorted>> orders = new ArrayList<>();
+        boolean orderAllowed = false;
+        boolean typeAllowed = false;
+        long order = SORT_ASC;
+        long type = SORT_REGULAR;
+        for (int i = 0; i < Args.count(a); i++) {
+            Object arg = Args.get(a, i);
+            String argument = "array_multisort(): Argument #" + (i + 1) + (i == 0 ? " ($array)" : "");
+            if (arg instanceof PhpArray) {
+                if (i > 0) {
+                    orders.add(multisortOrder(type, order));
+                    order = SORT_ASC;
+                    type = SORT_REGULAR;
+                }
+                arrays.add(Args.ref(a, i));
+                orderAllowed = true;
+                typeAllowed = true;
+            } else if (arg instanceof Long flag) {
+                long kind = flag & ~SORT_FLAG_CASE;
+                boolean isOrder = kind == SORT_ASC || kind == SORT_DESC;
+                if (!isOrder && kind != SORT_REGULAR && kind != SORT_NUMERIC && kind != SORT_STRING
+                        && kind != SORT_NATURAL && kind != SORT_LOCALE_STRING) {
+                    throw new PhpError("ValueError", argument + " must be a valid sort flag");
+                }
+                if (isOrder ? !orderAllowed : !typeAllowed) {
+                    throw new PhpError("TypeError", argument
+                            + " must be an array or a sort flag that has not already been specified");
+                }
+                if (isOrder) {
+                    order = flag == SORT_DESC ? SORT_DESC : SORT_ASC;
+                    orderAllowed = false;
+                } else {
+                    type = flag;
+                    typeAllowed = false;
+                }
+            } else {
+                throw new PhpError("TypeError", argument + " must be an array or a sort flag");
+            }
+        }
+        int size = ((PhpArray) arrays.get(0).get()).size();
+        for (PhpRef ref : arrays) {
+            if (((PhpArray) ref.get()).size() != size) {
+                throw new PhpError("ValueError", "Array sizes are inconsistent");
+            }
+        }
+        if (size == 0) {
+            return true;
+        }
+        orders.add(multisortOrder(type, order));
+        int columns = arrays.size();
+        Sorted[][] rows = new Sorted[size][columns];
+        for (int i = 0; i < columns; i++) {
+            Sorted[] column = buckets((PhpArray) arrays.get(i).get());
+            for (int k = 0; k < size; k++) {
+                rows[k][i] = column[k];
+            }
+        }
+        // php_multisort_compare: the columns in turn, then the first column's original order
+        zendSort(rows, 0, size, (x, y) -> {
+            for (int i = 0; i < columns; i++) {
+                int result = orders.get(i).compare(x[i], y[i]);
+                if (result != 0) {
+                    return result > 0 ? 1 : -1;
+                }
+            }
+            return Integer.compare(x[0].order(), y[0].order());
+        });
+        for (int i = 0; i < columns; i++) {
+            PhpArray result = PhpArray.ofCapacity(size);
+            for (Sorted[] row : rows) {
+                Object key = row[i].key() instanceof Long ? (Object) result.nextIndex() : row[i].key();
+                if (row[i].value() instanceof PhpRef r) {
+                    result.putRef(key, r);
+                } else {
+                    result.put(key, row[i].value());
+                }
+            }
+            result.setNextIndex(size);
+            arrays.get(i).set(result);
+        }
         return true;
+    }
+
+    /** php_get_data_compare_func_unstable for an array_multisort column, reversed for SORT_DESC. */
+    private static Comparator<Sorted> multisortOrder(long type, long order) {
+        Comparator<Sorted> compare = dataCompare(type);
+        return order == SORT_DESC ? (x, y) -> -compare.compare(x, y) : compare;
     }
 
     /** php_get_data_compare_func's comparisons (unstable, ascending). */

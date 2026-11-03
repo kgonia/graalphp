@@ -35,8 +35,9 @@ public final class Registry {
     }
 
     /**
-     * A built-in function. refMask marks by-reference parameters by position ('1' = by reference), and a trailing
-     * '*' makes all further parameters by reference.
+     * A built-in function. refMask marks by-reference parameters by position ('1' = by reference, '2' = by
+     * reference if a variable is passed: ZEND_SEND_PREFER_REF), and a trailing '*' makes all further parameters by
+     * reference (prefer-ref after a '2').
      */
     public void fn(String name, String refMask, Builtin body) {
         functions.add(make(name, refMask, body, false, false));
@@ -57,7 +58,7 @@ public final class Registry {
         int count = mask.length() + (variadicRef ? 1 : 0);
         PhpFunction.Param[] params = new PhpFunction.Param[count];
         for (int i = 0; i < mask.length(); i++) {
-            params[i] = new PhpFunction.Param("arg" + i, mask.charAt(i) == '1', false, Boolean.TRUE, (char) 0, true,
+            params[i] = new PhpFunction.Param("arg" + i, mask.charAt(i) != '0', false, Boolean.TRUE, (char) 0, true,
                     null);
         }
         if (variadicRef) {
@@ -66,6 +67,9 @@ public final class Registry {
         PhpFunction function = new PhpFunction(name, params, false, isStatic, true, false,
                 () -> new BuiltinRootNode(language, name, body, method).getCallTarget());
         function.setBuiltin(body);
+        if (mask.indexOf('2') >= 0) {
+            function.setPreferRef();
+        }
         return function;
     }
 
