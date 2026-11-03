@@ -175,6 +175,14 @@ public final class Callables {
         }
     }
 
+    /**
+     * The class "self", "parent" or "static" means in the PHP code calling a built-in (zend_get_executed_scope, its
+     * parent, zend_get_called_scope), or null when that code has none.
+     */
+    public static PhpClass callerClass(PhpContext context, String lowerName) {
+        return namedClass(context, lowerName, false, false);
+    }
+
     /** The PHP code calling: its frame's arguments and the lowercase name of its declaring class (or null). */
     private record Caller(Object[] arguments, String scopeName) {
         Object argument(int index) {

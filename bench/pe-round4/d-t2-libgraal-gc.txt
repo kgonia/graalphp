@@ -1,0 +1,22 @@
+target/p4id/diag/d-t2/server.log: 12632 collections in 82 isolate lives (GC(0) lines), 250.8 s of pauses; largest heap before a collection 1854 MB, after one 561 MB
+     7078     70.9 s  Incremental (Hinted GC)
+     3476     50.1 s  Incremental (Collect on allocation)
+     1821     99.4 s  Full (Hinted GC)
+      257     30.5 s  Full (Collect on allocation)
+  minute: collections, pause s, largest heap after one MB
+     0   1735    28.3     145
+     1   1001    18.5      63
+     2    829    17.6     115
+     3    785    16.2     240
+     4    547    12.1     344
+     5    725    14.8     556
+     6    610    20.8     561
+     7    540    16.8     444
+     8    886    16.1      80
+     9    791    14.0      90
+    10    845    15.1      73
+    11    883    15.0      96
+    12    743    14.6     110
+    13    764    14.1     119
+    14    788    14.3      91
+    15    160     2.5      75

@@ -1,16 +1,12 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.dsl.ReportPolymorphism;
-import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.vars.ClassRefNode;
-import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -18,6 +14,8 @@ import pl.codeloom.php.runtime.PhpObject;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Str;
+
+import java.util.concurrent.locks.Lock;
 
 /**
  * `Cls::m()`, `self::m()`, `parent::m()`, `static::m()`. Forwarding calls (self, parent, static) keep the
@@ -35,7 +33,7 @@ public final class StaticCallNode extends CallNode {
         this.classRef = classRef;
         this.args = args;
         this.forwarding = forwarding;
-        this.dispatch = StaticCallNodeFactory.DispatchNodeGen.create(Str.lower(methodName), Str.of(methodName));
+        this.dispatch = new Dispatch(Str.lower(methodName), Str.of(methodName));
     }
 
     @Override
@@ -54,76 +52,71 @@ public final class StaticCallNode extends CallNode {
     }
 
     /**
-     * Finds a method in a class, inline-cached on the class's key. A missing method goes to __call when the
-     * caller's $this is an instance of the class, else to __callStatic (zend_std_get_static_method).
+     * Finds a method in a class and calls it, looked up per class and called per method found
+     * ({@link MethodLookupNode}, {@link MethodDispatchNode}). A missing method goes to __call when the caller's
+     * $this is an instance of the class, else to __callStatic (zend_std_get_static_method); with neither, the call
+     * is an error before its arguments are evaluated.
      */
-    @ReportPolymorphism
-    public abstract static class Dispatch extends Node {
-        protected final String lowerName;
-        protected final TruffleString calledName;
+    public static final class Dispatch extends Node {
+        private final String lowerName;
+        private final TruffleString calledName;
+        @Child private MethodLookupNode lookup;
+        @Child private MethodDispatchNode call = MethodDispatchNode.create();
+        /** For a missing method: __call and __callStatic called indirectly, made when first needed. */
+        @Child private IndirectCallNode magicCall;
 
-        protected Dispatch(String lowerName, TruffleString calledName) {
+        Dispatch(String lowerName, TruffleString calledName) {
             this.lowerName = lowerName;
             this.calledName = calledName;
+            this.lookup = MethodLookupNode.create(lowerName);
         }
 
-        public abstract Object execute(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
-                                       ArgumentsNode args);
-
-        /** Keyed on the class's language-level identity: the same cache entry serves every context. */
-        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
-        protected Object cached(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
-                                ArgumentsNode args,
-                                @Cached("phpClass.getKey()") ClassKey cachedKey,
-                                @Cached("find(phpClass)") PhpFunction method,
-                                @Cached("createCall(method)") DirectCallNode call,
-                                @Cached IndirectCallNode magicCall) {
-            if (method == null) {
-                return magic(frame, phpClass, self, staticClass, args, magicCall);
+        public Object execute(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
+                              ArgumentsNode args) {
+            PhpFunction method = lookup.execute(phpClass);
+            if (method != null) {
+                return call.execute(frame, method, self, staticClass, args);
             }
-            Object thisObject = method.isStatic() ? null : self;
-            return call.call(args.build(frame, method, thisObject, staticClass, null));
-        }
-
-        @Specialization(replaces = "cached")
-        protected Object generic(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
-                                 ArgumentsNode args, @Cached IndirectCallNode call) {
-            PhpFunction method = find(phpClass);
-            if (method == null) {
-                return magic(frame, phpClass, self, staticClass, args, call);
+            if (magicCall == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                insertMagic();
             }
-            Object thisObject = method.isStatic() ? null : self;
-            return call.call(method.getCallTarget(), args.build(frame, method, thisObject, staticClass, null));
+            return magic(frame, phpClass, self, staticClass, args);
         }
 
         /** __call on the caller's $this (an instance of the class) or __callStatic, with the name as called. */
         private Object magic(VirtualFrame frame, PhpClass phpClass, Object self, PhpClass staticClass,
-                             ArgumentsNode args, IndirectCallNode call) {
-            Object[] values = Callables.magicValues(calledName, args.values(frame));
+                             ArgumentsNode args) {
             PhpFunction viaCall = self != null ? magicMethod(phpClass, "__call") : null;
-            if (viaCall != null) {
-                return call.call(viaCall.getCallTarget(), ArgumentsNode.frameArguments(self, staticClass, null, values));
-            }
-            PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
-            if (viaStatic == null) {
+            PhpFunction viaStatic = viaCall == null ? magicMethod(phpClass, "__callstatic") : null;
+            if (viaCall == null && viaStatic == null) {
                 throw undefined(phpClass);
             }
-            return call.call(viaStatic.getCallTarget(), ArgumentsNode.frameArguments(null, staticClass, null, values));
+            Object[] values = Callables.magicValues(calledName, args.values(frame));
+            if (viaCall != null) {
+                return magicCall.call(viaCall.getCallTarget(),
+                        ArgumentsNode.frameArguments(self, staticClass, null, values));
+            }
+            return magicCall.call(viaStatic.getCallTarget(),
+                    ArgumentsNode.frameArguments(null, staticClass, null, values));
         }
 
-        protected static DirectCallNode createCall(PhpFunction method) {
-            return method == null ? null : DirectCallNode.create(method.getCallTarget());
+        /** Inserted under the AST lock: the AST is shared by contexts that may run on several threads. */
+        private void insertMagic() {
+            Lock lock = getLock();
+            lock.lock();
+            try {
+                if (magicCall == null) {
+                    magicCall = insert(IndirectCallNode.create());
+                }
+            } finally {
+                lock.unlock();
+            }
         }
 
         @TruffleBoundary
         private static PhpFunction magicMethod(PhpClass phpClass, String lowerName) {
             return phpClass.findMethod(lowerName);
-        }
-
-        /** The method, or null when __call or __callStatic stands in for it. */
-        @TruffleBoundary
-        protected PhpFunction find(PhpClass phpClass) {
-            return findStatic(phpClass, lowerName);
         }
 
         /** A static call's method in a class, or null when __call or __callStatic stands in for it; else an Error. */

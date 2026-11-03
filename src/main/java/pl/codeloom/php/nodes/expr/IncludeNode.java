@@ -7,6 +7,7 @@ import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
+import pl.codeloom.php.nodes.FileRootNode;
 import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -46,7 +47,7 @@ public final class IncludeNode extends ExprNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        CallTarget file = resolve(this, path.execute(frame), once);
+        CallTarget file = resolve(this, this, path.execute(frame), once);
         if (file == null) {
             return Boolean.TRUE;
         }
@@ -57,16 +58,22 @@ public final class IncludeNode extends ExprNode {
      * The included file's call target, or null when an _once include finds the file included already. One call
      * for the path's conversion, its resolution and the file's loading, which run once per include: inlined as
      * five calls, they made top-level code with hundreds of includes (wp-settings.php) too large to install.
-     * Also a function's include on bytecode (site: its instruction's node).
+     * Also a function's include on bytecode (site: its instruction's node). includeSite tells the include sites
+     * apart for {@link FileRootNode#includedAgain}: the node itself on the tree; on bytecode the instruction's
+     * IncludeSite, since its bound node is the whole function's BytecodeNode, another object once it goes cached.
      */
     @TruffleBoundary
-    public static CallTarget resolve(Node site, Object pathValue, boolean once) {
+    public static CallTarget resolve(Node site, Object includeSite, Object pathValue, boolean once) {
         PhpContext context = PhpContext.get(site);
         String canonical = context.canonicalPath(Str.java(Convert.toStr(pathValue)));
         if (!context.markIncluded(canonical) && once) {
             return null;
         }
-        return context.loadFile(canonical).getCallTarget();
+        FileRootNode root = context.loadFile(canonical);
+        if (context.includedBefore(canonical, includeSite)) {
+            root.includedAgain();
+        }
+        return root.getCallTarget();
     }
 
     /**

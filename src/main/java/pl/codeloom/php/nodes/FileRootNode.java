@@ -26,6 +26,11 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
         }
         return large == 2;
     }
+    /** {@link RunOnceCode#classify}: 0 not yet, 1 compiled as any code, 2 large and without a loop. */
+    private volatile byte runOnce;
+    /** An include site ran the file twice in one context: it runs a number of times a request that depends on data. */
+    private volatile boolean includedAgain;
+
     private final String path;
     private final boolean internal;
     @Child private StmtNode prologue;
@@ -41,6 +46,31 @@ public final class FileRootNode extends RootNode implements SourceLocation.Code,
         this.internal = internal;
         this.prologue = prologue;
         this.body = body;
+    }
+
+    /** An include site ran the file again in a context where it had run it (IncludeNode). */
+    public void includedAgain() {
+        if (!includedAgain) {
+            includedAgain = true;
+        }
+    }
+
+    /**
+     * Large top-level code without a loop that no include site has run twice in one context runs a number of times a
+     * request bounded by the program's text, and isn't worth compiling ({@link RunOnceCode}); declining it here makes
+     * the compilation a retryable bailout, so it is tried again (and asked again) after Truffle's threshold.
+     */
+    @Override
+    protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {
+        if (includedAgain) {
+            return true;
+        }
+        byte kind = runOnce;
+        if (kind == 0) {
+            kind = RunOnceCode.classify(this);
+            runOnce = kind;
+        }
+        return kind != 2;
     }
 
     @Override

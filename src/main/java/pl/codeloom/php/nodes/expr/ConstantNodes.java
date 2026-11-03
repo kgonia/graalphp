@@ -131,6 +131,55 @@ public final class ConstantNodes {
     }
 
     /**
+     * `defined('NAME')` as php-src compiles it (zend_compile_func_defined into ZEND_DEFINED): a literal name with no
+     * namespace and no class, in a call that names the global function. The name's id is resolved here, and the
+     * test is the context's slot, an exact match as zend_quick_check_constant's: true, false and null are folded by
+     * the translator. A constant is never undefined, so, as ZEND_DEFINED's cache slot keeps the constant found,
+     * the site is true from then on while the language serves one context.
+     */
+    public static final class DefinedNode extends ExprNode {
+        private final int id;
+        /** The constant was found while the language served one context. */
+        @CompilerDirectives.CompilationFinal private boolean found;
+
+        /** id is the name's {@link pl.codeloom.php.PhpLanguage#constantId}. */
+        public DefinedNode(int id) {
+            this.id = id;
+        }
+
+        @Override
+        public boolean isBooleanValued() {
+            return true;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return executeCondition(frame);
+        }
+
+        @Override
+        public boolean executeBoolean(VirtualFrame frame) {
+            return executeCondition(frame);
+        }
+
+        @Override
+        public boolean executeCondition(VirtualFrame frame) {
+            Assumption single = PhpLanguage.get(this).singleContext();
+            if (found && single.isValid()) {
+                return true;
+            }
+            if (PhpContext.get(this).constantAt(id) == null) {
+                return false;
+            }
+            if (!found && single.isValid()) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                found = true;
+            }
+            return true;
+        }
+    }
+
+    /**
      * The value itself, as a compile-time constant while it is always the same object. Only immutable scalars and
      * strings are kept: the AST is shared by contexts, and an array or object belongs to the context that made it.
      * It reports no polymorphism: a second value comes from another context or a redefinition, not from the caller,
