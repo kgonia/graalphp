@@ -228,6 +228,10 @@ public final class Translator {
                 case "AST_CLASS":
                     topLevelClass(statement, classes, body);
                     break;
+                case "AST_LABEL":
+                    fileLabels.add((String) statement.get("name"));
+                    fileLabelTargets.add(body.size());
+                    break;
                 case "AST_STMT_LIST":
                     fileStatements(statement, prologue, classes, body);
                     break;
@@ -275,10 +279,16 @@ public final class Translator {
         // the classes the compile linked, then those bound if their parent is declared by then (EarlyClassNode)
         classes.sort(java.util.Comparator.comparing(early -> ((DeclareNodes.EarlyClassNode) early).isDelayed()));
         prologue.addAll(classes);
-        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), block(body),
+        StmtNode code = fileLabels.isEmpty() ? block(body) : new GotoNodes.LabeledBlockNode(
+                body.toArray(new StmtNode[0]), fileLabels.toArray(new String[0]),
+                fileLabelTargets.stream().mapToInt(Integer::intValue).toArray());
+        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), code,
                 source == null ? null : source.createSection(0, source.getLength()));
     }
 
+    /** The goto labels of a file's top level, braced namespaces and blocks in it included, and their places. */
+    private final List<String> fileLabels = new ArrayList<>();
+    private final List<Integer> fileLabelTargets = new ArrayList<>();
 
     /** The names of the classes this file's compile has linked so far (lowercase), for {@link #topLevelClass}. */
     private final Set<String> linkedClasses = new HashSet<>();
