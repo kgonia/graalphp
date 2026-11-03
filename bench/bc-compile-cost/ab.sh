@@ -26,7 +26,7 @@ case ${1:-} in
     mkdir -p target/bc-d/runs
     for r in $(seq "$rounds"); do
       if [ $((r % 2)) = 1 ]; then order="${variants[*]}"; else order=$(printf '%s\n' "${variants[@]}" | tac | tr '\n' ' '); fi
-      until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
+      until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 10; done
       echo "claude-wordpress-bccompile (wordpress-bccompile): Gate 2 visits round $r of ${variants[*]}, since $(date '+%F %T')" > $CPU_LOCK/note
       trap 'rm -rf $CPU_LOCK' EXIT
       echo "round $r ($order): host CPU before $(host_cpu)%" | tee -a target/bc-d/rounds.txt
@@ -42,7 +42,7 @@ case ${1:-} in
     for f in target/bc-d/runs/jvm-java.*-r[0-9].*; do mv "$f" "$(echo "$f" | sed -E 's/-r([0-9])\./-\1./')"; done ;;
   gate1)
     # Gate 1's kernels (bench/gate1/ab.sh all ITERATIONS ROUNDS): base, fix and the tree, under the CPU lock
-    until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
+    until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 10; done
     echo "claude-wordpress-bccompile (wordpress-bccompile): Gate 1 A/B, since $(date '+%F %T')" > $CPU_LOCK/note
     trap 'rm -rf $CPU_LOCK' EXIT
     echo "Gate 1: host CPU before $(host_cpu)%"

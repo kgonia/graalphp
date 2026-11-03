@@ -995,7 +995,9 @@ with the fixes (the tree 3.30 M and 33.5 MB: what is left is mostly the 2,168 sp
 
 Gate 1's kernels (one diagnosis run each, CPUs 6-13, TraceCompilation): `esc_html`'s last tier 15,874 IR nodes and
 75 KB of code before, 8,849 and 40 KB with the fixes (the tree 7,197 and 30 KB); `_wp_specialchars` 5,961 and 25 KB,
-then 2,627 and 10 KB (the tree 2,456 and 9 KB); `WP_Block_Parser::parse` stays larger (36,981 against 27,567).
+then 2,627 and 10 KB (the tree 2,456 and 9 KB); `WP_Block_Parser::parse` stays larger (36,981 against 27,567). The
+`escape` kernel's gap (1.43 at the flip) is likely mostly this; `blocks`' is not (the parser's graphs stay a third
+larger). Not timed: Gate 1's A/B (`ab.sh gate1 200 4`) waited for the shared CPU lock past this session's end.
 
 **The A/B** (`bench/bc-compile-cost/ab.sh run 3 200 base fix tree`: Gate 2's 200 paced visits from a cold server on
 CPUs 14-21, the CPU lock taken per round, interleaved, the order reversed every round; base is `7363eba`, fix the
@@ -1041,4 +1043,5 @@ Median CPU-s per visit over the visits (the pause included):
 Correctness on the fixed build: `mvn clean package` passes, the smoke tests 141/141 on bytecode
 (`tests/smoke/literal-keys.php` is new: duplicate and int-like keys, the evaluation order, a record's next index,
 by-value and by-reference arguments, compiled and then not; it passes on the tree too), Gate 2's pages 19/21 equal
-to PHP's (the two oEmbed links, as before).
+to PHP's (the two oEmbed links, as before), php-src's `.phpt` 3,397 of 7,341 as on `dsl-processor-patched` (the same
+cases fail).
