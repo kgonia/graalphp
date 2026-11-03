@@ -225,3 +225,22 @@ counting only destructible classes) is acceptable. The runtime counts the PHP ho
 
 **Status:** [destructors.md](destructors.md), [../issues/005-destructors.md](../issues/005-destructors.md);
 after D16.
+
+## D18: observable behaviour exactly as PHP; internals free, speed and memory first (2026-11-03)
+**Decision:** code, libraries and frameworks must behave as on php-src. That covers everything a PHP program can
+observe: output, errors and their messages, destructor timing and order, copy-on-write, references, evaluation
+order. Inside the runtime, php-src's internal logic need not be reproduced where no program can tell the
+difference; there speed and memory come first.
+
+**What that means in practice:**
+- **Exact:** anything a PHP program can see or depend on. A documented deviation there is still a bug (the
+  correct-before-simple rule).
+- **Free:** refcount numbers as `debug_zval_dump` shows them; `gc_status()` counts; when the automatic cycle
+  collector triggers (php-src itself varies it with OPcache's optimizer); whether temporaries are counted;
+  internal data layouts and caches.
+- **Judgement call:** something internal that shows up in output, such as object handle numbers in `var_dump`'s
+  `#n`, follows php-src when it is cheap, and is decided case by case when it isn't.
+
+**Why:** the goal is a faster drop-in PHP (D1). Copying the reference interpreter's internals where nothing can
+observe them only costs speed and memory.
+

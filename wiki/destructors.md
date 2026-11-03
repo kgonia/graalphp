@@ -147,18 +147,20 @@ killed. PEA removes counts only on virtualized values: array literals in inlined
    - a census oracle for test mode: at `gc_collect_cycles()` and before shutdown step 3a, count each value's in-degree from the roots (frames via `iterateFrames`, generators, globals, statics, constants, built-ins' state) and compare it with `rc`;
    - `CowRefs.tla` extended with objects and destruction events.
 
-## Open questions for the owner
-1. **Which php-src configuration is the reference for garbage cycles**, both the collector's moment and the order
-   of destructors within a run, explicit `gc_collect_cycles()` included? OPcache's optimizer changes both
-   *(Opus)*. Proposed: opcode semantics without the optimizer (`opcache.optimization_level=0`), with the
-   optimizer's variation recorded as a property of php-src itself; reference outputs are generated at that
-   setting (the reference image runs with `opcache.enable_cli=On`). Destruction at refcount zero isn't affected.
-2. Must `debug_zval_dump`'s refcounts and `gc_status()`'s numbers match too? If yes, every skipped pair becomes
-   visible and only the naive scheme (option A) remains.
-3. Which `zend.exception_ignore_args` is the default: CLI's 0 or production's 1? It decides how long objects in
-   exception traces live.
-4. **The budget:** about 2–4% warm on Gate 2 and up to 5–8% IR for exactness (F2/F5 were accepted at 4%)?
-5. Ownership moves at once and borrowed read-only parameters after the TLA+ model (Opus's proposal), or both after
-   P1's result?
-6. Values shared between contexts (enums, constants holding objects): uncounted like `FROZEN`, or counted per
-   context?
+## The owner's answers (2026-11-03, D18)
+1. **Garbage cycles:** destructors of garbage cycles run at an explicit `gc_collect_cycles()` and at shutdown, as on
+   php-src. When the automatic collector triggers and the order within one run are internal: php-src varies them
+   itself (OPcache), so the cheapest policy that php-src could also produce wins.
+2. **`debug_zval_dump` refcounts and `gc_status()` numbers need not match.** Every skip, move or borrow that no
+   program can observe is allowed.
+3. **`zend.exception_ignore_args`** comes from the ini, as on PHP (production 1, CLI 0); both work.
+4. **Budget:** not fixed in advance. The counting-only prototype gives the numbers, and the decision follows them.
+   If it is expensive, P2 (borrowed parameters) is measured first.
+5. **Moves and borrows** are internal: whatever is fastest and exact by the argument above.
+6. **Values shared between contexts** (enums, constants holding objects) are uncounted, like `FROZEN` arrays.
+7. **Non-atomic counters:** yes. A context runs on one thread at a time, and shared values are uncounted. Test mode
+   asserts that only the context's owning thread changes a count.
+
+**Why only some objects can't be counted:** memory is still the JVM's GC for every object; the count only decides
+*when* a destructor runs. But any container can receive a destructible object later (`$box`, above), and PHP's
+properties are mostly untyped, so no container can be left uncounted.
