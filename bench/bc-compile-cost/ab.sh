@@ -5,7 +5,8 @@
 # after it. The host's CPU load is logged per run (native.sh: target/bc-d/runs/NAME.host) and before each round.
 # Variants: base (bytecode, target/classes-base), fix (bytecode, target/classes-fix), tree (the tree, classes-fix).
 # - run ROUNDS VISITS VARIANT...; report: tests/gate2/visits_report.py over the runs.
-# Usage: bench/bc-compile-cost/ab.sh run ROUNDS VISITS VARIANT... | report
+# - gate1 ITERATIONS ROUNDS: Gate 1's kernels, base, fix and the tree (fix@-Dpolyglot.php.Interpreter=tree).
+# Usage: bench/bc-compile-cost/ab.sh run ROUNDS VISITS VARIANT... | gate1 ITERATIONS ROUNDS | report
 set -euo pipefail
 export PATH=/usr/bin:/bin:/mingw64/bin:$PATH
 cd "$(dirname "$0")/../.."
@@ -39,6 +40,13 @@ case ${1:-} in
       trap - EXIT
     done
     for f in target/bc-d/runs/jvm-java.*-r[0-9].*; do mv "$f" "$(echo "$f" | sed -E 's/-r([0-9])\./-\1./')"; done ;;
+  gate1)
+    # Gate 1's kernels (bench/gate1/ab.sh all ITERATIONS ROUNDS): base, fix and the tree, under the CPU lock
+    until mkdir $CPU_LOCK 2> /dev/null; do echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; sleep 60; done
+    echo "claude-wordpress-bccompile (wordpress-bccompile): Gate 1 A/B, since $(date '+%F %T')" > $CPU_LOCK/note
+    trap 'rm -rf $CPU_LOCK' EXIT
+    echo "Gate 1: host CPU before $(host_cpu)%"
+    AB_OUT=target/bc-d/gate1 bash bench/gate1/ab.sh all $2 $3 base fix fix@-Dpolyglot.php.Interpreter=tree ;;
   report) python -I tests/gate2/visits_report.py target/bc-d/runs jvm-java.tree jvm-java.base jvm-java.fix ;;
   *) sed -n 2,9p "$0"; exit 2 ;;
 esac

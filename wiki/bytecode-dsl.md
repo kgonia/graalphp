@@ -997,6 +997,47 @@ Gate 1's kernels (one diagnosis run each, CPUs 6-13, TraceCompilation): `esc_htm
 75 KB of code before, 8,849 and 40 KB with the fixes (the tree 7,197 and 30 KB); `_wp_specialchars` 5,961 and 25 KB,
 then 2,627 and 10 KB (the tree 2,456 and 9 KB); `WP_Block_Parser::parse` stays larger (36,981 against 27,567).
 
+**The A/B** (`bench/bc-compile-cost/ab.sh run 3 200 base fix tree`: Gate 2's 200 paced visits from a cold server on
+CPUs 14-21, the CPU lock taken per round, interleaved, the order reversed every round; base is `7363eba`, fix the
+two commits, the tree on the fix's build; medians of 3 rounds, the range in parentheses). The host's CPU outside the
+server: round 1's base run at a median of 99 % (other people's processes; its cold visit took 21 s), every other run
+at 41-51 %. The warm medians hold without that run (base 0.664-0.694 s and 4.31-4.76 CPU-s in the other two).
+
+| | cold home page s | cold visit: wait s / CPU-s | warm wait per visit s (last 50) | warm CPU-s per visit (last 50) | memory.peak MB, after the cold visit / warm |
+|---|---|---|---|---|---|
+| tree | 4.54 (4.32-6.87) | 5.72 / 31.2 | 0.600 (0.586-0.651) | 1.63 (1.49-1.78) | 904 / 1,280 (1,253-1,331) |
+| bytecode, `7363eba` | 7.27 (6.69-14.46) | 11.41 / 63.9 | 0.690 (0.664-0.694) | 4.57 (4.31-4.76) | 1,060 / 1,867 (1,774-2,004) |
+| bytecode, both fixes | 6.95 (6.87-7.17) | 10.93 / 60.9 | **0.594** (0.582-0.677) | **1.28** (1.24-1.54) | 1,076 / **1,471** (1,343-1,560) |
+
+Median CPU-s per visit over the visits (the pause included):
+
+| visits | 2 | 3 | 4-5 | 6-10 | 11-20 | 21-30 | 31-50 | 51-75 | 76-100 | 101-125 | 126-150 | 151-200 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| tree | 11.13 | 10.09 | 8.34 | 5.63 | 4.44 | 4.37 | 4.33 | 4.38 | 4.93 | 3.28 | 1.72 | 1.38 |
+| bytecode, `7363eba` | 27.08 | 17.68 | 14.71 | 6.22 | 5.18 | 5.08 | 4.50 | 5.05 | 4.55 | 4.06 | 3.77 | 4.63 |
+| bytecode, both fixes | 24.45 | 14.47 | 10.76 | 6.96 | 5.53 | 4.95 | 4.40 | 4.29 | 4.10 | 3.76 | 4.34 | 0.97 |
+
+- **The warm visits now cost the tree's CPU or less**: 1.28 CPU-s against 4.57 before and the tree's 1.63, and wait
+  as long as the tree's (0.594 against 0.600 s; every page within 2-5 % of the tree's, `login` faster). Bytecode's
+  compile queue now empties within the 200 visits, about 25 visits after the tree's; before, it never did.
+- **memory.peak falls by 400 MB** (1,867 to 1,471 MB; the tree 1,280): less code and smaller graphs in libgraal.
+- **Not the cold visit**: 10.9 against 11.4 s (the tree 5.7); its CPU is the interpreter's first runs and the
+  HotSpot compiler's work on the interpreter itself (the diagnosis' cold window: 31 CPU-s on HotSpot's compiler
+  threads against the tree's 23), which these fixes don't touch.
+
+**Proposals, ranked by the expected gain on Gate 2's warm CPU and its time to settle:**
+1. **`8225a73`** (PR #29, one annotation): the `add_filter` chain's split copies were about +90 s of 904 s of compile
+   time here, the largest part left; the audit measured -9 % warm CPU on Gate 2 with it before these fixes. With the
+   queue now emptying, it should move the moment it empties earlier, by about a tenth of the compile work; the
+   trade-off with Gate 1's `hooks` stays the owner's.
+2. **Why `ResolveFunction`'s callee is no constant at `SendVar`** (a cached specialization's value, read back from
+   the operand stack as a Pi). If it were one, every argument operation and `Call`'s identity check would fold
+   without caches of their own. Small: the other argument shapes measured within 30 % of the tree.
+3. **Built-ins compiled in place on bytecode** (the tree's `Intrinsics`): Gate 1 measured them as most of hooks' and
+   kses' gap; on Gate 2 they are calls, then inlined call targets at tier 2.
+4. **The cold visit** (10.9 against 5.7 s): the HotSpot compiler compiling the generated interpreter, and PE's cost
+   per node (1.3-2.5 times the tree's). Native image removes the first; the second is the DSL's loop.
+
 Correctness on the fixed build: `mvn clean package` passes, the smoke tests 141/141 on bytecode
 (`tests/smoke/literal-keys.php` is new: duplicate and int-like keys, the evaluation order, a record's next index,
 by-value and by-reference arguments, compiled and then not; it passes on the tree too), Gate 2's pages 19/21 equal
