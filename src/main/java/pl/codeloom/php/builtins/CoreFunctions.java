@@ -3,9 +3,15 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.parser.zend.CompilerGlobals;
+import pl.codeloom.php.parser.zend.ZendScannerBase;
+import pl.codeloom.php.parser.zend.generated.ZendLanguageParser;
+import pl.codeloom.php.parser.zend.generated.ZendLanguageScanner;
+import pl.codeloom.php.parser.zend.zval;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
+import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
@@ -388,6 +394,32 @@ final class CoreFunctions {
         r.fn("floor", a -> Math.floor(Convert.toDouble(Args.get(a, 0))));
         r.fn("ceil", a -> Math.ceil(Convert.toDouble(Args.get(a, 0))));
         r.fn("round", a -> round(Convert.toNumber(Args.get(a, 0)), Args.lng(a, 1, 0)));
+        r.fn("highlight_string", (context, a) -> {
+            Args.arity(a, "highlight_string", 1, 2);
+            byte[] code = Str.readBytes(Args.string(context, a, 0, "highlight_string", "string", false));
+            boolean capture = Args.has(a, 1) && Args.bool(context, a, 1, "highlight_string", "return");
+            return highlighted(context, highlight(context, code), capture);
+        });
+        for (String name : new String[]{"highlight_file", "show_source"}) {
+            r.fn(name, (context, a) -> {
+                Args.arity(a, name, 1, 2);
+                String file = path(context, a, name);
+                boolean capture = Args.has(a, 1) && Args.bool(context, a, 1, name, "return");
+                byte[] code = FileFunctions.readForZend(context, name, file);
+                if (code == null) {
+                    ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(name + "(): Failed opening '" + file
+                            + "' for highlighting"), SourceLocation.current());
+                    return Boolean.FALSE;
+                }
+                return highlighted(context, highlight(context, code), capture);
+            });
+        }
+        r.fn("php_strip_whitespace", (context, a) -> {
+            Args.arity(a, "php_strip_whitespace", 1, 1);
+            byte[] code = FileFunctions.readForZend(context, "php_strip_whitespace",
+                    path(context, a, "php_strip_whitespace"));
+            return code == null ? Str.EMPTY : strip(code);
+        });
         // math.c: the C library's functions on Z_PARAM_DOUBLE arguments. Math's (HotSpot's intrinsics) round as glibc's
         // more often than StrictMath's (fdlibm's), which stands in where Math has no intrinsic
         math(r, "sin", Math::sin);
@@ -1001,5 +1033,115 @@ final class CoreFunctions {
             return x / 0.0;
         }
         return Math.copySign(t, x);
+    }
+
+    /** Z_PARAM_PATH: a string without NUL bytes. */
+    private static String path(PhpContext context, Object[] a, String function) {
+        String name = Str.java(Args.string(context, a, 0, function, "filename", false));
+        if (name.indexOf(0) >= 0) {
+            throw new PhpError("ValueError", function + "(): Argument #1 ($filename) must not contain any null bytes");
+        }
+        return name;
+    }
+
+    private static Object highlighted(PhpContext context, byte[] html, boolean capture) {
+        if (capture) {
+            return Str.of(html);
+        }
+        context.write(Str.of(html));
+        return Boolean.TRUE;
+    }
+
+    /** zend_html_puts: the text with <, > and & escaped and tabs as four spaces. */
+    private static void htmlPuts(ByteBuilder out, byte[] s, int from, int length) {
+        for (int i = from; i < from + length; i++) {
+            switch (s[i]) {
+                case '<' -> out.writeAscii("&lt;");
+                case '>' -> out.writeAscii("&gt;");
+                case '&' -> out.writeAscii("&amp;");
+                case '\t' -> out.writeAscii("    ");
+                default -> out.write(s[i]);
+            }
+        }
+    }
+
+    /**
+     * zend_highlight on php-src's scanner: each token in a span of its kind's highlight.* color (html, comment,
+     * default, string, keyword: a token without a value), whitespace in the span before it. The scanner's errors
+     * are discarded (highlight_string runs with error_reporting E_ERROR).
+     */
+    private static byte[] highlight(PhpContext context, byte[] code) {
+        String[] colors = new String[5];
+        String[] names = {"html", "comment", "default", "string", "keyword"};
+        for (int i = 0; i < 5; i++) {
+            colors[i] = context.ini().get("highlight." + names[i]);
+        }
+        ByteBuilder out = new ByteBuilder(code.length * 2);
+        out.writeAscii("<pre><code style=\"color: " + colors[0] + "\">");
+        ZendScannerBase scanner = new ZendLanguageScanner(new CompilerGlobals(), code);
+        zval token = new zval();
+        int last = 0;
+        for (int type; (type = scanner.lex_scan(token, null)) != 0; ) {
+            int next = switch (type) {
+                case ZendLanguageParser.Lexer.T_INLINE_HTML -> 0;
+                case ZendLanguageParser.Lexer.T_COMMENT, ZendLanguageParser.Lexer.T_DOC_COMMENT -> 1;
+                case ZendLanguageParser.Lexer.T_OPEN_TAG, ZendLanguageParser.Lexer.T_OPEN_TAG_WITH_ECHO,
+                     ZendLanguageParser.Lexer.T_CLOSE_TAG, ZendLanguageParser.Lexer.T_LINE,
+                     ZendLanguageParser.Lexer.T_FILE, ZendLanguageParser.Lexer.T_DIR,
+                     ZendLanguageParser.Lexer.T_TRAIT_C, ZendLanguageParser.Lexer.T_METHOD_C,
+                     ZendLanguageParser.Lexer.T_FUNC_C, ZendLanguageParser.Lexer.T_PROPERTY_C,
+                     ZendLanguageParser.Lexer.T_NS_C, ZendLanguageParser.Lexer.T_CLASS_C -> 2;
+                case '"', ZendLanguageParser.Lexer.T_ENCAPSED_AND_WHITESPACE,
+                     ZendLanguageParser.Lexer.T_CONSTANT_ENCAPSED_STRING -> 3;
+                case ZendLanguageParser.Lexer.T_WHITESPACE -> -1;
+                default -> token.value == zval.UNDEF ? 4 : 2;
+            };
+            if (next >= 0 && next != last) {
+                if (last != 0) {
+                    out.writeAscii("</span>");
+                }
+                last = next;
+                if (last != 0) {
+                    out.writeAscii("<span style=\"color: " + colors[last] + "\">");
+                }
+            }
+            htmlPuts(out, scanner.yy_input, scanner.yy_text, scanner.yy_leng);
+        }
+        if (last != 0) {
+            out.writeAscii("</span>");
+        }
+        out.writeAscii("</code></pre>");
+        return out.toByteArray();
+    }
+
+    /** zend_strip: the tokens without comments, a run of whitespace as one space, a newline after a heredoc. */
+    private static TruffleString strip(byte[] code) {
+        ByteBuilder out = new ByteBuilder(code.length);
+        ZendScannerBase scanner = new ZendLanguageScanner(new CompilerGlobals(), code);
+        zval token = new zval();
+        boolean space = false;
+        for (int type; (type = scanner.lex_scan(token, null)) != 0; ) {
+            if (type == ZendLanguageParser.Lexer.T_WHITESPACE) {
+                if (!space) {
+                    out.write(' ');
+                    space = true;
+                }
+                continue;
+            }
+            if (type == ZendLanguageParser.Lexer.T_COMMENT || type == ZendLanguageParser.Lexer.T_DOC_COMMENT) {
+                continue;
+            }
+            out.write(scanner.yy_input, scanner.yy_text, scanner.yy_leng);
+            space = false;
+            if (type == ZendLanguageParser.Lexer.T_END_HEREDOC) {
+                // the following character, a newline or ;
+                if (scanner.lex_scan(token, null) != ZendLanguageParser.Lexer.T_WHITESPACE) {
+                    out.write(scanner.yy_input, scanner.yy_text, scanner.yy_leng);
+                }
+                out.write('\n');
+                space = true;
+            }
+        }
+        return Str.of(out.toByteArray());
     }
 }

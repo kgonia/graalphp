@@ -1219,7 +1219,7 @@ final class FileFunctions {
             Args.arity(a, "parse_ini_file", 1, 3);
             String name = Str.java(Args.string(context, a, 0, "parse_ini_file", "filename", false));
             if (name.indexOf(0) >= 0) {
-                throw new PhpError("TypeError", "parse_ini_file(): Argument #1 ($filename) must not contain any null "
+                throw new PhpError("ValueError", "parse_ini_file(): Argument #1 ($filename) must not contain any null "
                         + "bytes");
             }
             boolean sections = iniSections(context, a, "parse_ini_file");
@@ -1227,21 +1227,8 @@ final class FileFunctions {
             if (name.isEmpty()) {
                 throw new PhpError("ValueError", "parse_ini_file(): Argument #1 ($filename) must not be empty");
             }
-            byte[] text;
-            try {
-                // php_resolve_path: through the include path ("."), then beside the running script
-                TruffleFile file = file(context, name);
-                if (!file.exists() && !file.isAbsolute() && !name.startsWith("./") && !name.startsWith("../")) {
-                    TruffleFile beside = file(context, SourceLocation.current().file()).resolveSibling(name);
-                    file = beside.exists() ? beside : file;
-                }
-                text = file.readAllBytes();
-            } catch (IOException e) {
-                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("parse_ini_file(" + name
-                        + "): Failed to open stream: " + MailFunctions.reason(e)), SourceLocation.current());
-                return Boolean.FALSE;
-            }
-            return IniParser.parse(context, text, sections, mode, name);
+            byte[] text = readForZend(context, "parse_ini_file", name);
+            return text == null ? Boolean.FALSE : IniParser.parse(context, text, sections, mode, name);
         });
         r.fn("md5_file", (context, a) -> digestFile(context, "MD5", a));
         r.fn("sha1_file", (context, a) -> digestFile(context, "SHA-1", a));
@@ -1386,6 +1373,26 @@ final class FileFunctions {
 
     private static TruffleFile file(PhpContext context, String name) {
         return context.getEnv().getPublicTruffleFile(name);
+    }
+
+    /**
+     * A file as zend_stream_open reads it for the scanners (php_stream_open_for_zend_ex): through the include path
+     * ("."), then beside the running script (php_resolve_path); null after the warning if it can't be read.
+     */
+    @TruffleBoundary
+    static byte[] readForZend(PhpContext context, String function, String name) {
+        try {
+            TruffleFile file = file(context, name);
+            if (!file.exists() && !file.isAbsolute() && !name.startsWith("./") && !name.startsWith("../")) {
+                TruffleFile beside = file(context, SourceLocation.current().file()).resolveSibling(name);
+                file = beside.exists() ? beside : file;
+            }
+            return file.readAllBytes();
+        } catch (IOException e) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(" + name
+                    + "): Failed to open stream: " + MailFunctions.reason(e)), SourceLocation.current());
+            return null;
+        }
     }
 
     private static boolean iniSections(PhpContext context, Object[] a, String function) {

@@ -59,6 +59,11 @@ public final class Ini {
         directives.put("fatal_error_backtraces", new Directive("1", ALL));
         directives.put("expose_php", new Directive("1", SYSTEM));
         directives.put("file_uploads", new Directive("1", SYSTEM));
+        directives.put("highlight.comment", new Directive("#FF8000", ALL));
+        directives.put("highlight.default", new Directive("#0000BB", ALL));
+        directives.put("highlight.html", new Directive("#000000", ALL));
+        directives.put("highlight.keyword", new Directive("#007700", ALL));
+        directives.put("highlight.string", new Directive("#DD0000", ALL));
         directives.put("html_errors", new Directive("1", ALL));
         directives.put("ignore_repeated_errors", new Directive("0", ALL));
         directives.put("ignore_repeated_source", new Directive("0", ALL));
