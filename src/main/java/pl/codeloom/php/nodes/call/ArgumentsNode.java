@@ -8,8 +8,10 @@ import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
+import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.nodes.vars.FileVarNode;
 import pl.codeloom.php.nodes.vars.LocalVarNode;
+import pl.codeloom.php.nodes.vars.ThisNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
@@ -27,8 +29,9 @@ public final class ArgumentsNode extends Node {
     @Children private final ExprNode[] args;
     @CompilationFinal(dimensions = 1) private final boolean[] spread;
     /**
-     * The arguments that are calls (zend_is_call: also of built-ins compiled in place): a by-reference parameter
-     * takes the reference a callee returning by reference returned, else the value with a notice.
+     * The arguments that are calls (zend_is_call: not of built-ins compiled in place), `new`, include and yield
+     * (IS_VAR results): a by-reference parameter takes the reference a callee returning by reference returned, else
+     * the value with a notice.
      */
     @CompilationFinal(dimensions = 1) private final boolean[] calls;
     private final boolean hasSpread;
@@ -60,15 +63,35 @@ public final class ArgumentsNode extends Node {
         arguments[PhpFunction.ARG_STATIC] = staticClass;
         arguments[PhpFunction.ARG_CLOSURE] = closure;
         for (int i = 0; i < args.length; i++) {
-            if (callee.isByRef(i) && args[i] instanceof LValueNode place) {
-                arguments[PhpFunction.ARG_FIRST + i] = place.makeRef(frame);
-            } else if (calls[i] && callee.isByRef(i)) {
-                arguments[PhpFunction.ARG_FIRST + i] = refArgument(frame, args[i]);
-            } else {
-                arguments[PhpFunction.ARG_FIRST + i] = args[i].execute(frame);
-            }
+            arguments[PhpFunction.ARG_FIRST + i] = send(frame, i, callee, i);
         }
         return arguments;
+    }
+
+    /**
+     * Argument i at a parameter position: for a by-reference parameter a place's reference, a call's
+     * (SEND_VAR_NO_REF), the reference `$a = &$b` assigned, $this as a value; any other value is php-src's Error
+     * (SEND_VAL_EX), once evaluated.
+     */
+    private Object send(VirtualFrame frame, int i, PhpFunction callee, int position) {
+        if (!callee.isByRef(position)) {
+            return args[i].execute(frame);
+        }
+        if (args[i] instanceof LValueNode place) {
+            return place.makeRef(frame);
+        }
+        if (calls[i]) {
+            return refArgument(frame, args[i]);
+        }
+        if (args[i] instanceof AssignNodes.RefAssignNode assign) {
+            return assign.executeRef(frame);
+        }
+        Object value = args[i].execute(frame);
+        // ponytail: `$x = &f()` as an argument is sent as its value, unchecked
+        if (!(args[i] instanceof ThisNode) && !(args[i] instanceof AssignNodes.CallRefAssignNode)) {
+            throw CallNode.cannotPassByRef(callee, position);
+        }
+        return value;
     }
 
     /**
@@ -109,13 +132,7 @@ public final class ArgumentsNode extends Node {
         for (int i = 0; i < args.length; i++) {
             int position = size(list);
             if (!spread[i]) {
-                if (callee.isByRef(position) && args[i] instanceof LValueNode place) {
-                    add(list, place.makeRef(frame));
-                } else if (calls[i] && callee.isByRef(position)) {
-                    add(list, refArgument(frame, args[i]));
-                } else {
-                    add(list, args[i].execute(frame));
-                }
+                add(list, send(frame, i, callee, position));
                 continue;
             }
             Object value = args[i].execute(frame);

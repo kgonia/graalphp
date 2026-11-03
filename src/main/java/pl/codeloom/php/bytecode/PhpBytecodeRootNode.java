@@ -55,6 +55,7 @@ import pl.codeloom.php.nodes.call.FrameArgNode;
 import pl.codeloom.php.nodes.call.FunctionRootNode;
 import pl.codeloom.php.nodes.call.InstantiateNode;
 import pl.codeloom.php.nodes.call.MethodCallNode;
+import pl.codeloom.php.nodes.call.NewNode;
 import pl.codeloom.php.nodes.call.StaticCallNode;
 import pl.codeloom.php.nodes.expr.ArrayLiteralNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
@@ -197,6 +198,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
     @CompilationFinal private String className;
     @CompilationFinal private String scopeName;
+    /** A closure's body, whose calling scope is the class the closure is bound to (in its frame). */
+    @CompilationFinal private boolean closure;
     /** A generator function: `function &gen()` yields references; whether its body has a finally block. */
     @CompilationFinal private boolean generatorByRef;
     @CompilationFinal private boolean generatorHasFinally;
@@ -231,6 +234,24 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.foreachStates = foreachLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
+        this.closure = functionName.startsWith("{closure");
+    }
+
+    /**
+     * php-src's executed scope here (zend_get_executed_scope; lowercase, or null): a closure's bound class, else the
+     * class the function is declared in.
+     */
+    public String callingScope(VirtualFrame frame) {
+        return closure ? PropNode.callingScope(frame, scopeName) : scopeName;
+    }
+
+    public boolean isClosure() {
+        return closure;
+    }
+
+    /** Whether the scope a cache entry was made for is still the calling one. */
+    public boolean sameScope(VirtualFrame frame, String scope) {
+        return java.util.Objects.equals(callingScope(frame), scope);
     }
 
     /** Makes this the root of a function returning by reference. */
@@ -1300,8 +1321,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** A property as the base of an element chain written (PropNode.arrayForWrite), else the object it holds. */
     private static Object propertyForWrite(VirtualFrame frame, PropNode access, Object object, String name) {
-        PhpArray array = access.arrayForWriteOn(frame.getArguments(), object, name);
-        return array != null ? array : access.readOn(frame.getArguments(), object, name);
+        return access.containerForWriteOn(frame.getArguments(), object, name);
     }
 
     /**
@@ -1664,13 +1684,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `Cls::$name = &place` (StaticPropNode.bindRef): the reference made, then the tree's Error. */
+    /** `Cls::$name = &place` (StaticPropNode.bindRef): the reference made, then the class's property bound to it. */
     @Operation
     @ConstantOperand(type = StaticPropSite.class)
     public static final class BindStaticProp {
         @Specialization
-        public static Object bind(StaticPropSite site, PhpRef ref) {
-            throw StaticPropNode.bindError();
+        public static Object bind(StaticPropSite site, PhpRef ref, PhpClass phpClass, @Bind Node node) {
+            StaticPropNode.bind(node, phpClass, site.name, ref);
+            return ref.get();
         }
     }
 
@@ -2053,14 +2074,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpArray array = Locals.arrayForWrite(frame, variable, bytecode, node, sharedArray, refArray,
                     createdArray);
             if (array == null) {
-                throw overloadedElement();
+                return DimNode.overloadedRef(node, Variables.value(Locals.stored(frame, variable, bytecode)), key);
             }
             return array.refAt(toKey.execute(key));
-        }
-
-        @TruffleBoundary
-        private static PhpError overloadedElement() {
-            return new PhpError("Indirect modification of overloaded element");
         }
     }
 
@@ -2227,6 +2243,22 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * A value that is neither a variable nor a call as argument index (SEND_VAL_EX): php-src's Error, once the
+     * value is evaluated, when the callee's parameter is by reference.
+     */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class SendValue {
+        @Specialization
+        public static Object send(int index, PhpFunction function, Object value) {
+            if (function.isByRef(index)) {
+                throw CallNode.cannotPassByRef(function, index);
+            }
+            return value;
+        }
+    }
+
     @Operation
     @ConstantOperand(type = int.class)
     public static final class SendCall {
@@ -2340,18 +2372,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ResolveCallable {
         @Specialization
-        public static Callables.Target resolve(Object callable, @Bind Node node) {
-            return Callables.resolveCall(PhpContext.get(node), callable);
+        public static Callables.Target resolve(VirtualFrame frame, Object callable, @Bind Node node,
+                                               @Bind PhpBytecodeRootNode root) {
+            return Callables.resolveCall(PhpContext.get(node), callable, root.callingScope(frame));
         }
     }
 
-    /** What `$obj->$name(args)` calls (DynamicMethodCallNode): the callable [$obj, name], the name a string. */
+    /**
+     * What `$obj->$name(args)` calls (DynamicMethodCallNode): the callable [$obj, name]; ZEND_INIT_METHOD_CALL's
+     * Errors for a name that isn't a string and a value that isn't an object.
+     */
     @Operation
     public static final class ResolveDynamicMethod {
         @Specialization
-        public static Callables.Target resolve(Object object, Object name, @Bind Node node,
-                                               @Cached ToStrNode toStr) {
-            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, toStr.execute(name)));
+        public static Callables.Target resolve(VirtualFrame frame, Object object, Object name, @Bind Node node,
+                                               @Bind PhpBytecodeRootNode root) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            if (!(object instanceof PhpObject) && !(object instanceof PhpClosure)) {
+                throw MethodCallNode.memberOnNonObject(Str.java(method), object);
+            }
+            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, method),
+                    root.callingScope(frame));
         }
     }
 
@@ -2773,8 +2816,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ConvertMethod {
         @Specialization
-        public static Object convert(Object object, Object name, @Cached ToStrNode toStr) {
-            return CallableConvertNodes.MethodNode.convert(object, Str.java(toStr.execute(name)));
+        public static Object convert(VirtualFrame frame, Object object, Object name,
+                                     @Bind PhpBytecodeRootNode root) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return CallableConvertNodes.MethodNode.convert(object, Str.java(method), root.callingScope(frame));
         }
     }
 
@@ -2787,11 +2834,45 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "forwarding")
     public static final class ConvertStatic {
         @Specialization
-        public static Object convert(VirtualFrame frame, String name, boolean forwarding, PhpClass phpClass) {
+        public static Object convert(VirtualFrame frame, String name, boolean forwarding, PhpClass phpClass,
+                                     @Bind PhpBytecodeRootNode root) {
             Object[] caller = frame.getArguments();
             Object called = caller[PhpFunction.ARG_STATIC];
             return CallableConvertNodes.StaticMethodNode.convert(phpClass, caller[PhpFunction.ARG_THIS],
-                    forwarding && called instanceof PhpClass calledClass ? calledClass : phpClass, name);
+                    forwarding && called instanceof PhpClass calledClass ? calledClass : phpClass, name,
+                    root.callingScope(frame));
+        }
+    }
+
+    /** `Cls::$name(...)`: as ConvertStatic, the name computed; php-src's Error for one that isn't a string. */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "forwarding")
+    public static final class ConvertStaticNamed {
+        @Specialization
+        public static Object convert(VirtualFrame frame, boolean forwarding, PhpClass phpClass, Object name,
+                                     @Bind PhpBytecodeRootNode root) {
+            if (!(name instanceof TruffleString method)) {
+                throw MethodCallNode.nameNotString();
+            }
+            return ConvertStatic.convert(frame, Str.java(method), forwarding, phpClass, root);
+        }
+    }
+
+    /**
+     * What `Cls::$name(args)` calls (StaticCallNode.target), found before the arguments; CallValue calls it. forwarding:
+     * self::, parent::, static::, which keep the caller's called class.
+     */
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "forwarding")
+    public static final class ResolveStaticCall {
+        @Specialization
+        public static Callables.Target resolve(VirtualFrame frame, boolean forwarding, PhpClass phpClass, Object name,
+                                               @Bind PhpBytecodeRootNode root) {
+            Object[] caller = frame.getArguments();
+            PhpClass called = forwarding && caller[PhpFunction.ARG_STATIC] instanceof PhpClass callerStatic
+                    ? callerStatic : phpClass;
+            return StaticCallNode.target(phpClass, name, caller[PhpFunction.ARG_THIS], called,
+                    root.callingScope(frame));
         }
     }
 
@@ -2799,8 +2880,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ConvertValue {
         @Specialization
-        public static Object convert(Object callable, @Bind Node node) {
-            return CallableConvertNodes.ValueNode.convert(PhpContext.get(node), callable);
+        public static Object convert(VirtualFrame frame, Object callable, @Bind Node node,
+                                     @Bind PhpBytecodeRootNode root) {
+            return CallableConvertNodes.ValueNode.convert(PhpContext.get(node), callable, root.callingScope(frame));
         }
     }
 
@@ -2842,38 +2924,49 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = MethodSite.class)
     public static final class ResolveMethod {
-        @Specialization(guards = "receiver.getPhpClass().getKey() == cachedKey", limit = "4")
-        public static PhpFunction cached(MethodSite site, PhpObject receiver,
+        /**
+         * Per class key, as long as the answer follows from it (keyed) and, in a closure whose bound scope may
+         * change, the scope is the entry's or doesn't matter (scoped: the method's visibility or a private method
+         * of a scope decides). In a method the scope is the declaring class: both fold.
+         */
+        @Specialization(guards = {"receiver.getPhpClass().getKey() == cachedKey", "keyed",
+                "!scoped || root.sameScope(frame, cachedScope)"}, limit = "4", excludeForUncached = true)
+        public static PhpFunction cached(VirtualFrame frame, MethodSite site, PhpObject receiver,
+                                         @Bind PhpBytecodeRootNode root,
                                          @Cached("receiver.getPhpClass().getKey()") ClassKey cachedKey,
-                                         @Cached("find(site, receiver.getPhpClass())") PhpFunction method) {
+                                         @Cached("root.callingScope(frame)") String cachedScope,
+                                         @Cached("site.isKeyed(receiver.getPhpClass(), cachedScope)") boolean keyed,
+                                         @Cached("site.isScoped(root, receiver.getPhpClass())") boolean scoped,
+                                         @Cached("find(site, receiver.getPhpClass(), cachedScope)") PhpFunction method) {
             return method;
         }
 
         @Specialization(replaces = "cached")
-        public static PhpFunction object(MethodSite site, PhpObject receiver) {
-            return find(site, receiver.getPhpClass());
+        public static PhpFunction object(VirtualFrame frame, MethodSite site, PhpObject receiver,
+                                         @Bind PhpBytecodeRootNode root) {
+            return find(site, receiver.getPhpClass(), root.callingScope(frame));
         }
 
+        /** A Closure's __invoke is its function (unless __call stands in for it); its other methods take values. */
         @Specialization
         public static PhpFunction closure(MethodSite site, PhpClosure receiver) {
-            return MethodSite.BY_VALUE;
+            return site.lowerName.equals("__invoke") && receiver.getMagicName() == null ? receiver.getFunction()
+                    : MethodSite.BY_VALUE;
         }
 
         @Fallback
         public static PhpFunction other(MethodSite site, Object receiver) {
-            throw MethodCallNode.memberOnNonObject(site.lowerName, receiver);
+            throw MethodCallNode.memberOnNonObject(site.name, receiver);
         }
 
-        public static PhpFunction find(MethodSite site, PhpClass phpClass) {
-            PhpFunction method = MethodCallNode.Dispatch.findMethod(phpClass, site.lowerName);
-            return isMagic(phpClass, site.lowerName) ? MethodSite.BY_VALUE : method;
-        }
-
-        @TruffleBoundary
-        private static boolean isMagic(PhpClass phpClass, String lowerName) {
-            return phpClass.findMethod(lowerName) == null;
+        /** The method from the scope (zend_std_get_method), BY_VALUE for __call standing in for it. */
+        public static PhpFunction find(MethodSite site, PhpClass phpClass, String scope) {
+            PhpFunction method = phpClass.methodFrom(site.name, scope);
+            return method == null ? MethodSite.BY_VALUE : method;
         }
     }
+
+
 
     /**
      * `$obj->name(args)` once the arguments are sent: $this is the receiver unless the method is static, the
@@ -2886,23 +2979,33 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallMethod {
         @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
-        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object direct(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
-            PhpObject object = (PhpObject) receiver;
-            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : object;
-            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : receiver;
+            arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             return result(callNode.call(arguments), keepRef);
         }
 
         @Specialization(guards = "!isByValue(function)", replaces = "direct")
-        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                       @Shared @Cached IndirectCallNode callNode) {
-            PhpObject object = (PhpObject) receiver;
-            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : object;
-            arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
+            arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : receiver;
+            arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
+            return result(callNode.call(function.getCallTarget(), arguments), keepRef);
+        }
+
+        /** `$closure->__invoke(args)`: the closure's function, as `$closure(args)` calls it (CallValue). */
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite site, boolean keepRef, PhpClosure receiver, PhpFunction function,
+                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Shared @Cached IndirectCallNode callNode) {
+            PhpObject self = receiver.getBoundThis();
+            arguments[PhpFunction.ARG_THIS] = self;
+            arguments[PhpFunction.ARG_STATIC] = self != null ? self.getPhpClass() : receiver.getScope();
+            arguments[PhpFunction.ARG_CLOSURE] = receiver;
             return result(callNode.call(function.getCallTarget(), arguments), keepRef);
         }
 
@@ -2916,7 +3019,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     return result(callNode.call(closure.getFunction().getCallTarget(),
                             CallableDispatchNode.closureArguments(closure, values)), keepRef);
                 }
-                return result(MethodCallNode.closureMethod(node, site.lowerName, closure, values), keepRef);
+                return result(MethodCallNode.closureMethod(node, site.name, closure, values), keepRef);
             }
             PhpObject object = (PhpObject) receiver;
             PhpClass phpClass = object.getPhpClass();
@@ -2936,7 +3039,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallMethodSpread {
         @Specialization(guards = {"!isByValue(function)", "function == cachedFunction"}, limit = "4")
-        public static Object direct(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object direct(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                     SpreadArguments arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
@@ -2945,9 +3048,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Specialization(guards = "!isByValue(function)", replaces = "direct")
-        public static Object indirect(MethodSite site, boolean keepRef, Object receiver, PhpFunction function,
+        public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
             return CallMethod.indirect(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
+        }
+
+        @Specialization(guards = "!isByValue(function)")
+        public static Object invoke(MethodSite site, boolean keepRef, PhpClosure receiver, PhpFunction function,
+                                    SpreadArguments arguments, @Shared @Cached IndirectCallNode callNode) {
+            return CallMethod.invoke(site, keepRef, receiver, function, arguments.frameArguments(), callNode);
         }
 
         @Specialization(guards = "isByValue(function)")
@@ -2985,21 +3094,54 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = MethodSite.class)
     public static final class ResolveStaticMethod {
-        @Specialization(guards = "phpClass.getKey() == cachedKey", limit = "4")
-        public static PhpFunction cached(MethodSite site, PhpClass phpClass,
+        /** Cached as ResolveMethod's lookup. */
+        @Specialization(guards = {"phpClass.getKey() == cachedKey", "keyed",
+                "!scoped || root.sameScope(frame, cachedScope)"}, limit = "4", excludeForUncached = true)
+        public static PhpFunction cached(VirtualFrame frame, MethodSite site, PhpClass phpClass,
+                                         @Bind PhpBytecodeRootNode root,
                                          @Cached("phpClass.getKey()") ClassKey cachedKey,
-                                         @Cached("find(site, phpClass)") PhpFunction method) {
-            return method;
+                                         @Cached("root.callingScope(frame)") String cachedScope,
+                                         @Cached("site.isKeyed(phpClass, cachedScope)") boolean keyed,
+                                         @Cached("site.isScoped(root, phpClass)") boolean scoped,
+                                         @Cached("find(site, phpClass, cachedScope)") PhpFunction method,
+                                         @Shared @Cached SubclassTestNode subclassTest) {
+            return checked(frame, site, phpClass, method, subclassTest);
         }
 
         @Specialization(replaces = "cached")
-        public static PhpFunction generic(MethodSite site, PhpClass phpClass) {
-            return find(site, phpClass);
+        public static PhpFunction generic(VirtualFrame frame, MethodSite site, PhpClass phpClass,
+                                          @Bind PhpBytecodeRootNode root,
+                                          @Shared @Cached SubclassTestNode subclassTest) {
+            return checked(frame, site, phpClass, find(site, phpClass, root.callingScope(frame)), subclassTest);
         }
 
-        public static PhpFunction find(MethodSite site, PhpClass phpClass) {
-            PhpFunction method = StaticCallNode.Dispatch.findStatic(phpClass, site.lowerName);
+        /**
+         * The method from the scope (zend_std_get_static_method), BY_VALUE when __call or __callStatic stands in;
+         * `Cls::__construct()` is the class's constructor, unchecked (INIT_STATIC_METHOD_CALL without a name).
+         */
+        public static PhpFunction find(MethodSite site, PhpClass phpClass, String scope) {
+            PhpFunction method = site.constructor ? StaticCallNode.constructorOf(phpClass)
+                    : phpClass.staticMethodFrom(site.name, scope);
             return method == null ? MethodSite.BY_VALUE : method;
+        }
+
+        /**
+         * A non-static method needs the caller's $this, an instance of the class; a private constructor, a $this of
+         * its own class.
+         */
+        private static PhpFunction checked(VirtualFrame frame, MethodSite site, PhpClass phpClass,
+                                           PhpFunction method, SubclassTestNode subclassTest) {
+            if (MethodSite.byValue(method) || method.isStatic()) {
+                return method;
+            }
+            Object[] caller = frame.getArguments();
+            if (site.constructor) {
+                StaticCallNode.checkPrivateConstructor(phpClass, method, caller[PhpFunction.ARG_THIS]);
+            }
+            if (CallStatic.callerThis(caller, phpClass, subclassTest) == null) {
+                throw PhpClass.nonStaticCall(method);
+            }
+            return method;
         }
     }
 
@@ -3044,7 +3186,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    PhpFunction function,
                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                    @Shared @Cached IndirectCallNode callNode,
-                                   @Shared @Cached SubclassTestNode subclassTest) {
+                                   @Shared @Cached SubclassTestNode subclassTest,
+                                   @Bind PhpBytecodeRootNode root) {
             Object[] caller = frame.getArguments();
             Object self = callerThis(caller, phpClass, subclassTest);
             PhpClass staticClass = staticClass(site, caller, phpClass);
@@ -3056,7 +3199,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             PhpFunction viaStatic = magicMethod(phpClass, "__callstatic");
             if (viaStatic == null) {
-                throw StaticCallNode.Dispatch.undefined(phpClass, site.lowerName);
+                throw phpClass.callError(site.name, root.callingScope(frame));
             }
             return result(callNode.call(viaStatic.getCallTarget(),
                     ArgumentsNode.frameArguments(null, staticClass, null, values)), keepRef);
@@ -3111,9 +3254,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object magic(VirtualFrame frame, MethodSite site, boolean keepRef, PhpClass phpClass,
                                    PhpFunction function, SpreadArguments arguments,
                                    @Shared @Cached IndirectCallNode callNode,
-                                   @Shared @Cached SubclassTestNode subclassTest) {
+                                   @Shared @Cached SubclassTestNode subclassTest,
+                                   @Bind PhpBytecodeRootNode root) {
             return CallStatic.magic(frame, site, keepRef, phpClass, function, arguments.frameArguments(), callNode,
-                    subclassTest);
+                    subclassTest, root);
         }
 
         public static boolean isByValue(PhpFunction function) {
@@ -3174,21 +3318,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = boolean.class, name = "cacheable")
     public static final class ClassConstant {
-        @Specialization(guards = {"cacheable", "phpClass == cachedClass"}, limit = "1",
+        /** A constant that isn't public, read in a closure (whose bound scope may change), is looked up per call. */
+        @Specialization(guards = {"cacheable", "phpClass == cachedClass", "!scoped"}, limit = "1",
                 assumptions = "singleContext()", excludeForUncached = true)
-        public static Object single(String name, boolean cacheable, PhpClass phpClass,
+        public static Object single(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("phpClass") PhpClass cachedClass,
-                                    @Cached("classConstant(cachedClass, name)") Object value) {
+                                    @Cached("scoped(root, cachedClass, name)") boolean scoped,
+                                    @Cached("classConstant(cachedClass, name, root.callingScope(frame))") Object value) {
             return value;
         }
 
         @Specialization(replaces = "single")
-        public static Object perCall(String name, boolean cacheable, PhpClass phpClass) {
-            return ConstantNodes.classConstant(phpClass, name);
+        public static Object perCall(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
+                                     @Bind PhpBytecodeRootNode root) {
+            return ConstantNodes.classConstant(phpClass, name, root.callingScope(frame));
         }
 
-        public static Object classConstant(PhpClass phpClass, String name) {
-            return ConstantNodes.classConstant(phpClass, name);
+        public static Object classConstant(PhpClass phpClass, String name, String scope) {
+            return ConstantNodes.classConstant(phpClass, name, scope);
+        }
+
+        public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
+            return root.isClosure() && phpClass.isRestrictedConstant(name);
         }
 
         public static Assumption singleContext() {
@@ -3324,9 +3476,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     public static final class ResolveConstructor {
         @Specialization
-        public static PhpFunction constructor(PhpObject object) {
+        public static PhpFunction constructor(VirtualFrame frame, PhpObject object, @Bind PhpBytecodeRootNode root) {
             PhpFunction constructor = object.getPhpClass().getConstructor();
-            return constructor == null ? MethodSite.BY_VALUE : constructor;
+            if (constructor == null) {
+                return MethodSite.BY_VALUE;
+            }
+            if (!constructor.isPublic()) {
+                NewNode.checkConstructor(object.getPhpClass(), constructor, root.callingScope(frame));
+            }
+            return constructor;
         }
     }
 
@@ -3799,10 +3957,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The reference of the element keys name from base (made writable), or of a new element (append). */
     private static PhpRef elementRef(Node node, Object base, Object[] keys, boolean append,
                                      ElementNodes.ArrayKeyNode toKey, ElementNodes.ElementReadNode read) {
-        int levels = append ? keys.length : keys.length - 1;
-        Object container = ElementChain.forWrite(node, base, keys, levels, toKey, read);
+        int levels = keys.length - 1;
+        Object container = ElementChain.forWrite(node, base, keys, append ? keys.length : levels, toKey, read);
         if (!(container instanceof PhpArray array)) {
-            throw ElementChain.overloaded();
+            return DimNode.overloadedRef(node, container, append ? PhpNull.NULL : keys[levels]);
         }
         return append ? array.appendRef() : array.refAt(toKey.execute(keys[levels]));
     }

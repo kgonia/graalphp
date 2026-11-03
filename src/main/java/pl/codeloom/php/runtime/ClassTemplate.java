@@ -31,7 +31,7 @@ public final class ClassTemplate {
     }
 
     /** A class constant: its value, or a {@link Deferred} initializer. */
-    public record Constant(String name, Object value) implements Member {
+    public record Constant(String name, Object value, int visibility) implements Member {
     }
 
     /**
@@ -55,8 +55,11 @@ public final class ClassTemplate {
     public record TraitUse(List<String> traits, List<Alias> aliases, List<Exclusion> exclusions) implements Member {
     }
 
-    /** `[Trait::]method as [visibility] alias`; alias is null when only the visibility changes. */
-    public record Alias(String trait, String method, String alias) {
+    /**
+     * `[Trait::]method as [visibility] alias`; alias is null when only the visibility changes. modifiers: the
+     * ZEND_ACC_* visibility and final it gives, or 0.
+     */
+    public record Alias(String trait, String method, String alias, int modifiers) {
     }
 
     /** `Trait::method insteadof Other, ...`: the method of the listed traits is not imported. */
@@ -210,7 +213,7 @@ public final class ClassTemplate {
             }
             phpClass.addMethod(method.function());
         } else if (member instanceof Constant constant) {
-            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass));
+            phpClass.addConstant(constant.name(), bind(constant.value(), phpClass), constant.visibility());
         } else if (member instanceof Property property) {
             Object initial = bind(property.initial(), phpClass);
             if (property.isStatic()) {
@@ -390,17 +393,22 @@ public final class ClassTemplate {
                 if (member instanceof Method method) {
                     PhpFunction function = method.function();
                     String lower = Str.lower(function.getName());
+                    PhpFunction adapted = function;
                     for (Alias alias : use.aliases()) {
-                        if (alias.alias() != null && alias.method().equals(lower)
+                        if (alias.method().equals(lower)
                                 && (alias.trait() == null || alias.trait().equalsIgnoreCase(traitLower))) {
-                            phpClass.addMethod(alias.alias(), function);
+                            if (alias.alias() != null) {
+                                phpClass.addMethod(alias.alias(), function.withAliasModifiers(alias.modifiers()));
+                            } else {
+                                adapted = function.withAliasModifiers(alias.modifiers());
+                            }
                         }
                     }
                     if (own.contains(lower) || excluded(use, traitLower, lower)
                             || function.isAbstract() && phpClass.findMethod(lower) != null) {
                         continue;
                     }
-                    add(phpClass, member);
+                    add(phpClass, adapted == function ? member : new Method(adapted, method.promoted()));
                 } else if (member instanceof TraitUse nested) {
                     useTraits(context, phpClass, nested, own);
                 } else {
