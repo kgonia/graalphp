@@ -160,6 +160,21 @@ final class Dump {
         }
     }
 
+    /** __debugInfo()'s array as a property table (zend_std_get_debug_info), its keys as strings. */
+    private static Object[] debugTable(PhpObject object) {
+        if (!(PhpRef.deref(object.callMethod("__debuginfo")) instanceof PhpArray debug)) {
+            throw new PhpError("__debuginfo() must return an array");
+        }
+        Object[] table = new Object[debug.size() * 2];
+        int i = 0;
+        for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
+            Object key = debug.keyAt(p);
+            table[i++] = key instanceof Long l ? l.toString() : Str.key((TruffleString) key);
+            table[i++] = debug.rawAt(p);
+        }
+        return table;
+    }
+
     /**
      * A property table key after its "[", as php_object_property_dump (quoted) and print_hash write it: the name, then
      * ":protected" or the private one's ":Class:private".
@@ -341,7 +356,8 @@ final class Dump {
             }
             spaces(indent);
             ascii("(\n");
-            Object[] table = object.propertyTable();
+            Object[] table = object.getPhpClass().findMethod("__debuginfo") != null ? debugTable(object)
+                    : object.propertyTable();
             for (int i = 0; i < table.length; i += 2) {
                 spaces(indent + 4);
                 property((String) table[i], false);
