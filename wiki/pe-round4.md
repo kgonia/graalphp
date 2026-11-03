@@ -25,7 +25,8 @@ Then whether the Bytecode DSL interpreter has the same problems.
    only target 1 moves anything measurable at steady state (memory); targets 2 and 3 are within ±5% noise there.
 5. **Correctness:** 4 new smoke tests pinning PHP 8.5 (the dispatch's and `defined()`'s cases), every smoke test equal,
    Gate 2's pages 19 of 21 (the known oEmbed link), the WooCommerce walk as the base's, php-src `.phpt` no new failure
-   (7 more passing from this branch, 64 with main's merge), Gate 1's checksums equal. Found on the way: `issues/012-014`
+   (7 more passing from this branch, 64 with main's merge), Gate 1's checksums equal (its timing is open:
+   section 5). Found on the way: `issues/012-014`
    (class constant and method visibility, namespaced intrinsics).
 6. **The bytecode interpreter** already dispatches per method and reports no polymorphism there, and keeps file
    tops and thunks on the tree (target 1 applies); `defined()` would need porting to it.
@@ -304,7 +305,11 @@ The kernels' checksums equal PHP's on every iteration of every run. **This A/B d
 change isn't on the kernels' hot paths (WordPress's files call `defined()` there only outside the kernels' loops),
 yet it reads 14% slower on hooks and 24% on blocks, while t1, which contains t3, reads 6% and 11%; the
 four rounds ran beside other agents' work on the box (the bytecode A/B of `wordpress-bcdefault` started as this one
-ended). GATE1MORE
+ended).
+A rerun of base against t1 alone, 8 rounds, was queued for after the final checks; the CPUs' lock was held by
+another agent's A/B from 00:41 until this page was written (02:45), so it didn't run (`runs.sh gate1` with
+`GATE1_BUILDS="base t1" ROUNDS=8` repeats it). Gate 1's timing of round 4 is therefore open: the four-build A/B
+neither shows a gain nor separates a loss from the box's noise.
 
 ## 6. The Bytecode DSL interpreter
 The Bytecode DSL interpreter (`PhpBytecodeRootNode`, `BytecodeTranslator`, on main since the merge) translates
