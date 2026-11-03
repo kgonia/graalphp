@@ -507,7 +507,6 @@ public final class PcreFunctions {
 
     /** pcre_handle_exec_error: maps a PCRE2 match error to preg_last_error(). */
     private void execError(int rc) {
-        System.err.println("DEBUG rc " + rc);
         if (rc == -47) {
             lastError = 2;
         } else if (rc == -53) {
