@@ -283,7 +283,7 @@ final class ArrayFunctions {
         r.fn("uksort", "1", (context, a) -> sort(context, a, true, true, false, true));
         r.fn("natsort", "1", (context, a) -> natsort(context, a, "natsort"));
         r.fn("natcasesort", "1", (context, a) -> natsort(context, a, "natcasesort"));
-        r.fn("array_multisort", "1*", (context, a) -> multisort(a));
+        r.fn("array_multisort", "2*", (context, a) -> multisort(a));
 
         // ---- internal pointer ----
         r.fn("current", a -> current(Args.get(a, 0)));
