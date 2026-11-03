@@ -577,11 +577,16 @@ public final class PhpClass {
         int[] flags = new int[properties.size()];
         int i = 0;
         for (PropertyDecl decl : properties.values()) {
-            flags[i++] = (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
-                    : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
-                    ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0);
+            flags[i++] = propertyFlags(decl);
         }
         return flags;
+    }
+
+    /** The shape flags of a declared property in an object of this class. */
+    public int propertyFlags(PropertyDecl decl) {
+        return (decl.visibility() == PropertyDecl.PROTECTED ? PROPERTY_PROTECTED
+                : decl.visibility() == PropertyDecl.PRIVATE && lowerName.equals(decl.declaringClass())
+                ? PROPERTY_PRIVATE : 0) | (decl.type() != null ? PROPERTY_TYPED : 0);
     }
 
     /**

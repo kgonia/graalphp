@@ -129,7 +129,7 @@ final class Dump {
                     throw new PhpError("__debuginfo() must return an array");
                 }
                 ascii(common + "object(");
-                utf8(object.getPhpClass().getName());
+                utf8(object.getPhpClass().getName().split("\0", 2)[0]);
                 ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
                 for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
                     spaces(level + 1);
@@ -144,7 +144,7 @@ final class Dump {
             PhpClass phpClass = object.getPhpClass();
             Object[] table = object.propertyTable();
             ascii(common + "object(");
-            utf8(phpClass.getName());
+            utf8(phpClass.getName().split("\0", 2)[0]);
             ascii(")#" + object.id() + " (" + table.length / 2 + ") {\n");
             int t = 0;
             for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {

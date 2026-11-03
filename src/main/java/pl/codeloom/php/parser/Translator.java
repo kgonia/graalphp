@@ -1438,7 +1438,9 @@ public final class Translator {
                 for (Object child : member.node("props").children()) {
                     Ast element = (Ast) child;
                     String propertyName = Str.sourceKey((String) element.get("name"));
-                    PhpType type = propertyType(member.node("type"), className, propertyName);
+                    // a hooked property (not supported yet) stays untyped: its variance and state are its hooks'
+                    PhpType type = element.get("hooks") != null ? null
+                            : propertyType(member.node("type"), className, propertyName);
                     Object initial = element.get("default") == null ? type == null ? PhpNull.NULL : null
                             : constantOrDeferred(element.get("default"));
                     if (type != null && initial != null && !(initial instanceof ClassTemplate.Deferred)) {

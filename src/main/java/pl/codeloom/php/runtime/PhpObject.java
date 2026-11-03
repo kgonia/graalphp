@@ -172,9 +172,16 @@ public final class PhpObject extends DynamicObject {
         return DynamicObjectLibrary.getUncached().getOrDefault(this, name, null);
     }
 
+    /** Stores the property; an uninitialized typed one gets its declaration's flags. */
     @TruffleBoundary
     public void setProperty(String name, Object value) {
-        DynamicObjectLibrary.getUncached().put(this, name, value);
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        if (decl != null && decl.type() != null && !library.containsKey(this, name)) {
+            library.putWithFlags(this, name, value, phpClass.propertyFlags(decl));
+        } else {
+            library.put(this, name, value);
+        }
     }
 
     @TruffleBoundary

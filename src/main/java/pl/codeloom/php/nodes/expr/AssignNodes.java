@@ -9,6 +9,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.nodes.ToStrNode;
@@ -42,13 +43,13 @@ public final class AssignNodes {
             return AssignNodesFactory.AssignNodeGen.create(target, value);
         }
 
-        @Specialization
+        @Specialization(guards = "!isProperty()")
         protected long assignLong(VirtualFrame frame, long value) {
             target.writeLong(frame, value);
             return value;
         }
 
-        @Specialization
+        @Specialization(guards = "!isProperty()")
         protected double assignDouble(VirtualFrame frame, double value) {
             target.writeDouble(frame, value);
             return value;
@@ -56,8 +57,16 @@ public final class AssignNodes {
 
         @Specialization(replaces = {"assignLong", "assignDouble"})
         protected Object assign(VirtualFrame frame, Object value) {
+            if (target instanceof PropNode property) {
+                // a typed property's converted value is the result
+                return property.assign(frame, value);
+            }
             target.write(frame, value);
             return value;
+        }
+
+        protected boolean isProperty() {
+            return target instanceof PropNode;
         }
     }
 
@@ -316,7 +325,14 @@ public final class AssignNodes {
         @Specialization(replaces = "longs")
         protected Object generic(VirtualFrame frame, Object old) {
             Object updated = stepped(this, old, increment);
-            getTarget().write(frame, updated);
+            if (getTarget() instanceof PropNode property) {
+                if (old instanceof Long && updated instanceof Double) {
+                    property.incDecOverflow(frame, increment);
+                }
+                updated = property.assign(frame, updated);
+            } else {
+                getTarget().write(frame, updated);
+            }
             return prefix ? updated : old;
         }
 

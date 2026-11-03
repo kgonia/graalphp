@@ -1438,8 +1438,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            access.writeOn(frame, object, site.name, value);
-            return value;
+            return access.writeOn(frame, object, site.name, value);
         }
     }
 
@@ -1451,8 +1450,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object write(VirtualFrame frame, PropSite site, Object value, String name, Object object,
                                    @Cached(value = "site.create()", uncached = "site.uncached()",
                                            neverDefault = true) PropNode access) {
-            access.writeOn(frame, object, name, value);
-            return value;
+            return access.writeOn(frame, object, name, value);
         }
     }
 
@@ -1474,8 +1472,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpObject target = propertyTarget(object, site.name, "assign");
             TruffleString left = currentToStr.execute(access.readOn(frame, target, site.name));
             TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
-            access.writeOn(frame, target, site.name, result);
-            return result;
+            return access.writeOn(frame, target, site.name, result);
         }
 
         @Specialization(guards = "op != 8")
@@ -1485,8 +1482,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpObject target = propertyTarget(object, site.name, "assign");
             Object result = AssignNodes.CompoundAssignNode.apply(node, op, access.readOn(frame, target, site.name),
                     operand);
-            access.writeOn(frame, target, site.name, result);
-            return result;
+            return access.writeOn(frame, target, site.name, result);
         }
     }
 
@@ -1506,7 +1502,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpObject target = propertyTarget(object, site.name, "increment/decrement");
             Object old = access.readOn(frame, target, site.name);
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
-            access.writeOn(frame, target, site.name, updated);
+            if (old instanceof Long && updated instanceof Double) {
+                PropNode.incDecOverflow(target, site.name, increment);
+            }
+            updated = access.writeOn(frame, target, site.name, updated);
             return prefix ? updated : old;
         }
     }

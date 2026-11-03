@@ -277,7 +277,9 @@ public final class PhpType {
     @TruffleBoundary
     public static String declaringName(PhpClass.PropertyDecl decl) {
         PhpClass declaring = PhpContext.get(null).findClass(decl.declaringClass());
-        return declaring != null ? declaring.getName() : decl.declaringClass();
+        String name = declaring != null ? declaring.getName() : decl.declaringClass();
+        // %s stops at an anonymous class's NUL
+        return name.split("\0", 2)[0];
     }
 
     /** zend_type_to_string_resolved: static as the called class (if any), null as ?T for a single type. */

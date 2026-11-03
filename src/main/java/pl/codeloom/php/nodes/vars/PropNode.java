@@ -291,15 +291,8 @@ public final class PropNode extends LValueNode {
         if (converted instanceof PhpArray array) {
             array.addHolder();
         }
-        DynamicObjectLibrary.getUncached().putWithFlags(phpObject, name, converted, flagsOf(phpObject, decl));
+        phpObject.setProperty(name, converted);
         return true;
-    }
-
-    private static int flagsOf(PhpObject phpObject, PhpClass.PropertyDecl decl) {
-        PhpClass phpClass = phpObject.getPhpClass();
-        return PhpClass.PROPERTY_TYPED | (decl.visibility() == PhpClass.PropertyDecl.PROTECTED
-                ? PhpClass.PROPERTY_PROTECTED : decl.visibility() == PhpClass.PropertyDecl.PRIVATE
-                && phpClass.getLowerName().equals(decl.declaringClass()) ? PhpClass.PROPERTY_PRIVATE : 0);
     }
 
     @Override
@@ -360,16 +353,24 @@ public final class PropNode extends LValueNode {
 
     @Override
     public void write(VirtualFrame frame, Object value) {
-        String name = name(frame);
-        writeOn(frame, target(frame, name, "assign"), name, value);
+        assign(frame, value);
     }
 
-    /** `object->name = value`, the object evaluated: an error if it isn't one. */
-    public void writeOn(VirtualFrame frame, Object target, String name, Object value) {
+    /** `$obj->name = value`: the value stored, the assignment's result. */
+    public Object assign(VirtualFrame frame, Object value) {
+        String name = name(frame);
+        return writeOn(frame, target(frame, name, "assign"), name, value);
+    }
+
+    /**
+     * `object->name = value`, the object evaluated: an error if it isn't one. The value stored (a typed
+     * property's converted one), the assignment's result.
+     */
+    public Object writeOn(VirtualFrame frame, Object target, String name, Object value) {
         PhpObject phpObject = target(target, name, "assign");
         if (!accessible(frame, phpObject, name)) {
             inaccessibleWrite(phpObject, name, value);
-            return;
+            return value;
         }
         if (typed(phpObject, name)) {
             value = checked(phpObject, name, value);
@@ -378,13 +379,15 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpRef ref) {
             met(SEEN_REF);
             refWrites.set(ref, value);
-            return;
+            return value;
         }
         if (old == null) {
             met(SEEN_MISSING);
-            if (initialize(phpObject, name, value, callingScope(frame, lexicalClass))
-                    || phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
-                return;
+            if (initialize(phpObject, name, value, callingScope(frame, lexicalClass))) {
+                return PhpRef.deref(objects.getOrDefault(phpObject, name, null));
+            }
+            if (phpObject.magicProperty(this, "__set", name, value) != PhpObject.NO_MAGIC) {
+                return value;
             }
         }
         if (value instanceof Long l) {
@@ -399,6 +402,27 @@ public final class PropNode extends LValueNode {
         if (old instanceof PhpArray array && old != value) {
             met(SEEN_OLD_ARRAY);
             array.removeHolder();
+        }
+        return value;
+    }
+
+    /** {@link #incDecOverflow(PhpObject, String, boolean)} of this site's object and name. */
+    public void incDecOverflow(VirtualFrame frame, boolean increment) {
+        String name = name(frame);
+        incDecOverflow(target(frame, name, "increment/decrement"), name, increment);
+    }
+
+    /**
+     * `$o->p++` stepping a typed int property's PHP_INT_MAX to a float (zend_incdec_typed_prop): the TypeError,
+     * unless the type takes a float.
+     */
+    @TruffleBoundary
+    public static void incDecOverflow(PhpObject phpObject, String name, boolean increment) {
+        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
+        if (decl != null && !decl.type().has(PhpType.FLOAT)) {
+            throw new PhpError("TypeError", "Cannot " + (increment ? "increment" : "decrement") + " property "
+                    + PhpType.declaringName(decl) + "::$" + Str.keyText(name) + " of type " + decl.type().text(null)
+                    + " past its " + (increment ? "maximal" : "minimal") + " value");
         }
     }
 
@@ -433,23 +457,11 @@ public final class PropNode extends LValueNode {
         }
         ref.bind();
         if (old == null) {
-            putNew(phpObject, name, ref);
+            phpObject.setProperty(name, ref);
         } else {
             objects.put(phpObject, name, ref);
         }
         return ref;
-    }
-
-    /** Adds a property the object doesn't have: a typed one with its declaration's flags. */
-    @TruffleBoundary
-    private static void putNew(PhpObject phpObject, String name, Object value) {
-        PhpClass.PropertyDecl decl = typedDecl(phpObject, name);
-        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
-        if (decl != null) {
-            library.putWithFlags(phpObject, name, value, flagsOf(phpObject, decl));
-        } else {
-            library.put(phpObject, name, value);
-        }
     }
 
     /** A reference to an uninitialized typed property: one that takes null starts as null. */
@@ -523,7 +535,7 @@ public final class PropNode extends LValueNode {
             PhpArray created = new PhpArray();
             created.addHolder();
             if (old == null) {
-                putNew(phpObject, name, created);
+                phpObject.setProperty(name, created);
             } else {
                 objects.put(phpObject, name, created);
             }
