@@ -1118,7 +1118,9 @@ public final class Translator {
                     exclusions.add(new ClassTemplate.Exclusion(trait, method, excluded));
                 } else {
                     aliases.add(new ClassTemplate.Alias(trait, method,
-                            adaptation.get("alias") instanceof String alias ? alias : null));
+                            adaptation.get("alias") instanceof String alias ? alias : null, adaptation.flags
+                                    & (PhpFunction.ACC_PUBLIC | PhpFunction.ACC_PROTECTED | PhpFunction.ACC_PRIVATE
+                                    | PhpFunction.ACC_FINAL)));
                 }
             }
         }

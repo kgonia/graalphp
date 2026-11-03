@@ -39,6 +39,9 @@ bytecode `PhpBytecodeRootNode.callingScope` (the declaring class; a closure's bo
   callable (call_user_func, is_callable...) from its caller's, with zend_is_callable's "cannot access private method
   A::f()"; a callable whose resolution depends on the scope isn't kept in `LastCall` or a `CallableDispatchNode` entry.
 - First-class callables (`$o->m(...)`, `A::m(...)`, `$f(...)`) resolve as the call would.
+- A trait alias's visibility (`m as public`, `m as protected n`) is the method's in the class (zend_traits_copy_functions:
+  a copy with the alias's modifiers, calling the original's target); without it the checks above failed php-src's
+  `Zend/tests/traits/bug55137.phpt` and `bug76700.phpt`, which passed while visibility wasn't checked.
 
-Test: `tests/smoke/method-visibility.php`. Simplified (`ponytail:`): on the tree, a method run through a closure made
-of it (`$o->m(...)`) takes that closure's class as its scope; trait aliases' visibility (`m as protected`) isn't applied.
+Tests: `tests/smoke/method-visibility.php`, `tests/smoke/trait-alias-visibility.php`. Simplified (`ponytail:`): on the
+tree, a method run through a closure made of it (`$o->m(...)`) takes that closure's class as its scope.

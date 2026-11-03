@@ -136,6 +136,27 @@ public final class PhpFunction {
         return modifiers;
     }
 
+    /**
+     * A trait alias's copy with its modifiers (`use T { m as public; m as protected n; }`, zend_traits_copy_
+     * functions): a visibility replaces the method's, final adds to it. The copy calls the original's target.
+     */
+    public PhpFunction withAliasModifiers(int aliasModifiers) {
+        int ppp = ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE;
+        int adapted = (aliasModifiers & ppp) != 0 ? aliasModifiers | (modifiers & ~ppp) : aliasModifiers | modifiers;
+        if (adapted == modifiers) {
+            return this;
+        }
+        boolean adaptedPublic = (adapted & (ACC_PROTECTED | ACC_PRIVATE)) == 0;
+        PhpFunction copy = new PhpFunction(name, params, returnsRef, isStatic, adaptedPublic, isAbstract,
+                this::getCallTarget);
+        copy.setDeclaration(adapted, returnType, docComment, endLine);
+        copy.declaredAt = declaredAt;
+        copy.className = className;
+        copy.builtin = builtin;
+        copy.usesThis = usesThis;
+        return copy;
+    }
+
     public String getReturnType() {
         return returnType;
     }
