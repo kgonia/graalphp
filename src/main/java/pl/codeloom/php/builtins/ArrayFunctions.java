@@ -178,14 +178,7 @@ final class ArrayFunctions {
             }
             return result;
         });
-        r.fn("array_sum", a -> {
-            Object total = 0L;
-            PhpArray array = Args.array(a, 0, "array_sum");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                total = pl.codeloom.php.runtime.Operators.add(null, total, Convert.toNumber(array.valueAt(p)));
-            }
-            return total;
-        });
+        r.fn("array_sum", (context, a) -> binop(context, a, "array_sum", true));
         r.fn("array_count_values", a -> {
             PhpArray array = Args.array(a, 0, "array_count_values");
             PhpArray result = new PhpArray();
@@ -247,14 +240,7 @@ final class ArrayFunctions {
         r.fn("array_change_key_case", a -> changeKeyCase(Args.array(a, 0, "array_change_key_case"),
                 Args.lng(a, 1, 0) == 1));
         r.fn("array_chunk", a -> chunk(Args.array(a, 0, "array_chunk"), Args.lng(a, 1, 0), Args.bool(a, 2, false)));
-        r.fn("array_product", a -> {
-            PhpArray array = Args.array(a, 0, "array_product");
-            Object product = 1L;
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                product = Operators.mul(null, product, Convert.toNumber(array.valueAt(p)));
-            }
-            return product;
-        });
+        r.fn("array_product", (context, a) -> binop(context, a, "array_product", false));
         r.fn("array_diff_assoc", a -> diffAssoc(a, true));
         r.fn("array_intersect_assoc", a -> diffAssoc(a, false));
         r.fn("array_rand", a -> rand(Args.array(a, 0, "array_rand"), Args.lng(a, 1, 1)));
@@ -792,6 +778,37 @@ final class ArrayFunctions {
             }
         }
         return result;
+    }
+
+    /**
+     * php_array_binop for array_sum and array_product: each entry added or multiplied in, but an array or an object
+     * skipped with a warning, a resource taken as its id and a non-numeric string as 0 (both warned, for BC).
+     */
+    @TruffleBoundary
+    private static Object binop(PhpContext context, Object[] a, String function, boolean add) {
+        Args.arity(a, function, 1, 1);
+        PhpArray array = Args.array(a, 0, function);
+        Object total = add ? 0L : 1L;
+        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+            Object entry = array.valueAt(p);
+            Object operand = entry;
+            if (entry instanceof PhpResource resource) {
+                operand = (long) resource.getId();
+            } else if (entry instanceof TruffleString s && Convert.parseNumber(Str.readBytes(s), true) == null) {
+                operand = 0L;
+            } else if (!(entry instanceof PhpArray || entry instanceof PhpObject
+                    || entry instanceof pl.codeloom.php.runtime.PhpClosure)) {
+                total = add ? Operators.add(null, total, entry) : Operators.mul(null, total, entry);
+                continue;
+            }
+            if (operand != entry) {
+                total = add ? Operators.add(null, total, operand) : Operators.mul(null, total, operand);
+            }
+            ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function + "(): " + (add ? "Addition"
+                    : "Multiplication") + " is not supported on type " + Operators.zvalTypeName(entry)),
+                    SourceLocation.current());
+        }
+        return total;
     }
 
     @TruffleBoundary
