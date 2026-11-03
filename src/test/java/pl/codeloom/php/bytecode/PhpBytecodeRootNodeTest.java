@@ -34,9 +34,20 @@ class PhpBytecodeRootNodeTest {
     private static final PhpFunction.Param BY_REF = new PhpFunction.Param("p", true, false, null, (char) 0, false, null);
     private static final PhpFunction.Param INT = new PhpFunction.Param("p", false, false, null, 'i', false, null);
 
+    /**
+     * A context with the launchers' engine defaults (PhpMain.compilerDefaults). Graal reads FirstTierUseEconomy once
+     * per process, from the first engine that makes a call target (TruffleCompilerImpl.initialize): a context with
+     * Truffle's default here made every later engine's first tier the economy one, and CompilationTest's
+     * large-function.php then passed HotSpot's install limit.
+     */
+    private static Context.Builder context() {
+        return Context.newBuilder(PhpLanguage.ID).allowExperimentalOptions(true)
+                .option("compiler.FirstTierUseEconomy", "false");
+    }
+
     /** Runs test in an entered context of the language. */
     private static void inContext(Consumer<PhpLanguage> test) {
-        try (Context context = Context.newBuilder(PhpLanguage.ID).build()) {
+        try (Context context = context().build()) {
             context.initialize(PhpLanguage.ID);
             context.enter();
             try {
@@ -294,7 +305,7 @@ class PhpBytecodeRootNodeTest {
      */
     @Test
     void compiledReturnLeavesAnUnsetVariableAlone() {
-        Context.Builder builder = Context.newBuilder(PhpLanguage.ID).allowExperimentalOptions(true)
+        Context.Builder builder = context()
                 .option("engine.BackgroundCompilation", "false");
         try (Context context = builder.build()) {
             context.initialize(PhpLanguage.ID);
