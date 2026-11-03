@@ -390,7 +390,8 @@ public final class ClassTemplate {
         } else if (member instanceof Property property) {
             Object initial = property.initial() == null ? null : bind(property.initial(), phpClass);
             if (property.isStatic()) {
-                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial);
+                phpClass.addStaticProperty(property.name(), initial == null ? PhpNull.NULL : initial,
+                        property.visibility());
             } else {
                 PhpClass.PropertyDecl inherited = phpClass.findProperty(property.name());
                 boolean readonly = (property.modifiers() & PhpClass.PropertyDecl.READONLY) != 0;

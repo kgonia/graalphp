@@ -10,6 +10,7 @@ import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
@@ -230,6 +231,10 @@ final class RuntimeFunctions {
      */
     @TruffleBoundary
     private static Object cloneObject(PhpContext context, Object value, Object withProperties) {
+        if (value instanceof PhpClosure closure) {
+            // zend_closure_clone: a new closure of the same function, scope, $this and variables
+            return ClosureMethods.copy(closure);
+        }
         if (!(value instanceof PhpObject object)) {
             throw new PhpError("TypeError", "clone(): Argument #1 ($object) must be of type object, "
                     + Convert.debugType(value) + " given");

@@ -2,11 +2,15 @@ package pl.codeloom.php.runtime;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -439,11 +443,12 @@ public final class PhpGenerator {
             generator.running = true;
             Object result;
             try {
-                if (generator.values != null && generator.nextDelegatedValue()) {
+                if (generator.values != null && (generator.values instanceof PhpArray ? generator.nextDelegatedValue()
+                        : (Boolean) linked(generator, true))) {
                     generator.running = false;
                     return;
                 }
-                result = generator.runBody();
+                result = linked(generator, false);
             } catch (RuntimeException e) {
                 generator.running = false;
                 generator.close();
@@ -472,6 +477,68 @@ public final class PhpGenerator {
                 }
             }
             return;
+        }
+    }
+
+    /**
+     * The running generator's step, its body or (iterator) its Iterator's next value (true if one came), with the
+     * frames zend_generator_resume links in: this one's and those down its chain to the running one, and the running
+     * one's own for its Iterator, each suspended at its `yield from`. As php-src's placeholder frame, it is one
+     * frame, however deep the chain, which {@link #linkedLevels} unfolds for a trace.
+     */
+    private Object linked(PhpGenerator running, boolean iterator) {
+        if (this == running && !iterator) {
+            return runBody();
+        }
+        PhpGenerator inner = iterator ? running : below(running);
+        return ((PhpBytecodeRootNode) inner.start.getSourceRootNode()).linkedFrame().call(inner.frame,
+                inner.continuation.getLocation(), this, running, iterator);
+    }
+
+    @TruffleBoundary
+    private static Object linkedStep(PhpGenerator running, boolean iterator) {
+        return iterator ? (Object) running.nextDelegatedValue() : running.runBody();
+    }
+
+    /**
+     * The generators a {@link LinkedFrame}'s call stands for, innermost first: each one's code root, frame and the
+     * location it is suspended at (zend_generator_check_placeholder_frame).
+     */
+    @TruffleBoundary
+    public static List<Object[]> linkedLevels(Object[] arguments) {
+        PhpGenerator running = (PhpGenerator) arguments[3];
+        List<Object[]> levels = new ArrayList<>();
+        for (PhpGenerator g = (PhpGenerator) arguments[2]; g != running || (Boolean) arguments[4]; g = g.parent) {
+            levels.add(new Object[] {g.start.getSourceRootNode(), g.frame, g.continuation.getLocation()});
+            if (g == running) {
+                break;
+            }
+        }
+        java.util.Collections.reverse(levels);
+        return levels;
+    }
+
+    /**
+     * A generator function's frame while its generator is the innermost one linked in ({@link #linked}): to the frame
+     * walkers ({@link SourceLocation#codeRoot}), the generator's frame (argument 0) at its `yield from` (argument 1);
+     * a trace unfolds the rest of the chain ({@link #linkedLevels}).
+     */
+    public static final class LinkedFrame extends RootNode {
+        private final RootNode code;
+
+        public LinkedFrame(TruffleLanguage<?> language, RootNode code) {
+            super(language);
+            this.code = code;
+        }
+
+        public RootNode code() {
+            return code;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] arguments = frame.getArguments();
+            return linkedStep((PhpGenerator) arguments[3], (Boolean) arguments[4]);
         }
     }
 

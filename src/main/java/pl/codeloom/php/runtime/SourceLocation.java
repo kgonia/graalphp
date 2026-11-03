@@ -45,15 +45,17 @@ public record SourceLocation(String file, int line) {
 
     /**
      * The root whose code a frame runs: a generator's body resumed at a yield runs on a continuation root, whose
-     * code is its function's bytecode root.
+     * code is its function's bytecode root; so is a generator's linked in while its delegate runs.
      */
     public static RootNode codeRoot(RootNode root) {
-        return root instanceof ContinuationRootNode continuation ? (RootNode) continuation.getSourceRootNode() : root;
+        return root instanceof ContinuationRootNode continuation ? (RootNode) continuation.getSourceRootNode()
+                : root instanceof PhpGenerator.LinkedFrame linked ? linked.code() : root;
     }
 
-    /** The frame that code runs on: a continuation's is its first argument, the generator's frame. */
+    /** The frame that code runs on: a continuation's (or a linked generator's) first argument, the generator's. */
     public static Frame codeFrame(RootNode root, Frame frame) {
-        return root instanceof ContinuationRootNode && frame != null ? (Frame) frame.getArguments()[0] : frame;
+        return (root instanceof ContinuationRootNode || root instanceof PhpGenerator.LinkedFrame) && frame != null
+                ? (Frame) frame.getArguments()[0] : frame;
     }
 
     /** The innermost statement around the node, in its root's file; for the prelude's code, as current(). */
@@ -144,7 +146,11 @@ public record SourceLocation(String file, int line) {
     /** The instruction of a bytecode root a frame (not the innermost) is calling from, else null. */
     @TruffleBoundary
     public static BytecodeLocation callingInstruction(FrameInstance frame) {
-        RootNode root = codeRoot(((RootCallTarget) frame.getCallTarget()).getRootNode());
+        RootNode running = ((RootCallTarget) frame.getCallTarget()).getRootNode();
+        if (running instanceof PhpGenerator.LinkedFrame) {
+            return (BytecodeLocation) frame.getFrame(FrameInstance.FrameAccess.READ_ONLY).getArguments()[1];
+        }
+        RootNode root = codeRoot(running);
         return root instanceof BytecodeRootNode ? BytecodeLocation.get(frame) : null;
     }
 

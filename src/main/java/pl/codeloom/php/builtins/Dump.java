@@ -109,11 +109,7 @@ final class Dump {
                 return;
             }
             ascii(common + "array(" + array.size() + ") {\n");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                spaces(level + 1);
-                dumpKey(array.keyAt(p));
-                varDump(array.rawAt(p), level + 2);
-            }
+            dumpEntries(array, level);
             leave(array);
             closeBrace(level);
         } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
@@ -136,11 +132,7 @@ final class Dump {
                 ascii(common + "object(");
                 utf8(object.getPhpClass().getName().split("\0", 2)[0]);
                 ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
-                for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
-                    spaces(level + 1);
-                    dumpKey(debug.keyAt(p));
-                    varDump(debug.rawAt(p), level + 2);
-                }
+                dumpEntries(debug, level);
                 leave(object);
                 closeBrace(level);
                 return;
@@ -172,13 +164,28 @@ final class Dump {
             }
             leave(object);
             closeBrace(level);
-        } else if (value instanceof PhpClosure) {
-            ascii(common + "object(Closure)#0 (0) {\n");
+        } else if (value instanceof PhpClosure closure) {
+            if (!enter(closure)) {
+                ascii("*RECURSION*\n");
+                return;
+            }
+            PhpArray debug = ClosureMethods.debugInfo(closure);
+            ascii(common + "object(Closure)#" + closure.id() + " (" + debug.size() + ") {\n");
+            dumpEntries(debug, level);
+            leave(closure);
             closeBrace(level);
         } else if (value instanceof PhpResource resource) {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
         } else {
             ascii(common + "UNKNOWN:0\n");
+        }
+    }
+
+    private void dumpEntries(PhpArray entries, int level) {
+        for (int p = entries.firstPosition(); p >= 0; p = entries.nextPosition(p)) {
+            spaces(level + 1);
+            dumpKey(entries.keyAt(p));
+            varDump(entries.rawAt(p), level + 2);
         }
     }
 
@@ -371,24 +378,8 @@ final class Dump {
                 ascii(" *RECURSION*");
                 return;
             }
-            spaces(indent);
-            ascii("(\n");
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                spaces(indent + 4);
-                out.write('[');
-                Object key = array.keyAt(p);
-                if (key instanceof Long l) {
-                    ascii(Long.toString(l));
-                } else {
-                    out.write((TruffleString) key);
-                }
-                ascii("] => ");
-                printR(array.rawAt(p), indent + 8);
-                out.write('\n');
-            }
+            printEntries(array, indent);
             leave(array);
-            spaces(indent);
-            ascii(")\n");
         } else if (value instanceof PhpObject object) {
             utf8(object.getPhpClass().getName());
             String backing = object.getPhpClass().backingType();
@@ -411,14 +402,36 @@ final class Dump {
             leave(object);
             spaces(indent);
             ascii(")\n");
-        } else if (value instanceof PhpClosure) {
+        } else if (value instanceof PhpClosure closure) {
             ascii("Closure Object\n");
-            spaces(indent);
-            ascii("(\n");
-            spaces(indent);
-            ascii(")\n");
+            if (!enter(closure)) {
+                ascii(" *RECURSION*");
+                return;
+            }
+            printEntries(ClosureMethods.debugInfo(closure), indent);
+            leave(closure);
         } else {
             out.write(Convert.toStr(value == null ? PhpNull.NULL : value));
         }
+    }
+
+    private void printEntries(PhpArray entries, int indent) {
+        spaces(indent);
+        ascii("(\n");
+        for (int p = entries.firstPosition(); p >= 0; p = entries.nextPosition(p)) {
+            spaces(indent + 4);
+            out.write('[');
+            Object key = entries.keyAt(p);
+            if (key instanceof Long l) {
+                ascii(Long.toString(l));
+            } else {
+                out.write((TruffleString) key);
+            }
+            ascii("] => ");
+            printR(entries.rawAt(p), indent + 8);
+            out.write('\n');
+        }
+        spaces(indent);
+        ascii(")\n");
     }
 }

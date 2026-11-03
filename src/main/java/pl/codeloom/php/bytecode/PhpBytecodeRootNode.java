@@ -213,6 +213,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * has made them; null when the body has neither.
      */
     @CompilationFinal private LocalAccessor scopeLocal;
+    /** A generator function's frame in a `yield from` chain ({@link PhpGenerator.LinkedFrame}), made at first use. */
+    private CallTarget linkedFrame;
 
     protected PhpBytecodeRootNode(PhpLanguage language, FrameDescriptor.Builder frameDescriptor) {
         super(language, frameDescriptor.build());
@@ -1755,14 +1757,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = StaticPropSite.class)
     public static final class ReadStaticProp {
         @Specialization(excludeForUncached = true)
-        public static Object cached(StaticPropSite site, PhpClass phpClass,
+        public static Object cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            return StaticPropNode.declared(lookup.execute(phpClass), phpClass, site.name).get();
+            return StaticPropNode.declared(lookup.execute(frame, phpClass, false), phpClass, site.name).get();
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(StaticPropSite site, PhpClass phpClass) {
-            return StaticPropNode.declared(phpClass.getStaticProperty(site.name), phpClass, site.name).get();
+        public static Object uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            return StaticPropNode.declared(site.find(frame, phpClass, false), phpClass, site.name).get();
         }
     }
 
@@ -1771,34 +1773,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = StaticPropSite.class)
     public static final class StaticPropRef {
         @Specialization(excludeForUncached = true)
-        public static PhpRef cached(StaticPropSite site, PhpClass phpClass,
+        public static PhpRef cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            return StaticPropNode.declared(lookup.execute(phpClass), phpClass, site.name);
+            return StaticPropNode.declared(lookup.execute(frame, phpClass, false), phpClass, site.name);
         }
 
         @Specialization(replaces = "cached")
-        public static PhpRef uncached(StaticPropSite site, PhpClass phpClass) {
-            return StaticPropNode.declared(phpClass.getStaticProperty(site.name), phpClass, site.name);
+        public static PhpRef uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            return StaticPropNode.declared(site.find(frame, phpClass, false), phpClass, site.name);
         }
     }
 
     /**
      * `Cls::$name` as isset(), empty() and `??` read it (StaticPropNode.isSet, readIfSet): its value, null for a
-     * property the class doesn't have.
+     * property the class doesn't have or the calling scope may not access.
      */
     @Operation
     @ConstantOperand(type = StaticPropSite.class)
     public static final class StaticPropIfSet {
         @Specialization(excludeForUncached = true)
-        public static Object cached(StaticPropSite site, PhpClass phpClass,
+        public static Object cached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass,
                                     @Cached(value = "site.lookup()", neverDefault = true) StaticPropNode.Lookup lookup) {
-            PhpRef ref = lookup.execute(phpClass);
+            PhpRef ref = lookup.execute(frame, phpClass, true);
             return ref == null ? PhpNull.NULL : ref.get();
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(StaticPropSite site, PhpClass phpClass) {
-            PhpRef ref = phpClass.getStaticProperty(site.name);
+        public static Object uncached(VirtualFrame frame, StaticPropSite site, PhpClass phpClass) {
+            PhpRef ref = site.find(frame, phpClass, true);
             return ref == null ? PhpNull.NULL : ref.get();
         }
     }
@@ -3040,9 +3042,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
                 captured[i] = value;
             }
-            Object self = isStatic ? null : frame.getArguments()[PhpFunction.ARG_THIS];
-            return new PhpClosure(function, self instanceof PhpObject object ? object : null,
-                    scope instanceof PhpClass phpClass ? phpClass : null, captured);
+            return PhpClosure.declared(function, isStatic, frame.getArguments()[PhpFunction.ARG_THIS],
+                    frame.getArguments()[PhpFunction.ARG_STATIC], scope instanceof PhpClass phpClass ? phpClass : null,
+                    captured);
+        }
+    }
+
+    /** self, parent, their ::class, or the scope a nested closure gets, in a closure (ClassRefNode.closureScope). */
+    @Operation
+    @ConstantOperand(type = int.class, name = "mode")
+    public static final class ClosureScope {
+        @Specialization
+        public static Object scope(VirtualFrame frame, int mode) {
+            return ClassRefNode.closureScope(frame, mode);
         }
     }
 
@@ -4358,7 +4370,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static boolean bind(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
                                    @Bind BytecodeNode bytecode, @Bind Node node) {
-            PhpRef ref = PhpContext.get(node).findStaticVariable(function, name);
+            PhpRef ref = PhpContext.get(node).findStaticVariable(function,
+                    frame.getArguments()[PhpFunction.ARG_CLOSURE], name);
             if (ref == null) {
                 return false;
             }
@@ -4376,7 +4389,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void create(VirtualFrame frame, LocalAccessor variable, PhpFunction function, String name,
                                   Object initial, @Bind BytecodeNode bytecode, @Bind Node node) {
             Locals.bindRef(frame, variable, bytecode,
-                    PhpContext.get(node).createStaticVariable(function, name, initial));
+                    PhpContext.get(node).createStaticVariable(function, frame.getArguments()[PhpFunction.ARG_CLOSURE],
+                            name, initial));
         }
     }
 
@@ -4649,6 +4663,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     // ---- what the runtime asks of a function's root ----
+
+    public CallTarget linkedFrame() {
+        CallTarget target = linkedFrame;
+        if (target == null) {
+            target = new PhpGenerator.LinkedFrame(getLanguage(PhpLanguage.class), this).getCallTarget();
+            linkedFrame = target;
+        }
+        return target;
+    }
 
     @Override
     public boolean describe(Frame frame, PhpArray entry, int options, Backtrace.CallSite site) {

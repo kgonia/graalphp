@@ -134,6 +134,8 @@ public final class PhpClass {
      */
     private final Map<String, PropertyDecl> restrictedConstants = new HashMap<>();
     private final Map<String, PhpRef> staticProperties = new LinkedHashMap<>();
+    /** The non-public static properties, declared or inherited: their visibility and declaring class. */
+    private final Map<String, PropertyDecl> restrictedStatics = new HashMap<>();
     private final Map<String, Object> staticDefaults = new HashMap<>();
     private final Map<String, PropertyDecl> properties = new LinkedHashMap<>();
     private final Shape rootShape;
@@ -203,6 +205,7 @@ public final class PhpClass {
                 }
             }
             staticProperties.putAll(parent.staticProperties);
+            restrictedStatics.putAll(parent.restrictedStatics);
             staticDefaults.putAll(parent.staticDefaults);
             properties.putAll(parent.properties);
             constructor = parent.constructor;
@@ -638,15 +641,56 @@ public final class PhpClass {
         return value;
     }
 
-    public void addStaticProperty(String propertyName, Object initial) {
+    /** visibility: PropertyDecl's; a protected one keeps the class that first declared it (its prototype's). */
+    public void addStaticProperty(String propertyName, Object initial, int visibility) {
         PhpRef ref = new PhpRef(initial);
         ref.bind();
         staticProperties.put(propertyName, ref);
+        PropertyDecl inherited = restrictedStatics.remove(propertyName);
+        if (visibility != PropertyDecl.PUBLIC) {
+            restrictedStatics.put(propertyName, new PropertyDecl(propertyName, null, visibility,
+                    visibility == PropertyDecl.PROTECTED && inherited != null
+                            && inherited.visibility() == PropertyDecl.PROTECTED ? inherited.declaringClass() : lowerName,
+                    0, null));
+        }
         if (initial instanceof PhpArray array) {
             // the default holds the array too, so writes to the property copy it first
             array.addHolder();
         }
         staticDefaults.put(propertyName, initial);
+    }
+
+    /** Whether the static property is private or protected. */
+    @TruffleBoundary
+    public boolean isRestrictedStatic(String propertyName) {
+        return restrictedStatics.containsKey(propertyName);
+    }
+
+    /**
+     * Whether code in the scope (a class's lowercase name, or null) may access the static property
+     * (zend_std_get_static_property_with_info): a private one from its class, a protected one from a class related to
+     * the one that first declared it (is_protected_compatible_scope).
+     */
+    @TruffleBoundary
+    public boolean canAccessStatic(String propertyName, String scope) {
+        PropertyDecl decl = restrictedStatics.get(propertyName);
+        if (decl == null || decl.declaringClass().equals(scope)) {
+            return true;
+        }
+        if (scope == null || decl.visibility() == PropertyDecl.PRIVATE) {
+            return false;
+        }
+        PhpClass declaring = PhpContext.get(null).findClass(decl.declaringClass());
+        PhpClass scopeClass = PhpContext.get(null).findClass(scope);
+        return declaring != null && declaring.isSubclassOf(scope)
+                || scopeClass != null && scopeClass.isSubclassOf(decl.declaringClass());
+    }
+
+    /** zend_bad_property_access for a static property. */
+    @TruffleBoundary
+    public PhpError inaccessibleStatic(String propertyName) {
+        return new PhpError("Cannot access " + (restrictedStatics.get(propertyName).visibility() == PropertyDecl.PRIVATE
+                ? "private" : "protected") + " property " + name + "::$" + Str.keyText(propertyName));
     }
 
     /** A static property's declared default (default_static_members_table), whatever it holds now. */

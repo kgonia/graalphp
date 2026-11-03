@@ -70,7 +70,23 @@ final class CoreFunctions {
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("traversable"));
         r.fn("is_countable", a -> Args.get(a, 0) instanceof PhpArray
                 || Args.get(a, 0) instanceof PhpObject o && o.getPhpClass().isSubclassOf("countable"));
-        r.fn("is_callable", (context, a) -> Callables.resolve(context, Args.get(a, 0, PhpNull.NULL)) != null);
+        r.fn("is_callable", "001", (context, a) -> {
+            Object value = Args.get(a, 0, PhpNull.NULL);
+            if (Args.has(a, 2)) {
+                Args.ref(a, 2).set(callableName(value));
+            }
+            if (!Args.bool(a, 1, false)) {
+                return Callables.resolve(context, value) != null;
+            }
+            // IS_CALLABLE_CHECK_SYNTAX_ONLY: a string, a [class or object, method] pair, an object with __invoke
+            if (value instanceof PhpArray pair) {
+                Object target = pair.size() == 2 ? PhpRef.deref(pair.get(0L)) : null;
+                return PhpRef.deref(pair.get(1L)) instanceof TruffleString
+                        && (target instanceof TruffleString || target instanceof PhpObject
+                        || target instanceof PhpClosure);
+            }
+            return value instanceof TruffleString || Callables.resolve(context, value) != null;
+        });
         r.fn("gettype", a -> Str.of(Convert.typeName(Args.get(a, 0, PhpNull.NULL))));
         r.fn("get_debug_type", a -> Str.of(Convert.debugType(Args.get(a, 0, PhpNull.NULL))));
         r.fn("intval", a -> intval(Args.get(a, 0), Args.lng(a, 1, 10)));
@@ -169,6 +185,9 @@ final class CoreFunctions {
             String name = Str.key(Args.str(a, 1));
             if (target instanceof PhpObject o) {
                 return o.getProperty(name) != null || hasDeclared(o.getPhpClass(), name);
+            }
+            if (target instanceof PhpClosure) {
+                return false;
             }
             if (!(target instanceof TruffleString className)) {
                 throw Args.typeError("property_exists", 1, "object_or_class", "object|string", target);
@@ -736,6 +755,35 @@ final class CoreFunctions {
         return value instanceof PhpObject object ? object.visibleProperties(null) : new PhpArray();
     }
 
+    /** zend_get_callable_name_ex: is_callable()'s $callable_name. */
+    @TruffleBoundary
+    private static TruffleString callableName(Object value) {
+        if (value instanceof PhpArray pair) {
+            Object target = pair.size() == 2 ? PhpRef.deref(pair.get(0L)) : null;
+            if (pair.size() == 2 && PhpRef.deref(pair.get(1L)) instanceof TruffleString method) {
+                if (target instanceof TruffleString className) {
+                    return Str.concat(Str.concat(className, Str.of("::")), method);
+                }
+                if (target instanceof PhpObject object) {
+                    return Str.of(object.getPhpClass().getName() + "::" + Str.java(method));
+                }
+                if (target instanceof PhpClosure) {
+                    return Str.of("Closure::" + Str.java(method));
+                }
+            }
+            return Str.of("Array");
+        }
+        if (value instanceof PhpObject object) {
+            return Str.of(object.getPhpClass().getName() + "::__invoke");
+        }
+        if (value instanceof PhpClosure closure) {
+            // zend_get_callable_name_ex: a closure's function name, a method's with its class
+            String name = closure.getFunction().getName();
+            return Str.of(name.startsWith("{closure") ? name : closure.getFunction().displayName());
+        }
+        return Convert.toStr(value);
+    }
+
     /**
      * get_class_methods(): the names of the methods the calling scope may call, in function table order (a private
      * one from its class, a protected one from a class related to the one declaring it: zend_check_protected).
@@ -839,6 +887,9 @@ final class CoreFunctions {
     private static int objectId(Object value) {
         if (value instanceof PhpObject object) {
             return object.id();
+        }
+        if (value instanceof PhpClosure closure) {
+            return closure.id();
         }
         return System.identityHashCode(value);
     }
