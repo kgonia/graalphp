@@ -4797,7 +4797,7 @@ public final class BytecodeTranslator {
          * arguments before the first `...` sent as any call's, at their constant positions; then each unpacked
          * value's elements, by position or by name, by reference where they land on the callee's by-reference
          * parameters (a variable's array separated for it, SpreadVar); then the named arguments, bound when the call
-         * runs (spreadNamed). construct: a `new`'s.
+         * runs (beginSpreadNamed). construct: a `new`'s.
          */
         private void spreadArguments(Ast args, StackValue callee, boolean construct) {
             int count = args.size();
