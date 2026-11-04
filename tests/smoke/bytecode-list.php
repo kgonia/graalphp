@@ -1,5 +1,5 @@
 <?php
-// list() and [...] as assignment targets in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): nested,
+// list() and [...] as assignment targets in functions on bytecode: nested,
 // keyed and skipped entries, every kind of target, php-src's order (the value, then each element's key, read and
 // target), a value that isn't an array, ArrayAccess values read through offsetGet(), a list writing the variable it
 // is read from, and foreach into lists, elements and properties.

@@ -1,8 +1,7 @@
 <?php
 // Copy-on-write through the statements tla-cow.md models that functions on bytecode cover (values, copies,
-// element writes, unset, calls by value and by reference, returns, foreach by value), with calls between functions
-// on bytecode and functions the bytecode translator leaves on the tree (static marks those). Run with
-// -Dpolyglot.php.Interpreter=bytecode and without: both must print what PHP prints.
+// element writes, unset, calls by value and by reference, returns, foreach by value), with calls between functions:
+// it must print what PHP prints.
 
 function show($label, $value) {
     echo $label, ': ', json_encode($value), "\n";

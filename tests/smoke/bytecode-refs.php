@@ -1,5 +1,5 @@
 <?php
-// References in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): `=&` between variables, elements
+// References in functions on bytecode: `=&` between variables, elements
 // (nested, appended, of properties) and properties, `=&` of a call's result, functions returning by reference,
 // global and static variables, by-reference arguments that are nested elements or elements of properties,
 // array literals with references and spreads, and generators yielding elements, properties and calls by

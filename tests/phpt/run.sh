@@ -3,7 +3,7 @@
 # extract the tests from the reference image's source tarball, run each on PHP (the oracle) and on the Truffle
 # PHP (one JVM, a fresh context per test), compare stdout. Report: target/phpt/report.txt, failures.txt.
 # Usage: tests/phpt/run.sh [--reuse-oracle]    (build first; ~15 min, the oracle about 6 of them)
-# JAVA_OPTS reaches the Truffle PHP's JVM (-Dpolyglot.php.Interpreter=bytecode); PHP_CLASSES (relative to the repo)
+# JAVA_OPTS reaches the Truffle PHP's JVM; PHP_CLASSES (relative to the repo)
 # runs another build than target/classes, e.g. a copy that a rebuild during the run can't change, PHP_LIB its
 # libraries (default target/lib), TRUFFLE_IMAGE another image (default GraalVM 25.4's).
 set -euo pipefail

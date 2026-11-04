@@ -1,5 +1,5 @@
 <?php
-// switch, break N and continue N in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): loose comparison
+// switch, break N and continue N in functions on bytecode: loose comparison
 // against each case in order (the case values evaluated one by one until one matches), default anywhere,
 // fall-through, a switch as a level for break and continue, and yields in case values and bodies.
 

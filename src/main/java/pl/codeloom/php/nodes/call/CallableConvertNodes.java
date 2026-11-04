@@ -1,18 +1,14 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.vars.ClassRefNode;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -34,24 +30,7 @@ public final class CallableConvertNodes {
     }
 
     /** `f(...)`: the function the name resolves to, the namespaced one first, as a call finds it. */
-    public static final class FunctionNode extends ExprNode {
-        private final String displayName;
-        private final int id;
-        private final int fallbackId;
-        private final int site;
-
-        public FunctionNode(String displayName, int id, int fallbackId, int site) {
-            this.displayName = displayName;
-            this.id = id;
-            this.fallbackId = fallbackId;
-            this.site = site;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return convert(PhpContext.get(this), displayName, id, fallbackId, site);
-        }
-
+    public static final class FunctionNode {
         /** The closure of the function displayName names (its name id, the global one's or -1, its site's number). */
         @TruffleBoundary
         public static Object convert(PhpContext context, String displayName, int id, int fallbackId, int site) {
@@ -60,30 +39,7 @@ public final class CallableConvertNodes {
     }
 
     /** `$o->m(...)` and `$o->$name(...)`: the object's method, bound to it. */
-    public static final class MethodNode extends ExprNode {
-        @Child private ExprNode object;
-        @Child private ExprNode nameExpr;
-        private final String name;
-
-        /** A constant name, or null and the expression giving it. */
-        public MethodNode(ExprNode object, String name, ExprNode nameExpr) {
-            this.object = object;
-            this.name = name;
-            this.nameExpr = nameExpr;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Object target = object.execute(frame);
-            if (name != null) {
-                return convert(target, name, MethodCallNode.scope(frame, this));
-            }
-            if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString method)) {
-                throw MethodCallNode.nameNotString();
-            }
-            return convert(target, Str.java(method), MethodCallNode.scope(frame, this));
-        }
-
+    public static final class MethodNode {
         /**
          * The closure of target's method name as `$target->name()` finds it from scope, bound to it; php-src's
          * Errors for what has none.
@@ -112,37 +68,7 @@ public final class CallableConvertNodes {
      * `A::m(...)`, `self::m(...)`, `parent::m(...)`, `static::m(...)`: as StaticCallNode, a non-static method takes
      * the caller's $this when it is an instance of the class, and forwarding calls keep the called class.
      */
-    public static final class StaticMethodNode extends ExprNode {
-        @Child private ClassRefNode classRef;
-        @Child private ExprNode nameExpr;
-        private final String name;
-        private final boolean forwarding;
-
-        /** A constant name, or null and the expression giving it (`Cls::$name(...)`). */
-        public StaticMethodNode(ClassRefNode classRef, String name, ExprNode nameExpr, boolean forwarding) {
-            this.classRef = classRef;
-            this.name = name;
-            this.nameExpr = nameExpr;
-            this.forwarding = forwarding;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            PhpClass phpClass = classRef.resolve(frame);
-            String method = name;
-            if (method == null) {
-                if (!(PhpRef.deref(nameExpr.execute(frame)) instanceof TruffleString computed)) {
-                    throw MethodCallNode.nameNotString();
-                }
-                method = Str.java(computed);
-            }
-            Object[] callerArgs = frame.getArguments();
-            Object caller = callerArgs[PhpFunction.ARG_THIS];
-            Object callerStatic = callerArgs[PhpFunction.ARG_STATIC];
-            return convert(phpClass, caller, forwarding && callerStatic instanceof PhpClass called ? called : phpClass,
-                    method, MethodCallNode.scope(frame, this));
-        }
-
+    public static final class StaticMethodNode {
         /**
          * The closure of phpClass's method name, as `Cls::name()` finds it from scope, for a caller whose $this is
          * caller, called as staticClass.
@@ -176,18 +102,7 @@ public final class CallableConvertNodes {
     }
 
     /** `$f(...)`, `[$o, 'm'](...)`, `'A::m'(...)`: what the direct call `$f()` would call; a Closure stays itself. */
-    public static final class ValueNode extends ExprNode {
-        @Child private ExprNode callable;
-
-        public ValueNode(ExprNode callable) {
-            this.callable = callable;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return convert(PhpContext.get(this), callable.execute(frame), MethodCallNode.scope(frame, this));
-        }
-
+    public static final class ValueNode {
         /** What the call of value from scope would call, as a Closure. */
         @TruffleBoundary
         public static Object convert(PhpContext context, Object value, String scope) {

@@ -227,11 +227,7 @@ public final class Callables {
             if (root instanceof pl.codeloom.php.nodes.call.BuiltinRootNode) {
                 return null;
             }
-            String scope = root instanceof pl.codeloom.php.nodes.call.FunctionRootNode function
-                    ? function.getScopeName()
-                    : root instanceof pl.codeloom.php.nodes.stmt.GeneratorNodes.BodyRootNode body
-                    ? body.getScopeName()
-                    : root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
+            String scope = root instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode bytecode
                     ? bytecode.getScopeName() : null;
             Object[] arguments = SourceLocation.codeFrame(running,
                     frameInstance.getFrame(FrameInstance.FrameAccess.READ_ONLY)).getArguments();

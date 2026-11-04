@@ -229,9 +229,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean file;
     /** A constant expression's root (BytecodeTranslator.Thunk): its scope is the class it is bound to. */
     @CompilationFinal private boolean thunk;
-    /** A file's top level has a loop, a foreach or a goto label (RunOnceCode). */
+    /** A file's top level has a loop, a foreach or a goto label (prepareForCompilation). */
     private boolean fileLoops;
-    /** {@link RunOnceCode}: 0 not asked yet, 1 compiled as any code, 2 large and without a loop. */
+    /** {@link #prepareForCompilation}: 0 not asked yet, 1 compiled as any code, 2 large and without a loop. */
     private volatile byte runOnce;
     /** An include site ran the file twice in one context: it runs a number of times a request that depends on data. */
     private volatile boolean includedAgain;
@@ -294,9 +294,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * Large top-level code without a loop that no include site has run twice in one context runs a number of times a
-     * request bounded by the program's text, and isn't worth compiling ({@link RunOnceCode}); declining it here makes
-     * the compilation a retryable bailout, so it is tried again (and asked again) after Truffle's threshold.
+     * Code that runs a few times a request at most, a number bounded by the program's text, and that compilation can't
+     * pay back, isn't compiled: a file's top level that no include site has run twice in one context (each site runs
+     * it at most once a request: Jetpack's class map is required by two sites, the autoloader's version check and its
+     * manifest reader), and a constant expression's initializer (evaluated once per class and context), when it has no
+     * loop and is {@link #isLarge large}. Declining it here makes the compilation a retryable bailout, so it is tried
+     * again (and asked again) after Truffle's threshold.
+     * <p>
+     * Without a loop every instruction runs at most once per run, so compiling the code saves the interpreter's cost
+     * a few times a request, against a compilation of about a millisecond per AST node: it would pay back after
+     * thousands of requests. And large straight-line code is what doesn't compile at all: WooCommerce's Jetpack class
+     * map, a property default of a thousand class constants and its country list failed after 40-360 s each, holding a
+     * compiler thread and gigabytes of libgraal's heap (wiki/pe-round4-diagnosis.md). Code with a loop, or run twice
+     * by one include site in one request (a template part in a loop), runs a number of times that depends on the
+     * data, and is compiled as any function.
      */
     @Override
     protected boolean prepareForCompilation(boolean rootCompilation, int compilationTier, boolean lastTier) {

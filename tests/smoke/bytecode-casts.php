@@ -1,6 +1,6 @@
 <?php
 // Casts, print, global constants the translation doesn't fold, magic constants and $obj::class in functions on
-// bytecode (-Dpolyglot.php.Interpreter=bytecode).
+// bytecode.
 
 namespace Ns {
     const OWN = 'ns own';

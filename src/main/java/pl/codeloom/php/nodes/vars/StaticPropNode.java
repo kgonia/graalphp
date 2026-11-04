@@ -9,32 +9,13 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
-import pl.codeloom.php.nodes.LValueNode;
-import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
 /** `Cls::$name`: a static property, which is always a reference shared by the class (and subclasses). */
-public final class StaticPropNode extends LValueNode {
-    @Child private ClassRefNode classRef;
-    @Child private Lookup lookup;
-    private final String name;
-
-    /** lexicalClass: the class the code is written in (lowercase) or null; scopeInFrame as PropNode's. */
-    public StaticPropNode(ClassRefNode classRef, String name, String lexicalClass, boolean scopeInFrame) {
-        this.classRef = classRef;
-        this.name = name;
-        this.lookup = Lookup.create(name, lexicalClass, scopeInFrame);
-    }
-
-    private PhpRef ref(VirtualFrame frame) {
-        PhpClass phpClass = classRef.resolve(frame);
-        return declared(lookup.execute(frame, phpClass, false), phpClass, name);
-    }
-
+public final class StaticPropNode {
     /** The class's reference for the property (Lookup's), or php-src's Error when the class has none. */
     public static PhpRef declared(PhpRef ref, PhpClass phpClass, String name) {
         if (ref == null) {
@@ -56,49 +37,6 @@ public final class StaticPropNode extends LValueNode {
     public static void bind(Node site, PhpClass phpClass, String name, PhpRef ref) {
         declared(phpClass.getStaticProperty(name), phpClass, name);
         phpClass.bindStaticProperty(PhpContext.get(site), name, ref);
-    }
-
-    @Override
-    public Object execute(VirtualFrame frame) {
-        return ref(frame).get();
-    }
-
-    @Override
-    public void write(VirtualFrame frame, Object value) {
-        ref(frame).set(value);
-    }
-
-    @Override
-    public PhpRef makeRef(VirtualFrame frame) {
-        return ref(frame);
-    }
-
-    @Override
-    public void bindRef(VirtualFrame frame, PhpRef ref) {
-        bind(this, classRef.resolve(frame), name, ref);
-    }
-
-    @Override
-    public PhpArray arrayForWrite(VirtualFrame frame) {
-        return Places.refArrayForWrite(ref(frame));
-    }
-
-    @Override
-    public void unset(VirtualFrame frame) {
-        PhpClass phpClass = classRef.resolve(frame);
-        CompilerDirectives.transferToInterpreter();
-        throw unsetError(phpClass, name);
-    }
-
-    @Override
-    public boolean isSet(VirtualFrame frame) {
-        PhpRef ref = lookup.execute(frame, classRef.resolve(frame), true);
-        return ref != null && ref.get() != PhpNull.NULL;
-    }
-
-    @Override
-    public boolean isPure() {
-        return true;
     }
 
     /**

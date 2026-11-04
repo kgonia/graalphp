@@ -1,5 +1,5 @@
 <?php
-// try / catch / finally and throw in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode; generators run
+// try / catch / finally and throw in functions on bytecode (generators run
 // on bytecode in either mode): catch matching, a runtime error caught as its Error, finally on every way out
 // (end, exception, return, break, continue), a return in finally replacing what was pending, an exception thrown in
 // finally taking the pending one as previous, throw as an expression, and generators destroyed in a try.

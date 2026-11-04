@@ -368,7 +368,7 @@ public final class PhpContext {
 
     /**
      * Whether an include site ran a file before in this context: a site that runs a file twice in one request (a
-     * template part in a loop) runs it a number of times that depends on the data (RunOnceCode).
+     * template part in a loop) runs it a number of times that depends on the data (PhpBytecodeRootNode.prepareForCompilation).
      */
     @TruffleBoundary
     public boolean includedBefore(String canonical, Object site) {

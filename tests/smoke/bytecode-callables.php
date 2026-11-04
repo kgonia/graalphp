@@ -1,5 +1,5 @@
 <?php
-// Calls of callable values in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): `$f(args)` of names,
+// Calls of callable values in functions on bytecode: `$f(args)` of names,
 // closures, [$obj, 'm'], ['Cls', 'm'], 'Cls::m' and invokable objects, `$obj->$name(args)`, call_user_func(),
 // call_user_func_array(), first-class callable syntax, func_get_args(), func_num_args(), get_class() and
 // get_called_class(), and parameter defaults that aren't literals; with php-src's errors.
