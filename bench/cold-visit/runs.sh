@@ -44,7 +44,9 @@ lpload() { # SECONDS OUT: the host's per-LP load, in the background (Windows, of
 }
 JFR_EVENTS="settings=profile,jdk.ExecutionSample#period=1ms,jdk.Compilation#threshold=0ms"
 define() { # VARIANT ROUND: CLASSES_V and JAVA_OPTS_V for native.sh's start
-  local v=$1 r=$2 base=${1%[djam]} opts=
+  local v=$1 r=$2 base opts=
+  case $v in tree*) base=tree ;; main*) base=main ;; bc*) base=bc ;; *) base=$v ;; esac
+  local suffix=${v#$base}
   case $base in
     tree) export CLASSES_$v=target/classes-tree; opts="-Dpolyglot.php.Interpreter=tree" ;;
     bc) export CLASSES_$v=target/classes-bc ;;
@@ -52,18 +54,21 @@ define() { # VARIANT ROUND: CLASSES_V and JAVA_OPTS_V for native.sh's start
     main) export CLASSES_$v=target/classes-tree ;;
     *) echo "unknown variant $v"; exit 2 ;;
   esac
-  case $v in
-    *d) opts+=" -Dphp.phases=true -Dphp.nativeclock=true -Dpolyglot.engine.TraceCompilation=true"
+  case $suffix in
+    *d*) opts+=" -Dphp.phases=true -Dphp.nativeclock=true -Dpolyglot.engine.TraceCompilation=true"
         opts+=" -Dpolyglot.log.file=/out/engine-$v.log"
         opts+=" -XX:StartFlightRecording=filename=/out/$v.jfr,dumponexit=true,$JFR_EVENTS" ;;
-    *j) export CLASSES_$v=target/app-$base.jar ;;
-    *a) export CLASSES_$v=target/app-$base.jar
+    *j*) export CLASSES_$v=target/app-$base.jar ;;
+    *a*) export CLASSES_$v=target/app-$base.jar
         opts+=" ${AOT_EXTRA:-} -XX:AOTCache=target/aot/$base${AOT_SUFFIX:-}.aot -Xlog:aot=info,cds=info:file=/out/aot-$v.log" ;;
     # the cache trained with jdk.internal.vm.ci named on the command line (AOT_EXTRA=--add-modules=..., AOT_SUFFIX=-m)
-    *m) export CLASSES_$v=target/app-$base.jar
+    *m*) export CLASSES_$v=target/app-$base.jar
         opts+=" --add-modules=jdk.internal.vm.ci -XX:AOTCache=target/aot/$base-m.aot -Xlog:aot=info,cds=info:file=/out/aot-$v.log" ;;
   esac
-  export JAVA_OPTS_$v="$opts"
+  # n: the host compiler keeps code its profile never saw run (no "unreached" speculation, so no deoptimization
+  # when the interpreter first runs an instruction the profile missed)
+  case $suffix in *n*) opts+=" -Djdk.graal.RemoveNeverExecutedCode=false" ;; esac
+  export JAVA_OPTS_$v="$opts ${EXTRA_OPTS:-}"
 }
 case ${1:-} in
   stack)
@@ -129,7 +134,7 @@ case ${1:-} in
       done
     done ;;
   aot-train)
-    base=${2%[djam]}
+    base=${2%%[djamn]*}
     mkdir -p target/aot target/cv/train
     hold train 6 30 "wordpress-cold: AOT cache training run $base (CPUs 6-13)"
     define ${base}j 0

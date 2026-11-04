@@ -148,6 +148,11 @@ public class JfrCold {
         Map<String, Integer> parseInclusive = new HashMap<>();
         Map<String, Integer> threads = new TreeMap<>();
         List<RecordedEvent> compilations = new ArrayList<>();
+        Map<String, Integer> deopts = new HashMap<>();
+        Map<String, Integer> deoptMethods = new HashMap<>();
+        int deoptTotal = 0;
+        List<String> interpreterDeopts = new ArrayList<>();
+        Map<String, Integer> failures = new HashMap<>();
         long firstSample = Long.MAX_VALUE;
         try (RecordingFile file = new RecordingFile(Path.of(args[0]))) {
             while (file.hasMoreEvents()) {
@@ -162,6 +167,27 @@ public class JfrCold {
                 }
                 if (name.equals("jdk.Compilation")) {
                     compilations.add(e);
+                    continue;
+                }
+                if (name.equals("jdk.CompilationFailure")) {
+                    String msg = String.valueOf(e.getValue("failureMessage"));
+                    add(failures, msg.length() > 160 ? msg.substring(0, 160) : msg);
+                    continue;
+                }
+                if (name.equals("jdk.Deoptimization")) {
+                    RecordedMethod m = e.getValue("method");
+                    String mn = m == null ? "?" : m.getType().getName() + "." + m.getName();
+                    deoptTotal++;
+                    add(deoptMethods, mn);
+                    if (mn.startsWith(GEN + "$CachedBytecodeNode.continueAt") && jvmStart != null) {
+                        interpreterDeopts.add(String.format("  %7.2f  %s line %s: %s/%s",
+                                (e.getStartTime().toEpochMilli() - jvmStart.toEpochMilli()) / 1000.0,
+                                mn.substring(GEN.length()), e.getValue("lineNumber"), e.getValue("reason"), e.getValue("action")));
+                    }
+                    if (mn.startsWith(GEN)) {
+                        add(deopts, mn.substring(GEN.length()) + " line " + e.getValue("lineNumber") + " "
+                                + e.getValue("instruction") + ": " + e.getValue("reason") + "/" + e.getValue("action"));
+                    }
                     continue;
                 }
                 if (!name.equals("jdk.ExecutionSample")) {
@@ -278,6 +304,12 @@ public class JfrCold {
             print("stacks with " + stacksOf, stacks, total, 8);
         }
         print("all sampled threads (Java code only)", threads, threads.values().stream().mapToInt(i -> i).sum(), top);
+        System.out.printf("deoptimizations up to the cutoff: %d%n", deoptTotal);
+        print("deoptimizations by method", deoptMethods, deoptTotal, top);
+        print("deoptimizations in the generated interpreter (where, reason/action)", deopts, deoptTotal, top);
+        System.out.println("deoptimizations of the generated interpreter's continueAt (s after the JVM's start)");
+        interpreterDeopts.forEach(System.out::println);
+        print("host compilation failures", failures, failures.values().stream().mapToInt(i -> i).sum(), top);
         // host compilations
         double sum = 0;
         Map<String, double[]> byLevel = new TreeMap<>();
@@ -313,10 +345,11 @@ public class JfrCold {
 
     static void describe(RecordedEvent c, Instant start) {
         RecordedMethod m = c.getValue("method");
-        System.out.printf("  %7.2f %8.1f  %s  %7s  %s%s%n",
+        System.out.printf("  %7.2f %8.1f  %s  %7s  %s%s%s%n",
                 start == null ? -1 : (c.getStartTime().toEpochMilli() - start.toEpochMilli()) / 1000.0,
                 c.getDuration().toNanos() / 1e6, c.hasField("compileLevel") ? c.getValue("compileLevel") : "?",
                 c.hasField("codeSize") ? c.getValue("codeSize") : "?", m.getType().getName() + "." + m.getName(),
-                c.hasField("isOsr") && c.getBoolean("isOsr") ? " (OSR)" : "");
+                c.hasField("isOsr") && c.getBoolean("isOsr") ? " (OSR)" : "",
+                c.hasField("succeded") && !c.getBoolean("succeded") ? " FAILED" : "");
     }
 }
