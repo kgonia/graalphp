@@ -6,6 +6,7 @@ import com.oracle.truffle.api.bytecode.LocalAccessor;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import pl.codeloom.php.nodes.vars.IncludeScope;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpRef;
 
@@ -53,6 +54,12 @@ final class BytecodeScope extends IncludeScope {
     public boolean isDefined(String name) {
         LocalAccessor variable = root.variableNamed(name);
         return variable == null ? super.isDefined(name) : !variable.isCleared(bytecode, frame);
+    }
+
+    @Override
+    @TruffleBoundary
+    public PhpArray definedVariables() {
+        return root.definedVariables(frame, bytecode, this, PhpContext.get(null));
     }
 
     @Override

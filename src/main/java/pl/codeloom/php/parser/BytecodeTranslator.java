@@ -74,6 +74,8 @@ public final class BytecodeTranslator {
     /** How many translations {@link #collect} tries for one function before it gives up. */
     private static final int COLLECT_LIMIT = 500;
     /** php-src's fetch types of a written property's object (writtenObject). */
+    /** `(void)`'s cast type (php-ast's IS_VOID). */
+    private static final int CAST_VOID = 14;
     private static final int BP_VAR_W = 1;
     private static final int BP_VAR_RW = 2;
     private static final int BP_VAR_UNSET = 5;
@@ -538,11 +540,10 @@ public final class BytecodeTranslator {
                 variableLocals = locals.toArray(new LocalAccessor[0]);
                 variableNames = names.toArray(new String[0]);
             }
+            // without the source text (an export whose file is gone) there are no lines, as in internal code
             if (source != null) {
                 b.beginSource(source);
                 beginLine(declaration.line);
-            } else if (!internal) {
-                throw new Unsupported("no source text for lines", declaration);
             }
             prologue();
             entries(body);
@@ -589,8 +590,6 @@ public final class BytecodeTranslator {
             if (source != null) {
                 b.beginSource(source);
                 b.beginSourceSection(0, source.getLength());
-            } else if (!internal) {
-                throw new Unsupported("no source text for lines", file);
             }
             List<Object> body = new ArrayList<>();
             List<Runnable> early = new ArrayList<>();
@@ -1234,8 +1233,24 @@ public final class BytecodeTranslator {
                         }
                     }
                 }
+            } else if (statement.is("AST_TRY")) {
+                // into a try block or a catch block (into a finally block is JumpChecks' compile error)
+                labels.addAll(labelsInside(statement.node("try")));
+                for (Ast catchBlock : catchBlocks(statement)) {
+                    labels.addAll(labelsInside(catchBlock));
+                }
             }
             return labels;
+        }
+
+        /** A try statement's catch blocks' statements, in order. */
+        private List<Ast> catchBlocks(Ast tryStatement) {
+            List<Ast> blocks = new ArrayList<>();
+            Ast catches = tryStatement.node("catches");
+            for (int i = 0; catches != null && i < catches.size(); i++) {
+                blocks.add(((Ast) catches.child(i)).node("stmts"));
+            }
+            return blocks;
         }
 
         /**
@@ -1352,6 +1367,7 @@ public final class BytecodeTranslator {
                 }
             }
             labelScopes.add(scope);
+            BytecodeTranslator.this.loops = true;
             for (Object child : list.children()) {
                 if (child instanceof Ast statement) {
                     if (statement.is("AST_LABEL")) {
@@ -1563,6 +1579,7 @@ public final class BytecodeTranslator {
         private void loopBody(Loop outer, Ast body, Runnable first, Runnable afterContinue) {
             b.beginBlock();
             Loop loop = new Loop(outer.breakLabel(), b.createLabel());
+            BytecodeTranslator.this.loops = true;
             if (first != null) {
                 first.run();
             }
@@ -1868,6 +1885,33 @@ public final class BytecodeTranslator {
                 statements(node.node("try"));
                 return;
             }
+            tryCatchEntered(node, catches, catchBlocks(node), 0);
+        }
+
+        /**
+         * A goto jumping in to a catch block runs that block, as after its exception was caught, and goes on after
+         * the try (the DSL can't branch into a handler); any other way in, the try statement.
+         */
+        private void tryCatchEntered(Ast node, Ast catches, List<Ast> blocks, int from) {
+            for (int i = from; entering != null && i < blocks.size(); i++) {
+                Set<String> into = labelsInside(blocks.get(i));
+                if (into.isEmpty()) {
+                    continue;
+                }
+                // (inside the finally's TryCatchOtherwise when there is one: the finally block runs after it)
+                b.beginIfThenElse();
+                enteringOneOf(into);
+                statements(blocks.get(i));
+                b.beginBlock();
+                tryCatchEntered(node, catches, blocks, i + 1);
+                b.endBlock();
+                b.endIfThenElse();
+                return;
+            }
+            tryCatchBlocks(node, catches);
+        }
+
+        private void tryCatchBlocks(Ast node, Ast catches) {
             b.beginTryCatch();
             statements(node.node("try"));
             b.beginBlock();
@@ -2379,6 +2423,9 @@ public final class BytecodeTranslator {
                 listAssignment(target, node.get("expr"));
                 return;
             }
+            if (Translator.onTemporary(target)) {
+                throw compileError(target, "Cannot use temporary expression in write context");
+            }
             if (refPlace(target) instanceof RefPlace place) {
                 // StaticPropNode, GlobalVarNode, GlobalsDimNode write: the value, then the place's reference
                 b.beginBlock();
@@ -2541,7 +2588,7 @@ public final class BytecodeTranslator {
                     } else {
                         b.beginRefPropNested(element.site(), append);
                         expression(element.property().get("expr"));
-                        emitKeys(keys);
+                        propertyKeys(element, keys);
                         b.endRefPropNested();
                     }
                     b.endBlock();
@@ -2640,7 +2687,7 @@ public final class BytecodeTranslator {
                         b.beginBindPropNested(element.site(), append);
                         refOf(place);
                         expression(element.property().get("expr"));
-                        emitKeys(keys);
+                        propertyKeys(element, keys);
                         b.endBindPropNested();
                     }
                     b.endBlock();
@@ -3252,8 +3299,7 @@ public final class BytecodeTranslator {
         private void arrayLiteral(Ast node) {
             for (Object child : node.children()) {
                 if (!(child instanceof Ast)) {
-                    // php-src's compile error "Cannot use empty array elements in arrays"
-                    throw new Unsupported("empty array element", node);
+                    throw compileError(node, "Cannot use empty array elements in arrays");
                 }
             }
             List<Object> elements = node.children();
@@ -3317,8 +3363,9 @@ public final class BytecodeTranslator {
                         expression(element.get("key"));
                     }
                     if (!(element.get("value") instanceof Ast place) || !isRefPlace(place)) {
-                        // php-src's compile error "Cannot assign reference to non referenceable value"
-                        throw new Unsupported("reference to", element);
+                        throw compileError(element, Translator.isCall(element.get("value"))
+                                ? "Can't use function return value in write context"
+                                : "Cannot assign reference to non referenceable value");
                     }
                     refOf(place);
                     if (keyed) {
@@ -3381,6 +3428,14 @@ public final class BytecodeTranslator {
 
         /** `(int) x`... (UnaryNodes.CastNode); `(unset)` no longer parses. */
         private void cast(Ast node) {
+            if (node.flags == CAST_VOID) {
+                // (void) expr; (8.5, a statement only): the value dropped
+                b.beginBlock();
+                expression(node.get("expr"));
+                b.emitLoadConstant(PhpNull.NULL);
+                b.endBlock();
+                return;
+            }
             switch (node.flags) {
                 case CastNode.TO_LONG -> b.beginCastLong();
                 case CastNode.TO_DOUBLE -> b.beginCastDouble();
@@ -3477,21 +3532,39 @@ public final class BytecodeTranslator {
          * stays on the tree.
          */
         private void refuseNullsafeWrite(Ast node) {
-            boolean refused = switch (node.kind) {
-                case "AST_ASSIGN" -> nullsafeTarget(node.get("var")) || node.node("var").is("AST_ARRAY")
-                        && Translator.listHasRefs(node.node("var"))
+            Object[] targets = switch (node.kind) {
+                case "AST_ASSIGN", "AST_ASSIGN_REF", "AST_ASSIGN_OP", "AST_ASSIGN_COALESCE", "AST_PRE_INC",
+                     "AST_PRE_DEC", "AST_POST_INC", "AST_POST_DEC", "AST_UNSET" -> new Object[] {node.get("var")};
+                case "AST_FOREACH" -> new Object[] {node.get("value"), node.get("key")};
+                default -> new Object[0];
+            };
+            boolean written = false;
+            for (Object target : targets) {
+                // zend_ensure_writable_variable: a call's value first
+                if (target instanceof Ast call && call.is("AST_CALL")) {
+                    throw compileError(node, "Can't use function return value in write context");
+                }
+                if (target instanceof Ast call && (call.is("AST_METHOD_CALL") || call.is("AST_NULLSAFE_METHOD_CALL")
+                        || call.is("AST_STATIC_CALL"))) {
+                    throw compileError(node, "Can't use method return value in write context");
+                }
+                written |= nullsafeTarget(target);
+            }
+            if (written) {
+                // zend_ensure_writable_variable
+                throw compileError(node, "Can't use nullsafe operator in write context");
+            }
+            boolean referenced = switch (node.kind) {
+                case "AST_ASSIGN" -> node.node("var").is("AST_ARRAY") && Translator.listHasRefs(node.node("var"))
                         && Translator.deepestNullsafe(node.get("expr")) != null;
-                case "AST_ASSIGN_REF" -> nullsafeTarget(node.get("var"))
-                        || Translator.deepestNullsafe(node.get("expr")) != null;
-                case "AST_ASSIGN_OP", "AST_PRE_INC", "AST_PRE_DEC", "AST_POST_INC", "AST_POST_DEC", "AST_UNSET" ->
-                        nullsafeTarget(node.get("var"));
-                case "AST_FOREACH" -> nullsafeTarget(node.get("value")) || nullsafeTarget(node.get("key"));
+                case "AST_ASSIGN_REF" -> Translator.deepestNullsafe(node.get("expr")) != null;
                 case "AST_RETURN" -> returnsRef() && !Translator.isCall(node.get("expr"))
                         && Translator.deepestNullsafe(node.get("expr")) != null;
                 default -> false;
             };
-            if (refused) {
-                throw new Unsupported("?-> in a write context", node);
+            if (referenced) {
+                // zend_assert_not_short_circuited
+                throw compileError(node, "Cannot take reference of a nullsafe chain");
             }
         }
 
@@ -3640,11 +3713,13 @@ public final class BytecodeTranslator {
                 case "AST_PROP":
                     return delayedProp(ast, fetch);
                 case "AST_DIM": {
-                    if (ast.get("dim") == null) {
-                        // php-src appends a null to write to; read, the tree's error
-                        throw new Unsupported("[] as the object of a property written", ast);
-                    }
                     Object container = delayedObject(ast.get("expr"), fetch);
+                    if (ast.get("dim") == null) {
+                        // FETCH_DIM_W's new element, the object of the property (ElementForWrite)
+                        Ast appended = withParts(ast, "expr", container, "dim", null);
+                        writeFetched.add(appended);
+                        return appended;
+                    }
                     return withParts(ast, "expr", container, "dim", onceKey(ast.get("dim")));
                 }
                 default:
@@ -3807,7 +3882,9 @@ public final class BytecodeTranslator {
                 return;
             }
             if (!(tested instanceof Ast target) || !target.is("AST_PROP")) {
-                throw new Unsupported("isset of", tested instanceof Ast ast ? ast : null);
+                // zend_compile_isset_or_empty: a call (anything else doesn't parse)
+                throw compileError(tested instanceof Ast ast ? ast : null, "Cannot use isset() on the result of an "
+                        + "expression (you can use \"null !== expression\" instead)");
             }
             Object prop = target.get("prop");
             if (prop instanceof String name) {
@@ -3862,7 +3939,7 @@ public final class BytecodeTranslator {
             if (place instanceof Ast ast && !isThis(ast)) {
                 switch (ast.kind) {
                     case "AST_DIM" -> {
-                        if (ast.get("dim") == null) {
+                        if (ast.get("dim") == null && !writeFetched.contains(ast)) {
                             throw compileError(ast, "Cannot use [] for reading");
                         }
                         if (isGlobals(ast.get("expr"))) {
@@ -3870,9 +3947,14 @@ public final class BytecodeTranslator {
                             return;
                         }
                         if (writeFetched.contains(ast)) {
+                            // `[]` only as the object of a property written (delayedObject)
                             b.beginElementForWrite();
                             readIfSet(ast.get("expr"));
-                            key(ast.get("dim"));
+                            if (ast.get("dim") == null) {
+                                b.emitLoadConstant(PhpBytecodeRootNode.APPEND);
+                            } else {
+                                key(ast.get("dim"));
+                            }
                             b.endElementForWrite();
                             return;
                         }
@@ -4042,8 +4124,16 @@ public final class BytecodeTranslator {
                 base = base.node("expr");
             }
             for (int i = 0; i < dims.size() - 1; i++) {
-                if (dims.get(i) == null && !what.equals("assignment to")) {
-                    throw new Unsupported("[] inside a place read", target);
+                if (dims.get(i) != null) {
+                    continue;
+                }
+                // zend_delayed_compile_dim: `[]` is a write's (W, RW: a new element) and no read's
+                // an argument's: a new element by reference, else the send's Error "Cannot use [] for reading"
+                switch (what) {
+                    case "unset of" -> throw compileError(target, "Cannot use [] for unsetting");
+                    case "??= to" -> throw compileError(target, "Cannot use [] for reading");
+                    default -> {
+                    }
                 }
             }
             if (refPlace(base) instanceof RefPlace kept) {
@@ -4058,9 +4148,25 @@ public final class BytecodeTranslator {
                     case "unset of" -> VariableVariableNode.UNSET;
                     default -> VariableVariableNode.W;
                 }, what.equals("compound assignment to") || what.equals("increment of") || what.equals("argument"));
-                return new ElementPlace(null, property, writtenPropSite(property), null, dims);
+                // a computed name is the first of the keys the operation is given (placeName)
+                return new ElementPlace(null, property, propSite(property,
+                        property.get("prop") instanceof String name ? name : null), null, dims);
             }
-            throw new Unsupported(what + " an element of an expression", target);
+            // a call's result (php-src's VAR: the reference a function returned, else the value; ZEND_SEPARATE
+            // drops only a reference nothing else holds) or $this, kept as a variable the chain is written in
+            BytecodeLocal held = b.createLocal();
+            b.beginStoreLocal(held);
+            if (isThis(base)) {
+                thisAsRef();
+            } else if (Translator.isCall(base)) {
+                b.beginReturnedRef(false);
+                callForRef(base);
+                b.endReturnedRef();
+            } else {
+                throw new IllegalStateException(what + " an element of " + base.kind);
+            }
+            b.endStoreLocal();
+            return new ElementPlace(held, null, null, null, dims);
         }
 
         /** `place[]`: an append, which php-src refuses to read (its compile error "Cannot use [] for reading"). */
@@ -4084,6 +4190,14 @@ public final class BytecodeTranslator {
                 keys.add(dim == null ? null : onceKey(dim));
             }
             return keys;
+        }
+
+        /** A property element place's keys, after its name when that is computed (placeName). */
+        private void propertyKeys(ElementPlace place, List<Object> keys) {
+            if (!(place.property().get("prop") instanceof String)) {
+                propName(place.property().get("prop"));
+            }
+            emitKeys(keys);
         }
 
         private void emitKeys(List<Object> keys) {
@@ -4125,7 +4239,7 @@ public final class BytecodeTranslator {
                 b.beginWritePropNested(place.site(), append);
                 expression(value);
                 writtenObject(place.property().get("expr"), BP_VAR_W);
-                emitKeys(keys);
+                propertyKeys(place, keys);
                 b.endWritePropNested();
             }
         }
@@ -4142,6 +4256,11 @@ public final class BytecodeTranslator {
                 place.ref().readIfSet();
             } else if (place.variable() != null) {
                 b.emitReadVarIfSet(place.variable());
+            } else if (!(place.property().get("prop") instanceof String)) {
+                b.beginReadPropIfSetNamed(place.site());
+                readIfSet(place.property().get("expr"));
+                propName(place.property().get("prop"));
+                b.endReadPropIfSetNamed();
             } else {
                 b.beginReadPropIfSet(place.site());
                 readIfSet(place.property().get("expr"));
@@ -4155,10 +4274,6 @@ public final class BytecodeTranslator {
 
         /** `base[k1]...[kn] op= value` (CompoundAssignNode on a DimNode): the keys, the value, then the element. */
         private void nestedCompound(Ast target, Object value, int op) {
-            if (lastDimAppends(target)) {
-                // php-src appends a null and combines it; the tree's DimNode can't read the new element
-                throw new Unsupported("compound assignment to []", target);
-            }
             b.beginBlock();
             ElementPlace place = elementPlace(target, "compound assignment to");
             List<Object> keys = placeKeys(place, true);
@@ -4177,7 +4292,7 @@ public final class BytecodeTranslator {
                 b.beginCompoundPropNested(place.site(), op);
                 expression(value);
                 writtenObject(place.property().get("expr"), BP_VAR_RW);
-                emitKeys(keys);
+                propertyKeys(place, keys);
                 b.endCompoundPropNested();
             }
             b.endBlock();
@@ -4185,10 +4300,6 @@ public final class BytecodeTranslator {
 
         /** `++base[k1]...[kn]`, `base[k]--`... (IncDecNode on a DimNode). */
         private void nestedIncDec(Ast target, boolean increment, boolean prefix) {
-            if (lastDimAppends(target)) {
-                // php-src appends a null and steps it; the tree's DimNode can't read the new element
-                throw new Unsupported("increment of []", target);
-            }
             b.beginBlock();
             ElementPlace place = elementPlace(target, "increment of");
             List<Object> keys = placeKeys(place, true);
@@ -4204,7 +4315,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginIncDecPropNested(place.site(), increment, prefix);
                 writtenObject(place.property().get("expr"), BP_VAR_RW);
-                emitKeys(keys);
+                propertyKeys(place, keys);
                 b.endIncDecPropNested();
             }
             b.endBlock();
@@ -4231,7 +4342,7 @@ public final class BytecodeTranslator {
             } else {
                 b.beginUnsetPropNested(place.site());
                 writtenObject(place.property().get("expr"), BP_VAR_UNSET);
-                emitKeys(keys);
+                propertyKeys(place, keys);
                 b.endUnsetPropNested();
             }
             b.endBlock();
@@ -4426,8 +4537,13 @@ public final class BytecodeTranslator {
                         return false;
                     }
                     if (owner == null) {
-                        // php-src's Error; the tree's lateStatic(null) has no class to fall back to
-                        throw new Unsupported(lower + "() outside a class", node);
+                        // the scope or the called class the code runs with, else php-src's Error
+                        if (lower.equals("get_class")) {
+                            b.emitScopeClassName();
+                        } else {
+                            b.emitCalledClassName();
+                        }
+                        return true;
                     }
                     if (lower.equals("get_class")) {
                         // php-src 8.5's deprecation, which the tree's constant doesn't raise
@@ -4487,7 +4603,14 @@ public final class BytecodeTranslator {
                     b.endObjectVars();
                     return true;
                 }
-                case "get_defined_vars" -> throw new Unsupported(lower + "()", node);
+                case "get_defined_vars" -> {
+                    if (args.size() != 0) {
+                        return false;
+                    }
+                    useCallScope();
+                    b.emitDefinedVars();
+                    return true;
+                }
                 default -> {
                     return false;
                 }
@@ -5208,8 +5331,8 @@ public final class BytecodeTranslator {
                     }
                 }
                 // outside a class, a closure's called class is the scope it is bound to, if any
-                case "static" -> b.emitResolveLateStatic(owner == null ? (ClassSite) made(ClassSite::noScope)
-                        : classSite(owner.name()));
+                case "static" -> b.emitResolveLateStatic(owner == null && inClosure()
+                        ? (ClassSite) made(ClassSite::noScope) : classSite(enclosingClass(ast).name()));
                 default -> b.emitResolveClass(classSite(name));
             }
         }
@@ -5230,7 +5353,9 @@ public final class BytecodeTranslator {
         /** The class the code is written in, for self and static (the tree's requireClass). */
         private Translator.ClassInfo enclosingClass(Ast node) {
             if (owner == null) {
-                throw new Unsupported("self, parent or static outside a class", node);
+                // zend_ensure_valid_class_fetch_type, where the scope is known: a function outside a class
+                String which = node.is("AST_NAME") ? Str.lower(classNameOf(node)) : "self";
+                throw compileError(node, "Cannot use \"" + which + "\" when no class scope is active");
             }
             return owner;
         }
@@ -5238,7 +5363,7 @@ public final class BytecodeTranslator {
         private String parentClass(Ast node) {
             String parent = enclosingClass(node).parentName();
             if (parent == null) {
-                throw new Unsupported("parent in a class without a parent", node);
+                throw compileError(node, "Cannot use \"parent\" when current class scope has no parent");
             }
             return parent;
         }
@@ -5312,11 +5437,17 @@ public final class BytecodeTranslator {
                 return;
             }
             String name = classNameOf(classNode);
-            switch (Str.lower(name)) {
-                case "self" -> name = enclosingClass(node).name();
-                case "static", "parent" -> throw new Unsupported("instanceof static or parent", node);
-                default -> {
-                }
+            String lower = Str.lower(name);
+            if (lower.equals("static") || lower.equals("parent") || lower.equals("self") && inClosure()) {
+                // the class resolved as the code runs (ZEND_FETCH_CLASS_STATIC, _PARENT, a closure's scope)
+                b.beginInstanceOfValue();
+                expression(node.get("expr"));
+                classRef(classNode);
+                b.endInstanceOfValue();
+                return;
+            }
+            if (lower.equals("self")) {
+                name = enclosingClass(node).name();
             }
             b.beginInstanceOf(Str.lower(name));
             expression(node.get("expr"));
@@ -5447,10 +5578,14 @@ public final class BytecodeTranslator {
                 ElementPlace place = elementPlace(ast, "argument");
                 boolean append = place.appends();
                 List<Object> keys = placeKeys(place, !append);
-                if (place.ref() != null) {
-                    if (append) {
-                        throw new Unsupported("argument [] of a reference place", ast);
-                    }
+                if (place.ref() != null && append) {
+                    // a new element's reference, else the Error (SendTemporary on the place's reference)
+                    b.beginSendTemporary(index, true, true);
+                    b.emitLoadStackValue(callee);
+                    place.ref().ref(true);
+                    emitKeys(keys);
+                    b.endSendTemporary();
+                } else if (place.ref() != null) {
                     // the element's reference (DimNode.makeRef) or its value (DimNode.execute down the chain)
                     b.beginConditional();
                     argByRef(index, callee, named);
@@ -5476,7 +5611,7 @@ public final class BytecodeTranslator {
                     b.beginSendPropNested(place.site(), index, append);
                     sendCallee(callee, named);
                     writtenObject(place.property().get("expr"), BP_VAR_W);
-                    emitKeys(keys);
+                    propertyKeys(place, keys);
                     b.endSendPropNested();
                 }
                 b.endBlock();
@@ -5556,6 +5691,14 @@ public final class BytecodeTranslator {
                 }
             }
 
+            /** `Cls::$$key` fetched as mode says (StaticPropNamed). */
+            private void staticPropNamed(int mode) {
+                b.beginStaticPropNamed(site, mode);
+                emitClass();
+                propName(key);
+                b.endStaticPropNamed();
+            }
+
             /** `$$key` fetched as type says (VariableValue). */
             private void variableValue(int type) {
                 b.beginVariableValue(type);
@@ -5595,6 +5738,8 @@ public final class BytecodeTranslator {
             void read() {
                 if (variable) {
                     variableValue(fetch);
+                } else if (site != null && key != null) {
+                    staticPropNamed(VariableVariableNode.R);
                 } else if (site != null) {
                     b.beginReadStaticProp(site);
                     emitClass();
@@ -5623,6 +5768,10 @@ public final class BytecodeTranslator {
                 }
                 if (site == null) {
                     readGlobal(true);
+                    return;
+                }
+                if (key != null) {
+                    staticPropNamed(VariableVariableNode.IS);
                     return;
                 }
                 b.beginStaticPropIfSet(site);
@@ -5663,6 +5812,8 @@ public final class BytecodeTranslator {
                     b.beginVariableRef(create ? VariableVariableNode.W : VariableVariableNode.UNSET);
                     expression(key);
                     b.endVariableRef();
+                } else if (site != null && key != null) {
+                    staticPropNamed(VariableVariableNode.W);
                 } else if (site != null) {
                     b.beginStaticPropRef(site);
                     emitClass();
@@ -5683,6 +5834,10 @@ public final class BytecodeTranslator {
                     b.endUnsetVariable();
                     return;
                 }
+                if (site != null && key != null) {
+                    staticPropNamed(VariableVariableNode.UNSET);
+                    return;
+                }
                 if (site != null) {
                     b.beginUnsetStaticProp(site);
                     emitClass();
@@ -5701,6 +5856,14 @@ public final class BytecodeTranslator {
                     source.run();
                     expression(key);
                     b.endBindVariable();
+                    return;
+                }
+                if (site != null && key != null) {
+                    b.beginBindStaticPropNamed();
+                    source.run();
+                    emitClass();
+                    propName(key);
+                    b.endBindStaticPropNamed();
                     return;
                 }
                 if (site != null) {
@@ -5733,13 +5896,12 @@ public final class BytecodeTranslator {
             }
             switch (node.kind) {
                 case "AST_STATIC_PROP" -> {
-                    if (!(node.get("prop") instanceof String name)) {
-                        throw new Unsupported("static property by a computed name", node);
-                    }
+                    // a computed name is the place's key, evaluated after the class
+                    String name = node.get("prop") instanceof String constant ? Str.sourceKey(constant) : null;
                     boolean scopeInFrame = inClosure();
-                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(Str.sourceKey(name),
+                    StaticPropSite site = (StaticPropSite) made(() -> new StaticPropSite(name,
                             owner == null ? null : Str.lower(owner.name()), scopeInFrame));
-                    return new RefPlace(node.get("class"), site, null, null);
+                    return new RefPlace(node.get("class"), site, null, name == null ? node.get("prop") : null);
                 }
                 case "AST_VAR" -> {
                     if (!(node.get("name") instanceof String name)) {
@@ -5757,8 +5919,8 @@ public final class BytecodeTranslator {
                     }
                     Object dim = node.get("dim");
                     if (dim == null) {
-                        // php-src's compile errors "Cannot append to $GLOBALS", "Cannot use [] for reading"
-                        throw new Unsupported("[] of $GLOBALS", node);
+                        // zend_delayed_compile_dim (a read's "Cannot use [] for reading" comes first)
+                        throw compileError(node, "Cannot append to $GLOBALS");
                     }
                     String name = constantGlobalName(dim);
                     return name != null ? new RefPlace(null, null, name, null) : new RefPlace(null, null, null, dim);
@@ -5807,11 +5969,6 @@ public final class BytecodeTranslator {
             for (Object link = ast; link != base; link = ((Ast) link).get("expr")) {
                 dims.add(0, ((Ast) link).get("dim"));
             }
-            for (int i = 0; i < dims.size() - 1; i++) {
-                if (dims.get(i) == null) {
-                    throw new Unsupported("[] inside a place read", ast);
-                }
-            }
             boolean append = dims.get(dims.size() - 1) == null;
             boolean call = Translator.isCall(base) && !constants.compiledInPlace((Ast) base);
             b.beginSendTemporary(index, append, call);
@@ -5821,9 +5978,7 @@ public final class BytecodeTranslator {
             } else {
                 expression(base);
             }
-            for (int i = 0; i < (append ? dims.size() - 1 : dims.size()); i++) {
-                key(dims.get(i));
-            }
+            emitKeys(append ? dims.subList(0, dims.size() - 1) : dims);
             b.endSendTemporary();
         }
 
