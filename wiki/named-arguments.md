@@ -560,6 +560,48 @@ thunks are bytecode roots) compiles named arguments as any `new` does.
 
 The Gate 1 A/B at the end of phase 2 shows the first two rows.
 
+### 4.9 Results (2026-11-04, `a95c0e5` + the forward_static_call fix, against bytecode-only `5b82ba6`)
+
+- **Smoke:** 195 of 203 pass. The six failing before named arguments are byte-identical to the baseline (blocks,
+  blocks-corpus, closure-debug, closure-scope, lazy-objects, property-hooks). `named-args-assert` and
+  `named-args-fiber` wait for issues 030 and 031. Every other `named-args-*` test passes, and so does
+  `callbacks-by-reference`.
+- **php-src `.phpt`:** 5543 pass (75.5% strict) against the baseline's 5475 (74.6%): 70 more, 29 of them in
+  `Zend/tests/named_params`, which passes 29 of 33. The four left are `assert` (030) and three attribute tests (029).
+  - Two cases failed that passed on the baseline:
+    - `value_unknown_at_compile_time_001` is the random one known before (bytecode-dsl.md).
+    - `forward_static_call_002` lost forward_static_call()'s "no class scope" Error in part 2. It is fixed and now
+      throws that Error.
+- **Gate 2:** 19 of 21 pages are byte-identical to PHP 8.5's (php against jvm-bc). The other two are the oEmbed
+  link.
+- **WooCommerce walk** (php against jvm): every status is the same. The 11 bodies that differ differ only in the
+  oEmbed link. The rows differ only in the analytics import (`wc_order_stats`, the lookups, the scheduler's option
+  and two order meta rows), the open difference of woocommerce.md.
+- **Gate 1 A/B** (CPUs 14-21, under the CPU lock, base = bytecode-only `5b82ba6`, median time ratio named/base):
+  - All kernels, 300 iterations × 6 rounds:
+
+    | kernel | ratio | IQR |
+    |---|---|---|
+    | hooks | 0.97 | 0.95-1.11 |
+    | escape | 1.06 | 1.03-1.10 |
+    | slugs | 1.02 | 0.95-1.13 |
+    | wpautop | 1.01 | 1.00-1.23 |
+    | wptexturize | 0.99 | 0.98-1.06 |
+    | blocks | 1.07 | 1.01-1.12 |
+    | kses | 0.99 | 0.96-1.03 |
+    | peak memory | 0.95 | 0.95-1.01 |
+
+  - escape and blocks were then remeasured, with hooks, over 10 rounds:
+
+    | kernel | ratio | IQR |
+    |---|---|---|
+    | escape | 1.01 | 0.99-1.05 |
+    | blocks | 0.93 | 0.87-1.07 |
+    | hooks | 1.01 | 0.96-1.10 |
+    | memory | 1.02 | 0.99-1.08 |
+
+    Within noise: calls without names aren't slower, as the bytecode they compile to is unchanged.
+
 ## 5. Size and risks
 
 **Estimate:** about 2,500–3,000 lines.

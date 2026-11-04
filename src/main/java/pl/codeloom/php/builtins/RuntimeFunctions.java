@@ -98,9 +98,9 @@ final class RuntimeFunctions {
                 CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
         // the called class of the calling code goes on to the callee (late static binding)
         r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
-                FORWARD_STATIC_CALL)), PhpArray.list(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length))));
+                FORWARD_STATIC_CALL), "forward_static_call"), PhpArray.list(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length))));
         r.fn("forward_static_call_array", (context, a) -> callArray(forwarded(Callables.parameter(context,
-                Args.get(a, 0), FORWARD_STATIC_CALL_ARRAY)), Args.array(a, 1, "forward_static_call_array", "args")));
+                Args.get(a, 0), FORWARD_STATIC_CALL_ARRAY), "forward_static_call_array"), Args.array(a, 1, "forward_static_call_array", "args")));
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
@@ -354,7 +354,12 @@ final class RuntimeFunctions {
      * callable's when it is an instance of it, as fci_cache.called_scope; a call with an object keeps its class.
      */
     @TruffleBoundary
-    private static Callables.Target forwarded(Callables.Target target) {
+    private static Callables.Target forwarded(Callables.Target target, String function) {
+        // forward_static_call's own check (forward_static_call_array has none), on the code calling it once its
+        // parameters are parsed: EX(prev_execute_data)->func->common.scope
+        if (function.equals("forward_static_call") && Callables.callerScope() == null) {
+            throw new PhpError("Cannot call forward_static_call() when no class scope is active");
+        }
         if (target.thisObject() == null && target.staticClass() != null
                 && Callables.callerArgument(PhpFunction.ARG_STATIC) instanceof PhpClass called
                 && called.isSubclassOf(target.staticClass().getLowerName())) {

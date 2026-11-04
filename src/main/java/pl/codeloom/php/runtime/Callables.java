@@ -283,6 +283,13 @@ public final class Callables {
         return caller == null ? null : caller.argument(index);
     }
 
+    /** The lowercase name of the class scope of the PHP code calling (its declaring class or a closure's), or null. */
+    @TruffleBoundary
+    public static String callerScope() {
+        Caller caller = caller();
+        return caller == null ? null : caller.scopeName();
+    }
+
     /** $this of the PHP code calling when it is an instance of the class, or null. */
     private static PhpObject callerThisOf(PhpClass phpClass) {
         Caller caller = caller();
