@@ -342,8 +342,9 @@ public final class ElementNodes {
     /**
      * `$container[key]` as isset(), `??` and the containers of writes and unsets read it (BP_VAR_IS, BP_VAR_W,
      * BP_VAR_UNSET): as ElementReadNode, quietly; PhpNull.NULL when there is no element, also out of a string.
+     * It reports no polymorphism, as ElementReadNode: WP_Hook::add_filter's `isset($this->callbacks[$priority])` is
+     * this node's read.
      */
-    @ReportPolymorphism
     @GenerateUncached
     public abstract static class ElementIfSetNode extends Node {
         public abstract Object execute(Object container, Object key);
