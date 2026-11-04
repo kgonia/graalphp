@@ -610,7 +610,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "!isObject(value)")
         public static Object other(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                    @Bind Node node) {
-            if (value instanceof PhpRef ref) {
+            // only a function returning by reference returns one: the others compile one check, as the tree's
+            if (root.returnsRef && value instanceof PhpRef ref) {
                 ref.set(FunctionRootNode.checkReturn(root.name, root.returnType, ref.get(), calledClass(frame),
                         root.path, node));
                 return ref;
