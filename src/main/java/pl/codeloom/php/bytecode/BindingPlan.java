@@ -1,5 +1,6 @@
 package pl.codeloom.php.bytecode;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
@@ -13,7 +14,6 @@ import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
-import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.ArrayList;
@@ -61,6 +61,8 @@ public final class BindingPlan {
     private final String callError;
     /** The variadic parameter's index, for an extra's messages; -1 if the callee has none. */
     private final int variadic;
+    /** Whether the callee's root has been told to look for extras (NamedExtras.expect), on the first call. */
+    @CompilationFinal private boolean extrasExpected;
 
     private BindingPlan(int[] slot, boolean[] byRef, int length, int[] holes, TruffleString[] extraNames,
                         boolean constant, int sendErrorAt, String sendError, int callErrorAt, String callError,
@@ -89,13 +91,11 @@ public final class BindingPlan {
         int count = names.length;
         int positional = site.positional();
         PhpFunction.Param[] params = callee.getParams();
-        String[] parameterNames = parameterNames(callee);
-        boolean hasVariadic = callee == MethodSite.BY_VALUE ? !site.isConstruct()
-                : params.length > 0 && params[params.length - 1].variadic();
+        boolean hasVariadic = callee == MethodSite.BY_VALUE ? !site.isConstruct() : isVariadic(callee);
         int variadic = callee == MethodSite.BY_VALUE ? -1 : hasVariadic ? params.length - 1 : -1;
         int[] slot = new int[count];
         boolean[] byRef = new boolean[count];
-        boolean[] bound = new boolean[Math.max(count, parameterNames.length) + 1];
+        boolean[] bound = new boolean[Math.max(count, params.length) + 1];
         int numArgs = positional;
         for (int k = 0; k < positional; k++) {
             slot[k] = k;
@@ -109,7 +109,7 @@ public final class BindingPlan {
         String error = null;
         for (int k = positional; k < count && errorAt < 0; k++) {
             String name = Str.java(names[k]);
-            int index = Arrays.asList(parameterNames).indexOf(name);
+            int index = parameterIndex(callee, name);
             if (index >= 0) {
                 if (bound[index]) {
                     errorAt = k;
@@ -158,27 +158,34 @@ public final class BindingPlan {
                 callError, variadic);
     }
 
-    private static String overwrites(String name) {
+    static String overwrites(String name) {
         return "Named parameter $" + name + " overwrites previous argument";
     }
 
     /**
-     * The names a call can bind to callee's parameters, the variadic one's excluded (zend_get_arg_offset_by_name
-     * looks among the num_args first): none for a class without a constructor or __call standing in for a method.
+     * zend_get_arg_offset_by_name: the index of callee's parameter called name (case-sensitively), among the num_args
+     * before a variadic one; -1 for none. None for a class without a constructor or __call standing in for a method.
      * A built-in's parameters are named only by position here (Registry's arg0...): it binds no name until its
-     * parameters have php-src's names (the built-in parameter table).
+     * parameters have php-src's names (part 3, the built-in parameter table).
      */
-    private static String[] parameterNames(PhpFunction callee) {
+    static int parameterIndex(PhpFunction callee, String name) {
         if (callee == MethodSite.BY_VALUE || callee.getBuiltin() != null) {
-            return new String[0];
+            return -1;
         }
         PhpFunction.Param[] params = callee.getParams();
-        int declared = params.length > 0 && params[params.length - 1].variadic() ? params.length - 1 : params.length;
-        String[] names = new String[declared];
+        int declared = isVariadic(callee) ? params.length - 1 : params.length;
         for (int i = 0; i < declared; i++) {
-            names[i] = params[i].name();
+            if (params[i].name().equals(name)) {
+                return i;
+            }
         }
-        return names;
+        return -1;
+    }
+
+    /** Whether callee's last parameter is variadic (ZEND_ACC_VARIADIC). */
+    static boolean isVariadic(PhpFunction callee) {
+        PhpFunction.Param[] params = callee.getParams();
+        return params.length > 0 && params[params.length - 1].variadic();
     }
 
     // ---- the sends ----
@@ -212,15 +219,13 @@ public final class BindingPlan {
 
     /**
      * The frame arguments of the call, from the arguments as the call took them (in source order, after the first
-     * slots): each at its parameter's position, the holes NOT_PASSED. When nothing moves, the same array.
+     * slots): each at its parameter's position, the holes NOT_PASSED, the extras left for {@link #enter}. When
+     * nothing moves, the same array.
      */
     @ExplodeLoop
     Object[] frame(Object[] arguments) {
         if (identity) {
             return arguments;
-        }
-        if (extraNames.length != 0) {
-            throw extrasUnsupported();
         }
         Object[] frame = new Object[length];
         for (int k = 0; k < slot.length; k++) {
@@ -234,17 +239,72 @@ public final class BindingPlan {
         return frame;
     }
 
-    /** The holes filled (ZEND_CHECK_UNDEF_ARGS), after every argument is sent and before the callee runs. */
-    void fillHoles(Object[] frame, DirectCallNode defaults) {
+    /**
+     * Once the frame's first slots are set, before the call: the holes filled (ZEND_CHECK_UNDEF_ARGS, after every
+     * argument is sent and before the callee runs), and the extras passed in the closure slot (NamedExtras). The
+     * defaults target sees them, as php-src's fake frame is the call's, and puts the slot back: they go in again.
+     */
+    void enter(Object[] frame, Object[] arguments, PhpFunction callee, DirectCallNode defaults) {
+        if (extraNames.length == 0) {
+            if (holes.length != 0) {
+                defaults.call(frame);
+            }
+            return;
+        }
+        NamedExtras extras = extras(frame[PhpFunction.ARG_CLOSURE], arguments, callee);
+        frame[PhpFunction.ARG_CLOSURE] = extras;
         if (holes.length != 0) {
             defaults.call(frame);
+            frame[PhpFunction.ARG_CLOSURE] = extras;
         }
     }
 
-    void fillHoles(Object[] frame, PhpFunction callee, IndirectCallNode callNode) {
+    void enter(Object[] frame, Object[] arguments, PhpFunction callee, IndirectCallNode callNode) {
+        if (extraNames.length == 0) {
+            if (holes.length != 0) {
+                callNode.call(defaultsTarget(callee), frame);
+            }
+            return;
+        }
+        NamedExtras extras = extras(frame[PhpFunction.ARG_CLOSURE], arguments, callee);
+        frame[PhpFunction.ARG_CLOSURE] = extras;
         if (holes.length != 0) {
             callNode.call(defaultsTarget(callee), frame);
+            frame[PhpFunction.ARG_CLOSURE] = extras;
         }
+    }
+
+    /** The extras' values in their order (as sent: references for a by-reference variadic). */
+    @ExplodeLoop
+    private Object[] extraValues(Object[] arguments) {
+        Object[] values = new Object[extraNames.length];
+        int e = 0;
+        for (int k = 0; k < slot.length; k++) {
+            if (slot[k] == EXTRA) {
+                values[e++] = arguments[PhpFunction.ARG_FIRST + k];
+            }
+        }
+        return values;
+    }
+
+    /** The call's extras for the closure slot holding slotValue; the callee told to look for them first. */
+    private NamedExtras extras(Object slotValue, Object[] arguments, PhpFunction callee) {
+        if (!extrasExpected) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            NamedExtras.expect(callee);
+            extrasExpected = true;
+        }
+        return new NamedExtras(slotValue, extraNames, extraValues(arguments));
+    }
+
+    /**
+     * __call's or __callStatic's arguments (ZEND_CALL_TRAMPOLINE): the method's name as called, and an array of the
+     * values, the positional ones (in frame) then every named one under its name.
+     */
+    Object[] magicValues(TruffleString name, Object[] frame, Object[] arguments) {
+        Object[] positional = new Object[frame.length - PhpFunction.ARG_FIRST];
+        System.arraycopy(frame, PhpFunction.ARG_FIRST, positional, 0, positional.length);
+        return new Object[] {name, NamedExtras.magicArguments(positional, extraNames, extraValues(arguments))};
     }
 
     /** The call of callee's defaults target the plan needs, made with the operation's cache entry; or null. */
@@ -257,7 +317,7 @@ public final class BindingPlan {
      * passed"). A built-in's holes take its arginfo defaults: not covered here (no built-in binds a name yet).
      */
     @TruffleBoundary
-    private static RootCallTarget defaultsTarget(PhpFunction callee) {
+    static RootCallTarget defaultsTarget(PhpFunction callee) {
         RootCallTarget target = callee.getDefaultsTarget();
         if (target == null) {
             throw new PhpError("Unsupported named arguments leaving out parameters of the built-in "
@@ -285,31 +345,19 @@ public final class BindingPlan {
         }
     }
 
-    /** zend_param_must_be_ref's warning. */
-    private static void mustBeRef(PhpFunction callee, int index, Node node) {
+    /** zend_param_must_be_ref's warning: a variadic parameter's argument unnamed (get_function_arg_name). */
+    @TruffleBoundary
+    static void mustBeRef(PhpFunction callee, int index, Node node) {
         PhpFunction.Param[] params = callee.getParams();
-        String name = index >= 0 && index < params.length ? params[index].name() : null;
+        String name = index >= 0 && index < params.length && !params[index].variadic() ? params[index].name() : null;
         ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING, Str.of(callee.displayName()
                 + "(): Argument #" + (index + 1) + (name == null ? "" : " ($" + name + ")")
-                + " must be passed by reference, value given"), SourceLocation.of(node));
+                + " must be passed by reference, value given"), SpreadArguments.location(node));
     }
 
     @TruffleBoundary
     private static PhpError error(String message) {
         return new PhpError(message);
-    }
-
-    /**
-     * Extras collected by the callee's variadic parameter (php-src's extra_named_params, which RECV_VARIADIC
-     * appends under their names, and __call's arguments): not delivered yet.
-     */
-    @TruffleBoundary
-    private PhpError extrasUnsupported() {
-        StringBuilder names = new StringBuilder();
-        for (TruffleString name : extraNames) {
-            names.append(names.isEmpty() ? "$" : ", $").append(name);
-        }
-        return new PhpError("Unsupported named arguments collected by a variadic parameter: " + names);
     }
 
     /** "f(): Argument #2 ($b) not passed": a required parameter a call by name left out (in its fake frame). */

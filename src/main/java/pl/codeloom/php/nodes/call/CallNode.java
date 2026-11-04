@@ -46,8 +46,9 @@ public abstract class CallNode extends ExprNode {
     @TruffleBoundary
     public static PhpError cannotPassByRef(PhpFunction callee, int index) {
         PhpFunction.Param[] params = callee.getParams();
-        String name = params[Math.min(index, params.length - 1)].name();
-        return new PhpError(callee.displayName() + "(): Argument #" + (index + 1) + " ($" + name
-                + ") could not be passed by reference");
+        // a variadic parameter's argument is unnamed (get_function_arg_name: only the num_args before it are)
+        boolean named = index < params.length && !params[index].variadic();
+        return new PhpError(callee.displayName() + "(): Argument #" + (index + 1)
+                + (named ? " ($" + params[index].name() + ")" : "") + " could not be passed by reference");
     }
 }

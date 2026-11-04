@@ -34,6 +34,11 @@ public final class Callables {
             if (magicName != null) {
                 values = magicValues(magicName, values);
             }
+            return boundArguments(values);
+        }
+
+        /** The frame arguments for values as the function itself takes them (for __call, magicValues' two). */
+        public Object[] boundArguments(Object[] values) {
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
             arguments[PhpFunction.ARG_THIS] = thisObject;
             arguments[PhpFunction.ARG_STATIC] = staticClass;
