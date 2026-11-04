@@ -3,6 +3,7 @@ package pl.codeloom.php.bytecode;
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 
@@ -24,12 +25,12 @@ public final class DefinedSite {
         this.id = id;
     }
 
-    boolean test() {
-        Assumption single = PhpLanguage.get(null).singleContext();
+    boolean test(Node node) {
+        Assumption single = PhpLanguage.get(node).singleContext();
         if (found && single.isValid()) {
             return true;
         }
-        if (PhpContext.get(null).constantAt(id) == null) {
+        if (PhpContext.get(node).constantAt(id) == null) {
             return false;
         }
         if (!found && single.isValid()) {

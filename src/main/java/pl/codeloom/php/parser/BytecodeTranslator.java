@@ -209,6 +209,9 @@ public final class BytecodeTranslator {
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                 translator.foreachStates.toArray(new LocalAccessor[0]), null);
         root.initializeFile(translator.loops);
+        if (path.equals(DUMP)) {
+            root.dumpAtExit();
+        }
         return root;
     }
 
