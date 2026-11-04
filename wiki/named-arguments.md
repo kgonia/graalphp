@@ -3,14 +3,17 @@
 **State (2026-11-04):** phase 2 under way on branch `named-args`. Part 1 is in: the compile errors (1.1, checked
 with the file's compile in `JumpChecks`), binding at the call site (`NamedSite`, `BindingPlan`, the named sends and
 calls of 4.2 and 4.3) and the defaults target (4.4), for user functions, methods, constructors, closures and callable
-values; constant-expression `new` (zend_ast_evaluate's order). Still to come, each failing with a clear "Unsupported
-named arguments" Error meanwhile: extras into a variadic and `__call` (4.5), names after unpacking and the dynamic
-paths (4.7), the built-ins' parameter table and entry (4.6; a built-in binds no name yet), `assert`. The owner chose
-issue 017's option 1, full support exactly as php-src. Under D18 the observable behaviour must equal PHP's; the
-internals need not mirror php-src. The design is for the bytecode interpreter only.
+values; constant-expression `new` (zend_ast_evaluate's order). Part 2 is in: extras into a variadic and `__call` (4.5),
+string keys in unpacking and names after it, `call_user_func_array`, `forward_static_call(_array)` and Reflection's
+`invoke(Args)` and `newInstance(Args)` (4.7); issue 017 is fixed. Still to come (part 3), each failing with a clear
+"Unsupported named arguments" Error meanwhile: the built-ins' parameter table and entry (4.6; a built-in binds no name
+yet, `named-params.txt` isn't loaded), the forwarding built-ins (`call_user_func` with names, `Closure::call`,
+`Fiber::start`, `forward_static_call`'s refusal), `assert`. The owner chose issue 017's option 1, full support exactly
+as php-src. Under D18 the observable behaviour must equal PHP's; the internals need not mirror php-src. The design is
+for the bytecode interpreter only (since `bytecode-only` the only one).
 
 Before phase 2 Truffle PHP had no named arguments: the bytecode translator threw `Unsupported("argument")` on
-`AST_NAMED_ARG`. `ArgumentsNode.addSpread` passes an unpacked array's string keys by position (issue 017).
+`AST_NAMED_ARG`. `ArgumentsNode.addSpread` passed an unpacked array's string keys by position (issue 017).
 
 Tests (they fail until phase 2), each recorded on PHP 8.5 by `tests/smoke/run.sh`:
 
@@ -399,6 +402,22 @@ value (a closure, or null).
 **`__call`/`__callStatic`:** `Callables.Target.frameArguments` (the magic path) builds `$args` with the extras'
 string keys after the positional values. There is no channel; the plan of a magic target has every name as an extra.
 
+**As built (part 2).**
+- `NamedExtras` keeps the names and the values as two Java arrays (the names are the plan's constant array), not a
+  PHP array: nothing holds a count until the variadic's array takes them, as php-src frees extra_named_params with
+  the call.
+- Two operations, both only in variadic functions and both nothing while the root's `noNamedExtras` Assumption holds:
+  `TakeNamedExtras` first (the slot's value back, the wrapper into a hidden local), `BindNamedExtras` right after
+  `BindVariadic`, which is unchanged. The Assumption is invalidated by the first call that passes the function extras
+  (`BindingPlan.enter`, `SpreadArguments.enter`), before it calls; a clone shares it.
+- A typed variadic checks each extra with the argument number `max(num_args, variadic position)` + 1, unnamed, as
+  RECV_VARIADIC's arg_num; a by-reference variadic's are references (a value given one gets a new reference).
+- The defaults target of a variadic function takes the extras too (its frame shows them, as php-src's fake frame is
+  the call's) and puts the slot back: the call sets the wrapper again after it.
+- `describe()` appends them to the trace's `args` under their names.
+- `__call` and `__callStatic` (and a closure of a method `__call` stands in for): `BindingPlan.magicValues` and
+  `SpreadArguments.magicValues` build `$args`; a `Closure`'s own methods (`call`, `bindTo`) with names are part 3.
+
 ### 4.6 Built-ins
 
 **The table.** `tools/builtin-arity.php` also writes each internal function's and method's parameters:
@@ -461,6 +480,32 @@ temporary reference.
 
 The forwarding built-ins (`call_user_func`, `Closure::__invoke`/`call`, `Fiber::start`, Reflection's `invoke`) take
 the extras from their entry and pass them on to the binder.
+
+**As built (part 2).**
+- `SpreadArguments` binds by position or by name as the values come (`bind`/`set`), the holes `NOT_PASSED` and the
+  extras in two lists; `isNamed()` (a field test, no boundary) tells the `*Spread` calls whether to `enter` (defaults
+  target, then the extras), so unpacking without names costs what it did plus a key test per element.
+- `SpreadStart(construct)`: a `new`'s list knows that `MethodSite.BY_VALUE` is a class without a constructor
+  (zend_pass_function, every name unknown) rather than `__call` (every name an extra).
+- A variable's shared array is separated when an element lands on a by-reference parameter by its name or its
+  position (php-src's check: an unknown name looks at the variadic parameter).
+- Names after unpacking: `SpreadVarNamed(local, name)` (bound before the read, by reference as the bound slot's
+  parameter), `SpreadNamed(name, kind)` for a value (SEND_VAL_EX's Error), a call's result (SEND_VAR_NO_REF) or a place,
+  whose fetch asks `SpreadTarget(name)` (CHECK_FUNC_ARG by name). Three operations.
+- ZEND_SEND_ARRAY (`addSendArray`, `sendArray`): the compiled `CallUserFuncArray` takes it only when the array has a
+  string key (`CallableCallNode.arrayArguments` gives null: a hash's key test per element, the list layouts none), so a
+  positional call is unchanged; the built-ins `call_user_func_array`, `forward_static_call(_array)` (new; the calling
+  code's called class goes on when it is an instance of the callable's) and ReflectionMethod's `reflection_call` always
+  bind with it. The prelude's ReflectionFunction `invoke(Args)` call `call_user_func_array()`; ReflectionClass
+  `newInstance(Args)` call `Truffle\reflection_construct` (zend_call_known_function with named_params).
+- A call made from runtime code for the binder (the holes' defaults target, the named `call_user_func_array`) runs
+  with the call's node as its location (`Backtrace.callFrom`), so the trace shows the call's line.
+- Left: a positional `call_user_func(_array)` (and any callback a built-in calls) gives a value to a by-reference
+  parameter without zend_call_function's warning, and `__call`'s `$args` doesn't keep the references
+  `call_user_func_array` passes positionally (both older than named arguments; the named path does both).
+  `Closure::fromCallable([$obj, 'missing'])` makes a closure php-src gives no variadic parameter (names are "Unknown
+  named parameter"), while `$obj->missing(...)`'s has one (names are extras): Truffle PHP doesn't tell the two apart,
+  and both take names as extras.
 
 Constant-expression `new` (the defaults target, static variables, global constants, and class constants once their
 thunks are bytecode roots) compiles named arguments as any `new` does.

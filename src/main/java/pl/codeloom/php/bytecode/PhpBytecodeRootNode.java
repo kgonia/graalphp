@@ -2919,7 +2919,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    // ---- calls unpacking arguments (ArgumentsNode.buildWithSpread) ----
+    // ---- calls unpacking arguments (SpreadArguments) ----
 
     /**
      * The arguments of a call with `...`: SpreadStart makes the list (construct: a `new`'s), each SpreadAdd adds an

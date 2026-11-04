@@ -11,6 +11,7 @@ import com.oracle.truffle.api.strings.TruffleString;
 import org.graalvm.polyglot.Context;
 import org.junit.jupiter.api.Test;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.Str;
@@ -155,6 +156,19 @@ class BindingPlanTest {
             // __call's arguments are all extras
             site(false, false, "x").plan(MethodSite.BY_VALUE).checkSend(0);
         });
+    }
+
+    @Test
+    void callsArgumentsHaveTheNamesAfterThePositionalOnes() {
+        BindingPlan plan = site(null, "two", "one").plan(MethodSite.BY_VALUE);
+        Object[] arguments = {null, null, null, 1L, 2L, 3L};
+        Object[] values = plan.magicValues(Str.of("m"), plan.frame(arguments), arguments);
+        assertEquals(Str.of("m"), values[0]);
+        PhpArray args = (PhpArray) values[1];
+        assertEquals(3, args.size());
+        assertEquals(1L, args.get(0L));
+        assertEquals(2L, args.get(Str.of("two")));
+        assertEquals(3L, args.get(Str.of("one")));
     }
 
     @Test

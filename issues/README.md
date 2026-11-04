@@ -20,7 +20,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Fixed |
 | [015](015-generator-frames-in-traces.md) | A delegating generator's frame is missing from traces (gh8289) | Fixed |
 | [016](016-woo-stock-lost-update.md) | A WooCommerce `_stock` decrement is lost now and then under load | Won't fix: WooCommerce/MariaDB deadlock, on php-fpm too |
-| [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Open: a decision |
+| [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Fixed (built-ins' names come with part 3) |
 | [018](018-unpack-traversable.md) | Unpacking a Traversable fails | Fixed |
 | [019](019-extract-refs.md) | extract() with EXTR_REFS binds values | Fixed |
 | [020](020-variable-variables.md) | Variable variables (`$$name`, `${expr}`) aren't supported | Fixed |

@@ -1,6 +1,6 @@
 # 017: String keys in argument unpacking aren't taken as named arguments
 
-**State:** Open: the owner chose option 1 (2026-11-04); php-src's rules and the design are in [wiki/named-arguments.md](../wiki/named-arguments.md), the tests in `tests/smoke/named-args-*.php`
+**State:** Fixed (option 1, the owner's choice of 2026-11-04; php-src's rules and the design in [wiki/named-arguments.md](../wiki/named-arguments.md))
 
 **Symptom:** an unpacked array's or Traversable's string keys are php-src's named arguments (PHP 8.1):
 ```php
@@ -27,3 +27,14 @@ tests with named arguments stay on the tree and fail there). Unpacking passes th
    whose other half (`f(a: 1)`) would then be written again.
 3. **An Error** ("Unsupported named arguments") where a string key meets unpacking, instead of a wrong call: honest
    and cheap, no semantics.
+
+**Fix:** named arguments in full (branch `named-args`). An unpacked array's string key, and a Traversable's that
+isn't numeric, is bound by name against the callee resolved before the arguments (`SpreadArguments`, php-src's
+zend_handle_named_arg): the parameters skipped are filled by the callee's defaults target before the call, a name
+the callee doesn't have goes to its variadic parameter under that name (or is "Unknown named parameter $x"), a slot
+set twice is "Named parameter $x overwrites previous argument", and a position after a name in the same unpacking is
+"Cannot use positional argument after named argument during unpacking". `call_user_func_array()` and the calls
+like it bind the same way with ZEND_SEND_ARRAY's message and by-reference warning. Tests:
+`tests/smoke/named-args-unpack.php`, `named-args-variadic.php`, `named-args-callables.php`. A built-in binds no name
+until its parameter table is loaded (the named arguments' part 3): a string key unpacked into one is an Unsupported
+Error meanwhile.
