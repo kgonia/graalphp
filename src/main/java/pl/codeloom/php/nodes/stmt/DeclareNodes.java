@@ -1,11 +1,8 @@
 package pl.codeloom.php.nodes.stmt;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.StmtNode;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpBailout;
@@ -22,25 +19,7 @@ public final class DeclareNodes {
     private DeclareNodes() {
     }
 
-    public static final class DeclareFunctionNode extends StmtNode {
-        private final PhpFunction function;
-        /** A top-level declaration, which php-src binds when it compiles the file. */
-        private final boolean compileTime;
-
-        public DeclareFunctionNode(PhpFunction function, boolean compileTime) {
-            this.function = function;
-            this.compileTime = compileTime;
-        }
-
-        public PhpFunction getFunction() {
-            return function;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            declare(PhpContext.get(this), function, compileTime, this);
-        }
-
+    public static final class DeclareFunctionNode {
         /**
          * do_bind_function_error when the name is taken: E_COMPILE_ERROR for a top-level declaration (before the
          * file runs: its trace starts below the file), E_ERROR for one that runs later; at site.
@@ -91,27 +70,7 @@ public final class DeclareNodes {
         return phpClass;
     }
 
-    public static final class DeclareClassNode extends StmtNode {
-        private final ClassTemplate template;
-        /** The file's frame slot an {@link EarlyClassNode} sets when it bound the class; -1 for none. */
-        private final int boundSlot;
-
-        public DeclareClassNode(ClassTemplate template, int boundSlot) {
-            this.template = template;
-            this.boundSlot = boundSlot;
-        }
-
-        public ClassTemplate getTemplate() {
-            return template;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            if (boundSlot < 0 || !frame.isBoolean(boundSlot)) {
-                declare(PhpContext.get(this), template, this);
-            }
-        }
-
+    public static final class DeclareClassNode {
         /** ZEND_DECLARE_CLASS: a name taken is an E_COMPILE_ERROR here (zend_bind_class_in_slot). */
         @TruffleBoundary
         public static void declare(PhpContext context, ClassTemplate template, Node site) {
@@ -130,33 +89,7 @@ public final class DeclareNodes {
      * after them, are bound if their name is free and their parent declared by now
      * (zend_accel_do_delayed_early_binding), which the class's statement then skips (ZEND_DECLARE_CLASS_DELAYED).
      */
-    public static final class EarlyClassNode extends StmtNode {
-        private final ClassTemplate template;
-        /** The slot set when the class is bound (its DeclareClassNode's), -1 for a class with no parent. */
-        private final int boundSlot;
-        private final boolean delayed;
-
-        public EarlyClassNode(ClassTemplate template, int boundSlot, boolean delayed) {
-            this.template = template;
-            this.boundSlot = boundSlot;
-            this.delayed = delayed;
-        }
-
-        public ClassTemplate getTemplate() {
-            return template;
-        }
-
-        public boolean isDelayed() {
-            return delayed;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            if (bind(PhpContext.get(this), template, delayed, this) && boundSlot >= 0) {
-                frame.setBoolean(boundSlot, true);
-            }
-        }
-
+    public static final class EarlyClassNode {
         @TruffleBoundary
         public static boolean bind(PhpContext context, ClassTemplate template, boolean delayed, Node site) {
             PhpClass previous = context.findClass(Str.lower(template.getName()));
@@ -184,27 +117,7 @@ public final class DeclareNodes {
      * `new class(...) {...}`: declares the anonymous class the first time the context runs the expression, then
      * instantiates it. The name, as in php-src, is "class@anonymous", a NUL and the declaration's place.
      */
-    public static final class NewAnonymousClassNode extends ExprNode {
-        private final ClassTemplate template;
-        private final String lowerName;
-        @Child private ExprNode instantiate;
-
-        public NewAnonymousClassNode(ClassTemplate template, ExprNode instantiate) {
-            this.template = template;
-            this.lowerName = Str.lower(template.getName());
-            this.instantiate = instantiate;
-        }
-
-        public ClassTemplate getTemplate() {
-            return template;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            declareOnce(PhpContext.get(this), template, lowerName);
-            return instantiate.execute(frame);
-        }
-
+    public static final class NewAnonymousClassNode {
         @TruffleBoundary
         public static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
             if (context.findClass(lowerName) == null) {

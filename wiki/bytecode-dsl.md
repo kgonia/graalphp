@@ -1494,3 +1494,26 @@ the tests and scripts that run both interpreters. `Translator` keeps the declara
 parameters, types, closures' parts, constant expressions' checks) and php-src's compile errors there. The shared
 runtime stays: the operator nodes the bytecode proxies (`@OperationProxy`) and the static helpers it calls, left in
 what remains of their classes (the shortest diff).
+
+### Where it ended (2026-11-04, `ebb1abe`)
+- **Ported.** A file's top level (`fileRoot`: variables by name through `RefPlace`, hoisting, early binding with
+  `EarlyClass`, `return` from an include, namespaces, top-level labels), constant expressions (`Thunk`, built on first
+  use), `eval` (`SourceFiles.eval`), `defined()` in place (`Defined` with a `DefinedSite`), include-site counting
+  (`IncludeSite`, `includedAgain()` on the bytecode root) and the run-once rule on the bytecode root
+  (`prepareForCompilation`; the translator records loops and goto labels).
+- **The `Unsupported` sites.** Implemented or made php-src's compile errors as the table above says, each with a smoke
+  test (`top-level-bytecode`, `eval`, `bytecode-constructs`, `bytecode-places`, `bytecode-dim-object-write`,
+  `class-early-binding-files`). Left: named arguments (issue 017, another branch on top of this one: the call
+  translation stays in `BytecodeTranslator`'s call sites and `arguments()`), and unpacking into a parent property
+  hook call (`parent::$p::get(...$a)`, which needs the same spread machinery). A construct the translator doesn't
+  cover is now an Error ("Unsupported ... in FILE") where the code is translated.
+- **Issue 003.** Early binding hides other files' classes (`Variance.canEarlyBind`), as php-src's
+  `IGNORE_OTHER_FILES`: fixed, no deviation left.
+- **Deleted.** `src/main` 117,344 lines on main (`9ae85cb`) → 110,030 (-7,314; the deletion commit alone +133 -9,082).
+  `Translator` 4,042 → 2,304 lines; 26 node files gone, the classes nothing instantiates any more reduced to their
+  static helpers, `PropNode` without its tree children.
+- **Found on the way, outside the port.** `++`/`--` of an `ArrayAccess` element called `offsetSet()` (php-src:
+  `offsetGet()` and "Indirect modification" unless it returns a reference): fixed. `get_object_vars()` dropped a
+  shared reference's `&`: fixed. Still differing, as on main: `$a['k']->p = 1` on an array doesn't create the null
+  element before the Error (`ElementForWrite` reads), and a by-value argument `v($a[])` to a function known at
+  compile time is a runtime Error where php-src's is a compile error.

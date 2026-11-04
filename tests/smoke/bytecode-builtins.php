@@ -1,6 +1,6 @@
 <?php
 // The built-ins the tree compiles in place (Intrinsics), called from functions on bytecode
-// (-Dpolyglot.php.Interpreter=bytecode) as ordinary calls: their results, their by-reference arguments, the
+// as ordinary calls: their results, their by-reference arguments, the
 // TypeErrors and ValueErrors they raise and the traces through them and through the callbacks they call.
 
 function show($label, $value) {

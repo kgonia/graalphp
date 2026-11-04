@@ -1,5 +1,5 @@
 <?php
-// Closures and arrow functions declared in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): captures
+// Closures and arrow functions declared in functions on bytecode: captures
 // by value (a captured array is held) and by reference, arrow functions' automatic captures (nested ones too),
 // $this and the class scope, static closures, Closure::bind and call(), closures made in loops and generators, and
 // generators that are closures.

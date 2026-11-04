@@ -8,13 +8,11 @@ import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.NodeChild;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.strings.TruffleString;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Ini;
 import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.ToBooleanNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
@@ -33,24 +31,7 @@ public final class UnaryNodes {
      * the others aren't displayed or logged (error_get_last() and a user error handler still see them); it is
      * restored however the expression ends, unless the expression changed it.
      */
-    public static final class SilenceNode extends ExprNode {
-        @Child private ExprNode operand;
-
-        public SilenceNode(ExprNode operand) {
-            this.operand = operand;
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Ini ini = PhpContext.get(this).ini();
-            int saved = begin(ini);
-            try {
-                return operand.execute(frame);
-            } finally {
-                end(ini, saved);
-            }
-        }
-
+    public static final class SilenceNode {
         /** BEGIN_SILENCE: error_reporting keeps only the fatal errors; the value before, for {@link #end}. */
         public static int begin(Ini ini) {
             int saved = ini.errorReporting();
@@ -154,16 +135,6 @@ public final class UnaryNodes {
 
         private CastNode() {
         }
-
-        public static ExprNode create(ExprNode operand, int type) {
-            return switch (type) {
-                case TO_LONG -> UnaryNodesFactory.ToLongNodeGen.create(operand);
-                case TO_DOUBLE -> UnaryNodesFactory.ToDoubleNodeGen.create(operand);
-                case TO_STRING -> UnaryNodesFactory.ToStringNodeGen.create(operand);
-                case TO_BOOL -> UnaryNodesFactory.ToBoolNodeGen.create(operand);
-                default -> UnaryNodesFactory.ToOtherNodeGen.create(type, operand);
-            };
-        }
     }
 
     /** `(int)`; the bytecode interpreter proxies it (CastLong), as the casts below. */
@@ -214,18 +185,6 @@ public final class UnaryNodes {
         @Fallback
         public static TruffleString other(Object value, @Bind Node node) {
             return Convert.toStr(node, value);
-        }
-    }
-
-    public abstract static class ToBoolNode extends UnaryNode {
-        @Override
-        public boolean isBooleanValued() {
-            return true;
-        }
-
-        @Specialization
-        protected boolean cast(Object value, @Cached ToBooleanNode toBoolean) {
-            return toBoolean.execute(value);
         }
     }
 

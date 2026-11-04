@@ -1,5 +1,5 @@
 <?php
-// $this and properties in functions and methods on bytecode (-Dpolyglot.php.Interpreter=bytecode): reads and
+// $this and properties in functions and methods on bytecode: reads and
 // writes, by name and computed, compound assignments and increments, unset() and isset(), element writes through a
 // property, properties by reference, visibility from the calling scope (methods, subclasses, bound closures), the
 // magic methods, and copy-on-write of arrays in properties. The code that creates objects and calls methods stays

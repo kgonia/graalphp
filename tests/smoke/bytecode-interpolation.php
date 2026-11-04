@@ -1,5 +1,5 @@
 <?php
-// String interpolation and heredoc in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): each part is
+// String interpolation and heredoc in functions on bytecode: each part is
 // converted to a string as soon as it is evaluated (php-src's ROPE_ADD: a __toString() runs before the next part),
 // then the parts are joined; elements, properties, method calls and every kind of value as a part.
 

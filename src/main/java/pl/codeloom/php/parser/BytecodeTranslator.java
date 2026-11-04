@@ -64,15 +64,6 @@ import java.util.function.Supplier;
  * constant array) is made by the first run and taken by later ones in the same order.
  */
 public final class BytecodeTranslator {
-    private static final String REPORT_MODE = System.getProperty("php.bytecode.report", "false");
-    /**
-     * -Dphp.bytecode.report=all also lists every construct that keeps a function on the tree, not only the first
-     * (see {@link #collect}). A native image reads these properties at build time.
-     */
-    private static final boolean REPORT_ALL = REPORT_MODE.equals("all");
-    private static final boolean REPORT = REPORT_ALL || REPORT_MODE.equals("true");
-    /** How many translations {@link #collect} tries for one function before it gives up. */
-    private static final int COLLECT_LIMIT = 500;
     /** php-src's fetch types of a written property's object (writtenObject). */
     /** `(void)`'s cast type (php-ast's IS_VOID). */
     private static final int CAST_VOID = 14;
@@ -81,13 +72,7 @@ public final class BytecodeTranslator {
     private static final int BP_VAR_UNSET = 5;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
-    /**
-     * For finding a function the bytecode runs differently by halving: php.bytecode.only=BITS:VALUE keeps on the
-     * tree every function whose name's hash doesn't end in VALUE's BITS bits.
-     */
-    private static final String ONLY = System.getProperty("php.bytecode.only");
-
-    /** A construct the translator doesn't cover: the function stays on the tree. */
+    /** A construct the translator doesn't cover: the code's fatal error (see {@link #unsupported}). */
     static final class Unsupported extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
@@ -124,7 +109,7 @@ public final class BytecodeTranslator {
     private Ast thunk;
     /** A function's defaults target ({@link #defaults}): declaration has only the parameter list. */
     private boolean defaults;
-    /** Whether the code has a loop, a foreach or a goto label (RunOnceCode), as the first run found. */
+    /** Whether the code has a loop, a foreach or a goto label (prepareForCompilation), as the first run found. */
     private boolean loops;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
     private final List<Object> made = new ArrayList<>();
@@ -145,10 +130,6 @@ public final class BytecodeTranslator {
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
     private boolean firstRun = true;
-    /** report=all ({@link #collect}): the nodes this translation leaves out, by {@link Run#key}; else null. */
-    private Set<String> skip;
-    /** report=all: the last run, whose dispatch stack says where a construct failed. */
-    private Run lastRun;
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
                                Ast body, Translator.ClassInfo owner, PhpFunction function, String display,
@@ -172,21 +153,13 @@ public final class BytecodeTranslator {
     }
 
     /**
-     * The function's call target on bytecode, or null when its body uses something the translator doesn't cover.
+     * The function's call target on bytecode; a construct the translator doesn't cover is an Error (unsupported).
      * A generator function's (generator) returns the Generator, which runs the body on continuations.
      */
     static RootCallTarget translate(PhpLanguage language, String path, Source source, boolean internal,
                                     Ast declaration, Ast body, Translator.ClassInfo owner, PhpFunction function,
                                     String display, PhpFunction.Param[] params, String[] captures,
                                     boolean[] captureByRef, Names names, boolean generator) {
-        if (ONLY != null) {
-            int bits = Integer.parseInt(ONLY.split(":")[0]);
-            int value = Integer.parseInt(ONLY.split(":")[1]);
-            if ((display.hashCode() & ((1 << bits) - 1)) != value) {
-                report("tree     " + display + ": php.bytecode.only");
-                return null;
-            }
-        }
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration, body,
                 owner, function, display, params, captures, captureByRef, names, generator);
         BytecodeParser<PhpBytecodeRootNodeGen.Builder> parser = translator::parse;
@@ -194,17 +167,7 @@ public final class BytecodeTranslator {
         try {
             nodes = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, parser);
         } catch (Unsupported unsupported) {
-            report("tree     " + display + ": " + unsupported.getMessage());
-            if (REPORT_ALL) {
-                List<String> reasons = new ArrayList<>();
-                if (generator) {
-                    reasons.add("generator");
-                }
-                reasons.addAll(collect(language, path, source, internal, declaration, owner, function, display,
-                        params, captures, captureByRef, names, generator));
-                report("all      " + display + ": " + String.join(" | ", reasons));
-            }
-            return null;
+            throw unsupported(unsupported, path);
         }
         PhpBytecodeRootNode root = nodes.getNode(0);
         int[] parameterLocals = new int[params.length];
@@ -224,45 +187,12 @@ public final class BytecodeTranslator {
         } else if (function.returnsRef()) {
             root.initializeReturnsRef();
         }
-        report("bytecode " + display + (generator ? " (generator)" : ""));
         if (display.equals(DUMP)) {
             root.dumpAtExit();
         }
         return root.getCallTarget();
     }
 
-    /**
-     * Every construct that keeps a function on the tree, for report=all. The function is translated again and
-     * again. Each time it leaves out the node the last construct failed in (the innermost expression or statement
-     * being translated) and translates that node's parts alone in its place, until a translation gets through. The
-     * bytecode made on the way is thrown away: the function stays on the tree either way. A failure outside every
-     * statement (its parameters, a reference return) ends the search, marked "(function)".
-     */
-    private static List<String> collect(PhpLanguage language, String path, Source source, boolean internal,
-                                        Ast declaration, Translator.ClassInfo owner, PhpFunction function,
-                                        String display, PhpFunction.Param[] params, String[] captures,
-                                        boolean[] captureByRef, Names names, boolean generator) {
-        Set<String> skip = new java.util.HashSet<>();
-        Set<String> reasons = new LinkedHashSet<>();
-        for (int attempt = 0; attempt < COLLECT_LIMIT; attempt++) {
-            BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, declaration,
-                    null, owner, function, display, params, captures, captureByRef, names, generator);
-            translator.skip = skip;
-            try {
-                PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse);
-                return new ArrayList<>(reasons);
-            } catch (Unsupported unsupported) {
-                String at = translator.lastRun == null ? null : translator.lastRun.dispatched.peekLast();
-                if (at == null || !skip.add(at)) {
-                    reasons.add(unsupported.getMessage() + " (function)");
-                    return new ArrayList<>(reasons);
-                }
-                reasons.add(unsupported.getMessage());
-            }
-        }
-        reasons.add("(more)");
-        return new ArrayList<>(reasons);
-    }
 
 
 
@@ -281,7 +211,7 @@ public final class BytecodeTranslator {
         try {
             root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse).getNode(0);
         } catch (Unsupported unsupported) {
-            throw new PhpError("Unsupported " + unsupported.getMessage() + " in " + path);
+            throw unsupported(unsupported, path);
         }
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
@@ -392,10 +322,9 @@ public final class BytecodeTranslator {
         return root.getCallTarget();
     }
 
-    private static void report(String line) {
-        if (REPORT) {
-            System.err.println("php.bytecode " + line);
-        }
+    /** A construct the translator doesn't cover, as the Error it raises where the code is translated. */
+    private static PhpError unsupported(Unsupported unsupported, String path) {
+        return new PhpError("Unsupported " + unsupported.getMessage() + " in " + path);
     }
 
     private SourceSection functionSection() {
@@ -406,23 +335,23 @@ public final class BytecodeTranslator {
     /** One run of the parser: the DSL makes the first, and another whenever it needs the function's sources. */
     private void parse(PhpBytecodeRootNodeGen.Builder builder) {
         names = declaredNames;
-        lastRun = new Run(builder);
+        Run run = new Run(builder);
         if (thunk != null) {
-            lastRun.thunkRoot(thunk);
+            run.thunkRoot(thunk);
             firstRun = false;
             return;
         }
         if (defaults) {
-            lastRun.defaultsRoot();
+            run.defaultsRoot();
             firstRun = false;
             return;
         }
         Ast body = firstBody != null ? firstBody : reread != null ? reread.get() : declaration.body();
         firstBody = null;
         if (reread != null) {
-            lastRun.fileRoot(body);
+            run.fileRoot(body);
         } else {
-            lastRun.root(body);
+            run.root(body);
         }
         firstRun = false;
     }
@@ -469,10 +398,6 @@ public final class BytecodeTranslator {
         private int madeIndex;
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
-        /** report=all: the expressions and statements being translated, outermost first, by {@link #key}. */
-        private final java.util.ArrayDeque<String> dispatched = new java.util.ArrayDeque<>();
-        /** report=all: how many nodes of a kind on a line this run has met, for {@link #key}. */
-        private final Map<String, Integer> met = new HashMap<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -482,14 +407,8 @@ public final class BytecodeTranslator {
 
         // ---- the function ----
 
-        /**
-         * php-src's compile error at node's line (Translator.compileError: reported, the bailout ends the script);
-         * report=all's runs leaving nodes out only note it.
-         */
+        /** php-src's compile error at node's line (Translator.compileError: reported, the bailout ends the script). */
         private RuntimeException compileError(Ast node, String message) {
-            if (skip != null) {
-                return new Unsupported(message, node);
-            }
             return ErrorFunctions.fatal(PhpContext.get(null), ErrorFunctions.E_COMPILE_ERROR, Str.of(message),
                     new SourceLocation(path, node.line), 0);
         }
@@ -958,75 +877,9 @@ public final class BytecodeTranslator {
                 statements(node);
                 return;
             }
-            String key = null;
-            if (skip != null) {
-                key = key(node);
-                if (skip.contains(key)) {
-                    explore(node, false);
-                    return;
-                }
-                dispatched.addLast(key);
-            }
             beginLine(node.line);
             statementBody(node);
             endLine(node.line);
-            if (key != null) {
-                dispatched.removeLast();
-            }
-        }
-
-        // ---- report=all: leaving a node out ----
-
-        /** A node's place in a run: its kind, line, and how many such nodes the run met before it there. */
-        private String key(Ast node) {
-            String place = node.kind + ":" + node.line;
-            return place + ":" + met.merge(place, 1, Integer::sum);
-        }
-
-        /** A node left out: its parts translated alone in its place, then a null if it was a value. */
-        private void explore(Ast node, boolean value) {
-            b.beginBlock();
-            exploreParts(node);
-            if (value) {
-                b.emitLoadConstant(PhpNull.NULL);
-            }
-            b.endBlock();
-        }
-
-        private void exploreParts(Ast node) {
-            for (Object part : node.children()) {
-                explorePart(part, false);
-            }
-            Map<String, Object> named = node.namedOrNull();
-            if (named != null) {
-                for (Map.Entry<String, Object> part : named.entrySet()) {
-                    explorePart(part.getValue(), part.getKey().equals("stmts"));
-                }
-            }
-        }
-
-        /** A part: statements as statements, the lists and pieces of a construct by their parts, others as values. */
-        private void explorePart(Object part, boolean statementList) {
-            if (!(part instanceof Ast ast)) {
-                return;
-            }
-            switch (ast.kind) {
-                // names and types, and bodies of their own (another function's locals)
-                case "AST_NAME", "AST_NAME_LIST", "AST_PARAM_LIST", "AST_CLOSURE_USES", "AST_TYPE", "AST_NULLABLE_TYPE",
-                     "AST_TYPE_UNION", "AST_TYPE_INTERSECTION", "AST_ATTRIBUTE_LIST", "AST_CLOSURE", "AST_ARROW_FUNC",
-                     "AST_CLASS", "AST_FUNC_DECL" -> {
-                }
-                case "AST_ARG_LIST", "AST_EXPR_LIST", "AST_ARRAY_ELEM", "AST_UNPACK", "AST_NAMED_ARG", "AST_IF_ELEM",
-                     "AST_SWITCH_LIST", "AST_SWITCH_CASE", "AST_CATCH_LIST", "AST_CATCH", "AST_MATCH_ARM_LIST",
-                     "AST_MATCH_ARM", "AST_STATIC_VAR", "AST_PROP_ELEM", "AST_CONST_ELEM" -> exploreParts(ast);
-                default -> {
-                    if (statementList || ast.is("AST_STMT_LIST")) {
-                        statements(ast);
-                    } else {
-                        expression(ast);
-                    }
-                }
-            }
         }
 
         private void statementBody(Ast node) {
@@ -2028,21 +1881,6 @@ public final class BytecodeTranslator {
         }
 
         void expression(Object value) {
-            if (skip == null || !(value instanceof Ast node)) {
-                expressionBody(value);
-                return;
-            }
-            String key = key(node);
-            if (skip.contains(key)) {
-                explore(node, true);
-                return;
-            }
-            dispatched.addLast(key);
-            expressionBody(value);
-            dispatched.removeLast();
-        }
-
-        private void expressionBody(Object value) {
             if (value instanceof Ast fetched && writeFetched.contains(fetched)) {
                 readIfSet(fetched);
                 return;
@@ -3003,7 +2841,7 @@ public final class BytecodeTranslator {
             assignment(new Ast("AST_ASSIGN", 0, target.line, target.endLine, null, parts));
         }
 
-        /** A node standing for a value in a local where an expression is expected (see expressionBody). */
+        /** A node standing for a value in a local where an expression is expected (see expression). */
         private Ast standIn(BytecodeLocal local, Ast near) {
             Ast stand = new Ast("BYTECODE_OBJECT", 0, near == null ? 0 : near.line, near == null ? 0 : near.endLine,
                     null, null);

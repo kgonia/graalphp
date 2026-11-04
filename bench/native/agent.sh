@@ -2,7 +2,7 @@
 # Inside the Truffle PHP image: runs the kernels and the smoke tests on the JVM under native-image-agent, merging what
 # each run reaches (reflection, resources) into target/native/config. The foreign calls it records are dropped:
 # they register from the bindings (NativeCallsFeature), which cover the paths a run doesn't reach. JAVA_OPTS reaches
-# the runs (e.g. -Dpolyglot.php.Interpreter=bytecode, to cover that interpreter's paths too).
+# the runs.
 set -e
 out=target/native/config
 mkdir -p "$out"

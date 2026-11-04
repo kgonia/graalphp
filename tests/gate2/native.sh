@@ -126,10 +126,7 @@ start() {
     # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
     # (target/native/wp-http-phases: the flags are static finals, fixed at build time)
     *-phases) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.nativeclock=true" ;;
-    # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image
-    # fixes the system property at build time)
-    *-bc) opts="-Dpolyglot.php.Parser=java -Dpolyglot.php.Interpreter=bytecode"
-          [ -z "${BYTECODE_REPORT:-}" ] || opts+=" -Dphp.bytecode.report=true" ;;
+    *-bc) opts="-Dpolyglot.php.Parser=java" ;;
   esac
   case $variant in
     # php-nojit: OPcache without its JIT; php-noopc: no OPcache (each request compiles every file it includes)
@@ -189,10 +186,8 @@ agent() {
   [ -f bench/native/agent.sh ] || { echo "no native-image build on this branch (bench/native)"; exit 2; }
   local opts variant
   rm -rf target/native/config && mkdir -p target/native/config $out
-  for opts in "" "-Dpolyglot.php.Interpreter=bytecode"; do
-    MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 0-5 ${opts:+-e JAVA_OPTS="$opts"} -v "$root:/w" -w /w \
-      gate1-truffle:8.5-graal25.4 sh bench/native/agent.sh > "$out/agent-kernels${opts:+-bytecode}.log" 2>&1
-  done
+  MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 0-5 -v "$root:/w" -w /w \
+    gate1-truffle:8.5-graal25.4 sh bench/native/agent.sh > "$out/agent-kernels.log" 2>&1
   for variant in jvm-java jvm-bc jvm-export; do
     reset_db
     AGENT=1 start $variant 0-5 8095

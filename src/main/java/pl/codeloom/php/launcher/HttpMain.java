@@ -122,7 +122,7 @@ public final class HttpMain {
         }
         // the JDK server's time limit for receiving a request (seconds; read when the server class loads)
         System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
-        // the language's experimental options (php.Parser, php.Interpreter) come as system properties, as PhpMain's
+        // the language's experimental options (php.Parser) come as system properties, as PhpMain's
         Engine engine = Engine.newBuilder("php").allowExperimentalOptions(true).build();
         HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName,
                 ini);

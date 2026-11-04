@@ -2,86 +2,23 @@ package pl.codeloom.php.nodes.stmt;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.profiles.BranchProfile;
-import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
-import pl.codeloom.php.nodes.ConditionNode;
-import pl.codeloom.php.nodes.ControlFlow;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.LValueNode;
-import pl.codeloom.php.nodes.StmtNode;
-import pl.codeloom.php.nodes.call.CallNode;
-import pl.codeloom.php.nodes.vars.GlobalRefNode;
-import pl.codeloom.php.nodes.vars.IncludeScope;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
-import pl.codeloom.php.runtime.PhpFunction;
-import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpObject;
-import pl.codeloom.php.runtime.PhpRef;
 
 /** Straight-line statements. */
 public final class BasicStmts {
     private BasicStmts() {
     }
 
-    public static final class BlockNode extends StmtNode {
-        @Children private final StmtNode[] statements;
-        private final BranchProfile errorSurfaced = BranchProfile.create();
-
-        public BlockNode(StmtNode[] statements) {
-            this.statements = statements;
-        }
-
-        @Override
-        @ExplodeLoop
-        public void execute(VirtualFrame frame) {
-            int i = 0;
-            try {
-                for (; i < statements.length; i++) {
-                    statements[i].execute(frame);
-                }
-            } catch (PhpError e) {
-                errorSurfaced.enter();
-                surfaced(e, statements[i]);
-                throw e;
-            }
-        }
-    }
-
-    public static final class ExprStmtNode extends StmtNode {
-        @Child private ExprNode expression;
-
-        public ExprStmtNode(ExprNode expression) {
-            this.expression = expression;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            expression.execute(frame);
-        }
-    }
-
-    public static final class EchoNode extends StmtNode {
-        @Child private ExprNode value;
-
-        public EchoNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            echo(this, value.execute(frame));
-        }
-
+    public static final class EchoNode {
         /** Writes a value as a string to the output of site's context. */
         public static void echo(Node site, Object value) {
             TruffleString text = value instanceof TruffleString s ? s : Convert.toStr(site, value);
@@ -89,182 +26,7 @@ public final class BasicStmts {
         }
     }
 
-    public static final class IfNode extends StmtNode {
-        @Child private ExprNode condition;
-        @Child private StmtNode then;
-        @Child private StmtNode otherwise;
-        private final CountingConditionProfile profile = CountingConditionProfile.create();
-
-        public IfNode(ExprNode condition, StmtNode then, StmtNode otherwise) {
-            this.condition = ConditionNode.of(condition);
-            this.then = then;
-            this.otherwise = otherwise;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            if (profile.profile(condition.executeCondition(frame))) {
-                then.execute(frame);
-            } else if (otherwise != null) {
-                otherwise.execute(frame);
-            }
-        }
-    }
-
-    public static final class ReturnNode extends StmtNode {
-        @Child private ExprNode value;
-
-        public ReturnNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            throw new ControlFlow.Return(value == null ? PhpNull.NULL : value.execute(frame));
-        }
-    }
-
-    /**
-     * `return place;` in a function returning by reference (ZEND_RETURN_BY_REF): the reference of the variable,
-     * element or property, made as a write would make it (a missing element is created as null).
-     */
-    public static final class ReturnRefNode extends StmtNode {
-        @Child private LValueNode place;
-
-        public ReturnRefNode(LValueNode place) {
-            this.place = place;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            throw new ControlFlow.Return(place.makeRef(frame));
-        }
-    }
-
-    /**
-     * `return expr;` (or `return;`) in a function returning by reference when expr is no place: a call's
-     * reference when its callee returned one; else a new reference to the value, with php-src's notice. $this is
-     * fetched for writing, which php-src allows without the notice.
-     */
-    public static final class ReturnRefValueNode extends StmtNode {
-        @Child private ExprNode value;
-        private final boolean notice;
-
-        public ReturnRefValueNode(ExprNode value, boolean notice) {
-            this.value = value;
-            this.notice = notice;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            Object result = value == null ? PhpNull.NULL
-                    : value instanceof CallNode call ? call.executeRef(frame) : value.execute(frame);
-            if (result instanceof PhpRef) {
-                throw new ControlFlow.Return(result);
-            }
-            if (notice) {
-                CallNode.notice(this, CallNode.RETURNED_VALUE);
-            }
-            throw new ControlFlow.Return(PhpRef.unbound(result));
-        }
-    }
-
-    public static final class BreakNode extends StmtNode {
-        private final int levels;
-        private final boolean isContinue;
-
-        public BreakNode(int levels, boolean isContinue) {
-            this.levels = levels;
-            this.isContinue = isContinue;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            if (isContinue) {
-                throw new ControlFlow.Continue(levels);
-            }
-            throw new ControlFlow.Break(levels);
-        }
-    }
-
-    /** `global $x`: binds the local slot to the global's reference (cached by {@link GlobalRefNode}). */
-    public static final class GlobalNode extends StmtNode {
-        @Child private LValueNode local;
-        @Child private GlobalRefNode global;
-        /**
-         * In a file's top-level code: in the global scope the global made (null) if it doesn't exist, as
-         * ZEND_BIND_GLOBAL defines the variable; a binding in a file included from a function.
-         */
-        private final boolean fileLevel;
-
-        public GlobalNode(LValueNode local, String name, boolean fileLevel) {
-            this.local = local;
-            this.global = GlobalRefNode.create(name);
-            this.fileLevel = fileLevel;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            if (fileLevel && IncludeScope.of(frame) == null) {
-                global.execute(PhpContext.get(this), true);
-                return;
-            }
-            local.bindRef(frame, global.execute(PhpContext.get(this), true));
-        }
-    }
-
-    /** `static $x = init;`: binds the local slot to the function's persistent reference. */
-    public static final class StaticVarNode extends StmtNode {
-        @Child private LValueNode local;
-        @Child private ExprNode initial;
-        private final PhpFunction function;
-        private final String name;
-
-        public StaticVarNode(LValueNode local, ExprNode initial, PhpFunction function, String name) {
-            this.local = local;
-            this.initial = initial;
-            this.function = function;
-            this.name = name;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            PhpContext context = PhpContext.get(this);
-            Object closure = frame.getArguments()[PhpFunction.ARG_CLOSURE];
-            PhpRef ref = context.findStaticVariable(function, closure, name);
-            if (ref == null) {
-                ref = context.createStaticVariable(function, closure, name,
-                        initial == null ? PhpNull.NULL : initial.execute(frame));
-            }
-            local.bindRef(frame, ref);
-        }
-    }
-
-    public static final class UnsetNode extends StmtNode {
-        @Child private LValueNode place;
-
-        public UnsetNode(LValueNode place) {
-            this.place = place;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            place.unset(frame);
-        }
-    }
-
-    public static final class ThrowNode extends StmtNode {
-        @Child private ExprNode value;
-
-        public ThrowNode(ExprNode value) {
-            this.value = value;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            throwValue(value.execute(frame));
-        }
-
+    public static final class ThrowNode {
         /** ZEND_THROW: a Throwable object goes up as a PHP exception; anything else is an Error. */
         public static void throwValue(Object thrown) {
             if (thrown instanceof PhpObject object && object.getPhpClass().isSubclassOf("throwable")) {
@@ -275,29 +37,9 @@ public final class BasicStmts {
         }
     }
 
-    /** A statement that does nothing (declarations already hoisted, `declare(strict_types=1)`). */
-    public static final class NopNode extends StmtNode {
-        @Override
-        public void execute(VirtualFrame frame) {
-        }
-    }
-
     /** Runs an expression for its side effect in statement position, e.g. a hoisted declaration's runtime part. */
     /** Constructor property promotion: `$this->name = $name` before the constructor body runs. */
-    public static final class PromoteNode extends StmtNode {
-        private final String name;
-        @Child private ExprNode value;
-
-        public PromoteNode(String name, ExprNode value) {
-            this.name = name;
-            this.value = value;
-        }
-
-        @Override
-        public void execute(VirtualFrame frame) {
-            store((PhpObject) frame.getArguments()[PhpFunction.ARG_THIS], name, value.execute(frame));
-        }
-
+    public static final class PromoteNode {
         /** As `$this->name = $name` (ZEND_ASSIGN_OBJ): a hooked property's set hook takes it. */
         @TruffleBoundary
         public static void store(PhpObject self, String name, Object value) {

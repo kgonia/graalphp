@@ -1,5 +1,5 @@
 <?php
-// isset(), empty(), ?? and ??= in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): variables,
+// isset(), empty(), ?? and ??= in functions on bytecode: variables,
 // elements, nested elements, string offsets, ArrayAccess objects, properties with __isset and __get, calls on the
 // left of ??, and the order in which containers, keys and values are evaluated.
 
