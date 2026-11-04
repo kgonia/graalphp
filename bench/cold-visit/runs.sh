@@ -42,6 +42,19 @@ unlock() { rm -rf $CPU_LOCK; }
 lpload() { # SECONDS OUT: the host's per-LP load, in the background (Windows, off LPs 14-21)
   cmd //c "$(cygpath -w bench/cold-visit/lpload.cmd)" "$1" "$(cygpath -w "$2")" &
 }
+# QUIET=N: with the CPU lock taken, wait until three samples 10 s apart find the host's CPUs under N percent on
+# average (Win32_Processor's LoadPercentage), at most QUIET_MAX seconds (default 600); the wait goes to the log
+quiet() {
+  [ -n "${QUIET:-}" ] || return 0
+  local ok=0 load end=$(($(date +%s) + ${QUIET_MAX:-600})) t0=$(date +%s)
+  while [ $ok -lt 3 ]; do
+    [ "$(date +%s)" -lt $end ] || { echo "the host stayed loaded (${load:-?}%): going on"; return 0; }
+    load=$(powershell -NoProfile -Command       "[math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average)"       2> /dev/null | tr -d '')
+    if [ "${load:-100}" -lt "$QUIET" ]; then ok=$((ok + 1)); else ok=0; fi
+    sleep 10
+  done
+  echo "quiet after $(( $(date +%s) - t0 )) s"
+}
 JFR_EVENTS="settings=profile,jdk.ExecutionSample#period=1ms,jdk.Compilation#threshold=0ms"
 define() { # VARIANT ROUND: CLASSES_V and JAVA_OPTS_V for native.sh's start
   local v=$1 r=$2 base opts=
@@ -127,6 +140,7 @@ case ${1:-} in
           [ ! -e "$f" ] || { [ "$r" = 1 ] && rm -f "$f"; } || mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-x1.}"
         done
         lock "Gate 2 cold visit jvm-java.$v round $r"
+        quiet
         echo "$(date '+%F %T') $v-r$r: $(powershell -NoProfile -ExecutionPolicy Bypass -File bench/split-policy/hostload.ps1 | tr -d '\r')" \
           >> target/cv/hostload.log
         lpload 40 $runs/jvm-java.$v-$r.lp
@@ -139,6 +153,9 @@ case ${1:-} in
           for f in $runs/jvm-java.$v-1.*; do [ ! -e "$f" ] || mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-$r.}"; done
           for f in $runs/jvm-java.$v-x1.*; do [ ! -e "$f" ] || mv "$f" "${f/jvm-java.$v-x1./jvm-java.$v-1.}"; done
         fi
+        # a run that wrote no result (the database or Docker gone): two in a row stop the series
+        if [ -e $runs/jvm-java.$v-$r.json ]; then fails=0; else fails=$((${fails:-0} + 1)); fi
+        [ "$fails" -lt 2 ] || { echo "two runs in a row failed: stopping"; exit 4; }
       done
     done ;;
   aot-train)

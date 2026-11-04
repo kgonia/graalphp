@@ -173,7 +173,8 @@ public class JfrCold {
                     continue;
                 }
                 if (name.equals("jdk.CompilationFailure")) {
-                    String msg = String.valueOf(e.getValue("failureMessage"));
+                    Object failure = e.getValue("failureMessage");
+                    String msg = String.valueOf(failure);
                     add(failures, msg.length() > 160 ? msg.substring(0, 160) : msg);
                     continue;
                 }
