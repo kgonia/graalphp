@@ -37,12 +37,15 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import com.oracle.truffle.api.source.SourceSection;
+import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.SourceFiles;
 import pl.codeloom.php.builtins.Args;
+import pl.codeloom.php.builtins.ArrayFunctions;
 import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.builtins.StringFunctions;
 import pl.codeloom.php.nodes.PhpTypes;
 import pl.codeloom.php.nodes.LargeCode;
 import pl.codeloom.php.nodes.ToStrNode;
@@ -4414,6 +4417,595 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object[] arguments = new Object[PhpFunction.ARG_FIRST + 1];
             arguments[PhpFunction.ARG_FIRST] = value;
             return BuiltinNodes.BuiltinNode.callInPlace(node, "count", arguments);
+        }
+    }
+
+    // ---- built-ins compiled in place (the tree's Intrinsics), BytecodeTranslator.intrinsic ----
+
+    /**
+     * The built-in's own call, for the cases a built-in compiled in place leaves out: from this instruction, whose
+     * CallInfo traces find (frameless where php-src compiles the call into an opcode of its own). values are the
+     * arguments the call passed.
+     */
+    @TruffleBoundary
+    static Object builtin(Node node, CallInfo call, Object... values) {
+        Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
+        System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
+        CallTarget target = call.find(PhpContext.get(node)).getCallTarget();
+        return PhpRef.deref(Backtrace.callFrom(node, () -> target.call(arguments)));
+    }
+
+    /** is_array(), is_string()... of one argument: the built-in's test (CoreFunctions). */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class TypeTest {
+        public static final int ARRAY = 0;
+        public static final int STRING = 1;
+        public static final int INT = 2;
+        public static final int FLOAT = 3;
+        public static final int BOOL = 4;
+        public static final int NULL = 5;
+        public static final int OBJECT = 6;
+
+        @Specialization
+        public static boolean test(int type, Object value) {
+            return switch (type) {
+                case ARRAY -> value instanceof PhpArray;
+                case STRING -> value instanceof TruffleString;
+                case INT -> value instanceof Long;
+                case FLOAT -> value instanceof Double;
+                case BOOL -> value instanceof Boolean;
+                case NULL -> value == PhpNull.NULL;
+                default -> value instanceof PhpObject || value instanceof PhpClosure;
+            };
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Strlen {
+        @Specialization
+        public static long string(CallInfo call, TruffleString s) {
+            return s.byteLength(Str.ENC);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /** current() / pos() / key() of an array: the element or key at its internal pointer. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = boolean.class, name = "wantKey")
+    public static final class Current {
+        @Specialization
+        public static Object array(CallInfo call, boolean wantKey, PhpArray array) {
+            int p = array.pointer();
+            if (!array.isValidPosition(p)) {
+                return wantKey ? PhpNull.NULL : Boolean.FALSE;
+            }
+            return wantKey ? array.keyAt(p) : array.valueAt(p);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, boolean wantKey, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /**
+     * next() (1), prev() (-1), reset() (0), end() (2) of an array's reference (ArrayFunctions.move): the array
+     * separated first (the pointer is part of it), the pointer moved, the new current value.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "how")
+    public static final class Move {
+        @Specialization(guards = "isArrayRef(ref)")
+        public static Object array(CallInfo call, int how, Object function, Object ref) {
+            PhpArray array = ((PhpRef) ref).arrayForWrite();
+            int p = array.pointer();
+            switch (how) {
+                case 1 -> p = array.isValidPosition(p) ? array.nextPosition(p) : -1;
+                case -1 -> p = array.isValidPosition(p) ? array.previousPosition(p) : -1;
+                case 0 -> p = array.firstPosition();
+                default -> p = array.lastPosition();
+            }
+            array.setPointer(p);
+            return array.isValidPosition(p) ? array.valueAt(p) : Boolean.FALSE;
+        }
+
+        /** A by-reference argument that is a reference to an array. */
+        public static boolean isArrayRef(Object value) {
+            return value instanceof PhpRef ref && ref.get() instanceof PhpArray;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int how, Object function, Object ref, @Bind Node node) {
+            return builtin(node, call, ref);
+        }
+    }
+
+    /** array_pop() of an array's reference. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayPop {
+        @Specialization(guards = "isArrayRef(ref)")
+        public static Object array(CallInfo call, Object function, Object ref) {
+            return ((PhpRef) ref).arrayForWrite().pop();
+        }
+
+        /** A by-reference argument that is a reference to an array. */
+        public static boolean isArrayRef(Object value) {
+            return value instanceof PhpRef ref && ref.get() instanceof PhpArray;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object function, Object ref, @Bind Node node) {
+            return builtin(node, call, ref);
+        }
+    }
+
+    /** array_push() of one value onto an array's reference. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayPush {
+        @Specialization(guards = "isArrayRef(ref)")
+        public static long array(CallInfo call, Object function, Object ref, Object value) {
+            PhpArray array = ((PhpRef) ref).arrayForWrite();
+            array.append(value);
+            return array.size();
+        }
+
+        /** A by-reference argument that is a reference to an array. */
+        public static boolean isArrayRef(Object value) {
+            return value instanceof PhpRef ref && ref.get() instanceof PhpArray;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node) {
+            return builtin(node, call, ref, value);
+        }
+    }
+
+    /** array_unshift() of one value onto an array's reference; a packed list shifts its elements in place. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayUnshift {
+        @Specialization(guards = "isArrayRef(ref)")
+        public static long array(CallInfo call, Object function, Object ref, Object value) {
+            PhpArray array = ((PhpRef) ref).arrayForWrite();
+            array.prepend(value == array ? array.copy() : value);
+            return array.size();
+        }
+
+        /** A by-reference argument that is a reference to an array. */
+        public static boolean isArrayRef(Object value) {
+            return value instanceof PhpRef ref && ref.get() instanceof PhpArray;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node) {
+            return builtin(node, call, ref, value);
+        }
+    }
+
+    /**
+     * substr(string, int[, ?int]): a lazy view of the bytes, with php-src's offset and length rules (passed: the
+     * arguments the call passed, length null when 2).
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "passed")
+    public static final class Substr {
+        @Specialization(guards = "isLengthOrNull(length)")
+        public static TruffleString string(CallInfo call, int passed, TruffleString s, long from, Object length,
+                                           @Cached TruffleString.SubstringByteIndexNode substring) {
+            int n = s.byteLength(Str.ENC);
+            long start = from < 0 ? Math.max(0, n + from) : from;
+            if (start > n) {
+                return Str.EMPTY;
+            }
+            long end;
+            if (length instanceof Long count) {
+                if (count < 0) {
+                    end = n + count;
+                    if (end < start) {
+                        return Str.EMPTY;
+                    }
+                } else {
+                    end = Math.min(n, start + count);
+                }
+            } else {
+                end = n;
+            }
+            if (start == 0 && end == n) {
+                return s;
+            }
+            return substring.execute(s, (int) start, (int) (end - start), Str.ENC, true);
+        }
+
+        public static boolean isLengthOrNull(Object length) {
+            return length instanceof Long || length == PhpNull.NULL;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int passed, Object s, Object from, Object length, @Bind Node node) {
+            return passed == 2 ? builtin(node, call, s, from) : builtin(node, call, s, from, length);
+        }
+    }
+
+    /** strpos($haystack, $needle): the byte offset of the first occurrence, or false. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Strpos {
+        @Specialization
+        public static Object strings(CallInfo call, TruffleString haystack, TruffleString needle,
+                                     @Cached TruffleString.ByteIndexOfStringNode indexOf) {
+            int length = haystack.byteLength(Str.ENC);
+            int needleLength = needle.byteLength(Str.ENC);
+            int index = needleLength == 0 ? 0
+                    : needleLength > length ? -1 : indexOf.execute(haystack, needle, 0, length, Str.ENC);
+            return index < 0 ? (Object) Boolean.FALSE : (long) index;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object haystack, Object needle, @Bind Node node) {
+            return builtin(node, call, haystack, needle);
+        }
+    }
+
+    /** str_contains (0), str_starts_with (1), str_ends_with (2). */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "mode")
+    public static final class Contains {
+        @Specialization
+        public static boolean strings(CallInfo call, int mode, TruffleString haystack, TruffleString needle,
+                                      @Cached TruffleString.ByteIndexOfStringNode indexOf,
+                                      @Cached TruffleString.RegionEqualByteIndexNode regionEqual) {
+            int length = haystack.byteLength(Str.ENC);
+            int needleLength = needle.byteLength(Str.ENC);
+            if (needleLength == 0) {
+                return true;
+            }
+            if (needleLength > length) {
+                return false;
+            }
+            return switch (mode) {
+                case 0 -> indexOf.execute(haystack, needle, 0, length, Str.ENC) >= 0;
+                case 1 -> regionEqual.execute(haystack, 0, needle, 0, needleLength, Str.ENC);
+                default -> regionEqual.execute(haystack, length - needleLength, needle, 0, needleLength, Str.ENC);
+            };
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int mode, Object haystack, Object needle, @Bind Node node) {
+            return builtin(node, call, haystack, needle);
+        }
+    }
+
+    /**
+     * strspn / strcspn (accept: strspn): the length of the run at offset made of (or free of) mask bytes, scanned
+     * in place; a literal mask's table is made once. passed: the arguments the call passed (offset 0 and length
+     * null filled in).
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = boolean.class, name = "accept")
+    @ConstantOperand(type = int.class, name = "passed")
+    public static final class Span {
+        @Specialization(guards = {"mask == cachedMask", "isLengthOrNull(length)"}, limit = "1")
+        public static long constantMask(CallInfo call, boolean accept, int passed, TruffleString s, TruffleString mask,
+                                        long offset, Object length, @Cached("mask") TruffleString cachedMask,
+                                        @Cached(value = "table(mask)", dimensions = 1) boolean[] table,
+                                        @Shared @Cached TruffleString.GetInternalByteArrayNode bytes) {
+            return span(s, table, offset, length, accept, bytes);
+        }
+
+        @Specialization(guards = "isLengthOrNull(length)", replaces = "constantMask")
+        public static long anyMask(CallInfo call, boolean accept, int passed, TruffleString s, TruffleString mask,
+                                   long offset, Object length,
+                                   @Shared @Cached TruffleString.GetInternalByteArrayNode bytes) {
+            return span(s, table(mask), offset, length, accept, bytes);
+        }
+
+        @TruffleBoundary
+        static boolean[] table(TruffleString mask) {
+            boolean[] set = new boolean[256];
+            for (byte b : Str.readBytes(mask)) {
+                set[b & 0xFF] = true;
+            }
+            return set;
+        }
+
+        private static long span(TruffleString s, boolean[] set, long offset, Object length, boolean accept,
+                                 TruffleString.GetInternalByteArrayNode bytes) {
+            InternalByteArray view = bytes.execute(s, Str.ENC);
+            int n = view.getLength();
+            long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+            long end;
+            if (length instanceof Long len) {
+                end = len < 0 ? Math.max(start, n + len) : Math.min(n, start + len);
+            } else {
+                end = n;
+            }
+            byte[] array = view.getArray();
+            int base = view.getOffset();
+            int i = (int) start;
+            int limit = (int) end;
+            while (i < limit && set[array[base + i] & 0xFF] == accept) {
+                i++;
+            }
+            return i - start;
+        }
+
+        public static boolean isLengthOrNull(Object length) {
+            return length instanceof Long || length == PhpNull.NULL;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, boolean accept, int passed, Object s, Object mask, Object offset,
+                                   Object length, @Bind Node node) {
+            return switch (passed) {
+                case 2 -> builtin(node, call, s, mask);
+                case 3 -> builtin(node, call, s, mask, offset);
+                default -> builtin(node, call, s, mask, offset, length);
+            };
+        }
+    }
+
+    /** strtolower / strtoupper: a vectorized scan for a letter to change; most strings have none. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = boolean.class, name = "upper")
+    public static final class Case {
+        private static final TruffleString.CodePointSet UPPERCASE = TruffleString.CodePointSet.fromRanges(
+                new int[] {'A', 'Z'}, Str.ENC);
+        private static final TruffleString.CodePointSet LOWERCASE = TruffleString.CodePointSet.fromRanges(
+                new int[] {'a', 'z'}, Str.ENC);
+
+        @Specialization
+        public static TruffleString string(CallInfo call, boolean upper, TruffleString s,
+                                           @Cached TruffleString.ByteIndexOfCodePointSetNode find) {
+            if (find.execute(s, 0, s.byteLength(Str.ENC), upper ? LOWERCASE : UPPERCASE) < 0) {
+                return s;
+            }
+            return convert(s, upper);
+        }
+
+        @TruffleBoundary
+        private static TruffleString convert(TruffleString s, boolean upper) {
+            return upper ? StringFunctions.upper(s) : StringFunctions.lower(s);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, boolean upper, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /** trim (3) / ltrim (1) / rtrim (2) with php-src's default characters " \n\r\t\v\0". */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "mode")
+    public static final class Trim {
+        @Specialization
+        public static TruffleString string(CallInfo call, int mode, TruffleString s,
+                                           @Cached TruffleString.GetInternalByteArrayNode bytes,
+                                           @Cached TruffleString.SubstringByteIndexNode substring) {
+            InternalByteArray internal = bytes.execute(s, Str.ENC);
+            byte[] array = internal.getArray();
+            int offset = internal.getOffset();
+            int length = internal.getLength();
+            int start = 0;
+            int end = length;
+            if ((mode & 1) != 0) {
+                while (start < end && isTrimmed(array[offset + start])) {
+                    start++;
+                }
+            }
+            if ((mode & 2) != 0) {
+                while (end > start && isTrimmed(array[offset + end - 1])) {
+                    end--;
+                }
+            }
+            if (start == 0 && end == length) {
+                return s;
+            }
+            return substring.execute(s, start, end - start, Str.ENC, true);
+        }
+
+        private static boolean isTrimmed(byte b) {
+            return b == ' ' || b == '\n' || b == '\r' || b == '\t' || b == 0x0B || b == 0;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int mode, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /** ucfirst: unchanged unless the first byte is a lowercase ASCII letter. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Ucfirst {
+        @Specialization
+        public static TruffleString string(CallInfo call, TruffleString s,
+                                           @Cached TruffleString.ReadByteNode read) {
+            if (s.byteLength(Str.ENC) == 0) {
+                return s;
+            }
+            int first = read.execute(s, 0, Str.ENC);
+            return first >= 'a' && first <= 'z' ? upperFirst(s) : s;
+        }
+
+        @TruffleBoundary
+        private static TruffleString upperFirst(TruffleString s) {
+            return StringFunctions.caseFirst(s, true);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /**
+     * str_replace(string, string, string): a vectorized search first; a subject without the search string (the
+     * usual case) is returned as it is. The replacing itself, and arrays, go to the built-in.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class StrReplace {
+        @Specialization
+        public static Object strings(CallInfo call, TruffleString search, TruffleString replacement,
+                                     TruffleString subject, @Cached TruffleString.ByteIndexOfStringNode index,
+                                     @Bind Node node) {
+            int length = subject.byteLength(Str.ENC);
+            int searchLength = search.byteLength(Str.ENC);
+            if (searchLength == 0 || searchLength > length || index.execute(subject, search, 0, length, Str.ENC) < 0) {
+                return subject;
+            }
+            return builtin(node, call, search, replacement, subject);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object search, Object replacement, Object subject,
+                                   @Bind Node node) {
+            return builtin(node, call, search, replacement, subject);
+        }
+    }
+
+    /** in_array(needle, array[, strict]) without the call (passed: the arguments the call passed). */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "passed")
+    public static final class InArray {
+        @Specialization
+        public static boolean array(CallInfo call, int passed, Object needle, PhpArray haystack, boolean strict) {
+            return ArrayFunctions.search(needle, haystack, strict) != null;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int passed, Object needle, Object haystack, Object strict,
+                                   @Bind Node node) {
+            return passed == 2 ? builtin(node, call, needle, haystack) : builtin(node, call, needle, haystack, strict);
+        }
+    }
+
+    /**
+     * array_slice of a packed list with int bounds and renumbered keys (WP_Hook's argument trimming), built inline
+     * as ArrayFunctions.slice builds it; passed: the arguments the call passed.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "passed")
+    public static final class ArraySlice {
+        @Specialization(guards = {"array.isPacked()", "isLengthOrNull(length)", "!preserveKeys"})
+        public static PhpArray packed(CallInfo call, int passed, PhpArray array, long offset, Object length,
+                                      boolean preserveKeys) {
+            int n = array.size();
+            long start = offset < 0 ? Math.max(0, n + offset) : Math.min(offset, n);
+            long end;
+            if (length instanceof Long count) {
+                end = count < 0 ? Math.max(start, n + count) : Math.min(n, start + count);
+            } else {
+                end = n;
+            }
+            if (start >= end) {
+                return new PhpArray();
+            }
+            // one loop per layout, so the loop tests none (wiki/partial-evaluation.md, round 2)
+            if (array.holdsLongs()) {
+                PhpArray result = new PhpArray();
+                for (int p = (int) start; p < end; p++) {
+                    result.appendLong(array.longAt(p));
+                }
+                return result;
+            }
+            PhpArray result = PhpArray.ofCapacity((int) (end - start));
+            for (int p = (int) start; p < end; p++) {
+                result.appendCopied(array.copiedAt(p));
+            }
+            return result;
+        }
+
+        public static boolean isLengthOrNull(Object length) {
+            return length instanceof Long || length == PhpNull.NULL;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, int passed, Object array, Object offset, Object length,
+                                   Object preserveKeys, @Bind Node node) {
+            return switch (passed) {
+                case 2 -> builtin(node, call, array, offset);
+                case 3 -> builtin(node, call, array, offset, length);
+                default -> builtin(node, call, array, offset, length, preserveKeys);
+            };
+        }
+    }
+
+    /** array_keys($a): a packed array's keys are 0..n-1, built unboxed. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayKeys {
+        @Specialization
+        public static PhpArray array(CallInfo call, PhpArray array) {
+            if (array.isPacked()) {
+                PhpArray result = PhpArray.ofLongCapacity(array.size());
+                for (int i = 0; i < array.size(); i++) {
+                    result.appendLong(i);
+                }
+                return result;
+            }
+            PhpArray result = PhpArray.ofCapacity(array.size());
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                result.append(array.keyAt(p));
+            }
+            return result;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node) {
+            return builtin(node, call, value);
+        }
+    }
+
+    /** explode(separator, string) without a limit: a vectorized search for each piece; passed as above. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "passed")
+    public static final class Explode {
+        @Specialization(guards = {"limit == NO_LIMIT", "separator.byteLength(ENC) > 0"})
+        public static PhpArray split(CallInfo call, int passed, TruffleString separator, TruffleString s, long limit,
+                                     @Cached TruffleString.ByteIndexOfStringNode index,
+                                     @Cached TruffleString.SubstringByteIndexNode substring) {
+            int separatorLength = separator.byteLength(Str.ENC);
+            int length = s.byteLength(Str.ENC);
+            PhpArray result = new PhpArray();
+            int from = 0;
+            while (from + separatorLength <= length) {
+                int found = index.execute(s, separator, from, length, Str.ENC);
+                if (found < 0) {
+                    break;
+                }
+                result.append(substring.execute(s, from, found - from, Str.ENC, false));
+                from = found + separatorLength;
+            }
+            result.append(substring.execute(s, from, length - from, Str.ENC, false));
+            return result;
+        }
+
+        public static final long NO_LIMIT = Long.MAX_VALUE;
+        public static final TruffleString.Encoding ENC = Str.ENC;
+
+        @Fallback
+        public static Object other(CallInfo call, int passed, Object separator, Object s, Object limit,
+                                   @Bind Node node) {
+            return passed == 2 ? builtin(node, call, separator, s) : builtin(node, call, separator, s, limit);
         }
     }
 
