@@ -3454,8 +3454,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /**
      * include / require (_once) in a function (IncludeNode): the file runs in the call's variables (its
-     * {@link BytecodeScope}), with the call's $this and static class. Out of line as the tree's: the path's
-     * resolution and the file's run are a call each. This instruction is the file's caller in traces.
+     * {@link BytecodeScope}), with the call's $this and static class. Out of line: the path's resolution and the
+     * file's run are one call (IncludeNode.include). This instruction is the file's caller in traces.
      */
     @Operation
     @ConstantOperand(type = IncludeSite.class)
@@ -3464,11 +3464,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object include(VirtualFrame frame, IncludeSite site, Object path,
                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
                                      @Bind Node node) {
-            CallTarget file = IncludeNode.resolve(node, site, path, site.once());
-            if (file == null) {
-                return Boolean.TRUE;
-            }
-            return IncludeNode.run(node, file, frame.getArguments(), root.callScope(frame, bytecode));
+            return IncludeNode.include(node, site, path, site.once(), frame.getArguments(),
+                    root.callScope(frame, bytecode));
+        }
+    }
+
+    /**
+     * include / require (_once) in a file's top level: as Include, the file running in the scope the including
+     * file has (its frame's), without the function's scope to look at; wp-settings.php has hundreds.
+     */
+    @Operation
+    @ConstantOperand(type = IncludeSite.class)
+    public static final class IncludeInFile {
+        @Specialization
+        public static Object include(VirtualFrame frame, IncludeSite site, Object path, @Bind Node node) {
+            return IncludeNode.include(node, site, path, site.once(), frame.getArguments(), null);
         }
     }
 
