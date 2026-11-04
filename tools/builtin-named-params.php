@@ -1,6 +1,5 @@
 <?php
-// Writes the parameters of the internal functions and methods (params.txt, by tools/builtin-params.php, has the
-// functions' names only, for var_dump of their closures) (their arginfo, as Reflection gives it) into the
+// Writes the parameters of the internal functions and methods (their arginfo, as Reflection gives it) into the
 // resource Truffle PHP's built-ins take their names and defaults from for named arguments (wiki/named-arguments.md
 // 4.6), for the extensions tools/builtin-arity.php lists. Run on the reference PHP with mysqli:
 //   docker run --rm -v "$PWD:/w" -w /w bootshare-php:8.5 php -d auto_prepend_file= tools/builtin-named-params.php \
