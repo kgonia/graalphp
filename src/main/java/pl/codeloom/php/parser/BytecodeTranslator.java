@@ -5581,7 +5581,7 @@ public final class BytecodeTranslator {
                 if (place.ref() != null && append) {
                     // a new element's reference, else the Error (SendTemporary on the place's reference)
                     b.beginSendTemporary(index, true, true);
-                    b.emitLoadStackValue(callee);
+                    sendCallee(callee, named);
                     place.ref().ref(true);
                     emitKeys(keys);
                     b.endSendTemporary();
