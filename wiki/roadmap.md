@@ -57,3 +57,9 @@ epilogues). Tuning them earlier would be thrown away, and measuring them togethe
 Native image removes the HotSpot compilation of the interpreter itself from the cold visit (H9/H10: cold code
 2.8× the tree on the JVM, 1.11× natively). Steady state on native was 0.59× the JVM on Gate 1 (PR #6). That gap is
 measured again here.
+
+**GraalVM 25.5** ([graalvm-25-5.md](graalvm-25-5.md)) adds two things for this step. Its auxiliary engine cache
+(now in Community Edition) with Native Image's auxiliary images lets a training run store bytecode, compiled code
+and a pre-initialized context, so the cold visit starts warm. It also adds an unboxed calling convention for
+compiled Truffle-to-Truffle calls. The upgrade to 25.5 goes first, as its own PR; a probe of the cache comes before
+this step.
