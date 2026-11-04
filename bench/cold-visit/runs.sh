@@ -34,7 +34,7 @@ CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
 lock() {
   local said=
   until mkdir $CPU_LOCK 2> /dev/null; do
-    [ -n "$said" ] || echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; said=1; sleep 2
+    [ -n "$said" ] || echo "CPUs 14-21 taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1)"; said=1; sleep 0.5
   done
   echo "claude-wordpress-cold (wordpress-cold): $*, since $(date '+%F %T')" > $CPU_LOCK/note
 }
@@ -67,6 +67,8 @@ define() { # VARIANT ROUND: CLASSES_V and JAVA_OPTS_V for native.sh's start
   esac
   # n: the host compiler keeps code its profile never saw run (no "unreached" speculation, so no deoptimization
   # when the interpreter first runs an instruction the profile missed)
+  # x: no change (the same variant again, in a series of its own); p: this branch with the uncached IndirectCallNode loaded up front (target/classes-bcp)
+  case $suffix in *p*) export CLASSES_$v=target/classes-${base}p ;; esac
   case $suffix in *n*) opts+=" -Djdk.graal.RemoveNeverExecutedCode=false" ;; esac
   export JAVA_OPTS_$v="$opts ${EXTRA_OPTS:-}"
 }
@@ -120,7 +122,10 @@ case ${1:-} in
         define $v $r
         mkdir -p target/cv/out/r$r
         hold run 6 30 "wordpress-cold: Gate 2 cold visit jvm-java.$v-$r (CPUs 14-21, CPU lock)"
-        rm -f $runs/jvm-java.$v-1.*
+        # native.sh names the run VARIANT-1: round 1's files of this variant wait aside under -x1 meanwhile
+        for f in $runs/jvm-java.$v-1.*; do
+          [ ! -e "$f" ] || { [ "$r" = 1 ] && rm -f "$f"; } || mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-x1.}"
+        done
         lock "Gate 2 cold visit jvm-java.$v round $r"
         echo "$(date '+%F %T') $v-r$r: $(powershell -NoProfile -ExecutionPolicy Bypass -File bench/split-policy/hostload.ps1 | tr -d '\r')" \
           >> target/cv/hostload.log
@@ -130,7 +135,10 @@ case ${1:-} in
         unlock
         release run
         wait
-        for f in $runs/jvm-java.$v-1.*; do [ ! -e "$f" ] || mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-$r.}"; done
+        if [ "$r" != 1 ]; then
+          for f in $runs/jvm-java.$v-1.*; do [ ! -e "$f" ] || mv "$f" "${f/jvm-java.$v-1./jvm-java.$v-$r.}"; done
+          for f in $runs/jvm-java.$v-x1.*; do [ ! -e "$f" ] || mv "$f" "${f/jvm-java.$v-x1./jvm-java.$v-1.}"; done
+        fi
       done
     done ;;
   aot-train)

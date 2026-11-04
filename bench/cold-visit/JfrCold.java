@@ -41,7 +41,9 @@ public class JfrCold {
             return "parse";
         }
         if (c.startsWith("pl.codeloom.php.parser.Translator") || c.startsWith("pl.codeloom.php.parser.BytecodeTranslator")
-                || c.startsWith(GEN + "$Builder") || c.startsWith("com.oracle.truffle.api.bytecode.")) {
+                || c.startsWith(GEN + "$Builder") || c.startsWith("com.oracle.truffle.api.bytecode.BytecodeBuilder")
+                || c.startsWith("com.oracle.truffle.api.bytecode.BytecodeSupport")
+                || c.startsWith("com.oracle.truffle.api.bytecode.BytecodeRootNodes")) {
             return "translate";
         }
         if (guest(f)) {
@@ -152,6 +154,7 @@ public class JfrCold {
         Map<String, Integer> deoptMethods = new HashMap<>();
         int deoptTotal = 0;
         List<String> interpreterDeopts = new ArrayList<>();
+        List<long[]> continueAtEvents = new ArrayList<>(); // {time ms, 1 installed / 0 lost}
         Map<String, Integer> failures = new HashMap<>();
         long firstSample = Long.MAX_VALUE;
         try (RecordingFile file = new RecordingFile(Path.of(args[0]))) {
@@ -179,6 +182,9 @@ public class JfrCold {
                     String mn = m == null ? "?" : m.getType().getName() + "." + m.getName();
                     deoptTotal++;
                     add(deoptMethods, mn);
+                    if (mn.equals(GEN + "$CachedBytecodeNode.continueAt")) {
+                        continueAtEvents.add(new long[] {e.getStartTime().toEpochMilli(), 0});
+                    }
                     if (mn.startsWith(GEN + "$CachedBytecodeNode.continueAt") && jvmStart != null) {
                         interpreterDeopts.add(String.format("  %7.2f  %s line %s: %s/%s",
                                 (e.getStartTime().toEpochMilli() - jvmStart.toEpochMilli()) / 1000.0,
@@ -310,6 +316,36 @@ public class JfrCold {
         System.out.println("deoptimizations of the generated interpreter's continueAt (s after the JVM's start)");
         interpreterDeopts.forEach(System.out::println);
         print("host compilation failures", failures, failures.values().stream().mapToInt(i -> i).sum(), top);
+        // how long a tier-4 continueAt was installed while the requests ran: from a successful compile's end to the
+        // next deoptimization of it (an invalidation by class loading isn't a JFR deoptimization: not seen here)
+        for (RecordedEvent c : compilations) {
+            RecordedMethod m = c.getValue("method");
+            if ((m.getType().getName() + "." + m.getName()).equals(GEN + "$CachedBytecodeNode.continueAt")
+                    && c.hasField("compileLevel") && ((Number) c.getValue("compileLevel")).intValue() == 4
+                    && !(c.hasField("isOsr") && c.getBoolean("isOsr")) && c.getBoolean("succeded")) {
+                continueAtEvents.add(new long[] {c.getEndTime().toEpochMilli(), 1});
+            }
+        }
+        if (!continueAtEvents.isEmpty() && firstSample != Long.MAX_VALUE) {
+            continueAtEvents.sort((a, b) -> Long.compare(a[0], b[0]));
+            long end = cutoff > 0 ? cutoff : continueAtEvents.get(continueAtEvents.size() - 1)[0];
+            long installedSince = -1;
+            long covered = 0;
+            for (long[] ev : continueAtEvents) {
+                long t = Math.max(ev[0], firstSample);
+                if (ev[1] == 1 && installedSince < 0) {
+                    installedSince = Math.min(t, end);
+                } else if (ev[1] == 0 && installedSince >= 0) {
+                    covered += Math.max(0, Math.min(t, end) - installedSince);
+                    installedSince = -1;
+                }
+            }
+            if (installedSince >= 0) {
+                covered += Math.max(0, end - installedSince);
+            }
+            System.out.printf("tier-4 continueAt installed for %.2f s of the %.2f s from the first request sample to the cutoff%n",
+                    covered / 1000.0, (end - firstSample) / 1000.0);
+        }
         // host compilations
         double sum = 0;
         Map<String, double[]> byLevel = new TreeMap<>();
