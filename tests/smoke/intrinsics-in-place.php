@@ -41,6 +41,23 @@ namespace {
         $slice[0] = 'changed';
         echo json_encode([$x, $list, $slice]), "\n";
         echo json_encode(next(...[[1, 2]])), "\n";
+        // a variable changed in place: through its reference, shared with another, a global, not an array
+        $arr = [1, 2];
+        $r = &$arr;
+        array_push($r, 3);
+        $copy = $arr;
+        array_unshift($arr, $copy);
+        echo json_encode([$arr, $copy, array_pop($copy), $copy, end($arr), key($arr), reset($arr)]), "\n";
+        global $stack;
+        $stack = ['a'];
+        array_push($stack, 'b');
+        echo json_encode([array_pop($stack), $GLOBALS['stack']]), "\n";
+        $s = 'x';
+        try {
+            array_push($s, 1);
+        } catch (TypeError $e) {
+            frames($e);
+        }
     }
 
     function loops() {

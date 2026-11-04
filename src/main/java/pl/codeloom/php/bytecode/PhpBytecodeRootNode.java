@@ -4600,7 +4600,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class Move {
         @Specialization(guards = "isArrayRef(ref)")
         public static Object array(CallInfo call, int how, Object function, Object ref) {
-            PhpArray array = ((PhpRef) ref).arrayForWrite();
+            return moved(((PhpRef) ref).arrayForWrite(), how);
+        }
+
+        static Object moved(PhpArray array, int how) {
             int p = array.pointer();
             switch (how) {
                 case 1 -> p = array.isValidPosition(p) ? array.nextPosition(p) : -1;
@@ -4621,6 +4624,57 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object other(CallInfo call, int how, Object function, Object ref, @Bind Node node,
                                    @Cached IndirectCallNode callNode) {
             return builtin(callNode, node, call, ref);
+        }
+    }
+
+    /**
+     * next/prev/reset/end (how 1, -1, 0, 2), array_pop, array_push and array_unshift of one value (POP, PUSH, UNSHIFT)
+     * on a variable: its array changed in place as through the reference the call passes (separated if shared), but
+     * the variable not made one. Anything but an array goes to the built-in with the variable's reference.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    @ConstantOperand(type = int.class, name = "how")
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class ArrayOnVar {
+        public static final int POP = 3;
+        public static final int PUSH = 4;
+        public static final int UNSHIFT = 5;
+
+        @Specialization
+        public static Object onVariable(VirtualFrame frame, CallInfo call, int how, LocalAccessor variable,
+                                        @Variadic Object[] values, @Bind BytecodeNode bytecode, @Bind Node node,
+                                        @Cached InlinedBranchProfile sharedArray,
+                                        @Cached InlinedBranchProfile notArray,
+                                        @Cached IndirectCallNode callNode) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            PhpArray array;
+            if (stored instanceof PhpArray own) {
+                array = own;
+                if (own.isShared()) {
+                    sharedArray.enter(node);
+                    array = Variables.separated(own);
+                    variable.setObject(bytecode, frame, array);
+                }
+            } else if (stored instanceof PhpRef ref && ref.get() instanceof PhpArray) {
+                array = ref.arrayForWrite();
+            } else {
+                notArray.enter(node);
+                PhpRef ref = Locals.makeRef(frame, variable, bytecode);
+                return how >= PUSH ? builtin(callNode, node, call, ref, values[0]) : builtin(callNode, node, call, ref);
+            }
+            switch (how) {
+                case POP:
+                    return array.pop();
+                case PUSH:
+                    array.append(values[0]);
+                    return (long) array.size();
+                case UNSHIFT:
+                    array.prepend(values[0] == array ? array.copy() : values[0]);
+                    return (long) array.size();
+                default:
+                    return Move.moved(array, how);
+            }
         }
     }
 

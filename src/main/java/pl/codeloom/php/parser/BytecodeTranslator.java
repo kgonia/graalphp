@@ -4326,42 +4326,40 @@ public final class BytecodeTranslator {
                     expression(args.child(0));
                     b.endTrim();
                 }
-                case "next", "prev", "reset", "end" -> {
-                    if (n != 1) {
-                        return false;
-                    }
-                    b.beginMove(info, switch (lower) {
+                case "next", "prev", "reset", "end", "array_pop", "array_push", "array_unshift" -> {
+                    int how = switch (lower) {
                         case "next" -> 1;
                         case "prev" -> -1;
                         case "reset" -> 0;
-                        default -> 2;
-                    });
-                    byRefArguments(info, args);
-                    b.endMove();
-                }
-                case "array_pop" -> {
-                    if (n != 1) {
+                        case "end" -> 2;
+                        case "array_pop" -> PhpBytecodeRootNode.ArrayOnVar.POP;
+                        case "array_push" -> PhpBytecodeRootNode.ArrayOnVar.PUSH;
+                        default -> PhpBytecodeRootNode.ArrayOnVar.UNSHIFT;
+                    };
+                    if (n != (how >= PhpBytecodeRootNode.ArrayOnVar.PUSH ? 2 : 1)) {
                         return false;
                     }
-                    b.beginArrayPop(info);
-                    byRefArguments(info, args);
-                    b.endArrayPop();
-                }
-                case "array_push" -> {
-                    if (n != 2) {
-                        return false;
+                    if (onVariable(args)) {
+                        b.beginArrayOnVar(info, how, variable((Ast) args.child(0), "argument"));
+                        if (n == 2) {
+                            expression(args.child(1));
+                        }
+                        b.endArrayOnVar();
+                        return true;
                     }
-                    b.beginArrayPush(info);
-                    byRefArguments(info, args);
-                    b.endArrayPush();
-                }
-                case "array_unshift" -> {
-                    if (n != 2) {
-                        return false;
+                    switch (how) {
+                        case PhpBytecodeRootNode.ArrayOnVar.POP -> b.beginArrayPop(info);
+                        case PhpBytecodeRootNode.ArrayOnVar.PUSH -> b.beginArrayPush(info);
+                        case PhpBytecodeRootNode.ArrayOnVar.UNSHIFT -> b.beginArrayUnshift(info);
+                        default -> b.beginMove(info, how);
                     }
-                    b.beginArrayUnshift(info);
                     byRefArguments(info, args);
-                    b.endArrayUnshift();
+                    switch (how) {
+                        case PhpBytecodeRootNode.ArrayOnVar.POP -> b.endArrayPop();
+                        case PhpBytecodeRootNode.ArrayOnVar.PUSH -> b.endArrayPush();
+                        case PhpBytecodeRootNode.ArrayOnVar.UNSHIFT -> b.endArrayUnshift();
+                        default -> b.endMove();
+                    }
                 }
                 case "strpos" -> {
                     if (n != 2) {
@@ -4443,6 +4441,23 @@ public final class BytecodeTranslator {
                     b.emitLoadConstant(defaults[i - (arity - defaults.length)]);
                 }
             }
+        }
+
+        /**
+         * Whether a by-reference built-in's first argument is a variable it can change in place (ArrayOnVar): its
+         * value argument, evaluated before the variable is read there (the call makes the reference first), must
+         * not be able to change the variable: a constant or another variable.
+         */
+        private boolean onVariable(Ast args) {
+            if (!(args.child(0) instanceof Ast first) || !isVariable(first)) {
+                return false;
+            }
+            if (args.size() == 1) {
+                return true;
+            }
+            Object value = args.child(1);
+            return constantShaped(value) || value instanceof Ast other && isVariable(other)
+                    && !other.get("name").equals(first.get("name"));
         }
 
         /**
