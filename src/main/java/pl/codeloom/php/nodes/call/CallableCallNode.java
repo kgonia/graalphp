@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.call;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.nodes.ExprNode;
 import pl.codeloom.php.runtime.Callables;
@@ -45,6 +46,10 @@ public final class CallableCallNode extends CallNode {
                     args, call);
         }
         Object[] values = argsArray != null ? arrayArguments(argsArray.execute(frame)) : args.values(frame);
+        if (values == null) {
+            // the tree has no named arguments: bytecode's CallUserFuncArray binds the array's string keys
+            throw new PhpError("Unsupported named arguments to call_user_func_array() on the tree");
+        }
         return dispatch.execute(target, values);
     }
 
@@ -58,7 +63,10 @@ public final class CallableCallNode extends CallNode {
         return call.call(target.function().getCallTarget(), arguments);
     }
 
-    /** call_user_func_array()'s arguments: the array's elements (see toValues); anything else is a TypeError. */
+    /**
+     * call_user_func_array()'s arguments: the array's elements (see toValues), or null when a string key names one
+     * (ZEND_SEND_ARRAY's named arguments, which the caller binds); anything else is a TypeError.
+     */
     public static Object[] arrayArguments(Object array) {
         if (!(array instanceof PhpArray list)) {
             CompilerDirectives.transferToInterpreter();
@@ -68,7 +76,8 @@ public final class CallableCallNode extends CallNode {
     }
 
     /**
-     * The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. One
+     * The arguments in order, or null at a string key (only a hash has them); an element that is a reference
+     * (`array(&$x)`) is passed as one, to by-ref params. One
      * loop per layout, each bounded by the count: Graal's speculation on a loop over any layout (its type tests and
      * the index, hoisted out of the loop) failed natively for the layouts and sizes a site hadn't met.
      */
@@ -86,6 +95,9 @@ public final class CallableCallNode extends CallNode {
         } else {
             int p = list.firstPosition();
             for (int i = 0; i < count; i++) {
+                if (list.hashKeyAt(p) instanceof TruffleString) {
+                    return null;
+                }
                 values[i] = list.hashValueAt(p);
                 p = list.nextHashPosition(p);
             }

@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.SpreadArguments;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
@@ -41,6 +42,10 @@ final class RuntimeFunctions {
     private static final Callables.Parameter CALL_USER_FUNC = new Callables.Parameter("call_user_func", 1, false);
     private static final Callables.Parameter CALL_USER_FUNC_ARRAY =
             new Callables.Parameter("call_user_func_array", 1, false);
+    private static final Callables.Parameter FORWARD_STATIC_CALL =
+            new Callables.Parameter("forward_static_call", 1, false);
+    private static final Callables.Parameter FORWARD_STATIC_CALL_ARRAY =
+            new Callables.Parameter("forward_static_call_array", 1, false);
 
     /** php_get_uname on Linux: uname(2)'s fields, as /proc/sys/kernel gives them. */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
@@ -82,10 +87,14 @@ final class RuntimeFunctions {
             return Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC)
                     .call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
         });
-        r.fn("call_user_func_array", (context, a) -> {
-            Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC_ARRAY);
-            return target.call(positional(Args.array(a, 1, "call_user_func_array", "args")));
-        });
+        // zend_call_function with the array as named_params: its string keys name parameters
+        r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, Args.get(a, 0),
+                CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
+        // the called class of the calling code goes on to the callee (late static binding)
+        r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
+                FORWARD_STATIC_CALL)), PhpArray.list(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length))));
+        r.fn("forward_static_call_array", (context, a) -> callArray(forwarded(Callables.parameter(context,
+                Args.get(a, 0), FORWARD_STATIC_CALL_ARRAY)), Args.array(a, 1, "forward_static_call_array", "args")));
         r.fn("set_time_limit", a -> Boolean.TRUE);
         r.fn("getmypid", a -> ProcessHandle.current().pid());
         r.fn("ignore_user_abort", a -> 0L);
@@ -327,13 +336,25 @@ final class RuntimeFunctions {
     }
 
     /** The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. */
-    private static Object[] positional(PhpArray arguments) {
-        Object[] values = new Object[arguments.size()];
-        int i = 0;
-        for (int p = arguments.firstPosition(); p >= 0; p = arguments.nextPosition(p)) {
-            values[i++] = arguments.rawAt(p);
+    /** zend_call_function with named_params: the array bound as ZEND_SEND_ARRAY binds it (SpreadArguments). */
+    @TruffleBoundary
+    private static Object callArray(Callables.Target target, PhpArray arguments) {
+        return PhpRef.deref(target.function().getCallTarget().call(SpreadArguments.sendArray(target, arguments,
+                null)));
+    }
+
+    /**
+     * forward_static_call's target: the calling code's called class (zend_get_called_scope) instead of the
+     * callable's when it is an instance of it, as fci_cache.called_scope; a call with an object keeps its class.
+     */
+    @TruffleBoundary
+    private static Callables.Target forwarded(Callables.Target target) {
+        if (target.thisObject() == null && target.staticClass() != null
+                && Callables.callerArgument(PhpFunction.ARG_STATIC) instanceof PhpClass called
+                && called.isSubclassOf(target.staticClass().getLowerName())) {
+            return new Callables.Target(target.function(), null, called, target.closure(), target.magicName());
         }
-        return values;
+        return target;
     }
 
     @TruffleBoundary

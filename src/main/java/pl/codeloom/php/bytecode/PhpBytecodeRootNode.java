@@ -3226,22 +3226,39 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** call_user_func_array($f, $args): as CallUserFunc, the arguments the array's elements (references stay). */
+    /**
+     * call_user_func_array($f, $args): as CallUserFunc, the arguments the array's elements (references stay); with a
+     * string key, ZEND_SEND_ARRAY's binding by name (SpreadArguments.sendArray).
+     */
     @Operation
     @ConstantOperand(type = boolean.class, name = "keepRef")
     public static final class CallUserFuncArray {
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func_array", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, Object args,
+        public static Object cached(boolean keepRef, Object callable, Object args, @Bind Node node,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
-            return dispatch.execute(callable, CallableCallNode.arrayArguments(args));
+            Object[] values = CallableCallNode.arrayArguments(args);
+            if (values == null) {
+                return callNamed(callable, (PhpArray) args, keepRef, node);
+            }
+            return dispatch.execute(callable, values);
         }
 
         @Specialization(replaces = "cached")
         public static Object uncached(boolean keepRef, Object callable, Object args, @Bind Node node) {
             Object[] values = CallableCallNode.arrayArguments(args);
+            if (values == null) {
+                return callNamed(callable, (PhpArray) args, keepRef, node);
+            }
             return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        }
+
+        @TruffleBoundary
+        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node) {
+            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER);
+            Object[] frame = SpreadArguments.sendArray(target, args, node);
+            return result(Backtrace.callFrom(node, () -> target.function().getCallTarget().call(frame)), keepRef);
         }
     }
 

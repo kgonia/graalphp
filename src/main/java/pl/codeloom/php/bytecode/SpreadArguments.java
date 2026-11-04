@@ -9,6 +9,7 @@ import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
+import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -294,6 +295,26 @@ public final class SpreadArguments {
                 set(slot, new PhpRef(element));
             }
         }
+    }
+
+    /**
+     * The frame arguments of target's call with call_user_func_array()'s array (ZEND_SEND_ARRAY, zend_call_function's
+     * named_params): bound by {@link #addSendArray}, the holes filled and the extras put in. site: the call's
+     * instruction, or null for a built-in's.
+     */
+    @TruffleBoundary
+    public static Object[] sendArray(Callables.Target target, PhpArray array, Node site) {
+        SpreadArguments list = new SpreadArguments();
+        if (target.magicName() != null) {
+            list.addSendArray(array, MethodSite.BY_VALUE, site);
+            return target.boundArguments(list.magicValues(target.magicName()));
+        }
+        list.addSendArray(array, target.function(), site);
+        Object[] frame = target.boundArguments(list.values.toArray());
+        if (list.isNamed()) {
+            list.enter(frame, target.function(), site);
+        }
+        return frame;
     }
 
     /** Where a warning is: the call's instruction, or for a built-in's call the PHP code calling it. */
