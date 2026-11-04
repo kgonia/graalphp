@@ -1517,3 +1517,11 @@ what remains of their classes (the shortest diff).
   shared reference's `&`: fixed. Still differing, as on main: `$a['k']->p = 1` on an array doesn't create the null
   element before the Error (`ElementForWrite` reads), and a by-value argument `v($a[])` to a function known at
   compile time is a runtime Error where php-src's is a compile error.
+- **A file's top level compiled.** CompilationTest's `settings.php` (150 `require BASE . PARTS . 'x.php'`, the
+  file included 60 times by one site, so compiled by the run-once rule) went from the tree's 11,543 IR nodes to
+  22,473 as a bytecode root. Per include: two calls out (resolve, run), each with an exception path to the root's
+  epilog handler, and `IncludeSite.once()` testing `kind.endsWith("_once")` where it ran, a loop over the string in
+  compiled code at every include. Now one call (`IncludeNode.include`), deoptimizing on an exception (an exit() or
+  an error out of the included file goes on in the interpreter; the compiled code stays), the top level's own
+  `IncludeInFile` (its scope from the frame), and the flag computed when the site is made: 10,614 nodes, an include of
+  a literal path 15 (the tree's 30). The budget of 12,500 holds. Without the deoptimization it is 13,464.
