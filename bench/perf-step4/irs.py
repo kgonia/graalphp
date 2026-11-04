@@ -3,7 +3,7 @@ prints IR after PE / after all and code size side by side, the largest B/A first
 import re
 import sys
 
-LINE = re.compile(r"opt done\s+id=\s*\d+\s+(?P<name>\S.*?)\s*\|Tier (?P<tier>\d).*?\|IR\s+(?P<pe>\d+)/\s*(?P<ir>\d+)"
+LINE = re.compile(r"opt done\s+(?:engine=\d+\s+)?id=\s*\d+\s+(?P<name>\S.*?)\s*\|Tier (?P<tier>\d).*?\|IR\s+(?P<pe>\d+)/\s*(?P<ir>\d+)"
                   r".*?\|CodeSize\s+(?P<code>\d+)")
 
 
