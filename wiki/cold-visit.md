@@ -131,6 +131,8 @@ The timed variants, without the counters and JFR (5 rounds; `report.py`):
   ended one attempt; its runs were redone.
 
 ## Why the bytecode's execution is slow: its host-compiled interpreter keeps being thrown away
+[continueat.md](continueat.md) explains this section's mechanism, what GraalPy does, and the remedies in one place.
+
 The JFR samples rule out the suspect named first: in the cold visit only about 1% of the execution samples are in
 `continueAt` run by HotSpot's bytecode interpreter. HotSpot compiles `continueAt` within 1.2-2 s of the start (C1,
 tier 3), and the request thread spends 40-45% of its execution samples in host-compiled `continueAt` and
