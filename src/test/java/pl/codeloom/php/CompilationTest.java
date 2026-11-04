@@ -73,7 +73,8 @@ class CompilationTest {
 
     /**
      * A program's budgets of compiled code, lines "// IR budget: TARGET MAX": every compilation of the call target
-     * named TARGET, or of the code at TARGET as file:line, has at most MAX IR nodes after partial evaluation. A
+     * named TARGET, or of the file named TARGET (a file's top level, named by its path), has at most MAX IR nodes
+     * after partial evaluation. A
      * budget holds the code per operation of a construct to what it is now: HotSpot installs at most 640 KB of
      * code for one compilation, about 60,000 IR nodes, and WordPress's largest functions came close to it or over
      * (wiki/partial-evaluation.md).
@@ -87,7 +88,8 @@ class CompilationTest {
             int largest = 0;
             for (String line : log.split("\n")) {
                 Matcher done = DONE.matcher(line);
-                if (done.find() && (done.group(1).equals(target) || done.group(3).equals(target))) {
+                if (done.find() && (done.group(1).equals(target) || done.group(1).endsWith("/" + target)
+                        || done.group(1).endsWith("\\" + target))) {
                     compilations.add(line);
                     largest = Math.max(largest, Integer.parseInt(done.group(2)));
                 }

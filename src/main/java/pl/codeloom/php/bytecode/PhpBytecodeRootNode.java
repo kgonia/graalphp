@@ -5542,8 +5542,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = DefinedSite.class)
     public static final class Defined {
         @Specialization
-        public static boolean defined(DefinedSite site) {
-            return site.test();
+        public static boolean defined(DefinedSite site, @Bind Node node) {
+            return site.test(node);
         }
     }
 
