@@ -38,7 +38,8 @@ import java.util.function.Supplier;
  * {@link PhpContext}.
  */
 @TruffleLanguage.Registration(id = PhpLanguage.ID, name = "PHP", version = "8.5", defaultMimeType = PhpLanguage.MIME,
-        characterMimeTypes = PhpLanguage.MIME, contextPolicy = TruffleLanguage.ContextPolicy.SHARED)
+        characterMimeTypes = PhpLanguage.MIME, contextPolicy = TruffleLanguage.ContextPolicy.SHARED,
+        dependentLanguages = "regex")
 @ProvidedTags(StandardTags.StatementTag.class)
 public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     public static final String ID = "php";

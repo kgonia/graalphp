@@ -1,0 +1,10 @@
+# Rewrites for TRegexReplay: id<TAB>source or id<TAB>guard<TAB>source (tregex-replay.php, argument 6). Each is the
+# same pattern as the recorded one; the replay still compares every group with PCRE2 on every recorded call.
+# 44 (WP_Block_Parser): [^}]+ -> [^}]++ inside (?:...)*+. An atomic loop with nothing after it inside the group
+#    keeps its first, greedy path, so nothing ever backtracks into [^}]+.
+44	<!--\s+(?P<closer>\/)?wp:(?P<namespace>[a-z][a-z0-9_-]*\/)?(?P<name>[a-z][a-z0-9_-]*)\s+(?P<attrs>{(?:(?:[^}]++|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+)?(?P<void>\/)?-->
+# 20 (wpautop): (?<!<br />)\s*\n -> guard "<br />", \s*\n. \s*\n has no lookbehind and cannot match empty, so the
+#    first match of it not preceded by "<br />" (searching on one byte past a rejected start) is the original match.
+20	<br />	\s*\n
+# 8 (wpautop): \s*? -> \s* before /?>: no \s character can start /?>, so lazy and greedy take the same run.
+8	(<hr\s*/?>)

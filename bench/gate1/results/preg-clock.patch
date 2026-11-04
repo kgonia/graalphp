@@ -1,0 +1,280 @@
+diff --git a/src/main/java/pl/codeloom/php/builtins/PcreFunctions.java b/src/main/java/pl/codeloom/php/builtins/PcreFunctions.java
+index 5a48b75..3e070b6 100644
+--- a/src/main/java/pl/codeloom/php/builtins/PcreFunctions.java
++++ b/src/main/java/pl/codeloom/php/builtins/PcreFunctions.java
+@@ -8,6 +8,7 @@ import pl.codeloom.php.runtime.ByteBuilder;
+ import pl.codeloom.php.runtime.Callables;
+ import pl.codeloom.php.runtime.Convert;
+ import pl.codeloom.php.runtime.NativeClock;
++import pl.codeloom.php.runtime.PregClock;
+ import pl.codeloom.php.runtime.PhpArray;
+ import pl.codeloom.php.runtime.PhpNull;
+ import pl.codeloom.php.runtime.PhpRef;
+@@ -337,15 +338,34 @@ public final class PcreFunctions {
+ 
+     /** Declares the preg_* functions; their state is the calling context's instance. */
+     static void register(Registry r) {
+-        r.fn("preg_match", "001", (context, a) -> pcre(context).match(a, false));
+-        r.fn("preg_match_all", "001", (context, a) -> pcre(context).match(a, true));
+-        r.fn("preg_replace", "00001", (context, a) -> pcre(context).replace(context, a, false));
+-        r.fn("preg_replace_callback", "00001", (context, a) -> pcre(context).replace(context, a, true));
+-        r.fn("preg_split", (context, a) -> pcre(context).split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
+-        r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
+-        r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0)));
+-        r.fn("preg_last_error", (context, a) -> (long) pcre(context).lastError);
+-        r.fn("preg_last_error_msg", (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError]));
++        r.fn("preg_match", "001", timed(0, (context, a) -> pcre(context).match(a, false)));
++        r.fn("preg_match_all", "001", timed(1, (context, a) -> pcre(context).match(a, true)));
++        r.fn("preg_replace", "00001", timed(2, (context, a) -> pcre(context).replace(context, a, false)));
++        r.fn("preg_replace_callback", "00001", timed(3, (context, a) -> pcre(context).replace(context, a, true)));
++        r.fn("preg_split", timed(4, (context, a) -> pcre(context).split(Args.str(a, 0), Args.str(a, 1), Args.lng(a, 2, -1), Args.lng(a, 3, 0))));
++        if (PregClock.ENABLED) {
++            r.fn("preg_quote", timed(5, (context, a) -> quote(Args.str(a, 0), Args.get(a, 1))));
++        } else {
++            r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
++        }
++        r.fn("preg_grep", timed(6, (context, a) -> pcre(context).grep(Args.str(a, 0), Args.array(a, 1, "preg_grep"), Args.lng(a, 2, 0))));
++        r.fn("preg_last_error", timed(7, (context, a) -> (long) pcre(context).lastError));
++        r.fn("preg_last_error_msg", timed(8, (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError])));
++    }
++
++    /** The body, timed by PregClock when -Dphp.pregclock=true; the body itself otherwise. */
++    private static Registry.ContextBuiltin timed(int function, Registry.ContextBuiltin body) {
++        if (!PregClock.ENABLED) {
++            return body;
++        }
++        return (context, a) -> {
++            int outer = PregClock.enter(function);
++            try {
++                return body.call(context, a);
++            } finally {
++                PregClock.exit(outer);
++            }
++        };
+     }
+ 
+     /** The measurement functions of bench/gate1/run.php (php.Debug). */
+@@ -738,7 +758,18 @@ public final class PcreFunctions {
+                     int matchEnd = m.end(0);
+                     out.write(subject, lastEnd, matchStart - lastEnd);
+                     if (callback) {
+-                        Object value = ((Callables.Target) replacement).call(groups(m, rc, flags));
++                        Object value;
++                        if (PregClock.ENABLED) {
++                            PhpArray groups = groups(m, rc, flags);
++                            PregClock.callbackEnter();
++                            try {
++                                value = ((Callables.Target) replacement).call(groups);
++                            } finally {
++                                PregClock.callbackExit();
++                            }
++                        } else {
++                            value = ((Callables.Target) replacement).call(groups(m, rc, flags));
++                        }
+                         out.write(Convert.toStr(value));
+                     } else {
+                         template.expand(out, m, rc);
+diff --git a/src/main/java/pl/codeloom/php/launcher/RequestPhases.java b/src/main/java/pl/codeloom/php/launcher/RequestPhases.java
+index 5ca3109..86223b9 100644
+--- a/src/main/java/pl/codeloom/php/launcher/RequestPhases.java
++++ b/src/main/java/pl/codeloom/php/launcher/RequestPhases.java
+@@ -2,6 +2,7 @@ package pl.codeloom.php.launcher;
+ 
+ import pl.codeloom.php.runtime.NativeClock;
+ import pl.codeloom.php.runtime.Phases;
++import pl.codeloom.php.runtime.PregClock;
+ 
+ import java.io.IOException;
+ import java.lang.management.GarbageCollectorMXBean;
+@@ -39,11 +40,13 @@ final class RequestPhases {
+     private final long gcTimeStart;
+     private final long gcCountStart;
+     private final Phases phases;
++    private final PregClock pregStart;
+     private long contextReady;
+     private long evaluated;
+ 
+     RequestPhases() {
+         phases = Phases.begin();
++        pregStart = PregClock.ENABLED ? PregClock.current().copy() : null;
+         start = System.nanoTime();
+         cpuStart = threads.getCurrentThreadCpuTime();
+         nativeStart = NativeClock.nanos();
+@@ -92,6 +95,26 @@ final class RequestPhases {
+         }
+         field(line, "native_ns", NativeClock.nanos() - nativeStart);
+         field(line, "native_compile_ns", NativeClock.compileNanos() - nativeCompileStart);
++        if (PregClock.ENABLED) {
++            PregClock preg = PregClock.current();
++            long total = 0;
++            long calls = 0;
++            for (int i = 0; i < PregClock.NAMES.length; i++) {
++                long nanos = preg.nanos[i] - pregStart.nanos[i];
++                long n = preg.calls[i] - pregStart.calls[i];
++                total += nanos;
++                calls += n;
++                if (n > 0) {
++                    field(line, PregClock.NAMES[i] + "_ns", nanos);
++                    field(line, PregClock.NAMES[i] + "_n", n);
++                }
++            }
++            field(line, "preg_ns", total);
++            field(line, "preg_n", calls);
++            field(line, "preg_callback_ns", preg.callbackNanos - pregStart.callbackNanos);
++            field(line, "preg_callback_n", preg.callbacks - pregStart.callbacks);
++            field(line, "preg_overhead_ns", preg.overheadNanos - pregStart.overheadNanos);
++        }
+         field(line, "gc_ms", gcTime() - gcTimeStart);
+         field(line, "gc_n", gcCount() - gcCountStart);
+         System.err.println(processCpu(line));
+diff --git a/src/main/java/pl/codeloom/php/runtime/PregClock.java b/src/main/java/pl/codeloom/php/runtime/PregClock.java
+new file mode 100644
+index 0000000..9c96a1d
+--- /dev/null
++++ b/src/main/java/pl/codeloom/php/runtime/PregClock.java
+@@ -0,0 +1,124 @@
++package pl.codeloom.php.runtime;
++
++import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
++
++/**
++ * The inclusive time of the preg_* built-ins (-Dphp.pregclock=true): everything from a preg_* call's entry to its
++ * return (the subject's and pattern's conversion, the cache lookup, the native match, building $matches or the
++ * result) except the PHP code its replacement callbacks run, which is timed apart. A preg_* call inside a callback
++ * counts as preg time again. The flag is a static final: without it PcreFunctions registers the built-ins
++ * unwrapped, so nothing is left of this class.
++ *
++ * <p>The clock's own cost is measured in place, as {@link NativeClock} does: right after each exit the clock is read
++ * once more, and that back-to-back gap (about one clock reading and its bookkeeping, which is what a timed window
++ * holds of the clock itself) is kept apart, for the report to subtract. A thread's counters are its own; a server
++ * reads them around each request, which runs on one thread.
++ */
++public final class PregClock {
++    public static final boolean ENABLED = Boolean.getBoolean("php.pregclock");
++
++    /** Not inside a preg_* call. */
++    private static final int OUTSIDE = 0;
++    /** Inside a preg_* call, not in a callback. */
++    private static final int PREG = 1;
++    /** Inside a replacement callback's PHP code. */
++    private static final int CALLBACK = 2;
++
++    /** The functions timed: PcreFunctions passes these indices. */
++    public static final String[] NAMES = {"preg_match", "preg_match_all", "preg_replace", "preg_replace_callback",
++        "preg_split", "preg_quote", "preg_grep", "preg_last_error", "preg_last_error_msg"};
++    private static final int FUNCTIONS = NAMES.length;
++
++    private static final ThreadLocal<PregClock> CURRENT = ThreadLocal.withInitial(PregClock::new);
++
++    /** Nanoseconds inside preg_* calls, callbacks excluded, per function (PcreFunctions' index) and in all. */
++    public final long[] nanos;
++    public final long[] calls;
++    /** Nanoseconds in the callbacks' PHP code, and the callbacks called. */
++    public long callbackNanos;
++    public long callbacks;
++    /** The clock's own cost, measured in place: one back-to-back gap per timed window. */
++    public long overheadNanos;
++
++    private int state = OUTSIDE;
++    /** The function of the preg_* call running, while state is PREG or CALLBACK. */
++    private int function;
++    private long since;
++
++    private PregClock() {
++        nanos = new long[FUNCTIONS];
++        calls = new long[FUNCTIONS];
++    }
++
++    /** The current thread's counters so far. */
++    public static PregClock current() {
++        return CURRENT.get();
++    }
++
++    /** A copy of the counters, for a report's differences. */
++    public PregClock copy() {
++        PregClock copy = new PregClock();
++        System.arraycopy(nanos, 0, copy.nanos, 0, FUNCTIONS);
++        System.arraycopy(calls, 0, copy.calls, 0, FUNCTIONS);
++        copy.callbackNanos = callbackNanos;
++        copy.callbacks = callbacks;
++        copy.overheadNanos = overheadNanos;
++        return copy;
++    }
++
++    /** A preg_* call begins; returns the state it interrupts (encoded with the function), for {@link #exit}. */
++    @TruffleBoundary
++    public static int enter(int function) {
++        PregClock clock = CURRENT.get();
++        long now = System.nanoTime();
++        int outer = clock.state;
++        if (outer == CALLBACK) {
++            clock.callbackNanos += now - clock.since;
++        } else if (outer == PREG) {
++            // a preg_* built-in calling another directly: not done today, but the time stays preg time
++            clock.nanos[clock.function] += now - clock.since;
++        }
++        int encoded = outer | clock.function << 2;
++        clock.state = PREG;
++        clock.function = function;
++        clock.calls[function]++;
++        clock.since = now;
++        return encoded;
++    }
++
++    /** The preg_* call returns (or throws) to the state {@link #enter} returned. */
++    @TruffleBoundary
++    public static void exit(int encoded) {
++        PregClock clock = CURRENT.get();
++        long now = System.nanoTime();
++        clock.nanos[clock.function] += now - clock.since;
++        clock.state = encoded & 3;
++        clock.function = encoded >>> 2;
++        long after = System.nanoTime();
++        clock.overheadNanos += after - now;
++        clock.since = after;
++    }
++
++    /** A replacement callback's PHP code begins. */
++    @TruffleBoundary
++    public static void callbackEnter() {
++        PregClock clock = CURRENT.get();
++        long now = System.nanoTime();
++        clock.nanos[clock.function] += now - clock.since;
++        clock.state = CALLBACK;
++        clock.callbacks++;
++        clock.since = now;
++    }
++
++    /** The callback returned to its preg_* call. */
++    @TruffleBoundary
++    public static void callbackExit() {
++        PregClock clock = CURRENT.get();
++        long now = System.nanoTime();
++        clock.callbackNanos += now - clock.since;
++        clock.state = PREG;
++        long after = System.nanoTime();
++        clock.overheadNanos += after - now;
++        clock.since = after;
++    }
++}
+diff --git a/tests/gate2/native.sh b/tests/gate2/native.sh
+index d3b5f27..4b90ff6 100644
+--- a/tests/gate2/native.sh
++++ b/tests/gate2/native.sh
+@@ -114,6 +114,8 @@ start() {
+     # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
+     # (target/native/wp-http-phases: the flags are static finals, fixed at build time)
+     *-phases) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.nativeclock=true" ;;
++    # the preg_* built-ins' inclusive time (PregClock), with the phase lines; natively target/native/wp-http-preg
++    *-preg) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.pregclock=true" ;;
+     # BYTECODE_REPORT=1: each function's interpreter, and why it stays on the tree (the JVM only: a native image
+     # fixes the system property at build time)
+     *-bc) opts="-Dpolyglot.php.Parser=java -Dpolyglot.php.Interpreter=bytecode"
+@@ -133,6 +135,7 @@ start() {
+     native-*) local binary=wp-http
+               [ "$variant" != native-main ] || binary=wp-http-main
+               [ "$variant" != native-phases ] || binary=wp-http-phases
++              [ "$variant" != native-preg ] || binary=wp-http-preg
+               cmd="exec target/native/$binary \$JAVA_OPTS_BASE -Xmx1g $opts ${JAVA_OPTS:-}"
+               cmd+=" -Djava.net.preferIPv6Addresses=system $HTTP_ARGS --ast-root=/none" ;;
+     *) echo "unknown variant $variant"; exit 2 ;;

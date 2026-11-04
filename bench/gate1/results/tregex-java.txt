@@ -1,0 +1,96 @@
+flavor JavaUtilPattern
+kernel       matches  tregex  differ  time-cov     pcre ns   tregex ns   ratio pcre-all ns
+hooks              0       0       0       82%          50        1342   26.84          61
+escape          1513    1513       0      100%      117281      279657    2.38      117354
+slugs          11760   11760       0       98%      214923       88908    0.41      218682
+wpautop        36140   29277       0       89%     1968034    14852291    7.55     2212630
+wptexturize    23493   10608       0       33%      236182      464849    1.97      725996
+blocks          5910       0       0        0%          28          86    3.07      342891
+kses           96828   96122       0       96%     2839824    21455357    7.56     2961215
+
+per pattern, one kernel iteration's matches (ns), by PCRE2 time
+kernel          id matches       pcre     tregex  ratio  features                     pattern
+kses            46   18642    1462157   19505895  13.34  -                            /
+	(                      # Detect comments of various flavors before a.../
+kses            45    6567     469376     108183   0.23  -                            /[\x00-\x08\x0B\x0C\x0E-\x1F]/
+kses            48   12729     305663      91352   0.30  -                            /^(?:</[^a-zA-Z][^>]*>|<![a-z][^>]*>)$/
+kses            47   12729     291619     120749   0.41  -                            /\\"/
+wpautop         21    4032     215639    2995643  13.89  -                            /(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div|dl|dd.../
+slugs            4   11760     214309      64536   0.30  -                            /[\x80-\xff]/
+kses            51    6878     212498     120244   0.57  -                            /^<\s*(/\s*)?([a-zA-Z0-9-]+)([^>]*)>?$/
+wpautop         18    1876     197475    2751473  13.93  -                            /(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div|dl|dd.../
+kses             1    5913     187900      86261   0.46  -                            /&amp;#(0*[1-9][0-9]{0,6});/
+kses             2    5913     187369      87865   0.47  -                            /&amp;#[Xx](0*[1-9A-Fa-f][0-9A-Fa-f]{0,5});/
+kses             3    5916     187019     199991   1.07  -                            /&amp;([A-Za-z]{2,8}[0-9]{0,2});/
+wpautop         20    4091     171660    2606808  15.19  behind                       /(?<!<br />)\s*\n/
+wptexturize     28    8706     159973     215947   1.35  ahead,i                      /&(?!#(?:\d+|x[a-f0-9]+);|[a-z1-4]{1,8};)/
+kses            50    5851     151131      41982   0.28  -                            /-$/
+kses            49    5851     150843      73093   0.48  -                            /--+/
+wpautop         14    1962     130875    2208601  16.88  -                            /<p>\s*(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div.../
+wpautop          6    3116     130745     142669   1.09  -                            /(<(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div|dl|dd|d.../
+wpautop          7    3081      98944     138328   1.40  -                            /(</(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div|dl|dd|.../
+kses            52    3538      93354      29569   0.32  -                            /\s*/\s*$/
+wpautop         10    4121      92712      96117   1.04  -                            /
+
++/
+wpautop         11    4119      90811      93101   1.03  -                            /\n\s*\n/
+wpautop         17    1929      81542    1453430  17.82  -                            /<p>\s*(</?(?:table|thead|tfoot|caption|col|colgroup|tbody|tr|td|th|div.../
+kses            53    3538      71594      28718   0.40  -                            /[<>]/
+wpautop         13      61      40603      63452   1.56  -                            /<p>([^<]+)</(div|address|form)>/
+wpautop         12      75      38588      39729   1.03  -                            /<p>\s*</p>/
+wpautop         23      63      35283        786   0.02  -                            /
+</p>$/
+wptexturize     29    1828      32559      17856   0.55  behind                       /(?<=\d)x\d/
+wpautop         15     224      27420      75322   2.75  -                            /<p>(<li.+?)</p>/
+escape           0    1238      21652      12768   0.59  -                            /[&<>"']/
+wpautop         24      81      20115      44515   2.21  -                            /\s*(<figcaption[^>]*>)/
+wpautop         16      62      17473      17852   1.02  i                            /<p><blockquote((?:[^>"']|"[^"]*"|'[^']*')*)>/
+kses            57     551      13082       5661   0.43  -                            /[\\(&=}]|/\*/
+escape           3      99      12082       9438   0.78  -                            /&amp;([A-Za-z]{2,8}[0-9]{0,2});/
+escape           2      88      11905       7466   0.63  -                            /&amp;#[Xx](0*[1-9A-Fa-f][0-9A-Fa-f]{0,5});/
+escape           1      88      11877       7542   0.64  -                            /&amp;#(0*[1-9][0-9]{0,6});/
+kses            54     654      11777       4605   0.39  -                            /\\+0+/
+kses            55     551       9796       3127   0.32  -                            /^--[a-zA-Z0-9-_]+$/
+wpautop          8      61       9319      75210   8.07  -                            /(<hr\s*?/?>)/
+wpautop         19      61       8313     117179  14.10  backref                      /<(script|style|svg|math).*?<\/\1>/
+wpautop         22     119       7304       5828   0.80  -                            /<br />(\s*</?(?:p|li|div|dl|dd|dt|th|pre|td|ul|ol)[^>]*>)/
+wpautop          5      62       5897       3693   0.63  -                            /<br\s*/?>\s*<br\s*/?>/
+wpautop         25      81       5494       5752   1.05  -                            /</figcaption>\s*/
+kses            59     110       1972        828   0.42  i                            /:|&#0*58;|&#x0*3a;|&colon;/
+kses            58     110       1792       2905   1.62  ahead,i                      /(&#0*58(?![;0-9])|&#x0*3a(?![;a-f0-9]))/
+kses            60      64       1263        875   0.69  -                            /^data-[a-z0-9_-]+$/
+wptexturize     32      22        403        468   1.16  ahead                        /"(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+wptexturize     30      14        298       1327   4.45  behind                       /(?<=\A|[\r\n\t ]|\xC2\xA0|&nbsp;)"(\d[.,\d]*)"/
+wptexturize     33      14        267        323   1.21  behind                       /(?<=\d)"/
+kses            61       8        229        523   2.29  -                            /url\([^)]+\)/
+wptexturize     43       4        102        326   3.19  ahead,behind                 /(?<=^|[\r\n\t ]|\xC2\xA0|&nbsp;)-(?=$|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+wptexturize     40       4        102         79   0.77  -                            /---/
+wptexturize     41       4        100        150   1.50  ahead,behind                 /(?<=^|[\r\n\t ]|\xC2\xA0|&nbsp;)--(?=$|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+wptexturize     42       4         99        159   1.61  behind                       /(?<!xn)--/
+kses            63       4         81         94   1.17  -                            /(?:repeating-)?(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*.../
+wptexturize     37       2         50        199   4.00  behind                       /(?<=\A|[\r\n\t ]|\xC2\xA0|&nbsp;)'(\d[.,\d]*)'/
+wptexturize     36       2         49        161   3.26  ahead                        /'(?=\d\d(?:\Z|(?![%\d]|[.,]\d)))/
+wptexturize     34       2         48         71   1.47  ahead                        /'(\d\d)'(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+wptexturize     35       2         47         71   1.52  ahead                        /'(\d\d)"(?=\Z|[.,:;!?)}\-\]]|&gt;|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+kses             0       1         30         47   1.60  -                            /[&<>"']/
+kses            66       1         29         44   1.52  -                            /&#[Xx]([0-9A-Fa-f]+);/
+kses            67       1         29         47   1.64  -                            /\s/
+kses            65       1         27         45   1.63  -                            /&#([0-9]+);/
+kses            64       1         27         43   1.57  -                            //\?/
+
+per kernel: covered PCRE2 ns, PCRE2 ns of the patterns TRegex wins, their TRegex ns, TRegex-PCRE2 ns of featureless patterns
+kses            3810656    2159237     803112   16702121
+wpautop         1426211      48484      10307    8964883
+slugs            214309     214309      64536    -149773
+wptexturize      194098      32661      17935        -23
+escape            57515      57515      37213     -20302
+unsupported patterns: 9
+  RegexSyntaxException Unknown inline modifier: /(<(?(?=!--|!\[CDATA\[)(?(?=!-)!(?:-(?!->)[^\-]*+)*+(?:-->)?|!\[CDATA\[[^\]]*+(?:](?!]>)[^\]]*+)*+(?:]]>)?)|[^>]*>?))/
+  null: /\[/?([^<>&/\[\]\x00-\x20=]++)/
+  RegexSyntaxException Unknown inline modifier: /(<(?(?=!--)!(?:-(?!->)[^\-]*+)*+(?:-->)?|[^>]*>?))/
+  RegexSyntaxException Unclosed character class: /(?<=\A|[([{\-]|&lt;|[\r\n\t ]|\xC2\xA0|&nbsp;)"(?![\r\n\t ]|\xC2\xA0|&nbsp;)/
+  RegexSyntaxException Unclosed character class: /(?<=\A|[([{"\-]|&lt;|[\r\n\t ]|\xC2\xA0|&nbsp;)'/
+  RegexSyntaxException Unclosed character class: /(?<![\r\n\t ]|\xC2\xA0|&nbsp;)'(?!\Z|[.,:;!?"'(){}[\]\-]|&[lg]t;|[\r\n\t ]|\xC2\xA0|&nbsp;)/
+  RegexSyntaxException Unknown inline modifier: /<!--\s+(?P<closer>\/)?wp:(?P<namespace>[a-z][a-z0-9_-]*\/)?(?P<name>[a-z][a-z0-9_-]*)\s+(?P<attrs>{(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+)?(?P<void>\/)?-->/
+  RegexSyntaxException Unknown inline modifier: /\b(?:var|calc|min|max|minmax|clamp|repeat|matrix|matrix3d|perspective|rotate|rotate3d|rotateX|rotateY|rotateZ|scale|scale3d|scaleX|scaleY|scaleZ|skew|skewX|skewY|translate|translate3d|translateX|translateY|translateZ|circle|ellipse|inset|path|polygon|rect|shape|xywh)(\((?:[^()]|(?1))*\))/
+  RegexSyntaxException Illegal/unsupported escape sequence: /^url\(\s*(['\"]?)(.*)(\g1)\s*\)$/
