@@ -2682,16 +2682,32 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
     public static final class SendElement {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
+                                    Object key, @Bind BytecodeNode bytecode, @Bind Node node,
+                                    @Shared @Cached ElementNodes.ElementReadNode read,
+                                    @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                    @Shared @Cached InlinedBranchProfile undefined,
+                                    @Shared @Cached InlinedBranchProfile byRef,
+                                    @Shared @Cached InlinedBranchProfile sharedArray,
+                                    @Shared @Cached InlinedBranchProfile refArray,
+                                    @Shared @Cached InlinedBranchProfile createdArray,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, variable, index, cachedFunction, key, bytecode, node, read, toKey, undefined, byRef,
+                    sharedArray, refArray, createdArray);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, LocalAccessor variable, int index, PhpFunction function,
                                   Object key, @Bind BytecodeNode bytecode, @Bind Node node,
-                                  @Cached ElementNodes.ElementReadNode read,
-                                  @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached InlinedBranchProfile undefined,
-                                  @Cached InlinedBranchProfile byRef,
-                                  @Cached InlinedBranchProfile sharedArray,
-                                  @Cached InlinedBranchProfile refArray,
-                                  @Cached InlinedBranchProfile createdArray) {
+                                  @Shared @Cached ElementNodes.ElementReadNode read,
+                                  @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Shared @Cached InlinedBranchProfile undefined,
+                                  @Shared @Cached InlinedBranchProfile byRef,
+                                  @Shared @Cached InlinedBranchProfile sharedArray,
+                                  @Shared @Cached InlinedBranchProfile refArray,
+                                  @Shared @Cached InlinedBranchProfile createdArray) {
             if (!function.isByRef(index)) {
                 return read.execute(readValue(frame, variable, bytecode, node, undefined), key);
             }
@@ -2710,9 +2726,18 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = PropSite.class)
     @ConstantOperand(type = int.class)
     public static final class SendProp {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
+                                    @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, site, index, cachedFunction, object, access);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
-                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                  @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
             if (function.isByRef(index)) {
                 return access.makeRefOn(frame.getArguments(), object, site.name);
@@ -2726,10 +2751,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = PropSite.class)
     @ConstantOperand(type = int.class)
     public static final class SendPropNamed {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
+                                    String name,
+                                    @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, site, index, cachedFunction, object, name, access);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, PropSite site, int index, PhpFunction function, Object object,
                                   String name,
-                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                  @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access) {
             if (function.isByRef(index)) {
                 return access.makeRefOn(frame.getArguments(), object, name);
@@ -2748,15 +2783,30 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = int.class)
     @ConstantOperand(type = boolean.class, name = "append")
     public static final class SendNested {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, LocalAccessor variable, int index, boolean append,
+                                    PhpFunction function, @Variadic Object[] keys, @Bind BytecodeNode bytecode,
+                                    @Bind Node node, @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                    @Shared @Cached ElementNodes.ElementReadNode read,
+                                    @Shared @Cached InlinedBranchProfile undefined,
+                                    @Shared @Cached InlinedBranchProfile sharedArray,
+                                    @Shared @Cached InlinedBranchProfile refArray,
+                                    @Shared @Cached InlinedBranchProfile createdArray,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, variable, index, append, cachedFunction, keys, bytecode, node, toKey, read, undefined,
+                    sharedArray, refArray, createdArray);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, LocalAccessor variable, int index, boolean append,
                                   PhpFunction function, @Variadic Object[] keys, @Bind BytecodeNode bytecode,
-                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read,
-                                  @Cached InlinedBranchProfile undefined,
-                                  @Cached InlinedBranchProfile sharedArray,
-                                  @Cached InlinedBranchProfile refArray,
-                                  @Cached InlinedBranchProfile createdArray) {
+                                  @Bind Node node, @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Shared @Cached ElementNodes.ElementReadNode read,
+                                  @Shared @Cached InlinedBranchProfile undefined,
+                                  @Shared @Cached InlinedBranchProfile sharedArray,
+                                  @Shared @Cached InlinedBranchProfile refArray,
+                                  @Shared @Cached InlinedBranchProfile createdArray) {
             if (!function.isByRef(index)) {
                 if (append) {
                     throw appendRead();
@@ -2774,13 +2824,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = int.class)
     @ConstantOperand(type = boolean.class, name = "append")
     public static final class SendPropNested {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(VirtualFrame frame, PropSite site, int index, boolean append, PhpFunction function,
+                                    Object object, @Variadic Object[] keys,
+                                    @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
+                                            neverDefault = true) PropNode access,
+                                    @Bind Node node, @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                    @Shared @Cached ElementNodes.ElementReadNode read,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(frame, site, index, append, cachedFunction, object, keys, access, node, toKey, read);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(VirtualFrame frame, PropSite site, int index, boolean append, PhpFunction function,
                                   Object object, @Variadic Object[] keys,
-                                  @Cached(value = "site.create()", uncached = "site.uncached()",
+                                  @Shared @Cached(value = "site.create()", uncached = "site.uncached()",
                                           neverDefault = true) PropNode access,
-                                  @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read) {
+                                  @Bind Node node, @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Shared @Cached ElementNodes.ElementReadNode read) {
             String name = placeName(site, keys);
             keys = placeKeys(site, keys);
             if (!function.isByRef(index)) {
@@ -2804,10 +2866,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "append")
     @ConstantOperand(type = boolean.class, name = "call")
     public static final class SendTemporary {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(int index, boolean append, boolean call, PhpFunction function, Object base,
+                                    @Variadic Object[] keys, @Bind Node node,
+                                    @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                    @Shared @Cached ElementNodes.ElementReadNode read,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(index, append, call, cachedFunction, base, keys, node, toKey, read);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(int index, boolean append, boolean call, PhpFunction function, Object base,
-                                  @Variadic Object[] keys, @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
-                                  @Cached ElementNodes.ElementReadNode read) {
+                                  @Variadic Object[] keys, @Bind Node node,
+                                  @Shared @Cached ElementNodes.ArrayKeyNode toKey,
+                                  @Shared @Cached ElementNodes.ElementReadNode read) {
             if (!function.isByRef(index)) {
                 if (append) {
                     throw appendRead();
@@ -2869,7 +2942,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = int.class)
     public static final class ArgByRef {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static boolean cached(int index, PhpFunction function,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return byRef(index, cachedFunction);
+        }
+
+        @Specialization(replaces = "cached")
         public static boolean byRef(int index, PhpFunction function) {
             return function.isByRef(index);
         }
@@ -2882,7 +2962,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = int.class)
     public static final class SendValue {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(int index, PhpFunction function, Object value,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(index, cachedFunction, value);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(int index, PhpFunction function, Object value) {
             if (function.isByRef(index) && !function.isPreferRef()) {
                 throw CallNode.cannotPassByRef(function, index);
@@ -2894,7 +2981,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = int.class)
     public static final class SendCall {
-        @Specialization
+        /** The callee the site sees (nearly always one), a constant: see SendVar. */
+        @Specialization(guards = "function == cachedFunction", limit = "1", excludeForUncached = true)
+        public static Object cached(int index, PhpFunction function, Object result, @Bind Node node,
+                                    @Cached("function") PhpFunction cachedFunction) {
+            return send(index, cachedFunction, result, node);
+        }
+
+        @Specialization(replaces = "cached")
         public static Object send(int index, PhpFunction function, Object result, @Bind Node node) {
             if (!function.isByRef(index)) {
                 return PhpRef.deref(result);
