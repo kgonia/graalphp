@@ -349,8 +349,16 @@ public final class BytecodeTranslator {
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
-            this.constants = Translator.forConstants(language, path, source, internal, owner, display, function,
-                    names);
+            this.constants = constantsTranslator();
+        }
+
+        /**
+         * The declarations' translator for the names now in effect. A file's top level and a constant expression
+         * are in no function: their __FUNCTION__ and __METHOD__ are "".
+         */
+        private Translator constantsTranslator() {
+            return Translator.forConstants(language, path, source, internal, owner,
+                    reread != null || thunk != null ? "" : display, function, names);
         }
 
         // ---- the function ----
@@ -490,7 +498,7 @@ public final class BytecodeTranslator {
                 declaration.run();
             }
             names = declaredNames;
-            constants = Translator.forConstants(language, path, source, internal, owner, display, function, names);
+            constants = constantsTranslator();
             Ast statements = new Ast("AST_STMT_LIST", 0, file.line, file.endLine, body, null);
             entries(statements);
             if (entering != null) {
@@ -533,9 +541,8 @@ public final class BytecodeTranslator {
             return new Ast("NAMES", 0, at.line, at.line, null, Map.of("names", names));
         }
 
-        /** The declarations' translator for the names now in effect. */
         private void namesChanged() {
-            constants = Translator.forConstants(language, path, source, internal, owner, display, function, names);
+            constants = constantsTranslator();
         }
 
         /**
@@ -817,6 +824,9 @@ public final class BytecodeTranslator {
                     gotoStatement(node);
                     break;
                 case "AST_UNSET":
+                    if (lastDimAppends(node.node("var"))) {
+                        throw compileError(node, "Cannot use [] for unsetting");
+                    }
                     if (refPlace(node.node("var")) instanceof RefPlace place) {
                         place.unset();
                     } else if (node.node("var").is("AST_PROP")) {
@@ -2634,6 +2644,11 @@ public final class BytecodeTranslator {
             b.endBlock();
         }
 
+        /** A hiddenVariable's name: "\0list" and a number, which no PHP code names (a `${"\0"}` is a variable). */
+        private static boolean hidden(String name) {
+            return name.startsWith("\0list");
+        }
+
         /** A variable of the translator's own, a local in any code (a file's too), unset after its use. */
         private Ast hiddenVariable(Ast near) {
             String name = "\0list" + hiddenVariables++;
@@ -3285,6 +3300,9 @@ public final class BytecodeTranslator {
             };
             boolean written = false;
             for (Object target : targets) {
+                if (target instanceof Ast list && list.is("AST_ARRAY")) {
+                    verifyListTargets(list);
+                }
                 // zend_ensure_writable_variable: a call's value first
                 if (target instanceof Ast call && call.is("AST_CALL")) {
                     throw compileError(node, "Can't use function return value in write context");
@@ -3314,6 +3332,30 @@ public final class BytecodeTranslator {
         }
 
         /** A written place, or a list's, with a `?->` on its chain. */
+        /**
+         * zend_verify_list_assign_target: a list's targets, nested lists' too, are places that can be written, down
+         * their elements and properties to a variable or a call that isn't short-circuited (no `?->`).
+         */
+        private void verifyListTargets(Ast list) {
+            for (Object child : list.children()) {
+                if (!(child instanceof Ast element) || !(element.get("value") instanceof Ast value)) {
+                    continue;
+                }
+                if (value.is("AST_ARRAY")) {
+                    verifyListTargets(value);
+                    continue;
+                }
+                Object base = value;
+                while (base instanceof Ast ast && (ast.is("AST_DIM") || ast.is("AST_PROP"))) {
+                    base = ast.get("expr");
+                }
+                if (!(base instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_STATIC_PROP")
+                        || Translator.isCall(ast) || ast.is("AST_NULLSAFE_PROP"))) || Translator.deepestNullsafe(value) != null) {
+                    throw compileError(value, "Assignments can only happen to writable values");
+                }
+            }
+        }
+
         private static boolean nullsafeTarget(Object target) {
             if (target instanceof Ast list && list.is("AST_ARRAY")) {
                 for (Object element : list.children()) {
@@ -3585,6 +3627,10 @@ public final class BytecodeTranslator {
          * a property's computed name only from a variable.
          */
         private void isset(Object tested) {
+            if (tested instanceof Ast ast && lastDimAppends(ast)) {
+                // zend_compile_dim for BP_VAR_IS, before $GLOBALS's own check
+                throw compileError(ast, "Cannot use [] for reading");
+            }
             if (isThis(tested)) {
                 b.emitIssetThis();
                 return;
@@ -3971,8 +4017,10 @@ public final class BytecodeTranslator {
         private void emitWrite(ElementPlace place, List<Object> keys, Object value, boolean append) {
             if (place.ref() != null) {
                 b.beginWriteRefNested(append);
+                b.beginFetchForWrite();
                 expression(value);
                 place.ref().ref(true);
+                b.endFetchForWrite();
                 emitKeys(keys);
                 b.endWriteRefNested();
             } else if (place.variable() != null) {
@@ -4024,8 +4072,10 @@ public final class BytecodeTranslator {
             List<Object> keys = placeKeys(place, true);
             if (place.ref() != null) {
                 b.beginCompoundRefNested(op);
+                b.beginFetchForWrite();
                 expression(value);
                 place.ref().refForUpdate();
+                b.endFetchForWrite();
                 emitKeys(keys);
                 b.endCompoundRefNested();
             } else if (place.variable() != null) {
@@ -4050,7 +4100,10 @@ public final class BytecodeTranslator {
             List<Object> keys = placeKeys(place, true);
             if (place.ref() != null) {
                 b.beginIncDecRefNested(increment, prefix);
+                b.beginFetchForWrite();
+                b.emitLoadConstant(PhpNull.NULL);
                 place.ref().refForUpdate();
+                b.endFetchForWrite();
                 emitKeys(keys);
                 b.endIncDecRefNested();
             } else if (place.variable() != null) {
@@ -4708,6 +4761,10 @@ public final class BytecodeTranslator {
             if (Translator.isCallableConvert(node)) {
                 throw compileError(node, "Cannot create Closure for parent property hook call");
             }
+            if (owner == null) {
+                // zend_compile_parent_property_hook_call: the class first
+                throw compileError(node, "Cannot use \"parent\" when no class scope is active");
+            }
             String hook = function == null ? "" : function.getName();
             String error = Translator.parentHookError(node, hook);
             if (error != null) {
@@ -4830,7 +4887,7 @@ public final class BytecodeTranslator {
                     }
                 }
                 case "parent" -> {
-                    if (inClosure()) {
+                    if (inClosure() || parentUnknown()) {
                         b.emitClosureScope(ClassRefNode.PARENT);
                     } else {
                         b.emitResolveClass(classSite(parentClass(ast)));
@@ -4854,6 +4911,14 @@ public final class BytecodeTranslator {
         /** Whether the function is a closure: self and parent are its bound scope's, found when it runs. */
         private boolean inClosure() {
             return reread != null || function != null && function.getName().startsWith(CLOSURE_PREFIX);
+        }
+
+        /**
+         * A trait's method in a class without a parent: zend_is_scope_known is false in a trait, so `parent` is
+         * php-src's Error where it runs, not a compile error (bug76773: a call guarded by get_parent_class()).
+         */
+        private boolean parentUnknown() {
+            return owner != null && owner.isTrait() && owner.parentName() == null;
         }
 
         /** The class the code is written in, for self and static (the tree's requireClass). */
@@ -4909,7 +4974,7 @@ public final class BytecodeTranslator {
                     }
                 }
                 case "parent" -> {
-                    if (inClosure()) {
+                    if (inClosure() || parentUnknown()) {
                         b.emitClosureScope(ClassRefNode.PARENT_NAME);
                     } else {
                         b.emitLoadConstant(made(() -> Str.of(parentClass(ast))));
@@ -5380,7 +5445,7 @@ public final class BytecodeTranslator {
                     if (!(node.get("name") instanceof String name)) {
                         return new RefPlace(null, null, null, node.get("name"), true, node.flags);
                     }
-                    if (reread != null && plainVariable(name) && !name.startsWith("\0")) {
+                    if (reread != null && plainVariable(name) && !hidden(name)) {
                         // a file's variable: the global, or the including call's variable, by name
                         return new RefPlace(null, null, null, name, true, node.flags);
                     }
@@ -5466,6 +5531,10 @@ public final class BytecodeTranslator {
             if (!node.is("AST_VAR") || !(node.get("name") instanceof String name)) {
                 throw new Unsupported(what + " a place other than a variable", node);
             }
+            if (name.equals("GLOBALS")) {
+                // zend_ensure_writable_variable's is_globals_fetch
+                throw compileError(node, "$GLOBALS can only be modified using the $GLOBALS[$name] = $value syntax");
+            }
             BytecodeLocal local = variables.get(name);
             if (local == null) {
                 throw new Unsupported(what + " $" + name, node);
@@ -5481,7 +5550,7 @@ public final class BytecodeTranslator {
         /** A plain variable (a CV): no $this, $GLOBALS or superglobal, no variable variable. */
         private boolean isVariable(Ast node) {
             return node.is("AST_VAR") && node.get("name") instanceof String name
-                    && (reread == null && plainVariable(name) || name.startsWith("\0"));
+                    && (reread == null && plainVariable(name) || hidden(name));
         }
 
         /** A key read where it is used, as php-src reads a constant or a CV operand: a constant or a variable. */

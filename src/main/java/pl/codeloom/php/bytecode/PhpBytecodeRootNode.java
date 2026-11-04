@@ -1612,20 +1612,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "append")
     public static final class WriteRefNested {
         @Specialization
-        public static Object write(boolean append, Object value, PhpRef ref, @Variadic Object[] keys,
+        public static Object write(boolean append, Object[] fetched, @Variadic Object[] keys,
                                    @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                    @Cached ElementNodes.ElementWriteNode write,
-                                   @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite) {
-            // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
-            PhpArray held = null;
-            if (value instanceof PhpArray array) {
-                arrayWrite.enter(node);
-                held = array;
-                held.addHolder();
-            }
+                                   @Cached InlinedBranchProfile objectWrite) {
+            Object value = fetched[0];
+            // held since the containers were made writable, so `$a[k] = $a` copies $a first (DimNode.write)
+            PhpArray held = value instanceof PhpArray array ? array : null;
             try {
                 int levels = append ? keys.length : keys.length - 1;
-                Object container = ElementChain.forWrite(node, referenceForWrite(ref), keys, levels, toKey);
+                Object container = ElementChain.forWrite(node, fetched[1], keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
                         objectWrite);
             } catch (Throwable t) {
@@ -1646,16 +1642,50 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = int.class, name = "op")
     public static final class CompoundRefNested {
         @Specialization
-        public static Object compound(int op, Object operand, PhpRef ref, @Variadic Object[] keys,
+        public static Object compound(int op, Object[] fetched, @Variadic Object[] keys,
                                       @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                       @Cached ElementNodes.ElementReadNode read,
                                       @Cached ElementNodes.ElementWriteNode write,
                                       @Cached InlinedBranchProfile objectWrite) {
-            int last = keys.length - 1;
-            Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
-            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
-            ElementChain.write(node, container, keys[last], result, write, objectWrite);
-            return result;
+            Object operand = fetched[0];
+            PhpArray held = operand instanceof PhpArray array ? array : null;
+            try {
+                int last = keys.length - 1;
+                Object container = ElementChain.forUpdate(node, fetched[1], keys, last, toKey);
+                Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]),
+                        operand);
+                ElementChain.write(node, container, keys[last], result, write, objectWrite);
+                return result;
+            } finally {
+                if (held != null) {
+                    DimNode.letGo(held);
+                }
+            }
+        }
+    }
+
+    /**
+     * The value of a write into a place kept in a reference (WriteRefNested, CompoundRefNested; null for an
+     * increment), and the place's container made writable, which the write fetches before the keys it reads where it
+     * runs (ZEND_ASSIGN_DIM's container, then its CV key: an error handler the key's warning calls doesn't change
+     * which array is written). The value's array is held from here to the write, so the container is copied from it.
+     */
+    @Operation
+    public static final class FetchForWrite {
+        @Specialization
+        public static Object[] fetch(Object value, PhpRef ref, @Bind Node node,
+                                     @Cached InlinedBranchProfile arrayWrite) {
+            if (value instanceof PhpArray array) {
+                arrayWrite.enter(node);
+                array.addHolder();
+                try {
+                    return new Object[] {value, referenceForWrite(ref)};
+                } catch (Throwable t) {
+                    DimNode.letGo(array);
+                    throw t;
+                }
+            }
+            return new Object[] {value, referenceForWrite(ref)};
         }
     }
 
@@ -1665,13 +1695,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = boolean.class, name = "prefix")
     public static final class IncDecRefNested {
         @Specialization
-        public static Object step(boolean increment, boolean prefix, PhpRef ref, @Variadic Object[] keys,
+        public static Object step(boolean increment, boolean prefix, Object[] fetched, @Variadic Object[] keys,
                                   @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                   @Cached ElementNodes.ElementReadNode read,
                                   @Cached ElementNodes.ElementWriteNode write,
                                   @Cached InlinedBranchProfile objectWrite) {
             int last = keys.length - 1;
-            Object container = ElementChain.forUpdate(node, referenceForWrite(ref), keys, last, toKey);
+            Object container = ElementChain.forUpdate(node, fetched[1], keys, last, toKey);
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
