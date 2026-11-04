@@ -1525,3 +1525,25 @@ what remains of their classes (the shortest diff).
   an error out of the included file goes on in the interpreter; the compiled code stays), the top level's own
   `IncludeInFile` (its scope from the frame), and the flag computed when the site is made: 10,614 nodes, an include of
   a literal path 15 (the tree's 30). The budget of 12,500 holds. Without the deoptimization it is 13,464.
+
+### Measured (2026-11-04, `bde2fcd` against main `9ae85cb`)
+Checks: the translation scan of WordPress and WooCommerce (5,748 files) gives no error and no `Unsupported`;
+CompilationTest 18/18; smoke 187 ok (the failures are main's); tests/http 2/2; Gate 2 pages 19/21 as on main (the
+oEmbed link), jvm-main against the branch 21/21 identical; the WooCommerce walk gives main's diffs exactly; phpt
+5,492 against main's 5,283 (+209, 0 new failures).
+
+Interleaved, the order reversed every round, the server on CPUs 14-21, a shared host (load in the run logs):
+
+| | main | bytecode-only | ratio (rounds) |
+|---|---|---|---|
+| Gate 1, 7 kernels (6 rounds) | | | 0.93-1.07, all inside their IQR; memory.peak 0.96 |
+| Gate 2 cold visit, wait | 12.17 s | 13.16 s | 1.08 (1.09, 1.08, 1.01) |
+| Gate 2 cold visit, CPU | 68.7 s | 75.3 s | 1.10 (1.11, 1.10, 1.00) |
+| Gate 2 warm visit, wait / CPU | 0.694 s / 1.43 s | 0.692 s / 1.43 s | 0.99 / 1.00 |
+| Gate 2 memory.peak after the cold visit | 1,130 MB | 923 MB | 0.83 |
+| Gate 2 memory.peak warm (RssAnon) | 1,422 MB (1,022) | 2,287 MB (1,095) | 1.61 (1.06) |
+| WooCommerce load, orders/s (the 4 quiet rounds of 5) | 2.07 | 2.01 | 0.97, 1.04, 1.04, 1.11 |
+| WooCommerce memory.peak | 2,691 MB | 2,554 MB | 1.06 |
+
+Open: the cold visit is about 8% slower (visits 2-5 too; equal from the sixth), the file roots now running and
+compiling on bytecode; and the warm memory.peak's spike (RssAnon +6% only). Neither is looked into yet.
