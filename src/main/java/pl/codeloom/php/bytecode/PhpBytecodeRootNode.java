@@ -4522,12 +4522,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * CallInfo traces find (frameless where php-src compiles the call into an opcode of its own). values are the
      * arguments the call passed.
      */
-    @TruffleBoundary
-    static Object builtin(Node node, CallInfo call, Object... values) {
+    static Object builtin(IndirectCallNode callNode, Node node, CallInfo call, Object... values) {
         Object[] arguments = new Object[PhpFunction.ARG_FIRST + values.length];
         System.arraycopy(values, 0, arguments, PhpFunction.ARG_FIRST, values.length);
-        CallTarget target = call.find(PhpContext.get(node)).getCallTarget();
-        return PhpRef.deref(Backtrace.callFrom(node, () -> target.call(arguments)));
+        return PhpRef.deref(callNode.call(call.find(PhpContext.get(node)).getCallTarget(), arguments));
     }
 
     /** is_array(), is_string()... of one argument: the built-in's test (CoreFunctions). */
@@ -4565,8 +4563,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -4585,8 +4584,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, boolean wantKey, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, boolean wantKey, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -4618,8 +4618,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, int how, Object function, Object ref, @Bind Node node) {
-            return builtin(node, call, ref);
+        public static Object other(CallInfo call, int how, Object function, Object ref, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, ref);
         }
     }
 
@@ -4638,8 +4639,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object function, Object ref, @Bind Node node) {
-            return builtin(node, call, ref);
+        public static Object other(CallInfo call, Object function, Object ref, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, ref);
         }
     }
 
@@ -4660,8 +4662,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node) {
-            return builtin(node, call, ref, value);
+        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, ref, value);
         }
     }
 
@@ -4682,8 +4685,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node) {
-            return builtin(node, call, ref, value);
+        public static Object other(CallInfo call, Object function, Object ref, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, ref, value);
         }
     }
 
@@ -4727,8 +4731,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, int passed, Object s, Object from, Object length, @Bind Node node) {
-            return passed == 2 ? builtin(node, call, s, from) : builtin(node, call, s, from, length);
+        public static Object other(CallInfo call, int passed, Object s, Object from, Object length, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return passed == 2 ? builtin(callNode, node, call, s, from)
+                    : builtin(callNode, node, call, s, from, length);
         }
     }
 
@@ -4747,8 +4753,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object haystack, Object needle, @Bind Node node) {
-            return builtin(node, call, haystack, needle);
+        public static Object other(CallInfo call, Object haystack, Object needle, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, haystack, needle);
         }
     }
 
@@ -4777,8 +4784,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, int mode, Object haystack, Object needle, @Bind Node node) {
-            return builtin(node, call, haystack, needle);
+        public static Object other(CallInfo call, int mode, Object haystack, Object needle, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, haystack, needle);
         }
     }
 
@@ -4843,11 +4851,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Fallback
         public static Object other(CallInfo call, boolean accept, int passed, Object s, Object mask, Object offset,
-                                   Object length, @Bind Node node) {
+                                   Object length, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
             return switch (passed) {
-                case 2 -> builtin(node, call, s, mask);
-                case 3 -> builtin(node, call, s, mask, offset);
-                default -> builtin(node, call, s, mask, offset, length);
+                case 2 -> builtin(callNode, node, call, s, mask);
+                case 3 -> builtin(callNode, node, call, s, mask, offset);
+                default -> builtin(callNode, node, call, s, mask, offset, length);
             };
         }
     }
@@ -4877,8 +4886,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, boolean upper, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, boolean upper, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -4918,8 +4928,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, int mode, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, int mode, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -4943,8 +4954,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -4958,19 +4970,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object strings(CallInfo call, TruffleString search, TruffleString replacement,
                                      TruffleString subject, @Cached TruffleString.ByteIndexOfStringNode index,
-                                     @Bind Node node) {
+                                     @Bind Node node,
+                                   @Shared @Cached IndirectCallNode callNode) {
             int length = subject.byteLength(Str.ENC);
             int searchLength = search.byteLength(Str.ENC);
             if (searchLength == 0 || searchLength > length || index.execute(subject, search, 0, length, Str.ENC) < 0) {
                 return subject;
             }
-            return builtin(node, call, search, replacement, subject);
+            return builtin(callNode, node, call, search, replacement, subject);
         }
 
         @Fallback
         public static Object other(CallInfo call, Object search, Object replacement, Object subject,
-                                   @Bind Node node) {
-            return builtin(node, call, search, replacement, subject);
+                                   @Bind Node node,
+                                   @Shared @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, search, replacement, subject);
         }
     }
 
@@ -4986,8 +5000,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Fallback
         public static Object other(CallInfo call, int passed, Object needle, Object haystack, Object strict,
-                                   @Bind Node node) {
-            return passed == 2 ? builtin(node, call, needle, haystack) : builtin(node, call, needle, haystack, strict);
+                                   @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return passed == 2 ? builtin(callNode, node, call, needle, haystack)
+                    : builtin(callNode, node, call, needle, haystack, strict);
         }
     }
 
@@ -5034,11 +5050,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Fallback
         public static Object other(CallInfo call, int passed, Object array, Object offset, Object length,
-                                   Object preserveKeys, @Bind Node node) {
+                                   Object preserveKeys, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
             return switch (passed) {
-                case 2 -> builtin(node, call, array, offset);
-                case 3 -> builtin(node, call, array, offset, length);
-                default -> builtin(node, call, array, offset, length, preserveKeys);
+                case 2 -> builtin(callNode, node, call, array, offset);
+                case 3 -> builtin(callNode, node, call, array, offset, length);
+                default -> builtin(callNode, node, call, array, offset, length, preserveKeys);
             };
         }
     }
@@ -5064,8 +5081,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Fallback
-        public static Object other(CallInfo call, Object value, @Bind Node node) {
-            return builtin(node, call, value);
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
         }
     }
 
@@ -5099,8 +5117,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Fallback
         public static Object other(CallInfo call, int passed, Object separator, Object s, Object limit,
-                                   @Bind Node node) {
-            return passed == 2 ? builtin(node, call, separator, s) : builtin(node, call, separator, s, limit);
+                                   @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return passed == 2 ? builtin(callNode, node, call, separator, s)
+                    : builtin(callNode, node, call, separator, s, limit);
         }
     }
 
