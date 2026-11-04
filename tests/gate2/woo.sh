@@ -211,15 +211,17 @@ compare() {
 }
 
 # The CPU lock of the benchmark cores (14-21), shared by every agent on the box: a directory made atomically, a
-# note inside; another's: wait, polling once a minute
+# note inside; another's: wait, polling once a minute. CPU_LOCK_HELD=1: the caller holds it (and lets it go).
 CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
 cpu_lock() {
+  [ -z "${CPU_LOCK_HELD:-}" ] || return 0
   until mkdir $CPU_LOCK 2> /dev/null; do
     echo "CPUs 14-21 are taken: $(cat $CPU_LOCK/* 2> /dev/null | head -1); waiting"; sleep 60
   done
   echo "claude-wordpress-$P ($(basename "$root")): woo.sh $*, since $(date '+%F %T')" > $CPU_LOCK/note
 }
 cpu_unlock() {
+  [ -z "${CPU_LOCK_HELD:-}" ] || return 0
   rm -rf $CPU_LOCK
 }
 
