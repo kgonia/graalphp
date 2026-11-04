@@ -3,6 +3,8 @@ package pl.codeloom.php.bytecode;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.builtins.BuiltinSignature;
+import pl.codeloom.php.nodes.call.BuiltinRootNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -57,10 +59,12 @@ public final class NamedExtras {
     @TruffleBoundary
     static void expect(PhpFunction callee) {
         if (callee.getBuiltin() != null) {
-            // part 3, the built-ins' named entry: a forwarding built-in takes them, any other variadic one throws
-            // "f() does not accept unknown named parameters"
-            throw new PhpError("Unsupported named arguments collected by the variadic parameter of the built-in "
-                    + callee.displayName() + "()");
+            // a forwarding built-in takes them on, any other variadic one throws "f() does not accept unknown named
+            // parameters" once its argument count is checked
+            BuiltinSignature signature = callee.getBuiltinSignature();
+            ((BuiltinRootNode) callee.getCallTarget().getRootNode()).expectNamedExtras(
+                    signature != null && signature.isForwarding());
+            return;
         }
         RootNode root = callee.getCallTarget().getRootNode();
         if (!(root instanceof PhpBytecodeRootNode function) || !function.expectNamedExtras()) {
@@ -71,10 +75,30 @@ public final class NamedExtras {
 
     /** The extras as trace arguments under their names, after the positional ones (debug_backtrace_get_args). */
     @TruffleBoundary
-    void describe(PhpArray args) {
+    public void describe(PhpArray args) {
         for (int i = 0; i < values.length; i++) {
             args.put(names[i], PhpRef.deref(values[i]));
         }
+    }
+
+    /**
+     * A forwarding built-in's arguments from position from on, for zend_call_function: the positional ones, then the
+     * extras a call passed it (Z_PARAM_VARIADIC_WITH_NAMED's named_params) under their names; null if it passed
+     * none (the built-in calls on positionally).
+     */
+    @TruffleBoundary
+    public static PhpArray forwarded(Object[] frame, int from) {
+        if (!(frame[PhpFunction.ARG_CLOSURE] instanceof NamedExtras extras)) {
+            return null;
+        }
+        PhpArray arguments = new PhpArray();
+        for (int i = PhpFunction.ARG_FIRST + from; i < frame.length; i++) {
+            arguments.appendCopied(frame[i]);
+        }
+        for (int i = 0; i < extras.values.length; i++) {
+            arguments.putCopied(extras.names[i], extras.values[i]);
+        }
+        return arguments;
     }
 
     /** __call's and __callStatic's arguments array: the positional values, then the extras under their names. */
@@ -82,10 +106,10 @@ public final class NamedExtras {
     static PhpArray magicArguments(Object[] positional, TruffleString[] names, Object[] values) {
         PhpArray arguments = new PhpArray();
         for (Object value : positional) {
-            arguments.append(PhpRef.deref(value));
+            arguments.appendCopied(value);
         }
         for (int i = 0; i < values.length; i++) {
-            arguments.put(names[i], PhpRef.deref(values[i]));
+            arguments.putCopied(names[i], values[i]);
         }
         return arguments;
     }

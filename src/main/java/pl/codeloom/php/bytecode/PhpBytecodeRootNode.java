@@ -3139,7 +3139,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class TargetFunction {
         @Specialization
         public static PhpFunction function(Callables.Target target) {
-            return target.magicName() != null ? MethodSite.BY_VALUE : target.function();
+            if (target.magicName() == null) {
+                return target.function();
+            }
+            return target.closure() instanceof PhpClosure closure && !closure.isMagicVariadic()
+                    ? MethodSite.NO_PARAMETERS : MethodSite.BY_VALUE;
         }
     }
 
@@ -3948,7 +3952,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (receiver instanceof PhpClosure closure) {
                 if (site.lowerName.equals("__invoke")) {
                     return result(callNode.call(closure.getFunction().getCallTarget(),
-                            CallableDispatchNode.closureArguments(closure, values)), keepRef);
+                            CallableDispatchNode.closureArguments(closure, values, null)), keepRef);
                 }
                 return result(MethodCallNode.closureMethod(node, site.name, closure, values), keepRef);
             }
@@ -4020,10 +4024,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return CallMethod.byValue(site, keepRef, receiver, function, arguments.frameArguments(), callNode,
                         node);
             }
+            if (receiver instanceof PhpClosure closure && !site.lowerName.equals("__invoke")) {
+                // a Closure's own method (call, bindTo...): a built-in, bound by its arginfo names
+                PhpFunction builtin = closureMethod(node, site.name);
+                Object[] frame = arguments.frameArguments();
+                frame[PhpFunction.ARG_THIS] = closure;
+                return result(Backtrace.callFrom(node, () -> {
+                    arguments.enter(frame, builtin, node);
+                    return callNode.call(builtin.getCallTarget(), frame);
+                }), keepRef);
+            }
             if (receiver instanceof PhpClosure closure) {
-                if (!site.lowerName.equals("__invoke")) {
-                    throw closureMethodNamed(site.name);
-                }
                 return result(callNode.call(closure.getFunction().getCallTarget(), ArgumentsNode.frameArguments(
                         closure.getBoundThis(), closure.staticClass(), closure,
                         arguments.magicValues(closure.getMagicName()))), keepRef);
@@ -5901,14 +5912,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object byValue(MethodSite method, NamedSite site, boolean keepRef, Object receiver,
                                      PhpFunction function,
                                      @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
-                                     @Shared @Cached IndirectCallNode callNode) {
+                                     @Shared @Cached IndirectCallNode callNode, @Bind Node node) {
+            if (receiver instanceof PhpClosure closure && !method.lowerName.equals("__invoke")) {
+                // a Closure's own method (call, bindTo...): a built-in, bound by its arginfo names
+                PhpFunction builtin = closureMethod(node, method.name);
+                BindingPlan builtinPlan = site.plan(builtin);
+                Object[] frame = builtinPlan.frame(arguments);
+                frame[PhpFunction.ARG_THIS] = closure;
+                return result(Backtrace.callFrom(node, () -> {
+                    builtinPlan.enter(frame, arguments, builtin, callNode);
+                    return callNode.call(builtin.getCallTarget(), frame);
+                }), keepRef);
+            }
             BindingPlan plan = site.plan(function);
             Object[] frame = plan.frame(arguments);
             if (receiver instanceof PhpClosure closure) {
-                if (!method.lowerName.equals("__invoke")) {
-                    // part 3: the built-ins' parameter names (Closure::call(), bindTo())
-                    throw closureMethodNamed(method.name);
-                }
                 return result(callNode.call(closure.getFunction().getCallTarget(),
                         ArgumentsNode.frameArguments(closure.getBoundThis(), closure.staticClass(), closure,
                                 plan.magicValues(closure.getMagicName(), frame, arguments))), keepRef);
@@ -6079,10 +6097,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** A Closure's own method (call, bindTo) with names: the built-ins' parameter names come with part 3. */
+    /** A Closure's own method called with names (Closure::call, bindTo...): the built-in, or php-src's Error. */
     @TruffleBoundary
-    private static PhpError closureMethodNamed(String method) {
-        return new PhpError("Unsupported named arguments to the built-in Closure::" + method + "()");
+    private static PhpFunction closureMethod(Node node, String name) {
+        PhpFunction method = PhpContext.get(node).getClass("Closure").findMethod(Str.lower(name));
+        if (method == null) {
+            throw new PhpError("Call to undefined method Closure::" + name + "()");
+        }
+        return method;
     }
 
     /*

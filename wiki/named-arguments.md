@@ -1,14 +1,18 @@
 # Named arguments (PHP 8.0+): php-src's rules and the design for Truffle PHP
 
-**State (2026-11-04):** phase 2 under way on branch `named-args`. Part 1 is in: the compile errors (1.1, checked
+**State (2026-11-04):** phase 2 done on branch `named-args` (PR #45). Part 1: the compile errors (1.1, checked
 with the file's compile in `JumpChecks`), binding at the call site (`NamedSite`, `BindingPlan`, the named sends and
 calls of 4.2 and 4.3) and the defaults target (4.4), for user functions, methods, constructors, closures and callable
-values; constant-expression `new` (zend_ast_evaluate's order). Part 2 is in: extras into a variadic and `__call` (4.5),
+values; constant-expression `new` (zend_ast_evaluate's order). Part 2: extras into a variadic and `__call` (4.5),
 string keys in unpacking and names after it, `call_user_func_array`, `forward_static_call(_array)` and Reflection's
-`invoke(Args)` and `newInstance(Args)` (4.7); issue 017 is fixed. Still to come (part 3), each failing with a clear
-"Unsupported named arguments" Error meanwhile: the built-ins' parameter table and entry (4.6; a built-in binds no name
-yet, `named-params.txt` isn't loaded), the forwarding built-ins (`call_user_func` with names, `Closure::call`,
-`Fiber::start`, `forward_static_call`'s refusal), `assert`. The owner chose issue 017's option 1, full support exactly
+`invoke(Args)` and `newInstance(Args)` (4.7); issue 017 is fixed. Part 3: the built-ins (4.6) bind their arginfo
+names, holes take their arginfo defaults, the forwarding built-ins pass names on and the other variadic ones refuse
+them; zend_call_function's by-reference warning for call_user_func() and built-ins calling back; `__call` keeps
+call_user_func_array()'s references; Closure::fromCallable() of a `__call` stand-in takes no names. Left as issues:
+`ReflectionAttribute` (029), `assert()` compiled out (030, `named-args-assert` waits for it), `Fiber` (031,
+`named-args-fiber`), `#[\SensitiveParameter]` (032), and a zpp ordering corner of the refusal (033).
+
+The owner chose issue 017's option 1, full support exactly
 as php-src. Under D18 the observable behaviour must equal PHP's; the internals need not mirror php-src. The design is
 for the bytecode interpreter only (since `bytecode-only` the only one).
 
@@ -449,6 +453,30 @@ after the parameters before it are parsed. The entry raises it after the count c
 difference shows only when an earlier parameter's zpp type error would win. To be exact, the entry instead hands
 the extras to the body, and `Args`' variadic accessor throws at that point (php-src's place).
 
+**As built (part 3).**
+- `BuiltinSignature` (builtins): `named-params.txt` (tools/builtin-named-params.php, the reference's Reflection: names,
+  by reference, variadic, each default `serialize()`d, `?` when php-src doesn't know it), read on the first named call
+  of a built-in. `Registry` gives each built-in its key; `PhpFunction.getBuiltinSignature()` finds it, and
+  `BindingPlan.parameterIndex`/`isVariadic`/`variadicIndex` and `SpreadArguments` bind built-ins by it. A built-in's
+  positional behaviour is unchanged: its by-reference flags stay Registry's.
+- Holes: `BuiltinDefaultsRootNode`, the built-in's defaults target (`Registry` sets its factory), fills the arginfo
+  default (an array a copy, an enum case looked up, a by-reference parameter's in a new reference), or throws "not
+  passed" / "must be passed explicitly, because the default value is not known"; it describes itself as the
+  built-in's frame (`BuiltinRootNode.describe`, a hole `NULL`).
+- Extras: `NamedExtras.expect` tells the built-in's `BuiltinRootNode` (an Assumption, so a built-in never called with
+  extras checks nothing). Once invalidated it throws "f() does not accept unknown named parameters" after the count
+  check, unless the built-in forwards (`BuiltinSignature`'s list of the seven), whose body takes the names:
+  `call_user_func` and `Closure::call` through `NamedExtras.forwarded` and `SpreadArguments.sendArray`; a Closure's
+  own methods called with names (`$c->call(...)`, `bindTo`) bind as built-ins. The prelude's three forwarding
+  variadics (`ReflectionFunction::invoke`, `ReflectionMethod::invoke`, `ReflectionClass::newInstance`) are user
+  functions that unpack their extras; the prelude has no other public variadic.
+- Messages name a built-in's parameters by its arginfo (`PhpFunction.argumentName`): "preg_match(): Argument #3
+  ($matches) could not be passed by reference", positional calls too (they said `$arg2`).
+- `Callables.sendValues`: zend_call_function's sends from runtime code (call_user_func, call_user_func_array's
+  positional path, every built-in calling back through `CallableDispatchNode` or `Callables.Target`): a value for a
+  by-reference parameter is zend_param_must_be_ref's warning and a temporary reference; skipped at once for a function
+  without by-reference parameters (`PhpFunction.hasByRefParameter`, a constant for a cached callee).
+
 **Prelude classes written in PHP** (Reflection, some SPL) are user functions. Their parameter names must be
 php-src's, and a unit test checks them against the table. A prelude method that is a forwarding built-in in php-src
 (`ReflectionFunction::invoke(mixed ...$args)`) gets the extras in its variadic and unpacks them by name, which is
@@ -500,12 +528,10 @@ the extras from their entry and pass them on to the binder.
   `newInstance(Args)` call `Truffle\reflection_construct` (zend_call_known_function with named_params).
 - A call made from runtime code for the binder (the holes' defaults target, the named `call_user_func_array`) runs
   with the call's node as its location (`Backtrace.callFrom`), so the trace shows the call's line.
-- Left: a positional `call_user_func(_array)` (and any callback a built-in calls) gives a value to a by-reference
-  parameter without zend_call_function's warning, and `__call`'s `$args` doesn't keep the references
-  `call_user_func_array` passes positionally (both older than named arguments; the named path does both).
-  `Closure::fromCallable([$obj, 'missing'])` makes a closure php-src gives no variadic parameter (names are "Unknown
-  named parameter"), while `$obj->missing(...)`'s has one (names are extras): Truffle PHP doesn't tell the two apart,
-  and both take names as extras.
+- Fixed in part 3: positional `call_user_func(_array)` and built-ins' callbacks give zend_call_function's
+  by-reference warning, `__call`'s `$args` keeps the references `call_user_func_array` passes, and
+  `Closure::fromCallable([$obj, 'missing'])` takes no names ("Unknown named parameter", `MethodSite.NO_PARAMETERS`)
+  while `$obj->missing(...)`'s collects them (`tests/smoke/callbacks-by-reference.php`).
 
 Constant-expression `new` (the defaults target, static variables, global constants, and class constants once their
 thunks are bytecode roots) compiles named arguments as any `new` does.

@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.builtins.BuiltinSignature;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
@@ -92,10 +93,12 @@ public final class BindingPlan {
         int positional = site.positional();
         PhpFunction.Param[] params = callee.getParams();
         boolean hasVariadic = callee == MethodSite.BY_VALUE ? !site.isConstruct() : isVariadic(callee);
-        int variadic = callee == MethodSite.BY_VALUE ? -1 : hasVariadic ? params.length - 1 : -1;
+        int variadic = callee == MethodSite.BY_VALUE ? -1 : variadicIndex(callee);
         int[] slot = new int[count];
         boolean[] byRef = new boolean[count];
-        boolean[] bound = new boolean[Math.max(count, params.length) + 1];
+        BuiltinSignature signature = callee.getBuiltin() != null ? callee.getBuiltinSignature() : null;
+        int declared = signature != null ? signature.names().length : params.length;
+        boolean[] bound = new boolean[Math.max(count, declared) + 1];
         int numArgs = positional;
         for (int k = 0; k < positional; k++) {
             slot[k] = k;
@@ -116,7 +119,7 @@ public final class BindingPlan {
                     error = overwrites(name);
                 }
                 slot[k] = index;
-                byRef[k] = params[index].byRef();
+                byRef[k] = callee.isByRef(index);
                 bound[index] = true;
                 numArgs = Math.max(numArgs, index + 1);
             } else if (hasVariadic) {
@@ -125,7 +128,7 @@ public final class BindingPlan {
                     error = overwrites(name);
                 }
                 slot[k] = EXTRA;
-                byRef[k] = variadic >= 0 && params[variadic].byRef();
+                byRef[k] = variadic >= 0 && callee.isByRef(variadic);
                 extras.add(names[k]);
             } else {
                 errorAt = k;
@@ -165,12 +168,15 @@ public final class BindingPlan {
     /**
      * zend_get_arg_offset_by_name: the index of callee's parameter called name (case-sensitively), among the num_args
      * before a variadic one; -1 for none. None for a class without a constructor or __call standing in for a method.
-     * A built-in's parameters are named only by position here (Registry's arg0...): it binds no name until its
-     * parameters have php-src's names (part 3, the built-in parameter table).
+     * A built-in's names are its arginfo's (BuiltinSignature); one php-src doesn't have binds none.
      */
     static int parameterIndex(PhpFunction callee, String name) {
-        if (callee == MethodSite.BY_VALUE || callee.getBuiltin() != null) {
+        if (callee == MethodSite.BY_VALUE) {
             return -1;
+        }
+        if (callee.getBuiltin() != null) {
+            BuiltinSignature signature = callee.getBuiltinSignature();
+            return signature == null ? -1 : signature.indexOf(name);
         }
         PhpFunction.Param[] params = callee.getParams();
         int declared = isVariadic(callee) ? params.length - 1 : params.length;
@@ -182,10 +188,22 @@ public final class BindingPlan {
         return -1;
     }
 
-    /** Whether callee's last parameter is variadic (ZEND_ACC_VARIADIC). */
+    /** Whether callee's last parameter is variadic (ZEND_ACC_VARIADIC); a built-in's as its arginfo says. */
     static boolean isVariadic(PhpFunction callee) {
+        if (callee.getBuiltin() != null && callee.getBuiltinSignature() != null) {
+            return callee.getBuiltinSignature().isVariadic();
+        }
         PhpFunction.Param[] params = callee.getParams();
         return params.length > 0 && params[params.length - 1].variadic();
+    }
+
+    /** The index of callee's variadic parameter (num_args), -1 for none. */
+    static int variadicIndex(PhpFunction callee) {
+        if (!isVariadic(callee)) {
+            return -1;
+        }
+        BuiltinSignature signature = callee.getBuiltin() != null ? callee.getBuiltinSignature() : null;
+        return signature != null ? signature.declared() : callee.getParams().length - 1;
     }
 
     // ---- the sends ----
@@ -314,7 +332,8 @@ public final class BindingPlan {
 
     /**
      * The target filling the holes: a user function's (zend_handle_undef_args' RECV_INIT defaults and "not
-     * passed"). A built-in's holes take its arginfo defaults: not covered here (no built-in binds a name yet).
+     * passed"), or a built-in's (its arginfo defaults, BuiltinDefaultsRootNode). A built-in php-src doesn't have binds
+     * no name, so leaves no hole.
      */
     @TruffleBoundary
     static RootCallTarget defaultsTarget(PhpFunction callee) {
@@ -347,9 +366,8 @@ public final class BindingPlan {
 
     /** zend_param_must_be_ref's warning: a variadic parameter's argument unnamed (get_function_arg_name). */
     @TruffleBoundary
-    static void mustBeRef(PhpFunction callee, int index, Node node) {
-        PhpFunction.Param[] params = callee.getParams();
-        String name = index >= 0 && index < params.length && !params[index].variadic() ? params[index].name() : null;
+    public static void mustBeRef(PhpFunction callee, int index, Node node) {
+        String name = index >= 0 ? callee.argumentName(index) : null;
         ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING, Str.of(callee.displayName()
                 + "(): Argument #" + (index + 1) + (name == null ? "" : " ($" + name + ")")
                 + " must be passed by reference, value given"), SpreadArguments.location(node));

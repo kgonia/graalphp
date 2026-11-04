@@ -3,8 +3,9 @@
 // (Z_PARAM_VARIADIC_WITH_NAMED), call_user_func_array() takes an array's string keys as names (ZEND_SEND_ARRAY:
 // "Cannot use positional argument after named argument", without "during unpacking"), forward_static_call() refuses
 // them, forward_static_call_array() takes them; Closure::__invoke(), Closure::call(), Closure::fromCallable();
-// Reflection's invoke(), invokeArgs(), newInstance(), newInstanceArgs(); a value for a by-reference parameter is
-// php-src's warning and the call goes on; a skipped default resolved on the call's first use (runtime_cache_init).
+// Reflection's invoke(), invokeArgs(), newInstance(), newInstanceArgs() (Fiber::start() is named-args-fiber); a
+// value for a by-reference parameter is php-src's warning and the call goes on; a skipped default resolved on the
+// call's first use (runtime_cache_init).
 
 function rel($text) {
     return str_replace([__DIR__ . "\\", __DIR__ . "/"], "DIR/", $text);
@@ -112,11 +113,6 @@ function main() {
     $rc->newInstance('A', c: 'C');
     $rc->newInstanceArgs(['A', 'c' => 'C']);
     t('newInstanceArgs unknown', fn() => $rc->newInstanceArgs(['zz' => 1]));
-
-    $fiber = new Fiber(function ($a = 'a', $b = 'b') {
-        echo "  fiber: $a $b\n";
-    });
-    $fiber->start(b: 'B');
 }
 
 main();

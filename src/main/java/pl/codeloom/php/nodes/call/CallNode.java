@@ -45,10 +45,8 @@ public abstract class CallNode extends ExprNode {
     /** A value that isn't a variable or a call sent to a by-reference parameter (SEND_VAL_EX's Error). */
     @TruffleBoundary
     public static PhpError cannotPassByRef(PhpFunction callee, int index) {
-        PhpFunction.Param[] params = callee.getParams();
-        // a variadic parameter's argument is unnamed (get_function_arg_name: only the num_args before it are)
-        boolean named = index < params.length && !params[index].variadic();
+        String name = callee.argumentName(index);
         return new PhpError(callee.displayName() + "(): Argument #" + (index + 1)
-                + (named ? " ($" + params[index].name() + ")" : "") + " could not be passed by reference");
+                + (name != null ? " ($" + name + ")" : "") + " could not be passed by reference");
     }
 }

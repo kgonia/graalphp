@@ -4,10 +4,12 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.FrameInstance;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.BindingPlan;
 
 /** Resolves PHP callables: 'name', 'Cls::method', [$obj, 'method'], ['Cls', 'method'], closures, __invoke. */
 public final class Callables {
@@ -33,6 +35,8 @@ public final class Callables {
         public Object[] frameArguments(Object[] values) {
             if (magicName != null) {
                 values = magicValues(magicName, values);
+            } else {
+                values = sendValues(function, values);
             }
             return boundArguments(values);
         }
@@ -119,9 +123,39 @@ public final class Callables {
     public static Object[] magicValues(TruffleString name, Object[] values) {
         PhpArray arguments = new PhpArray();
         for (Object value : values) {
-            arguments.append(PhpRef.deref(value));
+            // a reference stays one (zend_call_function doesn't separate references for __call)
+            arguments.appendCopied(value);
         }
         return new Object[] {name, arguments};
+    }
+
+    /**
+     * zend_call_function's sends from runtime code (call_user_func(), a built-in calling back): a value for a
+     * by-reference parameter goes in a new reference after zend_param_must_be_ref's warning, the call going on
+     * (a prefer-ref built-in's takes it quietly). values: the arguments, a copy made if one changes.
+     */
+    public static Object[] sendValues(PhpFunction function, Object[] values) {
+        return function.hasByRefParameter() ? wrapValues(function, values, null) : values;
+    }
+
+    /** As sendValues, for a call made in place by PHP code at site (call_user_func() compiled as an operation). */
+    public static Object[] sendValues(PhpFunction function, Object[] values, Node site) {
+        return function.hasByRefParameter() ? wrapValues(function, values, site) : values;
+    }
+
+    @TruffleBoundary
+    private static Object[] wrapValues(PhpFunction function, Object[] values, Node site) {
+        Object[] sent = values;
+        for (int i = 0; i < values.length; i++) {
+            if (function.isByRef(i) && !(values[i] instanceof PhpRef) && !function.isPreferRef()) {
+                BindingPlan.mustBeRef(function, i, site);
+                if (sent == values) {
+                    sent = values.clone();
+                }
+                sent[i] = new PhpRef(values[i]);
+            }
+        }
+        return sent;
     }
 
     /** The lowercase name a class-name callable (`['Cls', 'm']`) is looked up by. */

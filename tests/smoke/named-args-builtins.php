@@ -4,8 +4,8 @@
 // "must be passed explicitly, because the default value is not known" for one without a known default (array_keys's
 // filter_value); "Unknown named parameter"; a variadic built-in refusing extra names ("does not accept unknown named
 // parameters", after its argument count is checked); by-reference parameters by name (preg_match's matches);
-// built-ins compiled specially (strlen, count, in_array, func_get_args); assert's message; built-in methods and a
-// built-in class's constructor.
+// built-ins compiled specially (strlen, count, in_array, func_get_args); built-in methods and a built-in class's
+// constructor. assert() is named-args-assert.
 
 function rel($text) {
     return str_replace([__DIR__ . "\\", __DIR__ . "/"], "DIR/", $text);
@@ -82,14 +82,6 @@ function main() {
     t('built-in method unknown', fn() => $date->format(fmt: 'Y'));
     $e = new Exception(code: 5, message: 'named');
     show('Exception constructor', [$e->getMessage(), $e->getCode()]);
-
-    t('assert by name', function () {
-        assert(assertion: true);
-        assert(assertion: false);
-    });
-    t('assert description by name', fn() => assert(assertion: false, description: 'Description'));
-    t('assert description only', fn() => assert(description: 'Description'));
 }
 
-ini_set('zend.assertions', 1);
 main();

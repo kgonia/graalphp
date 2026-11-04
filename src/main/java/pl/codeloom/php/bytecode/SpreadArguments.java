@@ -11,6 +11,7 @@ import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpObject;
@@ -87,10 +88,6 @@ public final class SpreadArguments {
      */
     @TruffleBoundary
     int bind(TruffleString name, PhpFunction callee) {
-        if (callee.getBuiltin() != null) {
-            // part 3: a built-in's parameters have php-src's names only with the built-in table
-            throw new PhpError("Unsupported named arguments to the built-in " + callee.displayName() + "()");
-        }
         int index = BindingPlan.parameterIndex(callee, Str.java(name));
         if (index >= 0) {
             if (index < values.size()) {
@@ -143,13 +140,13 @@ public final class SpreadArguments {
         if (index >= 0) {
             return callee.isByRef(index);
         }
-        return callee.getBuiltin() == null && callee != MethodSite.BY_VALUE && BindingPlan.isVariadic(callee)
-                && callee.isByRef(callee.paramCount());
+        return callee != MethodSite.BY_VALUE && BindingPlan.isVariadic(callee)
+                && callee.isByRef(BindingPlan.variadicIndex(callee));
     }
 
     /** ARG_SHOULD_BE_SENT_BY_REF of a slot: its parameter's, an extra's the variadic one's. */
     static boolean takesRef(PhpFunction callee, int slot) {
-        return callee.isByRef(slot == BindingPlan.EXTRA ? callee.paramCount() : slot);
+        return callee.isByRef(slot == BindingPlan.EXTRA ? Math.max(BindingPlan.variadicIndex(callee), 0) : slot);
     }
 
     /** ARG_MUST_BE_SENT_BY_REF: by reference, and not a built-in's prefer-ref parameter. */
@@ -159,7 +156,7 @@ public final class SpreadArguments {
 
     /** The parameter a slot's messages number: its own, an extra's the variadic one (arg_offset is num_args). */
     static int parameterOf(PhpFunction callee, int slot) {
-        return slot == BindingPlan.EXTRA ? callee.paramCount() - 1 : slot;
+        return slot == BindingPlan.EXTRA ? BindingPlan.variadicIndex(callee) : slot;
     }
 
     // ---- ZEND_SEND_UNPACK ----
@@ -223,7 +220,7 @@ public final class SpreadArguments {
             if (array.keyAt(p) instanceof TruffleString name) {
                 number = BindingPlan.parameterIndex(callee, Str.java(name)) + 1;
             }
-            if (number == 0 ? BindingPlan.isVariadic(callee) && callee.isByRef(callee.paramCount())
+            if (number == 0 ? BindingPlan.isVariadic(callee) && callee.isByRef(BindingPlan.variadicIndex(callee))
                     : callee.isByRef(number - 1)) {
                 return true;
             }
@@ -306,7 +303,9 @@ public final class SpreadArguments {
     public static Object[] sendArray(Callables.Target target, PhpArray array, Node site) {
         SpreadArguments list = new SpreadArguments();
         if (target.magicName() != null) {
-            list.addSendArray(array, MethodSite.BY_VALUE, site);
+            // __call's stand-in: names into its array, or none for Closure::fromCallable()'s (no variadic)
+            list.addSendArray(array, target.closure() instanceof PhpClosure closure && !closure.isMagicVariadic()
+                    ? MethodSite.NO_PARAMETERS : MethodSite.BY_VALUE, site);
             return target.boundArguments(list.magicValues(target.magicName()));
         }
         list.addSendArray(array, target.function(), site);

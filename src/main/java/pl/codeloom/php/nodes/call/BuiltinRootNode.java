@@ -1,6 +1,8 @@
 package pl.codeloom.php.nodes.call;
 
+import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
@@ -12,12 +14,14 @@ import com.oracle.truffle.api.source.SourceSection;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.Args;
 import pl.codeloom.php.builtins.Builtin;
+import pl.codeloom.php.bytecode.NamedExtras;
 import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
@@ -38,6 +42,13 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
     /** The argument counts php-src's arginfo allows (Registry.arity); max is Integer.MAX_VALUE for variadic. */
     private final int min;
     private final int max;
+    /**
+     * Valid while no call has passed this built-in named arguments its variadic parameter doesn't name (NamedExtras
+     * in the closure slot): until then nothing here looks for them.
+     */
+    private final Assumption noNamedExtras = Truffle.getRuntime().createAssumption("no named extras");
+    /** Whether the built-in passes such names on (Z_PARAM_VARIADIC_WITH_NAMED), else refuses them. */
+    @CompilationFinal private boolean forwardsNamed;
 
     public BuiltinRootNode(PhpLanguage language, String name, Builtin body, boolean method, int min, int max) {
         super(language);
@@ -56,7 +67,39 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
             CompilerDirectives.transferToInterpreter();
             throw wrongCount(arguments);
         }
+        if (!noNamedExtras.isValid() && arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras && !forwardsNamed) {
+            throw unexpectedNamed(arguments);
+        }
         return call(body, arguments);
+    }
+
+    /**
+     * A call is about to pass the built-in named arguments its variadic parameter doesn't name: from now on it looks
+     * for them. forwards: whether it takes them on (call_user_func...), else it throws (zpp's variadic).
+     */
+    public void expectNamedExtras(boolean forwards) {
+        if (noNamedExtras.isValid()) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            forwardsNamed = forwards;
+            noNamedExtras.invalidate();
+        }
+    }
+
+    /**
+     * zend_unexpected_extra_named_error, where zpp reaches a variadic parameter that doesn't take names: after the
+     * argument count is checked, in the built-in's frame.
+     */
+    @TruffleBoundary
+    private PhpError unexpectedNamed(Object[] arguments) {
+        return new PhpError("ArgumentCountError", messageName(arguments)
+                + "() does not accept unknown named parameters");
+    }
+
+    /** The name the built-in's messages give it: a method's after the class declaring it, as php-src's scope. */
+    @TruffleBoundary
+    public String messageName(Object[] arguments) {
+        String className = method ? declaringClass(arguments) : null;
+        return className == null ? name : className + "::" + name;
     }
 
     /**
@@ -90,7 +133,11 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         String className = method ? declaringClass(arguments) : null;
         PhpArray args = new PhpArray();
         for (int i = PhpFunction.ARG_FIRST; i < arguments.length; i++) {
-            args.append(PhpRef.deref(arguments[i]));
+            // a hole a call by name left, while its default is filled: UNDEF, shown as NULL
+            args.append(arguments[i] == PhpFunction.NOT_PASSED ? PhpNull.NULL : PhpRef.deref(arguments[i]));
+        }
+        if (arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras extras) {
+            extras.describe(args);
         }
         Backtrace.describeCall(entry, name, className, self, options, args);
         return true;

@@ -54,18 +54,19 @@ public abstract class CallableDispatchNode extends Node {
     protected Object closure(PhpClosure callable, Object[] values,
                              @Cached("callable.getFunction()") PhpFunction cachedFunction,
                              @Cached("create(cachedFunction.getCallTarget())") DirectCallNode call) {
-        return result(call.call(closureArguments(callable, values)));
+        return result(call.call(closureArguments(callable, values, this)));
     }
 
     /**
      * The frame arguments of a closure's call: its bound $this and scope, the closure, and the values (as
-     * __call's two for a closure made of a method __call stands in for).
+     * __call's two for a closure made of a method __call stands in for). site: the call_user_func() whose sends
+     * these are (zend_call_function's by-reference warning there), or null for values already sent.
      */
-    public static Object[] closureArguments(PhpClosure callable, Object[] values) {
+    public static Object[] closureArguments(PhpClosure callable, Object[] values, Node site) {
         PhpObject self = callable.getBoundThis();
         PhpClass scope = callable.staticClass();
-        Object[] arguments = callable.getMagicName() == null ? values
-                : Callables.magicValues(callable.getMagicName(), values);
+        Object[] arguments = callable.getMagicName() != null ? Callables.magicValues(callable.getMagicName(), values)
+                : site != null ? Callables.sendValues(callable.getFunction(), values, site) : values;
         return ArgumentsNode.frameArguments(self, scope, callable, arguments);
     }
 
@@ -81,7 +82,8 @@ public abstract class CallableDispatchNode extends Node {
                            @Cached("resolve(callable).function()") PhpFunction function,
                            @Cached("functionId(callable)") int functionId,
                            @Cached("create(function.getCallTarget())") DirectCallNode call) {
-        return result(call.call(ArgumentsNode.frameArguments(null, null, null, values)));
+        return result(call.call(ArgumentsNode.frameArguments(null, null, null,
+                Callables.sendValues(function, values, this))));
     }
 
     /**
@@ -99,7 +101,8 @@ public abstract class CallableDispatchNode extends Node {
                                   @Cached("resolve(callable).magicName()") TruffleString magicName,
                                   @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object self = method.isStatic() ? null : callable.get(0L);
-        Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
+        Object[] arguments = magicName == null ? Callables.sendValues(method, values, this)
+                : Callables.magicValues(magicName, values);
         return result(call.call(ArgumentsNode.frameArguments(self, classOf(callable), null, arguments)));
     }
 
@@ -122,7 +125,8 @@ public abstract class CallableDispatchNode extends Node {
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
                                  @Cached("scoped(classAt(classId), cachedMethod)") boolean scoped,
                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
-        Object[] arguments = magicName == null ? values : Callables.magicValues(magicName, values);
+        Object[] arguments = magicName == null ? Callables.sendValues(method, values, this)
+                : Callables.magicValues(magicName, values);
         return result(call.call(ArgumentsNode.frameArguments(null,
                 PhpContext.get(this).classAt(classId), null, arguments)));
     }

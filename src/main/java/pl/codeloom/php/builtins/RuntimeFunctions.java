@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObjectLibrary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.NamedExtras;
 import pl.codeloom.php.bytecode.SpreadArguments;
 import pl.codeloom.php.nodes.vars.PropNode;
 import pl.codeloom.php.runtime.ArrayKey;
@@ -84,8 +85,13 @@ final class RuntimeFunctions {
         // zend.assertions = -1, as in production: assert() is compiled out and returns true
         r.fn("assert", a -> Boolean.TRUE);
         r.fn("call_user_func", (context, a) -> {
-            return Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC)
-                    .call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
+            Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC);
+            // its extra named arguments go on to the callable (Z_PARAM_VARIADIC_WITH_NAMED)
+            PhpArray named = NamedExtras.forwarded(a, 1);
+            if (named != null) {
+                return callArray(target, named);
+            }
+            return target.call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
         });
         // zend_call_function with the array as named_params: its string keys name parameters
         r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, Args.get(a, 0),
