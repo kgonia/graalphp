@@ -15,7 +15,8 @@
 # - aot-train VARIANT: a training run for VARIANT's AOT cache (CPUs 6-13, not timed): the server under
 #   -XX:AOTCacheOutput, a cold visit and 20 more, then a clean exit that writes target/aot/VARIANT.aot.
 # - clean: every cv- container, the volume and the network.
-# Variants (define()): tree (main's 9ae85cb, php.Interpreter=tree), bc (this branch), with suffixes: d (diagnosis:
+# Variants (define()): tree (main's 9ae85cb, php.Interpreter=tree), main (main's default: bytecode functions, the
+# tree's top level), bc (this branch), with suffixes: d (diagnosis:
 # phase counters, JFR with 1 ms samples, TraceCompilation), j (classes from the jar, the AOT cache's class path,
 # no cache), a (the jar and its AOT cache).
 set -euo pipefail
@@ -47,6 +48,8 @@ define() { # VARIANT ROUND: CLASSES_V and JAVA_OPTS_V for native.sh's start
   case $base in
     tree) export CLASSES_$v=target/classes-tree; opts="-Dpolyglot.php.Interpreter=tree" ;;
     bc) export CLASSES_$v=target/classes-bc ;;
+    # main's default: bytecode functions, the tree for a file's top level, constant expressions and eval
+    main) export CLASSES_$v=target/classes-tree ;;
     *) echo "unknown variant $v"; exit 2 ;;
   esac
   case $v in
@@ -162,6 +165,31 @@ for n in range(21):
     release train
     ls -la target/cv/train
     [ ! -f target/cv/train/$name.aot ] || { cp target/cv/train/$name.aot target/aot/; "$0" classes; } ;;
+  memdiag)
+    # where memory.peak comes from (not timed: CPUs 6-13): VARIANT's server with libgraal's GC log and
+    # TraceCompilation, memwatch.py (memory.current, anon, file, kernel every 0.1 s, RssAnon every 1 s), the cold
+    # visit and VISITS more; target/cv/mem/VARIANT-TAG.{mem.json,json,server.log}, the engine log beside them
+    v=$2 visits=$3 tag=${4:-1}
+    out=target/cv/mem && mkdir -p $out
+    define $v 0
+    o=JAVA_OPTS_$v
+    export JAVA_OPTS_$v="${!o} -Djdk.graal.internal.PrintGC=true -Dpolyglot.engine.TraceCompilation=true -Dpolyglot.log.file=/out/engine-$v-$tag.log"
+    hold mem 6 30 "wordpress-cold: memory.peak attribution $v (CPUs 6-13, not timed)"
+    bash tests/gate2/native.sh reset-db
+    rm -f $out/$v-$tag.id $out/$v-$tag.mem.json
+    MSYS_NO_PATHCONV=1 docker run --rm --name cv-mdriver --cpuset-cpus 0-5 --network cv-net --pid=host --cgroupns=host       -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$out:/runs" python:3.13-slim       python -u /t/visits.py http://172.31.150.10:8080 /runs/$v-$tag.id "$visits" 1 /runs/$v-$tag.json > $out/$v-$tag.log 2>&1 &
+    driver=$!
+    sleep 3
+    OUT_DIR=$out NOWAIT=1 bash tests/gate2/native.sh start jvm-java.$v 6-13 8252
+    id=$(docker inspect -f '{{.Id}} {{.State.Pid}}' cv-jvm-java.$v)
+    MSYS_NO_PATHCONV=1 docker run -d --rm --name cv-memwatch --cpuset-cpus 0-5 --cgroupns=host --pid=host       -v /sys/fs/cgroup:/hostcg:ro -v "$root/bench/split-policy:/t:ro" -v "$root/$out:/out"       python:3.13-slim python -u /t/memwatch.py ${id%% *} /out/$v-$tag.mem.json > /dev/null
+    echo "$id" > $out/$v-$tag.id
+    wait $driver || true
+    docker logs cv-jvm-java.$v > $out/$v-$tag.server.log 2>&1
+    bash tests/gate2/native.sh stop jvm-java.$v
+    for _ in $(seq 30); do [ -s $out/$v-$tag.mem.json ] && break; sleep 1; done
+    release mem
+    tail -1 $out/$v-$tag.log ;;
   clean)
     bash tests/gate2/native.sh clean ;;
   *) sed -n 2,22p "$0"; exit 2 ;;

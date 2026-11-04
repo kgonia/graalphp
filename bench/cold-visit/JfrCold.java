@@ -30,7 +30,7 @@ import jdk.jfr.consumer.RecordingFile;
  * Also the host compilations (jdk.Compilation) up to the cutoff, and when the generated interpreter's continueAt
  * methods got compiled.
  *
- * Usage: java JfrCold.java RECORDING.jfr CUTOFF_EPOCH_MS [--top=N]
+ * Usage: java JfrCold.java RECORDING.jfr CUTOFF_EPOCH_MS [--top=N] [--thread=PREFIX (default pool-; the CLI's: main)]
  */
 public class JfrCold {
     static final String GEN = "pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen";
@@ -120,9 +120,16 @@ public class JfrCold {
     public static void main(String[] args) throws Exception {
         long cutoff = Long.parseLong(args[1]);
         int top = 25;
+        String threadPrefix = "pool-";
+        String stacksOf = null;
+        Map<String, Integer> stacks = new HashMap<>();
         for (String a : args) {
             if (a.startsWith("--top=")) {
                 top = Integer.parseInt(a.substring(6));
+            } else if (a.startsWith("--stacks=")) {
+                stacksOf = a.substring(9);
+            } else if (a.startsWith("--thread=")) {
+                threadPrefix = a.substring(9);
             }
         }
         Instant jvmStart = null;
@@ -130,11 +137,15 @@ public class JfrCold {
         Map<String, Integer> phaseKind = new TreeMap<>();
         Map<String, Integer> phases = new TreeMap<>();
         Map<String, Integer> guestKind = new TreeMap<>();
+        Map<String, Integer> guestFrame = new TreeMap<>();
         Map<String, Integer> hsLeafGroup = new HashMap<>();
         Map<String, Integer> hsLeaf = new HashMap<>();
         Map<String, Integer> translateLeaf = new HashMap<>();
         Map<String, Integer> hostLeaf = new HashMap<>();
         Map<String, Integer> otherLeaf = new HashMap<>();
+        Map<String, Integer> translateInclusive = new HashMap<>();
+        Map<String, Integer> translateSelf = new HashMap<>();
+        Map<String, Integer> parseInclusive = new HashMap<>();
         Map<String, Integer> threads = new TreeMap<>();
         List<RecordedEvent> compilations = new ArrayList<>();
         long firstSample = Long.MAX_VALUE;
@@ -159,7 +170,7 @@ public class JfrCold {
                 RecordedThread thread = e.getThread("sampledThread");
                 String tname = thread == null ? "?" : thread.getJavaName();
                 add(threads, tname == null ? "?" : tname.replaceAll("\\d+", "N"));
-                if (tname == null || !tname.startsWith("pool-")) {
+                if (tname == null || !tname.startsWith(threadPrefix)) {
                     continue;
                 }
                 RecordedStackTrace st = e.getStackTrace();
@@ -180,12 +191,36 @@ public class JfrCold {
                     }
                 }
                 String kind = kindAt(frames, 0);
+                if (stacksOf != null) {
+                    StringBuilder sb = new StringBuilder();
+                    boolean hit = false;
+                    for (int i = 0; i < Math.min(frames.size(), 40); i++) {
+                        RecordedMethod m = frames.get(i).getMethod();
+                        String n = m.getType().getName() + "." + m.getName();
+                        hit |= n.contains(stacksOf);
+                        sb.append(System.lineSeparator()).append("      ").append(n).append(':').append(frames.get(i).getLineNumber());
+                    }
+                    if (hit) {
+                        add(stacks, sb.toString());
+                    }
+                }
                 add(phases, phase);
                 add(phaseKind, phase + " / " + kind);
                 RecordedFrame leaf = frames.get(0);
                 String leafName = leaf.getMethod().getType().getName() + "." + leaf.getMethod().getName();
                 if (phase.equals("execution")) {
                     add(guestKind, kindAt(frames, at) + " (leaf " + kind + ")");
+                    // the raw frame type of the nearest interpreter frame: for the bytecode, continueAt is
+                    // Interpreted (HotSpot's interpreter), JIT compiled (host-compiled; 127 KB is never inlined by
+                    // the host) or Inlined (into Truffle-compiled PHP code)
+                    for (RecordedFrame f : frames) {
+                        String c = f.getMethod().getType().getName();
+                        if ((c.startsWith(GEN) && !c.startsWith(GEN + "$Builder")) || c.startsWith("pl.codeloom.php.nodes.")) {
+                            add(guestFrame, (c.startsWith(GEN) ? "bytecode " + f.getMethod().getName() : "tree node")
+                                    + " [" + f.getType() + "]");
+                            break;
+                        }
+                    }
                 }
                 if (kind.equals("hotspot-interpreted")) {
                     add(hsLeafGroup, phase + " / " + group(leaf));
@@ -193,8 +228,32 @@ public class JfrCold {
                 } else if (kind.equals("host-compiled") && phase.equals("execution")) {
                     add(hostLeaf, leafName);
                 }
-                if (phase.equals("translate")) {
-                    add(translateLeaf, leafName + " [" + leaf.getType() + "]");
+                if (phase.equals("translate") || phase.equals("parse")) {
+                    if (phase.equals("translate")) {
+                        add(translateLeaf, leafName + " [" + leaf.getType() + "]");
+                    }
+                    // inclusive: each of our methods once per sample; self: the nearest of our frames, with the
+                    // library method it was in
+                    java.util.Set<String> seen = new java.util.HashSet<>();
+                    String self = null;
+                    for (RecordedFrame f : frames) {
+                        String c = f.getMethod().getType().getName();
+                        if (!(c.startsWith("pl.codeloom.") || c.startsWith("com.oracle.truffle.api.bytecode."))) {
+                            continue;
+                        }
+                        String n = c.substring(c.lastIndexOf('.') + 1) + "." + f.getMethod().getName();
+                        if (self == null) {
+                            String l = leaf.getMethod().getType().getName();
+                            self = n + (f == leaf ? "" : " > " + l.substring(l.lastIndexOf('.') + 1) + "."
+                                    + leaf.getMethod().getName());
+                        }
+                        if (seen.add(n)) {
+                            add(phase.equals("translate") ? translateInclusive : parseInclusive, n);
+                        }
+                    }
+                    if (phase.equals("translate")) {
+                        add(translateSelf, self == null ? leafName : self);
+                    }
                 }
                 if (phase.equals("other")) {
                     add(otherLeaf, leafName + " [" + leaf.getType() + "]");
@@ -206,11 +265,18 @@ public class JfrCold {
         print("phase", phases, total, top);
         print("phase / leaf kind", phaseKind, total, top);
         print("execution: the guest frame's kind (leaf kind)", guestKind, total, top);
+        print("execution: the nearest interpreter frame [its type]", guestFrame, total, top);
         print("HotSpot-interpreted leaves by phase / package", hsLeafGroup, total, top);
         print("HotSpot-interpreted leaf methods", hsLeaf, total, top);
         print("host-compiled leaf methods in execution", hostLeaf, total, top);
         print("translate leaf methods", translateLeaf, total, top);
+        print("translate: our methods, inclusive", translateInclusive, total, top);
+        print("translate: self, at the nearest of our frames", translateSelf, total, top);
+        print("parse: our methods, inclusive", parseInclusive, total, top);
         print("other leaf methods", otherLeaf, total, top);
+        if (stacksOf != null) {
+            print("stacks with " + stacksOf, stacks, total, 8);
+        }
         print("all sampled threads (Java code only)", threads, threads.values().stream().mapToInt(i -> i).sum(), top);
         // host compilations
         double sum = 0;
