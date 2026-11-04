@@ -4416,6 +4416,12 @@ public final class BytecodeTranslator {
                 b.endEval();
                 return;
             }
+            if (reread != null) {
+                b.beginIncludeInFile((IncludeSite) made(() -> new IncludeSite(kind)));
+                expression(node.get("expr"));
+                b.endIncludeInFile();
+                return;
+            }
             b.beginInclude((IncludeSite) made(() -> new IncludeSite(kind)));
             expression(node.get("expr"));
             b.endInclude();

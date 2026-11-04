@@ -59,6 +59,19 @@ public final class IncludeNode {
     }
 
     /**
+     * An include (ZEND_INCLUDE_OR_EVAL) as one call out of the including code: resolve, then run; true when an _once
+     * include finds the file included already. One call, not two, and an exception out of it (an exit(), an error)
+     * goes on in the interpreter: otherwise each such call compiles an exception path to the bytecode root's
+     * handler too, and wp-settings.php's top level has hundreds of includes.
+     */
+    @TruffleBoundary
+    public static Object include(Node site, Object includeSite, Object pathValue, boolean once, Object[] own,
+                                 IncludeScope callScope) {
+        CallTarget file = resolve(site, includeSite, pathValue, once);
+        return file == null ? Boolean.TRUE : run(site, file, own, callScope);
+    }
+
+    /**
      * Runs the included file, out of line too: an include runs once per request, and an inlined indirect call (its
      * arguments, its exception handling) was most of what was left of an include's compiled code. This node is the
      * call's location, as an inlined call node's parent would be, so traces list the include. What the file throws
