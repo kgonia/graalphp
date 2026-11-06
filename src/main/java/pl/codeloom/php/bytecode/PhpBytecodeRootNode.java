@@ -210,6 +210,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * their statement ends (StoreTemp, ReleaseTemp); released here too when the call ends first.
      */
     @CompilationFinal(dimensions = 1) private LocalAccessor[] temporaries = new LocalAccessor[0];
+    /**
+     * Which hidden locals have held an owning temporary so far: the others are neither read at a statement's end nor
+     * at the function's, in compiled code (most of a function's calls return strings, arrays and scalars).
+     */
+    @CompilationFinal(dimensions = 1) private boolean[] temporariesHeld = new boolean[0];
     /** The hidden locals in which foreach loops keep what they iterate (an array they hold), cleared at the end. */
     @CompilationFinal(dimensions = 1) private LocalAccessor[] foreachStates;
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
@@ -267,6 +272,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The hidden locals of the owning temporaries (see {@link #temporaries}). */
     public void initializeTemporaries(LocalAccessor[] temporaryLocals) {
         this.temporaries = temporaryLocals;
+        this.temporariesHeld = new boolean[temporaryLocals.length];
+    }
+
+    private void temporaryHeld(int index) {
+        if (!temporariesHeld[index]) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            temporariesHeld[index] = true;
+        }
     }
 
     /** What the translator knows of the function, set once its bytecode is built (a reparse keeps it). */
@@ -543,8 +556,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
             }
         }
-        for (LocalAccessor temporary : temporaries) {
-            ReleaseTemp.release(frame, temporary, bytecode);
+        for (int i = 0; i < temporaries.length; i++) {
+            ReleaseTemp.release(frame, temporaries[i], i, this, bytecode);
         }
         if (scopeLocal != null) {
             BytecodeScope scope = existingScope(frame, bytecode);
@@ -2749,27 +2762,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      */
     @Operation
     @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class, name = "index")
     @ConstantOperand(type = boolean.class, name = "owned", specifyAtEnd = true)
     public static final class StoreTemp {
         @Specialization
-        public static Object store(VirtualFrame frame, LocalAccessor temporary, Object value, boolean owned,
-                                   @Bind BytecodeNode bytecode) {
+        public static Object store(VirtualFrame frame, LocalAccessor temporary, int index, Object value, boolean owned,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
             if (owned && value instanceof PhpObject object) {
-                ReleaseTemp.release(frame, temporary, bytecode);
+                root.temporaryHeld(index);
+                ReleaseTemp.release(frame, temporary, index, root, bytecode);
                 temporary.setObject(bytecode, frame, object);
             }
             return value;
         }
     }
 
-    /** The end of a statement: the owning temporary its hidden local keeps is released. */
+    /**
+     * The end of a statement: the owning temporary its hidden local keeps is released. index: the local's place in
+     * temporaries, whose bit says whether it has held one.
+     */
     @Operation
     @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class, name = "index")
     public static final class ReleaseTemp {
         @Specialization
-        public static void release(VirtualFrame frame, LocalAccessor temporary, @Bind BytecodeNode bytecode) {
+        public static void release(VirtualFrame frame, LocalAccessor temporary, int index,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
             // cleared first: see releaseVariables
-            if (!temporary.isCleared(bytecode, frame)) {
+            if (root.temporariesHeld[index] && !temporary.isCleared(bytecode, frame)) {
                 Object held = temporary.getObject(bytecode, frame);
                 temporary.clear(bytecode, frame);
                 Refcount.dec(held);

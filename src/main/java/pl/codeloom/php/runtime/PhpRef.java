@@ -59,16 +59,23 @@ public final class PhpRef {
         if (holds && newValue instanceof PhpArray array) {
             array.addHolder();
         }
-        if (holds) {
-            Refcount.inc(newValue);
-        }
         value = newValue;
         if (holds && old instanceof PhpArray array && old != newValue) {
             array.removeHolder();
         }
-        if (holds) {
-            Refcount.dec(old);
+        if (holds && (newValue instanceof PhpObject || old instanceof PhpObject)) {
+            countObjects(newValue, old);
         }
+    }
+
+    /**
+     * set()'s counts of objects, out of line: the callers that compile it (writes through a reference with no node
+     * of their own) mostly store arrays and scalars, and an inlined release is two boundary calls.
+     */
+    @TruffleBoundary
+    private static void countObjects(Object newValue, Object old) {
+        Refcount.inc(newValue);
+        Refcount.dec(old);
     }
 
     /**

@@ -98,10 +98,9 @@ public final class PhpObject extends DynamicObject {
     public void release() {
         int count = rc - 1;
         rc = count;
-        if (count == 0) {
-            Refcount.zero(this);
-        } else if (gcInfo == 0) {
-            Refcount.possibleRoot(this);
+        if (count == 0 || gcInfo == 0) {
+            // one out-of-line call for both events (HHVM's decref slow path), not two in every caller's code
+            Refcount.released(this, count);
         }
     }
 
