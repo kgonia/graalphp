@@ -21,8 +21,7 @@ import java.util.List;
  *
  * <p>A body on bytecode (PhpBytecodeRootNode) is suspended at a continuation: a yield stops it with the bytecode
  * index and the operand stack kept, as php-src keeps the generator's execute_data, and resuming continues after the
- * yield, with the sent value as the yield's result. A body on the tree (GeneratorNodes) is resumed by running it
- * again on its frame, its statements skipping what already ran.
+ * yield, with the sent value as the yield's result.
  *
  * <p>`yield from` an array or a Traversable that isn't a Generator keeps it here ({@link #values}): resuming takes
  * its next element without running the body, which goes on after the `yield from` once none is left. `yield from`
