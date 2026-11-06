@@ -9,6 +9,7 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.RefCounts;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpObject;
@@ -51,6 +52,7 @@ public final class BasicStmts {
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
+            RefCounts.addRef(value);
             // an uninitialized (readonly) property is put with its flags
             if (!DynamicObjectLibrary.getUncached().putIfPresent(self, name, value)) {
                 self.initProperty(name, value);

@@ -30,6 +30,13 @@ public final class PhpObject extends DynamicObject {
     private java.util.Set<String> guards;
     /** A lazy object's state, or null for an object that isn't lazy (any more). */
     private Lazy lazy;
+    /**
+     * The reference count ({@link RefCounts}): the slots holding this object (variables, properties, elements,
+     * references, parameters); temporaries are not counted.
+     */
+    int rc;
+    /** php-src's GC_INFO and flags: {@link RefCounts#ROOTED}, {@link RefCounts#DESTROYED}; 0 for neither. */
+    int gcInfo;
 
     /**
      * A lazy object's state (zend_lazy_object_info, PHP 8.4's ReflectionClass::newLazyGhost() and newLazyProxy()):
@@ -844,10 +851,12 @@ public final class PhpObject extends DynamicObject {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        RefCounts.addRef(value);
         DynamicObjectLibrary.getUncached().putWithFlags(this, name, value, phpClass.propertyFlags(name));
         if (old instanceof PhpArray array && old != value) {
             array.removeHolder();
         }
+        RefCounts.release(old);
     }
 
     @TruffleBoundary

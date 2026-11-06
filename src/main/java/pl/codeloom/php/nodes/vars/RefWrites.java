@@ -3,7 +3,9 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefCounts;
 
 /**
  * A site's writes through references ({@link PhpRef#set}), with a profile of the holder updates they have met: a
@@ -16,12 +18,18 @@ public final class RefWrites {
     @CompilationFinal private int seen;
     private static final int NEW_ARRAY = 1;
     private static final int OLD_ARRAY = 1 << 1;
+    private static final int NEW_OBJECT = 1 << 2;
+    private static final int OLD_OBJECT = 1 << 3;
+    private final RefCounts.Releases releases = RefCounts.Releases.create();
 
     public static RefWrites create() {
         return new RefWrites();
     }
 
-    /** ref.set(value), as PhpRef.set does it: the new array gains the reference as a holder, the old one loses it. */
+    /**
+     * ref.set(value), as PhpRef.set does it: the new array or object gains the reference as a holder, the old one
+     * loses it.
+     */
     public void set(PhpRef ref, Object value) {
         boolean holds = ref.holdsArrays();
         if (value instanceof PhpArray array) {
@@ -29,12 +37,26 @@ public final class RefWrites {
             if (holds) {
                 array.addHolder();
             }
+        } else if (value instanceof PhpObject object) {
+            met(NEW_OBJECT);
+            if (holds) {
+                RefCounts.addRef(object);
+            }
         }
         Object old = ref.exchange(value);
         if (old instanceof PhpArray array && old != value) {
             met(OLD_ARRAY);
             if (holds) {
                 array.removeHolder();
+            }
+        } else if (old instanceof PhpObject object) {
+            met(OLD_OBJECT);
+            if (holds) {
+                if (old == value) {
+                    RefCounts.moved(object); // the same object again: the count taken above goes back
+                } else {
+                    releases.release(object);
+                }
             }
         }
     }
@@ -46,6 +68,11 @@ public final class RefWrites {
             met(OLD_ARRAY);
             if (ref.holdsArrays()) {
                 array.removeHolder();
+            }
+        } else if (old instanceof PhpObject object) {
+            met(OLD_OBJECT);
+            if (ref.holdsArrays()) {
+                releases.release(object);
             }
         }
     }

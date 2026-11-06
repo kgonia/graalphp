@@ -31,8 +31,19 @@ public final class MethodSite {
     final boolean forwarding;
     /** `Cls::__construct()`, which php-src calls without a lookup. */
     final boolean constructor;
+    /**
+     * `$obj->name()` with a receiver other than `$this`: php-src's call holds the receiver and releases it after
+     * (OBJ_RELEASE of This), so the receiver is released then (RefCounts.receiverReleased); `$this->name()`
+     * isn't counted (op1 UNUSED).
+     */
+    final boolean countsReceiver;
 
     public MethodSite(String name, boolean forwarding) {
+        this(name, forwarding, false);
+    }
+
+    public MethodSite(String name, boolean forwarding, boolean countsReceiver) {
+        this.countsReceiver = countsReceiver;
         this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);

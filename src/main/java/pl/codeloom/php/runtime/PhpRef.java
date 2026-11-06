@@ -26,10 +26,12 @@ public final class PhpRef {
      */
     private boolean released;
 
-    /** The ref counts as a holder of an array value, like any other slot. */
+    /** The ref counts as a holder of an array value, and of an object, like any other slot. */
     public PhpRef(Object value) {
         if (value instanceof PhpArray array) {
             array.addHolder();
+        } else if (value instanceof PhpObject object) {
+            RefCounts.addRef(object);
         }
         this.value = value;
     }
@@ -57,9 +59,15 @@ public final class PhpRef {
         if (holds && newValue instanceof PhpArray array) {
             array.addHolder();
         }
+        if (holds && old != newValue) {
+            RefCounts.addRef(newValue);
+        }
         value = newValue;
         if (holds && old instanceof PhpArray array && old != newValue) {
             array.removeHolder();
+        }
+        if (holds && old != newValue) {
+            RefCounts.release(old);
         }
     }
 
@@ -73,7 +81,7 @@ public final class PhpRef {
         return old;
     }
 
-    /** Whether the ref counts as a holder of the array it holds (it does until all its bindings went). */
+    /** Whether the ref counts as a holder of the array or object it holds (it does until all its bindings went). */
     public boolean holdsArrays() {
         return !released;
     }
@@ -126,6 +134,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.removeHolder();
         }
+        RefCounts.release(value);
     }
 
     @TruffleBoundary
@@ -134,6 +143,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        RefCounts.addRef(value);
     }
 
     /** More than one holder: php-src's refcount above 1, where var_dump marks the value with "&". */

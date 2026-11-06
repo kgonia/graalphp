@@ -5,6 +5,7 @@ import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefCounts;
 
 /**
  * The rules for a function's local variable, whatever stores it: a frame slot ({@link LocalVarNode}) or a
@@ -28,6 +29,8 @@ public final class Variables {
     public static void replaced(Object old, Object value) {
         if (old instanceof PhpArray array && old != value) {
             array.removeHolder();
+        } else if (old != value) {
+            RefCounts.release(old);
         }
     }
 
@@ -37,6 +40,8 @@ public final class Variables {
             array.removeHolder();
         } else if (old instanceof PhpRef ref) {
             ref.unbind();
+        } else {
+            RefCounts.release(old);
         }
     }
 
@@ -49,6 +54,7 @@ public final class Variables {
         if (stored instanceof PhpArray array) {
             array.removeHolder();
         }
+        RefCounts.moved(stored); // the variable's count is the reference's now
         ref.bind();
         return ref;
     }
