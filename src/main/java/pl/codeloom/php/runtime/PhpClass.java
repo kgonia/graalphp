@@ -731,6 +731,11 @@ public final class PhpClass {
         context.getLanguage().staticPropertyRefs().invalidate();
     }
 
+    /** The static properties as they are, unevaluated initializers too (the refcount census reads them). */
+    public Map<String, PhpRef> staticPropertiesForCensus() {
+        return java.util.Collections.unmodifiableMap(staticProperties);
+    }
+
     @TruffleBoundary
     public PhpRef getStaticProperty(String propertyName) {
         PhpRef ref = staticProperties.get(propertyName);

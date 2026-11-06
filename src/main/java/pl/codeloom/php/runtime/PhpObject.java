@@ -85,6 +85,8 @@ public final class PhpObject extends DynamicObject {
     /** The cycle collector's state: 0, or {@link #BUFFERED} once the object was a possible root (php-src's GC_INFO). */
     private int gcInfo;
     private static final int BUFFERED = 1;
+    private static final int DESTRUCTOR_CALLED = 1 << 1;
+    private static final int FREED = 1 << 2;
 
     /** One more slot or owning temporary holds the object. */
     public void addRef() {
@@ -120,7 +122,33 @@ public final class PhpObject extends DynamicObject {
     }
 
     void buffered() {
-        gcInfo = BUFFERED;
+        gcInfo |= BUFFERED;
+    }
+
+    /** Its destructor ran or won't run (php-src's IS_OBJ_DESTRUCTOR_CALLED): set by the caller, true if it was. */
+    boolean markDestructorCalled() {
+        boolean was = (gcInfo & DESTRUCTOR_CALLED) != 0;
+        gcInfo |= DESTRUCTOR_CALLED;
+        return was;
+    }
+
+    /** Its properties were released (php-src's free_obj): set by the caller, true if they were already. */
+    boolean markFreed() {
+        boolean was = (gcInfo & FREED) != 0;
+        gcInfo |= FREED;
+        return was;
+    }
+
+    /** The count less one, for a site that profiles the events itself (Refcount.Releases). */
+    int decrement() {
+        int count = rc - 1;
+        rc = count;
+        return count;
+    }
+
+    /** Not a possible root yet (php-src's GC_INFO is 0). */
+    boolean unbuffered() {
+        return gcInfo == 0;
     }
 
     /** The count, for tests. */
@@ -652,12 +680,19 @@ public final class PhpObject extends DynamicObject {
                 && !DynamicObjectLibrary.getUncached().containsKey(this, name);
     }
 
-    /** Puts a property with its shape flags: a declared one's visibility and set checks, none for a dynamic one. */
+    /**
+     * Puts a property with its shape flags: a declared one's visibility and set checks, none for a dynamic one. As
+     * {@link #setProperty}, the property counts the object it now holds and gives up the one it held (the caller
+     * moves arrays' holders).
+     */
     @TruffleBoundary
     public void initProperty(String name, Object value) {
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
-        DynamicObjectLibrary.getUncached().putWithFlags(this, name, value,
-                decl == null ? 0 : phpClass.propertyFlags(decl));
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        Object old = library.getOrDefault(this, name, null);
+        Refcount.inc(value);
+        library.putWithFlags(this, name, value, decl == null ? 0 : phpClass.propertyFlags(decl));
+        Refcount.dec(old);
     }
 
     /**
@@ -866,16 +901,22 @@ public final class PhpObject extends DynamicObject {
         }
     }
 
-    /** Stores the property; an uninitialized typed one gets its declaration's flags. */
+    /**
+     * Stores the property; an uninitialized typed one gets its declaration's flags. The property counts the object
+     * it now holds and gives up the one it held, after the store (the caller moves arrays' holders).
+     */
     @TruffleBoundary
     public void setProperty(String name, Object value) {
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        Object old = library.getOrDefault(this, name, null);
+        Refcount.inc(value);
         if (decl != null && decl.type() != null && !library.containsKey(this, name)) {
             library.putWithFlags(this, name, value, phpClass.propertyFlags(decl));
         } else {
             library.put(this, name, value);
         }
+        Refcount.dec(old);
     }
 
     /**
@@ -895,7 +936,8 @@ public final class PhpObject extends DynamicObject {
         Refcount.inc(value);
         DynamicObjectLibrary.getUncached().putWithFlags(this, name, value, phpClass.propertyFlags(name));
         Refcount.dec(old);
-        if (old instanceof PhpArray array && old != value) {
+        if (old instanceof PhpArray array) {
+            // also when it is the value: its holder was added above
             array.removeHolder();
         }
     }

@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Refcount;
 
 /**
  * A site's writes through references ({@link PhpRef#set}), with a profile of the holder updates they have met: a
@@ -19,6 +20,7 @@ public final class RefWrites {
     private static final int OLD_ARRAY = 1 << 1;
     private static final int NEW_OBJECT = 1 << 2;
     private static final int OLD_OBJECT = 1 << 3;
+    private final Refcount.Releases releases = Refcount.Releases.create();
 
     public static RefWrites create() {
         return new RefWrites();
@@ -39,7 +41,8 @@ public final class RefWrites {
             }
         }
         Object old = ref.exchange(value);
-        if (old instanceof PhpArray array && old != value) {
+        if (old instanceof PhpArray array) {
+            // also when it is the value: its holder was added above
             met(OLD_ARRAY);
             if (holds) {
                 array.removeHolder();
@@ -47,7 +50,7 @@ public final class RefWrites {
         } else if (old instanceof PhpObject object) {
             met(OLD_OBJECT);
             if (holds) {
-                object.release();
+                releases.release(object);
             }
         }
     }
@@ -63,7 +66,7 @@ public final class RefWrites {
         } else if (old instanceof PhpObject object) {
             met(OLD_OBJECT);
             if (ref.holdsArrays()) {
-                object.release();
+                releases.release(object);
             }
         }
     }

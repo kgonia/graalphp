@@ -921,10 +921,16 @@ public final class ArrayFunctions {
         }
         if (value instanceof PhpArray nested) {
             nested.addHolder();
+        } else if (value instanceof PhpObject object) {
+            // held across the old array's release, which would take the element's count to zero
+            object.addRef();
         }
         ref.set(result);
         if (value instanceof PhpArray nested) {
             nested.removeHolder();
+        } else if (value instanceof PhpObject object) {
+            // moved out to the caller as array_pop's element (a built-in's result holds no count): no event
+            object.disown();
         }
         return value;
     }

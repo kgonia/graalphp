@@ -424,6 +424,8 @@ public final class BytecodeTranslator {
         private final List<BytecodeLocal> freeTemps = new ArrayList<>();
         /** Each hidden local's place in temporaries (and in the root's bits): the order they are created in. */
         private final Map<BytecodeLocal, Integer> tempIndex = new HashMap<>();
+        /** The hidden locals each try being emitted uses, released when it catches (emitReleaseTemps). */
+        private final List<Set<BytecodeLocal>> guardedTemps = new ArrayList<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -1789,8 +1791,11 @@ public final class BytecodeTranslator {
                 labelScopes.addAll(innerLabels);
             };
             b.beginTryCatchOtherwise(finallyCode);
+            Set<BytecodeLocal> guarded = collectTemps();
             tryCatch(node);
+            releaseTemps(guarded);
             b.beginBlock();
+            emitReleaseTemps(guarded);
             BytecodeLocal pending = b.createLocal();
             b.beginStoreLocal(pending);
             b.emitLoadException();
@@ -1852,8 +1857,11 @@ public final class BytecodeTranslator {
 
         private void tryCatchBlocks(Ast node, Ast catches) {
             b.beginTryCatch();
+            Set<BytecodeLocal> guarded = collectTemps();
             statements(node.node("try"));
+            releaseTemps(guarded);
             b.beginBlock();
+            emitReleaseTemps(guarded);
             BytecodeLocal exception = b.createLocal();
             BytecodeLocal thrown = b.createLocal();
             b.beginStoreLocal(exception);
@@ -1907,6 +1915,9 @@ public final class BytecodeTranslator {
                 kept.ref(true);
                 b.endWriteRef();
             }
+            b.beginReleaseInFlight();
+            b.emitLoadLocal(exception);
+            b.endReleaseInFlight();
             statements(handler.node("stmts"));
             b.endBlock();
             catchClauses(catches, index + 1, exception, thrown);
@@ -1992,7 +2003,32 @@ public final class BytecodeTranslator {
                 temp = freeTemps.remove(freeTemps.size() - 1);
             }
             statementTemps.add(temp);
+            for (Set<BytecodeLocal> guarded : guardedTemps) {
+                guarded.add(temp);
+            }
             return temp;
+        }
+
+        /** Starts collecting the hidden locals the code emitted next uses (a try's guarded code). */
+        private Set<BytecodeLocal> collectTemps() {
+            Set<BytecodeLocal> guarded = new LinkedHashSet<>();
+            guardedTemps.add(guarded);
+            return guarded;
+        }
+
+        private void releaseTemps(Set<BytecodeLocal> guarded) {
+            guardedTemps.remove(guarded);
+        }
+
+        /**
+         * An exception caught (a catch block, or a finally block run for one): the statement it left didn't reach
+         * its end, so the owning temporaries the guarded code kept are released here (php-src's cleanup_live_vars
+         * before the handler).
+         */
+        private void emitReleaseTemps(Set<BytecodeLocal> guarded) {
+            for (BytecodeLocal temp : guarded) {
+                b.emitReleaseTemp(temp, tempIndex.get(temp));
+            }
         }
 
         /** A value about to be stored, which counts it: an owning temporary's count moves to the store (Disown). */
@@ -2008,8 +2044,10 @@ public final class BytecodeTranslator {
 
         /** A returned value: owning for the caller (Own counts a variable's or a property's value). */
         private void returned(Object value) {
-            if (constantShaped(value) || value instanceof Ast node && (node.is("AST_BINARY_OP")
-                    || node.is("AST_UNARY_OP") || node.is("AST_ISSET") || node.is("AST_EMPTY")
+            // (`??` and `@`, the binary and unary ops of flag 260, give their operand's value: an object, which Own
+            // counts as any other)
+            if (constantShaped(value) || value instanceof Ast node && (node.is("AST_BINARY_OP") && node.flags != 260
+                    || node.is("AST_UNARY_OP") && node.flags != 260 || node.is("AST_ISSET") || node.is("AST_EMPTY")
                     || node.is("AST_ENCAPS_LIST") || node.is("AST_ARRAY") || node.is("AST_INSTANCEOF")
                     || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC"))) {
                 // never an object

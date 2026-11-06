@@ -16,6 +16,7 @@ import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Refcount;
 
 /**
  * A PHP variable in a bytecode local, as {@link LocalVarNode} keeps one in a frame slot, by the same rules
@@ -98,6 +99,7 @@ final class Locals {
         private static final int OLD_OBJECT = 1 << 7;
         @CompilationFinal private int seen;
         private final RefWrites refWrites = RefWrites.create();
+        private final Refcount.Releases releases = Refcount.Releases.create();
 
         static Writes create() {
             return new Writes();
@@ -167,8 +169,9 @@ final class Locals {
             if (old instanceof PhpObject object) {
                 // also when it is the value: counted twice above
                 met(OLD_OBJECT);
-                object.release();
-            } else if (old != value) {
+                releases.release(object);
+            } else {
+                // also when it is the value: its holder was added above
                 releaseOld(old);
             }
         }
@@ -180,7 +183,7 @@ final class Locals {
                 array.removeHolder();
             } else if (old instanceof PhpObject object) {
                 met(OLD_OBJECT);
-                object.release();
+                releases.release(object);
             }
         }
     }

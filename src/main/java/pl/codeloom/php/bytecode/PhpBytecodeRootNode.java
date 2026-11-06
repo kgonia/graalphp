@@ -6577,6 +6577,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class Throw {
         @Specialization
         public static Object doThrow(Object value) {
+            if (value instanceof PhpObject object && object.getPhpClass().isSubclassOf("throwable")) {
+                // in flight the exception holds a count, as php-src's EG(exception), until a catch takes it
+                throw PhpException.inFlight(object);
+            }
             BasicStmts.ThrowNode.throwValue(value);
             return value;
         }
@@ -6609,6 +6613,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static boolean matches(String[] types, Object thrown) {
             return thrown instanceof PhpObject object && TryNode.matches(object, types);
+        }
+    }
+
+    /**
+     * A catch block took the exception, its variable (if any) stored: the count `throw` gave the object in flight
+     * is released (php-src's ZEND_CATCH moves EG(exception) into the variable; with none, the object is freed).
+     */
+    @Operation
+    public static final class ReleaseInFlight {
+        @Specialization
+        public static void release(Object exception) {
+            if (exception instanceof PhpException thrown && thrown.takeCount()) {
+                Refcount.dec(thrown.getThrowable());
+            }
         }
     }
 
