@@ -416,6 +416,8 @@ public final class BytecodeTranslator {
         private List<BytecodeLocal> statementTemps = new ArrayList<>();
         /** Hidden locals no statement being emitted keeps: reused by the next ones. */
         private final List<BytecodeLocal> freeTemps = new ArrayList<>();
+        /** Each hidden local's place in temporaries (and in the root's bits): the order they are created in. */
+        private final Map<BytecodeLocal, Integer> tempIndex = new HashMap<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -909,7 +911,7 @@ public final class BytecodeTranslator {
             if (!node.is("AST_RETURN")) {
                 // a return's are released by the epilogue
                 for (BytecodeLocal temp : statementTemps) {
-                    b.emitReleaseTemp(temp);
+                    b.emitReleaseTemp(temp, tempIndex.get(temp));
                 }
             }
             freeTemps.addAll(statementTemps);
@@ -1936,9 +1938,18 @@ public final class BytecodeTranslator {
                 return;
             }
             BytecodeLocal temp = temporary();
-            b.beginStoreTemp(temp);
+            b.beginStoreTemp(temp, tempIndex.get(temp));
             boolean owned = emitOwned(value);
             b.endStoreTemp(owned);
+            if (!owned) {
+                unused(temp);
+            }
+        }
+
+        /** A hidden local its expression didn't store into (a call compiled in place): free again, nothing to release. */
+        private void unused(BytecodeLocal temp) {
+            statementTemps.remove(temp);
+            freeTemps.add(temp);
         }
 
         /** Whether value's node may give an owning temporary: a call or `new` (else it surely doesn't). */
@@ -1960,6 +1971,7 @@ public final class BytecodeTranslator {
             BytecodeLocal temp;
             if (freeTemps.isEmpty()) {
                 temp = b.createLocal();
+                tempIndex.put(temp, tempIndex.size());
                 if (firstRun) {
                     temporaries.add(LocalAccessor.constantOf(temp));
                 }
@@ -5988,7 +6000,7 @@ public final class BytecodeTranslator {
             }
             // the owning temporary kept until the statement ends (a reference returned stays uncounted)
             BytecodeLocal temp = temporary();
-            b.beginStoreTemp(temp);
+            b.beginStoreTemp(temp, tempIndex.get(temp));
             if (ast.is("AST_CALL")) {
                 call(ast, true);
             } else if (ast.is("AST_METHOD_CALL")) {
@@ -6001,6 +6013,9 @@ public final class BytecodeTranslator {
                 }
             }
             b.endStoreTemp(ownedNode == ast);
+            if (ownedNode != ast) {
+                unused(temp);
+            }
         }
 
         /**

@@ -128,14 +128,20 @@ public final class PhpArray implements TruffleObject {
     public void removeHolder() {
         int count = holders;
         if (count > 0) {
-            if (count == 1 && holdsCounted) {
-                release();
-                return;
-            }
             holders = count - 1;
-            if (count == 1 && mayHoldRefs) {
-                countReferences(false);
+            if (count == 1 && (holdsCounted || mayHoldRefs)) {
+                // one out-of-line call for both walks
+                lastHolderGone();
             }
+        }
+    }
+
+    @TruffleBoundary
+    private void lastHolderGone() {
+        if (holdsCounted) {
+            release();
+        } else {
+            countReferences(false);
         }
     }
 

@@ -42,6 +42,16 @@ public final class Refcount {
         }
     }
 
+    /** A decrement's event: the count reached zero, or else the object became a possible root. */
+    @TruffleBoundary
+    static void released(PhpObject object, int count) {
+        if (count == 0) {
+            zero(object);
+        } else {
+            possibleRoot(object);
+        }
+    }
+
     /** The count reached zero: php-src's zend_objects_store_del (the destructor, then the properties' release). */
     @TruffleBoundary
     static void zero(PhpObject object) {
