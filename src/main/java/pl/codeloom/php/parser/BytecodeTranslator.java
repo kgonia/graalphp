@@ -4225,7 +4225,252 @@ public final class BytecodeTranslator {
             CallInfo info = (CallInfo) made(() -> new CallInfo(resolved[0], language.functionId(Str.lower(resolved[0])),
                     resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])),
                     resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])), special));
-            functionCall(info, args, byRefContext);
+            if (resolved[1] != null && INTRINSICS.contains(lower) && !hasUnpackOrNames(args)) {
+                // unqualified in a namespace: compiled in place while the call finds the global built-in
+                b.beginConditional();
+                b.emitFallsBack(info);
+                if (!intrinsic(lower, info, args)) {
+                    functionCall(info, args, byRefContext);
+                }
+                functionCall(info, args, byRefContext);
+                b.endConditional();
+                return;
+            }
+            if (resolved[1] != null || !intrinsic(lower, info, args)) {
+                functionCall(info, args, byRefContext);
+            }
+        }
+
+        /** The names {@link #intrinsic} compiles in place. */
+        private static final Set<String> INTRINSICS = Set.of("is_array", "is_string", "is_int", "is_integer",
+                "is_long", "is_float", "is_double", "is_bool", "is_null", "is_object", "strlen", "current", "pos",
+                "key", "next", "prev", "reset", "end", "array_pop", "array_push", "array_unshift", "substr",
+                "strpos", "str_contains", "str_starts_with", "str_ends_with", "strspn", "strcspn", "strtolower",
+                "strtoupper", "trim", "ltrim", "rtrim", "chop", "ucfirst", "str_replace", "in_array",
+                "array_slice", "array_keys", "explode");
+
+        /**
+         * A small, hot built-in compiled in place (the tree's Intrinsics; PhpBytecodeRootNode's TypeTest...
+         * Explode), so partial evaluation sees through its common cases; what they leave out calls the built-in from
+         * the same instruction (PhpBytecodeRootNode.builtin). False for a form it doesn't cover (other arities,
+         * unpacking, named arguments), which is called. PHP forbids redeclaring a built-in, so the name binds here.
+         */
+        private boolean intrinsic(String lower, CallInfo info, Ast args) {
+            int n = args.size();
+            if (!INTRINSICS.contains(lower) || hasUnpackOrNames(args)) {
+                return false;
+            }
+            switch (lower) {
+                case "is_array", "is_string", "is_int", "is_integer", "is_long", "is_float", "is_double", "is_bool",
+                     "is_null", "is_object" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginTypeTest(switch (lower) {
+                        case "is_array" -> PhpBytecodeRootNode.TypeTest.ARRAY;
+                        case "is_string" -> PhpBytecodeRootNode.TypeTest.STRING;
+                        case "is_int", "is_integer", "is_long" -> PhpBytecodeRootNode.TypeTest.INT;
+                        case "is_float", "is_double" -> PhpBytecodeRootNode.TypeTest.FLOAT;
+                        case "is_bool" -> PhpBytecodeRootNode.TypeTest.BOOL;
+                        case "is_null" -> PhpBytecodeRootNode.TypeTest.NULL;
+                        default -> PhpBytecodeRootNode.TypeTest.OBJECT;
+                    });
+                    expression(args.child(0));
+                    b.endTypeTest();
+                }
+                case "strlen" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginStrlen(info);
+                    expression(args.child(0));
+                    b.endStrlen();
+                }
+                case "ucfirst" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginUcfirst(info);
+                    expression(args.child(0));
+                    b.endUcfirst();
+                }
+                case "array_keys" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginArrayKeys(info);
+                    expression(args.child(0));
+                    b.endArrayKeys();
+                }
+                case "current", "pos", "key" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginCurrent(info, lower.equals("key"));
+                    expression(args.child(0));
+                    b.endCurrent();
+                }
+                case "strtolower", "strtoupper" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginCase(info, lower.equals("strtoupper"));
+                    expression(args.child(0));
+                    b.endCase();
+                }
+                case "trim", "ltrim", "rtrim", "chop" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginTrim(info, lower.equals("trim") ? 3 : lower.equals("ltrim") ? 1 : 2);
+                    expression(args.child(0));
+                    b.endTrim();
+                }
+                case "next", "prev", "reset", "end", "array_pop", "array_push", "array_unshift" -> {
+                    int how = switch (lower) {
+                        case "next" -> 1;
+                        case "prev" -> -1;
+                        case "reset" -> 0;
+                        case "end" -> 2;
+                        case "array_pop" -> PhpBytecodeRootNode.ArrayOnVar.POP;
+                        case "array_push" -> PhpBytecodeRootNode.ArrayOnVar.PUSH;
+                        default -> PhpBytecodeRootNode.ArrayOnVar.UNSHIFT;
+                    };
+                    if (n != (how >= PhpBytecodeRootNode.ArrayOnVar.PUSH ? 2 : 1)) {
+                        return false;
+                    }
+                    if (onVariable(args)) {
+                        b.beginArrayOnVar(info, how, variable((Ast) args.child(0), "argument"));
+                        if (n == 2) {
+                            expression(args.child(1));
+                        }
+                        b.endArrayOnVar();
+                        return true;
+                    }
+                    switch (how) {
+                        case PhpBytecodeRootNode.ArrayOnVar.POP -> b.beginArrayPop(info);
+                        case PhpBytecodeRootNode.ArrayOnVar.PUSH -> b.beginArrayPush(info);
+                        case PhpBytecodeRootNode.ArrayOnVar.UNSHIFT -> b.beginArrayUnshift(info);
+                        default -> b.beginMove(info, how);
+                    }
+                    byRefArguments(info, args);
+                    switch (how) {
+                        case PhpBytecodeRootNode.ArrayOnVar.POP -> b.endArrayPop();
+                        case PhpBytecodeRootNode.ArrayOnVar.PUSH -> b.endArrayPush();
+                        case PhpBytecodeRootNode.ArrayOnVar.UNSHIFT -> b.endArrayUnshift();
+                        default -> b.endMove();
+                    }
+                }
+                case "strpos" -> {
+                    if (n != 2) {
+                        return false;
+                    }
+                    b.beginStrpos(info);
+                    operands(args, 2);
+                    b.endStrpos();
+                }
+                case "str_contains", "str_starts_with", "str_ends_with" -> {
+                    if (n != 2) {
+                        return false;
+                    }
+                    b.beginContains(info, lower.equals("str_contains") ? 0 : lower.equals("str_starts_with") ? 1 : 2);
+                    operands(args, 2);
+                    b.endContains();
+                }
+                case "str_replace" -> {
+                    if (n != 3) {
+                        return false;
+                    }
+                    b.beginStrReplace(info);
+                    operands(args, 3);
+                    b.endStrReplace();
+                }
+                case "substr" -> {
+                    if (n != 2 && n != 3) {
+                        return false;
+                    }
+                    b.beginSubstr(info, n);
+                    operands(args, 3, PhpNull.NULL);
+                    b.endSubstr();
+                }
+                case "strspn", "strcspn" -> {
+                    if (n < 2 || n > 4) {
+                        return false;
+                    }
+                    b.beginSpan(info, lower.equals("strspn"), n);
+                    operands(args, 4, 0L, PhpNull.NULL);
+                    b.endSpan();
+                }
+                case "in_array" -> {
+                    if (n != 2 && n != 3) {
+                        return false;
+                    }
+                    b.beginInArray(info, n);
+                    operands(args, 3, Boolean.FALSE);
+                    b.endInArray();
+                }
+                case "array_slice" -> {
+                    if (n < 2 || n > 4) {
+                        return false;
+                    }
+                    b.beginArraySlice(info, n);
+                    operands(args, 4, PhpNull.NULL, Boolean.FALSE);
+                    b.endArraySlice();
+                }
+                default -> { // explode
+                    if (n != 2 && n != 3) {
+                        return false;
+                    }
+                    b.beginExplode(info, n);
+                    operands(args, 3, Long.MAX_VALUE);
+                    b.endExplode();
+                }
+            }
+            return true;
+        }
+
+        /**
+         * An in-place built-in's arity operands: the arguments passed, then the default values of the optional
+         * parameters left out (defaults: those of the last parameters).
+         */
+        private void operands(Ast args, int arity, Object... defaults) {
+            for (int i = 0; i < arity; i++) {
+                if (i < args.size()) {
+                    expression(args.child(i));
+                } else {
+                    b.emitLoadConstant(defaults[i - (arity - defaults.length)]);
+                }
+            }
+        }
+
+        /**
+         * Whether a by-reference built-in's first argument is a variable it can change in place (ArrayOnVar): its
+         * value argument, evaluated before the variable is read there (the call makes the reference first), must
+         * not be able to change the variable: a constant or another variable.
+         */
+        private boolean onVariable(Ast args) {
+            if (!(args.child(0) instanceof Ast first) || !isVariable(first)) {
+                return false;
+            }
+            if (args.size() == 1) {
+                return true;
+            }
+            Object value = args.child(1);
+            return constantShaped(value) || value instanceof Ast other && isVariable(other)
+                    && !other.get("name").equals(first.get("name"));
+        }
+
+        /**
+         * The callee, then the arguments of a built-in whose first parameter is by reference, sent as the call
+         * sends them (its reference, or what a call or a value gives).
+         */
+        private void byRefArguments(CallInfo info, Ast args) {
+            b.beginBindStackValue();
+            b.emitResolveFunction(info);
+            StackValue callee = b.endBindStackValue();
+            for (int i = 0; i < args.size(); i++) {
+                argument(args.child(i), i, callee);
+            }
         }
 
         /** The call of the function info names, looked up first, then each argument evaluated. */

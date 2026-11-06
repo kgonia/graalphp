@@ -450,3 +450,119 @@ Truffle PHP built as a native standalone with Oracle GraalVM 25 (`native-image`,
 - **Memory is no lower:** hooks over 400 iterations peaked at 881 MB native, and at 1040 MB with `-Xmx256m`, against 695 MB for the JVM at `-Xmx256m`. The limit doesn't cover runtime compilation's memory.
 
 Native image is shelved. It would be worth reopening for startup time (per-request processes), not for throughput or footprint.
+
+## Roadmap step 4: the steady state on bytecode only (2026-11-04, branch `perf-step4`)
+The base is `bytecode-only` (#44, `fb291f3`) with #46 merged (`ElementIfSetNode` without `@ReportPolymorphism`, the
+add_filter splitting #35 brought back). The tree is main `9ae85cb` with `-Dpolyglot.php.Interpreter=tree`. Every
+series: `bench/perf-step4/runs.sh gate1` (bench/gate1/ab.sh, 400 iterations, 2 rounds per hold of the CPU lock,
+forward then reversed, CPUs 14-21), the ratio the median of the per-round ratios to base with its IQR, peak
+memory the container's `memory.peak`. Beside each hold, the host's per-LP load (`bench/perf-step4/lpload.ps1`,
+copied from wordpress-cold's: docker's cpuset pins the VM's vCPUs, which land on the host's 8 P-cores): the
+P-cores at 46-61 % and the E-cores at 17-28 % over every hold, the timed run's own load included. Every checksum of
+every run equals PHP 8.5's.
+
+**What the kernels call.** Built-in calls per iteration on base (a counting build of `BuiltinRootNode`, 20
+iterations each; `bench_render`'s `is_*`/`gettype` are outside the timed region):
+- hooks: `next` and `current` 70,560 each, `array_slice` 47,040, `is_array` 23,528, `array_pop` 23,520, `trim`,
+  `ucfirst`, `array_unshift`, `str_replace` 11,760 each.
+- kses: `preg_replace` 35,855, `strtolower` 29,261, `str_starts_with` 29,005, `str_replace` 24,182, `strlen` 20,548,
+  `is_array` 20,415, `strspn` 19,728, `strpos` 13,269, `trim` 8,316, `strcspn` 6,590, `substr` 6,062, `in_array`
+  5,430, `array_keys` and `array_filter` 3,538 each, `explode` 882.
+- wptexturize: `str_starts_with` 12,729, `trim` 9,298, `str_contains` 5,522, `in_array`, `strpos`, `substr` 3,648.
+- wpautop: `str_contains` 7,229, `trim` 4,061. blocks: `is_array` 46,508, `strlen` 5,911, `substr` 5,791,
+  `array_push` and `array_pop` 2,366. escape: `strlen` 2,477, `in_array` 99. slugs: almost none.
+
+Those built-ins are compiled in place again (`e0def46`); `array_map`/`array_filter` (the tree's calling-back
+ones, whose traces need the built-in's frame) and the ones no kernel calls (`ord`, `chr`, `gettype`,
+`array_key_exists`, `implode`) are left.
+
+**Base, the intrinsics (`i1`) and the callee caches (`c2`)**, two series of 6 rounds; i1 pooled over both (12
+rounds):
+
+| kernel | base ms | i1 ms | i1 / base, 12 rounds | c2 / base, 6 rounds |
+|---|---|---|---|---|
+| hooks | 14.35 | 12.68 | 0.94 (0.82-1.00) | 0.91 (0.77-1.03) |
+| escape | 1.64 | 1.79 | 1.12 (0.95-1.23) | 1.23 (0.98-1.34) |
+| slugs | 1.26 | 1.30 | 1.08 (0.95-1.14) | 1.04 (0.96-1.33) |
+| wpautop | 4.72 | 4.35 | 0.89 (0.81-0.96) | 0.87 (0.64-1.39) |
+| wptexturize | 3.65 | 3.46 | 0.95 (0.91-0.97) | 1.02 (0.85-1.27) |
+| blocks | 5.58 | 5.51 | 0.96 (0.93-1.02) | 1.00 (0.91-1.10) |
+| kses | 26.45 | 25.87 | 0.97 (0.80-1.13) | 0.98 (0.88-1.33) |
+| peak memory | 1,773 MB | 1,549 MB | 0.87 (0.85-0.96) | 0.94 (0.83-0.98) |
+
+**Base, `c4` (intrinsics, callee caches, `CheckReturn`) and the tree**, 8 rounds:
+
+| kernel | base ms | c4 ms | tree ms | c4 / base | tree / base |
+|---|---|---|---|---|---|
+| hooks | 14.07 | 13.35 | 13.41 | 0.94 (0.91-1.08) | 0.93 (0.83-1.09) |
+| escape | 1.64 | 1.75 | 1.65 | 1.05 (1.03-1.09) | 1.06 (0.96-1.17) |
+| slugs | 1.23 | 1.33 | 1.31 | 1.10 (1.01-1.19) | 1.11 (1.05-1.17) |
+| wpautop | 4.82 | 4.89 | 4.34 | 0.98 (0.90-1.07) | 0.92 (0.90-0.96) |
+| wptexturize | 3.43 | 3.40 | 2.96 | 0.91 (0.91-0.99) | 0.82 (0.74-0.94) |
+| blocks | 6.07 | 5.55 | 18.90 | 0.97 (0.87-0.98) | 3.29 (2.83-3.55) |
+| kses | 27.25 | 25.05 | 69.50 | 0.94 (0.84-1.00) | 2.71 (2.51-2.91) |
+| peak memory | 1,771 MB | 1,565 MB | 1,120 MB | 0.88 (0.86-0.90) | 0.64 (0.62-0.69) |
+
+- **The intrinsics' gap to the tree is closed where the tree is a reference**: hooks 0.94 against the tree's
+  0.93, escape 1.05 against 1.06, slugs 1.10 against 1.11 (all of base). The flip (2026-11-03) had the tree
+  without its intrinsics 1.16 slower on hooks and 1.26 on kses.
+- **The tree is no reference for blocks and kses any more:** on main it runs them 3.3 and 2.7 times slower than
+  bytecode (21 and 70 ms; on 2026-11-03 it was 5.8 and 23.5 ms against bytecode's 6.6 and 32). Something since
+  #33-#42 made the tree slow there, which nobody measured because bytecode had become the default; not looked into,
+  as the tree is deleted on bytecode-only. Against the tree the remaining gaps are wpautop (about 6 %) and
+  wptexturize (about 10 %).
+- **escape and slugs read 5-10 % slower than base in every series**, IQRs above 1, and so does the tree. In runs of
+  their own (diagnosis runs on CPUs 6-13: escape alone and after hooks, slugs alone and after hooks and escape) c4
+  and base are within each other's run-to-run spread (escape 2.02 against 2.02 and 2.07 against 2.10 ms after
+  hooks; slugs 1.33 and 1.31 against 1.38 and 1.15 alone). Their compiled code is smaller on c4 (esc_html 0.82,
+  _wp_specialchars 0.61, wp_check_invalid_utf8 0.66 of base's code). Not explained; one difference in the
+  all-kernel runs is the heap: peak memory is 12 % lower, hooks allocating less before them.
+- **Peak memory -12 %** (1,771 → 1,565 MB): the built-ins' call targets and their compilations are gone.
+
+**The final build (`c6` = `264d221`: also the cached call node for the fallbacks and `ArrayOnVar`), one hold (2
+rounds) before the session ended** (WIP: holds 2-3 were stopped): against base hooks 0.91 (0.83-1.00), escape 0.96
+(0.84-1.08), slugs 0.96, wpautop 0.78 (0.73-0.83), wptexturize 0.77 (0.73-0.81), blocks 1.00, kses 0.90
+(0.78-1.02), memory 0.96. Two rounds only; to be repeated.
+
+**Against PHP 8.5** (OPcache, tracing JIT; `bench/perf-step4/phpref.sh 4 400 c5`, PHP and `c5` interleaved under
+the lock, the order reversed every round; Truffle PHP time over PHP's, <1 faster; the host loaded, PHP's times
+moved by up to 1.5x between rounds):
+
+| kernel | PHP ms | c5 ms | c5 / PHP (range) |
+|---|---|---|---|
+| hooks | 11.32 | 12.66 | 1.16 (0.93-1.47) |
+| escape | 2.34 | 1.72 | 0.77 (0.62-0.93) |
+| slugs | 1.47 | 1.20 | 0.85 (0.57-1.04) |
+| wpautop | 3.65 | 3.98 | 1.01 (0.69-1.21) |
+| wptexturize | 2.11 | 3.43 | 1.65 (1.02-1.86) |
+| blocks | 5.73 | 5.38 | 0.94 (0.63-1.51) |
+| kses | 18.93 | 27.64 | 1.49 (1.07-1.77) |
+| peak memory | 31 MB | 1,666 MB | 54 |
+
+**Gate 2 (warm, 200 paced visits, `runs.sh g2`; WIP: base 3 rounds, c4 2, the third stopped):** warm wait per
+visit (last 50) base 0.642 s (0.516-0.645), c4 0.551 (0.549-0.552); warm CPU-s per visit base 1.31 (1.10-1.36), c4
+1.21 (1.21-1.22); memory.peak warm base 1,644 MB, c4 1,699; cold visit base 11.1 s, c4 13.1 s. Host load per run
+41-65 % (base's quietest run is its round 3, which c4 lacks): indicative only.
+
+**Correctness:** every Gate 1 checksum equals PHP 8.5's in every run; smoke 188 ok (the 4 failures are bytecode-
+only's: the Windows paths of closure-debug/closure-scope, object handles in lazy-objects/property-hooks);
+CompilationTest 18/18; phpt 5,490 against bytecode-only's 5,492, the 2 differences
+`Zend/tests/attributes/deprecated/{constants,class_constants}/value_unknown_at_compile_time_001`, which print
+`random_int(1, 2)`'s choice (the oracle drew 'b', the run 'a'): no new failure.
+
+### Next steps (where step 4 stopped, 2026-11-04)
+1. **Intrinsics:** repeat the base/c6 A/B (≥6 rounds) and Gate 2 (≥3 rounds each, a quiet host). Port the
+   calling-back `array_map`/`array_filter` (kses calls array_filter 3,538 times an iteration) with the built-in's
+   frame in traces (the tree's `CallingBackNode`). Look at escape/slugs reading 5-10 % slower in the all-kernel runs
+   only (try a fixed heap: `-Xms`/`-Xmx` equal on both).
+2. **Callee as a constant:** done for every argument operation (wiki/bytecode-dsl.md). Left: a nested element
+   argument (`SendNested`/`SendPropNested`'s `readChain`: pass the key count as a constant operand and unroll, or
+   emit the by-value read as a plain nested read under `ArgByRef`); the same rule (decide on constant operands or
+   own caches, never on pushed values' fields) to audit in the other operations that read a pushed `PhpClass`.
+3. **Steady-state gaps:** against the tree, wptexturize (about 10 %: `wptexturize`'s own graph 1.28x the tree's
+   after PE, `_get_wptexturize_split_regex` no longer inlined) and wpautop (about 6 %); against PHP, wptexturize
+   1.65 and kses 1.49 are the largest. The tree on main is no reference for blocks and kses (3.3x and 2.7x slower
+   than bytecode there).
+4. **usort (perf-check):** analysed in wiki/bytecode-dsl.md; the fix is the sort in compiled code (its own root per
+   call site, iterative zend_sort, the comparator through a `CallableDispatchNode`), keeping php-src's order.
+5. **The rest of perf-check's Gate 2 gap (#33, #38):** not started; bisect p33/p38 against base on a quiet host.
