@@ -614,23 +614,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** The value the function returns: the variables are released. */
     @EpilogReturn
     public static final class ReturnValue {
+        /**
+         * The returned value holds a count while the variables are released, then moves out as a temporary
+         * (php-src's RETURN of a CV increments before the epilogue frees the CVs): a returned local passes through
+         * no zero, a returned array through no release of its elements. One specialization per kind of value, so
+         * a return compiles the variables' release once, and only the kinds it has returned.
+         */
         @Specialization
+        public static Object returnObject(VirtualFrame frame, PhpObject value, @Bind PhpBytecodeRootNode root,
+                                          @Bind BytecodeNode bytecode) {
+            RefCounts.addRef(value);
+            root.releaseVariables(frame, bytecode);
+            RefCounts.moved(value);
+            return value;
+        }
+
+        @Specialization
+        public static Object returnArray(VirtualFrame frame, PhpArray value, @Bind PhpBytecodeRootNode root,
+                                         @Bind BytecodeNode bytecode) {
+            value.addHolder();
+            root.releaseVariables(frame, bytecode);
+            value.dropHolder();
+            return value;
+        }
+
+        @Fallback
         public static Object doReturn(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                       @Bind BytecodeNode bytecode) {
-            // the returned value holds a count while the variables are released, then moves out as a temporary
-            // (php-src's RETURN of a CV increments before the epilogue frees the CVs): a returned local passes
-            // through no zero, a returned array through no release of its elements
-            if (value instanceof PhpObject object) {
-                RefCounts.addRef(object);
-                root.releaseVariables(frame, bytecode);
-                RefCounts.moved(object);
-            } else if (value instanceof PhpArray array) {
-                array.addHolder();
-                root.releaseVariables(frame, bytecode);
-                array.dropHolder();
-            } else {
-                root.releaseVariables(frame, bytecode);
-            }
+            root.releaseVariables(frame, bytecode);
             return value;
         }
     }
@@ -2670,8 +2681,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         @Specialization
-        public static void discardObject(PhpObject value) {
-            RefCounts.freeTemporary(value);
+        public static void discardObject(PhpObject value, @Bind Node node, @Cached InlinedBranchProfile zero) {
+            if (RefCounts.count(value) == 0) {
+                zero.enter(node);
+                RefCounts.freeTemporary(value);
+            }
         }
 
         @Specialization
@@ -2694,9 +2708,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class FreeTemporary {
         @Specialization
         public static Object free(VirtualFrame frame, LocalAccessor temporary, Object result,
-                                  @Bind BytecodeNode bytecode) {
+                                  @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached InlinedBranchProfile zero, @Cached InlinedBranchProfile array) {
             if (!temporary.isCleared(bytecode, frame)) {
-                RefCounts.freeTemporary(temporary.getObject(bytecode, frame));
+                Object value = temporary.getObject(bytecode, frame);
+                if (value instanceof PhpObject object) {
+                    if (RefCounts.count(object) == 0) {
+                        zero.enter(node);
+                        RefCounts.freeTemporary(object);
+                    }
+                } else if (value instanceof PhpArray held) {
+                    array.enter(node);
+                    held.freeTemporary();
+                }
                 temporary.clear(bytecode, frame);
             }
             return result;
@@ -4162,12 +4186,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object direct(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                     @Cached("function") PhpFunction cachedFunction,
-                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+                                    @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode,
+                                    @Bind Node node, @Shared @Cached InlinedBranchProfile released) {
             arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : receiver;
             arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             Object result = callNode.call(arguments);
             if (site.countsReceiver) {
-                RefCounts.receiverReleased(receiver);
+                receiverReleased(receiver, node, released);
             }
             return result(result, keepRef);
         }
@@ -4175,14 +4200,26 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "!isByValue(function)", replaces = "direct")
         public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
-                                      @Shared @Cached IndirectCallNode callNode) {
+                                      @Shared @Cached IndirectCallNode callNode,
+                                      @Bind Node node, @Shared @Cached InlinedBranchProfile released) {
             arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : receiver;
             arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             Object result = callNode.call(function.getCallTarget(), arguments);
             if (site.countsReceiver) {
-                RefCounts.receiverReleased(receiver);
+                receiverReleased(receiver, node, released);
             }
             return result(result, keepRef);
+        }
+
+        /**
+         * The receiver's release after the call (RefCounts.receiverReleased): at zero, or a possible root, a
+         * deoptimization until the site first meets either.
+         */
+        private static void receiverReleased(PhpObject receiver, Node node, InlinedBranchProfile released) {
+            if (RefCounts.count(receiver) == 0 || RefCounts.unbuffered(receiver)) {
+                released.enter(node);
+                RefCounts.receiverReleased(receiver);
+            }
         }
 
         /** `$closure->__invoke(args)`: the closure's function, as `$closure(args)` calls it (CallValue). */
