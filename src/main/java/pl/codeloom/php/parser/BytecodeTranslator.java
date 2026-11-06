@@ -129,6 +129,8 @@ public final class BytecodeTranslator {
     private int namedExtrasOffset = -1;
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
+    /** The hidden locals of owning temporaries (Run.temporary), made by the first run. */
+    private final List<LocalAccessor> temporaries = new ArrayList<>();
     private boolean firstRun = true;
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
@@ -179,6 +181,7 @@ public final class BytecodeTranslator {
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
+        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
         if (translator.namedExtrasOffset >= 0) {
             root.initializeVariadic(translator.namedExtrasOffset);
         }
@@ -216,6 +219,7 @@ public final class BytecodeTranslator {
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                 translator.foreachStates.toArray(new LocalAccessor[0]), null);
+        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
         root.initializeFile(translator.loops);
         if (path.equals(DUMP)) {
             root.dumpAtExit();
@@ -273,6 +277,7 @@ public final class BytecodeTranslator {
                                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                                 translator.foreachStates.toArray(new LocalAccessor[0]),
                                 owner == null ? null : owner.name());
+                        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
                         root.initializeThunk();
                         made = root.getCallTarget();
                         target = made;
@@ -318,6 +323,7 @@ public final class BytecodeTranslator {
         }
         root.initialize(display, path, internal, translator.functionSection(), params, new int[0], null,
                 new LocalAccessor[0], new LocalAccessor[0], owner == null ? null : owner.name());
+        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
         root.initializeDefaults();
         if (translator.namedExtrasOffset >= 0) {
             root.initializeVariadic(translator.namedExtrasOffset);
@@ -407,6 +413,15 @@ public final class BytecodeTranslator {
         private int madeIndex;
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
+        /**
+         * The last expression emitted whose value is an owning temporary (a call's result or `new`'s object, which
+         * hold a count: wiki/destructors.md, P1): set once its operation is emitted, so an outer node knows.
+         */
+        private Ast ownedNode;
+        /** The hidden locals of the owning temporaries the statement being emitted keeps, released at its end. */
+        private List<BytecodeLocal> statementTemps = new ArrayList<>();
+        /** Hidden locals no statement being emitted keeps: reused by the next ones. */
+        private final List<BytecodeLocal> freeTemps = new ArrayList<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -894,7 +909,17 @@ public final class BytecodeTranslator {
                 return;
             }
             beginLine(node.line);
+            List<BytecodeLocal> outer = statementTemps;
+            statementTemps = new ArrayList<>();
             statementBody(node);
+            if (!node.is("AST_RETURN")) {
+                // a return's are released by the epilogue
+                for (BytecodeLocal temp : statementTemps) {
+                    b.emitReleaseTemp(temp);
+                }
+            }
+            freeTemps.addAll(statementTemps);
+            statementTemps = outer;
             endLine(node.line);
         }
 
@@ -1027,7 +1052,7 @@ public final class BytecodeTranslator {
                 switch (node.kind) {
                     case "AST_ASSIGN" -> {
                         b.beginWriteVarStatement(variable(target, "assignment to"));
-                        expression(node.get("expr"));
+                        stored(node.get("expr"));
                         b.endWriteVarStatement();
                         return;
                     }
@@ -1054,6 +1079,13 @@ public final class BytecodeTranslator {
                     default -> {
                     }
                 }
+            }
+            if (mayOwn(value)) {
+                // php-src's FREE of the call's result
+                b.beginReleaseObject();
+                boolean owned = emitOwned(value);
+                b.endReleaseObject(owned);
+                return;
             }
             expression(value);
         }
@@ -1343,7 +1375,7 @@ public final class BytecodeTranslator {
             } else if (value == null) {
                 b.emitLoadConstant(PhpNull.NULL);
             } else {
-                expression(value);
+                returned(value);
             }
             if (typed) {
                 b.endCheckReturn();
@@ -1906,7 +1938,81 @@ public final class BytecodeTranslator {
             };
         }
 
+        /**
+         * An expression whose value is used where it isn't kept (an operand, an argument, a receiver, a condition):
+         * an owning temporary (a call's result, `new`'s object) is kept in a hidden local until the statement ends,
+         * as php-src frees a TMP or VAR operand once used and cleans its live range on an exception.
+         */
         void expression(Object value) {
+            if (!mayOwn(value)) {
+                emit(value);
+                return;
+            }
+            BytecodeLocal temp = temporary();
+            b.beginStoreTemp(temp);
+            boolean owned = emitOwned(value);
+            b.endStoreTemp(owned);
+        }
+
+        /** Whether value's node may give an owning temporary: a call or `new` (else it surely doesn't). */
+        private boolean mayOwn(Object value) {
+            return value instanceof Ast node
+                    && (node.is("AST_CALL") || node.is("AST_METHOD_CALL") || node.is("AST_STATIC_CALL")
+                    || node.is("AST_NEW"))
+                    && !writeFetched.contains(node) && !constantShaped(value) && Translator.deepestNullsafe(node) == null;
+        }
+
+        /** Emits value; whether it gave an owning temporary (a call compiled in place doesn't). */
+        private boolean emitOwned(Object value) {
+            emit(value);
+            return ownedNode == value;
+        }
+
+        /** A hidden local for an owning temporary of the statement being emitted. */
+        private BytecodeLocal temporary() {
+            BytecodeLocal temp;
+            if (freeTemps.isEmpty()) {
+                temp = b.createLocal();
+                if (firstRun) {
+                    temporaries.add(LocalAccessor.constantOf(temp));
+                }
+            } else {
+                temp = freeTemps.remove(freeTemps.size() - 1);
+            }
+            statementTemps.add(temp);
+            return temp;
+        }
+
+        /** A value about to be stored, which counts it: an owning temporary's count moves to the store (Disown). */
+        private void stored(Object value) {
+            if (!mayOwn(value)) {
+                expression(value);
+                return;
+            }
+            b.beginDisown();
+            boolean owned = emitOwned(value);
+            b.endDisown(owned);
+        }
+
+        /** A returned value: owning for the caller (Own counts a variable's or a property's value). */
+        private void returned(Object value) {
+            if (constantShaped(value) || value instanceof Ast node && (node.is("AST_BINARY_OP")
+                    || node.is("AST_UNARY_OP") || node.is("AST_ISSET") || node.is("AST_EMPTY")
+                    || node.is("AST_ENCAPS_LIST") || node.is("AST_ARRAY") || node.is("AST_INSTANCEOF")
+                    || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC"))) {
+                // never an object
+                expression(value);
+                return;
+            }
+            b.beginOwn();
+            boolean owned = mayOwn(value) && emitOwned(value);
+            if (!mayOwn(value)) {
+                expression(value);
+            }
+            b.endOwn(!owned);
+        }
+
+        private void emit(Object value) {
             if (value instanceof Ast fetched && writeFetched.contains(fetched)) {
                 readIfSet(fetched);
                 return;
@@ -2110,12 +2216,17 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_METHOD_CALL":
                     methodCall(node, false);
+                    ownedNode = node;
                     break;
                 case "AST_STATIC_CALL":
                     staticCall(node, false);
+                    if (!Translator.isParentHookCall(node)) {
+                        ownedNode = node;
+                    }
                     break;
                 case "AST_NEW":
                     newObject(node);
+                    ownedNode = node;
                     break;
                 case "AST_CLASS_CONST":
                     classConstant(node);
@@ -2328,7 +2439,7 @@ public final class BytecodeTranslator {
                 b.beginBlock();
                 place.prepare();
                 b.beginWriteRef();
-                expression(node.get("expr"));
+                stored(node.get("expr"));
                 place.ref(true);
                 b.endWriteRef();
                 b.endBlock();
@@ -2344,7 +2455,7 @@ public final class BytecodeTranslator {
             }
             if (target.is("AST_VAR")) {
                 b.beginWriteVar(variable(target, "assignment to"));
-                expression(node.get("expr"));
+                stored(node.get("expr"));
                 b.endWriteVar();
                 return;
             }
@@ -2352,7 +2463,7 @@ public final class BytecodeTranslator {
                 BytecodeLocal container = variable(target.node("expr"), "element of");
                 if (target.get("dim") == null) {
                     b.beginAppendElement(container);
-                    expression(node.get("expr"));
+                    stored(node.get("expr"));
                     b.endAppendElement();
                     return;
                 }
@@ -2360,7 +2471,7 @@ public final class BytecodeTranslator {
                 b.beginBlock();
                 Object dim = onceKey(target.get("dim"));
                 b.beginWriteElement(container);
-                expression(node.get("expr"));
+                stored(node.get("expr"));
                 key(dim);
                 b.endWriteElement();
                 b.endBlock();
@@ -3677,12 +3788,12 @@ public final class BytecodeTranslator {
             Ast place = writtenProp(target, VariableVariableNode.W);
             if (place.get("prop") instanceof String name) {
                 b.beginWriteProp(propSite(place, name));
-                expression(value);
+                stored(value);
                 writtenObject(place.get("expr"), BP_VAR_W);
                 b.endWriteProp();
             } else {
                 b.beginWritePropNamed(propSite(place, null));
-                expression(value);
+                stored(value);
                 propName(place.get("prop"));
                 writtenObject(place.get("expr"), BP_VAR_W);
                 b.endWritePropNamed();
@@ -4167,12 +4278,12 @@ public final class BytecodeTranslator {
                 b.endWriteRefNested();
             } else if (place.variable() != null) {
                 b.beginWriteNested(place.variable(), append);
-                expression(value);
+                stored(value);
                 emitKeys(keys);
                 b.endWriteNested();
             } else {
                 b.beginWritePropNested(place.site(), append);
-                expression(value);
+                stored(value);
                 writtenObject(place.property().get("expr"), BP_VAR_W);
                 propertyKeys(place, keys);
                 b.endWritePropNested();
@@ -4301,6 +4412,7 @@ public final class BytecodeTranslator {
             if (callee == null) {
                 // a value called, as `|>` calls its callable (Translator.pipeCall)
                 callValue(node, node.get("expr"), byRefContext);
+                ownedNode = node;
                 return;
             }
             // a string callee naming a method, 'A::m'(), calls it as the value would be called
@@ -4321,6 +4433,7 @@ public final class BytecodeTranslator {
             }
             if (!callee.is("AST_NAME") || method) {
                 callValue(node, callable, byRefContext);
+                ownedNode = node;
                 return;
             }
             String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
@@ -4380,6 +4493,7 @@ public final class BytecodeTranslator {
             }
             if (resolved[1] != null || !intrinsic(lower, info, args)) {
                 functionCall(info, args, byRefContext);
+                ownedNode = node;
             }
         }
 
@@ -5372,8 +5486,9 @@ public final class BytecodeTranslator {
             }
             Ast args = node.node("args");
             NamedSite named = namedSite(args, false);
+            int receiverKind = receiverCount(node.get("expr"));
             if (named != null) {
-                MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
+                MethodSite site = (MethodSite) made(() -> new MethodSite(name, false, receiverKind));
                 b.beginCallMethodNamed(site, named, byRefContext);
                 b.beginBindStackValue();
                 expression(node.get("expr"));
@@ -5389,7 +5504,7 @@ public final class BytecodeTranslator {
             }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
-            MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
+            MethodSite site = (MethodSite) made(() -> new MethodSite(name, false, receiverKind));
             if (spread) {
                 b.beginCallMethodSpread(site, byRefContext);
             } else {
@@ -5409,6 +5524,17 @@ public final class BytecodeTranslator {
             } else {
                 b.endCallMethod();
             }
+        }
+
+        /**
+         * How a method call counts its receiver while it runs (MethodSite.receiver): $this not at all, a function's
+         * variable by its possible-root event only, anything else counted.
+         */
+        private int receiverCount(Object receiver) {
+            if (isThis(receiver)) {
+                return MethodSite.UNCOUNTED;
+            }
+            return receiver instanceof Ast ast && isVariable(ast) ? MethodSite.VARIABLE : MethodSite.COUNTED;
         }
 
         /**
@@ -5882,15 +6008,25 @@ public final class BytecodeTranslator {
 
         /** A call, `new`, include or yield as an argument: a call's result as it may return a reference. */
         private void callArgument(Ast ast) {
+            if (!ast.is("AST_CALL") && !ast.is("AST_METHOD_CALL") && !ast.is("AST_STATIC_CALL")) {
+                expression(ast);
+                return;
+            }
+            // the owning temporary kept until the statement ends (a reference returned stays uncounted)
+            BytecodeLocal temp = temporary();
+            b.beginStoreTemp(temp);
             if (ast.is("AST_CALL")) {
                 call(ast, true);
             } else if (ast.is("AST_METHOD_CALL")) {
                 methodCall(ast, true);
-            } else if (ast.is("AST_STATIC_CALL")) {
-                staticCall(ast, true);
+                ownedNode = ast;
             } else {
-                expression(ast);
+                staticCall(ast, true);
+                if (!Translator.isParentHookCall(ast)) {
+                    ownedNode = ast;
+                }
             }
+            b.endStoreTemp(ownedNode == ast);
         }
 
         /**
