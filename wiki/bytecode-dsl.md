@@ -1547,3 +1547,95 @@ Interleaved, the order reversed every round, the server on CPUs 14-21, a shared 
 
 Open: the cold visit is about 8% slower (visits 2-5 too; equal from the sixth), the file roots now running and
 compiling on bytecode; and the warm memory.peak's spike (RssAnon +6% only). Neither is looked into yet.
+
+## Roadmap step 4: the steady state on bytecode only (2026-11-04, branch `perf-step4`)
+Gate 1's numbers for this step are in [gate-1.md](gate-1.md) ("Roadmap step 4"); this section has the mechanism.
+
+### Why the callee is no constant at `SendVar` (proposal 2 of "What a bytecode compilation costs")
+`455ae9c` (PR #30) cached the callee in `SendVar` only. Probes in a build of their own (`target/exp-src`, not
+committed: `CompilerAsserts.partialEvaluationConstant` and `ensureVirtualizedHere` behind static flags, a micro
+program with `CompileOnly=f` and no background compilation) located it:
+
+| probe, `k(1, 2)` in f() | result |
+|---|---|
+| ResolveFunction's cached function inside `single` | constant |
+| its result in the generated handler, before `FRAMES.setObject` | constant |
+| the stack slot read back in Call's handler (`getObject` or `uncheckedGetObject`) | **not**: a `VirtualFrameGet` |
+| `sp` there | constant |
+| the frame at the Call (`ensureVirtualizedHere`) | virtual |
+
+**An operand on the Bytecode DSL's stack is never a partial-evaluation constant**, even with a virtual frame and a
+constant slot: the frame read stays a `VirtualFrameGet` until partial escape analysis, which runs after partial
+evaluation. The tree passed values in Java locals, so its argument nodes saw the callee they had cached. After
+escape analysis, the identity compare of two constants folds (SendVar's guard does), but the callee's
+`@CompilationFinal` fields read in `isByRef` do not, so each argument operation kept both its by-value and its
+by-reference path, and `SendValue` (every literal argument) the Error's building too.
+
+`71c6cb4`: every argument operation that reads the callee (`SendValue`, `SendElement`, `SendProp`,
+`SendPropNamed`, `SendNested`, `SendPropNested`, `SendTemporary`, `SendCall`, `ArgByRef`) caches it as SendVar does
+(limit 1) and decides on the cached, constant one. f() with 20 calls `k(...)`, one tier, IR after PE / after all,
+code bytes:
+
+| arguments | tree | before | after |
+|---|---|---|---|
+| `k(1, 2)` | 110 / 163, 835 | 1,953 / 2,226, 11,129 | 127 / 174, 835 |
+| `k(1)` | 20 / 21, 193 | 938 / 1,055, 5,634 | 46 / 54, 236 |
+| `k('a', 'b')` | 20 / 21, 193 | 1,744 / 2,043, 10,881 | 46 / 54, 236 |
+| `k($x[0], $x['b'])` | 6,034 / 10,634, 41,237 | 6,360 / 10,834, 44,503 | 6,119 / 10,581, 41,057 |
+| `k($o->p, $o->p)` | 237 / 191, 980 | 459 / 203, 1,025 | 256 / 243, 1,125 |
+| `k($o->q['a']['b'])` | 4,314 / 6,102, 22,873 | 11,205 / 17,008, 74,466 | 5,841 / 14,766, 61,788 |
+| `k($x['a']['b'], ...)` | 7,573 / 10,940, 44,543 | 17,409 / 27,745, 129,796 | 10,860 / 29,196, 129,891 |
+
+**Left:** a nested element as an argument stays 2.4-2.7 times the tree's after all phases, though its by-value
+read is a plain nested read when not an argument (`$v += $x['a']['b']`: 2,666 / 4,336 against the tree's
+2,704 / 4,383). `SendNested`'s `readChain` loops over the keys with one read node; the keys are a `@Variadic`
+operand, whose length isn't a PE constant either (an `@ExplodeLoop` there bails out: "too many loop explosion
+iterations"). A fix would pass the key count as a constant operand, or emit the by-value read as the plain
+nested read under `ArgByRef`.
+
+The same mechanism made `CheckReturn` compile its check twice (`7edecbf`): it tested every returned value for a
+`PhpRef`, which only a function returning by reference returns. A typed function returning a built-in's result
+(`wp_is_valid_utf8(): bool`, on every `esc_html`) went from the tree's 212 / 311, 1,276 to 367 / 487, 2,950; now
+189 / 279, 1,159.
+
+**The general rule for this interpreter:** anything an operation decides on must come from a constant operand or
+its own cache, not from a value another instruction pushed. Values pushed and read back fold only after escape
+analysis, and a field of such a value never.
+
+### The in-place built-ins on bytecode (`e0def46`, `86e95f3`, `264d221`)
+Each is an operation with the tree node's fast path and a CallInfo constant (traces find it on the instruction as
+they find a call's, frameless where php-src compiles the call into an opcode of its own). The rest calls the
+built-in through the operation's own `IndirectCallNode` (`86e95f3`; first through a boundary and a call target
+called from host code, which profiles its arguments on every call). By-reference first arguments:
+- a plain variable (`next($a)`, `array_pop($stack)`, `array_unshift($args, $value)`): `ArrayOnVar` changes the
+  variable's array in place, separated if shared, without making the variable a reference (the call's `SendVar`
+  makes it one for the rest of the function, and allocates it). `array_unshift($args, $value)` compiles to the
+  tree's 669 / 323 nodes (before: 769 / 553, code 2.3 against 1.3 KB);
+- any other place (`next($this->iterations[$level])`): sent as the call sends it, then changed through the
+  reference.
+
+Not ported: the calling-back `array_map`/`array_filter` (their traces need the built-in's frame: the tree's
+`CallingBackNode.inlineBuiltin`), and the built-ins no Gate 1 kernel calls in its timed part.
+
+### usort's cost since #38 (perf-check's finding, analysed, not fixed)
+`target/p4/micro/usort.php` (two usort of 40 records with a closure comparator, the Windows JVM, warm):
+
+| build | µs per two sorts | comparator calls (random, then sorted input) |
+|---|---|---|
+| perf-check base `4214f6b` (List.sort, TimSort) | 6.3-6.6 | 160, 39 |
+| p38 `e743196` (#38's zend_sort port) | 11.0-11.4 | 191, 109 |
+| this branch | 8.7-8.9 | 191, 109 |
+
+- **The comparisons are php-src's**, observable (a comparator that counts or prints sees them) and stay: zend_sort
+  calls the comparator 1.2 times as often on random input and 2.8 times on sorted input (insertion sort below 17
+  elements, no run detection). WordPress sorts mostly sorted lists (menus, `wp_list_sort`), the expensive case.
+- **The cost per comparison is unchanged** (about 29 ns here, 32 on base): the callback is called from the sort's
+  Java code behind the built-in's boundary, a call target called from host code. JFR over the micro program: 16 % of
+  the samples in `OptimizedCallTarget.areArgumentTypesValid`/`profileArguments`, 10 % in `Callables.Target.call` and
+  `getCallTarget`, 17 % in the sort's own loops and comparator lambdas.
+- **What would take it out:** the sort in compiled code, so the comparator is a direct call (or inlined): a root
+  node of its own per call site (zend_sort made iterative, its comparisons through a `CallableDispatchNode`), with
+  the built-in's frame in traces as the tree's calling-back intrinsics had. Not done here: about 12 of the 60-70 ms
+  per warm Gate 2 visit (perf-check), against a few hundred lines that must keep php-src's comparison order exactly.
+- **The rest of perf-check's gap (#33's scoped dispatch, #38's argument checks) was not bisected here**: it needs
+  Gate 2 runs per build on a quiet host, and the host was loaded (P-cores 46-61 %) all session.

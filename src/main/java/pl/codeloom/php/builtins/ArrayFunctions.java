@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** ext/standard array functions. Sorts are stable, as php-src's zend_sort is since PHP 8.0. */
-final class ArrayFunctions {
+public final class ArrayFunctions {
     private ArrayFunctions() {
     }
 
@@ -654,7 +654,7 @@ final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static Object search(Object needle, PhpArray array, boolean strict) {
+    public static Object search(Object needle, PhpArray array, boolean strict) {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object value = array.valueAt(p);
             if (strict ? Convert.strictEquals(value, needle) : Convert.looseEquals(value, needle)) {
