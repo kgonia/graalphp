@@ -229,6 +229,11 @@ public final class PhpArray implements TruffleObject {
      * Makes this array and the arrays nested in it immutable: language-level data shared by every context (and
      * thread). Call it before the array is published, while one thread holds it.
      */
+    /** Frozen (shared, its holders uncounted), for the refcount census. */
+    boolean isFrozen() {
+        return holders == FROZEN;
+    }
+
     @TruffleBoundary
     public void freeze() {
         if (holders == FROZEN) {

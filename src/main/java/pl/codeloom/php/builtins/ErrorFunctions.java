@@ -89,6 +89,14 @@ public final class ErrorFunctions {
         /** FATAL_EXIT_STATUS after a fatal error; the script's exit status unless exit() gives another. */
         int exitStatus;
 
+        /** The handlers kept (current and saved), each a value php-src holds a count of, for the refcount census. */
+        public void forEachHandler(java.util.function.Consumer<Object> each) {
+            each.accept(errorHandler);
+            errorHandlers.forEach(saved -> each.accept(saved.handler()));
+            each.accept(exceptionHandler);
+            exceptionHandlers.forEach(each);
+        }
+
         public int exitStatus() {
             return exitStatus;
         }

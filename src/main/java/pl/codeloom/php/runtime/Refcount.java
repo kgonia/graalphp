@@ -30,6 +30,46 @@ public final class Refcount {
         }
     }
 
+    /**
+     * The count audit (-Dphp.rc.audit=true, Census.audit): at the script's end, before the shutdown functions, each
+     * object's count against its holders. when: "end of script" or "exit" (frames still running).
+     */
+    public static void audit(pl.codeloom.php.PhpContext context, String when) {
+        if (Census.AUDIT) {
+            Census.audit(context, when);
+        }
+    }
+
+    /** Whether the translator emits an audit point at each statement's end (-Dphp.rc.audit.every=n). */
+    public static final boolean AUDIT_POINTS = Census.AUDIT_POINTS;
+
+    /** A frame's layout for the count audit: its first locals are PHP variables, then the hidden ones. */
+    public interface Variables {
+        int variableCount();
+    }
+
+    /**
+     * An owning temporary sent as an argument (audit points only): php-src moves it into the callee (SEND_VAL), so
+     * the hidden local still keeping it here isn't a holder php-src has, until it is released ({@link #unsent}).
+     */
+    public static void sent(Object value) {
+        if (value instanceof PhpObject object) {
+            Census.sent(object);
+        }
+    }
+
+    public static void unsent(Object value) {
+        if (value instanceof PhpObject object) {
+            Census.unsent(object);
+        }
+    }
+
+    /** A statement ended: every n-th time, the count audit with the frames as roots. */
+    public static void auditPoint(com.oracle.truffle.api.frame.MaterializedFrame frame,
+                                  com.oracle.truffle.api.bytecode.BytecodeNode bytecode) {
+        Census.auditPoint(frame, bytecode);
+    }
+
     /** A slot or an owning temporary takes the value. */
     public static void inc(Object value) {
         if (value instanceof PhpObject object) {
