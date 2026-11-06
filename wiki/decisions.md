@@ -188,3 +188,59 @@ Requests' streams transport writes raw HTTP over `stream_socket_client` itself, 
 - **pclose is fclose.** A child that exits 0 without reading all of a long message fails the last flush, and php then warns "Sendmail pclose failed 32 (Broken pipe)". The port gives the same result.
 - **Checked against PHP 8.5** in the reference image: the bytes sendmail gets for every `mail.cr_lf_mode`, `mail.mixed_lf_and_crlf`, `mail.add_x_header`, `additional_params` and `mail.force_extra_parameters`, `mail.log` to a file, `php://stderr` and syslog (all three `syslog.filter`s), exit statuses 0, 3 and 75, signals 9, 11, 15 and 34, a missing sendmail and a missing `/bin/sh`.
 - **One difference is left:** php-cli ignores SIGPIPE and its children inherit that, while HotSpot handles SIGPIPE, so the shell starts with the default action. A sendmail that writes to a pipe nobody reads is killed by SIGPIPE here and gets EPIPE under php. `posix_spawn` can only reset a signal to its default, not make the child ignore it.
+
+
+## D16: the Bytecode DSL is the only interpreter; the tree goes (2026-11-02)
+**Decision:** D6's Gate 2 question is answered: the Bytecode DSL interpreter is the default (PR #25) and becomes the
+only one. File top-level code, `ThunkRootNode` (class constants, property defaults) and `eval` move to bytecode,
+with #26's run-once rule (`RunOnceCode`) and `defined()` in place (`DefinedNode`); then the tree's translator and
+nodes, the `php.Interpreter` option and the dual-mode tests are deleted.
+
+**Why:**
+- **Two interpreters doubled the work and made mode-only bugs:** every semantic fix had to land twice, and fixes
+  landed on one side only (issue 004, `func_get_arg`, deprecated constants at the #23→#21 merge). The tree's smoke
+  run fails 19 tests the bytecode passes.
+- **Bytecode is no longer slower where it counts:** with #30 a warm Gate 2 visit costs 1.28 CPU-s against the
+  tree's 1.63 at the same wait, and splitting works again (#27, #28, #41).
+- **Cold code stays the known cost** (H9/H10 in [bytecode-dsl.md](bytecode-dsl.md)); native image is the answer
+  to it, not the tree.
+
+**Status:** [roadmap.md](roadmap.md), step 2.
+
+## D17: destructors exactly as php-src, by reference counting (2026-11-03)
+**Decision:** `__destruct` runs where php-src runs it: when an object's refcount reaches zero, from the cycle
+collector, and at shutdown in php-src's order. No documented deviation (end-of-request only, the JVM's GC,
+counting only destructible classes) is acceptable. The runtime counts the PHP holders of every container value
+(objects, arrays, references, closures, generator frames), with php-src's ownership discipline, and ports
+`zend_gc.c` and `shutdown_destructors`.
+
+**Why:**
+- **Code depends on it:** WordPress's `WP_HTML_Processor` releases its bookmarks from `WP_HTML_Token::__destruct`
+  and stops after 10,000 tokens without it. Buffers flushed and locks or transactions released in destructors are
+  common in plugins. PeachPie, which ignores destructors, broke Laravel's job queue that way.
+- **No cheaper exact scheme exists:** three independent analyses (Codex gpt-6-astra, Fable, Opus) found none.
+  Every container must be counted from its creation, because any of them can later receive a destructible object
+  ([destructors.md](destructors.md)). HHVM kept eager refcounting for the same reason.
+- **The cost is measured before it is accepted:** a counting-only prototype first, against thresholds.
+
+**Status:** [destructors.md](destructors.md), [../issues/005-destructors.md](../issues/005-destructors.md);
+after D16.
+
+## D18: observable behaviour exactly as PHP; internals free, speed and memory first (2026-11-03)
+**Decision:** code, libraries and frameworks must behave as on php-src. That covers everything a PHP program can
+observe: output, errors and their messages, destructor timing and order, copy-on-write, references, evaluation
+order. Inside the runtime, php-src's internal logic need not be reproduced where no program can tell the
+difference; there speed and memory come first.
+
+**What that means in practice:**
+- **Exact:** anything a PHP program can see or depend on. A documented deviation there is still a bug (the
+  correct-before-simple rule).
+- **Free:** refcount numbers as `debug_zval_dump` shows them; `gc_status()` counts; when the automatic cycle
+  collector triggers (php-src itself varies it with OPcache's optimizer); whether temporaries are counted;
+  internal data layouts and caches.
+- **Judgement call:** something internal that shows up in output, such as object handle numbers in `var_dump`'s
+  `#n`, follows php-src when it is cheap, and is decided case by case when it isn't.
+
+**Why:** the goal is a faster drop-in PHP (D1). Copying the reference interpreter's internals where nothing can
+observe them only costs speed and memory.
+
