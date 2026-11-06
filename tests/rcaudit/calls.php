@@ -5,7 +5,6 @@
 // Known findings:
 // - 'arg' LATE: php-src moves a temporary argument into the callee (SEND_VAL), which frees it in its epilogue
 //   before its own $l; here the caller's hidden local keeps it to the statement's end ("~l ~l ~arg").
-// - the Generator EARLY: its count reaches -1 (released once more than counted).
 class D {
     public $n;
     public $kids = [];
