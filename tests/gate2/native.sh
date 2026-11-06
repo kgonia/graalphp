@@ -297,9 +297,10 @@ host_cpu() {
     2> /dev/null | tr -d '\r'
 }
 
-# whether the host stayed under HOST_QUIET percent (default 30) over three samples 10 s apart
+# whether the host stayed under HOST_QUIET percent (default 30) over three samples 10 s apart; above 100, at once
 host_quiet() {
   local load
+  [ "${HOST_QUIET:-30}" -le 100 ] || return 0
   for _ in 1 2 3; do
     load=$(host_cpu)
     [ "${load:-100}" -lt "${HOST_QUIET:-30}" ] || return 1
