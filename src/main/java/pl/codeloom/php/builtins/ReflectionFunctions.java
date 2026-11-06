@@ -3,7 +3,9 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.SpreadArguments;
 import pl.codeloom.php.runtime.ArrayKey;
+import pl.codeloom.php.runtime.Backtrace;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.Convert;
@@ -55,6 +57,8 @@ final class ReflectionFunctions {
         r.fn("truffle\\reflection_closure", (context, a) -> closure(context, Args.get(a, 0), Args.str(a, 1),
                 Args.str(a, 2)));
         r.fn("truffle\\reflection_new", (context, a) -> phpClass(context, Args.get(a, 0), false).instantiate());
+        r.fn("truffle\\reflection_construct", (context, a) -> construct(context, Args.get(a, 0), Args.array(a, 1,
+                "Truffle\\reflection_construct")));
         r.fn("truffle\\lazy_new", (context, a) -> lazy(context, phpClass(context, Args.get(a, 0), false), null,
                 Args.get(a, 1), (int) Args.lng(a, 2, 0), Args.bool(a, 3, false)));
         r.fn("truffle\\lazy_reset", (context, a) -> lazy(context, phpClass(context, Args.get(a, 0), false),
@@ -635,61 +639,26 @@ final class ReflectionFunctions {
         PhpFunction method = phpClass.findMethod(Str.lower(Str.java(methodName)));
         PhpObject object = thisValue instanceof PhpObject o ? o : null;
         PhpClass staticClass = object != null ? object.getPhpClass() : phpClass;
-        Object[] values = arguments(context, method, arguments);
-        return new Callables.Target(method, method.isStatic() ? null : object, staticClass, null).call(values);
+        // zend_call_function with the arguments as named_params (ZEND_SEND_ARRAY's binding)
+        Callables.Target target = new Callables.Target(method, method.isStatic() ? null : object, staticClass, null);
+        return PhpRef.deref(method.getCallTarget().call(SpreadArguments.sendArray(target, arguments, null)));
     }
 
-    private static Object[] arguments(PhpContext context, PhpFunction function, PhpArray arguments) {
-        PhpFunction.Param[] params = function.getParams();
-        List<Object> values = new ArrayList<>();
-        for (int position = arguments.firstPosition(); arguments.isValidPosition(position);
-             position = arguments.nextPosition(position)) {
-            Object key = arguments.keyAt(position);
-            Object value = arguments.valueAt(position);
-            int index = values.size();
-            if (key instanceof TruffleString name) {
-                index = -1;
-                for (int i = 0; i < params.length; i++) {
-                    if (params[i].name().equals(Str.java(name)) && !params[i].variadic()) {
-                        index = i;
-                    }
-                }
-                if (index < 0) {
-                    throw new PhpError("Error", "Unknown named parameter $" + Str.java(name));
-                }
-                if (index < values.size() && values.get(index) != null) {
-                    throw new PhpError("Error", "Named parameter $" + Str.java(name)
-                            + " overwrites previous argument");
-                }
-            }
-            while (values.size() <= index) {
-                values.add(null);
-            }
-            values.set(index, byValue(context, function, index, value));
+    /**
+     * ReflectionClass::newInstance() and newInstanceArgs(): an instance of the class, as `new` makes it, its
+     * constructor called with the arguments as named_params (zend_call_known_function: ZEND_SEND_ARRAY's binding).
+     */
+    @TruffleBoundary
+    private static PhpObject construct(PhpContext context, Object className, PhpArray arguments) {
+        PhpClass phpClass = phpClass(context, className, false);
+        PhpObject object = phpClass.isThrowable() ? phpClass.instantiate(SourceLocation.current(),
+                Backtrace.forThrowable()) : phpClass.instantiate();
+        PhpFunction constructor = phpClass.getConstructor();
+        if (constructor != null) {
+            Callables.Target target = new Callables.Target(constructor, object, phpClass, null);
+            constructor.getCallTarget().call(SpreadArguments.sendArray(target, arguments, null));
         }
-        // a skipped parameter before a named one takes its default: only the trailing ones may stay unsent
-        for (int i = 0; i < values.size(); i++) {
-            if (values.get(i) == null) {
-                throw new PhpError("ArgumentCountError", function.displayName() + "(): Argument #" + (i + 1)
-                        + " ($" + params[i].name() + ") not passed");
-            }
-        }
-        return values.toArray();
-    }
-
-    private static Object byValue(PhpContext context, PhpFunction function, int index, Object value) {
-        if (!function.isByRef(index)) {
-            return PhpRef.deref(value);
-        }
-        if (value instanceof PhpRef) {
-            return value;
-        }
-        PhpFunction.Param[] params = function.getParams();
-        String name = index < params.length ? params[index].name() : params[params.length - 1].name();
-        ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of(function.displayName() + "(): Argument #"
-                + (index + 1) + " ($" + name + ") must be passed by reference, value given"),
-                SourceLocation.current());
-        return new PhpRef(value);
+        return object;
     }
 
     /** ReflectionMethod::getClosure: the method as a closure bound to the object (none for a static method). */

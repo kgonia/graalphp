@@ -20,7 +20,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [014](014-namespace-fallback-functions.md) | An unqualified call in a namespace: intrinsics ignore the namespace's function, and the fallback isn't kept per request | Fixed |
 | [015](015-generator-frames-in-traces.md) | A delegating generator's frame is missing from traces (gh8289) | Fixed |
 | [016](016-woo-stock-lost-update.md) | A WooCommerce `_stock` decrement is lost now and then under load | Won't fix: WooCommerce/MariaDB deadlock, on php-fpm too |
-| [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Open: a decision |
+| [017](017-named-args-unpacking.md) | String keys in argument unpacking aren't taken as named arguments | Fixed (built-ins' names come with part 3) |
 | [018](018-unpack-traversable.md) | Unpacking a Traversable fails | Fixed |
 | [019](019-extract-refs.md) | extract() with EXTR_REFS binds values | Fixed |
 | [020](020-variable-variables.md) | Variable variables (`$$name`, `${expr}`) aren't supported | Fixed |
@@ -32,3 +32,8 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [026](026-error-exception-constructor.md) | ErrorException ignores its severity, filename and line arguments | Open |
 | [027](027-undefined-property-warning.md) | A read of a missing property doesn't warn "Undefined property" | Open |
 | [028](028-autoload-invalid-name.md) | Autoloaders run for an empty or invalid class name | Fixed |
+| [029](029-reflection-attribute.md) | Attributes can't be read: no ReflectionAttribute | Open |
+| [030](030-assert-compiled-out.md) | assert() is compiled out (zend.assertions = -1), the reference runs it | Open |
+| [031](031-fiber.md) | No Fiber class | Open |
+| [032](032-sensitive-parameter.md) | #[\SensitiveParameter] doesn't redact arguments in traces | Open |
+| [033](033-unknown-named-zpp-order.md) | A variadic built-in refuses extra names before its fixed parameters' type errors | Open |

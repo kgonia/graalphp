@@ -22,6 +22,7 @@ import pl.codeloom.php.bytecode.DefinedSite;
 import pl.codeloom.php.bytecode.IncludeSite;
 import pl.codeloom.php.bytecode.LiteralSite;
 import pl.codeloom.php.bytecode.MethodSite;
+import pl.codeloom.php.bytecode.NamedSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNodeGen;
 import pl.codeloom.php.bytecode.PropSite;
@@ -106,6 +107,8 @@ public final class BytecodeTranslator {
     private boolean eval;
     /** A constant expression's root ({@link Thunk}): the expression; null for a function or a file. */
     private Ast thunk;
+    /** A function's defaults target ({@link #defaults}): declaration has only the parameter list. */
+    private boolean defaults;
     /** Whether the code has a loop, a foreach or a goto label (prepareForCompilation), as the first run found. */
     private boolean loops;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
@@ -122,6 +125,8 @@ public final class BytecodeTranslator {
     private String[] variableNames;
     /** The hidden local keeping the call's variables by name (an include, extract()), or null if none needs it. */
     private LocalAccessor scopeLocal;
+    /** A variadic function's (and its defaults target's) hidden local for the named extras (NamedExtras), or -1. */
+    private int namedExtrasOffset = -1;
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
     private boolean firstRun = true;
@@ -174,6 +179,9 @@ public final class BytecodeTranslator {
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
+        if (translator.namedExtrasOffset >= 0) {
+            root.initializeVariadic(translator.namedExtrasOffset);
+        }
         if (generator) {
             root.initializeGenerator(function.returnsRef(), hasFinally(body == null ? declaration.body() : body));
         } else if (function.returnsRef()) {
@@ -275,6 +283,48 @@ public final class BytecodeTranslator {
         }
     }
 
+    /**
+     * What makes a user function's defaults target (PhpFunction.getDefaultsTarget): it keeps the declaration's
+     * parameter list and line only, not its body.
+     */
+    static Supplier<RootCallTarget> defaults(PhpLanguage language, String path, Source source, boolean internal,
+                                             Ast declaration, Translator.ClassInfo owner, PhpFunction function,
+                                             String display, PhpFunction.Param[] params, Names names) {
+        Ast paramList = declaration.node("params");
+        if (paramList == null) {
+            return null;
+        }
+        Ast header = new Ast(declaration.kind, declaration.flags, declaration.line, declaration.endLine, null,
+                Map.of("params", paramList));
+        return () -> defaultsTarget(language, path, source, internal, header, owner, function, display, params, names);
+    }
+
+    /**
+     * The defaults target of a function: a root that fills the arguments a call by name left out, run on the call's
+     * frame arguments after every argument is sent and before the function's own target (php-src's
+     * zend_handle_undef_args in a fake frame of the callee). Made on the first call that leaves one out.
+     */
+    private static RootCallTarget defaultsTarget(PhpLanguage language, String path, Source source, boolean internal,
+                                                 Ast header, Translator.ClassInfo owner, PhpFunction function,
+                                                 String display, PhpFunction.Param[] params, Names names) {
+        BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, header, null, owner,
+                function, display, params, new String[0], new boolean[0], names, false);
+        translator.defaults = true;
+        PhpBytecodeRootNode root;
+        try {
+            root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse).getNode(0);
+        } catch (Unsupported unsupported) {
+            throw new PhpError("Unsupported " + unsupported.getMessage() + " in the defaults of " + display);
+        }
+        root.initialize(display, path, internal, translator.functionSection(), params, new int[0], null,
+                new LocalAccessor[0], new LocalAccessor[0], owner == null ? null : owner.name());
+        root.initializeDefaults();
+        if (translator.namedExtrasOffset >= 0) {
+            root.initializeVariadic(translator.namedExtrasOffset);
+        }
+        return root.getCallTarget();
+    }
+
     /** A construct the translator doesn't cover, as the Error it raises where the code is translated. */
     private static PhpError unsupported(Unsupported unsupported, String path) {
         return new PhpError("Unsupported " + unsupported.getMessage() + " in " + path);
@@ -291,6 +341,11 @@ public final class BytecodeTranslator {
         Run run = new Run(builder);
         if (thunk != null) {
             run.thunkRoot(thunk);
+            firstRun = false;
+            return;
+        }
+        if (defaults) {
+            run.defaultsRoot();
             firstRun = false;
             return;
         }
@@ -536,6 +591,54 @@ public final class BytecodeTranslator {
             b.endRoot();
         }
 
+        /**
+         * A function's defaults target ({@link BytecodeTranslator#defaults}): each parameter before a variadic one
+         * that the call left out, in order (zend_handle_undef_args), gets its default, evaluated as the prologue
+         * evaluates it (a constant expression in the function's scope), or is php-src's ArgumentCountError "not
+         * passed", which ends the call; each at the parameter's line (its RECV's), in a frame showing the callee.
+         */
+        void defaultsRoot() {
+            b.beginRoot();
+            if (source != null) {
+                b.beginSource(source);
+            }
+            // the extras the call passes too, which its frame shows (php-src's fake frame is the call's)
+            takeNamedExtras();
+            Ast paramList = declaration.node("params");
+            for (int i = 0; i < params.length; i++) {
+                if (params[i].variadic()) {
+                    continue;
+                }
+                Ast param = (Ast) paramList.child(i);
+                beginLine(param.line);
+                b.beginIfThen();
+                b.emitIsNotPassed(i);
+                Object defaultValue = param.get("default");
+                if (defaultValue == null) {
+                    b.emitNotPassed(i);
+                } else {
+                    b.beginSetArgument(i);
+                    if (constantShaped(defaultValue)) {
+                        constant(defaultValue, param);
+                    } else {
+                        constantExpression = true;
+                        expression(defaultValue);
+                        constantExpression = false;
+                    }
+                    b.endSetArgument();
+                }
+                b.endIfThen();
+                endLine(param.line);
+            }
+            b.beginReturn();
+            b.emitLoadConstant(PhpNull.NULL);
+            b.endReturn();
+            if (source != null) {
+                b.endSource();
+            }
+            b.endRoot();
+        }
+
         /** Where a statement changes the namespace or the imports in effect: the names from there on. */
         private Ast namesChange(Ast at) {
             return new Ast("NAMES", 0, at.line, at.line, null, Map.of("names", names));
@@ -649,6 +752,7 @@ public final class BytecodeTranslator {
             if (source != null) {
                 b.beginSourceSectionUnavailable();
             }
+            BytecodeLocal extras = takeNamedExtras();
             int[] arity = internal ? Registry.arity(display) : null;
             if (arity != null) {
                 b.emitCheckArity(Registry.declaredName(display), arity[0], arity[1]);
@@ -657,15 +761,17 @@ public final class BytecodeTranslator {
             for (int i = 0; i < params.length; i++) {
                 Ast param = (Ast) paramList.child(i);
                 BytecodeLocal local = variables.get(params[i].name());
+                // a parameter's errors are at its own line, its RECV opline's
                 if (params[i].variadic()) {
-                    beginLine(declaration.line);
+                    beginLine(param.line);
                     b.emitBindVariadic(local, i);
-                    endLine(declaration.line);
+                    b.emitBindNamedExtras(local, extras, i);
+                    endLine(param.line);
                     continue;
                 }
                 b.beginBindParameter(local, i);
                 if (params[i].declared() != null) {
-                    beginLine(declaration.line);
+                    beginLine(param.line);
                     b.beginCheckParameter(i);
                 }
                 Object defaultValue = param.get("default");
@@ -680,15 +786,17 @@ public final class BytecodeTranslator {
                     if (constantShaped(defaultValue)) {
                         constant(defaultValue, param);
                     } else {
+                        beginLine(param.line);
                         constantExpression = true;
                         expression(defaultValue);
                         constantExpression = false;
+                        endLine(param.line);
                     }
                     b.endConditional();
                 }
                 if (params[i].declared() != null) {
                     b.endCheckParameter();
-                    endLine(declaration.line);
+                    endLine(param.line);
                 }
                 b.endBindParameter();
             }
@@ -712,6 +820,20 @@ public final class BytecodeTranslator {
             if (source != null) {
                 b.endSourceSectionUnavailable();
             }
+        }
+
+        /**
+         * A variadic function's first instruction, before anything reads the frame's closure slot: the named extras a
+         * call may pass there (NamedExtras), kept in a hidden local of their own; null for another function.
+         */
+        private BytecodeLocal takeNamedExtras() {
+            if (params.length == 0 || !params[params.length - 1].variadic()) {
+                return null;
+            }
+            BytecodeLocal extras = b.createLocal();
+            namedExtrasOffset = extras.getLocalOffset();
+            b.emitTakeNamedExtras(extras);
+            return extras;
         }
 
         /** A statement's source section: its line, as the tree's statements carry it (StmtNode.setLine). */
@@ -4230,12 +4352,22 @@ public final class BytecodeTranslator {
 
         /** The call of the function info names, looked up first, then each argument evaluated. */
         private void functionCall(CallInfo info, Ast args, boolean byRefContext) {
+            NamedSite named = namedSite(args, false);
+            if (named != null) {
+                b.beginCallNamed(info, named, byRefContext);
+                b.beginBindStackValue();
+                b.emitResolveFunction(info);
+                StackValue callee = b.endBindStackValue();
+                namedArguments(args, named, callee);
+                b.endCallNamed();
+                return;
+            }
             if (unpacks(args)) {
                 b.beginCallSpread(info, byRefContext);
                 b.beginBindStackValue();
                 b.emitResolveFunction(info);
                 StackValue spreadCallee = b.endBindStackValue();
-                spreadArguments(args, spreadCallee);
+                spreadArguments(args, spreadCallee, false);
                 b.endCallSpread();
                 return;
             }
@@ -4497,6 +4629,18 @@ public final class BytecodeTranslator {
          */
         private void callValue(Ast node, Object calleeValue, boolean keepRef) {
             Ast args = node.node("args");
+            NamedSite named = namedSite(args, false);
+            if (named != null) {
+                b.beginCallValueNamed(named, keepRef);
+                b.beginBindStackValue();
+                b.beginResolveCallable();
+                calleeValue(calleeValue);
+                b.endResolveCallable();
+                StackValue target = b.endBindStackValue();
+                namedCallableArguments(args, named, target);
+                b.endCallValueNamed();
+                return;
+            }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             if (spread) {
@@ -4517,6 +4661,16 @@ public final class BytecodeTranslator {
             }
         }
 
+        /** The function operand of a CallValueNamed (TargetFunction) and its arguments. */
+        private void namedCallableArguments(Ast args, NamedSite named, StackValue target) {
+            b.beginBindStackValue();
+            b.beginTargetFunction();
+            b.emitLoadStackValue(target);
+            b.endTargetFunction();
+            StackValue callee = b.endBindStackValue();
+            namedArguments(args, named, callee);
+        }
+
         /** The function operand of a CallValue (its arguments' callee) and the arguments, a list if spread. */
         private void callableArguments(Ast args, StackValue target, boolean needsCallee, boolean spread) {
             StackValue calleeValue = callee(needsCallee, () -> {
@@ -4530,7 +4684,7 @@ public final class BytecodeTranslator {
         /** A call's arguments sent once its callee is known: each an operand, or the list a call unpacking takes. */
         private void arguments(Ast args, StackValue callee, boolean spread) {
             if (spread) {
-                spreadArguments(args, callee);
+                spreadArguments(args, callee, false);
                 return;
             }
             for (int i = 0; i < args.size(); i++) {
@@ -4540,13 +4694,19 @@ public final class BytecodeTranslator {
 
         /**
          * Whether a call unpacks arguments (`f($a, ...$b)`), checked as php-src's zend_compile_args does: no
-         * positional argument after an unpacked one (its compile error); named arguments stay on the tree, whose
-         * translation doesn't cover them either.
+         * positional argument after an unpacked one (its compile error); named arguments may follow it (namedSite
+         * checked the rest).
          */
         private boolean unpacks(Ast args) {
             boolean unpacked = false;
             for (Object arg : args.children()) {
-                if (arg instanceof Ast ast && (ast.is("AST_NAMED_ARG") || ast.is("AST_CALLABLE_CONVERT"))) {
+                if (arg instanceof Ast ast && ast.is("AST_CALLABLE_CONVERT")) {
+                    throw new Unsupported("argument", ast);
+                }
+                if (arg instanceof Ast ast && ast.is("AST_NAMED_ARG") && unpacked) {
+                    continue;
+                }
+                if (arg instanceof Ast ast && ast.is("AST_NAMED_ARG")) {
                     throw new Unsupported("argument", ast);
                 }
                 if (isUnpack(arg)) {
@@ -4564,16 +4724,150 @@ public final class BytecodeTranslator {
         }
 
         /**
-         * The arguments of a call that unpacks, as the list its call takes (SpreadStart, ArgumentsNode's spread):
-         * the arguments before the first `...` sent as any call's, at their constant positions; then each unpacked
-         * array's elements, by reference where they land on the callee's by-reference parameters (a variable's
-         * array separated for it, SpreadVar).
+         * The names of a call's arguments, or null for a call without any (its bytecode is a positional call's).
+         * php-src's zend_compile_args rejects a positional argument or an unpacking after a name (the file's check,
+         * JumpChecks, reports them first); names after an unpacking are bound when the call runs, by the unpacking's
+         * list (spreadArguments): null for them too. construct: a `new`'s.
          */
-        private void spreadArguments(Ast args, StackValue callee) {
+        private NamedSite namedSite(Ast args, boolean construct) {
+            int first = -1;
+            boolean unpacked = false;
+            for (int i = 0; i < args.size(); i++) {
+                Object arg = args.child(i);
+                Ast at = arg instanceof Ast ast ? ast : args;
+                if (at.is("AST_NAMED_ARG")) {
+                    first = first < 0 ? i : first;
+                } else if (isUnpack(arg)) {
+                    if (first >= 0) {
+                        throw compileError(at, "Cannot use argument unpacking after named arguments");
+                    }
+                    unpacked = true;
+                } else if (unpacked) {
+                    throw compileError(at, "Cannot use positional argument after argument unpacking");
+                } else if (first >= 0) {
+                    throw compileError(at, "Cannot use positional argument after named argument");
+                }
+            }
+            if (first < 0) {
+                return null;
+            }
+            if (unpacked) {
+                return null;
+            }
+            int count = args.size();
+            int positional = first;
+            boolean constant = constantExpression;
+            return (NamedSite) made(() -> {
+                TruffleString[] argumentNames = new TruffleString[count];
+                for (int i = positional; i < count; i++) {
+                    argumentNames[i] = language.intern(Str.of((String) ((Ast) args.child(i)).get("name")));
+                }
+                return new NamedSite(argumentNames, construct, constant);
+            });
+        }
+
+        /** A call's arguments sent: the positional ones before the first name as any call's, then the named ones. */
+        private void namedArguments(Ast args, NamedSite named, StackValue callee) {
+            for (int i = 0; i < args.size(); i++) {
+                if (i < named.positional()) {
+                    argument(args.child(i), i, callee);
+                } else {
+                    namedArgument(((Ast) args.child(i)).get("expr"), named, i, callee);
+                }
+            }
+        }
+
+        /**
+         * A named argument's value, sent as php-src sends it (zend_compile_args with a name, then
+         * zend_handle_named_arg at the SEND): a variable bound before it is read (SendVarNamed); a value or a call's
+         * result once evaluated; a place fetched as its parameter takes it (NamedTarget), then bound (SendPlaceNamed).
+         */
+        private void namedArgument(Object value, NamedSite named, int argument, StackValue callee) {
+            if (value instanceof Ast chain && (chain.is("BYTECODE_OBJECT")
+                    || Translator.deepestNullsafe(chain) != null)) {
+                if (Translator.isCall(chain)) {
+                    b.beginSendCallNamed(named, argument);
+                    b.emitLoadStackValue(callee);
+                    expression(chain);
+                    b.endSendCallNamed();
+                } else {
+                    b.beginSendValueNamed(named, argument);
+                    b.emitLoadStackValue(callee);
+                    expression(chain);
+                    b.endSendValueNamed();
+                }
+                return;
+            }
+            if (plainArgument(value) || value instanceof Ast assign && assign.is("AST_ASSIGN_REF")
+                    && !(isVariable(assign.node("var")) || assign.node("var").is("AST_VAR")
+                    && assign.node("var").get("name") instanceof String)) {
+                // $this, and a reference assigned to an element or a property (sent as its value, as positionally)
+                b.beginSendPlaceNamed(named, argument);
+                b.emitLoadStackValue(callee);
+                expression(value);
+                b.endSendPlaceNamed();
+                return;
+            }
+            if (value instanceof Ast assign && assign.is("AST_ASSIGN_REF")) {
+                // ASSIGN_REF's result is the reference: the assignment, then its variable as the argument
+                b.beginBlock();
+                assignRef(assign);
+                namedArgument(assign.node("var"), named, argument, callee);
+                b.endBlock();
+                return;
+            }
+            if (valueArgument(value)) {
+                b.beginSendValueNamed(named, argument);
+                b.emitLoadStackValue(callee);
+                expression(value);
+                b.endSendValueNamed();
+                return;
+            }
+            Ast ast = (Ast) value;
+            NamedSend send = new NamedSend(named, argument);
+            if (refPlace(ast) instanceof RefPlace kept) {
+                b.beginSendPlaceNamed(named, argument);
+                b.emitLoadStackValue(callee);
+                b.beginBlock();
+                kept.prepare();
+                b.beginConditional();
+                argByRef(0, callee, send);
+                kept.ref(true);
+                kept.read();
+                b.endConditional();
+                b.endBlock();
+                b.endSendPlaceNamed();
+            } else if (ast.is("AST_VAR")) {
+                b.beginSendVarNamed(variable(ast, "argument"), named, argument);
+                b.emitLoadStackValue(callee);
+                b.endSendVarNamed();
+            } else if (ast.is("AST_DIM") || ast.is("AST_PROP")) {
+                b.beginSendPlaceNamed(named, argument);
+                b.emitLoadStackValue(callee);
+                placeArgument(ast, 0, callee, send);
+                b.endSendPlaceNamed();
+            } else {
+                b.beginSendCallNamed(named, argument);
+                b.emitLoadStackValue(callee);
+                callArgument(ast);
+                b.endSendCallNamed();
+            }
+        }
+
+        /**
+         * The arguments of a call that unpacks, as the list its call takes (SpreadStart, SpreadArguments): the
+         * arguments before the first `...` sent as any call's, at their constant positions; then each unpacked
+         * value's elements, by position or by name, by reference where they land on the callee's by-reference
+         * parameters (a variable's array separated for it, SpreadVar); then the named arguments, bound when the call
+         * runs (beginSpreadNamed). construct: a `new`'s.
+         */
+        private void spreadArguments(Ast args, StackValue callee, boolean construct) {
             int count = args.size();
             for (int i = count - 1; i >= 0; i--) {
                 Object arg = args.child(i);
-                if (!isUnpack(arg)) {
+                if (arg instanceof Ast named && named.is("AST_NAMED_ARG")) {
+                    beginSpreadNamed(named.get("expr"), language.intern(Str.of((String) named.get("name"))));
+                } else if (!isUnpack(arg)) {
                     b.beginSpreadAdd();
                 } else if (((Ast) arg).get("expr") instanceof Ast unpacked && isVariable(unpacked)) {
                     b.beginSpreadVar(variable(unpacked, "unpacking of"));
@@ -4583,9 +4877,13 @@ public final class BytecodeTranslator {
                     b.beginSpreadValue();
                 }
             }
-            b.emitSpreadStart();
+            b.emitSpreadStart(construct);
             for (int i = 0; i < count; i++) {
                 Object arg = args.child(i);
+                if (arg instanceof Ast named && named.is("AST_NAMED_ARG")) {
+                    endSpreadNamed(named.get("expr"), language.intern(Str.of((String) named.get("name"))), callee);
+                    continue;
+                }
                 if (!isUnpack(arg)) {
                     argument(arg, i, callee);
                     b.endSpreadAdd();
@@ -4603,6 +4901,114 @@ public final class BytecodeTranslator {
                     b.endSpreadValue();
                 }
             }
+        }
+
+        /**
+         * How a named argument after an unpacking is sent (namedArgument's cases, its name bound when the call runs):
+         * a variable bound before it is read (SpreadVarNamed); else a value, a call's result or a place fetched as
+         * the name's parameter takes it (SpreadTarget), then bound (SpreadNamed). The operation, begun before the
+         * list it adds to.
+         */
+        private void beginSpreadNamed(Object value, TruffleString name) {
+            if (spreadVariable(value) instanceof Ast variable) {
+                b.beginSpreadVarNamed(variable(variable, "argument"), name);
+            } else {
+                b.beginSpreadNamed(name, spreadKind(value));
+            }
+        }
+
+        /** The operands of beginSpreadNamed's operation, the list emitted: the callee, then the argument's value. */
+        private void endSpreadNamed(Object value, TruffleString name, StackValue callee) {
+            if (spreadVariable(value) != null) {
+                if (value instanceof Ast assign && assign.is("AST_ASSIGN_REF")) {
+                    // ASSIGN_REF first, then its variable as the argument
+                    b.beginBlock();
+                    assignRef(assign);
+                    b.emitLoadStackValue(callee);
+                    b.endBlock();
+                } else {
+                    b.emitLoadStackValue(callee);
+                }
+                b.endSpreadVarNamed();
+                return;
+            }
+            b.emitLoadStackValue(callee);
+            spreadNamedValue(value, callee, new NamedSend(null, 0, name));
+            b.endSpreadNamed();
+        }
+
+        /** SpreadNamed's value operand: as namedArgument's sends evaluate it. */
+        private void spreadNamedValue(Object value, StackValue callee, NamedSend send) {
+            if (chained(value) || plainArgument(value) || referenceToPlace(value) || valueArgument(value)) {
+                expression(value);
+                return;
+            }
+            Ast ast = (Ast) value;
+            if (ast.is("AST_ASSIGN_REF")) {
+                // to a file's variable or a global: the assignment, then the variable as the argument
+                b.beginBlock();
+                assignRef(ast);
+                spreadNamedValue(ast.node("var"), callee, send);
+                b.endBlock();
+            } else if (refPlace(ast) instanceof RefPlace kept) {
+                b.beginBlock();
+                kept.prepare();
+                b.beginConditional();
+                argByRef(0, callee, send);
+                kept.ref(true);
+                kept.read();
+                b.endConditional();
+                b.endBlock();
+            } else if (ast.is("AST_DIM") || ast.is("AST_PROP")) {
+                placeArgument(ast, 0, callee, send);
+            } else {
+                callArgument(ast);
+            }
+        }
+
+        /** A `?->` chain or the operand of `|>`: a call's result or a value (namedArgument's first case). */
+        private boolean chained(Object value) {
+            return value instanceof Ast chain && (chain.is("BYTECODE_OBJECT")
+                    || Translator.deepestNullsafe(chain) != null);
+        }
+
+        /** `$a[0] = &$b`, `$o->p = &$b` as an argument: sent as its value (as positionally). */
+        private boolean referenceToPlace(Object value) {
+            return value instanceof Ast assign && assign.is("AST_ASSIGN_REF")
+                    && !(isVariable(assign.node("var")) || assign.node("var").is("AST_VAR")
+                    && assign.node("var").get("name") instanceof String);
+        }
+
+        /** The function's variable a named argument after an unpacking is (`$x`, `$x = &$y`): SpreadVarNamed's. */
+        private Ast spreadVariable(Object value) {
+            if (chained(value) || plainArgument(value) || referenceToPlace(value) || valueArgument(value)) {
+                return null;
+            }
+            Ast ast = (Ast) value;
+            if (ast.is("AST_ASSIGN_REF")) {
+                return spreadVariable(ast.node("var"));
+            }
+            return ast.is("AST_VAR") && refPlace(ast) == null ? ast : null;
+        }
+
+        /** SpreadNamed's kind for a named argument after an unpacking that isn't a variable (see spreadNamedValue). */
+        private int spreadKind(Object value) {
+            if (chained(value)) {
+                return Translator.isCall((Ast) value) ? PhpBytecodeRootNode.SPREAD_CALL
+                        : PhpBytecodeRootNode.SPREAD_VALUE;
+            }
+            if (plainArgument(value) || referenceToPlace(value)) {
+                return PhpBytecodeRootNode.SPREAD_PLACE;
+            }
+            if (valueArgument(value)) {
+                return PhpBytecodeRootNode.SPREAD_VALUE;
+            }
+            Ast ast = (Ast) value;
+            if (ast.is("AST_ASSIGN_REF")) {
+                return spreadKind(ast.node("var"));
+            }
+            return ast.is("AST_VAR") || ast.is("AST_STATIC_PROP") || ast.is("AST_DIM") || ast.is("AST_PROP")
+                    ? PhpBytecodeRootNode.SPREAD_PLACE : PhpBytecodeRootNode.SPREAD_CALL;
         }
 
         /** A file's variable or a superglobal: a variable by a constant name kept in a reference (RefPlace). */
@@ -4659,6 +5065,19 @@ public final class BytecodeTranslator {
             if (!(node.get("method") instanceof String name)) {
                 // `$obj->$name(args)` (DynamicMethodCallNode): the callable [$obj, name], then the arguments
                 Ast args = node.node("args");
+                NamedSite named = namedSite(args, false);
+                if (named != null) {
+                    b.beginCallValueNamed(named, byRefContext);
+                    b.beginBindStackValue();
+                    b.beginResolveDynamicMethod();
+                    expression(node.get("expr"));
+                    expression(node.get("method"));
+                    b.endResolveDynamicMethod();
+                    StackValue target = b.endBindStackValue();
+                    namedCallableArguments(args, named, target);
+                    b.endCallValueNamed();
+                    return;
+                }
                 boolean spread = unpacks(args);
                 boolean needsCallee = spread || argumentsNeedCallee(args);
                 if (spread) {
@@ -4681,6 +5100,22 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast args = node.node("args");
+            NamedSite named = namedSite(args, false);
+            if (named != null) {
+                MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
+                b.beginCallMethodNamed(site, named, byRefContext);
+                b.beginBindStackValue();
+                expression(node.get("expr"));
+                StackValue receiver = b.endBindStackValue();
+                b.beginBindStackValue();
+                b.beginResolveMethod(site);
+                b.emitLoadStackValue(receiver);
+                b.endResolveMethod();
+                StackValue callee = b.endBindStackValue();
+                namedArguments(args, named, callee);
+                b.endCallMethodNamed();
+                return;
+            }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
@@ -4729,6 +5164,22 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast args = node.node("args");
+            NamedSite named = namedSite(args, false);
+            if (named != null) {
+                MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
+                b.beginCallStaticNamed(site, named, byRefContext);
+                b.beginBindStackValue();
+                classRef(node.get("class"));
+                StackValue phpClass = b.endBindStackValue();
+                b.beginBindStackValue();
+                b.beginResolveStaticMethod(site);
+                b.emitLoadStackValue(phpClass);
+                b.endResolveStaticMethod();
+                StackValue callee = b.endBindStackValue();
+                namedArguments(args, named, callee);
+                b.endCallStaticNamed();
+                return;
+            }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
@@ -4796,6 +5247,19 @@ public final class BytecodeTranslator {
                 return;
             }
             Ast args = node.node("args");
+            NamedSite named = namedSite(args, false);
+            if (named != null) {
+                b.beginCallValueNamed(named, byRefContext);
+                b.beginBindStackValue();
+                b.beginResolveStaticCall(forwarding);
+                classRef(node.get("class"));
+                expression(node.get("method"));
+                b.endResolveStaticCall();
+                StackValue target = b.endBindStackValue();
+                namedCallableArguments(args, named, target);
+                b.endCallValueNamed();
+                return;
+            }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             if (spread) {
@@ -4834,6 +5298,30 @@ public final class BytecodeTranslator {
                 b.emitDeclareAnonymousClass(anonymous);
             }
             Ast args = node.node("args");
+            NamedSite named = namedSite(args, true);
+            if (named != null) {
+                b.beginConstructNamed(named);
+                b.beginBindStackValue();
+                b.beginInstantiate();
+                if (anonymous != null) {
+                    b.emitResolveClass(classSite(anonymous.getName()));
+                } else {
+                    classRef(node.get("class"));
+                }
+                b.endInstantiate();
+                StackValue object = b.endBindStackValue();
+                b.beginBindStackValue();
+                b.beginResolveConstructor();
+                b.emitLoadStackValue(object);
+                b.endResolveConstructor();
+                StackValue callee = b.endBindStackValue();
+                namedArguments(args, named, callee);
+                b.endConstructNamed();
+                if (anonymous != null) {
+                    b.endBlock();
+                }
+                return;
+            }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             if (spread) {
@@ -4855,7 +5343,11 @@ public final class BytecodeTranslator {
                 b.emitLoadStackValue(object);
                 b.endResolveConstructor();
             });
-            arguments(args, calleeValue, spread);
+            if (spread) {
+                spreadArguments(args, calleeValue, true);
+            } else {
+                arguments(args, calleeValue, false);
+            }
             if (spread) {
                 b.endConstructSpread();
             } else {
@@ -5106,11 +5598,40 @@ public final class BytecodeTranslator {
                 b.beginSendVar(variable(ast, "argument"), index);
                 b.emitLoadStackValue(callee);
                 b.endSendVar();
-            } else if (ast.is("AST_DIM") && temporaryBase(ast) != null) {
-                temporaryElementArgument(ast, temporaryBase(ast), index, callee);
+            } else if (ast.is("AST_DIM") || ast.is("AST_PROP")) {
+                placeArgument(ast, index, callee, null);
+            } else {
+                // a call, `new`, include or yield (SEND_VAR_NO_REF)
+                b.beginSendCall(index);
+                b.emitLoadStackValue(callee);
+                callArgument(ast);
+                b.endSendCall();
+            }
+        }
+
+        /** A call, `new`, include or yield as an argument: a call's result as it may return a reference. */
+        private void callArgument(Ast ast) {
+            if (ast.is("AST_CALL")) {
+                call(ast, true);
+            } else if (ast.is("AST_METHOD_CALL")) {
+                methodCall(ast, true);
+            } else if (ast.is("AST_STATIC_CALL")) {
+                staticCall(ast, true);
+            } else {
+                expression(ast);
+            }
+        }
+
+        /**
+         * An element or a property as argument index: its reference when the parameter is by reference, else its
+         * value (FETCH_*_FUNC_ARG). named: a named argument's, whose send asks NamedTarget about the parameter.
+         */
+        private void placeArgument(Ast ast, int index, StackValue callee, NamedSend named) {
+            if (ast.is("AST_DIM") && temporaryBase(ast) != null) {
+                temporaryElementArgument(ast, temporaryBase(ast), index, callee, named);
             } else if (ast.is("AST_DIM") && isVariable(ast.node("expr")) && ast.get("dim") != null) {
                 b.beginSendElement(variable(ast.node("expr"), "argument element of"), index);
-                b.emitLoadStackValue(callee);
+                sendCallee(callee, named);
                 key(ast.get("dim"));
                 b.endSendElement();
             } else if (ast.is("AST_DIM")) {
@@ -5123,14 +5644,14 @@ public final class BytecodeTranslator {
                 if (place.ref() != null && append) {
                     // a new element's reference, else the Error (SendTemporary on the place's reference)
                     b.beginSendTemporary(index, true, true);
-                    b.emitLoadStackValue(callee);
+                    sendCallee(callee, named);
                     place.ref().ref(true);
                     emitKeys(keys);
                     b.endSendTemporary();
                 } else if (place.ref() != null) {
                     // the element's reference (DimNode.makeRef) or its value (DimNode.execute down the chain)
                     b.beginConditional();
-                    argByRef(index, callee);
+                    argByRef(index, callee, named);
                     b.beginRefRefNested(false);
                     place.ref().ref(true);
                     emitKeys(keys);
@@ -5146,12 +5667,12 @@ public final class BytecodeTranslator {
                     b.endConditional();
                 } else if (place.variable() != null) {
                     b.beginSendNested(place.variable(), index, append);
-                    b.emitLoadStackValue(callee);
+                    sendCallee(callee, named);
                     emitKeys(keys);
                     b.endSendNested();
                 } else {
                     b.beginSendPropNested(place.site(), index, append);
-                    b.emitLoadStackValue(callee);
+                    sendCallee(callee, named);
                     writtenObject(place.property().get("expr"), BP_VAR_W);
                     propertyKeys(place, keys);
                     b.endSendPropNested();
@@ -5159,37 +5680,47 @@ public final class BytecodeTranslator {
                 b.endBlock();
             } else if (ast.is("AST_PROP") && ast.get("prop") instanceof String name) {
                 b.beginSendProp(propSite(ast, name), index);
-                b.emitLoadStackValue(callee);
+                sendCallee(callee, named);
                 expression(ast.get("expr"));
                 b.endSendProp();
             } else if (ast.is("AST_PROP")) {
                 // `$obj->$name`: the object, then the name (FETCH_OBJ_FUNC_ARG's operands)
                 b.beginSendPropNamed(propSite(ast, null), index);
-                b.emitLoadStackValue(callee);
+                sendCallee(callee, named);
                 expression(ast.get("expr"));
                 propName(ast.get("prop"));
                 b.endSendPropNamed();
-            } else {
-                // a call, `new`, include or yield (SEND_VAR_NO_REF)
-                b.beginSendCall(index);
-                b.emitLoadStackValue(callee);
-                if (ast.is("AST_CALL")) {
-                    call(ast, true);
-                } else if (ast.is("AST_METHOD_CALL")) {
-                    methodCall(ast, true);
-                } else if (ast.is("AST_STATIC_CALL")) {
-                    staticCall(ast, true);
-                } else {
-                    expression(ast);
-                }
-                b.endSendCall();
             }
         }
 
         private void argByRef(int index, StackValue callee) {
+            argByRef(index, callee, null);
+        }
+
+        private void argByRef(int index, StackValue callee, NamedSend named) {
             b.beginArgByRef(index);
-            b.emitLoadStackValue(callee);
+            sendCallee(callee, named);
             b.endArgByRef();
+        }
+
+        /**
+         * The callee a send asks about its parameter: the call's, or for a named argument the stand-in its binding
+         * gives (NamedTarget).
+         */
+        private void sendCallee(StackValue callee, NamedSend named) {
+            if (named == null) {
+                b.emitLoadStackValue(callee);
+                return;
+            }
+            if (named.site() == null) {
+                b.beginSpreadTarget(named.name());
+                b.emitLoadStackValue(callee);
+                b.endSpreadTarget();
+                return;
+            }
+            b.beginNamedTarget(named.site(), named.argument());
+            b.emitLoadStackValue(callee);
+            b.endNamedTarget();
         }
 
         // ---- static properties, superglobals and $GLOBALS: places kept in a reference ----
@@ -5502,7 +6033,7 @@ public final class BytecodeTranslator {
          * a separated copy of a call's array, through the reference a call returned (zend_separate_if_call_and_write);
          * php-src can't write to any other temporary ("Cannot use temporary expression in write context").
          */
-        private void temporaryElementArgument(Ast ast, Object base, int index, StackValue callee) {
+        private void temporaryElementArgument(Ast ast, Object base, int index, StackValue callee, NamedSend named) {
             List<Object> dims = new ArrayList<>();
             for (Object link = ast; link != base; link = ((Ast) link).get("expr")) {
                 dims.add(0, ((Ast) link).get("dim"));
@@ -5510,7 +6041,7 @@ public final class BytecodeTranslator {
             boolean append = dims.get(dims.size() - 1) == null;
             boolean call = Translator.isCall(base) && !constants.compiledInPlace((Ast) base);
             b.beginSendTemporary(index, append, call);
-            b.emitLoadStackValue(callee);
+            sendCallee(callee, named);
             if (call) {
                 callForRef((Ast) base);
             } else {
@@ -5616,6 +6147,16 @@ public final class BytecodeTranslator {
 
     /** A loop's labels: break goes after the loop, continue to its next step. */
     private record Loop(BytecodeLabel breakLabel, BytecodeLabel continueLabel) {
+    }
+
+    /**
+     * A named argument's send: its site and its position among the call's arguments; or, after an unpacking, its
+     * name, bound when the call runs (site null).
+     */
+    private record NamedSend(NamedSite site, int argument, TruffleString name) {
+        NamedSend(NamedSite site, int argument) {
+            this(site, argument, null);
+        }
     }
 
     /**

@@ -17,6 +17,12 @@ public final class MethodSite {
      */
     static final PhpFunction BY_VALUE = new PhpFunction("{by value}", new PhpFunction.Param[0], false, false, true,
             false, () -> null);
+    /**
+     * The parameters of Closure::fromCallable()'s closure of a __call stand-in: none and no variadic one, so its
+     * arguments go by value and any name is unknown (zend_closure_call_magic's).
+     */
+    static final PhpFunction NO_PARAMETERS = new PhpFunction("{no parameters}", new PhpFunction.Param[0], false,
+            false, true, false, () -> null);
 
     /** The name as written, for messages; calledName, as __call and __callStatic are given it. */
     final String name;

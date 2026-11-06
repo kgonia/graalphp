@@ -413,16 +413,17 @@ class ReflectionFunction extends ReflectionFunctionAbstract
         return TruffleReflection::of($this)['closure'];
     }
 
+    // zend_call_function with the arguments as named_params: call_user_func_array()'s binding
     public function invoke(mixed ...$args): mixed
     {
         $info = TruffleReflection::of($this);
-        return ($info['object'] ?? $info['name'])(...$args);
+        return call_user_func_array($info['object'] ?? $info['name'], $args);
     }
 
     public function invokeArgs(array $args = []): mixed
     {
         $info = TruffleReflection::of($this);
-        return ($info['object'] ?? $info['name'])(...$args);
+        return call_user_func_array($info['object'] ?? $info['name'], $args);
     }
 
     public function getClosure(): Closure
@@ -919,18 +920,19 @@ class ReflectionClass implements Reflector
         return $constants[$name];
     }
 
+    // the constructor called with the arguments as named_params (zend_call_known_function)
     public function newInstance(mixed ...$args): object
     {
         $name = TruffleReflection::of($this)['name'];
         TruffleReflection::constructible($name, $args);
-        return new $name(...$args);
+        return \Truffle\reflection_construct($name, $args);
     }
 
     public function newInstanceArgs(array $args = []): ?object
     {
         $name = TruffleReflection::of($this)['name'];
         TruffleReflection::constructible($name, $args);
-        return new $name(...$args);
+        return \Truffle\reflection_construct($name, $args);
     }
 
     public function newInstanceWithoutConstructor(): object

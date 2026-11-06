@@ -3,6 +3,8 @@ package pl.codeloom.php.builtins;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.bytecode.NamedExtras;
+import pl.codeloom.php.bytecode.SpreadArguments;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -196,6 +198,13 @@ final class ClosureMethods {
             return PhpNull.NULL;
         }
         PhpClosure bound = closure.rebound(newThis, newThis.getPhpClass());
+        // its extra named arguments go on to the closure (Z_PARAM_VARIADIC_WITH_NAMED)
+        PhpArray named = NamedExtras.forwarded(a, 1);
+        if (named != null) {
+            Callables.Target target = Callables.resolve(context, bound);
+            return PhpRef.deref(target.function().getCallTarget().call(SpreadArguments.sendArray(target, named,
+                    null)));
+        }
         int count = Args.count(a);
         Object[] values = count > 1 ? Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, PhpFunction.ARG_FIRST + count)
                 : new Object[0];
@@ -215,8 +224,12 @@ final class ClosureMethods {
             throw new PhpError("TypeError", "Failed to create closure from callable: "
                     + Callables.invalidReason(context, callable));
         }
-        return new PhpClosure(target.function(), target.thisObject() instanceof PhpObject self ? self : null,
-                target.staticClass(), new Object[0], target.magicName());
+        PhpClosure closure = new PhpClosure(target.function(), target.thisObject() instanceof PhpObject self ? self
+                : null, target.staticClass(), new Object[0], target.magicName());
+        if (target.magicName() != null) {
+            closure.fixMagicParameters();
+        }
+        return closure;
     }
 
     /**

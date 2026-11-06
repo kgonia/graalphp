@@ -19,6 +19,8 @@ public final class PhpClosure {
     private final Object[] captured;
     /** For a closure of a missing method made with `$o->m(...)`: function is __call or __callStatic, this the name. */
     private final TruffleString magicName;
+    /** Made by Closure::fromCallable() of a __call stand-in: no variadic parameter, so no named arguments. */
+    private boolean magicFixed;
     /** The class static:: names in the closure without a $this (zend_closure's called_scope). */
     private final PhpClass calledScope;
     /** var_dump's #n and spl_object_id(), numbered with the objects. */
@@ -100,7 +102,24 @@ public final class PhpClosure {
 
     /** The same closure bound to another $this and scope for one call (Closure::call): no new object. */
     public PhpClosure rebound(PhpObject newThis, PhpClass newScope) {
-        return new PhpClosure(function, newThis, newScope, newThis.getPhpClass(), captured, magicName, id, statics);
+        PhpClosure rebound = new PhpClosure(function, newThis, newScope, newThis.getPhpClass(), captured, magicName,
+                id, statics);
+        rebound.magicFixed = magicFixed;
+        return rebound;
+    }
+
+    /**
+     * Closure::fromCallable() of a method __call stands in for: php-src's closure of it takes no named arguments
+     * (its zend_closure_call_magic has no variadic arg_info), unlike `$obj->missing(...)`'s, whose variadic
+     * parameter collects them.
+     */
+    public void fixMagicParameters() {
+        magicFixed = true;
+    }
+
+    /** Whether the closure's __call stand-in has a variadic parameter (see fixMagicParameters). */
+    public boolean isMagicVariadic() {
+        return !magicFixed;
     }
 
     /** The class static:: names in a call of the closure: its $this's, else its called scope. */

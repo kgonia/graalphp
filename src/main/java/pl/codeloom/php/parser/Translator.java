@@ -341,6 +341,8 @@ public final class Translator {
         self[0] = new PhpFunction(name, params, (flags & FUNC_RETURNS_REF) != 0, isStatic, isPublic, isAbstract,
                 () -> timedBody(kind, () -> translateBody(node, owner, self[0], name, params, new String[0],
                         new boolean[0], declaredNames)));
+        self[0].setDefaults(BytecodeTranslator.defaults(language, path, source, internal, node, owner, self[0],
+                owner == null ? name : owner.name() + "::" + name, params, declaredNames));
         self[0].setDeclaredAt(declaredAt(node));
         int modifiers = 0;
         if (owner != null) {
@@ -956,6 +958,8 @@ public final class Translator {
                 (node.flags & MODIFIER_STATIC) != 0, true, false,
                 () -> timedBody(Phases.CLOSURE, () -> translateBody(node, owner, self[0], name, params, names, byRef,
                         declaredNames)));
+        self[0].setDefaults(BytecodeTranslator.defaults(language, path, source, internal, node, owner, self[0],
+                owner == null ? name : owner.name() + "::" + name, params, declaredNames));
         self[0].setDeclaredAt(declaredAt(node));
         Ast returnType = node.node("returnType");
         self[0].setDeclaredReturn(returnType == null ? null : builtType(returnType, false));

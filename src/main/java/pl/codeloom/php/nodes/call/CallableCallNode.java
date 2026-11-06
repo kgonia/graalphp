@@ -1,6 +1,7 @@
 package pl.codeloom.php.nodes.call;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 
@@ -9,7 +10,10 @@ import pl.codeloom.php.runtime.PhpError;
  * (argsArray set, args then empty).
  */
 public final class CallableCallNode {
-    /** call_user_func_array()'s arguments: the array's elements (see toValues); anything else is a TypeError. */
+    /**
+     * call_user_func_array()'s arguments: the array's elements (see toValues), or null when a string key names one
+     * (ZEND_SEND_ARRAY's named arguments, which the caller binds); anything else is a TypeError.
+     */
     public static Object[] arrayArguments(Object array) {
         if (!(array instanceof PhpArray list)) {
             CompilerDirectives.transferToInterpreter();
@@ -19,7 +23,8 @@ public final class CallableCallNode {
     }
 
     /**
-     * The arguments in order; an element that is a reference (`array(&$x)`) is passed as one, to by-ref params. One
+     * The arguments in order, or null at a string key (only a hash has them); an element that is a reference
+     * (`array(&$x)`) is passed as one, to by-ref params. One
      * loop per layout, each bounded by the count: Graal's speculation on a loop over any layout (its type tests and
      * the index, hoisted out of the loop) failed natively for the layouts and sizes a site hadn't met.
      */
@@ -37,6 +42,9 @@ public final class CallableCallNode {
         } else {
             int p = list.firstPosition();
             for (int i = 0; i < count; i++) {
+                if (list.hashKeyAt(p) instanceof TruffleString) {
+                    return null;
+                }
                 values[i] = list.hashValueAt(p);
                 p = list.nextHashPosition(p);
             }

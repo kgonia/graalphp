@@ -2,6 +2,7 @@ package pl.codeloom.php.builtins;
 
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
+import pl.codeloom.php.nodes.call.BuiltinDefaultsRootNode;
 import pl.codeloom.php.nodes.call.BuiltinRootNode;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.Str;
@@ -107,6 +108,13 @@ public final class Registry {
         PhpFunction function = new PhpFunction(name, params, false, isStatic, true, false,
                 () -> new BuiltinRootNode(language, name, body, method, min, max).getCallTarget());
         function.setBuiltin(body);
+        function.setBuiltinKey(Str.lower(key));
+        // the holes a call by name leaves take the arginfo defaults (zend_handle_undef_args), made on first need
+        function.setDefaults(() -> {
+            BuiltinSignature signature = BuiltinSignature.of(Str.lower(key));
+            return signature == null ? null
+                    : new BuiltinDefaultsRootNode(language, function, signature).getCallTarget();
+        });
         if (mask.indexOf('2') >= 0) {
             function.setPreferRef();
         }

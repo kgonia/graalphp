@@ -5,6 +5,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import pl.codeloom.php.builtins.Builtin;
+import pl.codeloom.php.builtins.BuiltinSignature;
 
 import java.util.function.Supplier;
 
@@ -20,6 +21,17 @@ public final class PhpFunction {
     public static final int ARG_STATIC = 1;
     public static final int ARG_CLOSURE = 2;
     public static final int ARG_FIRST = 3;
+
+    /**
+     * A frame argument a call by name left out (php-src's UNDEF slot below num_args): the callee's defaults target
+     * replaces it before the callee runs, so no prologue ever reads it. Distinct from PHP's null.
+     */
+    public static final Object NOT_PASSED = new Object() {
+        @Override
+        public String toString() {
+            return "NOT_PASSED";
+        }
+    };
 
     /**
      * A parameter. defaultValue is null for required parameters, else how a declaration writes it ("= 'a'").
@@ -39,6 +51,8 @@ public final class PhpFunction {
     public static final int ACC_ABSTRACT = 64;
 
     private final String name;
+    /** Whether a parameter is by reference: calls from runtime code check their values only then. */
+    private final boolean anyByRef;
     @CompilationFinal(dimensions = 1) private final Param[] params;
     private final boolean returnsRef;
     /**
@@ -56,16 +70,30 @@ public final class PhpFunction {
     private Supplier<RootCallTarget> factory;
     /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
     private Builtin builtin;
+    /** A built-in's key in BuiltinSignature's table, and the signature once a named call asked for it. */
+    private String builtinKey;
+    private volatile BuiltinSignature builtinSignature;
     /** The declaring class's name for messages ("C::m"); null for functions and shared built-in methods. */
     private String className;
 
     /** Made on first call; volatile because contexts on several threads share the function. */
     @CompilationFinal private volatile RootCallTarget callTarget;
+    /**
+     * Makes the target that fills the arguments a call by name left out with the parameters' defaults (php-src's
+     * zend_handle_undef_args), on the first such call; dropped then. Null for a built-in.
+     */
+    private Supplier<RootCallTarget> defaultsFactory;
+    private volatile RootCallTarget defaultsTarget;
 
     public PhpFunction(String name, Param[] params, boolean returnsRef, boolean isStatic, boolean isPublic,
                        boolean isAbstract, Supplier<RootCallTarget> factory) {
         this.name = name;
         this.params = params;
+        boolean byRef = false;
+        for (Param param : params) {
+            byRef |= param.byRef();
+        }
+        this.anyByRef = byRef;
         this.returnsRef = returnsRef;
         this.isStatic = isStatic;
         this.isPublic = isPublic;
@@ -86,6 +114,11 @@ public final class PhpFunction {
     }
 
     /** Whether the argument at a position is passed by reference (variadic by-ref covers the rest). */
+    /** Whether any parameter takes its argument by reference (ZEND_ACC_HAS_... by-ref arginfo). */
+    public boolean hasByRefParameter() {
+        return anyByRef;
+    }
+
     public boolean isByRef(int index) {
         if (index < params.length) {
             return params[index].byRef();
@@ -168,9 +201,30 @@ public final class PhpFunction {
         copy.declaredAt = declaredAt;
         copy.className = className;
         copy.builtin = builtin;
+        copy.builtinKey = builtinKey;
         copy.usesThis = usesThis;
         copy.declaredReturn = declaredReturn;
+        if (defaultsFactory != null || defaultsTarget != null) {
+            copy.defaultsFactory = this::getDefaultsTarget;
+        }
         return copy;
+    }
+
+    public void setDefaults(Supplier<RootCallTarget> factory) {
+        this.defaultsFactory = factory;
+    }
+
+    /**
+     * The target filling a call's left-out arguments (run on the call's frame arguments before the function's own
+     * target), made on first use; null for a function without one (a built-in).
+     */
+    @TruffleBoundary
+    public synchronized RootCallTarget getDefaultsTarget() {
+        if (defaultsTarget == null && defaultsFactory != null) {
+            defaultsTarget = defaultsFactory.get();
+            defaultsFactory = null;
+        }
+        return defaultsTarget;
     }
 
     public String getReturnType() {
@@ -232,6 +286,39 @@ public final class PhpFunction {
 
     public void setBuiltin(Builtin builtin) {
         this.builtin = builtin;
+    }
+
+    /**
+     * A built-in's arginfo parameters for named arguments (BuiltinSignature, by its Registry key), or null: a
+     * function, or a built-in php-src doesn't have.
+     */
+    public BuiltinSignature getBuiltinSignature() {
+        if (builtinKey == null) {
+            return null;
+        }
+        BuiltinSignature signature = builtinSignature;
+        if (signature == null) {
+            signature = BuiltinSignature.of(builtinKey);
+            builtinSignature = signature;
+        }
+        return signature;
+    }
+
+    /**
+     * get_function_arg_name: the name messages give parameter index's argument, a built-in's its arginfo's; null
+     * for a variadic parameter's argument (only the num_args before it are named) or a built-in php-src lacks.
+     */
+    public String argumentName(int index) {
+        if (builtin != null) {
+            BuiltinSignature signature = getBuiltinSignature();
+            return signature != null && index < signature.declared() ? signature.name(index) : null;
+        }
+        return index < params.length && !params[index].variadic() ? params[index].name() : null;
+    }
+
+    /** The key a built-in's signature is found by: lower case "name" or "class::name". */
+    public void setBuiltinKey(String builtinKey) {
+        this.builtinKey = builtinKey;
     }
 
     public boolean isPreferRef() {
