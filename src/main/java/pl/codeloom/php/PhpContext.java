@@ -262,6 +262,14 @@ public final class PhpContext {
             }
         }
         errors().forEachHandler(handler -> holder.accept("error/exception handler", handler));
+        pendingReleases.forEach(value -> holder.accept("pending release", value));
+    }
+
+    /** The counts results of PHP code called from runtime code still own (Refcount.pending). */
+    private final ArrayList<Object> pendingReleases = new ArrayList<>();
+
+    public ArrayList<Object> pendingReleases() {
+        return pendingReleases;
     }
 
     /** The objects made in this context, kept for the refcount audit (-Dphp.rc.audit=true); empty otherwise. */
@@ -578,7 +586,7 @@ public final class PhpContext {
         }
         try {
             for (Object autoloader : List.copyOf(autoloaders)) {
-                Callables.call(this, autoloader, Str.of(className));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, autoloader, Str.of(className)));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -806,7 +814,8 @@ public final class PhpContext {
         guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
                 Object[] entry = shutdownFunctions.get(i);
-                Callables.call(this, entry[0], Arrays.copyOfRange(entry, 1, entry.length));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, entry[0],
+                        Arrays.copyOfRange(entry, 1, entry.length)));
             }
         });
         // php_free_shutdown_functions: the entries let go once all ran
@@ -840,6 +849,7 @@ public final class PhpContext {
     @TruffleBoundary
     public void endScript() {
         if (!shuttingDown) {
+            guarded(() -> pl.codeloom.php.runtime.Refcount.releasePending(pendingReleases, 0));
             pl.codeloom.php.runtime.Refcount.audit(this, "end of script");
         }
         runShutdownFunctions();
@@ -1052,7 +1062,8 @@ public final class PhpContext {
         }
         int mode = buffer.started ? phase : phase | PHASE_START;
         buffer.started = true;
-        Object result = Callables.call(this, buffer.handler, contents, (long) mode);
+        Object result = pl.codeloom.php.runtime.Refcount.done(Callables.call(this, buffer.handler, contents,
+                (long) mode));
         return result == Boolean.FALSE ? contents : pl.codeloom.php.runtime.Convert.toStr(result);
     }
 

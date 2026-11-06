@@ -204,8 +204,8 @@ final class ClosureMethods {
         PhpArray named = NamedExtras.forwarded(a, 1);
         if (named != null) {
             Callables.Target target = Callables.resolve(context, bound);
-            return PhpRef.deref(target.function().getCallTarget().call(SpreadArguments.sendArray(target, named,
-                    null)));
+            return pl.codeloom.php.runtime.Refcount.pending(PhpRef.deref(target.function().getCallTarget().call(
+                    SpreadArguments.sendArray(target, named, null))));
         }
         int count = Args.count(a);
         Object[] values = count > 1 ? Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, PhpFunction.ARG_FIRST + count)

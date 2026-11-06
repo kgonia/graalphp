@@ -29,7 +29,15 @@ public final class Callables {
         /** Calls the target from runtime code (a built-in calling back): no inline caching. */
         @TruffleBoundary
         public Object call(Object... values) {
-            return PhpRef.deref(function.getCallTarget().call(frameArguments(values)));
+            return Refcount.pending(PhpRef.deref(function.getCallTarget().call(frameArguments(values))));
+        }
+
+        /**
+         * call for a result runtime code only tests, converts or discards: its own count goes once returned
+         * (Refcount.done). The value stays usable for the conversion.
+         */
+        public Object callScalar(Object... values) {
+            return Refcount.done(call(values));
         }
 
         public Object[] frameArguments(Object[] values) {
@@ -468,7 +476,7 @@ public final class Callables {
     @TruffleBoundary
     public static Object call(PhpContext context, Object callable, Object... values) {
         Target target = target(context, callable, null);
-        return PhpRef.deref(target.function().getCallTarget().call(target.frameArguments(values)));
+        return Refcount.pending(PhpRef.deref(target.function().getCallTarget().call(target.frameArguments(values))));
     }
 
     /**

@@ -135,7 +135,7 @@ final class ElementChain {
             return current.containsKey(normalized) ? normalized : null;
         }
         if (container instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod(node, "offsetunset", key);
+            pl.codeloom.php.runtime.Refcount.done(object.callMethod(node, "offsetunset", key));
         }
         return null;
     }

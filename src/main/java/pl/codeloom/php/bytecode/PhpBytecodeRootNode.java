@@ -2813,7 +2813,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object store(VirtualFrame frame, LocalAccessor temporary, int index, Object value, boolean owned,
                                    @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
-            if (owned && (value instanceof PhpObject || value instanceof PhpClosure)) {
+            if (owned && (value instanceof PhpObject || value instanceof PhpClosure
+                    || value instanceof PhpArray array && array.isTemporary())) {
                 root.temporaryHeld(index);
                 ReleaseTemp.release(frame, temporary, index, root, bytecode);
                 temporary.setObject(bytecode, frame, value);
@@ -2840,7 +2841,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (Refcount.AUDIT_POINTS) {
                     Refcount.unsent(held);
                 }
-                Refcount.dec(held);
+                if (held instanceof PhpArray array) {
+                    // php-src frees a TMP array once used: one nothing took gives its elements up
+                    array.releaseTemporary();
+                } else {
+                    Refcount.dec(held);
+                }
             }
         }
     }
@@ -2894,7 +2900,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void release(Object value, boolean owned) {
             if (owned) {
-                Refcount.dec(value);
+                if (value instanceof PhpArray array) {
+                    // a discarded array (a call's, a literal's) nothing took: its elements go (php-src's FREE)
+                    array.releaseTemporary();
+                } else {
+                    Refcount.dec(value);
+                }
             }
         }
     }
@@ -3571,8 +3582,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (!(object instanceof PhpObject) && !(object instanceof PhpClosure)) {
                 throw MethodCallNode.memberOnNonObject(Str.java(method), object);
             }
-            return Callables.resolveCall(PhpContext.get(node), PhpArray.list(object, method),
-                    root.callingScope(frame));
+            PhpArray callable = PhpArray.list(object, method);
+            try {
+                return Callables.resolveCall(PhpContext.get(node), callable, root.callingScope(frame));
+            } finally {
+                // only the lookup's: it gives up the object's count it took
+                callable.releaseTemporary();
+            }
         }
     }
 
@@ -6883,17 +6899,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `(object)` (ToOtherNode): an object stays, anything else becomes a stdClass. */
+    /**
+     * `(object)` (ToOtherNode): an object stays, anything else becomes a stdClass. The result owns a count (an owning
+     * temporary, as `new`'s object): php-src's cast result is a TMP holding the object.
+     */
     @Operation
     public static final class CastObject {
         @Specialization
         public static Object same(PhpObject value) {
+            value.addRef();
             return value;
         }
 
         @Fallback
         public static Object other(Object value, @Bind Node node) {
-            return UnaryNodes.ToOtherNode.toObject(node, value);
+            Object result = UnaryNodes.ToOtherNode.toObject(node, value);
+            Refcount.inc(result);
+            return result;
         }
     }
 

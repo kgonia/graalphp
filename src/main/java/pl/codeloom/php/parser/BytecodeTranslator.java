@@ -1986,7 +1986,9 @@ public final class BytecodeTranslator {
         private boolean mayOwn(Object value) {
             return value instanceof Ast node
                     && (node.is("AST_CALL") || node.is("AST_METHOD_CALL") || node.is("AST_STATIC_CALL")
-                    || node.is("AST_NEW") || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC"))
+                    || node.is("AST_NEW") || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC")
+                    || node.is("AST_ARRAY") || node.is("AST_CAST")
+                    && (node.flags == CastNode.TO_ARRAY || node.flags == CastNode.TO_OBJECT))
                     && !writeFetched.contains(node) && !constantShaped(value) && Translator.deepestNullsafe(node) == null;
         }
 
@@ -2251,6 +2253,8 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_ARRAY":
                     arrayLiteral(node);
+                    // a temporary: released at the statement's end unless something took it (ReleaseTemp)
+                    ownedNode = node;
                     break;
                 case "AST_ENCAPS_LIST":
                     interpolation(node);
@@ -3524,6 +3528,10 @@ public final class BytecodeTranslator {
                 case CastNode.TO_ARRAY -> b.endCastArray();
                 default -> b.endCastObject();
             }
+            if (node.flags == CastNode.TO_ARRAY || node.flags == CastNode.TO_OBJECT) {
+                // an owning temporary: CastObject's object counts for it, a new array is released unless taken
+                ownedNode = node;
+            }
         }
 
         /**
@@ -4511,9 +4519,17 @@ public final class BytecodeTranslator {
                 }
                 functionCall(info, args, byRefContext);
                 b.endConditional();
+                if (OWNED_FRAME_FUNCTIONS.contains(lower)) {
+                    // both branches give an owning temporary: the frame function's and the namespace function's
+                    ownedNode = node;
+                }
                 return;
             }
             if (frameFunction(node, lower, args, resolved[1] == null)) {
+                if (OWNED_FRAME_FUNCTIONS.contains(lower)) {
+                    // a call's result (call_user_func) or a new array: an owning temporary
+                    ownedNode = node;
+                }
                 return;
             }
             boolean special = resolved[1] == null && constants.compiledSpecially(Str.lower(resolved[0]), args);
@@ -4548,13 +4564,27 @@ public final class BytecodeTranslator {
                 }
                 functionCall(info, args, byRefContext);
                 b.endConditional();
+                if (ARRAY_INTRINSICS.contains(lower)) {
+                    ownedNode = node;
+                }
                 return;
             }
             if (resolved[1] != null || !intrinsic(lower, info, args)) {
                 functionCall(info, args, byRefContext);
                 ownedNode = node;
+            } else if (ARRAY_INTRINSICS.contains(lower)) {
+                // a new array: an owning temporary, released at the statement's end unless stored
+                ownedNode = node;
             }
         }
+
+        /** The frame functions whose result owns its count: what a call returned, or an array they make. */
+        private static final Set<String> OWNED_FRAME_FUNCTIONS = Set.of("call_user_func", "call_user_func_array",
+                "func_get_args", "compact");
+
+        /** The intrinsics whose result is a new array (array_slice, array_keys, explode, str_replace of arrays). */
+        private static final Set<String> ARRAY_INTRINSICS = Set.of("array_slice", "array_keys", "explode",
+                "str_replace");
 
         /** The names {@link #intrinsic} compiles in place. */
         private static final Set<String> INTRINSICS = Set.of("is_array", "is_string", "is_int", "is_integer",
