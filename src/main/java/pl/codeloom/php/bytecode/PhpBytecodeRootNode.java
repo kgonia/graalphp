@@ -178,7 +178,7 @@ import java.util.Map;
         booleanConverter = Proxies.ToBool.class)
 @ShortCircuitOperation(name = "Coalesce", operator = ShortCircuitOperation.Operator.OR_RETURN_VALUE,
         booleanConverter = PhpBytecodeRootNode.IsSetValue.class)
-public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRootNode, SourceLocation.Code,
+public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRootNode, SourceLocation.Code, Refcount.Variables,
         Backtrace.Callee, LargeCode {
     /**
      * Calls and back-edges a function runs on the uncached interpreter before it specializes (php.bytecode.uncached).
@@ -227,6 +227,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private boolean generatorHasFinally;
     /** `function &f()` (no generator): every return gives a PhpRef. */
     @CompilationFinal private boolean returnsRef;
+    /** How many locals are PHP variables; the hidden locals follow (the count audit's view of a frame). */
+    @Override
+    public int variableCount() {
+        return variables == null ? 0 : variables.length;
+    }
+
     /** The PHP variables' names in their locals' order (get_defined_vars). */
     private String[] variableNames = new String[0];
     /** The PHP variables' names, by the offsets of {@link #variables}, for access by name (BytecodeScope). */
@@ -540,6 +546,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             LocalAccessor variable = variables[i];
             if (!variable.isCleared(bytecode, frame)) {
                 Object value = variable.getObject(bytecode, frame);
+                if (Refcount.AUDIT_POINTS) {
+                    // a destructor this release runs may hold an audit point: the slot no longer holds the value
+                    variable.clear(bytecode, frame);
+                }
                 if (value instanceof PhpArray array) {
                     released(i, RELEASED_ARRAY);
                     if (array == returned) {
@@ -2792,8 +2802,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (root.temporariesHeld[index] && !temporary.isCleared(bytecode, frame)) {
                 Object held = temporary.getObject(bytecode, frame);
                 temporary.clear(bytecode, frame);
+                if (Refcount.AUDIT_POINTS) {
+                    Refcount.unsent(held);
+                }
                 Refcount.dec(held);
             }
+        }
+    }
+
+    /** A statement's end, emitted only with -Dphp.rc.audit.every=n: the count audit's point (Census.auditPoint). */
+    @Operation
+    public static final class AuditPoint {
+        @Specialization
+        public static void audit(VirtualFrame frame, @Bind BytecodeNode bytecode) {
+            Refcount.auditPoint(frame.materialize(), bytecode);
         }
     }
 
@@ -3287,6 +3309,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Specialization(replaces = "cached")
         public static Object send(int index, PhpFunction function, Object result, @Bind Node node) {
+            if (Refcount.AUDIT_POINTS) {
+                Refcount.sent(result);
+            }
             if (!function.isByRef(index)) {
                 return PhpRef.deref(result);
             }
@@ -6955,6 +6980,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         private static Object send(int argument, PhpFunction function, BindingPlan plan, Object result, Node node) {
+            if (Refcount.AUDIT_POINTS) {
+                Refcount.sent(result);
+            }
             plan.checkSend(argument);
             if (!plan.takesRef(argument) || function.isPreferRef()) {
                 return PhpRef.deref(result);

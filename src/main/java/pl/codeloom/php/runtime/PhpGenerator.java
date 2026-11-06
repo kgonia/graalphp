@@ -120,6 +120,33 @@ public final class PhpGenerator {
         this.hasFinally = false;
     }
 
+    /**
+     * What the generator holds, as php-src's zend_generator does, for the refcount census (Census.audit): while it
+     * can run, its frame's locals (CVs and temporaries); the last key and value; the return value; what a
+     * `yield from` walks; the value the next resume gives.
+     */
+    void censusChildren(java.util.function.Predicate<Object> frameWalked,
+                        java.util.function.BiConsumer<String, Object> child) {
+        if (open && continuation != null && !frameWalked.test(frame)) {
+            com.oracle.truffle.api.bytecode.BytecodeLocation location = continuation.getLocation();
+            if (location != null) {
+                try {
+                    Object[] locals = location.getBytecodeNode().getLocalValues(location.getBytecodeIndex(), frame);
+                    for (int i = 0; i < locals.length; i++) {
+                        child.accept(" frame local " + i, locals[i]);
+                    }
+                } catch (RuntimeException e) {
+                    child.accept(" frame unreadable", null);
+                }
+            }
+        }
+        child.accept(" key", key);
+        child.accept(" value", value);
+        child.accept(" returned", returned);
+        child.accept(" values", values);
+        child.accept(" resume value", resumeValue);
+    }
+
     /** The Generator object over a new generator. */
     @TruffleBoundary
     public PhpObject newObject(PhpContext context) {

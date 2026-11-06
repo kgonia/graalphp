@@ -922,6 +922,9 @@ public final class BytecodeTranslator {
                     b.emitReleaseTemp(temp, tempIndex.get(temp));
                 }
             }
+            if (pl.codeloom.php.runtime.Refcount.AUDIT_POINTS && !node.is("AST_RETURN")) {
+                b.emitAuditPoint();
+            }
             freeTemps.addAll(statementTemps);
             statementTemps = outer;
             endLine(node.line);

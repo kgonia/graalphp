@@ -61,6 +61,11 @@ public final class PhpClosure {
         return statics != null;
     }
 
+    /** The closure's static variables' references, for the refcount census; empty if it has none. */
+    Iterable<PhpRef> staticRefs() {
+        return statics == null ? java.util.List.of() : statics.values();
+    }
+
     /** The closure's `static $name`, or null before its first initialization. */
     @TruffleBoundary
     public PhpRef findStatic(String name) {

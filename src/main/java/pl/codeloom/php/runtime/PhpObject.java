@@ -78,6 +78,9 @@ public final class PhpObject extends DynamicObject {
         super(shape);
         this.phpClass = phpClass;
         this.id = id;
+        if (Census.AUDIT) {
+            Census.track(this);
+        }
     }
 
     /** The reference count (see {@link Refcount}): the slots and owning temporaries holding this object. */
@@ -144,6 +147,11 @@ public final class PhpObject extends DynamicObject {
         int count = rc - 1;
         rc = count;
         return count;
+    }
+
+    /** Whether its properties were released (php-src's free_obj ran). */
+    boolean isFreed() {
+        return (gcInfo & FREED) != 0;
     }
 
     /** Not a possible root yet (php-src's GC_INFO is 0). */

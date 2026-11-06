@@ -244,6 +244,33 @@ public final class PhpContext {
         }
     }
 
+    /**
+     * The values built-ins keep in Java state, each one a holder php-src counts (a zval it copied): autoloaders,
+     * shutdown functions and their arguments, output handlers, error and exception handlers. For the refcount
+     * census (Census.audit), which counts them as holders.
+     */
+    public void censusHolders(java.util.function.BiConsumer<String, Object> holder) {
+        autoloaders.forEach(callable -> holder.accept("autoloader", callable));
+        for (Object[] entry : shutdownFunctions) {
+            for (int i = 0; i < entry.length; i++) {
+                holder.accept(i == 0 ? "shutdown function" : "shutdown function argument " + i, entry[i]);
+            }
+        }
+        for (OutputBuffer buffer : buffers) {
+            if (buffer.handler != null) {
+                holder.accept("output handler", buffer.handler);
+            }
+        }
+        errors().forEachHandler(handler -> holder.accept("error/exception handler", handler));
+    }
+
+    /** The objects made in this context, kept for the refcount audit (-Dphp.rc.audit=true); empty otherwise. */
+    private final ArrayList<Object> auditedObjects = new ArrayList<>();
+
+    public ArrayList<Object> auditedObjects() {
+        return auditedObjects;
+    }
+
     /** get_resource_id()'s numbering: 1-3 are STDIN, STDOUT and STDERR in php-cli. */
     private int nextResourceId = 4;
 
@@ -779,6 +806,9 @@ public final class PhpContext {
     /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
     @TruffleBoundary
     public void exit(int status) {
+        if (!shuttingDown) {
+            pl.codeloom.php.runtime.Refcount.audit(this, "exit");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
         endRequest();
@@ -791,6 +821,9 @@ public final class PhpContext {
      */
     @TruffleBoundary
     public void endScript() {
+        if (!shuttingDown) {
+            pl.codeloom.php.runtime.Refcount.audit(this, "end of script");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
