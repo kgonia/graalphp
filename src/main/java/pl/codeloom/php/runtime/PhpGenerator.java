@@ -340,12 +340,12 @@ public final class PhpGenerator {
                 iterator.callMethod("next");
             }
             iteratorStarted = true;
-            if (!Convert.toBool(iterator.callMethod("valid"))) {
+            if (!Convert.toBool(Refcount.done(iterator.callMethod("valid")))) {
                 endValues();
                 return false;
             }
-            value = PhpRef.deref(iterator.callMethod("current"));
-            key = PhpRef.deref(iterator.callMethod("key"));
+            value = Refcount.borrowed(PhpRef.deref(iterator.callMethod("current")));
+            key = Refcount.borrowed(PhpRef.deref(iterator.callMethod("key")));
             return true;
         } catch (PhpThrowable e) {
             endValues();

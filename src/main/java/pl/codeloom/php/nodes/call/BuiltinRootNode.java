@@ -70,12 +70,23 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         if (!noNamedExtras.isValid() && arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras && !forwardsNamed) {
             throw unexpectedNamed(arguments);
         }
-        Object result = call(body, arguments);
-        if (result instanceof PhpObject object) {
-            // a call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1)
-            object.addRef();
-        } else if (result instanceof PhpClosure closureValue) {
-            closureValue.addRef();
+        java.util.ArrayList<Object> pending = pl.codeloom.php.PhpContext.get(this).pendingReleases();
+        int mark = pending.size();
+        Object result;
+        try {
+            result = call(body, arguments);
+            if (result instanceof PhpObject object) {
+                // a call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1)
+                object.addRef();
+            } else if (result instanceof PhpClosure closureValue) {
+                closureValue.addRef();
+            }
+        } finally {
+            if (pending.size() > mark) {
+                // the counts results of PHP code it called owned (Refcount.pending): its work with them is done,
+                // after its own result took its count
+                pl.codeloom.php.runtime.Refcount.releasePending(pending, mark);
+            }
         }
         return result;
     }

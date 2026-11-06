@@ -121,7 +121,8 @@ public final class ErrorFunctions {
         state.errorHandler = PhpNull.NULL;
         Object handled;
         try {
-            handled = Callables.call(context, handler, (long) type, message, Str.of(at.file()), (long) at.line());
+            handled = pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, (long) type, message,
+                    Str.of(at.file()), (long) at.line()));
         } finally {
             if (state.errorHandler == PhpNull.NULL) {
                 state.errorHandler = handler;
@@ -315,7 +316,7 @@ public final class ErrorFunctions {
             Object handler = state.exceptionHandler;
             state.exceptionHandlers.push(handler);
             state.exceptionHandler = PhpNull.NULL;
-            Callables.call(context, handler, throwable);
+            pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, throwable));
             if (state.exceptionHandler == PhpNull.NULL && !state.exceptionHandlers.isEmpty()) {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }

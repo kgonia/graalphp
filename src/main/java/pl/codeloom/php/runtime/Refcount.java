@@ -106,6 +106,85 @@ public final class Refcount {
         }
     }
 
+    /**
+     * The result of PHP code runtime code called (a callback, a magic or ArrayAccess method): the count it owns is
+     * given up when the built-in running now returns (BuiltinRootNode drains the context's pending releases above
+     * its mark), or at the request's end, as php-src's internal code frees a retval once used. Returns value.
+     */
+    public static Object pending(Object value) {
+        if (value instanceof PhpObject || value instanceof PhpClosure
+                || value instanceof PhpArray array && array.isTemporary()) {
+            pl.codeloom.php.PhpContext.get(null).pendingReleases().add(value);
+        }
+        return value;
+    }
+
+    /**
+     * Runtime code is done with a result it called for (a callback's whose value it discards or only tests or
+     * converts): its own count goes now, as php-src's zval_ptr_dtor of the retval right after use. Returns value.
+     */
+    public static Object done(Object value) {
+        if (value instanceof PhpObject || value instanceof PhpClosure || value instanceof PhpArray) {
+            takePending(value, true);
+        }
+        return value;
+    }
+
+    /**
+     * A result PHP code reads as a value (offsetGet, __get, a get hook): when something else holds it too, its own
+     * count goes now, so the read is the borrow an element's or a property's is; a value only the result holds (a
+     * fresh object) stays pending. Returns value.
+     */
+    public static Object borrowed(Object value) {
+        if (value instanceof PhpObject object && object.refcount() > 1
+                || value instanceof PhpClosure closure && closure.refcount() > 1) {
+            takePending(value, false);
+        }
+        return value;
+    }
+
+    /** Removes value's most recent pending release: given up (released), or moved to the caller (disowned). */
+    @TruffleBoundary
+    private static void takePending(Object value, boolean release) {
+        java.util.ArrayList<Object> pending = pl.codeloom.php.PhpContext.get(null).pendingReleases();
+        for (int i = pending.size() - 1; i >= 0 && i >= pending.size() - 16; i--) {
+            if (pending.get(i) == value) {
+                pending.remove(i);
+                if (value instanceof PhpArray array) {
+                    if (release) {
+                        array.releaseTemporary();
+                    }
+                } else if (release) {
+                    dec(value);
+                } else if (value instanceof PhpObject object) {
+                    object.disown();
+                } else {
+                    ((PhpClosure) value).disown();
+                }
+                return;
+            }
+        }
+    }
+
+    /** A temporary array runtime code makes and passes on (forward_static_call's arguments): pending too. */
+    public static PhpArray pendingTemporary(PhpArray array) {
+        pending(array);
+        return array;
+    }
+
+    /** Gives up the pending releases from mark on (BuiltinRootNode's return, the request's end). */
+    @TruffleBoundary
+    public static void releasePending(java.util.ArrayList<Object> pending, int mark) {
+        while (pending.size() > mark) {
+            Object value = pending.remove(pending.size() - 1);
+            if (value instanceof PhpArray array) {
+                array.releaseTemporary();
+            } else {
+                dec(value);
+            }
+        }
+    }
+
     /** A slot or an owning temporary takes the value. */
     public static void inc(Object value) {
         if (value instanceof PhpObject object) {
@@ -213,7 +292,7 @@ public final class Refcount {
                     // frame is freed (zend_generator_close)
                     generator.destroy();
                 } else {
-                    object.callMethod("__destruct");
+                    dec(object.callMethodOwned(null, "__destruct"));
                 }
             } catch (RuntimeException e) {
                 thrown = e;

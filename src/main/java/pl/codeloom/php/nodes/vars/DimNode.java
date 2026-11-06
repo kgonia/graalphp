@@ -11,6 +11,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.Str;
 
 /**
@@ -30,7 +31,7 @@ public final class DimNode {
      */
     public static void writeToObject(Node site, Object target, Object key, Object value) {
         if (target instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod(site, "offsetset", key, value);
+            Refcount.done(object.callMethod(site, "offsetset", key, value));
             return;
         }
         CompilerDirectives.transferToInterpreter();
@@ -96,7 +97,7 @@ public final class DimNode {
             return offset < 0 ? -offset <= length : offset < length;
         }
         if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return Convert.toBool(object.callMethod(site, "offsetexists", offsetValue));
+            return Convert.toBool(Refcount.done(object.callMethod(site, "offsetexists", offsetValue)));
         }
         return false;
     }

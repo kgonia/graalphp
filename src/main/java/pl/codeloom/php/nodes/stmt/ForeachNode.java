@@ -38,7 +38,7 @@ public final class ForeachNode {
     @TruffleBoundary
     public static Object step(Node site, PhpObject object, String method) {
         if (!(object.getInternal() instanceof PhpGenerator generator)) {
-            return object.callMethod(site, method);
+            return object.callMethodOwned(site, method);
         }
         Object result = Backtrace.callFrom(site, () -> generatorStep(generator, method));
         // owned, as a method's return value is
@@ -110,7 +110,7 @@ public final class ForeachNode {
     public static PhpObject unwrapAggregates(Node site, PhpObject subject) {
         PhpObject object = subject;
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            Object returned = object.callMethod(site, "getiterator");
+            Object returned = object.callMethodOwned(site, "getiterator");
             if (object != subject) {
                 // an aggregate getIterator() returned: the count that call gave is given up once it is unwrapped
                 pl.codeloom.php.runtime.Refcount.dec(object);

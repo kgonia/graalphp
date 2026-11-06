@@ -174,7 +174,41 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     private void release() {
         holders = RELEASED;
-        countElements(false);
+        // depth first, in element order, as php-src's recursive zend_array_destroy: a nested array whose last holder
+        // this was is walked in place, from an explicit stack (thousands of levels, unserialize()'s, would overflow
+        // the Java stack)
+        java.util.ArrayDeque<PhpArray> arrays = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<int[]> positions = new java.util.ArrayDeque<>();
+        arrays.push(this);
+        positions.push(new int[]{firstPosition()});
+        while (!arrays.isEmpty()) {
+            PhpArray array = arrays.peek();
+            int[] position = positions.peek();
+            int p = position[0];
+            if (p < 0) {
+                arrays.pop();
+                positions.pop();
+                continue;
+            }
+            position[0] = array.nextPosition(p);
+            Object raw = array.rawAt(p);
+            if (raw instanceof PhpArray nested) {
+                if (nested.holders == 1 && nested.holdsCounted) {
+                    // its last holder goes: released in place (removeHolder's lastHolderGone)
+                    nested.holders = RELEASED;
+                    arrays.push(nested);
+                    positions.push(new int[]{nested.firstPosition()});
+                } else {
+                    nested.removeHolder();
+                }
+            } else if (raw instanceof PhpObject object) {
+                object.release();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.release();
+            } else if (raw instanceof PhpRef ref) {
+                ref.unbind();
+            }
+        }
     }
 
     @TruffleBoundary
@@ -234,6 +268,40 @@ public final class PhpArray implements TruffleObject {
     /** More than one holder, or frozen (FROZEN is above 1 as an unsigned number): one compare. */
     public boolean isShared() {
         return Integer.compareUnsigned(holders, 1) > 0;
+    }
+
+    /**
+     * A temporary: no holder, its elements' counts still held (a literal or a returned array on its way somewhere).
+     * Released at its temporary's end unless something took it ({@link #releaseTemporary}).
+     */
+    public boolean isTemporary() {
+        return holders == 0 && (holdsCounted || mayHoldRefs);
+    }
+
+    /**
+     * The temporary's end (php-src frees a TMP): an array nothing took gives its elements' counts up, as at its
+     * last holder; its references, which no holder bound, let their values go.
+     */
+    @TruffleBoundary
+    public void releaseTemporary() {
+        if (holders != 0) {
+            return;
+        }
+        if (holdsCounted) {
+            release();
+        }
+        if (mayHoldRefs) {
+            for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+                if (rawAt(p) instanceof PhpRef ref) {
+                    ref.releaseUnbound();
+                }
+            }
+        }
+    }
+
+    /** The holders, for truffle_refcount (debugging): negative when frozen or released. */
+    public int holderCount() {
+        return holders;
     }
 
     /** Frozen (shared, its holders uncounted), for the refcount census. */
@@ -995,14 +1063,12 @@ public final class PhpArray implements TruffleObject {
             }
             return;
         }
-        if (old == replacement) {
-            return;
-        }
         if (old instanceof PhpArray array) {
+            // also when it is the replacement: countIn added the replacement's holder
             if (holders >= 0) {
                 array.removeHolder();
             }
-        } else if (old instanceof PhpRef ref && holders > 0) {
+        } else if (old instanceof PhpRef ref && old != replacement && holders > 0) {
             ref.unbind();
         }
     }

@@ -168,6 +168,22 @@ final class Census {
     private static final String AUDIT_OUT = System.getProperty("php.rc.audit.out");
     private static final boolean DESTRUCTORS = Boolean.getBoolean("php.rc.destructors");
 
+    /**
+     * The count changes of objects of one class (-Dphp.rc.trace.class=Name, with the audit): each +1 or -1 with the
+     * three PHP calls running, printed for an example of each LATE or EARLY group of that class.
+     */
+    private static final String TRACE_CLASS = System.getProperty("php.rc.trace.class");
+    static final boolean TRACE = AUDIT && TRACE_CLASS != null;
+    private static final IdentityHashMap<Object, List<String>> traces = new IdentityHashMap<>();
+
+    @TruffleBoundary
+    static void traced(PhpObject object, String change) {
+        if (object.getPhpClass().getName().equalsIgnoreCase(TRACE_CLASS)) {
+            traces.computeIfAbsent(object, o -> new ArrayList<>()).add(change + " (" + object.refcount() + ") at "
+                    + allocationSite());
+        }
+    }
+
     /** An object made in the context, with where: the PHP calls running then, innermost first. */
     private record Tracked(Object object, String site) {
     }
@@ -626,6 +642,10 @@ final class Census {
     private static void add(Findings f, String key, Object object, String example) {
         Group group = f.groups.computeIfAbsent(key, k -> new Group());
         if (group.objects.isEmpty()) {
+            List<String> trace = TRACE ? traces.get(object) : null;
+            if (trace != null) {
+                example += "\n        " + String.join("\n        ", trace);
+            }
             group.example = example;
             group.audits = 1;
         }
@@ -662,6 +682,7 @@ final class Census {
             System.err.print(out);
         }
         context.auditedObjects().clear();
+        traces.clear();
     }
 
     private static void report(StringBuilder out, Map<String, Group> groups, boolean points) {

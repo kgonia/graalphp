@@ -98,7 +98,8 @@ final class RuntimeFunctions {
                 CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
         // the called class of the calling code goes on to the callee (late static binding)
         r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
-                FORWARD_STATIC_CALL), "forward_static_call"), PhpArray.list(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length))));
+                FORWARD_STATIC_CALL), "forward_static_call"), pl.codeloom.php.runtime.Refcount.pendingTemporary(PhpArray.list(
+                Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length)))));
         r.fn("forward_static_call_array", (context, a) -> callArray(forwarded(Callables.parameter(context,
                 Args.get(a, 0), FORWARD_STATIC_CALL_ARRAY), "forward_static_call_array"), Args.array(a, 1, "forward_static_call_array", "args")));
         r.fn("set_time_limit", a -> Boolean.TRUE);
@@ -346,8 +347,8 @@ final class RuntimeFunctions {
     /** zend_call_function with named_params: the array bound as ZEND_SEND_ARRAY binds it (SpreadArguments). */
     @TruffleBoundary
     private static Object callArray(Callables.Target target, PhpArray arguments) {
-        return PhpRef.deref(target.function().getCallTarget().call(SpreadArguments.sendArray(target, arguments,
-                null)));
+        return pl.codeloom.php.runtime.Refcount.pending(PhpRef.deref(target.function().getCallTarget().call(
+                SpreadArguments.sendArray(target, arguments, null))));
     }
 
     /**

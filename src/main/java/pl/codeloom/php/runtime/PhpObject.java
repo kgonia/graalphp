@@ -94,6 +94,9 @@ public final class PhpObject extends DynamicObject {
     /** One more slot or owning temporary holds the object. */
     public void addRef() {
         rc++;
+        if (Census.TRACE) {
+            Census.traced(this, "+1");
+        }
     }
 
     /**
@@ -103,6 +106,9 @@ public final class PhpObject extends DynamicObject {
     public void release() {
         int count = rc - 1;
         rc = count;
+        if (Census.TRACE) {
+            Census.traced(this, "-1");
+        }
         if (count == 0 || gcInfo == 0) {
             // one out-of-line call for both events (HHVM's decref slow path), not two in every caller's code
             Refcount.released(this, count);
@@ -115,6 +121,9 @@ public final class PhpObject extends DynamicObject {
      */
     public void disown() {
         rc--;
+        if (Census.TRACE) {
+            Census.traced(this, "-1 disown");
+        }
     }
 
     /** A skipped increment/decrement pair (a method call on a variable): the possible-root event it would raise. */
@@ -146,6 +155,9 @@ public final class PhpObject extends DynamicObject {
     int decrement() {
         int count = rc - 1;
         rc = count;
+        if (Census.TRACE) {
+            Census.traced(this, "-1 decrement");
+        }
         return count;
     }
 
@@ -194,8 +206,12 @@ public final class PhpObject extends DynamicObject {
             Object[] arguments = new Object[args.length + 1];
             arguments[0] = Str.ofKey(name);
             System.arraycopy(args, 0, arguments, 1, args.length);
-            return keepRef ? phpClass.findMethod(lowerMethod).invokeRef(this, phpClass, arguments)
-                    : callMethod(lowerMethod, arguments);
+            if (keepRef) {
+                return phpClass.findMethod(lowerMethod).invokeRef(this, phpClass, arguments);
+            }
+            Object result = callMethod(lowerMethod, arguments);
+            // __get's value is read as a property's is; __set's, __isset's and __unset's are used up at once
+            return lowerMethod.equals("__get") ? Refcount.borrowed(result) : Refcount.done(result);
         } finally {
             guards.remove(guard);
         }
@@ -267,7 +283,7 @@ public final class PhpObject extends DynamicObject {
     public Object visibleValue(String name) {
         PhpClass.Hooks hooks = phpClass.findHooks(name);
         if (hooks != null && hooks.get() != null) {
-            return hooks.get().invoke(this, phpClass);
+            return Refcount.borrowed(hooks.get().invoke(this, phpClass));
         }
         return PhpRef.deref(getProperty(name));
     }
@@ -974,6 +990,20 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public Object callMethodRef(Node site, String lowerName, Object... args) {
         return Backtrace.callFrom(site, () -> phpClass.findMethod(lowerName).invokeRef(this, phpClass, args));
+    }
+
+    /**
+     * callMethod for a caller that gives up the result's own count itself (Refcount.pending's exception): foreach's
+     * steps, getIterator(), a destructor.
+     */
+    @TruffleBoundary
+    public Object callMethodOwned(Node site, String lowerName, Object... args) {
+        PhpFunction method = phpClass.findMethod(lowerName);
+        if (method == null) {
+            throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+        }
+        return site == null ? PhpRef.deref(method.invokeOwned(this, phpClass, args))
+                : Backtrace.callFrom(site, () -> PhpRef.deref(method.invokeOwned(this, phpClass, args)));
     }
 
     /** callMethod for a node's operation (ArrayAccess, iteration): the node is where traces show the call made. */

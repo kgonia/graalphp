@@ -131,6 +131,13 @@ public final class PhpRef {
         }
     }
 
+    /** A temporary array that bound nothing dies: a reference no variable bound lets its value go. */
+    void releaseUnbound() {
+        if (bindings == 0 && !released) {
+            release();
+        }
+    }
+
     /**
      * A binding goes but the value keeps this reference's count (a returned array's references: the array is on its
      * way to a holder, whose bind takes the binding back without counting the value again).
