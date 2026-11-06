@@ -567,8 +567,10 @@ public final class PhpArray implements TruffleObject {
             toObjects();
         }
         if (store instanceof Object[] packed && key instanceof Long index && index >= 0 && index < size) {
-            countOut(packed[(int) (long) index], null);
+            Object old = packed[(int) (long) index];
             packed[(int) (long) index] = ref;
+            // after the store, as php-src: a destructor the release runs sees the array as it is now
+            countOut(old, null);
             return;
         }
         if (store instanceof Object[] && key instanceof Long index && index == size && index >= nextIndex) {
@@ -579,8 +581,9 @@ public final class PhpArray implements TruffleObject {
         int h = hash(key);
         int slot = hash.find(key, h);
         if (slot >= 0) {
-            countOut(hash.value(slot), null);
+            Object old = hash.value(slot);
             hash.setValue(slot, ref);
+            countOut(old, null);
         } else {
             insert(hash, key, h, ref);
         }
@@ -684,8 +687,14 @@ public final class PhpArray implements TruffleObject {
                     size--;
                 } else {
                     Object[] packed = (Object[]) store;
-                    countOut(packed[size - 1], null);
+                    Object old = packed[size - 1];
                     packed[--size] = null;
+                    if (pointer >= size) {
+                        pointer = -1;
+                    }
+                    // once removed, as php-src's zend_hash_del: a destructor the release runs doesn't see it
+                    countOut(old, null);
+                    return;
                 }
                 if (pointer >= size) {
                     pointer = -1;
@@ -698,12 +707,14 @@ public final class PhpArray implements TruffleObject {
         if (slot < 0) {
             return;
         }
-        countOut(hash.value(slot), null);
+        Object old = hash.value(slot);
         hash.clear(slot);
         size--;
         if (pointer == slot) {
             pointer = nextPosition(slot);
         }
+        // once removed, as php-src's zend_hash_del: a destructor the release runs doesn't see it
+        countOut(old, null);
     }
 
     /**

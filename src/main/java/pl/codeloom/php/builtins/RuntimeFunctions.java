@@ -299,6 +299,7 @@ final class RuntimeFunctions {
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }
+            // the copy's property holds an object too (zend_objects_clone_members' Z_ADDREF; initProperty counts it)
             copy.initProperty((String) name, property);
         }
         if (copy.getPhpClass().findMethod("__clone") != null) {

@@ -75,6 +75,7 @@ public final class PropNode extends Node {
     private static final int SEEN_OLD_OBJECT = 1 << 6;
     /** The writes through a property that is a reference (SEEN_REF). */
     private final RefWrites refWrites = RefWrites.create();
+    private final Refcount.Releases releases = Refcount.Releases.create();
 
     private PropNode(String constantName, String lexicalClass, boolean scopeInFrame, boolean thisInMethod,
                      String hookOf, DynamicObjectLibrary objects) {
@@ -557,7 +558,6 @@ public final class PropNode extends Node {
         if (converted instanceof PhpArray array) {
             array.addHolder();
         }
-        Refcount.inc(converted);
         phpObject.setProperty(name, converted);
         return true;
     }
@@ -671,12 +671,13 @@ public final class PropNode extends Node {
             }
             objects.put(phpObject, name, value);
         }
-        if (old instanceof PhpArray array && old != value) {
+        if (old instanceof PhpArray array) {
+            // also when it is the value: its holder was added above
             met(SEEN_OLD_ARRAY);
             array.removeHolder();
         } else if (old instanceof PhpObject oldObject) {
             met(SEEN_OLD_OBJECT);
-            oldObject.release();
+            releases.release(oldObject);
         }
         if (setChecked) {
             // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)

@@ -229,6 +229,21 @@ public final class PhpContext {
         return CONTEXT.get(node);
     }
 
+    /**
+     * The context's roots for the refcount census (Census, -Dphp.rc.verify=true): globals, static variables,
+     * constants and classes' static properties, each with a name for the report.
+     */
+    public void censusRoots(java.util.function.BiConsumer<String, Object> root) {
+        globals.forEach((name, ref) -> root.accept("$" + name, ref));
+        staticVariables.forEach((function, vars) -> vars.forEach((name, ref) ->
+                root.accept("static $" + name + " in " + function.getName(), ref)));
+        constants.forEach((name, value) -> root.accept("constant " + name, value));
+        for (PhpClass phpClass : classes.values()) {
+            phpClass.staticPropertiesForCensus().forEach((name, ref) ->
+                    root.accept(phpClass.getName() + "::$" + name, ref));
+        }
+    }
+
     /** get_resource_id()'s numbering: 1-3 are STDIN, STDOUT and STDERR in php-cli. */
     private int nextResourceId = 4;
 
