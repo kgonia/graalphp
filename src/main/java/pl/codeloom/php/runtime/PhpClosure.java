@@ -46,6 +46,12 @@ public final class PhpClosure {
 
     private PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,
                        Object[] captured, TruffleString magicName, int id, Map<String, PhpRef> statics) {
+        this(function, boundThis, scope, calledScope, captured, magicName, id, statics, true);
+    }
+
+    private PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,
+                       Object[] captured, TruffleString magicName, int id, Map<String, PhpRef> statics,
+                       boolean counted) {
         this.function = function;
         this.boundThis = boundThis;
         this.scope = scope;
@@ -54,6 +60,73 @@ public final class PhpClosure {
         this.magicName = magicName;
         this.id = id;
         this.statics = statics;
+        this.counted = counted;
+        if (counted && boundThis != null) {
+            // zend_create_closure: the closure holds its $this
+            boundThis.addRef();
+        }
+        if (Census.AUDIT && counted) {
+            Census.track(this);
+        }
+    }
+
+    // ---- reference count (wiki/destructors.md, P1): a Closure is an object php-src counts ----
+
+    /** The slots and owning temporaries holding the closure. */
+    private int rc;
+    /** Whether it counts: not the stand-in Closure::call makes for one call, which shares this one's captures. */
+    private final boolean counted;
+    /** Its captures, $this and statics were released (zend_closure_free_storage ran). */
+    private boolean freed;
+
+    public void addRef() {
+        rc++;
+    }
+
+    /** A slot or an owning temporary gives the closure up: at zero it releases what it holds. */
+    public void release() {
+        if (--rc == 0 && counted) {
+            free();
+        }
+    }
+
+    /** An owning temporary's count moves to the slot about to store it (no event), as PhpObject.disown. */
+    public void disown() {
+        rc--;
+    }
+
+    public int refcount() {
+        return rc;
+    }
+
+    boolean isFreed() {
+        return freed;
+    }
+
+    /** zend_closure_free_storage: the static variables, the captured values and $this let go. */
+    @TruffleBoundary
+    private void free() {
+        if (freed) {
+            return;
+        }
+        freed = true;
+        if (statics != null) {
+            for (PhpRef ref : statics.values()) {
+                ref.unbind();
+            }
+        }
+        for (Object value : captured) {
+            if (value instanceof PhpRef ref) {
+                ref.unbind();
+            } else if (value instanceof PhpArray array) {
+                array.removeHolder();
+            } else {
+                Refcount.dec(value);
+            }
+        }
+        if (boundThis != null) {
+            boundThis.release();
+        }
     }
 
     /** Whether the closure keeps static variables of its own: a closure (not a fake one) that declares some. */
@@ -108,7 +181,7 @@ public final class PhpClosure {
     /** The same closure bound to another $this and scope for one call (Closure::call): no new object. */
     public PhpClosure rebound(PhpObject newThis, PhpClass newScope) {
         PhpClosure rebound = new PhpClosure(function, newThis, newScope, newThis.getPhpClass(), captured, magicName,
-                id, statics);
+                id, statics, false);
         rebound.magicFixed = magicFixed;
         return rebound;
     }

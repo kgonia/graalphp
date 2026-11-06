@@ -142,6 +142,8 @@ final class ClosureMethods {
                 ref.bind();
             } else if (value instanceof pl.codeloom.php.runtime.PhpArray array) {
                 array.addHolder();
+            } else {
+                pl.codeloom.php.runtime.Refcount.inc(value);
             }
             captured[i] = value;
         }

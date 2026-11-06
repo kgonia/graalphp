@@ -68,14 +68,14 @@ public final class Refcount {
      * the hidden local still keeping it here isn't a holder php-src has, until it is released ({@link #unsent}).
      */
     public static void sent(Object value) {
-        if (value instanceof PhpObject object) {
-            Census.sent(object);
+        if (value instanceof PhpObject || value instanceof PhpClosure) {
+            Census.sent(value);
         }
     }
 
     public static void unsent(Object value) {
-        if (value instanceof PhpObject object) {
-            Census.unsent(object);
+        if (value instanceof PhpObject || value instanceof PhpClosure) {
+            Census.unsent(value);
         }
     }
 
@@ -85,10 +85,33 @@ public final class Refcount {
         Census.auditPoint(frame, bytecode);
     }
 
+    /**
+     * A holder in a built-in's Java state takes the value (a handler, an autoloader, a shutdown function or its
+     * argument): php-src keeps a zval copy there, which counts an array, an object or a closure.
+     */
+    public static void hold(Object value) {
+        if (value instanceof PhpArray array) {
+            array.addHolder();
+        } else {
+            inc(value);
+        }
+    }
+
+    /** Such a holder lets the value go. */
+    public static void unhold(Object value) {
+        if (value instanceof PhpArray array) {
+            array.removeHolder();
+        } else {
+            dec(value);
+        }
+    }
+
     /** A slot or an owning temporary takes the value. */
     public static void inc(Object value) {
         if (value instanceof PhpObject object) {
             object.addRef();
+        } else if (value instanceof PhpClosure closure) {
+            closure.addRef();
         }
     }
 
@@ -96,6 +119,8 @@ public final class Refcount {
     public static void dec(Object value) {
         if (value instanceof PhpObject object) {
             object.release();
+        } else if (value instanceof PhpClosure closure) {
+            closure.release();
         }
     }
 
@@ -219,6 +244,8 @@ public final class Refcount {
         for (int i = 1; i < table.length; i += 2) {
             if (table[i] instanceof PhpObject held) {
                 held.release();
+            } else if (table[i] instanceof PhpClosure closure) {
+                closure.release();
             } else if (table[i] instanceof PhpArray array) {
                 array.removeHolder();
             } else if (table[i] instanceof PhpRef ref) {

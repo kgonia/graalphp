@@ -25,11 +25,11 @@ docker rm -f rca1 > /dev/null 2>&1 || true
 MSYS_NO_PATHCONV=1 docker run -d --name rca1 --cpuset-cpus 6-13 -e GATE2_DB_HOST=${DB_HOST:-172.17.0.2:3306} \
   -p $port:8080 -v "$root:/m" -v "$main:/w" gate1-truffle:8.5-graal25.4 sh -c 'mkdir -p /srv/target/gate2 &&
     cp -r /w/target/ast /srv/target/ && cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cd /srv &&
-    exec $GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx2g
-      -Dphp.rc.destructors=true -Dphp.rc.audit=true -Dphp.rc.audit.every='"${EVERY:-20000}"' -Dphp.rc.audit.groups=60
-      -Dphp.rc.audit.out=/m/'"$out"'/wp-audit.txt -Djava.net.preferIPv6Addresses=system
-      -Dpolyglot.engine.WarnInterpreterOnly=false $JAVA_OPTS_BASE -cp "/m/target/classes:/m/target/lib/*"
-      pl.codeloom.php.launcher.HttpMain --port=8080 --threads=1 --docroot=target/gate2/wordpress
+    exec $GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx2g \
+      -Dphp.rc.destructors=true -Dphp.rc.audit=true -Dphp.rc.audit.every='"${EVERY:-20000}"' -Dphp.rc.audit.groups=60 \
+      -Dphp.rc.audit.out=/m/'"$out"'/wp-audit.txt -Djava.net.preferIPv6Addresses=system \
+      -Dpolyglot.engine.WarnInterpreterOnly=false $JAVA_OPTS_BASE -cp "/m/target/classes:/m/target/lib/*" \
+      pl.codeloom.php.launcher.HttpMain --port=8080 --threads=1 --docroot=target/gate2/wordpress \
       --ast-root=target/ast --server-name=0.0.0.0 --host=0.0.0.0' > /dev/null
 until docker logs rca1 2>&1 | grep -q listening; do
   docker ps -q --filter name=rca1 | grep -q . || { docker logs rca1; exit 1; }

@@ -3,6 +3,7 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Refcount;
@@ -39,6 +40,8 @@ public final class RefWrites {
             if (holds) {
                 object.addRef();
             }
+        } else if (value instanceof PhpClosure closureValue && holds) {
+            closureValue.addRef();
         }
         Object old = ref.exchange(value);
         if (old instanceof PhpArray array) {
@@ -52,6 +55,8 @@ public final class RefWrites {
             if (holds) {
                 releases.release(object);
             }
+        } else if (old instanceof PhpClosure closureValue && holds) {
+            closureValue.release();
         }
     }
 
@@ -68,6 +73,8 @@ public final class RefWrites {
             if (ref.holdsArrays()) {
                 releases.release(object);
             }
+        } else if (old instanceof PhpClosure closureValue && ref.holdsArrays()) {
+            closureValue.release();
         }
     }
 

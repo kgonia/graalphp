@@ -617,12 +617,18 @@ public final class PhpContext {
         } else {
             autoloaders.add(callable);
         }
+        pl.codeloom.php.runtime.Refcount.hold(callable);
         return true;
     }
 
     @TruffleBoundary
     public boolean removeAutoloader(Object callable) {
-        return autoloaders.remove(callable);
+        int index = autoloaders.indexOf(callable);
+        if (index < 0) {
+            return false;
+        }
+        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index));
+        return true;
     }
 
     @TruffleBoundary
@@ -781,6 +787,9 @@ public final class PhpContext {
         Object[] entry = new Object[arguments.length + 1];
         entry[0] = callable;
         System.arraycopy(arguments, 0, entry, 1, arguments.length);
+        for (Object value : entry) {
+            pl.codeloom.php.runtime.Refcount.hold(value);
+        }
         shutdownFunctions.add(entry);
     }
 
@@ -800,7 +809,16 @@ public final class PhpContext {
                 Callables.call(this, entry[0], Arrays.copyOfRange(entry, 1, entry.length));
             }
         });
+        // php_free_shutdown_functions: the entries let go once all ran
+        List<Object[]> ran = List.copyOf(shutdownFunctions);
         shutdownFunctions.clear();
+        guarded(() -> {
+            for (Object[] entry : ran) {
+                for (Object value : entry) {
+                    pl.codeloom.php.runtime.Refcount.unhold(value);
+                }
+            }
+        });
     }
 
     /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
@@ -988,6 +1006,7 @@ public final class PhpContext {
     /** ob_start($handler, 0, $flags); handler is null for none. */
     @TruffleBoundary
     public void startBuffer(Object handler, long flags) {
+        pl.codeloom.php.runtime.Refcount.hold(handler);
         buffers.push(new OutputBuffer(handler, flags));
     }
 
@@ -1046,6 +1065,7 @@ public final class PhpContext {
         }
         TruffleString output = process(top, PHASE_FINAL);
         buffers.poll();
+        pl.codeloom.php.runtime.Refcount.unhold(top.handler);
         write(output);
         return true;
     }
@@ -1087,6 +1107,7 @@ public final class PhpContext {
         }
         process(top, PHASE_CLEAN | PHASE_FINAL);
         buffers.poll();
+        pl.codeloom.php.runtime.Refcount.unhold(top.handler);
         return true;
     }
 

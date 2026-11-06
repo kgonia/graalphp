@@ -153,9 +153,9 @@ public final class PhpGenerator {
             return;
         }
         com.oracle.truffle.api.bytecode.BytecodeRootNode code = continuation.getSourceRootNode();
-        com.oracle.truffle.api.bytecode.BytecodeLocation location = continuation.getLocation();
-        ((Refcount.Variables) code).releaseFrame(frame,
-                location != null ? location.getBytecodeNode() : code.getBytecodeNode());
+        // the root's current bytecode node: the continuation's location may be of a tier the frame has left (its
+        // slots typed since by the cached interpreter)
+        ((Refcount.Variables) code).releaseFrame(frame, code.getBytecodeNode());
     }
 
     /** The Generator object over a new generator. */

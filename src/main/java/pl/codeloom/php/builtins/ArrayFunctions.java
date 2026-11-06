@@ -10,6 +10,7 @@ import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpResource;
@@ -924,13 +925,18 @@ public final class ArrayFunctions {
         } else if (value instanceof PhpObject object) {
             // held across the old array's release, which would take the element's count to zero
             object.addRef();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         ref.set(result);
         if (value instanceof PhpArray nested) {
-            nested.removeHolder();
+            // the result: it keeps its elements on its way to the caller (php-src's retval holds the array)
+            nested.removeReturnedHolder();
         } else if (value instanceof PhpObject object) {
             // moved out to the caller as array_pop's element (a built-in's result holds no count): no event
             object.disown();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         return value;
     }
