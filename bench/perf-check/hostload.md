@@ -1,0 +1,53 @@
+- 2026-11-03 23:15:33 gate1 hold 1: outside 14-21 43%, on 14-21 50%; top: vmmemWSL 542%, node#3 209%, node#1 199%, MsMpEng 169%, Docker Desktop#4 83%, SearchIndexer 56%
+- 2026-11-03 23:21:51 gate1 hold 2: outside 14-21 42%, on 14-21 49%; top: java#1 280%, node#3 231%, node#1 224%, Docker Desktop#4 133%, SearchIndexer 80%, WmiPrvSE#2 38%
+- 2026-11-03 23:26:03 gate1 hold 3: outside 14-21 59%, on 14-21 38%; top: node#3 262%, node#1 215%, java#1 159%, vmmemWSL 150%, Docker Desktop#4 85%, MsMpEng 56%
+- 2026-11-03 23:30:22 gate1 hold 4: outside 14-21 51%, on 14-21 64%; top: node#3 233%, node#1 230%, java#1 200%, SearchIndexer 60%, WmiPrvSE#2 40%, SearchProtocolHost 40%
+- 2026-11-03 23:34:26 g2 base-r1: outside 14-21 48%, on 14-21 27%; top: java#1 372%, node#3 247%, node#1 222%, LenovoVantage-(DeviceSettingsSystemAddin) 93%, MsMpEng 53%, WmiPrvSE#2 39%
+- 2026-11-03 23:41:37 g2 main-r1: outside 14-21 24%, on 14-21 25%; top: node#3 205%, node#1 192%, WmiPrvSE#2 32%, System 12%, herdr 8%, svchost#84 8%
+- 2026-11-03 23:49:00 g2 main-r2: outside 14-21 53%, on 14-21 41%; top: node#3 258%, node#1 219%, vmmemWSL 166%, Docker Desktop#4 81%, LenovoVantage-(DeviceSettingsSystemAddin) 56%, WmiPrvSE#2 38%
+- 2026-11-03 23:56:40 g2 base-r2: outside 14-21 29%, on 14-21 14%; top: node#1 223%, node#3 223%, MsMpEng 61%, WmiPrvSE#2 43%, WUDFHost 10%, LenovoVantageService 10%
+- 2026-11-04 00:03:37 g2 base-r3: outside 14-21 30%, on 14-21 26%; top: node#3 236%, node#1 229%, WmiPrvSE#2 46%, claude#4 19%, claude#2 9%, svchost#84 9%
+- 2026-11-04 00:10:45 g2 main-r3: outside 14-21 50%, on 14-21 44%; top: node#3 250%, node#1 213%, WmiPrvSE#2 46%, claude#4 23%, SearchIndexer 10%, SearchProtocolHost 10%
+- 2026-11-04 00:18:42 gate1 hold 1: outside 14-21 58%, on 14-21 42%; top: node#3 244%, node#1 225%, MsMpEng 50%, WmiPrvSE#2 44%, System 34%, bash#39 9%
+- 2026-11-04 00:23:28 gate1 hold 2: outside 14-21 58%, on 14-21 49%; top: java#2 269%, java#3 252%, node#1 225%, node#3 215%, java#1 101%, WmiPrvSE#2 43%
+- 2026-11-04 00:28:20 gate1 hold 3: outside 14-21 47%, on 14-21 26%; top: java#1 296%, node#1 257%, node#3 212%, Docker Desktop#4 91%, WmiPrvSE#2 39%, MsMpEng 32%
+- 2026-11-04 00:32:23 gate1 hold 4: outside 14-21 39%, on 14-21 34%; top: java#1 327%, node#3 289%, node#1 222%, vmmemWSL 64%, LenovoVantageService 55%, WmiPrvSE#2 46%
+- 2026-11-04 00:35:42 g2 main-r4: outside 14-21 29%, on 14-21 34%; top: node#1 238%, node#3 227%, LenovoVantage-(LenovoSystemUpdateAddin) 74%, WmiPrvSE#2 39%, MsMpEng 11%, svchost#17 11%
+- 2026-11-04 00:42:53 g2 base-r4: outside 14-21 30%, on 14-21 45%; top: node#3 285%, node#1 237%, MsMpEng 125%, WmiPrvSE#2 40%, SearchIndexer 14%, SearchProtocolHost 14%
+- 2026-11-04 00:50:41 g2 base-r5: outside 14-21 62%, on 14-21 76%; top: node#1 266%, java#1 221%, node#3 218%, MsMpEng 205%, vmmemWSL 129%, Docker Desktop#4 88%
+- 2026-11-04 00:59:27 g2 main-r5: outside 14-21 46%, on 14-21 44%; top: vmmemWSL 433%, node#1 255%, node#3 248%, System 66%, svchost#84 44%, WmiPrvSE#2 40%
+- 2026-11-04 01:08:00 g2 main-r6: outside 14-21 45%, on 14-21 36%; top: node#3 206%, node#1 206%, vmmemWSL 151%, WmiPrvSE#2 45%, aw-watcher-window 6%, herdr 6%
+- 2026-11-04 01:15:56 g2 base-r6: outside 14-21 44%, on 14-21 35%; top: java#1 247%, node#1 209%, node#3 202%, Docker Desktop#4 152%, WmiPrvSE#2 44%, vmmemWSL 41%
+- 2026-11-04 02:32:22 g2 base-r7: outside 14-21 39%, on 14-21 38%; top: vmmemWSL 480%, java#1 297%, node#1 243%, node#3 237%, dwm 154%, SearchIndexer 88%
+- 2026-11-04 02:40:39 g2 p38-r7: outside 14-21 47%, on 14-21 27%; top: java#1 419%, node#3 238%, node#1 219%, dwm 142%, SearchIndexer 100%, vmmemWSL 83%
+- 2026-11-04 02:48:27 g2 p39-r7: outside 14-21 38%, on 14-21 32%; top: vmmemWSL 263%, node#3 260%, node#1 221%, dwm 127%, com.docker.backend#1 96%, MsMpEng 93%
+- 2026-11-04 02:56:19 g2 p40-r7: outside 14-21 64%, on 14-21 67%; top: java#1 317%, node#1 197%, node#3 189%, dwm 125%, vmmemWSL 96%, jetbrains_client64 96%
+- 2026-11-04 03:04:32 g2 p42-r7: outside 14-21 76%, on 14-21 65%; top: java#1 268%, node#1 220%, node#3 214%, dwm 146%, vmmemWSL 88%, SearchIndexer 61%
+- 2026-11-04 03:12:56 g2 main-r7: outside 14-21 50%, on 14-21 32%; top: node#1 237%, node#3 213%, dwm 137%, MsMpEng 137%, vmmemWSL 103%, LenovoVantage-(LenovoSystemUpdateAddin) 65%
+- 2026-11-04 03:23:24 g2 base-r9: outside 14-21 60%, on 14-21 56%; top: java#1 312%, node#3 230%, node#1 195%, dwm 123%, Docker Desktop#4 75%, WmiPrvSE#2 48%
+- 2026-11-04 03:35:48 g2 base-r9: outside 14-21 48%, on 14-21 52%; top: node#3 244%, node#1 217%, dwm 142%, MsMpEng 112%, SearchIndexer 101%, vmmemWSL 71%
+- 2026-11-04 03:56:07 g2 base-r9: outside 14-21 54%, on 14-21 47%; top: msedgewebview2#18 307%, node#3 240%, node#1 184%, dwm 131%, vmmemWSL 131%, WmiPrvSE#2 52%
+- 2026-11-04 04:38:59 g2 p38-r9: outside 14-21 52%, on 14-21 30%; top: node#3 258%, node#1 228%, dwm 132%, SearchProtocolHost 51%, WmiPrvSE#2 40%, SearchIndexer 36%
+- 2026-11-04 04:47:06 g2 p41-r9: outside 14-21 34%, on 14-21 45%; top: node#1 246%, node#3 238%, dwm 113%, SearchProtocolHost 55%, SearchIndexer 47%, WmiPrvSE#2 36%
+- 2026-11-04 04:55:34 g2 main-r9: outside 14-21 49%, on 14-21 46%; top: node#3 251%, node#1 219%, dwm 122%, vmmemWSL 97%, SearchIndexer 97%, MsMpEng 53%
+- 2026-11-04 05:03:52 g2 fix-r9: outside 14-21 44%, on 14-21 31%; top: node#1 244%, node#3 232%, dwm 140%, WmiPrvSE#2 47%, vmmemWSL 47%, MsMpEng 44%
+- 2026-11-04 06:16:48 g2 fix-r10: outside 14-21 42%, on 14-21 17%; top: node#1 201%, node#3 191%, dwm 132%, vmmemWSL 118%, WmiPrvSE#2 45%, MsMpEng 31%
+- 2026-11-04 06:24:40 g2 main-r10: outside 14-21 41%, on 14-21 46%; top: node#3 226%, node#1 215%, dwm 144%, vmmemWSL 141%, WmiPrvSE#2 51%, com.docker.backend#1 42%
+- 2026-11-04 06:39:20 g2 p41-r10: outside 14-21 29%, on 14-21 40%; top: node#3 240%, node#1 227%, MsMpEng 126%, dwm 113%, claude#4 71%, WmiPrvSE#2 45%
+- 2026-11-04 06:46:36 g2 p38-r10: outside 14-21 29%, on 14-21 9%; top: dwm 126%, SearchIndexer 100%, MsMpEng 37%, WmiPrvSE#2 33%, vmmemWSL 12%, com.docker.backend#1 8%
+- 2026-11-04 06:53:39 g2 base-r10: outside 14-21 14%, on 14-21 15%; top: SearchIndexer 104%, WmiPrvSE#2 25%, MsMpEng 12%, vmmemWSL 8%, dwm 8%, System 8%
+- 2026-11-04 08:42:21 gate1 hold 1: outside 14-21 9%, on 14-21 3%; top: MsMpEng 37%, WmiPrvSE#2 33%, herdr 12%, vmmemWSL 12%, WUDFHost 12%, com.docker.backend#1 8%
+- 2026-11-04 08:54:55 gate1 hold 2: outside 14-21 13%, on 14-21 3%; top: WmiPrvSE#2 28%, System 16%, chrome#47 16%, chrome 16%, claude#1 12%, sleep#11 8%
+- 2026-11-04 09:06:02 gate1 hold 3: outside 14-21 16%, on 14-21 0%; top: SearchIndexer 104%, svchost#84 36%, WmiPrvSE#2 32%, System 16%, chrome#47 16%, LenovoVantageService 12%
+- 2026-11-04 09:17:29 g2 base-r11: outside 14-21 19%, on 14-21 1%; top: vmmemWSL 122%, SearchIndexer 99%, WmiPrvSE#2 48%, System 25%, MsMpEng 22%, chrome#2 14%
+- 2026-11-04 09:24:32 g2 main-r11: outside 14-21 15%, on 14-21 5%; top: LenovoVantage-(DeviceSettingsSystemAddin) 36%, System 36%, WmiPrvSE#2 28%, dwm 8%, herdr 8%, svchost#84 4%
+- 2026-11-04 09:31:35 g2 fix-r11: outside 14-21 6%, on 14-21 1%; top: WmiPrvSE#2 33%, bash#38 16%, vmmemWSL 12%, MsMpEng 12%, Docker Desktop#4 12%, WUDFHost 4%
+- 2026-11-04 09:39:13 g2 fix-r12: outside 14-21 11%, on 14-21 2%; top: LenovoVantage-(DeviceSettingsSystemAddin) 37%, WmiPrvSE#2 33%, svchost#84 33%, idea64 12%, chrome#2 12%, claude#4 12%
+- 2026-11-04 09:47:08 g2 main-r12: outside 14-21 6%, on 14-21 2%; top: WmiPrvSE#2 28%, System 8%, vmmemWSL 4%, svchost#63 4%, sleep#9 4%, claude#2 4%
+- 2026-11-04 09:54:40 g2 base-r12: outside 14-21 12%, on 14-21 14%; top: SearchIndexer 105%, WmiPrvSE#2 32%, MsMpEng 28%, idea64 12%, dwm 12%, herdr-app 12%
+- 2026-11-04 10:59:46 g2 base-r13: outside 14-21 20%, on 14-21 6%; top: SearchIndexer 102%, WmiPrvSE#2 32%, chrome#2 16%, Docker Desktop#4 12%, chrome#60 12%, vmmemWSL 12%
+- 2026-11-04 11:07:16 g2 p38-r13: outside 14-21 9%, on 14-21 0%; top: Docker Desktop#4 67%, WmiPrvSE#2 33%, svchost#84 20%, System 12%, dwm 12%, msedge 8%
+- 2026-11-04 11:22:21 g2 p41-r13: outside 14-21 14%, on 14-21 2%; top: WmiPrvSE#2 36%, MsMpEng 36%, Taskmgr 32%, System 28%, herdr 8%, herdr-app 8%
+- 2026-11-04 11:30:40 g2 p39-r13: outside 14-21 20%, on 14-21 1%; top: vmmemWSL 111%, WmiPrvSE#2 38%, Taskmgr 38%, MsMpEng 30%, herdr-app 23%, LenovoVantageService 15%
+- 2026-11-04 11:49:39 g2 p40-r13: outside 14-21 36%, on 14-21 7%; top: vmmemWSL 82%, WmiPrvSE#2 39%, System 25%, Memory Compression 21%, svchost#84 14%, Taskmgr 10%
+- 2026-11-04 12:02:33 g2 p42-r13: outside 14-21 23%, on 14-21 12%; top: SearchIndexer 101%, Taskmgr 36%, WmiPrvSE#2 32%, dwm 16%, svchost#84 12%, nvcontainer#1 12%
