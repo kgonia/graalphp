@@ -19,6 +19,7 @@ import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefCounts;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -299,6 +300,7 @@ final class RuntimeFunctions {
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }
+            RefCounts.addRef(property);
             copy.initProperty((String) name, property);
         }
         if (copy.getPhpClass().findMethod("__clone") != null) {

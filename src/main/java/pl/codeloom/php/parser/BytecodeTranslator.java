@@ -129,6 +129,8 @@ public final class BytecodeTranslator {
     private int namedExtrasOffset = -1;
     /** The foreach loops' state locals, as the first run met them. */
     private final List<LocalAccessor> foreachStates = new ArrayList<>();
+    /** The hidden locals of call arguments' temporaries (Run.takeTemporary), as the first run made them. */
+    private final List<LocalAccessor> temporaries = new ArrayList<>();
     private boolean firstRun = true;
 
     private BytecodeTranslator(PhpLanguage language, String path, Source source, boolean internal, Ast declaration,
@@ -178,6 +180,7 @@ public final class BytecodeTranslator {
                 Translator.checkedReturn(function, generator), translator.variableLocals,
                 translator.foreachStates.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
+        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
         root.initializeNames(translator.variableNames, translator.scopeLocal);
         if (translator.namedExtrasOffset >= 0) {
             root.initializeVariadic(translator.namedExtrasOffset);
@@ -216,6 +219,7 @@ public final class BytecodeTranslator {
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                 translator.foreachStates.toArray(new LocalAccessor[0]), null);
+        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
         root.initializeFile(translator.loops);
         if (path.equals(DUMP)) {
             root.dumpAtExit();
@@ -273,6 +277,7 @@ public final class BytecodeTranslator {
                                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
                                 translator.foreachStates.toArray(new LocalAccessor[0]),
                                 owner == null ? null : owner.name());
+                        root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]));
                         root.initializeThunk();
                         made = root.getCallTarget();
                         target = made;
@@ -401,6 +406,14 @@ public final class BytecodeTranslator {
         private int madeIndex;
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
+        /**
+         * The hidden locals for call arguments' temporaries, reused by calls one after another: a call takes the next
+         * ones while its arguments are emitted (calls nested in them take further ones) and gives them back after.
+         */
+        private final List<BytecodeLocal> temporaryPool = new ArrayList<>();
+        private int temporaryDepth;
+        /** The arguments of the calls being emitted that keep their temporary in a hidden local, with the local. */
+        private final Map<Object, BytecodeLocal> temporaryArguments = new java.util.IdentityHashMap<>();
 
         Run(PhpBytecodeRootNodeGen.Builder builder) {
             this.b = builder;
@@ -1042,7 +1055,55 @@ public final class BytecodeTranslator {
                     }
                 }
             }
+            // the value is dropped: a temporary nothing holds is freed (php-src's FREE)
+            b.beginDiscardValue();
             expression(value);
+            b.endDiscardValue();
+        }
+
+        /**
+         * An argument whose value is an owning temporary in php-src (a call's result, `new`, `clone`, an array
+         * literal that isn't constant): kept in a hidden local while the call runs, freed after it (FreeTemporary).
+         */
+        private boolean temporaryArgument(Object arg) {
+            if (!(arg instanceof Ast ast)) {
+                return false;
+            }
+            if (ast.is("AST_ARRAY")) {
+                return !constantShaped(ast);
+            }
+            return Translator.isCall(ast) || ast.is("AST_NEW") || ast.is("AST_CLONE");
+        }
+
+        /**
+         * Before a call: a hidden local for each temporary argument (temporaryArgument), and the FreeTemporary
+         * operations around the call that free them; endTemporaries closes them after the call.
+         */
+        private int beginTemporaries(Ast args) {
+            int taken = 0;
+            for (Object arg : args.children()) {
+                if (temporaryArgument(arg)) {
+                    if (temporaryDepth == temporaryPool.size()) {
+                        BytecodeLocal local = b.createLocal();
+                        temporaryPool.add(local);
+                        if (firstRun) {
+                            temporaries.add(LocalAccessor.constantOf(local));
+                        }
+                    }
+                    BytecodeLocal local = temporaryPool.get(temporaryDepth++);
+                    temporaryArguments.put(arg, local);
+                    b.beginFreeTemporary(local);
+                    taken++;
+                }
+            }
+            return taken;
+        }
+
+        private void endTemporaries(int taken) {
+            for (int i = 0; i < taken; i++) {
+                b.endFreeTemporary();
+            }
+            temporaryDepth -= taken;
         }
 
         /**
@@ -4617,6 +4678,7 @@ public final class BytecodeTranslator {
                 return;
             }
             boolean needsCallee = argumentsNeedCallee(args);
+            int temporaries = beginTemporaries(args);
             if (byRefContext) {
                 b.beginCallRef(info);
             } else {
@@ -4640,6 +4702,7 @@ public final class BytecodeTranslator {
             } else {
                 b.endCall();
             }
+            endTemporaries(temporaries);
         }
 
         private void calleeValue(Object value) {
@@ -5363,7 +5426,9 @@ public final class BytecodeTranslator {
             }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
-            MethodSite site = (MethodSite) made(() -> new MethodSite(name, false));
+            boolean countsReceiver = !isThis(node.get("expr"));
+            MethodSite site = (MethodSite) made(() -> new MethodSite(name, false, countsReceiver));
+            int temporaries = spread ? 0 : beginTemporaries(args);
             if (spread) {
                 b.beginCallMethodSpread(site, byRefContext);
             } else {
@@ -5383,6 +5448,7 @@ public final class BytecodeTranslator {
             } else {
                 b.endCallMethod();
             }
+            endTemporaries(temporaries);
         }
 
         /**
@@ -5428,6 +5494,7 @@ public final class BytecodeTranslator {
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
             MethodSite site = (MethodSite) made(() -> new MethodSite(name, forwarding));
+            int temporaries = spread ? 0 : beginTemporaries(args);
             if (spread) {
                 b.beginCallStaticSpread(site, byRefContext);
             } else {
@@ -5447,6 +5514,7 @@ public final class BytecodeTranslator {
             } else {
                 b.endCallStatic();
             }
+            endTemporaries(temporaries);
         }
 
         /**
@@ -5569,6 +5637,7 @@ public final class BytecodeTranslator {
             }
             boolean spread = unpacks(args);
             boolean needsCallee = spread || argumentsNeedCallee(args);
+            int temporaries = spread ? 0 : beginTemporaries(args);
             if (spread) {
                 b.beginConstructSpread();
             } else {
@@ -5598,6 +5667,7 @@ public final class BytecodeTranslator {
             } else {
                 b.endConstruct();
             }
+            endTemporaries(temporaries);
             if (anonymous != null) {
                 b.endBlock();
             }
@@ -5786,6 +5856,21 @@ public final class BytecodeTranslator {
         }
 
         private void argument(Object arg, int index, StackValue callee) {
+            BytecodeLocal temporary = temporaryArguments.remove(arg);
+            if (temporary != null) {
+                // the argument's temporary, kept for FreeTemporary after the call
+                b.beginBlock();
+                b.beginStoreLocal(temporary);
+                sendArgument(arg, index, callee);
+                b.endStoreLocal();
+                b.emitLoadLocal(temporary);
+                b.endBlock();
+                return;
+            }
+            sendArgument(arg, index, callee);
+        }
+
+        private void sendArgument(Object arg, int index, StackValue callee) {
             if (arg instanceof Ast chain && (chain.is("BYTECODE_OBJECT") || Translator.deepestNullsafe(chain) != null)) {
                 // a `?->` chain, or the operand of `|>`: a call's result (SEND_VAR_NO_REF), else a value, which a
                 // by-reference parameter refuses (SEND_VAL_EX)

@@ -13,6 +13,7 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefCounts;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -965,6 +966,8 @@ final class Serialization {
                 array.addHolder();
             } else if (value instanceof PhpRef ref) {
                 ref.bind();
+            } else {
+                RefCounts.addRef(value);
             }
             object.initProperty(name, value);
             if (old instanceof PhpArray array && old != value) {
