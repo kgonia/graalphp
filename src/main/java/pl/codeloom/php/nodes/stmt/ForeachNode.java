@@ -40,7 +40,10 @@ public final class ForeachNode {
         if (!(object.getInternal() instanceof PhpGenerator generator)) {
             return object.callMethod(site, method);
         }
-        return Backtrace.callFrom(site, () -> generatorStep(generator, method));
+        Object result = Backtrace.callFrom(site, () -> generatorStep(generator, method));
+        // owned, as a method's return value is
+        pl.codeloom.php.runtime.Refcount.inc(result);
+        return result;
     }
 
     private static Object generatorStep(PhpGenerator generator, String method) {
@@ -74,22 +77,46 @@ public final class ForeachNode {
     @TruffleBoundary
     public static void traverse(Node site, PhpObject subject, Visit visit) {
         PhpObject iterator = unwrapAggregates(site, subject);
-        step(site, iterator, "rewind");
-        while (Convert.toBool(step(site, iterator, "valid"))) {
-            Object value = PhpRef.deref(step(site, iterator, "current"));
-            if (!visit.element(PhpRef.deref(step(site, iterator, "key")), value)) {
-                return;
+        try {
+            step(site, iterator, "rewind");
+            while (Convert.toBool(step(site, iterator, "valid"))) {
+                Object value = PhpRef.deref(step(site, iterator, "current"));
+                Object key = PhpRef.deref(step(site, iterator, "key"));
+                boolean more;
+                try {
+                    more = visit.element(key, value);
+                } finally {
+                    // the calls' own counts: whatever visit stored counted its own
+                    pl.codeloom.php.runtime.Refcount.dec(value);
+                    pl.codeloom.php.runtime.Refcount.dec(key);
+                }
+                if (!more) {
+                    return;
+                }
+                step(site, iterator, "next");
             }
-            step(site, iterator, "next");
+        } finally {
+            if (iterator != subject) {
+                pl.codeloom.php.runtime.Refcount.dec(iterator);
+            }
         }
     }
 
-    /** unwrapAggregates for a loop at site. */
+    /**
+     * unwrapAggregates for a loop at site. An iterator other than subject comes with the count its getIterator()
+     * call gave, which the caller gives up when done with it.
+     */
     @TruffleBoundary
     public static PhpObject unwrapAggregates(Node site, PhpObject subject) {
         PhpObject object = subject;
         while (object.getPhpClass().isSubclassOf("iteratoraggregate")) {
-            if (!(object.callMethod(site, "getiterator") instanceof PhpObject inner)) {
+            Object returned = object.callMethod(site, "getiterator");
+            if (object != subject) {
+                // an aggregate getIterator() returned: the count that call gave is given up once it is unwrapped
+                pl.codeloom.php.runtime.Refcount.dec(object);
+            }
+            if (!(returned instanceof PhpObject inner)) {
+                pl.codeloom.php.runtime.Refcount.dec(returned);
                 throw new PhpError("getIterator() must return a Traversable");
             }
             object = inner;

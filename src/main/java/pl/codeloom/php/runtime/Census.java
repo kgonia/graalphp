@@ -252,7 +252,7 @@ final class Census {
                 holders.computeIfAbsent(object, o -> new int[1])[0] += weight;
             }
             if ((value instanceof PhpRef || value instanceof PhpArray || value instanceof PhpObject
-                    || value instanceof PhpClosure || value instanceof IncludeScope)
+                    || value instanceof PhpClosure || value instanceof IncludeScope || value instanceof Refcount.Holder)
                     && !seen.containsKey(value)) {
                 Node node = new Node(value, from, label, fromRoots);
                 seen.put(value, node);
@@ -294,6 +294,8 @@ final class Census {
                 }
             } else if (value instanceof IncludeScope scope) {
                 scope.forEachOther((name, ref) -> slots.slot(" $" + name, ref, 1));
+            } else if (value instanceof Refcount.Holder holder) {
+                slots.slot(" foreach", holder.held(), 1);
             }
         }
 
@@ -360,6 +362,21 @@ final class Census {
     private static int pointAudits;
     /** The points' findings until the script's end, by kind, class and where the object was made. */
     private static final Map<String, Group> pointGroups = new LinkedHashMap<>();
+
+    /** The objects whose destructor runs now: each holds the count zend_objects_store_del adds around it. */
+    private static final IdentityHashMap<PhpObject, int[]> inDestructor = new IdentityHashMap<>();
+
+    @TruffleBoundary
+    static void destroying(PhpObject object, boolean starts) {
+        if (starts) {
+            inDestructor.computeIfAbsent(object, o -> new int[1])[0]++;
+        } else {
+            int[] count = inDestructor.get(object);
+            if (count != null && --count[0] <= 0) {
+                inDestructor.remove(object);
+            }
+        }
+    }
 
     /** The owning temporaries sent as arguments and still kept in a hidden local (Refcount.sent). */
     private static final IdentityHashMap<PhpObject, int[]> sentTemporaries = new IdentityHashMap<>();
@@ -433,6 +450,8 @@ final class Census {
         Walk walk = new Walk();
         f.walk = walk;
         IdentityHashMap<PhpObject, int[]> slack = new IdentityHashMap<>();
+        // the destructor's own hold (zend_objects_store_del's GC_ADDREF) has no slot either
+        inDestructor.forEach((object, count) -> slack.computeIfAbsent(object, o -> new int[1])[0] += count[0]);
         context.censusRoots((label, value) -> walk.root(label, value, 1));
         context.censusHolders((label, value) -> walk.root(label, value, 1));
         String[] builtin = {null};

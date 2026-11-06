@@ -18,7 +18,7 @@ import java.util.List;
  * access, each made a reference (PhpObject.propertyRef). An Iterator is an Error (zend_user_it_get_iterator). The
  * generator's steps are made from the loop's statement or instruction, as traces show them.
  */
-public final class GeneratorRefIteration {
+public final class GeneratorRefIteration implements pl.codeloom.php.runtime.Refcount.Holder {
     private final PhpGenerator generator;
     /**
      * A plain object's walk (generator null): the object, the calling scope, its properties met so far
@@ -31,11 +31,28 @@ public final class GeneratorRefIteration {
     private PhpRef current;
     private boolean started;
 
-    private GeneratorRefIteration(PhpGenerator generator, PhpObject object, String scope, List<String> properties) {
+    /** What the loop holds a count of until it ends (FE_RESET_RW's copy, or the iterator getIterator() returned). */
+    private PhpObject held;
+
+    private GeneratorRefIteration(PhpGenerator generator, PhpObject object, String scope, List<String> properties,
+                                  PhpObject held) {
         this.generator = generator;
         this.object = object;
         this.scope = scope;
         this.properties = properties;
+        this.held = held;
+    }
+
+    @Override
+    public Object held() {
+        return held;
+    }
+
+    /** The loop ends however it ends (FE_FREE): it lets go of what it held. */
+    public void end() {
+        PhpObject was = held;
+        held = null;
+        pl.codeloom.php.runtime.Refcount.dec(was);
     }
 
     /**
@@ -47,18 +64,28 @@ public final class GeneratorRefIteration {
         PhpClass phpClass = subject.getPhpClass();
         if (!phpClass.isSubclassOf("iterator") && !phpClass.isSubclassOf("iteratoraggregate")) {
             PhpObject object = subject.initialized();
-            return new GeneratorRefIteration(null, object, scope, object.visiblePropertyNames(scope));
+            subject.addRef();
+            return new GeneratorRefIteration(null, object, scope, object.visiblePropertyNames(scope), subject);
         }
         PhpObject object = ForeachNode.unwrapAggregates(site, subject);
-        if (!(object.getInternal() instanceof PhpGenerator generator)) {
-            throw new PhpError("An iterator cannot be used with foreach by reference");
+        if (object == subject) {
+            subject.addRef();
         }
-        Backtrace.callFrom(site, () -> {
-            generator.startIteration(true);
-            generator.rewind();
-            return null;
-        });
-        return new GeneratorRefIteration(generator, null, null, null);
+        try {
+            if (!(object.getInternal() instanceof PhpGenerator generator)) {
+                throw new PhpError("An iterator cannot be used with foreach by reference");
+            }
+            Backtrace.callFrom(site, () -> {
+                generator.startIteration(true);
+                generator.rewind();
+                return null;
+            });
+            return new GeneratorRefIteration(generator, null, null, null, object);
+        } catch (RuntimeException e) {
+            // FE_RESET_RW threw: its result is freed
+            pl.codeloom.php.runtime.Refcount.dec(object);
+            throw e;
+        }
     }
 
     /** Moves to the next element (after the first step): false at the end. */

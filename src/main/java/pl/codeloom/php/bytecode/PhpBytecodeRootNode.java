@@ -562,7 +562,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     object.release();
                 } else if (value instanceof PhpRef ref) {
                     released(i, RELEASED_REF);
-                    ref.unbind();
+                    if (returned != null && ref.get() == returned) {
+                        // `return $b` where $b is a reference: the array goes on to the caller, as above
+                        ref.unbindReturning();
+                    } else {
+                        ref.unbind();
+                    }
                 }
             }
         }
@@ -605,6 +610,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ExplodeLoop
     public Throwable interceptInternalException(Throwable t, VirtualFrame frame, BytecodeNode bytecodeNode,
                                                 int bytecodeIndex) {
+        releaseFrame(frame, bytecodeNode);
+        return t;
+    }
+
+    /**
+     * The variables and the running foreach loops let go of what they hold: on an internal exception, and when a
+     * suspended generator's frame is freed (php-src's zend_generator_close).
+     */
+    @Override
+    @ExplodeLoop
+    public void releaseFrame(VirtualFrame frame, BytecodeNode bytecodeNode) {
         releaseVariables(frame, bytecodeNode);
         for (LocalAccessor state : foreachStates) {
             if (state.isCleared(bytecodeNode, frame)) {
@@ -612,14 +628,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             Object held = state.getObject(bytecodeNode, frame);
             if (held instanceof PhpArray array) {
+                state.clear(bytecodeNode, frame);
                 array.removeHolder();
-                state.clear(bytecodeNode, frame);
             } else if (held instanceof RefIteration iteration) {
-                iteration.end(PhpContext.get(bytecodeNode));
                 state.clear(bytecodeNode, frame);
+                iteration.end(PhpContext.get(bytecodeNode));
+            } else if (held instanceof ObjectIteration iteration) {
+                state.clear(bytecodeNode, frame);
+                iteration.end();
+            } else if (held instanceof GeneratorRefIteration iteration) {
+                state.clear(bytecodeNode, frame);
+                iteration.end();
             }
         }
-        return t;
     }
 
     // ---- function entry and exit ----
@@ -630,6 +651,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object doReturn(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                       @Bind BytecodeNode bytecode) {
+            if (value instanceof PhpArray array) {
+                // the return value holds the array while the epilogue runs (php-src's retval has its own count):
+                // a variable, temporary or object the epilogue frees may have been its last other holder
+                array.addHolder();
+                root.releaseVariables(frame, bytecode, value);
+                array.removeReturnedHolder();
+                return value;
+            }
             root.releaseVariables(frame, bytecode, value);
             return value;
         }
@@ -5907,10 +5936,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void end(VirtualFrame frame, LocalAccessor state, LocalAccessor position,
                                @Bind BytecodeNode bytecode) {
-            if (!state.isCleared(bytecode, frame) && state.getObject(bytecode, frame) instanceof PhpArray array) {
-                array.removeHolder();
+            if (!state.isCleared(bytecode, frame)) {
+                Object held = state.getObject(bytecode, frame);
+                state.clear(bytecode, frame);
+                if (held instanceof PhpArray array) {
+                    array.removeHolder();
+                } else if (held instanceof ObjectIteration iteration) {
+                    iteration.end();
+                }
             }
-            state.clear(bytecode, frame);
             position.clear(bytecode, frame);
         }
     }
@@ -6044,10 +6078,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void end(VirtualFrame frame, LocalAccessor state, @Bind BytecodeNode bytecode,
                                @Bind Node node) {
-            if (!state.isCleared(bytecode, frame) && state.getObject(bytecode, frame) instanceof RefIteration it) {
-                it.end(PhpContext.get(node));
+            if (!state.isCleared(bytecode, frame)) {
+                Object held = state.getObject(bytecode, frame);
+                state.clear(bytecode, frame);
+                if (held instanceof RefIteration it) {
+                    it.end(PhpContext.get(node));
+                } else if (held instanceof GeneratorRefIteration iteration) {
+                    iteration.end();
+                }
             }
-            state.clear(bytecode, frame);
         }
     }
 
@@ -6067,7 +6106,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             PhpGenerator state = new PhpGenerator(continuation, frame, root.generatorByRef,
                     root.generatorHasFinally);
             generator.setObject(bytecode, frame, state);
-            return state.newObject(PhpContext.get(node));
+            PhpObject object = state.newObject(PhpContext.get(node));
+            // the call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1)
+            object.addRef();
+            return object;
         }
     }
 

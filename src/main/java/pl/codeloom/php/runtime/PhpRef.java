@@ -132,6 +132,33 @@ public final class PhpRef {
     }
 
     /**
+     * A binding goes but the value keeps this reference's count (a returned array's references: the array is on its
+     * way to a holder, whose bind takes the binding back without counting the value again).
+     */
+    void unbindKeeping() {
+        if (bindings > 0) {
+            bindings--;
+        }
+    }
+
+    /**
+     * unbind for a reference whose array a function returns (its epilogue releases the variable while the value goes
+     * on to the caller): at its last binding the array loses this holder without giving its elements' counts up,
+     * as PhpArray.removeReturnedHolder.
+     */
+    @TruffleBoundary
+    public void unbindReturning() {
+        if (bindings > 0 && --bindings == 0) {
+            released = true;
+            if (value instanceof PhpArray array) {
+                array.removeReturnedHolder();
+            } else {
+                Refcount.dec(value);
+            }
+        }
+    }
+
+    /**
      * Out of line: unbind is inlined wherever a variable is rebound or a frame releases its locals, and the
      * release is the rare end of it.
      */

@@ -155,7 +155,12 @@ public final class PhpArray implements TruffleObject {
         if (count > 0) {
             holders = count - 1;
             if (count == 1 && mayHoldRefs) {
-                countReferences(false);
+                // its references lose this binding but keep their values' counts, as the elements do
+                for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+                    if (rawAt(p) instanceof PhpRef ref) {
+                        ref.unbindKeeping();
+                    }
+                }
             }
         }
     }
@@ -225,15 +230,15 @@ public final class PhpArray implements TruffleObject {
         return Integer.compareUnsigned(holders, 1) > 0;
     }
 
-    /**
-     * Makes this array and the arrays nested in it immutable: language-level data shared by every context (and
-     * thread). Call it before the array is published, while one thread holds it.
-     */
     /** Frozen (shared, its holders uncounted), for the refcount census. */
     boolean isFrozen() {
         return holders == FROZEN;
     }
 
+    /**
+     * Makes this array and the arrays nested in it immutable: language-level data shared by every context (and
+     * thread). Call it before the array is published, while one thread holds it.
+     */
     @TruffleBoundary
     public void freeze() {
         if (holders == FROZEN) {

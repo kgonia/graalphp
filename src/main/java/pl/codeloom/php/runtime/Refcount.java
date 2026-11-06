@@ -46,6 +46,21 @@ public final class Refcount {
     /** A frame's layout for the count audit: its first locals are PHP variables, then the hidden ones. */
     public interface Variables {
         int variableCount();
+
+        /**
+         * A suspended generator's frame is freed (php-src's zend_generator_close): its variables give up what they
+         * hold, and so do its running foreach loops.
+         */
+        void releaseFrame(com.oracle.truffle.api.frame.VirtualFrame frame,
+                          com.oracle.truffle.api.bytecode.BytecodeNode bytecode);
+    }
+
+    /**
+     * A loop's state that holds a count (foreach over an object: php-src's FE_RESET copy or the iterator it made),
+     * for the count audit.
+     */
+    public interface Holder {
+        Object held();
     }
 
     /**
@@ -160,12 +175,27 @@ public final class Refcount {
      */
     private static void destroy(PhpObject object) {
         RuntimeException thrown = null;
-        if (!object.markDestructorCalled() && object.getPhpClass().findMethod("__destruct") != null) {
+        PhpGenerator generator = object.getInternal() instanceof PhpGenerator g ? g : null;
+        if (!object.markDestructorCalled()
+                && (generator != null || object.getPhpClass().findMethod("__destruct") != null)) {
             object.addRef();
+            if (Census.AUDIT) {
+                Census.destroying(object, true);
+            }
             try {
-                object.callMethod("__destruct");
+                if (generator != null) {
+                    // zend_generator_dtor_storage: a generator suspended in a try runs its finally blocks; its
+                    // frame is freed (zend_generator_close)
+                    generator.destroy();
+                } else {
+                    object.callMethod("__destruct");
+                }
             } catch (RuntimeException e) {
                 thrown = e;
+            } finally {
+                if (Census.AUDIT) {
+                    Census.destroying(object, false);
+                }
             }
             if (object.decrement() > 0) {
                 // resurrected: freed when its count next reaches zero, without its destructor

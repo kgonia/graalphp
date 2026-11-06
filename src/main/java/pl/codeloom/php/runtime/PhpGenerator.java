@@ -147,6 +147,17 @@ public final class PhpGenerator {
         child.accept(" resume value", resumeValue);
     }
 
+    /** zend_generator_close's freeing of a suspended body's frame: its variables and foreach loops let go. */
+    private void releaseFrame() {
+        if (continuation == null) {
+            return;
+        }
+        com.oracle.truffle.api.bytecode.BytecodeRootNode code = continuation.getSourceRootNode();
+        com.oracle.truffle.api.bytecode.BytecodeLocation location = continuation.getLocation();
+        ((Refcount.Variables) code).releaseFrame(frame,
+                location != null ? location.getBytecodeNode() : code.getBytecodeNode());
+    }
+
     /** The Generator object over a new generator. */
     @TruffleBoundary
     public PhpObject newObject(PhpContext context) {
@@ -702,6 +713,11 @@ public final class PhpGenerator {
             unlink(this);
         }
         if (!open || running || !hasFinally || continuation == start) {
+            if (open && !running) {
+                // suspended (or not started): its frame is freed, the variables give up what they hold (the
+                // finally path below unwinds, which releases them)
+                releaseFrame();
+            }
             close();
             return;
         }
