@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 
 /**
@@ -28,6 +29,8 @@ public final class Variables {
     public static void replaced(Object old, Object value) {
         if (old instanceof PhpArray array && old != value) {
             array.removeHolder();
+        } else if (old instanceof PhpObject object) {
+            object.release();
         }
     }
 
@@ -35,6 +38,8 @@ public final class Variables {
     public static void released(Object old) {
         if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpObject object) {
+            object.release();
         } else if (old instanceof PhpRef ref) {
             ref.unbind();
         }
@@ -48,6 +53,9 @@ public final class Variables {
         PhpRef ref = new PhpRef(stored == null ? PhpNull.NULL : stored);
         if (stored instanceof PhpArray array) {
             array.removeHolder();
+        } else if (stored instanceof PhpObject object) {
+            // the variable's count moved to the reference, which counted it
+            object.disown();
         }
         ref.bind();
         return ref;

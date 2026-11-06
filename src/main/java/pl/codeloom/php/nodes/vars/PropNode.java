@@ -23,6 +23,7 @@ import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpType;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
@@ -70,6 +71,8 @@ public final class PropNode extends Node {
     private static final int SEEN_OLD_ARRAY = 1 << 3;
     /** A read (read()) of a value that isn't an object. */
     private static final int SEEN_NON_OBJECT = 1 << 4;
+    private static final int SEEN_NEW_OBJECT = 1 << 5;
+    private static final int SEEN_OLD_OBJECT = 1 << 6;
     /** The writes through a property that is a reference (SEEN_REF). */
     private final RefWrites refWrites = RefWrites.create();
 
@@ -554,6 +557,7 @@ public final class PropNode extends Node {
         if (converted instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(converted);
         phpObject.setProperty(name, converted);
         return true;
     }
@@ -661,12 +665,18 @@ public final class PropNode extends Node {
             if (value instanceof PhpArray array) {
                 met(SEEN_NEW_ARRAY);
                 array.addHolder();
+            } else if (value instanceof PhpObject newObject) {
+                met(SEEN_NEW_OBJECT);
+                newObject.addRef();
             }
             objects.put(phpObject, name, value);
         }
         if (old instanceof PhpArray array && old != value) {
             met(SEEN_OLD_ARRAY);
             array.removeHolder();
+        } else if (old instanceof PhpObject oldObject) {
+            met(SEEN_OLD_OBJECT);
+            oldObject.release();
         }
         if (setChecked) {
             // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)
@@ -713,6 +723,9 @@ public final class PropNode extends Node {
         PhpRef ref = new PhpRef(old == null ? PhpNull.NULL : old);
         if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpObject object) {
+            // the property's count moved to the reference, which counted it
+            object.disown();
         }
         ref.bind();
         if (old == null) {
@@ -763,6 +776,8 @@ public final class PropNode extends Node {
         }
         if (old instanceof PhpArray array) {
             array.removeHolder();
+        } else if (old instanceof PhpObject object) {
+            object.release();
         } else if (old instanceof PhpRef previous) {
             previous.unbind();
         }
@@ -1006,6 +1021,8 @@ public final class PropNode extends Node {
             }
             if (old instanceof PhpArray array) {
                 array.removeHolder();
+            } else if (old instanceof PhpObject object) {
+                object.release();
             }
             boolean typed = typed(phpObject, name);
             objects.removeKey(phpObject, name);

@@ -94,6 +94,8 @@ final class Locals {
         private static final int REF = 1 << 3;
         private static final int NEW_ARRAY = 1 << 4;
         private static final int OLD_ARRAY = 1 << 5;
+        private static final int NEW_OBJECT = 1 << 6;
+        private static final int OLD_OBJECT = 1 << 7;
         @CompilationFinal private int seen;
         private final RefWrites refWrites = RefWrites.create();
 
@@ -133,7 +135,7 @@ final class Locals {
                 return;
             }
             variable.setLong(bytecode, frame, value);
-            releaseArray(old);
+            releaseOld(old);
         }
 
         void writeDouble(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, double value) {
@@ -144,7 +146,7 @@ final class Locals {
                 return;
             }
             variable.setDouble(bytecode, frame, value);
-            releaseArray(old);
+            releaseOld(old);
         }
 
         void writeObject(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
@@ -157,17 +159,28 @@ final class Locals {
             if (value instanceof PhpArray array) {
                 met(NEW_ARRAY);
                 array.addHolder();
+            } else if (value instanceof PhpObject object) {
+                met(NEW_OBJECT);
+                object.addRef();
             }
             variable.setObject(bytecode, frame, value);
-            if (old != value) {
-                releaseArray(old);
+            if (old instanceof PhpObject object) {
+                // also when it is the value: counted twice above
+                met(OLD_OBJECT);
+                object.release();
+            } else if (old != value) {
+                releaseOld(old);
             }
         }
 
-        private void releaseArray(Object old) {
+        /** What the variable held directly gives up its count. */
+        private void releaseOld(Object old) {
             if (old instanceof PhpArray array) {
                 met(OLD_ARRAY);
                 array.removeHolder();
+            } else if (old instanceof PhpObject object) {
+                met(OLD_OBJECT);
+                object.release();
             }
         }
     }
