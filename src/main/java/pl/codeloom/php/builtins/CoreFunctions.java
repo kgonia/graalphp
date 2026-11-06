@@ -144,7 +144,7 @@ final class CoreFunctions {
         // compiled in place where a call names them; called by a name resolved at run time they refuse, as
         // zend_forbid_dynamic_call does
         for (String frameFunction : new String[] {"func_get_arg", "func_get_args", "func_num_args", "compact",
-                "extract"}) {
+                "extract", "get_defined_vars"}) {
             r.fn(frameFunction, a -> {
                 throw new PhpError("Error", "Cannot call " + frameFunction + "() dynamically");
             });

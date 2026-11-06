@@ -1,6 +1,6 @@
 <?php
 // Nested element writes, appends, compound assignments, increments and unset() in functions on bytecode
-// (-Dpolyglot.php.Interpreter=bytecode): the containers made writable down the chain (copied when shared, created
+//: the containers made writable down the chain (copied when shared, created
 // when unset or null), through references, on properties and ArrayAccess objects, with php-src's order of keys
 // and values, and the copy-on-write rules (tla-cow.md).
 

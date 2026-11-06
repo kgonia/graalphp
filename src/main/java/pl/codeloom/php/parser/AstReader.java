@@ -41,8 +41,16 @@ public final class AstReader {
     }
 
     public static Ast read(InputStream in) throws IOException {
-        byte[] json = in.readAllBytes();
-        return (Ast) read(json, 0, json.length);
+        return read(in.readAllBytes());
+    }
+
+    /** The tree of a whole export, read again from its bytes (which the functions' bodies keep anyway). */
+    public static Ast read(byte[] json) {
+        try {
+            return (Ast) read(json, 0, json.length);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     /** The value in json[offset, offset + length): a tree, or a leaf value. */

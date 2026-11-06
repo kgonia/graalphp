@@ -17,7 +17,7 @@ import org.graalvm.options.OptionMap;
 import org.graalvm.options.OptionStability;
 import org.graalvm.options.OptionValues;
 import pl.codeloom.php.builtins.Builtins;
-import pl.codeloom.php.nodes.FileRootNode;
+import com.oracle.truffle.api.nodes.RootNode;
 import pl.codeloom.php.nodes.ScriptRootNode;
 import pl.codeloom.php.runtime.ClassKey;
 import pl.codeloom.php.runtime.NameIds;
@@ -71,11 +71,6 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<Boolean> Debug = new OptionKey<>(false);
 
-    @Option(help = "How functions run: bytecode (the Bytecode DSL interpreter, for the functions it supports; the "
-            + "others stay on the tree) or tree (the AST interpreter).", category = OptionCategory.EXPERT,
-            stability = OptionStability.EXPERIMENTAL)
-    static final OptionKey<String> Interpreter = new OptionKey<>("bytecode");
-
     private static final LanguageReference<PhpLanguage> LANGUAGE = LanguageReference.create(PhpLanguage.class);
 
     private final Shape rootShape = Shape.newBuilder().layout(PhpObject.class, java.lang.invoke.MethodHandles.lookup())
@@ -95,12 +90,12 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     /** A translation and the AST export version (modification time and size) it was made from. */
     /** A file's translation for one version of its AST export, made once by the first context to need it. */
-    private record CachedFile(FutureTask<FileRootNode> translation, long modified, long size) {
+    private record CachedFile(FutureTask<RootNode> translation, long modified, long size) {
         boolean isFor(long otherModified, long otherSize) {
             return modified == otherModified && size == otherSize;
         }
 
-        FileRootNode root() {
+        RootNode root() {
             try {
                 return translation.get();
             } catch (ExecutionException e) {
@@ -182,17 +177,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return table;
     }
 
-    /** Set by the first context: options are the same for every context of the language (areOptionsCompatible). */
-    private volatile boolean bytecode;
-
-    /** Whether functions the bytecode translator supports run on bytecode (php.Interpreter=bytecode). */
-    public boolean bytecode() {
-        return bytecode;
-    }
-
     @Override
     protected PhpContext createContext(Env env) {
-        bytecode = env.getOptions().get(Interpreter).equals("bytecode");
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
                 env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
                 iniSettings(env.getOptions().get(Ini)));
@@ -272,7 +258,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
      * that version: once, also when contexts race (the others wait for it), and outside the map's lock, so
      * translating one file doesn't hold up others. A failed translation isn't kept.
      */
-    public FileRootNode file(String canonical, long modified, long size, Supplier<FileRootNode> translate) {
+    public RootNode file(String canonical, long modified, long size, Supplier<RootNode> translate) {
         CachedFile cached = files.get(canonical);
         if (cached == null || !cached.isFor(modified, size)) {
             CachedFile fresh = new CachedFile(new FutureTask<>(translate::get), modified, size);
@@ -329,7 +315,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     }
 
     /** A prelude file's translation, shared by every context. */
-    public FileRootNode preludeRoot(String file) {
+    public RootNode preludeRoot(String file) {
         return file(Prelude.path(file), 0, 0, () -> Prelude.translate(this, file));
     }
 
@@ -339,8 +325,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
                 && firstOptions.get(Parser).equals(newOptions.get(Parser))
                 && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
-                && firstOptions.get(Debug).equals(newOptions.get(Debug))
-                && firstOptions.get(Interpreter).equals(newOptions.get(Interpreter));
+                && firstOptions.get(Debug).equals(newOptions.get(Debug));
     }
 
     @Override

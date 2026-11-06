@@ -1,16 +1,11 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.Convert;
-import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -26,7 +21,7 @@ import pl.codeloom.php.runtime.Str;
  * in a symbol table. This node is a file's top-level `$$name`; the static methods are what both interpreters run.
  * Rare code, behind boundaries.
  */
-public final class VariableVariableNode extends LValueNode {
+public final class VariableVariableNode {
     /** php-src's fetch types, and ISSET for ZEND_ISSET_ISEMPTY_VAR, which doesn't fall back to $this. */
     public static final int R = 0;
     public static final int W = 1;
@@ -34,15 +29,9 @@ public final class VariableVariableNode extends LValueNode {
     public static final int IS = 3;
     public static final int UNSET = 4;
     public static final int ISSET = 5;
+    /** A read that leaves an undefined variable Java null: an arrow function's capture (ReadVarIfDefined). */
+    public static final int DEFINED = 6;
 
-    @Child private ExprNode name;
-    /** How readIfSet fetches: IS (`??`, a container's isset()), or ISSET for empty($$name). */
-    private final int ifSet;
-
-    public VariableVariableNode(ExprNode name, int ifSet) {
-        this.name = name;
-        this.ifSet = ifSet;
-    }
 
     /** The variable's name (zval_try_get_tmp_string): an array's with php-src's warning, an object's __toString(). */
     @TruffleBoundary
@@ -63,6 +52,9 @@ public final class VariableVariableNode extends LValueNode {
         Object value = scope != null ? scope.get(name) : globalValue(node, name);
         if (value != null) {
             return value;
+        }
+        if (type == DEFINED) {
+            return null;
         }
         if (type != ISSET && name.equals("this")) {
             if (thisObject instanceof PhpObject) {
@@ -133,63 +125,4 @@ public final class VariableVariableNode extends LValueNode {
         ErrorFunctions.raise(PhpContext.get(node), ErrorFunctions.E_WARNING, Str.of(message), SourceLocation.of(node));
     }
 
-    private String name(VirtualFrame frame) {
-        return name(this, name.execute(frame));
-    }
-
-    private static Object thisObject(VirtualFrame frame) {
-        return frame.getArguments()[PhpFunction.ARG_THIS];
-    }
-
-    @Override
-    public Object execute(VirtualFrame frame) {
-        return fetch(frame, R);
-    }
-
-    /** The value fetched as type says (see {@link #read}): PropNode fetches the object it writes to for W. */
-    public Object fetch(VirtualFrame frame, int type) {
-        return read(this, IncludeScope.of(frame), thisObject(frame), name(frame), type);
-    }
-
-    @Override
-    public void write(VirtualFrame frame, Object value) {
-        ((PhpRef) ref(this, IncludeScope.of(frame), name(frame), W)).set(value);
-    }
-
-    @Override
-    public PhpRef makeRef(VirtualFrame frame) {
-        return (PhpRef) ref(this, IncludeScope.of(frame), name(frame), W);
-    }
-
-    @Override
-    public void bindRef(VirtualFrame frame, PhpRef ref) {
-        bind(this, IncludeScope.of(frame), name(frame), ref);
-    }
-
-    @Override
-    public PhpArray arrayForWrite(VirtualFrame frame) {
-        return Places.refArrayForWrite(makeRef(frame));
-    }
-
-    @Override
-    public void unset(VirtualFrame frame) {
-        unset(this, IncludeScope.of(frame), name(frame));
-    }
-
-    @Override
-    public boolean isSet(VirtualFrame frame) {
-        return fetch(frame, ISSET) != PhpNull.NULL;
-    }
-
-    @Override
-    public Object readIfSet(VirtualFrame frame) {
-        Object value = fetch(frame, ifSet);
-        return value == PhpNull.NULL ? null : value;
-    }
-
-    @Override
-    public boolean isPure() {
-        return name.constantValue() != null || name instanceof LocalVarNode || name instanceof FileVarNode
-                || name instanceof GlobalVarNode;
-    }
 }

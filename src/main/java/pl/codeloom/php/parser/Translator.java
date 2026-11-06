@@ -1,73 +1,18 @@
 package pl.codeloom.php.parser;
 
 import com.oracle.truffle.api.RootCallTarget;
-import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.source.Source;
-import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.FileRootNode;
-import pl.codeloom.php.nodes.LValueNode;
-import pl.codeloom.php.nodes.StmtNode;
-import pl.codeloom.php.nodes.ThunkRootNode;
-import pl.codeloom.php.nodes.call.ArgumentsNode;
-import pl.codeloom.php.nodes.call.CallableCallNode;
-import pl.codeloom.php.nodes.call.CallableConvertNodes;
-import pl.codeloom.php.nodes.call.ClosureNode;
-import pl.codeloom.php.nodes.call.DynamicMethodCallNode;
-import pl.codeloom.php.nodes.call.FrameArgNode;
-import pl.codeloom.php.nodes.call.FrameArgsNode;
-import pl.codeloom.php.nodes.call.FunctionCallNode;
-import pl.codeloom.php.nodes.call.FunctionRootNode;
-import pl.codeloom.php.nodes.call.MethodCallNode;
-import pl.codeloom.php.nodes.call.NewNode;
-import pl.codeloom.php.nodes.call.StaticCallNode;
-import pl.codeloom.php.nodes.expr.ArithmeticNodesFactory;
-import pl.codeloom.php.nodes.expr.ArrayLiteralNode;
+import pl.codeloom.php.bytecode.DefinedSite;
+import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
-import pl.codeloom.php.nodes.expr.CompareNodes;
-import pl.codeloom.php.nodes.expr.ConstNode;
-import pl.codeloom.php.nodes.expr.ConstantNodes;
-import pl.codeloom.php.nodes.expr.ConcatChainNode;
-import pl.codeloom.php.nodes.expr.IncludeNode;
-import pl.codeloom.php.nodes.expr.InterpolationNode;
-import pl.codeloom.php.nodes.expr.LogicNodes;
-import pl.codeloom.php.nodes.expr.MatchNode;
-import pl.codeloom.php.nodes.expr.TemporaryNode;
 import pl.codeloom.php.parser.zend.ZendParser;
-import pl.codeloom.php.nodes.expr.TestNodes;
-import pl.codeloom.php.nodes.expr.ThrowExprNode;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
-import pl.codeloom.php.nodes.intrinsics.Intrinsics;
-import pl.codeloom.php.nodes.stmt.BasicStmts;
-import pl.codeloom.php.nodes.stmt.DeclareNodes;
-import pl.codeloom.php.nodes.stmt.ForeachNode;
-import pl.codeloom.php.nodes.stmt.GeneratorNodes;
-import pl.codeloom.php.nodes.stmt.GotoNodes;
-import pl.codeloom.php.nodes.stmt.LoopNodes;
-import pl.codeloom.php.nodes.stmt.TryNode;
-import pl.codeloom.php.nodes.vars.ClassRefNode;
-import pl.codeloom.php.nodes.vars.CompactNode;
-import pl.codeloom.php.nodes.vars.DimNode;
-import pl.codeloom.php.nodes.vars.DynamicCompactNode;
 import pl.codeloom.php.nodes.vars.ExtractNode;
-import pl.codeloom.php.nodes.vars.FileVarNode;
-import pl.codeloom.php.nodes.vars.ObjectVarsNode;
-import pl.codeloom.php.nodes.vars.GlobalVarNode;
-import pl.codeloom.php.nodes.vars.GlobalsArrayNode;
-import pl.codeloom.php.nodes.vars.GlobalsDimNode;
-import pl.codeloom.php.nodes.vars.ListAssignNode;
-import pl.codeloom.php.nodes.vars.LocalVarNode;
-import pl.codeloom.php.nodes.vars.PropNode;
-import pl.codeloom.php.nodes.vars.StaticPropNode;
-import pl.codeloom.php.nodes.vars.ThisNode;
-import pl.codeloom.php.nodes.vars.VariableVariableNode;
 import pl.codeloom.php.runtime.ArrayKey;
-import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
@@ -84,7 +29,6 @@ import pl.codeloom.php.runtime.Str;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -92,7 +36,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -121,34 +64,11 @@ public final class Translator {
     private static final int PROPERTY_MODIFIERS = MODIFIER_READONLY | 1024 | 2048 | 4096;
     private static final int ARRAY_ELEM_REF = 1;
     private static final int CLOSURE_USE_REF = 1;
-    private static final int ARRAY_SYNTAX_LIST = 1;
-    private static final int EXEC_EVAL = 1;
-    private static final int EXEC_INCLUDE_ONCE = 4;
-    private static final int EXEC_REQUIRE = 8;
-    private static final int EXEC_REQUIRE_ONCE = 16;
-    private static final int BINARY_PIPE = 261;
     /** How PHP 8.4 names a closure: {closure:the enclosing function or file:its line}. */
     private static final String CLOSURE_PREFIX = "{closure:";
 
     /** The class whose members are being translated, for self::, parent:: and __CLASS__. */
     record ClassInfo(String name, String parentName, boolean isTrait) {
-    }
-
-    /** A function's local variables: name to frame slot. */
-    private static final class Scope {
-        final FrameDescriptor.Builder frame = FrameDescriptor.newBuilder().defaultValueIllegal();
-        final Map<String, Integer> slots = new HashMap<>();
-        /** The slot keeping the call's IncludeScope (one per call, shared by its includes); -1 until needed. */
-        int includeScopeSlot = -1;
-
-        int slot(String name) {
-            Integer slot = slots.get(name);
-            if (slot == null) {
-                slot = frame.addSlot(FrameSlotKind.Illegal, name, null);
-                slots.put(name, slot);
-            }
-            return slot;
-        }
     }
 
     private final PhpLanguage language;
@@ -159,17 +79,6 @@ public final class Translator {
     private final ClassInfo classInfo;
     private final String functionName;
     private final PhpFunction function;
-    private final Scope scope;
-    /** In a generator function's body: the frame slot of its Generator state; -1 elsewhere. */
-    private int generatorSlot = -1;
-    /** In the body of a function returning by reference (not a generator, whose `&` is for its yields). */
-    private boolean returnsRef;
-    /** Numbers hidden temporaries ("\0key0", ...), which no PHP variable name can clash with. */
-    private int hiddenCounter;
-    /** While a constant expression is translated: its `->` and `[]` check their objects (ConstantObjectNode). */
-    private boolean constantExpression;
-    /** Frame slots of a file's top-level code: only hidden ones (its variables are globals, not slots). */
-    private final Scope fileSlots = new Scope();
     /** The namespace and imports in effect: updated by a file's namespace and use statements as they come. */
     private Names names;
     /** In a class's members: the class's php-ast flags (interface, trait...). */
@@ -179,11 +88,11 @@ public final class Translator {
 
     /** internal: the file is the prelude's, which stands for php-src's internal code (RootNode.isInternal). */
     public Translator(PhpLanguage language, String path, Source source, boolean internal) {
-        this(language, path, source, internal, null, "", null, null, Names.GLOBAL);
+        this(language, path, source, internal, null, "", null, Names.GLOBAL);
     }
 
     private Translator(PhpLanguage language, String path, Source source, boolean internal, ClassInfo classInfo,
-                       String functionName, PhpFunction function, Scope scope, Names names) {
+                       String functionName, PhpFunction function, Names names) {
         this.language = language;
         this.path = path;
         this.source = source;
@@ -191,7 +100,6 @@ public final class Translator {
         this.classInfo = classInfo;
         this.functionName = functionName;
         this.function = function;
-        this.scope = scope;
         this.names = names;
     }
 
@@ -201,12 +109,7 @@ public final class Translator {
      */
     static Translator forConstants(PhpLanguage language, String path, Source source, boolean internal,
                                    ClassInfo classInfo, String functionName, PhpFunction function, Names names) {
-        return new Translator(language, path, source, internal, classInfo, functionName, function, new Scope(),
-                names);
-    }
-
-    SourceSection lineSection(int line) {
-        return source == null || line < 1 || line > source.getLineCount() ? null : source.createSection(line);
+        return new Translator(language, path, source, internal, classInfo, functionName, function, names);
     }
 
     private PhpError unsupported(Ast node, String what) {
@@ -225,67 +128,8 @@ public final class Translator {
 
     // ---- files ----
 
-    /**
-     * A file's top-level statements: function declarations are hoisted into the prologue, and the classes php-src
-     * binds before the file runs into classes (see {@link #topLevelClass}); namespace and use statements change
-     * how the following names resolve, and a braced namespace's or block's statements come in place, at the top
-     * level still (zend_compile_top_stmt).
-     */
-    private void fileStatements(Ast list, List<StmtNode> prologue, List<StmtNode> classes, List<StmtNode> body) {
-        for (Object child : list.children()) {
-            if (!(child instanceof Ast statement)) {
-                continue;
-            }
-            switch (statement.kind) {
-                case "AST_FUNC_DECL": {
-                    StmtNode declaration = new DeclareNodes.DeclareFunctionNode(declareFunction(statement, null), true);
-                    declaration.setLine(statement.line);
-                    prologue.add(declaration);
-                    break;
-                }
-                case "AST_CLASS":
-                    topLevelClass(statement, classes, body);
-                    break;
-                case "AST_LABEL":
-                    fileLabels.add((String) statement.get("name"));
-                    fileLabelTargets.add(body.size());
-                    break;
-                case "AST_STMT_LIST":
-                    fileStatements(statement, prologue, classes, body);
-                    break;
-                case "AST_NAMESPACE":
-                    names = Names.namespace((String) statement.get("name"));
-                    if (statement.get("stmts") != null) {
-                        fileStatements(statement.node("stmts"), prologue, classes, body);
-                        names = Names.GLOBAL;
-                    }
-                    break;
-                case "AST_USE":
-                    for (Object element : statement.children()) {
-                        Ast use = (Ast) element;
-                        checkUse(statement.flags, use, (String) use.get("name"));
-                        names = names.use(statement.flags, (String) use.get("name"), (String) use.get("alias"));
-                    }
-                    break;
-                case "AST_GROUP_USE": {
-                    String prefix = (String) statement.get("prefix");
-                    Ast uses = statement.node("uses");
-                    for (Object element : uses.children()) {
-                        Ast use = (Ast) element;
-                        int kind = use.flags != 0 ? use.flags : uses.flags;
-                        checkUse(kind, use, prefix + "\\" + use.get("name"));
-                        names = names.use(kind, prefix + "\\" + use.get("name"), (String) use.get("alias"));
-                    }
-                    break;
-                }
-                default:
-                    body.add(statement(statement));
-            }
-        }
-    }
-
     /** zend_compile_use: a class can't be imported under a reserved name. */
-    private void checkUse(int kind, Ast use, String name) {
+    void checkUse(int kind, Ast use, String name) {
         String alias = use.get("alias") instanceof String a ? a : name.substring(name.lastIndexOf('\\') + 1);
         if (kind == 1 && RESERVED_CLASS_NAMES.contains(Str.lower(alias))) {
             throw compileError(use.line, "Cannot use " + name + " as " + alias + " because '" + alias
@@ -297,7 +141,7 @@ public final class Translator {
     private final Set<Ast> topDeclares = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** A declare statement's strict_types element, or null. */
-    private static Ast strictTypes(Ast declare) {
+    static Ast strictTypes(Ast declare) {
         for (Object child : declare.node("declares").children()) {
             if ("strict_types".equalsIgnoreCase((String) ((Ast) child).get("name"))) {
                 return (Ast) child;
@@ -306,7 +150,20 @@ public final class Translator {
         return null;
     }
 
-    public FileRootNode translateFile(Ast file) {
+    /**
+     * A file's top level on bytecode (BytecodeTranslator.translateFile), after php-src's checks of the whole file:
+     * strict_types, and the jumps of every op_array (JumpChecks). reread gives the file's tree again.
+     */
+    public PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread) {
+        return translateFile(file, reread, false);
+    }
+
+    /** eval'd code (SourceFiles.eval): a file's top level whose value without `return` is null. */
+    public PhpBytecodeRootNode translateEval(Ast file, Supplier<Ast> reread) {
+        return translateFile(file, reread, true);
+    }
+
+    private PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread, boolean eval) {
         // zend_compile_declare's strict_types: first in the file (after other declares), no block, 0 or 1
         boolean first = true;
         for (Object child : file.children()) {
@@ -339,61 +196,43 @@ public final class Translator {
                 throw compileError(failure.line, failure.getMessage());
             }
         }
-        List<StmtNode> prologue = new ArrayList<>();
-        List<StmtNode> classes = new ArrayList<>();
-        List<StmtNode> body = new ArrayList<>();
-        fileStatements(file, prologue, classes, body);
-        // the classes the compile linked, then those bound if their parent is declared by then (EarlyClassNode)
-        classes.sort(java.util.Comparator.comparing(early -> ((DeclareNodes.EarlyClassNode) early).isDelayed()));
-        prologue.addAll(classes);
-        StmtNode code = fileLabels.isEmpty() ? block(body) : new GotoNodes.LabeledBlockNode(
-                body.toArray(new StmtNode[0]), fileLabels.toArray(new String[0]),
-                fileLabelTargets.stream().mapToInt(Integer::intValue).toArray());
-        return new FileRootNode(language, fileSlots.frame.build(), path, internal, block(prologue), code,
-                source == null ? null : source.createSection(0, source.getLength()));
+        return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval);
     }
-
-    /** The goto labels of a file's top level, braced namespaces and blocks in it included, and their places. */
-    private final List<String> fileLabels = new ArrayList<>();
-    private final List<Integer> fileLabelTargets = new ArrayList<>();
 
     /** The names of the classes this file's compile has linked so far (lowercase), for {@link #topLevelClass}. */
     private final Set<String> linkedClasses = new HashSet<>();
 
+    /** {@link #earlyBinding}: declared by its statement only. */
+    static final int STATEMENT = 0;
+    /** Linked by the compile, bound when the file is loaded; no statement. */
+    static final int LINKED = 1;
+    /** Linked if its parent's checks pass then, else bound late if its parent is declared, else by its statement. */
+    static final int BOUND_LINKED = 2;
+    /** Bound late if its parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its statement. */
+    static final int BOUND_DELAYED = 3;
+
     /**
-     * A top-level class, bound as php-src with opcache (the reference's CLI has it) binds it. The compile links one
-     * that implements no interface and uses no trait (zend_compile_class_decl) if it has no parent or one linked
-     * then: a built-in or a class linked earlier in this file (ZEND_COMPILE_IGNORE_OTHER_FILES), and if the name
-     * isn't a built-in's; it is bound when the file is loaded, and has no statement. Such a class with another
-     * parent is bound at the load if the parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its
+     * How a top-level class is bound, as php-src with opcache (the reference's CLI has it) binds it. The compile links
+     * one that implements no interface and uses no trait (zend_compile_class_decl) if it has no parent or one linked
+     * then: a built-in or a class linked earlier in this file (linkedClasses, ZEND_COMPILE_IGNORE_OTHER_FILES), and
+     * if the name isn't a built-in's; it is bound when the file is loaded, and has no statement. Such a class with
+     * another parent is bound at the load if the parent is declared by then (ZEND_DECLARE_CLASS_DELAYED), else by its
      * statement. Every other class is declared by its statement.
      */
-    private void topLevelClass(Ast node, List<StmtNode> classes, List<StmtNode> body) {
-        ClassTemplate template = classTemplate(node, names.declared((String) node.get("name")));
+    int earlyBinding(Ast node, ClassTemplate template, Set<String> linkedClasses) {
         String lower = Str.lower(template.getName());
         String parent = template.getParentName();
-        int boundSlot = -1;
-        if (template.getInterfaceNames().isEmpty() && !usesTrait(node) && (node.flags & CLASS_ENUM) == 0) {
-            if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
-                    && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
-                linkedClasses.add(lower);
-                if (parent == null) {
-                    classes.add(new DeclareNodes.EarlyClassNode(template, -1, false));
-                    return;
-                }
-                // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
-                // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
-                boundSlot = hiddenSlot("bound");
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, false));
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
-            } else if (parent != null) {
-                boundSlot = hiddenSlot("bound");
-                classes.add(new DeclareNodes.EarlyClassNode(template, boundSlot, true));
-            }
+        if (!template.getInterfaceNames().isEmpty() || usesTrait(node) || (node.flags & CLASS_ENUM) != 0) {
+            return STATEMENT;
         }
-        StmtNode declaration = new DeclareNodes.DeclareClassNode(template, boundSlot);
-        declaration.setLine(node.line);
-        body.add(declaration);
+        if ((parent == null || linkedClasses.contains(Str.lower(parent)) || isInternalClass(parent))
+                && !linkedClasses.contains(lower) && !isInternalClass(lower)) {
+            linkedClasses.add(lower);
+            // a check needing a class not declared yet leaves it to the delayed binding, then to its statement
+            // (zend_try_early_bind's INHERITANCE_UNRESOLVED)
+            return parent == null ? LINKED : BOUND_LINKED;
+        }
+        return parent != null ? BOUND_DELAYED : STATEMENT;
     }
 
     private static boolean usesTrait(Ast node) {
@@ -421,120 +260,7 @@ public final class Translator {
         return internal ? null : new SourceLocation(path, node.line);
     }
 
-    /** A statement list, also of one: a block records which statement a runtime error left (StmtNode.surfaced). */
-    private static StmtNode block(List<StmtNode> statements) {
-        return new BasicStmts.BlockNode(statements.toArray(new StmtNode[0]));
-    }
-
     // ---- statements ----
-
-    private StmtNode statements(Ast list) {
-        if (list == null) {
-            return new BasicStmts.NopNode();
-        }
-        if (!list.is("AST_STMT_LIST")) {
-            return block(List.of(statement(list)));
-        }
-        if (generatorSlot >= 0 && containsYield(list)) {
-            return resumableStatement(list);
-        }
-        List<StmtNode> result = new ArrayList<>();
-        List<String> labels = new ArrayList<>();
-        List<Integer> targets = new ArrayList<>();
-        for (Object child : list.children()) {
-            if (child instanceof Ast statement) {
-                if (statement.is("AST_LABEL")) {
-                    labels.add((String) statement.get("name"));
-                    targets.add(result.size());
-                    continue;
-                }
-                result.add(statement(statement));
-            }
-        }
-        if (!labels.isEmpty()) {
-            return new GotoNodes.LabeledBlockNode(result.toArray(new StmtNode[0]), labels.toArray(new String[0]),
-                    targets.stream().mapToInt(Integer::intValue).toArray());
-        }
-        return block(result);
-    }
-
-    /** A statement, tagged with its source line for line-level tools. */
-    private StmtNode statement(Ast node) {
-        StmtNode statement = statementNode(node);
-        if (!node.is("AST_STMT_LIST") && statement.getClass() != BasicStmts.BlockNode.class) {
-            statement.setLine(node.line);
-        }
-        return statement;
-    }
-
-    private StmtNode statementNode(Ast node) {
-        if (generatorSlot >= 0 && containsYield(node)) {
-            StmtNode resumable = resumableStatement(node);
-            if (resumable != null) {
-                return resumable;
-            }
-        }
-        switch (node.kind) {
-            case "AST_STMT_LIST":
-                return statements(node);
-            case "AST_ECHO":
-                return new BasicStmts.EchoNode(expression(node.get("expr")));
-            case "AST_IF":
-                return ifChain(node, 0);
-            case "AST_WHILE":
-                return new LoopNodes.WhileNode(expression(node.get("cond")), statements(node.node("stmts")), true);
-            case "AST_DO_WHILE":
-                return new LoopNodes.WhileNode(expression(node.get("cond")), statements(node.node("stmts")), false);
-            case "AST_FOR":
-                return new LoopNodes.ForNode(expressionList(node.node("init")), expressionList(node.node("cond")),
-                        expressionList(node.node("loop")), statements(node.node("stmts")));
-            case "AST_FOREACH":
-                return foreach(node);
-            case "AST_SWITCH":
-                return switchStatement(node);
-            case "AST_GOTO":
-                return new GotoNodes.GotoNode((String) node.get("label"));
-            case "AST_LABEL":
-                return new BasicStmts.NopNode();
-            case "AST_BREAK":
-            case "AST_CONTINUE":
-                return new BasicStmts.BreakNode(node.get("depth") instanceof Long depth ? depth.intValue() : 1,
-                        node.is("AST_CONTINUE"));
-            case "AST_RETURN":
-                return returnStatement(node.get("expr"));
-            case "AST_GLOBAL":
-                return globalStatement(node);
-            case "AST_STATIC":
-                return staticStatement(node);
-            case "AST_UNSET":
-                if (isGlobalsElement(node.get("var")) && node.node("var").get("dim") == null) {
-                    throw compileError(node.line, "Cannot use [] for unsetting");
-                }
-                return new BasicStmts.UnsetNode(written(node.get("var")));
-            case "AST_THROW":
-                return new BasicStmts.ThrowNode(expression(node.get("expr")));
-            case "AST_TRY":
-                return tryStatement(node);
-            case "AST_FUNC_DECL": {
-                PhpFunction declared = declareFunction(node, null);
-                return new DeclareNodes.DeclareFunctionNode(declared, false);
-            }
-            case "AST_CLASS":
-                return classDeclaration(node);
-            case "AST_CONST_DECL":
-                return constDeclaration(node);
-            case "AST_DECLARE":
-                if (strictTypes(node) != null && !topDeclares.contains(node)) {
-                    throw compileError(node.line,
-                            "strict_types declaration must be the very first statement in the script");
-                }
-                return new BasicStmts.NopNode();
-            case "AST_INLINE_HTML":
-                return new BasicStmts.EchoNode(new ConstNode(literal(node.get("value"))));
-            default:
-                return new BasicStmts.ExprStmtNode(expression(node));
-        }
-    }
 
     // ---- generators ----
 
@@ -569,73 +295,6 @@ public final class Translator {
         return false;
     }
 
-    /**
-     * The resumable variant of a statement on the path to a yield (see {@link GeneratorNodes}); null for a
-     * statement that is simply evaluated again on resume (an expression, echo, return).
-     */
-    private StmtNode resumableStatement(Ast node) {
-        switch (node.kind) {
-            case "AST_STMT_LIST": {
-                List<StmtNode> result = new ArrayList<>();
-                for (Object child : node.children()) {
-                    if (child instanceof Ast statement) {
-                        result.add(statement(statement));
-                    }
-                }
-                return new GeneratorNodes.BlockNode(result.toArray(new StmtNode[0]), hiddenSlot("block"));
-            }
-            case "AST_IF":
-                return resumableIf(node, 0);
-            case "AST_WHILE":
-            case "AST_DO_WHILE":
-                return new GeneratorNodes.WhileNode(expression(node.get("cond")), statements(node.node("stmts")),
-                        node.is("AST_WHILE"), hiddenSlot("while"));
-            case "AST_FOR":
-                return new GeneratorNodes.ForNode(expressionList(node.node("init")),
-                        expressionList(node.node("cond")), expressionList(node.node("loop")),
-                        statements(node.node("stmts")), hiddenSlot("for"));
-            case "AST_FOREACH": {
-                Ast value = node.node("value");
-                if (value.is("AST_REF") || value.is("AST_ARRAY")) {
-                    throw unsupported(node, "foreach by reference or into list() around a yield");
-                }
-                return new GeneratorNodes.ForeachNode(expression(node.get("expr")),
-                        node.get("key") == null ? null : place(node.get("key")), place(value),
-                        statements(node.node("stmts")), hiddenSlot("foreach"), hiddenSlot("subject"),
-                        hiddenSlot("position"));
-            }
-            case "AST_TRY":
-                return resumableTry(node);
-            case "AST_SWITCH":
-                throw unsupported(node, "yield inside switch");
-            default:
-                return null;
-        }
-    }
-
-    /**
-     * `return expr;`. In a function returning by reference (zend_compile_return), a variable, element or property
-     * returns its reference and a call the reference its callee returned; anything else returns its value.
-     */
-    private StmtNode returnStatement(Object expr) {
-        if (!returnsRef) {
-            return new BasicStmts.ReturnNode(expr == null ? null : expression(expr));
-        }
-        if (expr instanceof Ast ast && (isPlace(ast) || ast.is("AST_NULLSAFE_PROP")) && !isThis(ast)
-                && !isGlobals(ast)) {
-            if (deepestNullsafe(ast) != null) {
-                throw compileError(ast.line, "Cannot take reference of a nullsafe chain");
-            }
-            return new BasicStmts.ReturnRefNode(place(ast));
-        }
-        return new BasicStmts.ReturnRefValueNode(expr == null ? null : expression(expr), !isThis(expr));
-    }
-
-    /** A variable, element or property (zend_is_variable): what `&` can take the reference of. */
-    private static boolean isPlace(Ast node) {
-        return node.is("AST_VAR") || node.is("AST_DIM") || node.is("AST_PROP") || node.is("AST_STATIC_PROP");
-    }
-
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
     /**
      * Whether a place written (assigned, compound-assigned, incremented, unset) stands on a temporary: down its
@@ -651,14 +310,6 @@ public final class Translator {
                 && !(base instanceof Ast node && (node.is("AST_VAR") || node.is("AST_STATIC_PROP")));
     }
 
-    /** place() of a place written: onTemporary's compile error first. */
-    private LValueNode written(Object value) {
-        if (onTemporary(value)) {
-            throw compileError(((Ast) value).line, "Cannot use temporary expression in write context");
-        }
-        return place(value);
-    }
-
     static boolean isCall(Object value) {
         return value instanceof Ast node && (node.is("AST_CALL") || node.is("AST_METHOD_CALL")
                 || node.is("AST_NULLSAFE_METHOD_CALL") || node.is("AST_STATIC_CALL"));
@@ -668,164 +319,6 @@ public final class Translator {
     static boolean isVarResult(Object value) {
         return value instanceof Ast node && (node.is("AST_NEW") || node.is("AST_INCLUDE_OR_EVAL")
                 || node.is("AST_YIELD"));
-    }
-
-    private StmtNode resumableIf(Ast node, int index) {
-        if (index >= node.size()) {
-            return null;
-        }
-        Ast element = (Ast) node.child(index);
-        Object condition = element.get("cond");
-        StmtNode body = statements(element.node("stmts"));
-        if (condition == null) {
-            return body;
-        }
-        return new GeneratorNodes.IfNode(expression(condition), body, resumableIf(node, index + 1),
-                hiddenSlot("if"));
-    }
-
-    private StmtNode resumableTry(Ast node) {
-        StmtNode body = statements(node.node("try"));
-        Ast catches = node.node("catches");
-        int count = catches == null ? 0 : catches.size();
-        String[][] types = new String[count][];
-        LValueNode[] targets = new LValueNode[count];
-        StmtNode[] bodies = new StmtNode[count];
-        for (int i = 0; i < count; i++) {
-            Ast handler = (Ast) catches.child(i);
-            Ast classes = handler.node("class");
-            types[i] = new String[classes.size()];
-            for (int j = 0; j < classes.size(); j++) {
-                types[i][j] = Str.lower(className((Ast) classes.child(j)));
-            }
-            targets[i] = handler.get("var") == null ? null : place(handler.get("var"));
-            bodies[i] = statements(handler.node("stmts"));
-        }
-        StmtNode finallyBody = node.get("finally") == null ? null : statements(node.node("finally"));
-        return new GeneratorNodes.TryNode(body, types, targets, bodies, finallyBody, hiddenSlot("try"),
-                hiddenSlot("leaving"));
-    }
-
-    private StmtNode ifChain(Ast node, int index) {
-        if (index >= node.size()) {
-            return null;
-        }
-        Ast element = (Ast) node.child(index);
-        Object condition = element.get("cond");
-        StmtNode body = statements(element.node("stmts"));
-        if (condition == null) {
-            return body;
-        }
-        return new BasicStmts.IfNode(expression(condition), body, ifChain(node, index + 1));
-    }
-
-    private StmtNode foreach(Ast node) {
-        ExprNode subject = expression(node.get("expr"));
-        Ast value = node.node("value");
-        boolean byRef = value.is("AST_REF");
-        if (byRef) {
-            value = value.node("var");
-        }
-        // zend_compile_foreach: the value's target, the key's, then the body
-        ListAssignNode list = value.is("AST_ARRAY") ? listTarget(value) : null;
-        LValueNode target = list == null ? place(value) : null;
-        LValueNode key = node.get("key") == null ? null : place(node.get("key"));
-        StmtNode body = statements(node.node("stmts"));
-        return new ForeachNode(subject, key, target, list, body, byRef && list == null, hiddenSlot("array"),
-                hiddenSlot("position"), lexicalClass());
-    }
-
-    private StmtNode switchStatement(Ast node) {
-        Ast list = node.node("stmts");
-        ExprNode[] cases = new ExprNode[list.size()];
-        StmtNode[] bodies = new StmtNode[list.size()];
-        int defaultIndex = -1;
-        for (int i = 0; i < list.size(); i++) {
-            Ast switchCase = (Ast) list.child(i);
-            Object condition = switchCase.get("cond");
-            if (condition == null) {
-                defaultIndex = i;
-            } else {
-                cases[i] = expression(condition);
-            }
-            bodies[i] = statements(switchCase.node("stmts"));
-        }
-        return new LoopNodes.SwitchNode(expression(node.get("cond")), cases, bodies, defaultIndex);
-    }
-
-    private StmtNode globalStatement(Ast node) {
-        Ast variable = node.node("var");
-        String name = variable.get("name") instanceof String s ? s : null;
-        if (name == null) {
-            throw unsupported(node, "dynamic global variable name");
-        }
-        if (scope == null) {
-            return new BasicStmts.GlobalNode(new FileVarNode(name), name, true);
-        }
-        return new BasicStmts.GlobalNode(new LocalVarNode(scope.slot(name), name), name, false);
-    }
-
-    private StmtNode staticStatement(Ast node) {
-        String name = (String) node.node("var").get("name");
-        if (scope == null || function == null) {
-            throw unsupported(node, "static variable outside a function");
-        }
-        ExprNode initial = node.get("default") == null ? null : expression(node.get("default"));
-        return new BasicStmts.StaticVarNode(new LocalVarNode(scope.slot(name), name), initial, function, name);
-    }
-
-    private StmtNode tryStatement(Ast node) {
-        StmtNode body = statements(node.node("try"));
-        Ast catches = node.node("catches");
-        int count = catches == null ? 0 : catches.size();
-        String[][] types = new String[count][];
-        LValueNode[] targets = new LValueNode[count];
-        StmtNode[] bodies = new StmtNode[count];
-        for (int i = 0; i < count; i++) {
-            Ast handler = (Ast) catches.child(i);
-            Ast classes = handler.node("class");
-            types[i] = new String[classes.size()];
-            for (int j = 0; j < classes.size(); j++) {
-                types[i][j] = Str.lower(className((Ast) classes.child(j)));
-            }
-            targets[i] = handler.get("var") == null ? null : place(handler.get("var"));
-            bodies[i] = statements(handler.node("stmts"));
-        }
-        StmtNode finallyBody = node.get("finally") == null ? null : statements(node.node("finally"));
-        return new TryNode(body, types, targets, bodies, finallyBody);
-    }
-
-    private StmtNode constDeclaration(Ast node) {
-        List<StmtNode> result = new ArrayList<>();
-        for (Object child : node.children()) {
-            Ast element = (Ast) child;
-            if (!element.is("AST_CONST_ELEM")) {
-                continue; // #[attributes] on the declaration
-            }
-            String name = names.declared((String) element.get("name"));
-            checkConstantExpression(element.get("value"), true, element.line);
-            ExprNode value = constantExpression(element.get("value"));
-            result.add(new BasicStmts.ExprStmtNode(new DefineNode(name, value)));
-        }
-        return block(result);
-    }
-
-    /** `const NAME = value;` at top level. */
-    private static final class DefineNode extends ExprNode {
-        private final String name;
-        @Child private ExprNode value;
-
-        DefineNode(String name, ExprNode value) {
-            this.name = name;
-            this.value = value;
-        }
-
-        @Override
-        public Object execute(com.oracle.truffle.api.frame.VirtualFrame frame) {
-            Object result = value.execute(frame);
-            PhpContext.get(this).defineConstant(name, result);
-            return result;
-        }
     }
 
     // ---- functions ----
@@ -1404,81 +897,8 @@ public final class Translator {
         if (generator && target.getDeclaredReturn() != null) {
             generatorReturn(stmts, target.getDeclaredReturn());
         }
-        if (language.bytecode()) {
-            RootCallTarget bytecode = BytecodeTranslator.translate(language, path, source, internal, node, stmts,
-                    owner, target, display, params, captures, captureByRef, declaredNames, generator);
-            if (bytecode != null) {
-                return bytecode;
-            }
-        }
-        Scope bodyScope = new Scope();
-        Translator body = new Translator(language, path, source, internal, owner, display, target, bodyScope,
-                declaredNames);
-        Ast paramList = node.node("params");
-        int[] paramSlots = new int[params.length];
-        ExprNode[] defaults = new ExprNode[params.length];
-        for (int i = 0; i < params.length; i++) {
-            paramSlots[i] = bodyScope.slot(params[i].name());
-            Object defaultValue = ((Ast) paramList.child(i)).get("default");
-            defaults[i] = defaultValue == null ? null : body.constantExpression(defaultValue);
-        }
-        int[] captureSlots = new int[captures.length];
-        for (int i = 0; i < captures.length; i++) {
-            captureSlots[i] = bodyScope.slot(captures[i]);
-        }
-        if (generator) {
-            body.generatorSlot = bodyScope.slot("\0generator");
-        }
-        body.returnsRef = target.returnsRef() && !generator;
-        StmtNode statements;
-        if (node.is("AST_ARROW_FUNC")) {
-            Ast returned = stmts.is("AST_RETURN") ? stmts : null;
-            statements = returned != null ? body.statement(returned) : body.returnStatement(stmts);
-        } else {
-            statements = body.statements(stmts);
-        }
-        if (owner != null && name.equalsIgnoreCase("__construct")) {
-            List<StmtNode> promoted = new ArrayList<>();
-            for (int i = 0; i < params.length; i++) {
-                if (isPromoted((Ast) paramList.child(i))) {
-                    promoted.add(new BasicStmts.PromoteNode(Str.sourceKey(params[i].name()),
-                            new LocalVarNode(paramSlots[i], params[i].name())));
-                }
-            }
-            if (!promoted.isEmpty()) {
-                promoted.add(statements);
-                statements = new BasicStmts.BlockNode(promoted.toArray(new StmtNode[0]));
-            }
-        }
-        FrameDescriptor descriptor = bodyScope.frame.build();
-        if (generator) {
-            FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params, paramSlots,
-                    defaults, captureSlots, captureByRef, null, new BasicStmts.NopNode(), path, internal,
-                    lineSection(node.line));
-            root.setScope(owner == null ? null : owner.name());
-            root.setGeneratorBody(new GeneratorNodes.BodyRootNode(language, descriptor, statements, root)
-                    .getCallTarget(), body.generatorSlot);
-            return root.getCallTarget();
-        }
-        FunctionRootNode root = new FunctionRootNode(language, descriptor, display, params,
-                paramSlots, defaults, captureSlots, captureByRef, checkedReturn(target, false), statements, path,
-                internal, lineSection(node.line));
-        root.setScope(owner == null ? null : owner.name());
-        if (body.returnsRef) {
-            root.setReturnsRef(node.endLine);
-        }
-        return root.getCallTarget();
-    }
-
-    private ExprNode closure(Ast node) {
-        ClosureParts parts = closureParts(node, name -> scope == null || scope.slots.containsKey(name));
-        ExprNode[] captureNodes = new ExprNode[parts.captures().length];
-        for (int i = 0; i < captureNodes.length; i++) {
-            captureNodes[i] = variable(parts.captures()[i]);
-        }
-        ClassRefNode scopeRef = classInfo == null ? null : ClassRefNode.named(classInfo.name());
-        return new ClosureNode(parts.function(), captureNodes, parts.byRef(), parts.isStatic(),
-                node.is("AST_ARROW_FUNC"), scopeRef);
+        return BytecodeTranslator.translate(language, path, source, internal, node, stmts, owner, target, display,
+                params, captures, captureByRef, declaredNames, generator);
     }
 
     /**
@@ -1570,7 +990,7 @@ public final class Translator {
                 Object initial = ast.get("default");
                 initials.add(initial instanceof Ast expr && !(expr.is("AST_ARRAY") || expr.is("AST_CONST")
                         || expr.is("AST_UNARY_OP") || expr.is("AST_BINARY_OP")) ? null
-                        : expression(initial).constantValue());
+                        : fold(initial));
             }
             return;
         }
@@ -1609,17 +1029,6 @@ public final class Translator {
     }
 
     // ---- classes ----
-
-    private StmtNode classDeclaration(Ast node) {
-        return new DeclareNodes.DeclareClassNode(classTemplate(node, names.declared((String) node.get("name"))), -1);
-    }
-
-    /** `new class(...) {...}`, named as php-src names it: "class@anonymous", NUL, then file:line$n. */
-    private ExprNode newAnonymousClass(Ast node, Ast classNode) {
-        ClassTemplate template = anonymousClass(classNode);
-        return new DeclareNodes.NewAnonymousClassNode(template,
-                new NewNode(ClassRefNode.named(template.getName()), arguments(node.node("args"))));
-    }
 
     /** An anonymous class's template, under a name of its own (the bytecode translator's too). */
     ClassTemplate anonymousClass(Ast classNode) {
@@ -1662,7 +1071,7 @@ public final class Translator {
                     + name.split("\0")[0]);
         }
         ClassInfo info = new ClassInfo(name, parentName, false);
-        Translator inClass = new Translator(language, path, source, internal, info, "", null, null, names);
+        Translator inClass = new Translator(language, path, source, internal, info, "", null, names);
         inClass.classFlags = node.flags;
         List<ClassTemplate.Member> members = new ArrayList<>();
         String unsupported = null;
@@ -1710,8 +1119,7 @@ public final class Translator {
         Names declaredNames = names;
         ClassTemplate.TraitBody body = (className, parentName) -> {
             ClassInfo info = new ClassInfo(className, parentName, true);
-            Translator inClass = new Translator(language, path, source, internal, info, "", null, null,
-                    declaredNames);
+            Translator inClass = new Translator(language, path, source, internal, info, "", null, declaredNames);
             inClass.classFlags = CLASS_TRAIT;
             List<ClassTemplate.Member> members = new ArrayList<>();
             for (Object child : statements.children()) {
@@ -2167,7 +1575,7 @@ public final class Translator {
      * it (not in a class constant or property default), no object cast, only static closures, calls only as first
      * class callables.
      */
-    private void checkConstantExpression(Object expression, boolean newAllowed, int line) {
+    void checkConstantExpression(Object expression, boolean newAllowed, int line) {
         String error = constantExpressionError(expression, newAllowed);
         if (error != null) {
             throw compileError(expression instanceof Ast ast ? ast.line : line, error);
@@ -2231,17 +1639,6 @@ public final class Translator {
             }
         }
         return null;
-    }
-
-    /** A constant expression's tree (constantExpression set while it is translated). */
-    private ExprNode constantExpression(Object expression) {
-        boolean outer = constantExpression;
-        constantExpression = true;
-        try {
-            return expression(expression);
-        } finally {
-            constantExpression = outer;
-        }
     }
 
     /** A property's type (zend_compile_prop_decl): no void, never or callable. */
@@ -2337,15 +1734,178 @@ public final class Translator {
         }
     }
 
+    /**
+     * The value an expression has at compile time, or null when it has none (it is evaluated where it is used):
+     * literals; true, false and null; a predefined constant whose name can't mean a namespace's own; magic
+     * constants; `-` of a number; a concatenation whose parts all fold (null, false and "" dropping out, as
+     * zend_compile_binary_op's); a constant array (frozen: every place that stores it copies before writing, like
+     * php-src's immutable arrays); `Name::class`, self's and parent's.
+     */
+    Object fold(Object value) {
+        if (value instanceof String || value instanceof byte[]) {
+            return literal(value);
+        }
+        if (value instanceof Long || value instanceof Double) {
+            return value;
+        }
+        if (value == null) {
+            return PhpNull.NULL;
+        }
+        Ast node = (Ast) value;
+        switch (node.kind) {
+            case "AST_CONST": {
+                Ast nameNode = node.node("name");
+                String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
+                // true, false and null are global; a namespace can't declare them
+                String name = resolved[1] != null ? resolved[1] : resolved[0];
+                switch (Str.lower(name)) {
+                    case "true":
+                        return Boolean.TRUE;
+                    case "false":
+                        return Boolean.FALSE;
+                    case "null":
+                        return PhpNull.NULL;
+                    default:
+                        break;
+                }
+                if (language.builtins().deprecation(name) != null || resolved[1] != null) {
+                    return null;
+                }
+                return language.builtins().constant(name);
+            }
+            case "AST_MAGIC_CONST":
+                return magicValue(node);
+            case "AST_UNARY_OP": {
+                Object operand = node.flags == 262 ? fold(node.get("expr")) : null;
+                if (operand instanceof Long l && l != Long.MIN_VALUE) {
+                    return -l;
+                }
+                return operand instanceof Double d ? -d : null;
+            }
+            case "AST_BINARY_OP": {
+                if (node.flags != 8) {
+                    return null;
+                }
+                StringBuilder parts = new StringBuilder();
+                return foldConcat(node, parts) ? language.intern(Str.of(parts.toString())) : null;
+            }
+            case "AST_ARRAY":
+                return foldArray(node);
+            case "AST_CLASS_CONST":
+                if (!((String) node.get("const")).equalsIgnoreCase("class")) {
+                    return null;
+                }
+                return foldClassName(node);
+            case "AST_CLASS_NAME":
+                return foldClassName(node);
+            default:
+                return null;
+        }
+    }
+
+    /** A concatenation's parts (concatParts) appended to text; false when one doesn't fold to a scalar. */
+    private boolean foldConcat(Object operand, StringBuilder text) {
+        if (operand instanceof Ast ast && ast.is("AST_CAST") && ast.flags == UnaryNodes.CastNode.TO_STRING) {
+            return foldConcat(ast.get("expr"), text);
+        }
+        if (operand instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
+            return foldConcat(ast.get("left"), text) && foldConcat(ast.get("right"), text);
+        }
+        if (operand instanceof Ast ast && ast.is("AST_ENCAPS_LIST") && interpolated(ast).size() == 1) {
+            return foldConcat(interpolated(ast).get(0), text);
+        }
+        Object value = fold(operand);
+        if (value == null || value instanceof PhpArray) {
+            return false;
+        }
+        text.append(Str.java(Convert.toStr(value)));
+        return true;
+    }
+
+    /** A constant array literal's value, frozen; null when an element isn't constant. */
+    private Object foldArray(Ast node) {
+        int count = node.size();
+        Object[] keys = new Object[count];
+        Object[] values = new Object[count];
+        boolean ints = true;
+        for (int i = 0; i < count; i++) {
+            if (!(node.child(i) instanceof Ast element) || element.is("AST_UNPACK")
+                    || (element.flags & ARRAY_ELEM_REF) != 0) {
+                return null;
+            }
+            keys[i] = element.get("key") == null ? null : fold(element.get("key"));
+            values[i] = fold(element.get("value"));
+            if (values[i] == null || element.get("key") != null && keys[i] == null) {
+                return null;
+            }
+            ints &= values[i] instanceof Long;
+        }
+        // an int list starts in the int strategy; anything else is sized for its elements
+        PhpArray array = ints ? new PhpArray() : PhpArray.ofCapacity(count);
+        for (int i = 0; i < count; i++) {
+            if (keys[i] == null) {
+                array.append(values[i]);
+            } else {
+                array.put(ArrayKey.of(keys[i]), values[i]);
+            }
+        }
+        array.freeze();
+        return array;
+    }
+
+    /** `Name::class` as written, self's and parent's; null for static's and an expression's. */
+    private Object foldClassName(Ast node) {
+        if (!(node.get("class") instanceof Ast ast) || !ast.is("AST_NAME")) {
+            return null;
+        }
+        String name = className(ast);
+        return switch (Str.lower(name)) {
+            case "self" -> Str.of(requireClass(node).name());
+            case "parent" -> Str.of(requireClass(node).parentName());
+            case "static" -> null;
+            default -> Str.of(name);
+        };
+    }
+
+    /** A magic constant's value (zend_try_ct_eval_magic_const). */
+    private Object magicValue(Ast node) {
+        switch (node.flags) {
+            case 346:
+                return (long) node.line;
+            case 347:
+                return Str.of(path);
+            case 348:
+                return Str.of(Path.of(path).getParent().toString());
+            case 349:
+                return Str.of(classInfo == null ? "" : classInfo.name());
+            case 351: {
+                // a closure's __METHOD__ is its name, without its scope's class
+                int closure = functionName.indexOf(CLOSURE_PREFIX);
+                return Str.of(closure > 0 ? functionName.substring(closure) : functionName);
+            }
+            case 352:
+                return Str.of(functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
+                        : functionName);
+            case 353: {
+                // __PROPERTY__: in a property hook ("$name::get"), the property's name
+                String hook = function == null ? "" : function.getName();
+                return Str.of(hook.startsWith("$") ? hook.substring(1, hook.lastIndexOf("::")) : "");
+            }
+            case 354:
+                return Str.of(names.namespace());
+            default:
+                throw unsupported(node, "magic constant " + node.flags);
+        }
+    }
+
     /** A constant expression's value if it folds, else its initializer, evaluated per class on first use. */
     private Object constantOrDeferred(Object expression) {
         checkConstantExpression(expression, false, 0);
-        ExprNode node = constantExpression(expression);
-        Object value = node.constantValue();
+        Object value = fold(expression);
         if (value != null) {
             return value;
         }
-        return new ThunkRootNode(language, node);
+        return new BytecodeTranslator.Thunk(language, path, source, internal, (Ast) expression, classInfo, names);
     }
 
     /** A class name as written, resolved against the namespace and imports (self, parent, static unchanged). */
@@ -2353,302 +1913,7 @@ public final class Translator {
         return names.className((String) name.get("name"), name.flags);
     }
 
-    /** A class reference by name: self and parent resolve to the enclosing class names, static to LSB. */
-    private ClassRefNode classRef(Object nameNode) {
-        if (!(nameNode instanceof Ast ast) || !ast.is("AST_NAME")) {
-            return ClassRefNode.dynamic(expression(nameNode));
-        }
-        String name = className(ast);
-        switch (Str.lower(name)) {
-            case "self":
-                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.SELF)
-                        : ClassRefNode.named(requireClass(ast).name());
-            case "parent":
-                return inClosure() ? ClassRefNode.inClosure(ClassRefNode.PARENT)
-                        : ClassRefNode.named(requireClass(ast).parentName());
-            case "static":
-                return ClassRefNode.lateStatic(classInfo == null ? null : classInfo.name());
-            default:
-                return ClassRefNode.named(name);
-        }
-    }
-
-    private ClassInfo requireClass(Ast node) {
-        if (classInfo == null) {
-            throw unsupported(node, "self/parent outside a class");
-        }
-        return classInfo;
-    }
-
     // ---- expressions ----
-
-    private ExprNode[] expressionList(Ast list) {
-        if (list == null) {
-            return new ExprNode[0];
-        }
-        ExprNode[] result = new ExprNode[list.size()];
-        for (int i = 0; i < result.length; i++) {
-            result[i] = expression(list.child(i));
-        }
-        return result;
-    }
-
-    private TruffleString literal(Object value) {
-        if (value instanceof String s) {
-            return language.intern(Str.of(s));
-        }
-        if (value instanceof byte[] bytes) {
-            return language.intern(Str.of(bytes));
-        }
-        throw new PhpError("not a string literal: " + value);
-    }
-
-    ExprNode expression(Object value) {
-        if (value instanceof String || value instanceof byte[]) {
-            return new ConstNode(literal(value));
-        }
-        if (value instanceof Long || value instanceof Double) {
-            return new ConstNode(value);
-        }
-        if (value == null) {
-            return new ConstNode(PhpNull.NULL);
-        }
-        Ast node = (Ast) value;
-        Ast nullsafe = deepestNullsafe(node);
-        if (nullsafe != null) {
-            return nullsafeChain(node, nullsafe, false);
-        }
-        switch (node.kind) {
-            case "TEMPORARY":
-                return new TemporaryNode.Read(node.flags);
-            case "AST_VAR":
-            case "AST_DIM":
-            case "AST_PROP":
-            case "AST_STATIC_PROP":
-                if (isThis(node)) {
-                    return new ThisNode();
-                }
-                if (isGlobals(node)) {
-                    // $GLOBALS read as a whole: a value, not a place
-                    return new GlobalsArrayNode();
-                }
-                return place(node);
-            case "AST_CONST":
-                return constant(node);
-            case "AST_CLASS_CONST":
-                return classConstant(node);
-            case "AST_CLASS_NAME":
-                return classNameExpr(node);
-            case "AST_MAGIC_CONST":
-                return magicConstant(node);
-            case "AST_ARRAY":
-                return arrayLiteral(node);
-            case "AST_ENCAPS_LIST":
-                return interpolation(node);
-            case "AST_ASSIGN":
-                return assignment(node);
-            case "AST_ASSIGN_REF": {
-                LValueNode target = place(node.get("var"));
-                if (deepestNullsafe(node.get("expr")) != null) {
-                    throw compileError(node.line, "Cannot take reference of a nullsafe chain");
-                }
-                if (isCall(node.get("expr"))) {
-                    return new AssignNodes.CallRefAssignNode(target, expression(node.get("expr")));
-                }
-                if (isGlobals(node.get("expr"))) {
-                    throw compileError(node.line, "Cannot acquire reference to $GLOBALS");
-                }
-                return new AssignNodes.RefAssignNode(target, place(node.get("expr")));
-            }
-            case "AST_ASSIGN_OP":
-                return compoundAssignment(node);
-            case "AST_BINARY_OP":
-                return binary(node);
-            case "AST_UNARY_OP":
-                return unary(node);
-            case "AST_PRE_INC":
-            case "AST_PRE_DEC":
-            case "AST_POST_INC":
-            case "AST_POST_DEC": {
-                boolean increment = node.is("AST_PRE_INC") || node.is("AST_POST_INC");
-                boolean prefix = node.is("AST_PRE_INC") || node.is("AST_PRE_DEC");
-                return readWritten(node.get("var"), target -> AssignNodes.IncDecNode.create(target, increment,
-                        prefix));
-            }
-            case "AST_CONDITIONAL":
-                return new LogicNodes.TernaryNode(expression(node.get("cond")),
-                        node.get("true") == null ? null : expression(node.get("true")), expression(node.get("false")));
-            case "AST_ISSET":
-            case "AST_EMPTY": {
-                Object tested = node.get(node.is("AST_ISSET") ? "var" : "expr");
-                // zend_compile_isset_or_empty: $GLOBALS is set and not empty; $GLOBALS[] is refused
-                if (isGlobals(tested)) {
-                    return new ConstNode(node.is("AST_ISSET"));
-                }
-                if (isGlobalsElement(tested) && ((Ast) tested).get("dim") == null) {
-                    throw compileError(node.line, "Cannot use [] for reading");
-                }
-                if (node.is("AST_ISSET")) {
-                    if (deepestNullsafe(tested) != null) {
-                        if (isCall(tested)) {
-                            throw compileError(node.line, "Cannot use isset() on the result of an expression"
-                                    + " (you can use \"null !== expression\" instead)");
-                        }
-                        return new TestNodes.IssetNode(new LValueNode[]{(LValueNode) quiet(tested)});
-                    }
-                    return isThis(tested) ? new ThisNode.IsSetNode()
-                            : new TestNodes.IssetNode(new LValueNode[]{place(tested)});
-                }
-                if (scope == null && tested instanceof Ast variable && variable.is("AST_VAR")
-                        && !(variable.get("name") instanceof String)) {
-                    // ZEND_ISSET_ISEMPTY_VAR: a lookup, which doesn't fall back to $this
-                    return new TestNodes.EmptyNode(new VariableVariableNode(expression(variable.get("name")),
-                            VariableVariableNode.ISSET));
-                }
-                return isThis(tested) ? new LogicNodes.NotNode(new ThisNode.IsSetNode())
-                        : new TestNodes.EmptyNode(quiet(tested));
-            }
-            case "AST_CAST":
-                return UnaryNodes.CastNode.create(expression(node.get("expr")), node.flags);
-            case "AST_INSTANCEOF": {
-                Ast classNode = node.node("class");
-                if (!classNode.is("AST_NAME")) {
-                    return new TestNodes.DynamicInstanceofNode(expression(node.get("expr")), expression(classNode));
-                }
-                String name = className(classNode);
-                if (name.equalsIgnoreCase("self") || name.equalsIgnoreCase("static")) {
-                    name = requireClass(node).name();
-                }
-                return new TestNodes.InstanceofNode(expression(node.get("expr")), Str.lower(name));
-            }
-            case "AST_CALL":
-                return call(node);
-            case "AST_METHOD_CALL":
-                if (isCallableConvert(node)) {
-                    return node.get("method") instanceof String method
-                            ? new CallableConvertNodes.MethodNode(expression(node.get("expr")), method, null)
-                            : new CallableConvertNodes.MethodNode(expression(node.get("expr")), null,
-                                    expression(node.get("method")));
-                }
-                if (!(node.get("method") instanceof String)) {
-                    return new DynamicMethodCallNode(placeOrExpression(node.get("expr")), expression(node.get("method")),
-                            arguments(node.node("args")));
-                }
-                return new MethodCallNode(expression(node.get("expr")), methodName(node), arguments(node.node("args")));
-            case "AST_STATIC_CALL": {
-                Ast classNode = node.node("class");
-                if (isParentHookCall(node) && classInfo == null) {
-                    throw compileError(node.line, "Cannot use \"parent\" when no class scope is active");
-                }
-                String name = classNode != null && classNode.is("AST_NAME") ? Str.lower(className(classNode)) : "";
-                boolean forwarding = name.equals("self") || name.equals("parent") || name.equals("static");
-                if (isCallableConvert(node)) {
-                    return node.get("method") instanceof String method
-                            ? new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), method, null,
-                            forwarding)
-                            : new CallableConvertNodes.StaticMethodNode(classRef(node.get("class")), null,
-                            expression(node.get("method")), forwarding);
-                }
-                if (!(node.get("method") instanceof String)) {
-                    return new StaticCallNode(classRef(node.get("class")), expression(node.get("method")),
-                            arguments(node.node("args")), forwarding);
-                }
-                return new StaticCallNode(classRef(node.get("class")), methodName(node), arguments(node.node("args")),
-                        forwarding);
-            }
-            case "AST_YIELD":
-                if (generatorSlot < 0) {
-                    throw unsupported(node, "yield outside a function");
-                }
-                return new GeneratorNodes.YieldNode(node.get("key") == null ? null : expression(node.get("key")),
-                        node.get("value") == null ? null : expression(node.get("value")), hiddenSlot("yield"),
-                        generatorSlot);
-            case "AST_YIELD_FROM":
-                if (generatorSlot < 0) {
-                    throw unsupported(node, "yield from outside a function");
-                }
-                return new GeneratorNodes.YieldFromNode(expression(node.get("expr")), hiddenSlot("yield"),
-                        hiddenSlot("source"), hiddenSlot("position"), generatorSlot);
-            case "AST_NEW":
-                if (isCallableConvert(node)) {
-                    throw compileError(node.line, "Cannot create Closure for new expression");
-                }
-                if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
-                    return newAnonymousClass(node, classNode);
-                }
-                return new NewNode(classRef(node.get("class")), arguments(node.node("args")));
-            case "AST_CLOSURE":
-            case "AST_ARROW_FUNC":
-                return closure(node);
-            case "AST_INCLUDE_OR_EVAL": {
-                if (node.flags == EXEC_EVAL) {
-                    throw unsupported(node, "eval");
-                }
-                String kind = switch (node.flags) {
-                    case EXEC_INCLUDE_ONCE -> "include_once";
-                    case EXEC_REQUIRE -> "require";
-                    case EXEC_REQUIRE_ONCE -> "require_once";
-                    default -> "include";
-                };
-                if (scope == null) {
-                    return new IncludeNode(expression(node.get("expr")), kind, null, -1, null);
-                }
-                if (scope.includeScopeSlot < 0) {
-                    scope.includeScopeSlot = hiddenSlot("includeScope");
-                }
-                return new IncludeNode(expression(node.get("expr")), kind, scope.slots, scope.includeScopeSlot,
-                        lexicalClass());
-            }
-            case "AST_PRINT":
-                return new LogicNodes.TernaryNode(new ConstNode(Boolean.TRUE),
-                        new PrintNode(expression(node.get("expr"))), new ConstNode(1L));
-            case "AST_THROW":
-                return new ThrowExprNode(new BasicStmts.ThrowNode(expression(node.get("expr"))));
-            case "AST_MATCH":
-                return match(node);
-            default:
-                throw unsupported(node, "expression");
-        }
-    }
-
-    /**
-     * zend_compile_match: the subject, then (after the check that there is at most one default arm) every arm's
-     * conditions in order, then the bodies.
-     */
-    private ExprNode match(Ast node) {
-        ExprNode subject = expression(node.get("cond"));
-        Ast armList = node.node("stmts");
-        int armCount = armList == null ? 0 : armList.size();
-        Ast secondDefault = secondDefaultArm(node);
-        if (secondDefault != null) {
-            throw compileError(secondDefault.line, "Match expressions may only contain one default arm");
-        }
-        List<ExprNode> conditions = new ArrayList<>();
-        List<Integer> armOf = new ArrayList<>();
-        List<Object> constants = new ArrayList<>();
-        int defaultArm = -1;
-        for (int i = 0; i < armCount; i++) {
-            Ast arm = (Ast) armList.child(i);
-            if (arm.get("cond") == null) {
-                defaultArm = i;
-                continue;
-            }
-            for (Object condition : arm.node("cond").children()) {
-                ExprNode translated = expression(condition);
-                Object constant = translated.constantValue();
-                constants.add(constant != null ? constant : foldedArithmetic(condition));
-                conditions.add(translated);
-                armOf.add(i);
-            }
-        }
-        ExprNode[] bodies = new ExprNode[armCount];
-        for (int i = 0; i < armCount; i++) {
-            bodies[i] = expression(((Ast) armList.child(i)).get("expr"));
-        }
-        return new MatchNode(subject, conditions.toArray(new ExprNode[0]),
-                armOf.stream().mapToInt(Integer::intValue).toArray(), bodies, defaultArm,
-                defaultArm < 0 ? matchErrorLine(node, constants) : 0);
-    }
 
     /**
      * The int or float zend_eval_const_expr folds an arithmetic expression of constants to (zend_try_ct_eval_binary_op),
@@ -2675,17 +1940,6 @@ public final class Translator {
         } catch (PhpError | ArithmeticException error) {
             return null;
         }
-    }
-
-    private Object foldedOperand(Object value) {
-        if (!(value instanceof Ast node)) {
-            return value instanceof Long || value instanceof Double ? value : null;
-        }
-        return switch (node.kind) {
-            case "AST_CONST", "AST_UNARY_OP", "AST_MAGIC_CONST" -> expression(node).constantValue();
-            case "AST_BINARY_OP" -> foldedArithmetic(node);
-            default -> null;
-        };
     }
 
     /** A match's second default arm, which zend_compile_match refuses; null if it has at most one. */
@@ -2760,32 +2014,6 @@ public final class Translator {
         return line;
     }
 
-    /** print: echoes and evaluates to 1. */
-    private static final class PrintNode extends ExprNode {
-        @Child private StmtNode echo;
-
-        PrintNode(ExprNode value) {
-            this.echo = new BasicStmts.EchoNode(value);
-        }
-
-        @Override
-        public Object execute(com.oracle.truffle.api.frame.VirtualFrame frame) {
-            echo.execute(frame);
-            return 1L;
-        }
-    }
-
-    private String methodName(Ast node) {
-        if (node.get("method") instanceof String name) {
-            return name;
-        }
-        throw unsupported(node, "dynamic method name");
-    }
-
-    private static boolean isThis(Object value) {
-        return value instanceof Ast node && node.is("AST_VAR") && "this".equals(node.get("name"));
-    }
-
     // ---- `?->` chains ----
 
     /** The child of a chain's link its object comes from: a static member's class, else the expression. */
@@ -2837,176 +2065,7 @@ public final class Translator {
         return new Ast(kind, node.flags, node.line, node.endLine, null, parts);
     }
 
-    /**
-     * A chain read with a `?->` (ZEND_JMP_NULL): its object evaluated into a hidden slot, the rest of the chain on
-     * it, the `?->` as `->` (with further `?->`s of its own); quiet in isset(), empty() and `??` (BP_VAR_IS).
-     */
-    private ExprNode nullsafeChain(Ast node, Ast nullsafe, boolean quiet) {
-        if (convertInChain(node, nullsafe) instanceof Ast convert) {
-            throw compileError(convert.line, "Cannot combine nullsafe operator with Closure creation");
-        }
-        ExprNode object = expression(nullsafe.get("expr"));
-        int slot = hiddenSlot("nullsafe");
-        Ast chain = withObject(node, nullsafe, temporary(slot, node));
-        return quiet ? new TemporaryNode.IfSet(object, quiet(chain), slot)
-                : new TemporaryNode(object, expression(chain), slot, true);
-    }
-
-    /** A node standing for the value a TemporaryNode keeps in a hidden slot. */
-    private static Ast temporary(int slot, Ast at) {
-        return new Ast("TEMPORARY", slot, at.line, at.endLine, null, null);
-    }
-
-    /** An operand isset(), empty() or `??` reads quietly: a `?->` chain's parts too. */
-    private ExprNode quiet(Object value) {
-        Ast nullsafe = deepestNullsafe(value);
-        return nullsafe != null ? nullsafeChain((Ast) value, nullsafe, true) : expression(value);
-    }
-
     // ---- places ----
-
-    LValueNode place(Object value) {
-        Ast node = (Ast) value;
-        if (deepestNullsafe(node) != null) {
-            // zend_ensure_writable_variable
-            throw compileError(node.line, "Can't use nullsafe operator in write context");
-        }
-        switch (node.kind) {
-            case "AST_VAR": {
-                if (!(node.get("name") instanceof String name)) {
-                    // ponytail: a function's $$name runs on bytecode (BytecodeScope); the tree keeps a file's
-                    if (scope != null) {
-                        throw unsupported(node, "variable variable");
-                    }
-                    return new VariableVariableNode(expression(node.get("name")), VariableVariableNode.IS);
-                }
-                if (name.equals("this")) {
-                    throw unsupported(node, "assignment to $this");
-                }
-                if (name.equals("GLOBALS")) {
-                    // zend_ensure_writable_variable
-                    throw compileError(node.line,
-                            "$GLOBALS can only be modified using the $GLOBALS[$name] = $value syntax");
-                }
-                return (LValueNode) variable(name);
-            }
-            case "AST_DIM": {
-                Object dim = node.get("dim");
-                if (isGlobals(node.get("expr"))) {
-                    // zend_delayed_compile_dim: the global variable the key names
-                    if (dim == null) {
-                        throw compileError(node.line, "Cannot append to $GLOBALS");
-                    }
-                    return new GlobalsDimNode(expression(dim));
-                }
-                ExprNode container = isThis(node.get("expr")) ? new ThisNode() : constantObject(node.get("expr"), true);
-                return element(container, dim == null ? null : expression(dim));
-            }
-            case "AST_PROP": {
-                Object prop = node.get("prop");
-                // php-src checks the object after evaluating a computed name, which this order can't do
-                ExprNode object = prop instanceof String ? constantObject(node.get("expr"), false)
-                        : placeOrExpression(node.get("expr"));
-                if (prop instanceof String name) {
-                    return new PropNode(object, Str.sourceKey(name), null, lexicalClass(), scopeInFrame());
-                }
-                return new PropNode(object, null, expression(prop), lexicalClass(), scopeInFrame());
-            }
-            case "AST_STATIC_PROP": {
-                if (!(node.get("prop") instanceof String name)) {
-                    throw unsupported(node, "dynamic static property name");
-                }
-                return new StaticPropNode(classRef(node.get("class")), Str.sourceKey(name), lexicalClass(),
-                        scopeInFrame());
-            }
-            default:
-                throw unsupported(node, "assignment target");
-        }
-    }
-
-    /**
-     * An element of an array (key null for `[]`), its key normalized once when it is a constant string or int, as
-     * php-src's compiler does (zend_handle_numeric_dim); a float, bool or null key converts where it is used, which
-     * warns for a string offset.
-     */
-    private static DimNode element(ExprNode container, ExprNode key) {
-        if (key == null) {
-            return new DimNode(container, null, null);
-        }
-        Object constant = key.constantValue();
-        Object normalized = constant instanceof TruffleString || constant instanceof Long ? ArrayKey.of(constant)
-                : null;
-        return new DimNode(container, key, normalized);
-    }
-
-    /** `$GLOBALS` itself (is_globals_fetch). */
-    private static boolean isGlobals(Object value) {
-        return value instanceof Ast node && node.is("AST_VAR") && "GLOBALS".equals(node.get("name"));
-    }
-
-    /** `$GLOBALS[...]` (is_global_var_fetch): a global variable, named by the key. */
-    private static boolean isGlobalsElement(Object value) {
-        return value instanceof Ast node && node.is("AST_DIM") && isGlobals(node.get("expr"));
-    }
-
-    /** $this, a place, or any other expression (as a container of a dimension or property). */
-    /** placeOrExpression of the object of `->` (element false) or `[]`, checked in a constant expression. */
-    private ExprNode constantObject(Object value, boolean element) {
-        ExprNode object = placeOrExpression(value);
-        return constantExpression && object.constantValue() == null
-                ? new ConstantNodes.ConstantObjectNode(object, element) : object;
-    }
-
-    private ExprNode placeOrExpression(Object value) {
-        if (value instanceof Ast ast && ast.is("AST_VAR") && "this".equals(ast.get("name"))) {
-            return new ThisNode();
-        }
-        return expression(value);
-    }
-
-    /** A frame slot for a node's own state, in the function's frame or the file's; no PHP variable can name it. */
-    private int hiddenSlot(String purpose) {
-        return (scope != null ? scope : fileSlots).slot("\0" + purpose + hiddenCounter++);
-    }
-
-    /**
-     * The site numbers (PhpLanguage.nextFallbackSite) of the calls by an unqualified name in a namespace: one per
-     * name in the code translated, as opcache shares one runtime cache slot between the INIT_NS_FCALL_BY_NAMEs of
-     * an op_array that name the same function (compact_literals).
-     */
-    private final Map<String, Integer> fallbackSites = new HashMap<>();
-
-    private int fallbackSite(String lowerName) {
-        return fallbackSites.computeIfAbsent(lowerName, name -> language.nextFallbackSite());
-    }
-
-    /** The class (lowercase) the code being translated is written in, or null outside classes. */
-    private String lexicalClass() {
-        return classInfo == null ? null : Str.lower(classInfo.name());
-    }
-
-    /** Whether the code is a closure's: self and parent are its bound scope's, found when it runs. */
-    private boolean inClosure() {
-        return function != null && function.getName().startsWith(CLOSURE_PREFIX);
-    }
-
-    /** Whether the calling scope comes from the frame: in a closure or a file's top-level code. */
-    private boolean scopeInFrame() {
-        return scope == null || function != null && function.getName().startsWith(CLOSURE_PREFIX);
-    }
-
-    private ExprNode variable(String name) {
-        if (name.equals("this")) {
-            return new ThisNode();
-        }
-        if (name.equals("GLOBALS")) {
-            return new GlobalsArrayNode();
-        }
-        if (PhpContext.SUPERGLOBALS.contains(name)) {
-            return new GlobalVarNode(name);
-        }
-        return scope == null ? new FileVarNode(name) : new LocalVarNode(scope.slot(name), name);
-    }
 
     /** zend_propagate_list_refs: whether an element of the list, or of a list in it, is taken by reference. */
     static boolean listHasRefs(Ast list) {
@@ -3020,488 +2079,11 @@ public final class Translator {
         return refs;
     }
 
-    private ListAssignNode listTarget(Ast list) {
-        int count = list.size();
-        ExprNode[] keys = new ExprNode[count];
-        LValueNode[] targets = new LValueNode[count];
-        ListAssignNode[] nested = new ListAssignNode[count];
-        for (int i = 0; i < count; i++) {
-            Object child = list.child(i);
-            if (child == null) {
-                continue;
-            }
-            Ast element = (Ast) child;
-            if ((element.flags & ARRAY_ELEM_REF) != 0) {
-                throw unsupported(element, "reference in list()");
-            }
-            keys[i] = element.get("key") == null ? null : expression(element.get("key"));
-            Ast target = element.node("value");
-            if (target.is("AST_ARRAY")) {
-                nested[i] = listTarget(target);
-            } else {
-                if (deepestNullsafe(target) != null) {
-                    // zend_verify_list_assign_target
-                    throw compileError(target.line, "Assignments can only happen to writable values");
-                }
-                targets[i] = place(target);
-            }
-        }
-        return new ListAssignNode(keys, targets, nested);
-    }
-
-    private ExprNode assignment(Ast node) {
-        Ast target = node.node("var");
-        if (target.is("AST_ARRAY")) {
-            // zend_compile_assign: a list with references takes them from a variable or a call only
-            if (listHasRefs(target) && !(node.get("expr") instanceof Ast value
-                    && (isPlace(value) || value.is("AST_NULLSAFE_PROP") || isCall(value)))) {
-                throw compileError(node.line, "Cannot assign reference to non referenceable value");
-            }
-            if (listHasRefs(target) && deepestNullsafe(node.get("expr")) != null) {
-                throw compileError(node.line, "Cannot take reference of a nullsafe chain");
-            }
-            return new AssignNodes.ListAssignExprNode(listTarget(target), expression(node.get("expr")));
-        }
-        return AssignNodes.AssignNode.create(written(target), expression(node.get("expr")));
-    }
-
-    private ExprNode compoundAssignment(Ast node) {
-        return readWritten(node.get("var"), target -> {
-            if (!target.isPure()) {
-                throw unsupported(node, "compound assignment to a place with side effects");
-            }
-            return AssignNodes.CompoundAssignNode.create(target, expression(node.get("expr")), node.flags);
-        });
-    }
-
-    /**
-     * An operation that reads a place and writes it (`op=`, `??=`, `++`): it evaluates the place twice, so every
-     * array key on the way to it that has side effects (`$a[f()][g()]`, `$GLOBALS[f()]`) is evaluated once before,
-     * in order, into a hidden variable, as php-src evaluates the keys once (zend_delayed_compile_dim).
-     */
-    private ExprNode readWritten(Object var, Function<LValueNode, ExprNode> operation) {
-        if (onTemporary(var)) {
-            throw compileError(((Ast) var).line, "Cannot use temporary expression in write context");
-        }
-        List<ExprNode> keys = new ArrayList<>();
-        LValueNode target = keysEvaluatedOnce(var, keys);
-        ExprNode result = operation.apply(target);
-        for (int i = keys.size() - 1; i >= 0; i--) {
-            result = new AssignNodes.SequenceNode(keys.get(i), result);
-        }
-        return result;
-    }
-
-    /** The place, with its keys that have side effects moved into hidden variables (their assignments to keys). */
-    private LValueNode keysEvaluatedOnce(Object value, List<ExprNode> keys) {
-        if (!(value instanceof Ast node) || !node.is("AST_DIM") || node.get("dim") == null) {
-            return place(value);
-        }
-        Object containerAst = node.get("expr");
-        boolean globals = isGlobals(containerAst);
-        ExprNode container = null;
-        if (!globals) {
-            container = isThis(containerAst) ? new ThisNode()
-                    : containerAst instanceof Ast inner && inner.is("AST_DIM") ? keysEvaluatedOnce(inner, keys)
-                    : placeOrExpression(containerAst);
-        }
-        ExprNode key = expression(node.get("dim"));
-        if (!isPureKey(key)) {
-            String temp = "\0key" + hiddenCounter++;
-            keys.add(AssignNodes.AssignNode.create((LValueNode) variable(temp), key));
-            key = variable(temp);
-        }
-        return globals ? new GlobalsDimNode(key) : element(container, key);
-    }
-
-    /** A key that evaluating again gives the same and does nothing else: a constant or a variable. */
-    private static boolean isPureKey(ExprNode key) {
-        return key.constantValue() != null || key instanceof LocalVarNode || key instanceof FileVarNode
-                || key instanceof GlobalVarNode;
-    }
-
     // ---- operators ----
-
-    private ExprNode binary(Ast node) {
-        if (node.flags == BINARY_PIPE) {
-            Object right = node.get("right");
-            if (right instanceof Ast arrow && arrow.is("AST_ARROW_FUNC") && unparenthesizedArrow(arrow)) {
-                throw compileError(node.line, "Arrow functions on the right hand side of |> must be parenthesized");
-            }
-            ExprNode operand = expression(node.get("left"));
-            int slot = hiddenSlot("pipe");
-            return new TemporaryNode(operand, expression(pipeCall(node, temporary(slot, node))), slot, false);
-        }
-        if (node.flags == 8) {
-            return concatNode(concatParts(node));
-        }
-        ExprNode left = node.flags == 260 ? quiet(node.get("left")) : expression(node.get("left"));
-        ExprNode right = expression(node.get("right"));
-        switch (node.flags) {
-            case 1:
-                return ArithmeticNodesFactory.AddNodeGen.create(left, right);
-            case 2:
-                return ArithmeticNodesFactory.SubNodeGen.create(left, right);
-            case 3:
-                return ArithmeticNodesFactory.MulNodeGen.create(left, right);
-            case 4:
-                return ArithmeticNodesFactory.DivNodeGen.create(left, right);
-            case 5:
-                return ArithmeticNodesFactory.ModNodeGen.create(left, right);
-            case 12:
-                return ArithmeticNodesFactory.PowNodeGen.create(left, right);
-            case 9:
-                return ArithmeticNodesFactory.BitOrNodeGen.create(left, right);
-            case 10:
-                return ArithmeticNodesFactory.BitAndNodeGen.create(left, right);
-            case 11:
-                return ArithmeticNodesFactory.BitXorNodeGen.create(left, right);
-            case 6:
-                return ArithmeticNodesFactory.ShiftLeftNodeGen.create(left, right);
-            case 7:
-                return ArithmeticNodesFactory.ShiftRightNodeGen.create(left, right);
-            case 16:
-                return CompareNodes.IdenticalNode.create(left, right, false);
-            case 17:
-                return CompareNodes.IdenticalNode.create(left, right, true);
-            case 18:
-                return CompareNodes.EqualNode.create(left, right, false);
-            case 19:
-                return CompareNodes.EqualNode.create(left, right, true);
-            case 20:
-                return CompareNodes.LessNode.create(left, right, false, false);
-            case 21:
-                return CompareNodes.LessNode.create(left, right, true, false);
-            case 256:
-                return CompareNodes.LessNode.create(left, right, false, true);
-            case 257:
-                return CompareNodes.LessNode.create(left, right, true, true);
-            case 170:
-                return CompareNodes.SpaceshipNode.create(left, right);
-            case 259:
-                return new LogicNodes.AndOrNode(left, right, false);
-            case 258:
-                return new LogicNodes.AndOrNode(left, right, true);
-            case 15:
-                return new LogicNodes.XorNode(left, right);
-            case 260:
-                return new LogicNodes.CoalesceNode(left, right);
-            default:
-                throw unsupported(node, "binary operator " + node.flags);
-        }
-    }
-
-    /**
-     * The operands of `a . b . c ...` as the reference's opcache leaves them (its block pass): a left operand that
-     * is a concatenation extends the chain; an empty literal ('', null, false) is dropped (CONCAT(X, '') becomes
-     * CAST(X)); an operand cast to a string ((string) x, "$x", a concatenation left with one operand) is the value
-     * itself, which the concatenation converts (CONCAT(CAST(X), Y) becomes CONCAT(X, Y)).
-     */
-    private List<ExprNode> concatParts(Ast node) {
-        List<ExprNode> parts = new ArrayList<>();
-        Object left = node.get("left");
-        if (left instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
-            parts.addAll(concatParts(ast));
-        } else {
-            addConcatPart(parts, left);
-        }
-        addConcatPart(parts, node.get("right"));
-        return parts;
-    }
-
-    private void addConcatPart(List<ExprNode> parts, Object operand) {
-        if (operand instanceof Ast ast && ast.is("AST_CAST") && ast.flags == UnaryNodes.CastNode.TO_STRING) {
-            addConcatPart(parts, ast.get("expr"));
-            return;
-        }
-        if (operand instanceof Ast ast && ast.is("AST_BINARY_OP") && ast.flags == 8) {
-            List<ExprNode> nested = concatParts(ast);
-            if (nested.size() <= 1) {
-                parts.addAll(nested);
-            } else {
-                parts.add(concatNode(nested));
-            }
-            return;
-        }
-        if (operand instanceof Ast ast && ast.is("AST_ENCAPS_LIST") && interpolated(ast).size() == 1) {
-            addConcatPart(parts, interpolated(ast).get(0));
-            return;
-        }
-        ExprNode part = expression(operand);
-        Object value = part.constantValue();
-        if (value == PhpNull.NULL || value == Boolean.FALSE || (value instanceof TruffleString s && s.isEmpty())) {
-            return;
-        }
-        parts.add(part);
-    }
-
-    /**
-     * A concatenation of its parts (concatParts), adjacent literals joined: none is "", one converts as a cast,
-     * two are a ConcatNode, more one ConcatChainNode (a join, where a `.` per pair made a string each).
-     */
-    private ExprNode concatNode(List<ExprNode> operands) {
-        List<ExprNode> parts = new ArrayList<>();
-        for (ExprNode operand : operands) {
-            ExprNode last = parts.isEmpty() ? null : parts.get(parts.size() - 1);
-            if (last != null && literal(last) && literal(operand)) {
-                parts.set(parts.size() - 1, new ConstNode(language.intern(Str.concat(
-                        Convert.toStr(last.constantValue()), Convert.toStr(operand.constantValue())))));
-            } else {
-                parts.add(operand);
-            }
-        }
-        return switch (parts.size()) {
-            case 0 -> new ConstNode(language.intern(Str.EMPTY));
-            case 1 -> literal(parts.get(0)) ? new ConstNode(language.intern(Convert.toStr(parts.get(0)
-                    .constantValue()))) : UnaryNodes.CastNode.create(parts.get(0), UnaryNodes.CastNode.TO_STRING);
-            case 2 -> ArithmeticNodesFactory.ConcatNodeGen.create(parts.get(0), parts.get(1));
-            default -> new ConcatChainNode(parts.toArray(new ExprNode[0]));
-        };
-    }
-
-    /** A constant php-src's compiler converts to a string in a concatenation (not an array). */
-    private static boolean literal(ExprNode node) {
-        Object value = node.constantValue();
-        return value != null && !(value instanceof PhpArray);
-    }
-
-    /**
-     * Whether an interpolation's parts are two expressions, whose FAST_CONCAT evaluates both before converting
-     * either; with a literal part, converting each as it is evaluated (a rope's order) is the same.
-     */
-    static boolean twoExpressions(List<Object> parts) {
-        return parts.size() == 2 && parts.get(0) instanceof Ast && parts.get(1) instanceof Ast;
-    }
-
-    /** The parts of an interpolated string that php-src's rope keeps: all but empty literals. */
-    static List<Object> interpolated(Ast node) {
-        List<Object> parts = new ArrayList<>();
-        for (Object part : node.children()) {
-            if (!(part instanceof String text && text.isEmpty()) && !(part instanceof byte[] bytes
-                    && bytes.length == 0)) {
-                parts.add(part);
-            }
-        }
-        return parts;
-    }
-
-    private ExprNode unary(Ast node) {
-        ExprNode operand = expression(node.get("expr"));
-        switch (node.flags) {
-            case 14:
-                return new LogicNodes.NotNode(operand);
-            case 13:
-                return UnaryNodes.BitNotNode.create(operand);
-            case 260:
-                return new UnaryNodes.SilenceNode(operand);
-            case 261:
-                return UnaryNodes.PlusNode.create(operand);
-            case 262: {
-                Object constant = operand.constantValue();
-                if (constant instanceof Long l && l != Long.MIN_VALUE) {
-                    return new ConstNode(-l);
-                }
-                if (constant instanceof Double d) {
-                    return new ConstNode(-d);
-                }
-                return UnaryNodes.NegateNode.create(operand);
-            }
-            default:
-                throw unsupported(node, "unary operator " + node.flags);
-        }
-    }
 
     // ---- constants and literals ----
 
-    private ExprNode constant(Ast node) {
-        Ast nameNode = node.node("name");
-        String[] resolved = names.constantName((String) nameNode.get("name"), nameNode.flags);
-        // true, false and null are global; a namespace can't declare them
-        String name = resolved[1] != null ? resolved[1] : resolved[0];
-        switch (Str.lower(name)) {
-            case "true":
-                return new ConstNode(Boolean.TRUE);
-            case "false":
-                return new ConstNode(Boolean.FALSE);
-            case "null":
-                return new ConstNode(PhpNull.NULL);
-            default:
-                break;
-        }
-        String deprecation = language.builtins().deprecation(name);
-        if (deprecation != null) {
-            return new ConstantNodes.DeprecatedConstNode(resolved[0], language.constantId(resolved[0]),
-                    resolved[1] == null ? -1 : language.constantId(resolved[1]), deprecation, node.line);
-        }
-        // a predefined constant folds where the name can't mean a namespace's own (`namespace N; const INI_ALL = 0;`)
-        Object known = resolved[1] == null ? language.builtins().constant(name) : null;
-        if (known != null) {
-            return new ConstNode(known);
-        }
-        return new ConstantNodes.GlobalConstNode(resolved[0], language.constantId(resolved[0]),
-                resolved[1] == null ? -1 : language.constantId(resolved[1]));
-    }
-
-    private ExprNode classConstant(Ast node) {
-        String constantName = (String) node.get("const");
-        Object classNode = node.get("class");
-        if (constantName.equalsIgnoreCase("class")) {
-            return classNameExpr(node);
-        }
-        boolean cacheable = !(classNode instanceof Ast ast && ast.is("AST_NAME")
-                && className(ast).equalsIgnoreCase("static")) && classNode instanceof Ast named
-                && named.is("AST_NAME");
-        return new ConstantNodes.ClassConstNode(classRef(classNode), constantName, cacheable);
-    }
-
-    private ExprNode classNameExpr(Ast node) {
-        Object classNode = node.get("class");
-        if (classNode instanceof Ast ast && ast.is("AST_NAME")) {
-            String name = className(ast);
-            switch (Str.lower(name)) {
-                case "self":
-                    return new ConstNode(Str.of(requireClass(node).name()));
-                case "parent":
-                    return new ConstNode(Str.of(requireClass(node).parentName()));
-                case "static":
-                    return new ConstantNodes.ClassNameNode(classRef(classNode));
-                default:
-                    return new ConstNode(Str.of(name));
-            }
-        }
-        return new ConstantNodes.ObjectClassNameNode(expression(classNode));
-    }
-
-    private ExprNode magicConstant(Ast node) {
-        switch (node.flags) {
-            case 346:
-                return new ConstNode((long) node.line);
-            case 347:
-                return new ConstNode(Str.of(path));
-            case 348:
-                return new ConstNode(Str.of(Path.of(path).getParent().toString()));
-            case 349:
-                return new ConstNode(Str.of(classInfo == null ? "" : classInfo.name()));
-            case 351: {
-                // a closure's __METHOD__ is its name, without its scope's class
-                int closure = functionName.indexOf(CLOSURE_PREFIX);
-                return new ConstNode(Str.of(closure > 0 ? functionName.substring(closure) : functionName));
-            }
-            case 352: {
-                String name = functionName.contains("::") ? functionName.substring(functionName.indexOf("::") + 2)
-                        : functionName;
-                return new ConstNode(Str.of(name));
-            }
-            case 353: {
-                // __PROPERTY__: in a property hook ("$name::get"), the property's name
-                String hook = function == null ? "" : function.getName();
-                return new ConstNode(Str.of(hook.startsWith("$") ? hook.substring(1, hook.lastIndexOf("::")) : ""));
-            }
-            case 354:
-                return new ConstNode(Str.of(names.namespace()));
-            default:
-                throw unsupported(node, "magic constant " + node.flags);
-        }
-    }
-
-    private ExprNode arrayLiteral(Ast node) {
-        int count = node.size();
-        ExprNode[] keys = new ExprNode[count];
-        ExprNode[] values = new ExprNode[count];
-        byte[] kinds = new byte[count];
-        boolean constant = true;
-        for (int i = 0; i < count; i++) {
-            Ast element = (Ast) node.child(i);
-            if (element == null) {
-                throw unsupported(node, "empty array element");
-            }
-            if (element.is("AST_UNPACK")) {
-                kinds[i] = ArrayLiteralNode.SPREAD;
-                values[i] = expression(element.get("expr"));
-                constant = false;
-                continue;
-            }
-            keys[i] = element.get("key") == null ? null : expression(element.get("key"));
-            // array(&$this) (WordPress's do_action_ref_array): $this can't be rebound, so a copy behaves the same
-            boolean refToThis = element.get("value") instanceof Ast value && value.is("AST_VAR")
-                    && "this".equals(value.get("name"));
-            if ((element.flags & ARRAY_ELEM_REF) != 0 && !refToThis) {
-                kinds[i] = ArrayLiteralNode.REF;
-                values[i] = place(element.get("value"));
-                constant = false;
-            } else {
-                values[i] = expression(element.get("value"));
-                constant &= values[i].constantValue() != null && (keys[i] == null || keys[i].constantValue() != null);
-            }
-        }
-        if (constant) {
-            boolean ints = true;
-            for (int i = 0; i < count; i++) {
-                ints &= values[i].constantValue() instanceof Long;
-            }
-            // an int list starts in the int strategy; anything else is sized for its elements
-            PhpArray array = ints ? new PhpArray() : PhpArray.ofCapacity(count);
-            for (int i = 0; i < count; i++) {
-                Object item = values[i].constantValue();
-                if (keys[i] == null) {
-                    array.append(item);
-                } else {
-                    array.put(ArrayKey.of(keys[i].constantValue()), item);
-                }
-            }
-            return new ConstNode(array);
-        }
-        return new ArrayLiteralNode(keys, values, kinds);
-    }
-
-    /**
-     * `"text {$expr} $var"` as php-src compiles it (zend_compile_encaps_list, zend_compile_rope_finalize): one part
-     * is a cast, two are a concatenation (FAST_CONCAT: both evaluated, then converted), more a rope, which converts
-     * each part as it is evaluated.
-     */
-    private ExprNode interpolation(Ast node) {
-        List<Object> kept = interpolated(node);
-        if (kept.size() == 1) {
-            return UnaryNodes.CastNode.create(expression(kept.get(0)), UnaryNodes.CastNode.TO_STRING);
-        }
-        if (twoExpressions(kept)) {
-            // joined as a chain is (ConcatChainNode's order is FAST_CONCAT's for two)
-            return new ConcatChainNode(new ExprNode[] {expression(kept.get(0)), expression(kept.get(1))});
-        }
-        ExprNode[] parts = new ExprNode[kept.size()];
-        for (int i = 0; i < parts.length; i++) {
-            parts[i] = expression(kept.get(i));
-        }
-        return new InterpolationNode(parts);
-    }
-
     // ---- calls ----
-
-    private ArgumentsNode arguments(Ast list) {
-        int count = list == null ? 0 : list.size();
-        ExprNode[] args = new ExprNode[count];
-        boolean[] spread = new boolean[count];
-        boolean[] calls = new boolean[count];
-        for (int i = 0; i < count; i++) {
-            Object arg = list.child(i);
-            calls[i] = isCall(arg) ? !compiledInPlace((Ast) arg) : isVarResult(arg);
-            if (arg instanceof Ast ast && ast.is("AST_UNPACK")) {
-                spread[i] = true;
-                args[i] = expression(ast.get("expr"));
-            } else if (arg instanceof Ast ast && ast.is("AST_NAMED_ARG")) {
-                throw unsupported(ast, "named argument");
-            } else if (arg instanceof Ast ast && ast.is("AST_CALLABLE_CONVERT")) {
-                throw unsupported(ast, "first-class callable syntax");
-            } else if (arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
-                    || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name")) && !isGlobals(ast)
-                    && deepestNullsafe(ast) == null) {
-                args[i] = place(arg);
-            } else {
-                args[i] = expression(arg);
-            }
-        }
-        return new ArgumentsNode(args, spread, calls);
-    }
 
     /**
      * `operand |> callable` as php-src compiles it (zend_compile_pipe), the operand a value evaluated before:
@@ -3544,139 +2126,6 @@ public final class Translator {
         return call.get("args") instanceof Ast args && args.is("AST_CALLABLE_CONVERT");
     }
 
-    private ExprNode call(Ast node) {
-        Ast callee = node.node("expr");
-        Ast args = node.node("args");
-        if (callee == null) {
-            // a value called, as `|>` calls its callable (pipeCall)
-            return new CallableCallNode(expression(node.get("expr")), arguments(args), null, null, true);
-        }
-        // a string callee naming a method, 'A::m'(), calls it as the value would be called
-        boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
-        ExprNode value = method ? new ConstNode(Str.of((String) callee.get("name"))) : null;
-        if (isCallableConvert(node)) {
-            if (!callee.is("AST_NAME") || method) {
-                return new CallableConvertNodes.ValueNode(method ? value : expression(callee));
-            }
-            String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
-            return new CallableConvertNodes.FunctionNode(resolved[0], language.functionId(Str.lower(resolved[0])),
-                    resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1])),
-                    resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0])));
-        }
-        if (!callee.is("AST_NAME") || method) {
-            return new CallableCallNode(method ? value : expression(callee), arguments(args), null, null, true);
-        }
-        String[] resolved = names.functionName((String) callee.get("name"), callee.flags);
-        // the global name, for the built-ins the translator handles itself (null: a namespaced function)
-        String name = resolved[1] != null ? resolved[1] : resolved[0].indexOf('\\') < 0 ? resolved[0] : "";
-        // unqualified in a namespace, the name is resolved at run time: php-src compiles nothing in
-        boolean special = resolved[1] == null && compiledSpecially(Str.lower(resolved[0]), args);
-        if (special && Str.lower(resolved[0]).equals("defined")) {
-            return defined(definedName(args.child(0)));
-        }
-        ExprNode inPlace = name.isEmpty() ? null : inPlace(node, name, resolved, args, special);
-        if (inPlace != null && resolved[1] == null) {
-            return inPlace;
-        }
-        int id = language.functionId(Str.lower(resolved[0]));
-        int fallbackId = resolved[1] == null ? -1 : language.functionId(Str.lower(resolved[1]));
-        int site = resolved[1] == null ? -1 : fallbackSite(Str.lower(resolved[0]));
-        ExprNode call = new FunctionCallNode(resolved[0], id, fallbackId, site, arguments(args), special);
-        // a built-in compiled in place for an unqualified name in a namespace, while the call falls back to it
-        return inPlace == null ? call : new FunctionCallNode.FallbackNode(inPlace, call, id, fallbackId, site);
-    }
-
-    /** A call of a built-in compiled in place (name: the global name), or null for a call. */
-    private ExprNode inPlace(Ast node, String name, String[] resolved, Ast args, boolean special) {
-        switch (Str.lower(name)) {
-            case "func_get_args":
-                return new FrameArgsNode(false);
-            case "func_num_args":
-                return new FrameArgsNode(true);
-            case "func_get_arg": {
-                ExprNode[] positionArgs = expressionList(args);
-                if (positionArgs.length != 1) {
-                    break;
-                }
-                int[] paramSlots = null;
-                if (scope != null && function != null) {
-                    List<Integer> slots = new ArrayList<>();
-                    for (PhpFunction.Param param : function.getParams()) {
-                        if (!param.variadic()) {
-                            slots.add(scope.slot(param.name()));
-                        }
-                    }
-                    paramSlots = slots.stream().mapToInt(Integer::intValue).toArray();
-                }
-                return new FrameArgNode(positionArgs[0], paramSlots);
-            }
-            // a name resolved at compile time is compiled into the call itself (zend_compile_func_cuf), whose
-            // result is the callee's; the built-in function, called by a name resolved at run time, returns a value
-            case "call_user_func": {
-                ArgumentsNode rest = arguments(dropFirst(args));
-                return new CallableCallNode(expression(args.child(0)), rest, null,
-                        new Callables.Parameter("call_user_func", 1, false), resolved[1] == null);
-            }
-            case "call_user_func_array":
-                return new CallableCallNode(expression(args.child(0)), new ArgumentsNode(new ExprNode[0],
-                        new boolean[0], new boolean[0]), expression(args.child(1)),
-                        new Callables.Parameter("call_user_func_array", 1, false),
-                        resolved[1] == null && args.size() == 2);
-            case "get_class":
-            case "get_called_class":
-                if (args.size() == 0) {
-                    return name.equalsIgnoreCase("get_class") && classInfo != null
-                            ? new ConstNode(Str.of(classInfo.name()))
-                            : new ConstantNodes.ClassNameNode(ClassRefNode.lateStatic(classInfo == null ? null
-                            : classInfo.name()));
-                }
-                break;
-            case "compact": {
-                if (args.size() == 0) {
-                    break;
-                }
-                List<String> variableNames = new ArrayList<>();
-                if (compactNames(args, variableNames)) {
-                    TruffleString[] keys = new TruffleString[variableNames.size()];
-                    LValueNode[] variables = new LValueNode[keys.length];
-                    for (int i = 0; i < keys.length; i++) {
-                        keys[i] = language.intern(Str.of(variableNames.get(i)));
-                        variables[i] = (LValueNode) variable(variableNames.get(i));
-                    }
-                    return new CompactNode(keys, variables);
-                }
-                return new DynamicCompactNode(expressionList(args), scope == null ? null : scope.slots);
-            }
-            case "extract": {
-                ExprNode[] extractArgs = expressionList(args);
-                if (extractArgs.length == 0 || extractArgs.length > 3) {
-                    break;
-                }
-                if (scope != null && scope.includeScopeSlot < 0) {
-                    scope.includeScopeSlot = hiddenSlot("includeScope");
-                }
-                if (extractTakesRef(args)) {
-                    extractArgs[0] = place(args.child(0));
-                }
-                return new ExtractNode(extractArgs[0], extractArgs.length > 1 ? extractArgs[1] : null,
-                        extractArgs.length > 2 ? extractArgs[2] : null, scope == null ? null : scope.slots,
-                        scope == null ? -1 : scope.includeScopeSlot, lexicalClass());
-            }
-            case "get_object_vars": {
-                ExprNode[] objectArgs = expressionList(args);
-                if (objectArgs.length != 1) {
-                    break;
-                }
-                return new ObjectVarsNode(objectArgs[0], lexicalClass());
-            }
-            case "get_defined_vars":
-                throw unsupported(node, name + "()");
-            default:
-                break;
-        }
-        return intrinsic(Str.lower(name), args, special);
-    }
-
     /**
      * Whether extract()'s array goes by reference: its parameter prefers one (ZEND_SEND_PREFER_REF), which a
      * variable or other place takes, and only EXTR_REFS uses (php_extract_ref_*): unless the flags are a constant
@@ -3690,7 +2139,7 @@ public final class Translator {
         }
         Object flags = args.child(1);
         if (flags instanceof Ast ast && (ast.is("AST_CONST") || ast.is("AST_BINARY_OP"))) {
-            flags = expression(ast).constantValue();
+            flags = fold(ast);
         }
         return !(flags instanceof Long value) || (value & ExtractNode.REFS) != 0;
     }
@@ -3756,16 +2205,17 @@ public final class Translator {
     }
 
     /**
-     * defined('NAME') compiled in place (ZEND_DEFINED). As zend_compile_func_defined, a name zend_try_ct_eval_const
-     * knows at compile time is true: true, false and null in any case, and the predefined constants.
+     * defined('NAME') compiled in place on bytecode (ZEND_DEFINED, the call compiledSpecially): true for a name
+     * zend_try_ct_eval_const knows at compile time, else the DefinedSite testing the name.
      */
-    private ExprNode defined(String name) {
+    Object definedSite(Ast args) {
+        String name = definedName(args.child(0));
         String lower = Str.lower(name);
         if (lower.equals("true") || lower.equals("false") || lower.equals("null")
                 || language.builtins().constant(name) != null) {
-            return new ConstNode(Boolean.TRUE);
+            return Boolean.TRUE;
         }
-        return new ConstantNodes.DefinedNode(language.constantId(name));
+        return new DefinedSite(language.constantId(name));
     }
 
     /** zend_compile_func_sprintf's test: the number of %s and %d in a format of only those (and %%), else -1. */
@@ -3804,36 +2254,51 @@ public final class Translator {
         return true;
     }
 
-    /** The in-place node for a small built-in (see {@link Intrinsics}), or null for a regular call. */
-    private ExprNode intrinsic(String lowerName, Ast args, boolean compiledSpecially) {
-        if (!Intrinsics.handles(lowerName)) {
-            return null;
-        }
-        int count = args == null ? 0 : args.size();
-        ExprNode[] nodes = new ExprNode[count];
-        for (int i = 0; i < count; i++) {
-            Object arg = args.child(i);
-            if (arg instanceof Ast ast && (ast.is("AST_UNPACK") || ast.is("AST_NAMED_ARG")
-                    || ast.is("AST_CALLABLE_CONVERT"))) {
-                return null;
-            }
-            if (Intrinsics.byRef(lowerName, i)) {
-                if (!(arg instanceof Ast ast && (ast.is("AST_VAR") || ast.is("AST_DIM") || ast.is("AST_PROP")
-                        || ast.is("AST_STATIC_PROP")) && !"this".equals(ast.get("name"))
-                        && deepestNullsafe(ast) == null)) {
-                    return null;
-                }
-                nodes[i] = place(arg);
-            } else {
-                nodes[i] = expression(arg);
-            }
-        }
-        return Intrinsics.create(lowerName, nodes, Intrinsics.callsBack(lowerName) ? hiddenSlot("callback") : -1,
-                compiledSpecially);
+    /**
+     * Whether an interpolation's parts are two expressions, whose FAST_CONCAT evaluates both before converting
+     * either; with a literal part, converting each as it is evaluated (a rope's order) is the same.
+     */
+    static boolean twoExpressions(List<Object> parts) {
+        return parts.size() == 2 && parts.get(0) instanceof Ast && parts.get(1) instanceof Ast;
     }
 
-    private static Ast dropFirst(Ast list) {
-        List<Object> rest = new ArrayList<>(list.children().subList(1, list.size()));
-        return new Ast(list.kind, list.flags, list.line, list.endLine, rest, null);
+    /** The parts of an interpolated string that php-src's rope keeps: all but empty literals. */
+    static List<Object> interpolated(Ast node) {
+        List<Object> parts = new ArrayList<>();
+        for (Object part : node.children()) {
+            if (!(part instanceof String text && text.isEmpty()) && !(part instanceof byte[] bytes
+                    && bytes.length == 0)) {
+                parts.add(part);
+            }
+        }
+        return parts;
+    }
+
+    private ClassInfo requireClass(Ast node) {
+        if (classInfo == null) {
+            throw unsupported(node, "self/parent outside a class");
+        }
+        return classInfo;
+    }
+
+    private Object foldedOperand(Object value) {
+        if (!(value instanceof Ast node)) {
+            return value instanceof Long || value instanceof Double ? value : null;
+        }
+        return switch (node.kind) {
+            case "AST_CONST", "AST_UNARY_OP", "AST_MAGIC_CONST" -> fold(node);
+            case "AST_BINARY_OP" -> foldedArithmetic(node);
+            default -> null;
+        };
+    }
+
+    private TruffleString literal(Object value) {
+        if (value instanceof String s) {
+            return language.intern(Str.of(s));
+        }
+        if (value instanceof byte[] bytes) {
+            return language.intern(Str.of(bytes));
+        }
+        throw new PhpError("not a string literal: " + value);
     }
 }

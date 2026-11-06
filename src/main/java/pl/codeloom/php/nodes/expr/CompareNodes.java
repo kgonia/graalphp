@@ -159,43 +159,6 @@ public final class CompareNodes {
         }
     }
 
-    /**
-     * `<` and `<=` (orEqual); with swapped, `>` and `>=` as `right < left`. Operands still evaluate left first.
-     */
-    public abstract static class LessNode extends CompareNode {
-        private final boolean orEqual;
-        private final boolean swapped;
-
-        protected LessNode(boolean orEqual, boolean swapped) {
-            this.orEqual = orEqual;
-            this.swapped = swapped;
-        }
-
-        public static LessNode create(ExprNode left, ExprNode right, boolean orEqual, boolean swapped) {
-            return CompareNodesFactory.LessNodeGen.create(orEqual, swapped, left, right);
-        }
-
-        @Specialization
-        protected boolean longs(long first, long second) {
-            long a = swapped ? second : first;
-            long b = swapped ? first : second;
-            return orEqual ? a <= b : a < b;
-        }
-
-        @Specialization
-        protected boolean doubles(double first, double second) {
-            double a = swapped ? second : first;
-            double b = swapped ? first : second;
-            return orEqual ? a <= b : a < b;
-        }
-
-        @Fallback
-        protected boolean other(Object first, Object second) {
-            int c = Convert.compare(swapped ? second : first, swapped ? first : second);
-            return orEqual ? c <= 0 : c < 0;
-        }
-    }
-
     /** `<=>`. */
     @NodeChild("left")
     @NodeChild("right")

@@ -73,8 +73,11 @@ public final class ClassRefNode extends Node {
      * (static::class's the called class's).
      */
     public static Object closureScope(Frame frame, int mode) {
-        PhpClass scope = frame.getArguments()[PhpFunction.ARG_CLOSURE] instanceof PhpClosure closure
-                ? closure.getScope() : null;
+        Object bound = frame.getArguments()[PhpFunction.ARG_CLOSURE];
+        // an included file's code has the including function's scope (ZEND_INCLUDE_OR_EVAL)
+        PhpClass scope = bound instanceof PhpClosure closure ? closure.getScope()
+                : bound instanceof IncludeScope included && included.classScope() != null
+                ? includedScope(included.classScope()) : null;
         boolean parent = mode == PARENT || mode == PARENT_NAME;
         if (mode == STATIC_NAME && scope != null) {
             // static::class: the called scope (ZEND_FETCH_CLASS_NAME), which needs a scope too
@@ -86,6 +89,11 @@ public final class ClassRefNode extends Node {
         }
         CompilerDirectives.transferToInterpreter();
         throw noScope(mode, scope != null);
+    }
+
+    @TruffleBoundary
+    private static PhpClass includedScope(String lowerName) {
+        return PhpContext.get(null).findClass(lowerName);
     }
 
     @TruffleBoundary

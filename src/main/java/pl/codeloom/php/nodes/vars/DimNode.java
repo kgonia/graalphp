@@ -2,22 +2,12 @@ package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.UnexpectedResultException;
-import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.strings.TruffleString;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.LValueNode;
-import pl.codeloom.php.nodes.vars.ElementNodes.ArrayKeyNode;
-import pl.codeloom.php.nodes.vars.ElementNodes.ElementIfSetNode;
-import pl.codeloom.php.nodes.vars.ElementNodes.ElementReadNode;
-import pl.codeloom.php.nodes.vars.ElementNodes.ElementWriteNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
-import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -28,127 +18,10 @@ import pl.codeloom.php.runtime.Str;
  * A literal key is normalized once by the translator (constantKey); other keys are normalized per access. Element
  * reads and writes are {@link ElementNodes}: DSL nodes that dispatch on the container and the array's storage.
  */
-public final class DimNode extends LValueNode {
-    @Child private ExprNode container;
-    @Child private ExprNode key;
-    @Child private ElementReadNode read = ElementNodesFactory.ElementReadNodeGen.create();
-    /** isset()'s and `??`'s read, quiet (FETCH_DIM_IS). */
-    @Child private ElementIfSetNode lookup = ElementNodesFactory.ElementIfSetNodeGen.create();
-    @Child private ElementWriteNode writeElement = ElementNodesFactory.ElementWriteNodeGen.create();
-    @Child private ArrayKeyNode toKey = ElementNodesFactory.ArrayKeyNodeGen.create();
-    private final Object constantKey;
-    /** Until a write here meets an ArrayAccess object, compiled code leaves that path out. */
-    private final BranchProfile objectWrite = BranchProfile.create();
-    /** Until isset() or `??` here meets a string or an object, compiled code leaves those paths out. */
-    private final BranchProfile notArray = BranchProfile.create();
-    /** Until a write here stores an array, compiled code leaves out holding it (writeHeld). */
-    private final BranchProfile arrayWrite = BranchProfile.create();
-
-    /** key and constantKey are both null for `$a[]`. */
-    public DimNode(ExprNode container, ExprNode key, Object constantKey) {
-        this.container = container;
-        this.key = constantKey != null ? null : key;
-        this.constantKey = constantKey;
-    }
-
-    private boolean isAppend() {
-        return key == null && constantKey == null;
-    }
-
-    private Object rawKey(VirtualFrame frame) {
-        return constantKey != null ? constantKey : key.execute(frame);
-    }
-
-    private Object normalizedKey(VirtualFrame frame) {
-        return constantKey != null ? constantKey : toKey.execute(key.execute(frame));
-    }
-
-    private LValueNode place() {
-        if (container instanceof LValueNode place) {
-            return place;
-        }
-        CompilerDirectives.transferToInterpreter();
-        throw new PhpError("Cannot use temporary expression in write context");
-    }
-
-    @Override
-    public Object execute(VirtualFrame frame) {
-        if (isAppend()) {
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Cannot use [] for reading");
-        }
-        Object value = container.execute(frame);
-        return read.execute(value, rawKey(frame));
-    }
-
-    /** An int element of an int-strategy array is read without boxing. */
-    @Override
-    public long executeLong(VirtualFrame frame) throws UnexpectedResultException {
-        if (isAppend()) {
-            return super.executeLong(frame);
-        }
-        Object value = container.execute(frame);
-        return read.executeLong(value, rawKey(frame));
-    }
-
-    /**
-     * An array value is held while the container is made writable, so `$a[k] = $a` copies $a first. Let go once on
-     * each exit, not in a finally (which javac copies onto both), and out of line when the store throws.
-     */
-    @Override
-    public void write(VirtualFrame frame, Object value) {
-        PhpArray held = null;
-        if (value instanceof PhpArray array) {
-            arrayWrite.enter();
-            held = array;
-            held.addHolder();
-        }
-        try {
-            store(frame, value);
-        } catch (Throwable t) {
-            if (held != null) {
-                letGo(held);
-            }
-            throw t;
-        }
-        if (held != null) {
-            held.removeHolder();
-        }
-    }
-
+public final class DimNode {
     @TruffleBoundary
     public static void letGo(PhpArray held) {
         held.removeHolder();
-    }
-
-    private void store(VirtualFrame frame, Object value) {
-        PhpArray array = place().arrayForWrite(frame);
-        if (array == null) {
-            writeObject(frame, value);
-        } else if (isAppend()) {
-            array.append(value);
-        } else {
-            writeElement.execute(array, rawKey(frame), value);
-        }
-    }
-
-    /** Stores an int unboxed while the array holds only ints. */
-    @Override
-    public void writeLong(VirtualFrame frame, long value) {
-        PhpArray array = place().arrayForWrite(frame);
-        if (array == null) {
-            writeObject(frame, value);
-        } else if (isAppend()) {
-            array.appendLong(value);
-        } else {
-            writeElement.executeLong(array, rawKey(frame), value);
-        }
-    }
-
-    private void writeObject(VirtualFrame frame, Object value) {
-        objectWrite.enter();
-        Object target = container.execute(frame);
-        writeToObject(this, target, isAppend() ? PhpNull.NULL : rawKey(frame), value);
     }
 
     /**
@@ -162,15 +35,6 @@ public final class DimNode extends LValueNode {
         }
         CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(target) + " as array");
-    }
-
-    @Override
-    public PhpRef makeRef(VirtualFrame frame) {
-        PhpArray array = place().arrayForWrite(frame);
-        if (array == null) {
-            return overloadedRef(this, container.execute(frame), rawKey(frame));
-        }
-        return isAppend() ? array.appendRef() : array.refAt(normalizedKey(frame));
     }
 
     /**
@@ -218,83 +82,6 @@ public final class DimNode extends LValueNode {
                 + " has no effect");
     }
 
-    @Override
-    public void bindRef(VirtualFrame frame, PhpRef ref) {
-        PhpArray array = place().arrayForWrite(frame);
-        if (array == null) {
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Indirect modification of overloaded element");
-        }
-        array.putRef(isAppend() ? (Object) array.nextIndex() : normalizedKey(frame), ref);
-    }
-
-    @Override
-    public PhpArray arrayForWrite(VirtualFrame frame) {
-        PhpArray array = place().arrayForWrite(frame);
-        if (array == null) {
-            Object target = container.execute(frame);
-            if (target instanceof PhpObject object && object.isArrayAccess()) {
-                // ponytail: a nested write into an ArrayAccess element of an object a place holds is a write fetch
-                // whose temporary or object the caller doesn't take
-                return overloadedForWrite(this, object, rawKey(frame)) instanceof PhpArray element ? element : null;
-            }
-            return null;
-        }
-        if (isAppend()) {
-            PhpArray created = new PhpArray();
-            array.append(created);
-            return created;
-        }
-        Object k = normalizedKey(frame);
-        PhpArray nested = array.arrayForWrite(k);
-        if (nested == null && !(array.get(k) instanceof PhpObject)) {
-            CompilerDirectives.transferToInterpreter();
-            throw new PhpError("Cannot use a scalar value as an array");
-        }
-        return nested;
-    }
-
-    /** The containers are read as isset() reads them (FETCH_DIM_UNSET): quietly. */
-    @Override
-    public void unset(VirtualFrame frame) {
-        Object value = container instanceof PropNode property ? property.readForUnset(frame)
-                : container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
-        if (value instanceof PhpArray current) {
-            Object k = normalizedKey(frame);
-            if (current.containsKey(k)) {
-                PhpArray array = place().arrayForWrite(frame);
-                array.remove(k);
-            }
-        } else if (value instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod(this, "offsetunset", rawKey(frame));
-        }
-    }
-
-    ExprNode container() {
-        return container;
-    }
-
-    /** The element of value as FETCH_DIM_W fetches it for a property write: an unset key quietly null, offsetGet() alone. */
-    Object writtenIn(VirtualFrame frame, Object value) {
-        Object offset = rawKey(frame);
-        return value == null ? PhpNull.NULL : lookup.execute(value, offset);
-    }
-
-    /** The key is evaluated whatever the container holds, as php-src evaluates it before ISSET_ISEMPTY_DIM_OBJ. */
-    @Override
-    public boolean isSet(VirtualFrame frame) {
-        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
-        Object offset = rawKey(frame);
-        if (value instanceof PhpArray array) {
-            return lookup.execute(array, offset) != PhpNull.NULL;
-        }
-        if (value == null || value == PhpNull.NULL) {
-            return false;
-        }
-        notArray.enter();
-        return isSetIn(this, value, offset);
-    }
-
     /**
      * isset() of an element of a string (an offset in range) or an ArrayAccess object (offsetExists(), called from
      * site); false for other values.
@@ -314,32 +101,4 @@ public final class DimNode extends LValueNode {
         return false;
     }
 
-    /**
-     * The container and the key are evaluated once, the key whatever the container holds, as php-src's FETCH_DIM_IS
-     * does: isSet and execute each
-     * evaluated them again, so a nested `$a[x][y][z] ?? d` compiled 2^depth copies of the lookups below it, and
-     * an ArrayAccess container's offsetGet() or a key's side effects ran more than once.
-     */
-    @Override
-    public Object readIfSet(VirtualFrame frame) {
-        Object value = container instanceof LValueNode place ? place.readIfSet(frame) : container.execute(frame);
-        Object offset = rawKey(frame);
-        if (value instanceof PhpArray array) {
-            Object element = lookup.execute(array, offset);
-            return element == PhpNull.NULL ? null : element;
-        }
-        if (value == null || value == PhpNull.NULL) {
-            return null;
-        }
-        notArray.enter();
-        return isSetIn(this, value, offset) ? lookup.execute(value, offset) : null;
-    }
-
-    @Override
-    public boolean isPure() {
-        boolean containerPure = container instanceof LValueNode place && place.isPure();
-        return containerPure && (key == null || key instanceof LocalVarNode || key instanceof GlobalVarNode
-                || key instanceof FileVarNode
-                || key.constantValue() != null);
-    }
 }

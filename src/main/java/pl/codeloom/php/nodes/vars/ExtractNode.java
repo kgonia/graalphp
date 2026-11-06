@@ -1,19 +1,15 @@
 package pl.codeloom.php.nodes.vars;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.Args;
-import pl.codeloom.php.nodes.ExprNode;
-import pl.codeloom.php.nodes.LValueNode;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Str;
 
-import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -25,7 +21,7 @@ import java.util.regex.Pattern;
  * php_extract_* (a variable the function names but that is unset is in php-src's symbol table, undefined). With
  * EXTR_REFS each variable is bound to its entry, made a reference in the array (php_extract_ref_*).
  */
-public final class ExtractNode extends ExprNode {
+public final class ExtractNode {
     /** EXTR_REFS. */
     public static final long REFS = 256;
     private static final Pattern NAME = Pattern.compile("[a-zA-Z_\\x80-\\xff][a-zA-Z0-9_\\x80-\\xff]*");
@@ -37,35 +33,6 @@ public final class ExtractNode extends ExprNode {
     private static final long IF_EXISTS = 6;
     private static final long PREFIX_IF_EXISTS = 5;
 
-    @Child private ExprNode array;
-    @Child private ExprNode flags;
-    @Child private ExprNode prefix;
-    /** Name to frame slot, or null at the top level. */
-    private final Map<String, Integer> slots;
-    /** In a function: the slot of the call's IncludeScope, and the class the function is written in. */
-    private final int scopeSlot;
-    private final String lexicalClass;
-
-    public ExtractNode(ExprNode array, ExprNode flags, ExprNode prefix, Map<String, Integer> slots, int scopeSlot,
-                       String lexicalClass) {
-        this.array = array;
-        this.flags = flags;
-        this.prefix = prefix;
-        this.slots = slots;
-        this.scopeSlot = scopeSlot;
-        this.lexicalClass = lexicalClass;
-    }
-
-    @Override
-    public Object execute(VirtualFrame frame) {
-        // a place when EXTR_REFS may be given (Translator.extractTakesRef): its reference
-        Object source = array instanceof LValueNode place ? place.makeRef(frame) : array.execute(frame);
-        Object flagsValue = flags == null ? null : flags.execute(frame);
-        Object prefixValue = prefix == null ? null : prefix.execute(frame);
-        IncludeScope included = slots == null ? IncludeScope.of(frame)
-                : IncludeScope.forCall(frame, scopeSlot, slots, lexicalClass);
-        return extract(source, flagsValue, prefixValue, included, slots == null ? PhpContext.get(this) : null);
-    }
 
     /**
      * The call, its arguments evaluated (flags and prefix null when not given; the array a reference when the

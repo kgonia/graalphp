@@ -9,13 +9,16 @@ import pl.codeloom.php.runtime.Backtrace;
  */
 public final class IncludeSite implements Backtrace.CallSite {
     private final String kind;
+    /** include_once, require_once: known when the site is made, not looked for in kind where it runs. */
+    private final boolean once;
 
     public IncludeSite(String kind) {
         this.kind = kind;
+        this.once = kind.endsWith("_once");
     }
 
     boolean once() {
-        return kind.endsWith("_once");
+        return once;
     }
 
     @Override

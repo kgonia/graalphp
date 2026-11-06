@@ -1,6 +1,6 @@
 <?php
 // Method calls, static calls, new, class constants, ::class, instanceof and clone in functions and methods on
-// bytecode (-Dpolyglot.php.Interpreter=bytecode): the callee is found before the arguments, which go by reference
+// bytecode: the callee is found before the arguments, which go by reference
 // where its parameters do; __call and __callStatic, Closure receivers, self/parent/static and the called class
 // they forward, constructors and their arguments, and the traces of calls made from bytecode.
 

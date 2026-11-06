@@ -1,5 +1,5 @@
 <?php
-// foreach by reference in functions on bytecode (-Dpolyglot.php.Interpreter=bytecode): over variables, elements,
+// foreach by reference in functions on bytecode: over variables, elements,
 // properties, calls returning by reference and temporaries; the value bound to each element's reference, the
 // array the variable holds followed as it changes (appends, copies, reassignment), targets that are elements and
 // properties, the loop's end however it ends; and by-reference generators, which the tree doesn't iterate.
