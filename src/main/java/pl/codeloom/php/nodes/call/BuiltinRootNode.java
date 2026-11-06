@@ -70,7 +70,12 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         if (!noNamedExtras.isValid() && arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras && !forwardsNamed) {
             throw unexpectedNamed(arguments);
         }
-        return call(body, arguments);
+        Object result = call(body, arguments);
+        if (result instanceof PhpObject object) {
+            // a call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1)
+            object.addRef();
+        }
+        return result;
     }
 
     /**

@@ -80,6 +80,54 @@ public final class PhpObject extends DynamicObject {
         this.id = id;
     }
 
+    /** The reference count (see {@link Refcount}): the slots and owning temporaries holding this object. */
+    private int rc;
+    /** The cycle collector's state: 0, or {@link #BUFFERED} once the object was a possible root (php-src's GC_INFO). */
+    private int gcInfo;
+    private static final int BUFFERED = 1;
+
+    /** One more slot or owning temporary holds the object. */
+    public void addRef() {
+        rc++;
+    }
+
+    /**
+     * A slot or an owning temporary gives the object up: at zero it would be destroyed, else it becomes a possible
+     * root of a garbage cycle unless it already is one (php-src's zval_ptr_dtor of an object).
+     */
+    public void release() {
+        int count = rc - 1;
+        rc = count;
+        if (count == 0 || gcInfo == 0) {
+            // one out-of-line call for both events (HHVM's decref slow path), not two in every caller's code
+            Refcount.released(this, count);
+        }
+    }
+
+    /**
+     * An owning temporary's count moves to the slot about to store it, which counts it again: the count stays at
+     * least 1 across the store, so no event (HHVM's DecRefNZ).
+     */
+    public void disown() {
+        rc--;
+    }
+
+    /** A skipped increment/decrement pair (a method call on a variable): the possible-root event it would raise. */
+    public void possibleRoot() {
+        if (gcInfo == 0) {
+            Refcount.possibleRoot(this);
+        }
+    }
+
+    void buffered() {
+        gcInfo = BUFFERED;
+    }
+
+    /** The count, for tests. */
+    public int refcount() {
+        return rc;
+    }
+
     /**
      * Calls a magic property method (__get, __set, __isset, __unset) unless the class has none or one for this
      * property is already running on this object, as php-src's property guards; NO_MAGIC when it didn't call.
@@ -844,7 +892,9 @@ public final class PhpObject extends DynamicObject {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
         DynamicObjectLibrary.getUncached().putWithFlags(this, name, value, phpClass.propertyFlags(name));
+        Refcount.dec(old);
         if (old instanceof PhpArray array && old != value) {
             array.removeHolder();
         }

@@ -31,13 +31,27 @@ public final class MethodSite {
     final boolean forwarding;
     /** `Cls::__construct()`, which php-src calls without a lookup. */
     final boolean constructor;
+    /**
+     * How the call counts its receiver while it runs (php-src's ZEND_CALL_RELEASE_THIS): not at all for `$this`
+     * (INIT_METHOD_CALL's op1 UNUSED) or a static call; for a variable, the pair is skipped but its possible-root
+     * event raised (wiki/destructors.md, "Why skipping a pair is exact"); any other receiver is counted.
+     */
+    final int receiver;
+    public static final int UNCOUNTED = 0;
+    public static final int VARIABLE = 1;
+    public static final int COUNTED = 2;
 
     public MethodSite(String name, boolean forwarding) {
+        this(name, forwarding, UNCOUNTED);
+    }
+
+    public MethodSite(String name, boolean forwarding, int receiver) {
         this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);
         this.forwarding = forwarding;
         this.constructor = lowerName.equals("__construct");
+        this.receiver = receiver;
     }
 
     /** Whether the lookup's answer from scope follows from the class's key (PhpClass.isMethodAccessKeyed). */

@@ -143,6 +143,12 @@ killed. PEA removes counts only on virtualized values: array literals in inlined
    - WooCommerce: orders/s, memory peak, whether the compile queue settles.
 
    Thresholds: ≤3% on the Gate 1 median, ≤5% warm CPU on Gate 2, ≤8% IR. Over them, measure P2 before deciding.
+
+   **Measured (2026-11-06, [destructors-prototype.md](destructors-prototype.md)):**
+   - Gate 1 is within its threshold: per-round ratios 0.96–1.03, IQRs ±5–15%.
+   - IR after PE is over its threshold: tier 1 median 1.06 and total 1.10, tier 2 median 1.12 and total 1.06.
+   - Gate 2's warm CPU is over its threshold: median 1.13 over 5 rounds, 1.01–1.14 in the 3 quiet rounds.
+   - WooCommerce wasn't measured.
 3. **In parallel:**
    - a census oracle for test mode: at `gc_collect_cycles()` and before shutdown step 3a, count each value's in-degree from the roots (frames via `iterateFrames`, generators, globals, statics, constants, built-ins' state) and compare it with `rc`;
    - `CowRefs.tla` extended with objects and destruction events.

@@ -31,6 +31,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
         this.value = value;
     }
 
@@ -42,6 +43,7 @@ public final class PhpRef {
     public static PhpRef unbound(Object value) {
         PhpRef ref = new PhpRef(null);
         ref.value = value;
+        // like a released reference's value: counted once something binds it (takeBack)
         ref.released = true;
         return ref;
     }
@@ -61,6 +63,19 @@ public final class PhpRef {
         if (holds && old instanceof PhpArray array && old != newValue) {
             array.removeHolder();
         }
+        if (holds && (newValue instanceof PhpObject || old instanceof PhpObject)) {
+            countObjects(newValue, old);
+        }
+    }
+
+    /**
+     * set()'s counts of objects, out of line: the callers that compile it (writes through a reference with no node
+     * of their own) mostly store arrays and scalars, and an inlined release is two boundary calls.
+     */
+    @TruffleBoundary
+    private static void countObjects(Object newValue, Object old) {
+        Refcount.inc(newValue);
+        Refcount.dec(old);
     }
 
     /**
@@ -126,6 +141,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.removeHolder();
         }
+        Refcount.dec(value);
     }
 
     @TruffleBoundary
@@ -134,6 +150,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
     }
 
     /** More than one holder: php-src's refcount above 1, where var_dump marks the value with "&". */
