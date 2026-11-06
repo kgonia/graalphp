@@ -560,6 +560,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 } else if (value instanceof PhpObject object) {
                     released(i, RELEASED_OBJECT);
                     object.release();
+                } else if (value instanceof PhpClosure closureValue) {
+                    closureValue.release();
                 } else if (value instanceof PhpRef ref) {
                     released(i, RELEASED_REF);
                     if (returned != null && ref.get() == returned) {
@@ -834,6 +836,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             } else if (value instanceof PhpObject object) {
                 // SEND_VAR's copy, released with the variables
                 object.addRef();
+            } else if (value instanceof PhpClosure closureValue) {
+                closureValue.addRef();
             }
             Locals.initialize(frame, variable, bytecode, value);
         }
@@ -878,6 +882,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 array.addHolder();
             } else if (!byRef && captured instanceof PhpObject object) {
                 object.addRef();
+            } else if (!byRef && captured instanceof PhpClosure closureValue) {
+                closureValue.addRef();
             } else if (captured instanceof PhpRef ref) {
                 ref.bind();
             }
@@ -2807,10 +2813,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object store(VirtualFrame frame, LocalAccessor temporary, int index, Object value, boolean owned,
                                    @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
-            if (owned && value instanceof PhpObject object) {
+            if (owned && (value instanceof PhpObject || value instanceof PhpClosure)) {
                 root.temporaryHeld(index);
                 ReleaseTemp.release(frame, temporary, index, root, bytecode);
-                temporary.setObject(bytecode, frame, object);
+                temporary.setObject(bytecode, frame, value);
             }
             return value;
         }
@@ -2856,6 +2862,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object disown(Object value, boolean owned) {
             if (owned && value instanceof PhpObject object) {
                 object.disown();
+            } else if (owned && value instanceof PhpClosure closureValue) {
+                closureValue.disown();
             }
             return value;
         }
@@ -2872,6 +2880,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object own(Object value, boolean borrowed) {
             if (borrowed && value instanceof PhpObject object) {
                 object.addRef();
+            } else if (borrowed && value instanceof PhpClosure closureValue) {
+                closureValue.addRef();
             }
             return value;
         }
@@ -4277,12 +4287,20 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     array.addHolder();
                 } else if (value instanceof PhpObject object) {
                     object.addRef();
+                } else if (value instanceof PhpClosure closureValue) {
+                    closureValue.addRef();
                 }
                 captured[i] = value;
             }
-            return PhpClosure.declared(function, isStatic, frame.getArguments()[PhpFunction.ARG_THIS],
+            return owned(PhpClosure.declared(function, isStatic, frame.getArguments()[PhpFunction.ARG_THIS],
                     frame.getArguments()[PhpFunction.ARG_STATIC], scope instanceof PhpClass phpClass ? phpClass : null,
-                    captured);
+                    captured));
+        }
+
+        /** ZEND_DECLARE_LAMBDA_FUNCTION's result: the temporary holds the closure's first count, as `new`'s. */
+        private static PhpClosure owned(PhpClosure closure) {
+            closure.addRef();
+            return closure;
         }
     }
 

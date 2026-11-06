@@ -169,13 +169,13 @@ final class Census {
     private static final boolean DESTRUCTORS = Boolean.getBoolean("php.rc.destructors");
 
     /** An object made in the context, with where: the PHP calls running then, innermost first. */
-    private record Tracked(PhpObject object, String site) {
+    private record Tracked(Object object, String site) {
     }
 
     private static final Map<String, String> internedSites = new java.util.HashMap<>();
 
     @TruffleBoundary
-    static void track(PhpObject object) {
+    static void track(Object object) {
         PhpContext context;
         try {
             context = PhpContext.get(null);
@@ -238,18 +238,18 @@ final class Census {
     /** The walk: every holder reached once, and how many counted slots hold each object. */
     private static final class Walk {
         final IdentityHashMap<Object, Node> seen = new IdentityHashMap<>();
-        final IdentityHashMap<PhpObject, int[]> holders = new IdentityHashMap<>();
+        final IdentityHashMap<Object, int[]> holders = new IdentityHashMap<>();
         final ArrayDeque<Node> queue = new ArrayDeque<>();
         boolean fromRoots = true;
         /** Objects whose properties were released (destroyed) though a slot still holds them, with the first path. */
-        final IdentityHashMap<PhpObject, Node> freedHeld = new IdentityHashMap<>();
+        final IdentityHashMap<Object, Node> freedHeld = new IdentityHashMap<>();
         /** The frames walked from the stack: a running generator's frame isn't counted again from its object. */
         final IdentityHashMap<Object, Boolean> frames = new IdentityHashMap<>();
 
         /** A slot holding value; weight: whether php-src counts it (1) or it only makes the value reachable (0). */
         void edge(Node from, String label, Object value, int weight) {
-            if (value instanceof PhpObject object && weight > 0) {
-                holders.computeIfAbsent(object, o -> new int[1])[0] += weight;
+            if (counted(value) && weight > 0) {
+                holders.computeIfAbsent(value, o -> new int[1])[0] += weight;
             }
             if ((value instanceof PhpRef || value instanceof PhpArray || value instanceof PhpObject
                     || value instanceof PhpClosure || value instanceof IncludeScope || value instanceof Refcount.Holder)
@@ -285,6 +285,9 @@ final class Census {
                     generator.censusChildren(frames::containsKey, (label, child) -> slots.slot(label, child, 1));
                 }
             } else if (value instanceof PhpClosure closure) {
+                if (closure.isFreed()) {
+                    return;
+                }
                 slots.slot(" $this", closure.getBoundThis(), 1);
                 for (int i = 0; i < closure.getCaptureCount(); i++) {
                     slots.slot(" use#" + i, closure.getCaptured(i), 1);
@@ -302,8 +305,8 @@ final class Census {
         void drain() {
             while (!queue.isEmpty()) {
                 Node node = queue.poll();
-                if (node.value instanceof PhpObject object && object.isFreed()) {
-                    freedHeld.putIfAbsent(object, node);
+                if (counted(node.value) && freedOf(node.value)) {
+                    freedHeld.putIfAbsent(node.value, node);
                 }
                 children(node.value, (label, child, weight) -> edge(node, label, child, weight));
             }
@@ -346,7 +349,7 @@ final class Census {
 
     /** One kind of mismatch: its objects (each once), the audits it was seen at, and the first one's details. */
     private static final class Group {
-        final IdentityHashMap<PhpObject, Boolean> objects = new IdentityHashMap<>();
+        final IdentityHashMap<Object, Boolean> objects = new IdentityHashMap<>();
         int audits;
         String example;
     }
@@ -364,7 +367,7 @@ final class Census {
     private static final Map<String, Group> pointGroups = new LinkedHashMap<>();
 
     /** The objects whose destructor runs now: each holds the count zend_objects_store_del adds around it. */
-    private static final IdentityHashMap<PhpObject, int[]> inDestructor = new IdentityHashMap<>();
+    private static final IdentityHashMap<Object, int[]> inDestructor = new IdentityHashMap<>();
 
     @TruffleBoundary
     static void destroying(PhpObject object, boolean starts) {
@@ -379,15 +382,15 @@ final class Census {
     }
 
     /** The owning temporaries sent as arguments and still kept in a hidden local (Refcount.sent). */
-    private static final IdentityHashMap<PhpObject, int[]> sentTemporaries = new IdentityHashMap<>();
+    private static final IdentityHashMap<Object, int[]> sentTemporaries = new IdentityHashMap<>();
 
     @TruffleBoundary
-    static void sent(PhpObject object) {
+    static void sent(Object object) {
         sentTemporaries.computeIfAbsent(object, o -> new int[1])[0]++;
     }
 
     @TruffleBoundary
-    static void unsent(PhpObject object) {
+    static void unsent(Object object) {
         int[] sent = sentTemporaries.get(object);
         if (sent != null && --sent[0] <= 0) {
             sentTemporaries.remove(object);
@@ -412,8 +415,8 @@ final class Census {
         });
         // freed objects nothing holds can't show up again: the list keeps the live ones and those held
         context.auditedObjects().removeIf(entry -> {
-            PhpObject object = ((Tracked) entry).object();
-            return object.isFreed() && !findings.walk.freedHeld.containsKey(object);
+            Object object = ((Tracked) entry).object();
+            return freedOf(object) && !findings.walk.freedHeld.containsKey(object);
         });
     }
 
@@ -449,7 +452,7 @@ final class Census {
         Findings f = new Findings();
         Walk walk = new Walk();
         f.walk = walk;
-        IdentityHashMap<PhpObject, int[]> slack = new IdentityHashMap<>();
+        IdentityHashMap<Object, int[]> slack = new IdentityHashMap<>();
         // the destructor's own hold (zend_objects_store_del's GC_ADDREF) has no slot either
         inDestructor.forEach((object, count) -> slack.computeIfAbsent(object, o -> new int[1])[0] += count[0]);
         context.censusRoots((label, value) -> walk.root(label, value, 1));
@@ -522,12 +525,12 @@ final class Census {
                     } catch (RuntimeException e) {
                         continue;
                     }
-                    if (value instanceof PhpObject object) {
-                        int[] local = inLocals.get(object);
+                    if (counted(value)) {
+                        int[] local = inLocals.get(value);
                         if (local != null && local[0] > 0) {
                             local[0]--;
                         } else {
-                            slack.computeIfAbsent(object, o -> new int[1])[0]++;
+                            slack.computeIfAbsent(value, o -> new int[1])[0]++;
                         }
                     }
                 }
@@ -538,9 +541,9 @@ final class Census {
         walk.fromRoots = false;
         List<Object> tracked = context.auditedObjects();
         for (Object entry : tracked) {
-            PhpObject object = ((Tracked) entry).object();
-            if (!object.isFreed() && !walk.seen.containsKey(object)) {
-                walk.edge(null, "unreachable #" + object.id(), object, 0);
+            Object object = ((Tracked) entry).object();
+            if (!freedOf(object) && !walk.seen.containsKey(object)) {
+                walk.edge(null, "unreachable #" + idOf(object), object, 0);
                 walk.drain();
             }
         }
@@ -548,13 +551,13 @@ final class Census {
         IdentityHashMap<Object, Boolean> stillHeld = walk.held();
         for (Object entry : tracked) {
             Tracked t = (Tracked) entry;
-            PhpObject object = t.object();
-            if (object.isFreed()) {
+            Object object = t.object();
+            if (freedOf(object)) {
                 Node held = walk.freedHeld.get(object);
                 if (held != null) {
                     f.freedHeld++;
-                    add(f, "FREED while held  " + object.getPhpClass().getName() + "  made in " + t.site(), object,
-                            "#" + object.id() + " count " + object.refcount() + ", via " + held.path()
+                    add(f, "FREED while held  " + classOf(object) + "  made in " + t.site(), object,
+                            "#" + idOf(object) + " count " + rcOf(object) + ", via " + held.path()
                                     + (held.fromRoot ? "" : " (from garbage)") + under);
                 }
                 continue;
@@ -565,7 +568,7 @@ final class Census {
             if (fromRoot) {
                 f.reachable++;
             }
-            if (object.getPhpClass().isEnum()) {
+            if (object instanceof PhpObject o && o.getPhpClass().isEnum()) {
                 f.enums++;
                 continue;
             }
@@ -573,7 +576,7 @@ final class Census {
             int expected = counted == null ? 0 : counted[0];
             int[] extra = slack.get(object);
             int allowed = expected + (extra == null ? 0 : extra[0]);
-            int rc = object.refcount();
+            int rc = rcOf(object);
             String kind;
             if (rc >= expected && rc <= allowed && rc > 0) {
                 if (!fromRoot) {
@@ -591,15 +594,36 @@ final class Census {
                 f.unders++;
                 kind = "EARLY -" + (expected - rc);
             }
-            add(f, kind + "  " + object.getPhpClass().getName() + "  made in " + t.site(), object,
-                    "#" + object.id() + " count " + rc + ", holders " + expected
+            add(f, kind + "  " + classOf(object) + "  made in " + t.site(), object,
+                    "#" + idOf(object) + " count " + rc + ", holders " + expected
                             + (allowed > expected ? " (+" + (allowed - expected) + " unnamed)" : "")
                             + (fromRoot ? ", via " + node.path() : ", unreachable") + under);
         }
         return f;
     }
 
-    private static void add(Findings f, String key, PhpObject object, String example) {
+    /** Objects and closures: the values php-src counts that the audit checks. */
+    private static boolean counted(Object value) {
+        return value instanceof PhpObject || value instanceof PhpClosure;
+    }
+
+    private static int rcOf(Object value) {
+        return value instanceof PhpObject object ? object.refcount() : ((PhpClosure) value).refcount();
+    }
+
+    private static boolean freedOf(Object value) {
+        return value instanceof PhpObject object ? object.isFreed() : ((PhpClosure) value).isFreed();
+    }
+
+    private static String classOf(Object value) {
+        return value instanceof PhpObject object ? object.getPhpClass().getName() : "Closure";
+    }
+
+    private static int idOf(Object value) {
+        return value instanceof PhpObject object ? object.id() : ((PhpClosure) value).id();
+    }
+
+    private static void add(Findings f, String key, Object object, String example) {
         Group group = f.groups.computeIfAbsent(key, k -> new Group());
         if (group.objects.isEmpty()) {
             group.example = example;

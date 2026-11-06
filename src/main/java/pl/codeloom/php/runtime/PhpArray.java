@@ -198,6 +198,12 @@ public final class PhpArray implements TruffleObject {
                 } else {
                     object.release();
                 }
+            } else if (raw instanceof PhpClosure closureValue) {
+                if (in) {
+                    closureValue.addRef();
+                } else {
+                    closureValue.release();
+                }
             } else if (raw instanceof PhpRef ref) {
                 if (in) {
                     ref.bind();
@@ -311,6 +317,8 @@ public final class PhpArray implements TruffleObject {
             nested.addHolder();
         } else if (values[i] instanceof PhpObject object) {
             object.addRef();
+        } else if (values[i] instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
     }
 
@@ -815,6 +823,15 @@ public final class PhpArray implements TruffleObject {
                     if (holders >= 0) {
                         object.disown();
                     }
+                } else if (raw instanceof PhpClosure closureValue) {
+                    if (holders >= 0) {
+                        closureValue.disown();
+                    }
+                } else if (raw instanceof PhpArray nested) {
+                    // the result: it keeps its elements on its way to the caller
+                    if (holders >= 0) {
+                        nested.removeReturnedHolder();
+                    }
                 } else {
                     countOut(raw, null);
                 }
@@ -892,6 +909,8 @@ public final class PhpArray implements TruffleObject {
                 nested.removeHolder();
             } else if (raw instanceof PhpObject object) {
                 object.disown();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.disown();
             }
         }
         store = rebuilt.store;
@@ -915,13 +934,18 @@ public final class PhpArray implements TruffleObject {
             nested.addHolder();
         } else if (value instanceof PhpObject object) {
             object.addRef();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         remove(key);
         rewindNextIndex(key);
         if (value instanceof PhpArray nested) {
-            nested.removeHolder();
+            // on its way to the caller as the result: it keeps its elements (php-src's retval holds the array)
+            nested.removeReturnedHolder();
         } else if (value instanceof PhpObject object) {
             object.disown();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         setPointer(firstPosition());
         return value;
@@ -946,6 +970,11 @@ public final class PhpArray implements TruffleObject {
             if (holders >= 0) {
                 object.addRef();
             }
+        } else if (value instanceof PhpClosure closureValue) {
+            holdsCounted = true;
+            if (holders >= 0) {
+                closureValue.addRef();
+            }
         }
     }
 
@@ -957,6 +986,12 @@ public final class PhpArray implements TruffleObject {
         if (old instanceof PhpObject object) {
             if (holders >= 0) {
                 object.release();
+            }
+            return;
+        }
+        if (old instanceof PhpClosure closureValue) {
+            if (holders >= 0) {
+                closureValue.release();
             }
             return;
         }
@@ -1168,6 +1203,8 @@ public final class PhpArray implements TruffleObject {
         } else if (raw instanceof PhpObject object && holders >= 0) {
             // the slot's count moves to the reference, which counted it
             object.disown();
+        } else if (raw instanceof PhpClosure closureValue && holders >= 0) {
+            closureValue.disown();
         }
         if (store instanceof long[]) {
             toObjects();

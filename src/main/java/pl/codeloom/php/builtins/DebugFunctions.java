@@ -27,7 +27,8 @@ final class DebugFunctions {
         r.fn("truffle_translate", (context, a) -> translate(context, Str.java(Args.str(a, 0))));
         // an object's reference count (Refcount), -1 for any other value; passing it to a built-in counts nothing
         r.fn("truffle_refcount", (context, a) -> Args.get(a, 0) instanceof PhpObject object
-                ? (long) object.refcount() : -1L);
+                ? (long) object.refcount() : Args.get(a, 0) instanceof pl.codeloom.php.runtime.PhpClosure closure
+                ? (long) closure.refcount() : -1L);
     }
 
     /**

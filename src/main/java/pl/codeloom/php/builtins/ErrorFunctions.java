@@ -125,6 +125,9 @@ public final class ErrorFunctions {
         } finally {
             if (state.errorHandler == PhpNull.NULL) {
                 state.errorHandler = handler;
+            } else {
+                // the handler set another one: zend_error lets the original go
+                pl.codeloom.php.runtime.Refcount.unhold(handler);
             }
         }
         if (Boolean.FALSE.equals(PhpRef.deref(handled))) {
@@ -391,6 +394,7 @@ public final class ErrorFunctions {
             }
             Object previous = state.errorHandler;
             state.errorHandlers.push(new SavedHandler(state.errorHandler, state.errorHandlerLevels));
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.errorHandler = handler;
             if (handler != PhpNull.NULL) {
                 state.errorHandlerLevels = (int) Args.lng(a, 1, E_ALL);
@@ -400,6 +404,7 @@ public final class ErrorFunctions {
         r.fn("restore_error_handler", (context, a) -> {
             State state = context.errors();
             SavedHandler previous = state.errorHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.errorHandler);
             if (previous == null) {
                 state.errorHandler = PhpNull.NULL;
             } else {
@@ -416,12 +421,14 @@ public final class ErrorFunctions {
             }
             Object previous = state.exceptionHandler;
             state.exceptionHandlers.push(state.exceptionHandler);
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.exceptionHandler = handler;
             return previous;
         });
         r.fn("restore_exception_handler", (context, a) -> {
             State state = context.errors();
             Object previous = state.exceptionHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.exceptionHandler);
             state.exceptionHandler = previous == null ? PhpNull.NULL : previous;
             return Boolean.TRUE;
         });

@@ -1979,11 +1979,14 @@ public final class BytecodeTranslator {
             freeTemps.add(temp);
         }
 
-        /** Whether value's node may give an owning temporary: a call or `new` (else it surely doesn't). */
+        /**
+         * Whether value's node may give an owning temporary: a call, `new` or a closure literal (else it surely
+         * doesn't).
+         */
         private boolean mayOwn(Object value) {
             return value instanceof Ast node
                     && (node.is("AST_CALL") || node.is("AST_METHOD_CALL") || node.is("AST_STATIC_CALL")
-                    || node.is("AST_NEW"))
+                    || node.is("AST_NEW") || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC"))
                     && !writeFetched.contains(node) && !constantShaped(value) && Translator.deepestNullsafe(node) == null;
         }
 
@@ -2051,8 +2054,7 @@ public final class BytecodeTranslator {
             // counts as any other)
             if (constantShaped(value) || value instanceof Ast node && (node.is("AST_BINARY_OP") && node.flags != 260
                     || node.is("AST_UNARY_OP") && node.flags != 260 || node.is("AST_ISSET") || node.is("AST_EMPTY")
-                    || node.is("AST_ENCAPS_LIST") || node.is("AST_ARRAY") || node.is("AST_INSTANCEOF")
-                    || node.is("AST_CLOSURE") || node.is("AST_ARROW_FUNC"))) {
+                    || node.is("AST_ENCAPS_LIST") || node.is("AST_ARRAY") || node.is("AST_INSTANCEOF"))) {
                 // never an object
                 expression(value);
                 return;
@@ -2307,6 +2309,8 @@ public final class BytecodeTranslator {
                 case "AST_CLOSURE":
                 case "AST_ARROW_FUNC":
                     closure(node);
+                    // MakeClosure's closure is an owning temporary, as `new`'s object
+                    ownedNode = node;
                     break;
                 case "AST_INCLUDE_OR_EVAL":
                     include(node);
@@ -4472,6 +4476,8 @@ public final class BytecodeTranslator {
             boolean method = callee.is("AST_NAME") && ((String) callee.get("name")).contains("::");
             Object callable = method ? made(() -> Str.of((String) callee.get("name"))) : callee;
             if (Translator.isCallableConvert(node)) {
+                // the Closure is an owning temporary (CallableConvertNodes)
+                ownedNode = node;
                 if (!callee.is("AST_NAME") || method) {
                     b.beginConvertValue();
                     calleeValue(callable);

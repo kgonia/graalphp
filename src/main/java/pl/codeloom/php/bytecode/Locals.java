@@ -14,6 +14,7 @@ import pl.codeloom.php.nodes.vars.Places;
 import pl.codeloom.php.nodes.vars.RefWrites;
 import pl.codeloom.php.nodes.vars.Variables;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.Refcount;
@@ -164,6 +165,8 @@ final class Locals {
             } else if (value instanceof PhpObject object) {
                 met(NEW_OBJECT);
                 object.addRef();
+            } else if (value instanceof PhpClosure closureValue) {
+                closureValue.addRef();
             }
             variable.setObject(bytecode, frame, value);
             if (old instanceof PhpObject object) {
@@ -184,6 +187,8 @@ final class Locals {
             } else if (old instanceof PhpObject object) {
                 met(OLD_OBJECT);
                 releases.release(object);
+            } else if (old instanceof PhpClosure closureValue) {
+                closureValue.release();
             }
         }
     }
@@ -210,11 +215,15 @@ final class Locals {
         return ref;
     }
 
-    /** The variable becomes the reference (`$x = &...`, LocalVarNode.bindRef), giving up what it held first. */
+    /**
+     * The variable becomes the reference (`$x = &...`, LocalVarNode.bindRef), then gives up what it held, as
+     * zend_assign_to_variable_reference: the new binding first, so `$x = &$x` doesn't take its reference to zero.
+     */
     static void bindRef(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, PhpRef ref) {
-        Variables.released(stored(frame, variable, bytecode));
+        Object old = stored(frame, variable, bytecode);
         ref.bind();
         variable.setObject(bytecode, frame, ref);
+        Variables.released(old);
     }
 
     static void unset(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) {

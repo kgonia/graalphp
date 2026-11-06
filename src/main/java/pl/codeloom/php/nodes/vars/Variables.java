@@ -4,6 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 
@@ -31,6 +32,8 @@ public final class Variables {
             array.removeHolder();
         } else if (old instanceof PhpObject object) {
             object.release();
+        } else if (old instanceof PhpClosure closureValue) {
+            closureValue.release();
         }
     }
 
@@ -40,6 +43,8 @@ public final class Variables {
             array.removeHolder();
         } else if (old instanceof PhpObject object) {
             object.release();
+        } else if (old instanceof PhpClosure closureValue) {
+            closureValue.release();
         } else if (old instanceof PhpRef ref) {
             ref.unbind();
         }
@@ -56,6 +61,8 @@ public final class Variables {
         } else if (stored instanceof PhpObject object) {
             // the variable's count moved to the reference, which counted it
             object.disown();
+        } else if (stored instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         ref.bind();
         return ref;

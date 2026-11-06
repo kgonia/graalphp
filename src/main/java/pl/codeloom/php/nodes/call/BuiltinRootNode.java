@@ -74,6 +74,8 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         if (result instanceof PhpObject object) {
             // a call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1)
             object.addRef();
+        } else if (result instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         return result;
     }

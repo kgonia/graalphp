@@ -668,6 +668,8 @@ public final class PropNode extends Node {
             } else if (value instanceof PhpObject newObject) {
                 met(SEEN_NEW_OBJECT);
                 newObject.addRef();
+            } else if (value instanceof PhpClosure closureValue) {
+                closureValue.addRef();
             }
             objects.put(phpObject, name, value);
         }
@@ -678,6 +680,8 @@ public final class PropNode extends Node {
         } else if (old instanceof PhpObject oldObject) {
             met(SEEN_OLD_OBJECT);
             releases.release(oldObject);
+        } else if (old instanceof PhpClosure closureValue) {
+            closureValue.release();
         }
         if (setChecked) {
             // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)
@@ -727,6 +731,8 @@ public final class PropNode extends Node {
         } else if (old instanceof PhpObject object) {
             // the property's count moved to the reference, which counted it
             object.disown();
+        } else if (old instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         ref.bind();
         if (old == null) {
@@ -775,15 +781,18 @@ public final class PropNode extends Node {
         if (readonlyIndirect(arguments, phpObject, name, old)) {
             throw phpObject.indirectError(name, scope(arguments));
         }
+        // the new binding first, as zend_assign_to_variable_reference (`$o->p = &$o->p`)
+        ref.bind();
+        objects.put(phpObject, name, ref);
         if (old instanceof PhpArray array) {
             array.removeHolder();
         } else if (old instanceof PhpObject object) {
             object.release();
+        } else if (old instanceof PhpClosure closureValue) {
+            closureValue.release();
         } else if (old instanceof PhpRef previous) {
             previous.unbind();
         }
-        ref.bind();
-        objects.put(phpObject, name, ref);
     }
 
     /**
@@ -1024,6 +1033,8 @@ public final class PropNode extends Node {
                 array.removeHolder();
             } else if (old instanceof PhpObject object) {
                 object.release();
+            } else if (old instanceof PhpClosure closureValue) {
+                closureValue.release();
             }
             boolean typed = typed(phpObject, name);
             objects.removeKey(phpObject, name);
