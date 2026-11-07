@@ -709,17 +709,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         /**
-         * The argument converted or the TypeError: the parameter's variable holds the argument meanwhile, as
-         * php-src's call slot does, so the error's trace shows it (an array, whose holders the binding counts,
-         * stays out).
+         * The argument converted or the TypeError. Before the error, this parameter and the ones after it are bound
+         * to the arguments passed (counted, as BindParameter binds them; the epilogue releases them): php-src's
+         * call slots hold the arguments from the call on, so the error's trace shows them and keeps them while the
+         * exception lives (zend.exception_ignore_args off).
          */
         private static Object slow(VirtualFrame frame, int index, Object value, PhpBytecodeRootNode root, Node node,
                                    BytecodeNode bytecode) {
-            if (!(value instanceof PhpArray)) {
-                root.variables[root.parameterLocals[index]].setObject(bytecode, frame, value);
+            PhpClass called = calledClass(frame);
+            Object accepted = FunctionRootNode.argumentAccepted(root.params[index], value, called, node);
+            if (accepted != null) {
+                return accepted;
             }
-            return FunctionRootNode.argumentSlow(root.name, root.params[index], index, value, calledClass(frame),
-                    node);
+            CompilerDirectives.transferToInterpreter();
+            root.bindPassed(frame.materialize(), bytecode, index);
+            throw FunctionRootNode.argumentError(root.name, root.params[index], index, value, called);
         }
 
         static boolean isObject(Object value) {
@@ -893,6 +897,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (taken != null) {
                     extras.setObject(bytecode, frame, taken);
                 }
+            }
+        }
+    }
+
+    /** CheckParameter's TypeError: the parameters from index on that an argument was passed for, bound. */
+    @TruffleBoundary
+    private void bindPassed(MaterializedFrame frame, BytecodeNode bytecode, int index) {
+        Object[] arguments = frame.getArguments();
+        for (int i = index; i < params.length && PhpFunction.ARG_FIRST + i < arguments.length; i++) {
+            if (params[i].variadic()) {
+                break;
+            }
+            LocalAccessor variable = variables[parameterLocals[i]];
+            if (variable.isCleared(bytecode, frame)) {
+                BindParameter.bind(frame, variable, i, arguments[PhpFunction.ARG_FIRST + i], this, bytecode);
             }
         }
     }

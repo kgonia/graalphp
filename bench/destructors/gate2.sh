@@ -35,6 +35,7 @@ case ${1:-} in
     v=$2
     $MEMLOCK acquire $NAME-check --gb 5 --wait --ttl 90 --note "wordpress-destructors: Gate 2 pages of $v (CPUs 6-13)"
     opts=OPTS_$v; export CLASSES_$v=target/classes-$v JAVA_OPTS_$v="${!opts:-}"
+    rm -rf target/rcg/pages/php  # the stack's database changes: PHP's pages are taken again each time
     if [ ! -d target/rcg/pages/php ]; then
       g2 reset-db && g2 start php 6-13 8252 && g2 pages php 8252; g2 stop php
     fi

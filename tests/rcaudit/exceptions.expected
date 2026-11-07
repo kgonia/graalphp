@@ -1,0 +1,9 @@
+1: c after ~a | 
+2: ~b c after | 
+3: c ~c after ~d | 
+4: re c ~r after | 
+5: fin ~f c after | 
+6: c ~p ~q | 
+7: ~g ret after | 
+8: E ~t | 
+end
