@@ -300,6 +300,11 @@ public final class PhpObject extends DynamicObject {
      * there.
      */
     @TruffleBoundary
+    /** The object whose properties propertyTable lists: an initialized proxy's instance, else this one. */
+    PhpObject propertyOwner() {
+        return lazy != null && lazy.instance != null ? lazy.instance.propertyOwner() : this;
+    }
+
     public Object[] propertyTable() {
         if (lazy != null && lazy.instance != null) {
             // an initialized proxy's are its instance's (zend_std_get_properties)

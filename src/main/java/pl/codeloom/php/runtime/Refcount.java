@@ -189,43 +189,85 @@ public final class Refcount {
      * callee bound its parameters) is at zero and not yet destroyed: php-src frees it with the unfinished call.
      */
     public static void moved(Object value) {
-        if (value instanceof PhpObject object) {
-            if (object.refcount() == 0 && !object.isDestructorCalled()) {
-                untaken(object);
-            }
-        } else if (value instanceof PhpClosure closure) {
-            if (closure.refcount() == 0 && !closure.isFreed()) {
-                untaken(closure);
-            }
+        if (value instanceof PhpObject object && object.refcount() == 0 && !object.isDestructorCalled()
+                || value instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed()) {
+            untaken(value);
+        } else if (!pl.codeloom.php.PhpContext.get(null).movedToBuiltins().isEmpty()) {
+            // noted for a built-in that ran without BuiltinRootNode (a call site's intrinsic: array_push...):
+            // the note goes with the statement
+            forgetMoved(value);
+        }
+    }
+
+    @TruffleBoundary
+    private static void forgetMoved(Object value) {
+        java.util.ArrayList<Object> moved = pl.codeloom.php.PhpContext.get(null).movedToBuiltins();
+        int at = indexOfIdentical(moved, value);
+        if (at >= 0) {
+            moved.remove(at);
         }
     }
 
     @TruffleBoundary
     private static void untaken(Object value) {
+        // sent to a built-in whose call never started: no longer waiting for it
+        java.util.ArrayList<Object> moved = pl.codeloom.php.PhpContext.get(null).movedToBuiltins();
+        int at = indexOfIdentical(moved, value);
+        if (at >= 0) {
+            moved.remove(at);
+        }
         inc(value);
         dec(value);
     }
 
     /**
-     * A built-in's call takes the arguments moved into it (StoreTemp), at zero: counted while it runs and released
-     * after it returns, in order (php-src's zend_vm_stack_free_args after the internal function), through the pending
-     * releases from the call's mark (BuiltinRootNode). Pushed last to first: the releases go last in, first out.
+     * A value sent as an argument (Send*): one at zero sent to a built-in is an argument's temporary moved into the
+     * call (StoreTemp; a variable's value has its variable's count), noted for the built-in's call to take
+     * (takeMoved). A user function's parameter takes it itself: for a site's constant callee this folds away.
      */
-    public static void takeMoved(Object[] arguments, java.util.ArrayList<Object> pending) {
+    public static void toBuiltin(PhpFunction function, Object value) {
+        if (function.getBuiltin() != null && (value instanceof PhpObject object && object.refcount() == 0
+                || value instanceof PhpClosure closure && closure.refcount() == 0)) {
+            movedToBuiltin(value);
+        }
+    }
+
+    @TruffleBoundary
+    private static void movedToBuiltin(Object value) {
+        pl.codeloom.php.PhpContext.get(null).movedToBuiltins().add(value);
+    }
+
+    /**
+     * A built-in's call takes the arguments moved into it (toBuiltin): counted while it runs and released after it
+     * returns, in order (php-src's zend_vm_stack_free_args after the internal function), through the pending
+     * releases from the call's mark (BuiltinRootNode). Pushed last to first: the releases go last in, first out.
+     * Moved values another call's arguments still wait with (a later argument's call) stay noted.
+     */
+    @TruffleBoundary
+    public static void takeMoved(Object[] arguments, java.util.ArrayList<Object> pending,
+                                 java.util.ArrayList<Object> moved) {
         for (int i = arguments.length - 1; i >= PhpFunction.ARG_FIRST; i--) {
             Object argument = arguments[i];
-            if (argument instanceof PhpObject object) {
-                if (object.refcount() == 0 && !object.isDestructorCalled()) {
-                    object.addRef();
-                    pending.add(object);
-                }
-            } else if (argument instanceof PhpClosure closure) {
-                if (closure.refcount() == 0 && !closure.isFreed()) {
-                    closure.addRef();
-                    pending.add(closure);
-                }
+            int at = indexOfIdentical(moved, argument);
+            if (at < 0) {
+                continue;
+            }
+            moved.remove(at);
+            if (argument instanceof PhpObject object && object.refcount() == 0 && !object.isDestructorCalled()
+                    || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed()) {
+                inc(argument);
+                pending.add(argument);
             }
         }
+    }
+
+    private static int indexOfIdentical(java.util.ArrayList<Object> list, Object value) {
+        for (int i = list.size() - 1; i >= 0; i--) {
+            if (list.get(i) == value) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** TakeExtraArguments: the arguments from `from` on that the call moved in, counted, or null if none. */
@@ -256,6 +298,7 @@ public final class Refcount {
         }
     }
 
+    @TruffleBoundary
     public static void releasePending(java.util.ArrayList<Object> pending, int mark) {
         while (pending.size() > mark) {
             Object value = pending.remove(pending.size() - 1);
@@ -399,19 +442,32 @@ public final class Refcount {
         }
     }
 
-    /** php-src's zend_object_std_dtor: each property gives up what it holds. */
+    /**
+     * php-src's zend_object_std_dtor: each property gives up what it holds, the declared ones first in their order,
+     * then the dynamic ones (the order of propertyTable, without making it: no names are needed).
+     */
     private static void freeProperties(PhpObject object) {
-        Object[] table = object.propertyTable();
-        for (int i = 1; i < table.length; i += 2) {
-            if (table[i] instanceof PhpObject held) {
-                held.release();
-            } else if (table[i] instanceof PhpClosure closure) {
-                closure.release();
-            } else if (table[i] instanceof PhpArray array) {
-                array.removeHolder();
-            } else if (table[i] instanceof PhpRef ref) {
-                ref.unbind();
+        PhpObject owner = object.propertyOwner();
+        PhpClass phpClass = owner.getPhpClass();
+        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+            freeProperty(owner.getProperty(decl.name()));
+        }
+        for (Object name : owner.propertyNames()) {
+            if (!phpClass.isDeclaredProperty((String) name)) {
+                freeProperty(owner.getProperty((String) name));
             }
+        }
+    }
+
+    private static void freeProperty(Object value) {
+        if (value instanceof PhpObject held) {
+            held.release();
+        } else if (value instanceof PhpClosure closure) {
+            closure.release();
+        } else if (value instanceof PhpArray array) {
+            array.removeHolder();
+        } else if (value instanceof PhpRef ref) {
+            ref.unbind();
         }
     }
 

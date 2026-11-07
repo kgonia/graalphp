@@ -98,6 +98,8 @@ final class Locals {
         private static final int OLD_ARRAY = 1 << 5;
         private static final int NEW_OBJECT = 1 << 6;
         private static final int OLD_OBJECT = 1 << 7;
+        private static final int NEW_CLOSURE = 1 << 8;
+        private static final int OLD_CLOSURE = 1 << 9;
         @CompilationFinal private int seen;
         private final RefWrites refWrites = RefWrites.create();
         private final Refcount.Releases releases = Refcount.Releases.create();
@@ -166,6 +168,7 @@ final class Locals {
                 met(NEW_OBJECT);
                 object.addRef();
             } else if (value instanceof PhpClosure closureValue) {
+                met(NEW_CLOSURE);
                 closureValue.addRef();
             }
             variable.setObject(bytecode, frame, value);
@@ -188,6 +191,7 @@ final class Locals {
                 met(OLD_OBJECT);
                 releases.release(object);
             } else if (old instanceof PhpClosure closureValue) {
+                met(OLD_CLOSURE);
                 closureValue.release();
             }
         }

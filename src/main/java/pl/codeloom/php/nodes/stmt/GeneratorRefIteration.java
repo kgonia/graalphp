@@ -48,7 +48,8 @@ public final class GeneratorRefIteration implements pl.codeloom.php.runtime.Refc
         return held;
     }
 
-    /** The loop ends however it ends (FE_FREE): it lets go of what it held. */
+    /** The loop ends however it ends (FE_FREE): it lets go of what it held. Out of line: rare, and in every loop. */
+    @TruffleBoundary
     public void end() {
         PhpObject was = held;
         held = null;
