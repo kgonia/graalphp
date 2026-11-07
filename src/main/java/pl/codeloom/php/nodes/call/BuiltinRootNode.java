@@ -70,9 +70,14 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         if (!noNamedExtras.isValid() && arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras && !forwardsNamed) {
             throw unexpectedNamed(arguments);
         }
-        java.util.ArrayList<Object> pending = pl.codeloom.php.PhpContext.get(this).pendingReleases();
+        pl.codeloom.php.PhpContext context = pl.codeloom.php.PhpContext.get(this);
+        java.util.ArrayList<Object> pending = context.pendingReleases();
         int mark = pending.size();
-        pl.codeloom.php.runtime.Refcount.takeMoved(arguments, pending);
+        java.util.ArrayList<Object> moved = context.movedToBuiltins();
+        if (!moved.isEmpty()) {
+            // arguments moved into this call (Refcount.toBuiltin): counted while it runs
+            pl.codeloom.php.runtime.Refcount.takeMoved(arguments, pending, moved);
+        }
         Object result;
         try {
             result = call(body, arguments);

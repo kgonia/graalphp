@@ -268,6 +268,13 @@ public final class PhpContext {
     /** The counts results of PHP code called from runtime code still own (Refcount.pending). */
     private final ArrayList<Object> pendingReleases = new ArrayList<>();
 
+    /** Arguments moved into a built-in's call, waiting for it to start (Refcount.toBuiltin, takeMoved). */
+    private final ArrayList<Object> movedToBuiltins = new ArrayList<>();
+
+    public ArrayList<Object> movedToBuiltins() {
+        return movedToBuiltins;
+    }
+
     public ArrayList<Object> pendingReleases() {
         return pendingReleases;
     }

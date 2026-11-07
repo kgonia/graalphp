@@ -155,12 +155,17 @@ public final class PhpArray implements TruffleObject {
         if (count > 0) {
             holders = count - 1;
             if (count == 1 && mayHoldRefs) {
-                // its references lose this binding but keep their values' counts, as the elements do
-                for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
-                    if (rawAt(p) instanceof PhpRef ref) {
-                        ref.unbindKeeping();
-                    }
-                }
+                returnedReferences();
+            }
+        }
+    }
+
+    /** Its references lose this binding but keep their values' counts, as the elements do (out of line). */
+    @TruffleBoundary
+    private void returnedReferences() {
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            if (rawAt(p) instanceof PhpRef ref) {
+                ref.unbindKeeping();
             }
         }
     }
@@ -174,9 +179,44 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     private void release() {
         holders = RELEASED;
-        // depth first, in element order, as php-src's recursive zend_array_destroy: a nested array whose last holder
-        // this was is walked in place, from an explicit stack (thousands of levels, unserialize()'s, would overflow
-        // the Java stack)
+        releaseElements(0);
+    }
+
+    /** Nested arrays walked by recursion up to this depth, deeper from an explicit stack (releaseDeep). */
+    private static final int RELEASE_RECURSION = 128;
+
+    /**
+     * Depth first, in element order, as php-src's recursive zend_array_destroy: a nested array whose last holder
+     * this was is walked in place (recursion allocates nothing; past RELEASE_RECURSION levels, unserialize()'s
+     * thousands, the explicit stack of releaseDeep).
+     */
+    private void releaseElements(int depth) {
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            Object raw = rawAt(p);
+            if (raw instanceof PhpArray nested) {
+                if (nested.holders == 1 && nested.holdsCounted) {
+                    // its last holder goes: released in place (removeHolder's lastHolderGone)
+                    nested.holders = RELEASED;
+                    if (depth < RELEASE_RECURSION) {
+                        nested.releaseElements(depth + 1);
+                    } else {
+                        nested.releaseDeep();
+                    }
+                } else {
+                    nested.removeHolder();
+                }
+            } else if (raw instanceof PhpObject object) {
+                object.release();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.release();
+            } else if (raw instanceof PhpRef ref) {
+                ref.unbind();
+            }
+        }
+    }
+
+    /** releaseElements from an explicit stack, for nesting past RELEASE_RECURSION. */
+    private void releaseDeep() {
         java.util.ArrayDeque<PhpArray> arrays = new java.util.ArrayDeque<>();
         java.util.ArrayDeque<int[]> positions = new java.util.ArrayDeque<>();
         arrays.push(this);
@@ -282,11 +322,15 @@ public final class PhpArray implements TruffleObject {
      * The temporary's end (php-src frees a TMP): an array nothing took gives its elements' counts up, as at its
      * last holder; its references, which no holder bound, let their values go.
      */
-    @TruffleBoundary
     public void releaseTemporary() {
-        if (holders != 0) {
-            return;
+        // inline: most temporaries hold nothing counted, or were taken
+        if (holders == 0 && (holdsCounted || mayHoldRefs)) {
+            releaseTemporarySlow();
         }
+    }
+
+    @TruffleBoundary
+    private void releaseTemporarySlow() {
         if (holdsCounted) {
             release();
         }

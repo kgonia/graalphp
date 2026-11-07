@@ -69,7 +69,7 @@ public final class PhpFunction {
      */
     private Supplier<RootCallTarget> factory;
     /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
-    private Builtin builtin;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal private Builtin builtin;
     /** A built-in's key in BuiltinSignature's table, and the signature once a named call asked for it. */
     private String builtinKey;
     private volatile BuiltinSignature builtinSignature;

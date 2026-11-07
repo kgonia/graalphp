@@ -47,7 +47,8 @@ final class ObjectIteration implements Refcount.Holder {
         return held;
     }
 
-    /** The loop ends however it ends (FE_FREE): it lets go of what it held. */
+    /** The loop ends however it ends (FE_FREE): it lets go of what it held. Out of line: rare, and in every loop. */
+    @TruffleBoundary
     void end() {
         PhpObject was = held;
         held = null;
