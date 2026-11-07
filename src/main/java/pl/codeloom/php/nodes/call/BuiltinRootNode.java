@@ -72,6 +72,7 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         }
         java.util.ArrayList<Object> pending = pl.codeloom.php.PhpContext.get(this).pendingReleases();
         int mark = pending.size();
+        pl.codeloom.php.runtime.Refcount.takeMoved(arguments, pending);
         Object result;
         try {
             result = call(body, arguments);

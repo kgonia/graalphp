@@ -215,6 +215,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * at the function's, in compiled code (most of a function's calls return strings, arrays and scalars).
      */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesHeld = new boolean[0];
+    /** The hidden local of the extra arguments the frame took (TakeExtraArguments), or null. */
+    @CompilationFinal private LocalAccessor extraArguments;
+    /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
+    @CompilationFinal(dimensions = 1) private boolean[] temporariesMoved = new boolean[0];
     /** The hidden locals in which foreach loops keep what they iterate (an array they hold), cleared at the end. */
     @CompilationFinal(dimensions = 1) private LocalAccessor[] foreachStates;
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
@@ -276,9 +280,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /** The hidden locals of the owning temporaries (see {@link #temporaries}). */
-    public void initializeTemporaries(LocalAccessor[] temporaryLocals) {
+    public void initializeTemporaries(LocalAccessor[] temporaryLocals, boolean[] moved, LocalAccessor extras) {
         this.temporaries = temporaryLocals;
         this.temporariesHeld = new boolean[temporaryLocals.length];
+        this.temporariesMoved = moved;
+        this.extraArguments = extras;
     }
 
     private void temporaryHeld(int index) {
@@ -573,6 +579,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
             }
         }
+        if (extraArguments != null && !extraArguments.isCleared(bytecode, frame)) {
+            // after the variables, as php-src's zend_vm_stack_free_extra_args after i_free_compiled_variables
+            Object[] taken = (Object[]) extraArguments.getObject(bytecode, frame);
+            extraArguments.clear(bytecode, frame);
+            Refcount.releaseExtras(taken);
+        }
         for (int i = 0; i < temporaries.length; i++) {
             ReleaseTemp.release(frame, temporaries[i], i, this, bytecode);
         }
@@ -861,6 +873,27 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             variable.setObject(bytecode, frame, FunctionRootNode.collectVariadic(arguments, index,
                     arguments.length - PhpFunction.ARG_FIRST, param.byRef()));
+        }
+    }
+
+    /**
+     * The arguments past the declared parameters (php-src's extra args, which the frame owns and frees after its
+     * variables): those the call moved in (StoreTemp: at zero, not yet destroyed) are counted and kept in a hidden
+     * local until releaseVariables.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class)
+    public static final class TakeExtraArguments {
+        @Specialization
+        public static void take(VirtualFrame frame, LocalAccessor extras, int declared, @Bind BytecodeNode bytecode) {
+            Object[] arguments = frame.getArguments();
+            if (arguments.length > PhpFunction.ARG_FIRST + declared) {
+                Object[] taken = Refcount.takeExtras(arguments, PhpFunction.ARG_FIRST + declared);
+                if (taken != null) {
+                    extras.setObject(bytecode, frame, taken);
+                }
+            }
         }
     }
 
@@ -2818,6 +2851,42 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 root.temporaryHeld(index);
                 ReleaseTemp.release(frame, temporary, index, root, bytecode);
                 temporary.setObject(bytecode, frame, value);
+                if (root.temporariesMoved[index] && !(value instanceof PhpArray)) {
+                    // an argument: php-src moves the TMP or VAR into the call (SEND_VAL, SEND_VAR_NO_REF), so the
+                    // callee's parameter (or a built-in's call) holds the only count; the local keeps it uncounted
+                    // until the statement ends, for a call that never starts (Refcount.moved)
+                    if (Refcount.AUDIT_POINTS) {
+                        Refcount.sent(value);
+                    }
+                    Refcount.disown(value);
+                }
+            }
+            return value;
+        }
+    }
+
+    /**
+     * An operation that used the owning temporaries of its operands (php-src's FREE_OP once the opcode computed its
+     * result): they are released after it, before its value is used. borrowing: a property's or an element's read,
+     * whose value here is the container's own (php-src copies it): when it is an object, an array or a reference,
+     * the temporaries go with the enclosing operation's instead (the translator lists them there too).
+     */
+    @Operation
+    @ConstantOperand(type = Temporaries.class, name = "temps", specifyAtEnd = true)
+    @ConstantOperand(type = boolean.class, name = "borrowing", specifyAtEnd = true)
+    public static final class ReleaseAfter {
+        @Specialization
+        @ExplodeLoop
+        public static Object release(VirtualFrame frame, Object value, Temporaries temps, boolean borrowing,
+                                     @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            if (borrowing && (value instanceof PhpObject || value instanceof PhpArray || value instanceof PhpRef
+                    || value instanceof PhpClosure)) {
+                return value;
+            }
+            int[] indices = temps.indices;
+            for (int i = 0; i < indices.length; i++) {
+                int index = indices[i];
+                ReleaseTemp.release(frame, root.temporaries[index], index, root, bytecode);
             }
             return value;
         }
@@ -2844,6 +2913,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (held instanceof PhpArray array) {
                     // php-src frees a TMP array once used: one nothing took gives its elements up
                     array.releaseTemporary();
+                } else if (root.temporariesMoved[index]) {
+                    Refcount.moved(held);
                 } else {
                     Refcount.dec(held);
                 }
@@ -3359,9 +3430,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Specialization(replaces = "cached")
         public static Object send(int index, PhpFunction function, Object result, @Bind Node node) {
-            if (Refcount.AUDIT_POINTS) {
-                Refcount.sent(result);
-            }
             if (!function.isByRef(index)) {
                 return PhpRef.deref(result);
             }
@@ -7062,9 +7130,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         private static Object send(int argument, PhpFunction function, BindingPlan plan, Object result, Node node) {
-            if (Refcount.AUDIT_POINTS) {
-                Refcount.sent(result);
-            }
             plan.checkSend(argument);
             if (!plan.takesRef(argument) || function.isPreferRef()) {
                 return PhpRef.deref(result);

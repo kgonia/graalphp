@@ -174,6 +174,88 @@ public final class Refcount {
 
     /** Gives up the pending releases from mark on (BuiltinRootNode's return, the request's end). */
     @TruffleBoundary
+    /** An argument's temporary (StoreTemp): its count moves into the call. */
+    public static void disown(Object value) {
+        if (value instanceof PhpObject object) {
+            object.disown();
+        } else if (value instanceof PhpClosure closure) {
+            closure.disown();
+        }
+    }
+
+    /**
+     * An argument's temporary at its statement's end (or a catch's, or the function's): the call took the count
+     * StoreTemp gave up, so the local holds none. One no call took (an exception in a later argument, or before the
+     * callee bound its parameters) is at zero and not yet destroyed: php-src frees it with the unfinished call.
+     */
+    public static void moved(Object value) {
+        if (value instanceof PhpObject object) {
+            if (object.refcount() == 0 && !object.isDestructorCalled()) {
+                untaken(object);
+            }
+        } else if (value instanceof PhpClosure closure) {
+            if (closure.refcount() == 0 && !closure.isFreed()) {
+                untaken(closure);
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private static void untaken(Object value) {
+        inc(value);
+        dec(value);
+    }
+
+    /**
+     * A built-in's call takes the arguments moved into it (StoreTemp), at zero: counted while it runs and released
+     * after it returns, in order (php-src's zend_vm_stack_free_args after the internal function), through the pending
+     * releases from the call's mark (BuiltinRootNode). Pushed last to first: the releases go last in, first out.
+     */
+    public static void takeMoved(Object[] arguments, java.util.ArrayList<Object> pending) {
+        for (int i = arguments.length - 1; i >= PhpFunction.ARG_FIRST; i--) {
+            Object argument = arguments[i];
+            if (argument instanceof PhpObject object) {
+                if (object.refcount() == 0 && !object.isDestructorCalled()) {
+                    object.addRef();
+                    pending.add(object);
+                }
+            } else if (argument instanceof PhpClosure closure) {
+                if (closure.refcount() == 0 && !closure.isFreed()) {
+                    closure.addRef();
+                    pending.add(closure);
+                }
+            }
+        }
+    }
+
+    /** TakeExtraArguments: the arguments from `from` on that the call moved in, counted, or null if none. */
+    @TruffleBoundary
+    public static Object[] takeExtras(Object[] arguments, int from) {
+        java.util.ArrayList<Object> taken = null;
+        for (int i = from; i < arguments.length; i++) {
+            Object argument = arguments[i];
+            boolean moved = argument instanceof PhpObject object && object.refcount() == 0
+                    && !object.isDestructorCalled()
+                    || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed();
+            if (moved) {
+                inc(argument);
+                if (taken == null) {
+                    taken = new java.util.ArrayList<>();
+                }
+                taken.add(argument);
+            }
+        }
+        return taken == null ? null : taken.toArray();
+    }
+
+    /** The extra arguments a frame took, released in order at its end. */
+    @TruffleBoundary
+    public static void releaseExtras(Object[] taken) {
+        for (Object argument : taken) {
+            dec(argument);
+        }
+    }
+
     public static void releasePending(java.util.ArrayList<Object> pending, int mark) {
         while (pending.size() > mark) {
             Object value = pending.remove(pending.size() - 1);

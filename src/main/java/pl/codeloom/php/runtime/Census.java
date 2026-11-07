@@ -492,11 +492,10 @@ final class Census {
                     slack.computeIfAbsent(self, o -> new int[1])[0]++;
                 }
                 boolean user = code instanceof BytecodeRootNode;
-                for (int i = 0; i < arguments.length; i++) {
-                    // a built-in's argument slot holds what php-src moved into it (a temporary sent); a user
-                    // function's parameters are its locals
-                    int[] sent = !user && i >= PhpFunction.ARG_FIRST ? sentTemporaries.get(arguments[i]) : null;
-                    walk.root(name + " argument " + i, arguments[i], sent != null && sent[0] > 0 ? 1 : 0);
+                // a user function's parameters are its locals; a built-in's arguments are its caller's (a variable
+                // sent) or counted by its pending releases (a temporary moved into it, Refcount.takeMoved)
+                for (int i = 0; i < (user ? PhpFunction.ARG_FIRST : arguments.length); i++) {
+                    walk.root(name + " argument " + i, arguments[i], 0);
                 }
                 if (!user) {
                     if (builtin[0] == null && code instanceof pl.codeloom.php.nodes.call.BuiltinRootNode) {
@@ -526,6 +525,17 @@ final class Census {
                         // a temporary sent as an argument: php-src moved it into the call
                         int[] sent = i >= variables ? sentTemporaries.get(locals[i]) : null;
                         int weight = sent != null && sent[0] > 0 ? 0 : 1;
+                        if (weight == 0 && freedOf(locals[i])) {
+                            // an argument's temporary keeps what the callee took uncounted, to its statement's end
+                            continue;
+                        }
+                        if (locals[i] instanceof Object[] taken) {
+                            // the extra arguments the frame took (TakeExtraArguments)
+                            for (Object argument : taken) {
+                                walk.root(name + " extra argument", argument, 1);
+                            }
+                            continue;
+                        }
                         walk.root(name + (i >= variables ? " temporary " : " local ") + i, locals[i], weight);
                         inLocals.computeIfAbsent(locals[i], o -> new int[1])[0]++;
                     }

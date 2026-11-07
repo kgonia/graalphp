@@ -144,6 +144,11 @@ public final class PhpObject extends DynamicObject {
         return was;
     }
 
+    /** Whether its destructor ran or won't run. */
+    public boolean isDestructorCalled() {
+        return (gcInfo & DESTRUCTOR_CALLED) != 0;
+    }
+
     /** Its properties were released (php-src's free_obj): set by the caller, true if they were already. */
     boolean markFreed() {
         boolean was = (gcInfo & FREED) != 0;
