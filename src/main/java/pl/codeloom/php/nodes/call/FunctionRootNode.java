@@ -66,23 +66,33 @@ public final class FunctionRootNode {
     @TruffleBoundary
     public static Object argumentSlow(String function, PhpFunction.Param param, int index, Object value,
                                       PhpClass calledClass, Node site) {
-        SourceLocation caller = null;
-        boolean strict = false;
-        PhpLanguage language = PhpContext.get(null).getLanguage();
-        if (!language.noStrictFiles().isValid()) {
-            caller = Backtrace.userCaller();
-            strict = caller != null && language.isStrict(caller.file());
-        }
-        Object accepted = param.declared().slow(value, strict, calledClass, site);
+        Object accepted = argumentAccepted(param, value, calledClass, site);
         if (accepted != null) {
             return accepted;
         }
-        if (caller == null) {
-            caller = Backtrace.userCaller();
+        throw argumentError(function, param, index, value, calledClass);
+    }
+
+    /** The value converted to the parameter's type (coercive unless the caller's file is strict), else null. */
+    @TruffleBoundary
+    public static Object argumentAccepted(PhpFunction.Param param, Object value, PhpClass calledClass, Node site) {
+        boolean strict = false;
+        PhpLanguage language = PhpContext.get(null).getLanguage();
+        if (!language.noStrictFiles().isValid()) {
+            SourceLocation caller = Backtrace.userCaller();
+            strict = caller != null && language.isStrict(caller.file());
         }
+        return param.declared().slow(value, strict, calledClass, site);
+    }
+
+    /** The TypeError for an argument the parameter's type refuses. */
+    @TruffleBoundary
+    public static PhpError argumentError(String function, PhpFunction.Param param, int index, Object value,
+                                         PhpClass calledClass) {
+        SourceLocation caller = Backtrace.userCaller();
         // a variadic parameter's arguments go unnamed (get_function_arg_name)
         // the active function's name as %s writes it: an anonymous class's method up to its NUL
-        throw new PhpError("TypeError", function.split("\0", 2)[0] + "(): Argument #" + (index + 1)
+        return new PhpError("TypeError", function.split("\0", 2)[0] + "(): Argument #" + (index + 1)
                 + (param.variadic() ? "" : " ($" + param.name() + ")") + " must be of type "
                 + param.declared().text(calledClass) + ", " + PhpType.valueName(value)
                 + " given" + (caller == null ? "" : ", called in " + caller.file() + " on line " + caller.line()));

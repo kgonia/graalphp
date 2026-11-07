@@ -10,3 +10,9 @@
 10: ~b ~l ~c ~l ~a | 
 11: ~e2 finally catch | 
 end
+
+12: catch after | 
+13: catch after ~moved | 
+14: in ~ok | 
+end2
+~var 

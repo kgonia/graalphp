@@ -30,3 +30,8 @@ echo "\n10: "; (new D("a"))->m(new D("b"))->m(new D("c")); echo "| ";
 echo "\n11: "; function inner() { try { two(new D("e2"), thrower()); } finally { echo "finally "; } }
 try { inner(); } catch (Exception $e) { echo "catch "; } echo "| ";
 echo "\nend\n";
+echo "\n12: "; function typed2(int $i) { echo "in "; }
+$d = new D("var"); try { typed2($d); } catch (TypeError $e) { echo "catch "; } echo "after "; $e = null; echo "| ";
+echo "\n13: "; try { typed2(new D("moved")); } catch (TypeError $e) { echo "catch "; } echo "after "; $e = null; echo "| ";
+echo "\n14: "; try { typed(1, new D("ok")); } catch (TypeError $e) { echo "catch "; } echo "| ";
+echo "\nend2\n";
