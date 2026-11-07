@@ -8,6 +8,7 @@
 # - g2 ROUNDS VISITS VARIANT...: native.sh measure, one run per CPU lock and memory reservation, the variants
 #   interleaved and the order reversed every round; every server logs its compilations (engine-VARIANT.log).
 # - clean: the stack's containers, volume and network.
+# OPTS_VARIANT: more server options for that variant (e.g. OPTS_dt=-Dphp.rc.destructors=true).
 set -euo pipefail
 export PATH=/usr/bin:/bin:/mingw64/bin:$PATH
 cd "$(dirname "$0")/../.."
@@ -33,7 +34,7 @@ case ${1:-} in
   check)
     v=$2
     $MEMLOCK acquire $NAME-check --gb 5 --wait --ttl 90 --note "wordpress-destructors: Gate 2 pages of $v (CPUs 6-13)"
-    export CLASSES_$v=target/classes-$v
+    opts=OPTS_$v; export CLASSES_$v=target/classes-$v JAVA_OPTS_$v="${!opts:-}"
     if [ ! -d target/rcg/pages/php ]; then
       g2 reset-db && g2 start php 6-13 8252 && g2 pages php 8252; g2 stop php
     fi
@@ -53,7 +54,7 @@ case ${1:-} in
         if [ -e $runs/jvm-java.$v-$r.json ] || [ -e $runs/jvm-java.$v-x$r.json ]; then echo "jvm-java.$v-$r exists: skipped"; continue; fi
         $MEMLOCK acquire $NAME --gb 6 --wait --ttl 120 --note "wordpress-destructors: Gate 2 visits jvm-java.$v-$r (CPUs 14-21, CPU lock)" \
           || { echo "no memlock reservation: stopping"; exit 3; }
-        export CLASSES_$v=target/classes-$v JAVA_OPTS_$v="$LOGS -Dpolyglot.log.file=/out/engine-$v.log"
+        opts=OPTS_$v; export CLASSES_$v=target/classes-$v JAVA_OPTS_$v="$LOGS -Dpolyglot.log.file=/out/engine-$v.log ${!opts:-}"
         mkdir -p target/rcg/out/r$r
         lock "Gate 2 visits jvm-java.$v round $r"
         trap 'unlock; $MEMLOCK release $NAME > /dev/null 2>&1 || true' EXIT
