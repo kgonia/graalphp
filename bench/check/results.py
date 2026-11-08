@@ -115,8 +115,8 @@ def surefire(sha, directory):
 
 def wp(sha, path):
     text = read(path)
-    new = sorted(set(re.findall(r'^\s+NEW (\S+)	', text, re.M)))
-    agree = sorted(set(re.findall(r'^\s+AGREES (\S+)	', text, re.M)))
+    new = sorted(set(re.findall(r'^\s+NEW (\S+)\t', text, re.M)))
+    agree = sorted(set(re.findall(r'^\s+AGREES (\S+)\t', text, re.M)))
     records = [{'sha': sha, 'check': 'wp-phpunit', 'metric': 'newly differing', 'value': len(new), 'unit': 'tests',
                 'names': new},
                {'sha': sha, 'check': 'wp-phpunit', 'metric': 'now agreeing', 'value': len(agree), 'unit': 'tests',
