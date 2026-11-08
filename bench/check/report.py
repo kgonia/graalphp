@@ -7,6 +7,8 @@ Every check gets one verdict:
   Gate 2's warm CPU ≤5%.
 - name sets (smoke, phpt, unit tests, fixtures): a ratchet. Names failing on the build and not on the base are
   "regressed" (the verdict is "worse"), names fixed are listed too; a count without the base's is reported as is.
+- compiled code (ir): each IR budget's size against the base's, at most 8% more (wiki/destructors.md); a size over
+  its budget is listed.
 - wp-phpunit's newly differing tests and the fixtures' lines matching neither PHP must be 0.
 
 Usage: python -I report.py SHA BASE [--out FILE]
@@ -30,6 +32,7 @@ THRESHOLDS = {
     ('gate2', 'compilations ratio'): None,  # shown, no verdict: it explains the CPU
 }
 GATE1_KERNEL = 1.03
+IR_GROWTH = 1.08
 MUST_BE_ZERO = {('wp-phpunit', 'newly differing'), ('fixtures', 'lines matching neither PHP'),
                 ('gate2', 'failed visits')}
 NAME_SETS = {('smoke', 'failing'), ('phpt', 'failing'), ('fixtures', 'lines matching neither PHP')}
@@ -97,6 +100,14 @@ def main():
             if ratio:
                 verdict = ratio_verdict(ratio, limit) if check != 'gate1 control' else ''
                 cell = f"{ratio['value']:.2f} ({ratio['iqr'][0]:.2f}–{ratio['iqr'][1]:.2f}, {ratio['rounds']} rounds)"
+            if check == 'ir' and isinstance(other, int) and other and mine is not None:
+                # compiled size against the base (wiki/destructors.md: at most 8% more), and against the budget
+                limit = IR_GROWTH
+                cell = f'{mine / other:.2f}'
+                verdict = 'ok' if mine / other <= IR_GROWTH else 'worse'
+                if mine > r.get('budget', mine):
+                    notes.append(f"- {metric}: {mine} IR nodes, over its budget of {r['budget']}"
+                                 + ('' if other > r['budget'] else ' (the base was under it)'))
             if key in MUST_BE_ZERO:
                 verdict = 'ok' if mine == 0 else 'worse'
             if key in NAME_SETS or (check == 'unit' and 'names' in r):

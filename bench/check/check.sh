@@ -163,6 +163,7 @@ l0() { # SHA
   reserve l0-$s 4 60 "L0 of $s (unit tests, smoke)"
   (cd "$src" && on_pcores "$MVN" -q -o test > "$WORK/$out/unit.txt" 2>&1) || true
   $PY "$here/results.py" surefire "$s" "$src/target/surefire-reports" --level L0
+  $PY "$here/results.py" ir "$s" "$out/unit.txt" --level L0
   (cd "$src" && on_pcores bash tests/smoke/run.sh > "$WORK/$out/smoke.txt" 2>&1) || true
   $PY "$here/results.py" smoke "$s" "$out/smoke.txt" --level L0
   if [ -f "$src/bench/destructors/fixtures.sh" ]; then

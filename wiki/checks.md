@@ -73,7 +73,12 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
     - "unclear": over the threshold but within noise.
   - With `CONTROL=1` Gate 1 also runs the base twice (an A/A arm), and a kernel's threshold widens to the A/A
     difference.
-  - Failing names are a ratchet: a test failing on the build and not on the base is worse, whatever the counts.
+  - Failing names are a ratchet: a test failing on the build and not on the base is worse, whatever the counts. A
+    unit failure is named by its method and its message's first line, with numbers as N.
+  - Compiled code (`ir`): `CompilationTest` prints every IR budget's size, under the budget or not. Each one is
+    worse at more than 8% over the base's, and one over its budget is listed. On 2026-11-08, main (438231d) itself
+    was over: `Query::sql` at 25,933 IR nodes against a budget of 24,000, and `large-function.php` too large to
+    install.
 - **Triage of the WordPress suite** (`wp_triage.py`, in `l1` with `WP=1`): the frozen fail-set comes from one run of
   an older build, so a new difference may come from the build, from an option it ran with, from main or from an
   unstable test. Every one is a bug to fix; the cause says where (a difference from main doesn't block the PR) and

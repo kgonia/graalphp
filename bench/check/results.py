@@ -10,6 +10,7 @@ Each subcommand reads one existing tool's output and appends its records:
   phpt SHA DIR                tests/phpt/run.sh's report.txt and failures.txt
   fixtures SHA FILE           bench/destructors/fixtures.sh's output: lines matching neither PHP behaviour
   surefire SHA DIR            target/surefire-reports: failed tests per class (CompilationTest: IR budgets)
+  ir SHA FILE                 mvn test's output: each IR budget's size after partial evaluation (CompilationTest)
   wp SHA FILE                 tests/wp-phpunit/compare.py --frozen's output: tests that newly differ
   wptriage SHA FILE           wp_triage.py classify's output: the new differences per cause
   gate1 SHA BASE DIR          bench/gate1/ab.sh's runs (DIR/INDEX-ROUND.txt, BASE index 0, SHA index 1): per kernel
@@ -123,6 +124,15 @@ def surefire(sha, directory):
     return records
 
 
+def ir(sha, path):
+    """CompilationTest's "IR budget result: PROGRAM TARGET IR MAX" lines (mvn test's output): each budget's size."""
+    records = []
+    for program, target, size, limit in re.findall(r'^IR budget result: (\S+) (\S+) (\d+) (\d+)$', read(path), re.M):
+        records.append({'sha': sha, 'check': 'ir', 'metric': f'{target} ({program})', 'value': int(size),
+                        'unit': 'IR nodes', 'budget': int(limit)})
+    return records
+
+
 def wp(sha, path):
     text = read(path)
     new = sorted(set(re.findall(r'^\s+NEW (\S.*?)\t', text, re.M)))
@@ -215,7 +225,7 @@ def main():
     if '--host' in args:
         i = args.index('--host'); host = json.loads(args[i + 1]); del args[i:i + 2]
     command, rest = args[0], args[1:]
-    parsers = {'smoke': smoke, 'phpt': phpt, 'fixtures': fixtures, 'surefire': surefire, 'wp': wp,
+    parsers = {'smoke': smoke, 'phpt': phpt, 'fixtures': fixtures, 'surefire': surefire, 'ir': ir, 'wp': wp,
                'wptriage': wptriage, 'gate1': gate1,
                'gate2': gate2}
     if command not in parsers:

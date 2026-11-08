@@ -95,6 +95,8 @@ class CompilationTest {
                 }
             }
             assertTrue(!compilations.isEmpty(), name + ": " + target + " was not compiled\n" + log);
+            // every budget's size, under it or not, for the checks' comparison with a base (bench/check/results.py)
+            System.out.println("IR budget result: " + name + " " + target + " " + largest + " " + max);
             assertTrue(largest <= max, name + ": " + target + " compiled to " + largest + " IR nodes, its budget is "
                     + max + ":\n" + String.join("\n", compilations));
         }
