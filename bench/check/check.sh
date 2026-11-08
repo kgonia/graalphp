@@ -135,11 +135,33 @@ l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
     # WordPress's PHPUnit suite in WORK (its wordpress-develop tree and PHP's reference run,
     # target/wp-phpunit/runs/php-all-chunked, from tests/wp-phpunit/setup.sh and run.sh php), on this build;
     # JAVA_OPTS reaches its JVMs
+    local runs=target/wp-phpunit/runs
     reserve l1-wp-$s 8 300 "L1 of $s (WordPress PHPUnit on CPUs 6-13)"
-    CLASSES=target/classes-$s LIB=target/lib-$s RUN=truffle-$s-chunked CHUNKED=1       bash tests/wp-phpunit/run.sh truffle > "$out/wp-run.txt" 2>&1 || true
-    unreserve l1-wp-$s
-    python tests/wp-phpunit/compare.py diff target/wp-phpunit/runs/php-all-chunked       target/wp-phpunit/runs/truffle-$s-chunked --frozen tests/wp-phpunit/wordpress.failset.tsv       --out "$out/wp-report.txt" > "$out/wp.txt" 2>&1 || true
+    CLASSES=target/classes-$s LIB=target/lib-$s RUN=truffle-$s-chunked CHUNKED=1 \
+      bash tests/wp-phpunit/run.sh truffle > "$out/wp-run.txt" 2>&1 || true
+    python tests/wp-phpunit/compare.py diff $runs/php-all-chunked $runs/truffle-$s-chunked \
+      --frozen tests/wp-phpunit/wordpress.failset.tsv --out "$out/wp-report.txt" > "$out/wp.txt" 2>&1 || true
     $PY "$here/results.py" wp "$s" "$out/wp.txt" --level L1
+    if grep -q '^ *NEW ' "$out/wp.txt"; then
+      # triage (wp_triage.py): the classes with a new difference again, on this build with and without JAVA_OPTS,
+      # and on the base; then a cause per test
+      local selected filter chunks
+      selected=$($PY "$here/wp_triage.py" select "$out/wp.txt" target/wp-phpunit/wordpress-develop)
+      filter=$(sed -n 1p <<< "$selected") chunks=$(sed -n 2p <<< "$selected")
+      build "$base"
+      rerun() { # RUN SHA JAVA_OPTS
+        RUN=$1 CLASSES=target/classes-$2 LIB=target/lib-$2 JAVA_OPTS=$3 CHUNKED=1 CHUNKS=$chunks \
+          bash tests/wp-phpunit/run.sh truffle --filter "$filter" > "$out/$1.txt" 2>&1 || true
+      }
+      rerun truffle-$s-again "$s" "${JAVA_OPTS:-}"
+      noopts=-
+      if [ -n "${JAVA_OPTS:-}" ]; then rerun truffle-$s-noopts "$s" ""; noopts=$runs/truffle-$s-noopts; fi
+      rerun truffle-$s-base-$base "$base" ""
+      $PY "$here/wp_triage.py" classify "$out/wp.txt" $runs/php-all-chunked $runs/truffle-$s-again "$noopts" \
+        $runs/truffle-$s-base-$base > "$out/wp-triage.tsv"
+      $PY "$here/results.py" wptriage "$s" "$out/wp-triage.tsv" --level L1
+    fi
+    unreserve l1-wp-$s
   fi
 }
 
@@ -217,5 +239,5 @@ case $command in
   l1) running; preflight correct; l1 "$sha"; report ;;
   l2) running; l2 "$sha" "$base"; report ;;
   report) report ;;
-  *) sed -n 2,26p "$0"; exit 2 ;;
+  *) sed -n "2,/^set -euo/p" "$0" | sed "$ d"; exit 2 ;;
 esac

@@ -63,6 +63,17 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
   - With `CONTROL=1` Gate 1 also runs the base twice (an A/A arm), and a kernel's threshold widens to the A/A
     difference.
   - Failing names are a ratchet: a test failing on the build and not on the base is worse, whatever the counts.
+- **Triage of the WordPress suite** (`wp_triage.py`, in `l1` with `WP=1`): the frozen fail-set comes from one run of
+  an older build, so a new difference may come from the build, from an option it ran with, from main or from an
+  unstable test. Every one is a bug to fix; the cause says where (a difference from main doesn't block the PR) and
+  keeps unstable tests out of the hunt. Only the classes with a new difference run again (a `--filter` of their
+  names, the suite entries that hold them: minutes, not a second full run), three times: the same build and
+  options, the same build without `JAVA_OPTS`, the base. Each new difference gets one cause:
+  - `unstable`: the same build and options, run again, give PHP's outcome;
+  - `base`: the base differs from PHP too;
+  - `option`: without the options the build gives PHP's outcome;
+  - `build`: the build differs without the options too, and the base doesn't;
+  - `not rerun`: a rerun has no outcome for it.
 
 ## The host (2026-11-08)
 

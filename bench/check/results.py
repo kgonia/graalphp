@@ -11,6 +11,7 @@ Each subcommand reads one existing tool's output and appends its records:
   fixtures SHA FILE           bench/destructors/fixtures.sh's output: lines matching neither PHP behaviour
   surefire SHA DIR            target/surefire-reports: failed tests per class (CompilationTest: IR budgets)
   wp SHA FILE                 tests/wp-phpunit/compare.py --frozen's output: tests that newly differ
+  wptriage SHA FILE           wp_triage.py classify's output: the new differences per cause
   gate1 SHA BASE DIR          bench/gate1/ab.sh's runs (DIR/INDEX-ROUND.txt, BASE index 0, SHA index 1): per kernel
                               the steady-state ms and the per-round ratio to BASE (median, IQR); peak memory; with an
                               index 2 (CONTROL: BASE again) the A/A ratios as check "gate1 control"
@@ -115,8 +116,8 @@ def surefire(sha, directory):
 
 def wp(sha, path):
     text = read(path)
-    new = sorted(set(re.findall(r'^\s+NEW (\S+)\t', text, re.M)))
-    agree = sorted(set(re.findall(r'^\s+AGREES (\S+)\t', text, re.M)))
+    new = sorted(set(re.findall(r'^\s+NEW (\S.*?)\t', text, re.M)))
+    agree = sorted(set(re.findall(r'^\s+AGREES (\S.*?)\t', text, re.M)))
     records = [{'sha': sha, 'check': 'wp-phpunit', 'metric': 'newly differing', 'value': len(new), 'unit': 'tests',
                 'names': new},
                {'sha': sha, 'check': 'wp-phpunit', 'metric': 'now agreeing', 'value': len(agree), 'unit': 'tests',
@@ -126,6 +127,16 @@ def wp(sha, path):
         records.append({'sha': sha, 'check': 'wp-phpunit', 'metric': 'same outcome as PHP', 'value': int(m.group(2)),
                         'unit': 'tests', 'of': int(m.group(1))})
     return records
+
+
+def wptriage(sha, path):
+    causes = {}
+    for line in read(path).splitlines():
+        if '	' in line:
+            cause, name = line.split('	', 1)
+            causes.setdefault(cause, []).append(name)
+    return [{'sha': sha, 'check': 'wp-phpunit triage', 'metric': cause, 'value': len(names), 'unit': 'tests',
+             'names': sorted(names)} for cause, names in sorted(causes.items())]
 
 
 def gate1(sha, base, directory):
@@ -195,7 +206,8 @@ def main():
     if '--host' in args:
         i = args.index('--host'); host = json.loads(args[i + 1]); del args[i:i + 2]
     command, rest = args[0], args[1:]
-    parsers = {'smoke': smoke, 'phpt': phpt, 'fixtures': fixtures, 'surefire': surefire, 'wp': wp, 'gate1': gate1,
+    parsers = {'smoke': smoke, 'phpt': phpt, 'fixtures': fixtures, 'surefire': surefire, 'wp': wp,
+               'wptriage': wptriage, 'gate1': gate1,
                'gate2': gate2}
     if command not in parsers:
         print(__doc__)
