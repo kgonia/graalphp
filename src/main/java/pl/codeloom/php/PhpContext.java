@@ -979,7 +979,7 @@ public final class PhpContext {
 
     /** A buffer's contents through its handler, in a phase; false from the handler passes them unchanged. */
     private TruffleString process(OutputBuffer buffer, int phase) {
-        TruffleString contents = Str.of(buffer.bytes.toByteArray());
+        TruffleString contents = buffer.bytes.toStr();
         if (buffer.handler == null) {
             return contents;
         }

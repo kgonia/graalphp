@@ -208,7 +208,7 @@ public final class ErrorFunctions {
                         out.write('\n');
                     }
                     writeUtf8(out, ini.errorAppendString());
-                    context.write(Str.of(out.toByteArray()));
+                    context.write(out.toStr());
                 }
             }
         }
@@ -356,7 +356,7 @@ public final class ErrorFunctions {
         text.writeAscii("Uncaught ");
         text.write(Convert.toStr(Builtins.property(throwable, "string")));
         text.writeAscii("\n  thrown");
-        report(context, E_ERROR, Str.of(text.toByteArray()), locationOf(throwable), null, false);
+        report(context, E_ERROR, text.toStr(), locationOf(throwable), null, false);
     }
 
     private static SourceLocation locationOf(PhpObject throwable) {

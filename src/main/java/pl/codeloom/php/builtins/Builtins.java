@@ -465,7 +465,7 @@ public final class Builtins {
                 text.writeAscii("\n\nNext ");
             }
         }
-        return Str.of(text.toByteArray());
+        return text.toStr();
     }
 
     /** A Throwable's property as its methods read it: null if unset. */

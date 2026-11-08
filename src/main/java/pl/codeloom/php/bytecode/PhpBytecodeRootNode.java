@@ -39,6 +39,7 @@ import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.strings.InternalByteArray;
 import com.oracle.truffle.api.strings.TruffleString;
+import com.oracle.truffle.api.strings.TruffleStringBuilder;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.SourceFiles;
@@ -1125,6 +1126,113 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Shared("undefined") @Cached InlinedBranchProfile undefined,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
             IncDecVar.generic(frame, variable, increment, true, bytecode, node, undefined, writes);
+        }
+    }
+
+    /**
+     * A variable's `.=` appends in place (AppendVar): the builder whose buffer the variable's string shares, and
+     * that string (last). php-src appends to a zend_string its variable alone holds without copying; a
+     * TruffleString can't grow, but one that a builder made (ToStringNode, lazy) shares its buffer, and the
+     * builder only ever writes past the end of the strings it made. builder null: the variable's string came from
+     * one `.=` (a lazy concatenation); a second one on it starts the builder.
+     */
+    static final class Appender {
+        /**
+         * The length from which a string is appended to in place: below it a lazy concatenation is cheaper than
+         * a builder (its flattening, on a read, copies little); above it a read between appends would copy the
+         * whole string again.
+         */
+        static final int IN_PLACE_FROM = 4096;
+
+        TruffleStringBuilder builder;
+        TruffleString last;
+
+        Appender(TruffleString last) {
+            this.last = last;
+        }
+    }
+
+    /**
+     * `$x .= value` (CompoundVar's op 8) appending in place: appender is the variable's hidden local holding its
+     * Appender. While the variable still holds the string its last `.=` made, the value goes into that string's
+     * builder, so a loop of appends copies each byte once and reading the string in between (`$s[$i]`,
+     * strlen) costs no flattening, where a lazy concatenation per append was flattened by each read
+     * (quadratic).
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = LocalAccessor.class, name = "appender")
+    public static final class AppendVar {
+        @Specialization
+        public static TruffleString append(VirtualFrame frame, LocalAccessor variable, LocalAccessor appender,
+                                           Object operand,
+                                           @Bind BytecodeNode bytecode, @Bind Node node,
+                                           @Cached InlinedBranchProfile undefined,
+                                           @Cached InlinedBranchProfile started,
+                                           @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
+                                           @Cached TruffleString.ConcatNode concat,
+                                           @Cached TruffleStringBuilder.AppendStringNode appendString,
+                                           @Cached TruffleStringBuilder.ToStringNode toString,
+                @Cached(neverDefault = true) Locals.Writes writes) {
+            Object stored = Locals.stored(frame, variable, bytecode);
+            PhpThrowable pending = null;
+            if (stored == null) {
+                undefined.enter(node);
+                pending = undefinedForUpdate(node, variable, bytecode);
+            }
+            TruffleString left = currentToStr.execute(Variables.value(stored));
+            TruffleString right = operandToStr.execute(operand);
+            Object held = appender.isCleared(bytecode, frame) ? null : appender.getObject(bytecode, frame);
+            TruffleString result;
+            if (held instanceof Appender state && state.last == left
+                    && (state.builder != null || left.byteLength(Str.ENC) >= Appender.IN_PLACE_FROM)) {
+                TruffleStringBuilder builder = state.builder;
+                if (builder == null) {
+                    // the second append to the string: from now on in place
+                    started.enter(node);
+                    builder = TruffleStringBuilder.create(Str.ENC,
+                            Math.max(64, 2 * (left.byteLength(Str.ENC) + right.byteLength(Str.ENC))));
+                    appendString.execute(builder, left);
+                    state.builder = builder;
+                }
+                appendString.execute(builder, right);
+                result = toString.execute(builder, true);
+                state.last = result;
+            } else {
+                result = concat.execute(left, right, Str.ENC, true);
+                if (held instanceof Appender state) {
+                    state.last = result;
+                    state.builder = null;
+                } else {
+                    appender.setObject(bytecode, frame, new Appender(result));
+                }
+            }
+            writes.writeObject(frame, variable, bytecode, result);
+            if (pending != null) {
+                throw pending;
+            }
+            return result;
+        }
+    }
+
+    /** `$x .= value;` as a statement: AppendVar without the result. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = LocalAccessor.class, name = "appender")
+    public static final class AppendVarStatement {
+        @Specialization
+        public static void append(VirtualFrame frame, LocalAccessor variable, LocalAccessor appender,
+                                  Object operand,
+                                  @Bind BytecodeNode bytecode, @Bind Node node,
+                                  @Cached InlinedBranchProfile undefined,
+                                  @Cached InlinedBranchProfile started,
+                                  @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
+                                  @Cached TruffleString.ConcatNode concat,
+                                  @Cached TruffleStringBuilder.AppendStringNode appendString,
+                                  @Cached TruffleStringBuilder.ToStringNode toString,
+                @Cached(neverDefault = true) Locals.Writes writes) {
+            AppendVar.append(frame, variable, appender, operand, bytecode, node, undefined, started, currentToStr,
+                    operandToStr, concat, appendString, toString, writes);
         }
     }
 
@@ -5042,6 +5150,36 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * strpos(haystack, needle, offset) without the call; an offset outside the haystack is the built-in's
+     * ValueError.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class StrposFrom {
+        @Specialization
+        public static Object strings(CallInfo call, TruffleString haystack, TruffleString needle, long offset,
+                                     @Cached TruffleString.ByteIndexOfStringNode indexOf,
+                                     @Bind Node node,
+                                     @Shared @Cached IndirectCallNode callNode) {
+            int length = haystack.byteLength(Str.ENC);
+            long from = offset < 0 ? offset + length : offset;
+            if (from < 0 || from > length) {
+                return builtin(callNode, node, call, haystack, needle, offset);
+            }
+            int needleLength = needle.byteLength(Str.ENC);
+            int index = needleLength == 0 ? (int) from
+                    : needleLength > length - from ? -1 : indexOf.execute(haystack, needle, (int) from, length, Str.ENC);
+            return index < 0 ? (Object) Boolean.FALSE : (long) index;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object haystack, Object needle, Object offset, @Bind Node node,
+                                   @Shared @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, haystack, needle, offset);
+        }
+    }
+
     /** str_contains (0), str_starts_with (1), str_ends_with (2). */
     @Operation
     @ConstantOperand(type = CallInfo.class)
@@ -5261,6 +5399,45 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 return subject;
             }
             return builtin(callNode, node, call, search, replacement, subject);
+        }
+
+        /**
+         * An array of strings searched for (wptexturize's, kses's tables): when none occurs in the subject, the
+         * subject as it is, without the call. php-src converts the replacements as it walks the searches, so only
+         * replacements whose conversion does nothing visible (no object, no array) take this path.
+         */
+        @Specialization
+        public static Object strings(CallInfo call, PhpArray search, Object replacement, TruffleString subject,
+                                     @Cached TruffleString.ByteIndexOfStringNode index,
+                                     @Bind Node node,
+                                     @Shared @Cached IndirectCallNode callNode) {
+            int length = subject.byteLength(Str.ENC);
+            for (int p = search.firstPosition(); p >= 0; p = search.nextPosition(p)) {
+                if (!(search.valueAt(p) instanceof TruffleString one)) {
+                    return builtin(callNode, node, call, search, replacement, subject);
+                }
+                int searchLength = one.byteLength(Str.ENC);
+                if (searchLength != 0 && searchLength <= length
+                        && index.execute(subject, one, 0, length, Str.ENC) >= 0) {
+                    return builtin(callNode, node, call, search, replacement, subject);
+                }
+            }
+            if (replacement instanceof TruffleString || replacement instanceof PhpArray array && plain(array)) {
+                return subject;
+            }
+            return builtin(callNode, node, call, search, replacement, subject);
+        }
+
+        @TruffleBoundary
+        static boolean plain(PhpArray array) {
+            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
+                Object value = array.valueAt(p);
+                if (value instanceof PhpArray || value instanceof PhpObject || value instanceof PhpRef
+                        || value instanceof PhpClosure) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         @Fallback

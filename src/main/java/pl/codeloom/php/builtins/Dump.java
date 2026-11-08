@@ -53,7 +53,7 @@ final class Dump {
     }
 
     private TruffleString result() {
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     private void ascii(String text) {

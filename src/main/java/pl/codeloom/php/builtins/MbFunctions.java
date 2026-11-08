@@ -257,7 +257,7 @@ final class MbFunctions {
                 encode(state, out, cp);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -279,7 +279,7 @@ final class MbFunctions {
             encode(state, out, cp == 0xFFFF ? -1 : cp);
             i += Character.charCount(cp);
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -299,6 +299,6 @@ final class MbFunctions {
         }
         ByteBuilder out = new ByteBuilder(4);
         JsonFunctions.Utf8.encode(out, (int) cp);
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 }

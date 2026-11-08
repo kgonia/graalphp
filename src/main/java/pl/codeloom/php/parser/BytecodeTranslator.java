@@ -383,6 +383,12 @@ public final class BytecodeTranslator {
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
          */
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
+        /** Each `.=` variable's hidden local for its in-place appends (AppendVar). */
+        private final Map<BytecodeLocal, BytecodeLocal> appenders = new java.util.IdentityHashMap<>();
+
+        private BytecodeLocal appender(BytecodeLocal variable) {
+            return appenders.computeIfAbsent(variable, v -> b.createLocal());
+        }
         /** How many variables of its own (hiddenVariable) the run has made. */
         private int hiddenVariables;
         /** The objects of written properties (delayedProp): read as isset() reads them, as php-src's BP_VAR_W. */
@@ -1027,7 +1033,14 @@ public final class BytecodeTranslator {
                     }
                     case "AST_ASSIGN_OP" -> {
                         if (node.flags != 260) {
-                            b.beginCompoundVarStatement(variable(target, "compound assignment to"), node.flags);
+                            BytecodeLocal compounded = variable(target, "compound assignment to");
+                            if (node.flags == 8) {
+                                b.beginAppendVarStatement(compounded, appender(compounded));
+                                expression(node.get("expr"));
+                                b.endAppendVarStatement();
+                                return;
+                            }
+                            b.beginCompoundVarStatement(compounded, node.flags);
                             expression(node.get("expr"));
                             b.endCompoundVarStatement();
                             return;
@@ -2002,7 +2015,14 @@ public final class BytecodeTranslator {
                         b.endBlock();
                         break;
                     }
-                    b.beginCompoundVar(variable(node.node("var"), "compound assignment to"), node.flags);
+                    BytecodeLocal compounded = variable(node.node("var"), "compound assignment to");
+                    if (node.flags == 8) {
+                        b.beginAppendVar(compounded, appender(compounded));
+                        expression(node.get("expr"));
+                        b.endAppendVar();
+                        break;
+                    }
+                    b.beginCompoundVar(compounded, node.flags);
                     expression(node.get("expr"));
                     b.endCompoundVar();
                     break;
@@ -4484,6 +4504,12 @@ public final class BytecodeTranslator {
                     }
                 }
                 case "strpos" -> {
+                    if (n == 3) {
+                        b.beginStrposFrom(info);
+                        operands(args, 3);
+                        b.endStrposFrom();
+                        return true;
+                    }
                     if (n != 2) {
                         return false;
                     }

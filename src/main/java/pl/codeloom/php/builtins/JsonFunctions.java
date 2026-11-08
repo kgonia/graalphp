@@ -417,7 +417,7 @@ final class JsonFunctions {
                         result = Str.of(s, runStart, pos - runStart);
                     } else {
                         out.write(s, runStart, pos - runStart);
-                        result = Str.of(out.toByteArray());
+                        result = out.toStr();
                     }
                     pos++;
                     return result;
@@ -535,7 +535,7 @@ final class JsonFunctions {
             }
             return Boolean.FALSE;
         }
-        return Str.of(encoder.out.toByteArray());
+        return encoder.out.toStr();
     }
 
     /** json_encoder.c: each encode function's false is its FAILURE, which stops the encoding unless partial. */

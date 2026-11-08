@@ -689,7 +689,7 @@ final class DateFunctions {
             }
             bytes.write(out.toString().getBytes(StandardCharsets.ISO_8859_1));
         }
-        return Str.of(bytes.toByteArray());
+        return bytes.toStr();
     }
 
     private static String two(long value) {

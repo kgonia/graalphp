@@ -305,7 +305,7 @@ final class Sprintf {
             throw new PhpError("ArgumentCountError", (maxMissingArgnum + nbAdditional + 1)
                     + " arguments are required, " + (args.length + nbAdditional) + " given");
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /**
