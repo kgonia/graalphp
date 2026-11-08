@@ -1,0 +1,3 @@
+# the script's directory, which differs, in messages, traces and closure names
+s#/w/tests/smoke/#DIR/#g
+s#[A-Za-z]:[^ ]*[\/]tests[\/]smoke[\/]#DIR/#g

@@ -58,3 +58,21 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [052](052-ref-append-self.md) | `$r[] = $a`, with `$r` a reference to `$a`, appends a copy instead of the array itself | Open |
 | [053](053-destructor-backtrace-returning-frame.md) | A destructor that a function's return runs sees the returning function in its backtrace | Open |
 | [054](054-rc-verify-moved-temporaries.md) | `-Dphp.rc.verify` reports moved arguments as reachable from the caller's temporary | Open (check tool) |
+| [055](055-output-handler-state.md) | Output buffering doesn't know a handler is running, or that one failed | Open |
+| [056](056-callable-static-cache.md) | `'static::m'` as a callable is resolved once, not per called class | Open |
+| [057](057-self-referencing-constant.md) | Class constants that refer to each other overflow the Java stack | Open |
+| [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Open |
+| [059](059-element-write-handler-shares.md) | An element write lands in an array the error handler shared during it | Open |
+| [060](060-abandoned-generator-cleanup.md) | A generator destroyed while suspended doesn't undo its frame's state (`@`, foreach) | Open |
+| [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Open |
+| [062](062-directoryiterator-entry-path.md) | `DirectoryIterator`'s `SplFileInfo` methods describe the first entry | Open |
+| [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Open |
+| [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Open |
+| [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
+| [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |
+| [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Open |
+| [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Open |
+| [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Open |
+| [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Open |
+| [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Open |
+| [072](072-state-machines-unprobed.md) | Implicit state machines with likely defects, not probed yet | Open |
