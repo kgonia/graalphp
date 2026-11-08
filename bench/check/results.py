@@ -114,9 +114,18 @@ def surefire(sha, directory):
 
 
 def wp(sha, path):
-    names = sorted({m.group(1) for m in re.finditer(r'^\s*(\S+::\S+)\s', read(path), re.M)})
-    return [{'sha': sha, 'check': 'wp-phpunit', 'metric': 'newly differing', 'value': len(names), 'unit': 'tests',
-             'names': names}]
+    text = read(path)
+    new = sorted(set(re.findall(r'^\s+NEW (\S+)	', text, re.M)))
+    agree = sorted(set(re.findall(r'^\s+AGREES (\S+)	', text, re.M)))
+    records = [{'sha': sha, 'check': 'wp-phpunit', 'metric': 'newly differing', 'value': len(new), 'unit': 'tests',
+                'names': new},
+               {'sha': sha, 'check': 'wp-phpunit', 'metric': 'now agreeing', 'value': len(agree), 'unit': 'tests',
+                'names': agree}]
+    m = re.search(r'in both: (\d+), same outcome (\d+), different (\d+)', text)
+    if m:
+        records.append({'sha': sha, 'check': 'wp-phpunit', 'metric': 'same outcome as PHP', 'value': int(m.group(2)),
+                        'unit': 'tests', 'of': int(m.group(1))})
+    return records
 
 
 def gate1(sha, base, directory):

@@ -6,7 +6,8 @@
 #                               that L0 and L1 run their tests in (the commit's own tests)
 #   l0 [REF] [--base REF]       ~10 min, no CPU lock: unit tests (IR budgets: CompilationTest), smoke, the destructor
 #                               fixtures (when the commit has them)
-#   l1 [REF] [--base REF]       ~1 h: php-src's .phpt (CPUs 6-13); WP=1 adds WordPress's PHPUnit suite (~2.5 h)
+#   l1 [REF] [--base REF]       ~1 h: php-src's .phpt (CPUs 6-13); WP=1 adds WordPress's PHPUnit suite (~2.5 h),
+#                               L1="wp" with WP=1 runs only that
 #   l2 [REF] [--base REF]       ~3 h, timed, on CPUs 14-21 under the CPU lock: Gate 1 (HOLDS x 2 rounds, ITERATIONS)
 #                               and Gate 2 (ROUNDS of VISITS), REF and BASE interleaved
 #   report [REF] [--base REF]   the Markdown report (report.py) to target/check/report-SHA-BASE.md; exit 1 when a
@@ -120,20 +121,24 @@ l0() { # SHA
   unreserve l0-$s
 }
 
-l1() { # SHA
+l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
   local s=$1 src=target/check/src-$1 out=target/check/$1
   build "$s"
   mkdir -p "$out"
-  reserve l1-$s 6 120 "L1 of $s (phpt on CPUs 6-13)"
-  (cd "$src" && CPUSET=6-13 bash tests/phpt/run.sh > "$WORK/$out/phpt.txt" 2>&1) || true
-  $PY "$here/results.py" phpt "$s" "$src/target/phpt" --level L1
-  unreserve l1-$s
-  if [ -n "${WP:-}" ] && [ -f "$src/tests/wp-phpunit/run.sh" ]; then
-    (cd "$src" && bash tests/wp-phpunit/setup.sh > "$WORK/$out/wp-setup.txt" 2>&1 \
-      && CHUNKED=1 bash tests/wp-phpunit/run.sh truffle > "$WORK/$out/wp-run.txt" 2>&1) || true
-    (cd "$src" && python tests/wp-phpunit/compare.py diff target/wp-phpunit/runs/php-all-chunked \
-      target/wp-phpunit/runs/truffle-all-chunked --frozen tests/wp-phpunit/wordpress.failset.tsv \
-      > "$WORK/$out/wp.txt" 2>&1) || true
+  if [[ " ${L1:-phpt} " == *" phpt "* ]]; then
+    reserve l1-$s 6 120 "L1 of $s (phpt on CPUs 6-13)"
+    (cd "$src" && CPUSET=6-13 bash tests/phpt/run.sh > "$WORK/$out/phpt.txt" 2>&1) || true
+    $PY "$here/results.py" phpt "$s" "$src/target/phpt" --level L1
+    unreserve l1-$s
+  fi
+  if [ -n "${WP:-}" ]; then
+    # WordPress's PHPUnit suite in WORK (its wordpress-develop tree and PHP's reference run,
+    # target/wp-phpunit/runs/php-all-chunked, from tests/wp-phpunit/setup.sh and run.sh php), on this build;
+    # JAVA_OPTS reaches its JVMs
+    reserve l1-wp-$s 8 300 "L1 of $s (WordPress PHPUnit on CPUs 6-13)"
+    CLASSES=target/classes-$s LIB=target/lib-$s RUN=truffle-$s-chunked CHUNKED=1       bash tests/wp-phpunit/run.sh truffle > "$out/wp-run.txt" 2>&1 || true
+    unreserve l1-wp-$s
+    python tests/wp-phpunit/compare.py diff target/wp-phpunit/runs/php-all-chunked       target/wp-phpunit/runs/truffle-$s-chunked --frozen tests/wp-phpunit/wordpress.failset.tsv       --out "$out/wp-report.txt" > "$out/wp.txt" 2>&1 || true
     $PY "$here/results.py" wp "$s" "$out/wp.txt" --level L1
   fi
 }
