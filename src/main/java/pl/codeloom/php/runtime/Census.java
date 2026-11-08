@@ -591,6 +591,10 @@ final class Census {
                         } else {
                             slack.computeIfAbsent(value, o -> new int[1])[0]++;
                         }
+                    } else if (value instanceof PhpArray array && array.isTemporary() && !inLocals.containsKey(array)) {
+                        // an array being built (a literal's elements go in on the operand stack): what it holds is
+                        // counted, as php-src's INIT_ARRAY result (a stale one only widens the slack)
+                        walk.root(name + " operand", array, 0);
                     }
                 }
                 return null;

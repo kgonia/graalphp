@@ -72,6 +72,12 @@ public final class BytecodeTranslator {
     private static final int BP_VAR_UNSET = 5;
     /** A function whose bytecode is printed at its first return (php.bytecode.dump=name), for debugging. */
     private static final String DUMP = System.getProperty("php.bytecode.dump");
+    /**
+     * -Dphp.rc.releases=FILE: for every body translated, each owning temporary in evaluation order, with where it
+     * came from (origin) and the operation that releases it (bench/destructors/release_diff.py compares them with
+     * php-src's opcodes). A debugging aid: off, nothing is recorded.
+     */
+    private static final String RELEASES = System.getProperty("php.rc.releases");
     /** A construct the translator doesn't cover: the code's fatal error (see {@link #unsupported}). */
     static final class Unsupported extends RuntimeException {
         private static final long serialVersionUID = 1L;
@@ -136,6 +142,8 @@ public final class BytecodeTranslator {
     /** Which of them hold an argument the call takes (Run.argumentTemporary). */
     private final List<Boolean> temporariesMoved = new ArrayList<>();
     private boolean firstRun = true;
+    /** The owning temporaries' {origin, release} (RELEASES), in the order they were created. */
+    private final List<String[]> releaseEvents = RELEASES == null ? null : new ArrayList<>();
 
     /**
      * The hidden locals that hold a value without its count (a list()'s source and elements), for the count audit:
@@ -223,6 +231,7 @@ public final class BytecodeTranslator {
         if (display.equals(DUMP)) {
             root.dumpAtExit();
         }
+        writeReleases(path, display, translator.releaseEvents);
         return root.getCallTarget();
     }
 
@@ -256,7 +265,26 @@ public final class BytecodeTranslator {
         if (path.equals(DUMP)) {
             root.dumpAtExit();
         }
+        writeReleases(path, null, translator.releaseEvents);
         return root;
+    }
+
+    /** Appends a body's release events to RELEASES: "== path function" (the file's top level: no name). */
+    private static synchronized void writeReleases(String path, String function, List<String[]> events) {
+        if (events == null) {
+            return;
+        }
+        StringBuilder text = new StringBuilder("== ").append(path).append(' ')
+                .append(function == null ? "(main)" : function).append('\n');
+        for (String[] event : events) {
+            text.append(event[0]).append('\t').append(event[1] == null ? "?" : event[1]).append('\n');
+        }
+        try {
+            java.nio.file.Files.writeString(java.nio.file.Path.of(RELEASES), text,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     /**
@@ -436,6 +464,77 @@ public final class BytecodeTranslator {
          * the object, releases them (php-src's FETCH_OBJ_R or INIT_METHOD_CALL on the TMP, after JMP_NULL).
          */
         private final Map<Ast, List<BytecodeLocal>> nullsafeTemps = new java.util.IdentityHashMap<>();
+        /** The release event (RELEASES) of the owning temporary each hidden local holds now. */
+        private final Map<BytecodeLocal, String[]> releaseOf = new java.util.IdentityHashMap<>();
+
+        /** An owning temporary made (RELEASES): its origin, and its release when already known (else null). */
+        private void created(BytecodeLocal temp, Object value, String release) {
+            if (releaseEvents == null || !firstRun) {
+                return;
+            }
+            String[] event = {origin(value), release};
+            releaseEvents.add(event);
+            if (temp != null) {
+                releaseOf.put(temp, event);
+            }
+        }
+
+        /** The operation releasing temp's owning temporary (RELEASES), unless an inner one did. */
+        private void releasedBy(BytecodeLocal temp, String release) {
+            String[] event = releaseEvents == null || !firstRun ? null : releaseOf.get(temp);
+            if (event != null && event[1] == null) {
+                event[1] = release;
+            }
+        }
+
+        /** temp's expression gave no owning temporary (a call compiled in place). */
+        private void unowned(BytecodeLocal temp) {
+            String[] event = releaseEvents == null || !firstRun ? null : releaseOf.get(temp);
+            if (event != null) {
+                event[1] = "(unowned)";
+            }
+        }
+
+        private String origin(Object value) {
+            if (!(value instanceof Ast node)) {
+                return "?";
+            }
+            return switch (node.kind) {
+                case "AST_CALL" -> "call:" + lastName(node.get("expr"));
+                case "AST_METHOD_CALL", "AST_NULLSAFE_METHOD_CALL" -> "mcall:"
+                        + (node.get("method") instanceof String m ? Str.lower(m) : "?");
+                case "AST_STATIC_CALL" -> "scall:" + (node.get("method") instanceof String m ? Str.lower(m) : "?");
+                case "AST_NEW" -> "new:" + lastName(node.get("class"));
+                case "AST_CLOSURE", "AST_ARROW_FUNC" -> "closure";
+                case "AST_ARRAY" -> "array";
+                case "AST_CAST" -> "cast";
+                default -> node.kind;
+            };
+        }
+
+        private String lastName(Object name) {
+            if (!(name instanceof Ast ast) || !ast.is("AST_NAME") || !(ast.get("name") instanceof String text)) {
+                return "?";
+            }
+            return Str.lower(text.substring(text.lastIndexOf('\\') + 1));
+        }
+
+        /** The operation an operand's owning temporary is released by (RELEASES), as node's consumer. */
+        private String releaseLabel(Ast node) {
+            return switch (node.kind) {
+                case "AST_PROP", "AST_DIM" -> "fetch";
+                case "AST_UNARY_OP" -> node.flags == 14 ? "test" : "operator";
+                case "AST_CAST" -> node.flags == CastNode.TO_BOOL ? "test" : "cast";
+                case "AST_ISSET", "AST_EMPTY" -> "isset";
+                case "AST_ENCAPS_LIST" -> "concat";
+                case "AST_PRINT" -> "echo";
+                case "AST_INSTANCEOF" -> "instanceof";
+                case "AST_METHOD_CALL" -> "receiver";
+                case "AST_CALL" -> "arg";
+                case "AST_STATIC_CALL", "AST_NEW" -> "class";
+                default -> "operator";
+            };
+        }
         /** How many variables of its own (hiddenVariable) the run has made. */
         private int hiddenVariables;
         /** The objects of written properties (delayedProp): read as isset() reads them, as php-src's BP_VAR_W. */
@@ -973,6 +1072,9 @@ public final class BytecodeTranslator {
             List<BytecodeLocal> outer = statementTemps;
             statementTemps = new ArrayList<>();
             statementBody(node);
+            for (BytecodeLocal temp : statementTemps) {
+                releasedBy(temp, "stmt:" + node.kind);
+            }
             if (!node.is("AST_RETURN")) {
                 // a return's are released by the epilogue
                 for (BytecodeLocal temp : statementTemps) {
@@ -2017,7 +2119,7 @@ public final class BytecodeTranslator {
             }
             if (operandOwns(value)) {
                 // JMPZ and the like free an owning temporary once tested
-                consumed(CONSUMER, () -> {
+                consumed(CONSUMER, "test", () -> {
                     b.beginToBool();
                     expression(value);
                     b.endToBool();
@@ -2061,7 +2163,10 @@ public final class BytecodeTranslator {
             b.beginStoreTemp(temp, tempIndex.get(temp));
             boolean owned = emitOwned(value);
             b.endStoreTemp(owned);
+            // (after its operands': php-src's order, a call's result after its arguments')
+            created(temp, value, null);
             if (!owned) {
+                unowned(temp);
                 unused(temp);
             } else if (!consumerScopes.isEmpty()) {
                 consumerScopes.get(consumerScopes.size() - 1).add(temp);
@@ -2091,13 +2196,16 @@ public final class BytecodeTranslator {
             return switch (node.kind) {
                 case "AST_PROP", "AST_DIM" -> FETCH;
                 case "AST_BINARY_OP" -> switch (node.flags) {
-                    case BINARY_COALESCE, BINARY_CONCAT, BINARY_OR, BINARY_AND -> NO_CONSUMER;
+                    // (`|>`'s operand moves into its call, the consumer of the rest)
+                    case BINARY_COALESCE, BINARY_CONCAT, BINARY_OR, BINARY_AND, BINARY_PIPE -> NO_CONSUMER;
                     default -> CONSUMER;
                 };
                 case "AST_UNARY_OP" -> node.flags == UNARY_SILENCE ? NO_CONSUMER : CONSUMER;
                 case "AST_CAST" -> node.flags == CastNode.TO_ARRAY ? PASSING : CONSUMER;
                 case "AST_ISSET", "AST_EMPTY", "AST_ENCAPS_LIST", "AST_PRINT", "AST_INSTANCEOF",
                      "AST_METHOD_CALL", "AST_CALL", "AST_STATIC_CALL", "AST_NEW" -> CONSUMER;
+                // ASSIGN_OP frees its value once combined (`??=`'s value is stored)
+                case "AST_ASSIGN_OP" -> node.flags == BINARY_COALESCE ? NO_CONSUMER : CONSUMER;
                 default -> NO_CONSUMER;
             };
         }
@@ -2106,6 +2214,7 @@ public final class BytecodeTranslator {
         private static final int BINARY_XOR = 15;
         private static final int BINARY_OR = 258;
         private static final int BINARY_AND = 259;
+        private static final int BINARY_PIPE = 261;
 
         /**
          * Whether an operand of node may be an owning temporary its operation uses (not an argument, which moves
@@ -2163,7 +2272,7 @@ public final class BytecodeTranslator {
          * Emits node's operation, its operands' owning temporaries released after it (ReleaseAfter) when it is a
          * consumer.
          */
-        private void consumed(int consumer, Runnable operation) {
+        private void consumed(int consumer, String release, Runnable operation) {
             b.beginReleaseAfter();
             List<BytecodeLocal> scope = new ArrayList<>();
             consumerScopes.add(scope);
@@ -2171,6 +2280,12 @@ public final class BytecodeTranslator {
                 operation.run();
             } finally {
                 consumerScopes.remove(consumerScopes.size() - 1);
+            }
+            for (BytecodeLocal temp : scope) {
+                // (a pass's operand goes on to the enclosing operation; a borrowing read's when its value is counted)
+                if (consumer != PASSING) {
+                    releasedBy(temp, consumer == FETCH ? "fetch?" : release);
+                }
             }
             if ((consumer == FETCH || consumer == PASSING || consumer == COPIED) && !consumerScopes.isEmpty()) {
                 // kept when the value is the container's own, or the operand: the enclosing operation releases them
@@ -2188,7 +2303,7 @@ public final class BytecodeTranslator {
         /** Emits operation, released after it as an operation that used operand when operand may own temporaries. */
         private void consumedIfOwning(Object operand, Runnable operation) {
             if (operandOwns(operand)) {
-                consumed(CONSUMER, operation);
+                consumed(CONSUMER, "class", operation);
             } else {
                 operation.run();
             }
@@ -2235,7 +2350,9 @@ public final class BytecodeTranslator {
             b.beginStoreTemp(temp, tempIndex.get(temp));
             boolean owned = emitOwned(value);
             b.endStoreTemp(owned);
+            created(temp, value, "arg");
             if (!owned) {
+                unowned(temp);
                 unused(temp);
             }
         }
@@ -2326,6 +2443,7 @@ public final class BytecodeTranslator {
             b.beginDisown();
             boolean owned = emitOwned(value);
             b.endDisown(owned);
+            created(null, value, owned ? "store" : "(unowned)");
         }
 
         /** A returned value: owning for the caller (Own counts a variable's or a property's value). */
@@ -2343,6 +2461,8 @@ public final class BytecodeTranslator {
             boolean owned = mayOwn(value) && emitOwned(value);
             if (!mayOwn(value)) {
                 expression(value);
+            } else {
+                created(null, value, owned ? "return" : "(unowned)");
             }
             b.endOwn(!owned);
         }
@@ -2365,7 +2485,7 @@ public final class BytecodeTranslator {
             refuseNullsafeWrite(node);
             int consumer = consumerKind(node);
             if (consumer != NO_CONSUMER && ownsOperand(node)) {
-                consumed(consumer, () -> dispatch(node));
+                consumed(consumer, releaseLabel(node), () -> dispatch(node));
                 return;
             }
             dispatch(node);
@@ -2667,6 +2787,9 @@ public final class BytecodeTranslator {
             b.endBlock();
             if (owns) {
                 b.endReleaseAfter(temporaries(subjectTemps), PhpBytecodeRootNode.ReleaseAfter.CONSUMES);
+                for (BytecodeLocal temp : subjectTemps) {
+                    releasedBy(temp, "match-end");
+                }
             }
         }
 
@@ -3406,7 +3529,8 @@ public final class BytecodeTranslator {
                     b.beginBlock();
                     BytecodeLocal operand = b.createLocal();
                     b.beginStoreLocal(operand);
-                    expression(node.get("left"));
+                    // an owning temporary moves into the call, as an argument (php-src's SEND_VAL)
+                    argumentExpression(node.get("left"));
                     b.endStoreLocal();
                     Ast operandNode = new Ast("BYTECODE_OBJECT", 0, node.line, node.endLine, null, null);
                     nullsafeObjects.put(operandNode, operand);
@@ -3516,7 +3640,7 @@ public final class BytecodeTranslator {
                 case 0 -> b.emitLoadConstant(Str.EMPTY);
                 case 1 -> {
                     if (partOwns(parts.get(0))) {
-                        consumed(CONSUMER, () -> concat(parts.get(0)));
+                        consumed(CONSUMER, "concat", () -> concat(parts.get(0)));
                     } else {
                         concat(parts.get(0));
                     }
@@ -3529,7 +3653,7 @@ public final class BytecodeTranslator {
                         b.endConcat();
                     };
                     if (partOwns(parts.get(0)) || partOwns(parts.get(1))) {
-                        consumed(CONSUMER, concatenation);
+                        consumed(CONSUMER, "concat", concatenation);
                     } else {
                         concatenation.run();
                     }
@@ -3589,6 +3713,9 @@ public final class BytecodeTranslator {
             b.endInterpolationPart();
             if (!firstTwo.isEmpty()) {
                 b.endReleaseAfter(temporaries(firstTwo), PhpBytecodeRootNode.ReleaseAfter.CONSUMES);
+                for (BytecodeLocal temp : firstTwo) {
+                    releasedBy(temp, "concat");
+                }
             }
             for (int i = 2; i < parts.size(); i++) {
                 Object part = parts.get(i);
@@ -3599,7 +3726,7 @@ public final class BytecodeTranslator {
                 };
                 if (partOwns(part)) {
                     // each next one's once converted (its ZEND_CONCAT)
-                    consumed(CONSUMER, converted);
+                    consumed(CONSUMER, "concat", converted);
                 } else {
                     converted.run();
                 }
@@ -3750,10 +3877,16 @@ public final class BytecodeTranslator {
             LiteralSite site = (LiteralSite) made(() -> new LiteralSite(count, isRecord));
             // LiteralEnd(Literal...(Literal...(LiteralStart, e1), e2)...): each element goes in as it is evaluated
             b.beginLiteralEnd(site);
+            // an unpacked owning temporary is released once its elements are in (ADD_ARRAY_UNPACK's FREE_OP)
+            boolean[] releasing = new boolean[count];
             for (int i = count - 1; i >= 0; i--) {
                 Ast element = (Ast) elements.get(i);
                 boolean keyed = element.get("key") != null;
                 if (element.is("AST_UNPACK")) {
+                    releasing[i] = operandOwns(element.get("expr"));
+                    if (releasing[i]) {
+                        b.beginReleaseAfter();
+                    }
                     b.beginLiteralSpread();
                 } else if (literalRef(element)) {
                     if (keyed) {
@@ -3776,8 +3909,18 @@ public final class BytecodeTranslator {
                 Ast element = (Ast) elements.get(i);
                 boolean keyed = element.get("key") != null;
                 if (element.is("AST_UNPACK")) {
-                    expression(element.get("expr"));
-                    b.endLiteralSpread();
+                    if (releasing[i]) {
+                        List<BytecodeLocal> unpackedTemps = new ArrayList<>();
+                        collecting(unpackedTemps, () -> expression(element.get("expr")));
+                        b.endLiteralSpread();
+                        b.endReleaseAfter(temporaries(unpackedTemps), PhpBytecodeRootNode.ReleaseAfter.CONSUMES);
+                        for (BytecodeLocal temp : unpackedTemps) {
+                            releasedBy(temp, "operator");
+                        }
+                    } else {
+                        expression(element.get("expr"));
+                        b.endLiteralSpread();
+                    }
                     continue;
                 }
                 if (literalRef(element)) {
@@ -3800,7 +3943,7 @@ public final class BytecodeTranslator {
                 if (keyed && keys[i] == null) {
                     expression(element.get("key"));
                 }
-                expression(element.get("value"));
+                elementValue(element.get("value"));
                 if (isRecord) {
                     b.endLiteralAdd();
                 } else if (keys[i] != null) {
@@ -3812,6 +3955,27 @@ public final class BytecodeTranslator {
                 }
             }
             b.endLiteralEnd();
+        }
+
+        /**
+         * An array literal's element value: an owning temporary moves into the array (INIT_ARRAY,
+         * ADD_ARRAY_ELEMENT take the TMP), which counts it as it goes in; its hidden local keeps it uncounted, as an
+         * argument's, so one the array never took (an exception before) is still released (ReleaseTemp).
+         */
+        private void elementValue(Object value) {
+            if (!mayOwn(value)) {
+                expression(value);
+                return;
+            }
+            BytecodeLocal temp = argumentTemporary();
+            b.beginStoreTemp(temp, tempIndex.get(temp));
+            boolean owned = emitOwned(value);
+            b.endStoreTemp(owned);
+            created(temp, value, "store");
+            if (!owned) {
+                unowned(temp);
+                unused(temp);
+            }
         }
 
         /** An element taken by reference (`&$x`); `&$this` is taken as its value (Translator.arrayLiteral). */
@@ -4492,7 +4656,7 @@ public final class BytecodeTranslator {
         private void copied(Runnable read) {
             BytecodeLocal temp = temporary();
             b.beginStoreTemp(temp, tempIndex.get(temp));
-            consumed(COPIED, read);
+            consumed(COPIED, "fetch", read);
             b.endStoreTemp(true);
             if (!consumerScopes.isEmpty()) {
                 consumerScopes.get(consumerScopes.size() - 1).add(temp);
@@ -5300,8 +5464,15 @@ public final class BytecodeTranslator {
                         return false;
                     }
                     b.beginCallUserFunc(compiled);
+                    boolean callable = true;
                     for (Object arg : args.children()) {
-                        expression(arg);
+                        if (callable) {
+                            expression(arg);
+                            callable = false;
+                        } else {
+                            // moved into the call (SEND_USER), as a call's argument
+                            argumentExpression(arg);
+                        }
                     }
                     b.endCallUserFunc();
                     return true;
@@ -5739,6 +5910,8 @@ public final class BytecodeTranslator {
                 } else if (namedPlace(((Ast) arg).get("expr"))) {
                     b.beginSpreadRef();
                 } else {
+                    // (an unpacked owning temporary stays to the statement's end: the list doesn't count the
+                    // elements it takes, where php-src's SEND_UNPACK copies them and frees the array)
                     b.beginSpreadValue();
                 }
             }
@@ -6522,7 +6695,7 @@ public final class BytecodeTranslator {
             };
             if (ownsOperand(ast)) {
                 // its receiver's, its class's or an in-place built-in's operands' temporaries, once it returned
-                consumed(CONSUMER, called);
+                consumed(CONSUMER, releaseLabel(ast), called);
             } else {
                 called.run();
             }
@@ -6530,7 +6703,9 @@ public final class BytecodeTranslator {
                 ownedNode = ast;
             }
             b.endStoreTemp(ownedNode == ast);
+            created(temp, ast, moved ? "arg" : null);
             if (ownedNode != ast) {
+                unowned(temp);
                 unused(temp);
             }
         }
