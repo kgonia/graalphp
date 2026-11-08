@@ -37,7 +37,10 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
 
 - **Builds** (`check.sh build REF`): a detached worktree `target/check/src-SHA` per commit, built once on the
   P-cores. The output goes to `target/classes-SHA` and `target/lib-SHA` (`classes-SHA.commit` holds the full
-  commit), names that `bench/gate1/ab.sh` and `bin-php.sh` (`PHP_CLASSES`) already understand. L0 and L1 run the
+  commit), names that `bench/gate1/ab.sh` and `bin-php.sh` (`PHP_CLASSES`) already understand. Every timed run uses the
+  build's own libraries: Gate 1 through ab.sh's `lib-X`, Gate 2 through `tests/gate2/native.sh`'s `LIB_TAG`. If
+  WORK's `native.sh` doesn't have `LIB_TAG` yet and the two builds' libraries differ (a GraalVM or Truffle bump),
+  `l2` stops rather than run the new code on the old libraries. L0 and L1 run the
   commit's own tests in its worktree.
 - **Preflight** (`preflight.py perf|correct`):
   - `correct` refuses to start beside another check run (`target/check/run.pid`) and beside a timed run (the CPU

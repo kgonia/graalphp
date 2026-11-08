@@ -112,12 +112,13 @@ check() {
 start() {
   local name=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
   # VARIANT.TAG: the variant with the tag's own settings, so one measurement compares builds and options:
-  # CLASSES_TAG, NATIVE_BIN_TAG, JAVA_OPTS_TAG (added to JAVA_OPTS), e.g. native-phases.base with
-  # NATIVE_BIN_base=wp-http-phases-base
+  # CLASSES_TAG, LIB_TAG (the build's libraries, as CLASSES_TAG under target/), NATIVE_BIN_TAG, JAVA_OPTS_TAG
+  # (added to JAVA_OPTS), e.g. native-phases.base with NATIVE_BIN_base=wp-http-phases-base
   local variant=${name%%.*} tag= setting
   [ "$variant" = "$name" ] || tag=${name#*.}
   if [ -n "$tag" ]; then
     setting=CLASSES_$tag; [ -z "${!setting:-}" ] || local CLASSES=${!setting}
+    setting=LIB_$tag; [ -z "${!setting:-}" ] || local LIB=${!setting}
     setting=NATIVE_BIN_$tag; [ -z "${!setting:-}" ] || local NATIVE_BIN=${!setting}
     setting=JAVA_OPTS_$tag; [ -z "${!setting:-}" ] || local JAVA_OPTS="${JAVA_OPTS:-} ${!setting}"
   fi
@@ -150,6 +151,7 @@ start() {
   esac
   # CLASSES, NATIVE: another build's classes (under target/) or native launcher, for profiling a build of its own
   [ -z "${CLASSES:-}" ] || cmd=${cmd/target\/classes:/$CLASSES:}
+  [ -z "${LIB:-}" ] || cmd=${cmd/target\/lib\//$LIB/}
   [ -z "${NATIVE:-}" ] || cmd=${cmd/target\/native\/wp-http /$NATIVE }
   # OUT_DIR: a host directory the server may write to, at /out (a profiler's output)
   local extra=()

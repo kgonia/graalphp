@@ -170,8 +170,16 @@ l2() { # SHA BASE
   export WPN_NAME=ck WPN_NET=172.31.152 WPN_DB_PORT=3452 WPN_DB_CPUS=22-23 WPN_MEASURE_PORT=8252 WPN_AUX_CPUS=6-13
   bash tests/gate2/native.sh db > /dev/null
   bash tests/gate2/native.sh volume > /dev/null
+  # each build runs with its own libraries (LIB_VARIANT); a native.sh without LIB_TAG would run both on WORK's
+  # target/lib, wrong for a change of dependencies (a GraalVM/Truffle bump): then stop, unless the libraries match
+  if ! grep -q 'LIB_\$tag' tests/gate2/native.sh && ! diff -rq "target/lib-$s" "target/lib-$b" > /dev/null; then
+    echo "Gate 2: $s and $b have different libraries, and WORK's tests/gate2/native.sh can't give a build its own"
+    echo "(no LIB_TAG; the checks branch adds it): stopping"
+    exit 3
+  fi
   MSYS_NO_PATHCONV=1 docker run --rm --cpuset-cpus 6-13 -v ck-site:/srv -v "$(pwd -W):/w:ro" alpine:3 sh -c \
-    'for v in "$@"; do rm -rf /srv/target/classes-$v; cp -r /w/target/classes-$v /srv/target/; done' sh "$s" "$b"
+    'for v in "$@"; do rm -rf /srv/target/classes-$v /srv/target/lib-$v
+       cp -r /w/target/classes-$v /w/target/lib-$v /srv/target/; done' sh "$s" "$b"
   local runs=target/ck/runs logs="-Dpolyglot.engine.TraceCompilation=true -Djdk.graal.internal.PrintGC=true"
   for r in $(seq 1 "${ROUNDS:-6}"); do
     if [ $((r % 2)) = 1 ]; then order="$b $s"; else order="$s $b"; fi
@@ -179,7 +187,8 @@ l2() { # SHA BASE
       [ ! -e "$out/gate2/runs/jvm-java.$v-$r.json" ] || continue
       reserve gate2 6 120 "Gate 2 $v round $r (CPUs 14-21)"
       [ "$v" = "$s" ] && opts=${JAVA_OPTS_REF:-} || opts=${JAVA_OPTS_BASE:-}
-      export CLASSES_$v=target/classes-$v JAVA_OPTS_$v="$logs -Dpolyglot.log.file=/out/engine-$v.log $opts"
+      export CLASSES_$v=target/classes-$v LIB_$v=target/lib-$v
+      export JAVA_OPTS_$v="$logs -Dpolyglot.log.file=/out/engine-$v.log $opts"
       mkdir -p "$out/gate2/r$r"
       lock "Gate 2 $v round $r"
       trap 'unlock; unreserve gate2; rm -f target/check/run.pid' EXIT
