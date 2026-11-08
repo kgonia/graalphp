@@ -108,11 +108,18 @@ def surefire(sha, directory):
         if not m:
             continue
         suite = os.path.basename(path)[:-4].rsplit('.', 1)[-1]
-        failed = sorted(set(re.findall(r'^(\S+?)(?:\(.*?\))?\s+Time elapsed.*<<< (?:FAILURE|ERROR)!', text, re.M)))
-        budgets = re.findall(r'(\S+: \S+ compiled to \d+ IR nodes, its budget is \d+)', text)
+        # a failure's name: the test method and its message's first line (a parameterized test's cases share the
+        # method), numbers as N so the ratchet sees the same failure with another count as the same failure
+        failed = set()
+        # "pkg.Class.method(String)[5] -- Time elapsed: 5.870 s <<< FAILURE!", then the exception, then its message
+        for f in re.finditer(r'^(\S+?)(?:\(.*?\))?(?:\[\d+\])?(?: --)?\s+Time elapsed.*<<< (?:FAILURE|ERROR)!\n'
+                             r'(\S*?(?:Error|Exception)\b:?[ \t]*)([^\n]*)\n?([^\n]*)', text, re.M):
+            message = (f.group(3) or f.group(4)).strip() or f.group(2).rstrip(': ')
+            method = f.group(1).rsplit('.', 1)[-1]
+            failed.add(re.sub(r'\d+', 'N', f'{method}: {message}')[:160])
         records.append({'sha': sha, 'check': 'unit', 'metric': f'{suite} failing',
                         'value': int(m.group(2)) + int(m.group(3)), 'unit': 'tests', 'of': int(m.group(1)),
-                        'names': failed + budgets})
+                        'names': sorted(failed)})
     return records
 
 
