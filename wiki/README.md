@@ -8,6 +8,7 @@
 |---|---|
 | [retro.md](retro.md) | Lessons from once-campfire-java and stable-diffusion.cpp, and the standing rules for this project |
 | [plan.md](plan.md) | Goal, precedents (graalphp, HHVM, PeachPie, TruffleRuby), architecture, size estimate, gates 0–4, risks |
+| [checks.md](checks.md) | One entry point for a build's checks (bench/check): levels L0-L2, builds by commit, the host's preflight, one results store, the report against the base |
 | [decisions.md](decisions.md) | Numbered decisions with the reason for each |
 | [graalphp-assessment.md](graalphp-assessment.md) | Why graalphp is a reference, not a base to fork |
 | [gate-1.md](gate-1.md) | Gate 1 spec, method, go/no-go criteria and status log |
