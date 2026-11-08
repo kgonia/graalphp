@@ -16,6 +16,10 @@ Every claim about a change (it works, it is as fast, it uses no more memory, it 
 | performance, memory or compiled code in question | `CONTROL=1 bench/check/check.sh l2 REF` |
 | a PR's description | the report, `target/check/report-SHA-BASE.md` |
 
+- Checks run in their own checkout, `C:/Users/krzgo/Projects/wordpress-checkhost` (made once by
+  `bench/check/check.sh setup`), which every run sets to origin/main's tools: every agent measures with the same
+  scripts, and each result records their commit. That checkout belongs to `check.sh`; changes to the tools go
+  through a branch and a PR.
 - The base is REF's merge-base with origin/main unless `--base` names another. An option goes to a build through
   `JAVA_OPTS_REF` (l2) or `JAVA_OPTS` (l1).
 - A "worse" verdict blocks the merge. Fix it, or name it in the PR as the owner's decision.

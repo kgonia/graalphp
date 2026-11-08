@@ -35,6 +35,17 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
 
 ## Pieces
 
+- **The checks' checkout** (`check.sh setup`, `WORK`, default `C:/Users/krzgo/Projects/wordpress-checkhost`): a
+  worktree used by nothing else. `setup` copies the data git doesn't hold from the main checkout (`SEED`), once:
+  - Gate 1's `bench/gate1/wordpress` and `data`;
+  - Gate 2's site (`target/gate2`, `target/ast`);
+  - the WordPress suite's `wordpress-develop` and PHP's reference run;
+
+  about 700 MB in all. Every `l0`, `l1` and `l2` first fetches, sets WORK to `TOOLS` (default `origin/main`) and
+  runs `check.sh` again from there. The harness scripts are then the same for every agent. Each result records
+  their commit (`tools`), and the report flags a build and a base measured with different tools. WORK with changes
+  to tracked files stops the run. Until the tools are on main, `TOOLS=origin/checks` runs them from their branch.
+
 - **Builds** (`check.sh build REF`): a detached worktree `target/check/src-SHA` per commit, built once on the
   P-cores. The output goes to `target/classes-SHA` and `target/lib-SHA` (`classes-SHA.commit` holds the full
   commit), names that `bench/gate1/ab.sh` and `bin-php.sh` (`PHP_CLASSES`) already understand. Every timed run uses the

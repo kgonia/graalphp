@@ -15,9 +15,14 @@
 # BASE defaults to REF's merge-base with origin/main, or REF's first parent when REF is on main. Every level builds
 # what it needs first, appends its results to WORK/target/check/results.jsonl (results.py) and prints the report.
 #
-# WORK (default the main checkout, C:/Users/krzgo/Projects/wordpress) holds the data the gates need and that git
-# doesn't (bench/gate1/wordpress and data, target/gate2/wordpress, target/ast); its bench/gate1 and tests/gate2
-# scripts run them. Host-side work (the build, unit tests, smoke's JVMs) runs on the P-cores only (start /affinity
+#   setup                       make WORK once: a worktree of its own, and the data git doesn't hold copied from SEED
+#
+# WORK (default C:/Users/krzgo/Projects/wordpress-checkhost) is the checks' own checkout, used by nothing else. It
+# holds the data the gates need (bench/gate1/wordpress and data, target/gate2, target/ast, target/wp-phpunit's
+# wordpress-develop and PHP's reference run, copied once from SEED, default the main checkout) and the builds. Every
+# l0, l1 and l2 first sets WORK to TOOLS (default origin/main, fetched) and runs from there: the scripts, the
+# harnesses and this file are TOOLS', the same for every agent, and each result records TOOLS' commit. WORK with
+# changes to tracked files stops the run. Host-side work (the build, unit tests, smoke's JVMs) runs on the P-cores only (start /affinity
 # C03C03: LPs 0, 1, 10-13, 22, 23), so it stays off the E-cores, where the WSL VM and the timed runs are. A check run
 # refuses to start beside another (target/check/run.pid); L2 runs preflight.py perf before every timed run.
 # CONTROL=1 adds BASE a second time to Gate 1 (an A/A arm: how far two identical builds differ in this run; on
@@ -27,29 +32,45 @@
 set -euo pipefail
 export PATH=/usr/bin:/bin:/mingw64/bin:$PATH
 here=$(cd "$(dirname "$0")" && pwd)
-WORK=${WORK:-/c/Users/krzgo/Projects/wordpress}
+WORK=${WORK:-/c/Users/krzgo/Projects/wordpress-checkhost}
+SEED=${SEED:-/c/Users/krzgo/Projects/wordpress}
+TOOLS=${TOOLS:-origin/main}
+args=("$@")
 export JAVA_HOME=${JAVA_HOME:-$HOME/.jdks/graalvm-25.4.4.1.1+1.1}
 MVN=${MVN:-/c/Users/krzgo/.m2/wrapper/dists/apache-maven-3.9.16/0daed3be3ebd1c706f0e69e8b07c6b73f5cc4ea3dfce72a8d0ec2e849ca2ddb0/bin/mvn}
 MEMLOCK="python C:/Users/krzgo/Projects/memory-lock/memlock.py"
 CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
 PY="python -I"
-cd "$WORK"
-mkdir -p target/check
 
-command=${1:-}; shift || true
-ref=HEAD base=
-while [ $# -gt 0 ]; do
-  case $1 in
-    --base) base=$2; shift 2 ;;
-    *) ref=$1; shift ;;
-  esac
-done
-sha=$(git rev-parse --short=7 "$ref^{commit}")
-if [ -z "$base" ]; then
-  base=$(git merge-base "$sha" origin/main)
-  [ "$(git rev-parse "$base")" != "$(git rev-parse "$sha")" ] || base=$(git rev-parse "$sha^1")
-fi
-base=$(git rev-parse --short=7 "$base^{commit}")
+setup() { # WORK: a worktree of SEED's repository at TOOLS, and SEED's data (what exists already is kept)
+  if [ ! -e "$WORK/.git" ]; then
+    git -C "$SEED" fetch -q origin
+    git -C "$SEED" worktree add --detach "$WORK" "$TOOLS"
+  fi
+  local d
+  for d in bench/gate1/wordpress bench/gate1/data target/gate2 target/ast target/wp-phpunit/wordpress-develop \
+      target/wp-phpunit/runs/php-all-chunked target/wp-phpunit/lib-extra target/wp-phpunit/composer.phar; do
+    if [ ! -e "$WORK/$d" ] && [ -e "$SEED/$d" ]; then
+      mkdir -p "$(dirname "$WORK/$d")"
+      echo "copying $d"
+      on_pcores cp -r "$SEED/$d" "$WORK/$d"
+    fi
+  done
+  echo "WORK $WORK ready at $(git -C "$WORK" rev-parse --short=7 HEAD)"
+}
+sync_tools() { # WORK at TOOLS, then this script from there (once); every result records TOOLS' commit
+  git -C "$WORK" fetch -q origin
+  if [ -n "$(git -C "$WORK" status --porcelain --untracked-files=no)" ]; then
+    echo "WORK ($WORK) has changes to tracked files: it runs only TOOLS as committed. Stopping."
+    git -C "$WORK" status --short --untracked-files=no | head
+    exit 3
+  fi
+  git -C "$WORK" checkout -q --detach "$TOOLS"
+  export CHECK_TOOLS=$(git -C "$WORK" rev-parse --short=7 HEAD)
+  if [ -z "${CHECK_REEXEC:-}" ] && [ "$here" != "$WORK/bench/check" ] && [ -f "$WORK/bench/check/check.sh" ]; then
+    CHECK_REEXEC=1 exec bash "$WORK/bench/check/check.sh" "${args[@]}"
+  fi
+}
 
 reserve() { # NAME GB TTL-minutes NOTE: a reservation, or stop
   $MEMLOCK acquire "claude-check-$1" --gb "$2" --wait --ttl "$3" --note "check: $4" > /dev/null \
@@ -73,13 +94,42 @@ on_pcores() { # COMMAND...: run with the host's P-cores only (its children inher
 }
 running() { # take the run's pidfile, or stop (preflight checks it too)
   local pidfile=target/check/run.pid
-  if [ -f $pidfile ] && ps -p "$(cut -d' ' -f1 $pidfile)" > /dev/null 2>&1; then
+  local pid
+  pid=$(cut -d' ' -f1 $pidfile 2> /dev/null || true)
+  # the same pid is this run itself, after sync_tools' exec
+  if [ -n "$pid" ] && [ "$pid" != $$ ] && ps -p "$pid" > /dev/null 2>&1; then
     echo "another check run is active: $(cat $pidfile)"; exit 3
   fi
   echo "$$ $command $sha $(date '+%F %T')" > $pidfile
   export CHECK_RUN_PID=$$
   trap 'rm -f target/check/run.pid' EXIT
 }
+
+command=${1:-}; shift || true
+if [ "$command" = setup ]; then
+  setup
+  exit 0
+fi
+[ -e "$WORK/.git" ] || { echo "no WORK at $WORK: run bench/check/check.sh setup first"; exit 2; }
+# REF and BASE are resolved where the command was given (HEAD is the caller's), then passed on as commits
+ref=HEAD base=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --base) base=$2; shift 2 ;;
+    *) ref=$1; shift ;;
+  esac
+done
+git rev-parse --git-dir > /dev/null 2>&1 || cd "$WORK"
+sha=$(git rev-parse "$ref^{commit}")
+if [ -z "$base" ]; then
+  base=$(git merge-base "$sha" origin/main)
+  [ "$base" != "$sha" ] || base=$(git rev-parse "$sha^1")
+fi
+base=$(git rev-parse "$base^{commit}")
+args=("$command" "$sha" --base "$base")
+sha=${sha:0:7} base=${base:0:7}
+cd "$WORK"
+mkdir -p target/check
 
 build() { # SHA: classes-SHA, lib-SHA and the source worktree, once
   local s=$1 src=target/check/src-$1
@@ -249,12 +299,12 @@ report() {
 
 case $command in
   build) build "$sha" ;;
-  l0) running; preflight correct; l0 "$sha"
+  l0) running; sync_tools; preflight correct; l0 "$sha"
       # the base's results, for the ratchets, unless the store has them
       grep -q "\"sha\": \"$base\", \"check\": \"smoke\"" target/check/results.jsonl 2> /dev/null || l0 "$base"
       report ;;
-  l1) running; preflight correct; l1 "$sha"; report ;;
-  l2) running; l2 "$sha" "$base"; report ;;
+  l1) running; sync_tools; preflight correct; l1 "$sha"; report ;;
+  l2) running; sync_tools; l2 "$sha" "$base"; report ;;
   report) report ;;
   *) sed -n "2,/^set -euo/p" "$0" | sed "$ d"; exit 2 ;;
 esac

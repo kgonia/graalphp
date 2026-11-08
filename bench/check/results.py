@@ -41,6 +41,8 @@ def append(records, level, host):
     with open(STORE, 'a', encoding='utf-8') as out:
         for r in records:
             r = {'t': now, 'level': level, **r}
+            if os.environ.get('CHECK_TOOLS'):
+                r['tools'] = os.environ['CHECK_TOOLS']  # the commit of the scripts that measured it (check.sh)
             if host:
                 r['host'] = host
             out.write(json.dumps(r) + '\n')

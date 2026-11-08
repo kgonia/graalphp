@@ -118,6 +118,12 @@ def main():
             if verdict:
                 verdicts[verdict] += 1
         lines += [''] + notes + ([''] if notes else [])
+        tools = {r['tools'] for _, r in by_check[check] if 'tools' in r}
+        tools |= {theirs[k]['tools'] for k, _ in by_check[check] if k in theirs and 'tools' in theirs[k]}
+        if len(tools) > 1:
+            lines += [f"**Measured with different tools ({', '.join(sorted(tools))}): rerun one side.**", '']
+        elif tools:
+            lines += [f'Tools: {tools.pop()}', '']
         hosts = {json.dumps(r['host'], sort_keys=True) for _, r in by_check[check] if 'host' in r}
         if hosts:
             lines += [f'Host: {h}' for h in sorted(hosts)] + ['']
