@@ -99,4 +99,7 @@ $t('PIPE', function () { echo make('bm') |> (fn($x) => $x->n), " after "; });
 $t('NEW args', function () { $o = new D(new D('bn')); echo "made "; $o = null; echo "after "; });
 $t('ARRAY_KEY_EXISTS', function () { echo array_key_exists(0, arr('bo')) ? 'y ' : 'n ', "after "; });
 $t('IN_ARRAY', function () { echo in_array(1, [make('bp'), 1], true) ? 'y ' : 'n ', "after "; });
+$t('ASSIGN_OP (.=) expression', function () { $s = 'x'; echo ($s .= make('bq')), " after "; });
+$t('ASSIGN_OP (.=) in place', function () { $s = str_repeat('x', 5000); $s .= 'y'; $s .= make('br'); $s .= make('bs'); echo strlen($s), " after "; });
+$t('ASSIGN_OP (.=) loop', function () { $s = ''; for ($k = 0; $k < 3; $k++) { $s .= make("bt$k"); } echo "$s after "; });
 echo "end\n";

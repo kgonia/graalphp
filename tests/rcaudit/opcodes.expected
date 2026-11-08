@@ -65,4 +65,7 @@
 65 NEW args: made ~sbn ~bn after |
 66 ARRAY_KEY_EXISTS: ~bo y after |
 67 IN_ARRAY: ~bp y after |
+68 ASSIGN_OP (.=) expression: ~bq xsbq after |
+69 ASSIGN_OP (.=) in place: ~br ~bs 5007 after |
+70 ASSIGN_OP (.=) loop: ~bt0 ~bt1 ~bt2 sbt0sbt1sbt2 after |
 end
