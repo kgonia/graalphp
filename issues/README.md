@@ -8,7 +8,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [002](002-by-ref-magic-get.md) | `&__get` and `&offsetGet` aren't written through | Fixed |
 | [003](003-class-early-binding.md) | Top-level classes aren't bound early | Fixed |
 | [004](004-generator-resume-reevaluates.md) | A resumed generator evaluates the yielding statement again | Fixed on bytecode; open for generators left on the tree |
-| [005](005-destructors.md) | Destructors never run | Open: design written, the owner decides (option A recommended) |
+| [005](005-destructors.md) | Destructors never run | Open: decided, exact semantics (option A); prototype gaps in 036 |
 | [006](006-compile-time-jump-checks.md) | Compile-time errors for jumps and try aren't raised | Fixed; the compile-time `continue` warnings open |
 | [007](007-goto-over-try-file-level.md) | A goto over a try at file level escapes as a Java exception | Fixed; a goto into an if, try or catch at the top level open |
 | [008](008-builtin-arity.md) | Built-in functions don't check their argument count | Fixed |
@@ -37,3 +37,21 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [031](031-fiber.md) | No Fiber class | Open |
 | [032](032-sensitive-parameter.md) | #[\SensitiveParameter] doesn't redact arguments in traces | Open |
 | [033](033-unknown-named-zpp-order.md) | A variadic built-in refuses extra names before its fixed parameters' type errors | Open |
+| [034](034-mb-8bit-encoding.md) | mbstring functions refuse the 8bit encoding, so comments can't be posted | Open |
+| [035](035-lazy-parse-break-error.md) | The lazy parse reads `break_error_001`'s function body eagerly (`mvn test` fails on main) | Open |
+| [036](036-refcount-prototype-gaps.md) | Known gaps of the object refcount prototype (destructors) | Open (work for 005) |
+| [037](037-object-number-compare-notice.md) | Comparing an object with a number raises no notice | Open |
+| [038](038-string-offset-write.md) | Writing a string offset (`$s[i] = 'c'`) throws "Cannot use a scalar value as an array" | Open |
+| [039](039-private-property-shadowed.md) | A subclass's property hides its parent's private property in the parent's methods | Open |
+| [040](040-closure-scope-from-class.md) | `Closure::call`, `bind` and `bindTo` don't change the scope of a closure made in a class | Open |
+| [041](041-reflection-parameter-default.md) | `ReflectionParameter::getDefaultValue()` and its family are missing (404 WP tests) | Open |
+| [042](042-var-export-recursion.md) | `var_export` doesn't warn about circular references, and hangs on a WordPress value | Open |
+| [043](043-ref-to-this-in-array-args.md) | `array(&$this)` loses its reference when passed on to a by-reference callback | Open |
+| [044](044-version-compare-operators.md) | `version_compare` refuses the `=` operator | Open |
+| [045](045-array-unique-sort-regular.md) | `array_unique(..., SORT_REGULAR)` on arrays of arrays warns and removes the wrong elements | Open |
+| [046](046-mb-strlen-invalid-utf8.md) | `mb_strlen` counts invalid UTF-8 differently from PHP 8.3+ | Open |
+| [047](047-shebang-line.md) | A script's `#!` line isn't skipped | Open |
+| [048](048-splobjectstorage-offsetset-arity.md) | `SplObjectStorage::offsetSet($object)` requires a second argument | Open |
+| [049](049-missing-extensions-wp-suite.md) | Extensions and built-ins that WordPress's test suite needs and the runtime lacks | Open |
+| [050](050-launcher-stdin-slf4j.md) | The launcher can't run a script from stdin; every JVM prints an SLF4J notice on stderr | Open |
+| [051](051-wp-suite-undiagnosed.md) | WordPress PHPUnit suite: differences not diagnosed yet | Open |
