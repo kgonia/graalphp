@@ -20,7 +20,7 @@ MEMLOCK="python C:/Users/krzgo/Projects/memory-lock/memlock.py"
 NAME=claude-wordpress-destructors-audit
 $MEMLOCK acquire $NAME --gb 4 --timeout 0 --ttl 90 --note "wordpress-destructors: WordPress rc audit (CPUs 6-13)" \
   || { echo "no memlock reservation: stopping"; exit 3; }
-trap 'docker rm -f rca1 > /dev/null 2>&1 || true; $MEMLOCK release $NAME > /dev/null 2>&1 || true' EXIT
+trap 'docker logs rca1 > $out/server.log 2>&1 || true; docker rm -f rca1 > /dev/null 2>&1 || true; $MEMLOCK release $NAME > /dev/null 2>&1 || true' EXIT
 mkdir -p $out/pages && rm -f $out/wp-audit.txt $out/pages/*
 docker rm -f rca1 > /dev/null 2>&1 || true
 MSYS_NO_PATHCONV=1 docker run -d --name rca1 --cpuset-cpus 6-13 -e GATE2_DB_HOST=${DB_HOST:-172.17.0.2:3306} \

@@ -191,27 +191,41 @@ public final class PhpArray implements TruffleObject {
      * thousands, the explicit stack of releaseDeep).
      */
     private void releaseElements(int depth) {
-        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
-            Object raw = rawAt(p);
-            if (raw instanceof PhpArray nested) {
-                if (nested.holders == 1 && nested.holdsCounted) {
-                    // its last holder goes: released in place (removeHolder's lastHolderGone)
-                    nested.holders = RELEASED;
-                    if (depth < RELEASE_RECURSION) {
-                        nested.releaseElements(depth + 1);
-                    } else {
-                        nested.releaseDeep();
-                    }
-                } else {
-                    nested.removeHolder();
-                }
-            } else if (raw instanceof PhpObject object) {
-                object.release();
-            } else if (raw instanceof PhpClosure closureValue) {
-                closureValue.release();
-            } else if (raw instanceof PhpRef ref) {
-                ref.unbind();
+        // by layout, without rawAt's dispatch per element; longs and doubles hold nothing counted
+        Object elements = store;
+        if (elements instanceof Object[] packed) {
+            for (int i = 0; i < size; i++) {
+                releaseElement(packed[i], depth);
             }
+        } else if (elements instanceof Hash hash) {
+            Object[] entries = hash.entries;
+            for (int i = 0; i < hash.used; i++) {
+                if (entries[2 * i] != null) {
+                    releaseElement(entries[2 * i + 1], depth);
+                }
+            }
+        }
+    }
+
+    private static void releaseElement(Object raw, int depth) {
+        if (raw instanceof PhpArray nested) {
+            if (nested.holders == 1 && nested.holdsCounted) {
+                // its last holder goes: released in place (removeHolder's lastHolderGone)
+                nested.holders = RELEASED;
+                if (depth < RELEASE_RECURSION) {
+                    nested.releaseElements(depth + 1);
+                } else {
+                    nested.releaseDeep();
+                }
+            } else {
+                nested.removeHolder();
+            }
+        } else if (raw instanceof PhpObject object) {
+            object.release();
+        } else if (raw instanceof PhpClosure closureValue) {
+            closureValue.release();
+        } else if (raw instanceof PhpRef ref) {
+            ref.unbind();
         }
     }
 
@@ -346,6 +360,11 @@ public final class PhpArray implements TruffleObject {
     /** The holders, for truffle_refcount (debugging): negative when frozen or released. */
     public int holderCount() {
         return holders;
+    }
+
+    /** Released (its last holder went: its elements gave their counts up), for the refcount census. */
+    boolean isReleased() {
+        return holders == RELEASED;
     }
 
     /** Frozen (shared, its holders uncounted), for the refcount census. */

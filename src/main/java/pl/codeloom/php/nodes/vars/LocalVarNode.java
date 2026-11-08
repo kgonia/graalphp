@@ -278,8 +278,9 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Variables.released(storedObject(frame));
+        Object old = storedObject(frame);
         frame.clear(slot);
+        Variables.released(old);
     }
 
     @Override

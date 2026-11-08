@@ -59,6 +59,9 @@ final class Census {
             return false;
         }
         checked++;
+        if (AUDIT) {
+            return heldAtZero(object);
+        }
         String path = pathTo(object);
         if (path == null) {
             return false;
@@ -70,6 +73,31 @@ final class Census {
         if (seen == 1 && sites.size() <= MAX_REPORTS) {
             System.err.println("rc-verify: " + object.getPhpClass().getName() + " #" + object.id()
                     + " reached zero but is reachable via " + path + "\n    in " + calls);
+        }
+        return true;
+    }
+
+    /**
+     * With the audit's tracking: the audit's walk (the holders php-src counts: a variable or temporary, an element,
+     * a property, a capture, a generator's frame, the values built-ins keep...) at the moment the count reached
+     * zero. A counted holder reachable from the roots means the destructor would run while php-src's count is still
+     * above zero: early, whatever the program prints. Needs no run of PHP to compare with.
+     */
+    private static boolean heldAtZero(PhpObject object) {
+        Findings f = check(PhpContext.get(null), true, null, null);
+        int[] counted = f.walk.holders.get(object);
+        Node node = f.walk.seen.get(object);
+        if (counted == null || counted[0] == 0 || node == null || !node.fromRoot) {
+            return false;
+        }
+        reachable++;
+        String calls = calls();
+        String site = object.getPhpClass().getName() + " at " + calls;
+        int seen = sites.merge(site, 1, Integer::sum);
+        if (seen == 1 && sites.size() <= MAX_REPORTS) {
+            System.err.println("rc-verify: EARLY " + object.getPhpClass().getName() + " #" + object.id()
+                    + " reached zero with " + counted[0] + " counted holder(s), via " + node.path() + "\n    in "
+                    + calls);
         }
         return true;
     }
@@ -285,7 +313,8 @@ final class Census {
             if (value instanceof PhpRef ref) {
                 slots.slot("&", ref.get(), 1);
             } else if (value instanceof PhpArray array) {
-                int weight = array.isFrozen() ? 0 : 1;
+                // a released array's elements gave their counts up (it may still be on its way to a holder)
+                int weight = array.isFrozen() || array.isReleased() ? 0 : 1;
                 for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                     slots.slot("[" + array.keyAt(p) + "]", array.rawAt(p), weight);
                 }
@@ -376,7 +405,7 @@ final class Census {
      * gone again by the script's end; these points see it.
      */
     private static final int AUDIT_EVERY = Integer.getInteger("php.rc.audit.every", 0);
-    static final boolean AUDIT_POINTS = AUDIT && AUDIT_EVERY > 0;
+    static final boolean AUDIT_POINTS = AUDIT && (AUDIT_EVERY > 0 || VERIFY);
     private static long statementEnds;
     private static int pointAudits;
     /** The points' findings until the script's end, by kind, class and where the object was made. */
@@ -416,7 +445,8 @@ final class Census {
     /** A statement ended (AuditPoint): every n-th one, the counts are audited with the frames as roots. */
     @TruffleBoundary
     static void auditPoint(com.oracle.truffle.api.frame.MaterializedFrame innermost, com.oracle.truffle.api.bytecode.BytecodeNode innermostBytecode) {
-        if (++statementEnds % AUDIT_EVERY != 0) {
+        if (AUDIT_EVERY == 0 || ++statementEnds % AUDIT_EVERY != 0) {
+            // points only for the verify mode's cleared slots
             return;
         }
         PhpContext context = PhpContext.get(null);
@@ -524,7 +554,10 @@ final class Census {
                     for (int i = 0; i < locals.length; i++) {
                         // a temporary sent as an argument: php-src moved it into the call
                         int[] sent = i >= variables ? sentTemporaries.get(locals[i]) : null;
-                        int weight = sent != null && sent[0] > 0 ? 0 : 1;
+                        // a list()'s source and elements hold uncounted
+                        boolean owning = !(code instanceof pl.codeloom.php.bytecode.PhpBytecodeRootNode r)
+                                || !r.isUncounted(i);
+                        int weight = !owning || sent != null && sent[0] > 0 ? 0 : 1;
                         if (weight == 0 && freedOf(locals[i])) {
                             // an argument's temporary keeps what the callee took uncounted, to its statement's end
                             continue;
@@ -608,6 +641,10 @@ final class Census {
                 if (!fromRoot) {
                     f.garbage++;
                 }
+                continue;
+            } else if (rc == 0 && expected == 0 && sentTemporaries.containsKey(object)) {
+                // an argument moved into a call that hasn't started yet (a later argument runs): its count is in
+                // flight, as php-src's is in the call frame's slot
                 continue;
             } else if (rc == 0 && expected == 0) {
                 f.zeroUnfreed++;

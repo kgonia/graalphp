@@ -9,7 +9,9 @@ through the callers, the chain of methods partial evaluation inlined. Each node 
 - for its method: the innermost method of the project (pl.codeloom), else the innermost of any,
 - inclusively, once for every project method on its chain.
 
-summarize DIR OUT.json   reads DIR/*.bgv (bench/ir-attribution/dump.sh writes them), writes the counts per tier
+summarize DIR OUT.json [--function NAME] [--graph TITLE]   reads DIR/*.bgv (dump.sh writes them), writes the counts
+    per tier (of one PHP function's compilations only, with --function; of another phase's graph, with --graph, e.g.
+    "After low tier")
 report A.json [B.json] [--top N] [--tier 1|2]   the counts of A, or B against A (B - A, by how much each grew)
 """
 import collections
@@ -42,16 +44,18 @@ def operation(chain):
     return '(prologue)'
 
 
-def summarize(directory, out):
+def summarize(directory, out, function_filter=None, graph=GRAPH):
     counts = {}
     for path in sorted(glob.glob(os.path.join(directory, '*.bgv'))):
         for groups, title, nodes in bgv.read(path):
-            if title != GRAPH or not groups or 'AST' in groups[-1] or 'Call Tree' in groups[-1]:
+            if title != graph or not groups or 'AST' in groups[-1] or 'Call Tree' in groups[-1]:
                 continue
             m = re.match(r'TruffleIR\.Tier(\d)\.(.*)', groups[-1])
             if not m:
                 continue
             tier, function = m.group(1), m.group(2)
+            if function_filter and not function.startswith(function_filter):
+                continue
             c = counts.setdefault(tier, {'nodes': 0, 'functions': collections.Counter(), 'ops': collections.Counter(),
                                          'self': collections.Counter(), 'inclusive': collections.Counter(),
                                          'compilations': 0})
@@ -120,8 +124,17 @@ if __name__ == '__main__':
         i = args.index('--tier')
         tiers = {args[i + 1]}
         del args[i:i + 2]
+    function_filter = graph = None
+    if '--function' in args:
+        i = args.index('--function')
+        function_filter = args[i + 1]
+        del args[i:i + 2]
+    if '--graph' in args:
+        i = args.index('--graph')
+        graph = args[i + 1]
+        del args[i:i + 2]
     if args and args[0] == 'summarize':
-        summarize(args[1], args[2])
+        summarize(args[1], args[2], function_filter, graph or GRAPH)
     elif args and args[0] == 'report':
         report(args[1], args[2] if len(args) > 2 else None, top, tiers)
     else:

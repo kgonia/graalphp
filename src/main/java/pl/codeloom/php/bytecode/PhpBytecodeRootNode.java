@@ -221,6 +221,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
      * at the function's, in compiled code (most of a function's calls return strings, arrays and scalars).
      */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesHeld = new boolean[0];
+    /** The hidden locals that hold a value uncounted (a list()'s source and elements), for the count audit. */
+    private int[] uncountedOffsets = new int[0];
+
+    /** Whether the local at offset holds its value uncounted, for the count audit. */
+    public boolean isUncounted(int offset) {
+        for (int o : uncountedOffsets) {
+            if (o == offset) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The hidden local of the extra arguments the frame took (TakeExtraArguments), or null. */
     @CompilationFinal private LocalAccessor extraArguments;
     /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
@@ -286,7 +299,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /** The hidden locals of the owning temporaries (see {@link #temporaries}). */
-    public void initializeTemporaries(LocalAccessor[] temporaryLocals, boolean[] moved, LocalAccessor extras) {
+    public void initializeTemporaries(LocalAccessor[] temporaryLocals, boolean[] moved, LocalAccessor extras,
+                                      int[] uncounted) {
+        this.uncountedOffsets = uncounted;
         this.temporaries = temporaryLocals;
         this.temporariesHeld = new boolean[temporaryLocals.length];
         this.temporaryReleases = new byte[temporaryLocals.length];
@@ -866,7 +881,42 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
     public static final class BindParameter {
-        @Specialization
+        // by the argument's kind (a by-value parameter's), so a parameter compiles only the kinds it was passed
+        @Specialization(guards = "!byRef(root, index)")
+        public static void bindLong(VirtualFrame frame, LocalAccessor variable, int index, long argument,
+                                    @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            variable.setLong(bytecode, frame, argument);
+        }
+
+        @Specialization(guards = "!byRef(root, index)")
+        public static void bindDouble(VirtualFrame frame, LocalAccessor variable, int index, double argument,
+                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            variable.setDouble(bytecode, frame, argument);
+        }
+
+        @Specialization(guards = "!byRef(root, index)")
+        public static void bindString(VirtualFrame frame, LocalAccessor variable, int index,
+                                      com.oracle.truffle.api.strings.TruffleString argument,
+                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            variable.setObject(bytecode, frame, argument);
+        }
+
+        @Specialization(guards = "!byRef(root, index)")
+        public static void bindArray(VirtualFrame frame, LocalAccessor variable, int index, PhpArray argument,
+                                     @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            argument.addHolder();
+            variable.setObject(bytecode, frame, argument);
+        }
+
+        @Specialization(guards = "!byRef(root, index)")
+        public static void bindObject(VirtualFrame frame, LocalAccessor variable, int index, PhpObject argument,
+                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            // SEND_VAR's copy, released with the variables
+            argument.addRef();
+            variable.setObject(bytecode, frame, argument);
+        }
+
+        @Specialization(replaces = {"bindLong", "bindDouble", "bindString", "bindArray", "bindObject"})
         public static void bind(VirtualFrame frame, LocalAccessor variable, int index, Object argument,
                                 @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
             PhpFunction.Param param = root.params[index];
@@ -886,6 +936,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 closureValue.addRef();
             }
             Locals.initialize(frame, variable, bytecode, value);
+        }
+
+        static boolean byRef(PhpBytecodeRootNode root, int index) {
+            return root.params[index].byRef();
         }
     }
 
@@ -2916,26 +2970,55 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /**
      * An operation that used the owning temporaries of its operands (php-src's FREE_OP once the opcode computed its
-     * result): they are released after it, before its value is used. borrowing: a property's or an element's read,
-     * whose value here is the container's own (php-src copies it): when it is an object, an array or a reference,
-     * the temporaries go with the enclosing operation's instead (the translator lists them there too).
+     * result): they are released after it, before its value is used. kind:
+     * - CONSUMES: all of them.
+     * - BORROWS: a property's or an element's read, whose value here is the container's own (php-src copies it):
+     *   when it is an object, an array or a reference, none; they go with the enclosing operation's instead (the
+     *   translator lists them there too).
+     * - PASSES: `(array)` of an array, whose value is the operand itself (php-src's ZVAL_COPY): the temporary that
+     *   holds it goes with the enclosing operation's.
+     * - TAKES: a read whose value goes to an owning temporary of its own (StoreTemp): counted first, as php-src's
+     *   copy, then all of them released; an array, once its container let it go, is that temporary's (a TMP with
+     *   its elements' counts, removeReturnedHolder). A reference keeps them, as BORROWS.
      */
     @Operation
     @ConstantOperand(type = Temporaries.class, name = "temps", specifyAtEnd = true)
-    @ConstantOperand(type = boolean.class, name = "borrowing", specifyAtEnd = true)
+    @ConstantOperand(type = int.class, name = "kind", specifyAtEnd = true)
     public static final class ReleaseAfter {
+        public static final int CONSUMES = 0;
+        public static final int BORROWS = 1;
+        public static final int PASSES = 2;
+        public static final int TAKES = 3;
+
         @Specialization
         @ExplodeLoop
-        public static Object release(VirtualFrame frame, Object value, Temporaries temps, boolean borrowing,
+        public static Object release(VirtualFrame frame, Object value, Temporaries temps, int kind,
                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
-            if (borrowing && (value instanceof PhpObject || value instanceof PhpArray || value instanceof PhpRef
-                    || value instanceof PhpClosure)) {
+            if (kind == BORROWS && (value instanceof PhpObject || value instanceof PhpArray || value instanceof PhpRef
+                    || value instanceof PhpClosure) || kind == TAKES && value instanceof PhpRef) {
                 return value;
+            }
+            if (kind == TAKES) {
+                if (value instanceof PhpObject object) {
+                    object.addRef();
+                } else if (value instanceof PhpClosure closure) {
+                    closure.addRef();
+                } else if (value instanceof PhpArray array) {
+                    array.addHolder();
+                }
             }
             int[] indices = temps.indices;
             for (int i = 0; i < indices.length; i++) {
                 int index = indices[i];
-                ReleaseTemp.release(frame, root.temporaries[index], index, root, bytecode);
+                LocalAccessor temporary = root.temporaries[index];
+                if (kind == PASSES && root.temporariesHeld[index] && !temporary.isCleared(bytecode, frame)
+                        && temporary.getObject(bytecode, frame) == value) {
+                    continue;
+                }
+                ReleaseTemp.release(frame, temporary, index, root, bytecode);
+            }
+            if (kind == TAKES && value instanceof PhpArray array) {
+                array.removeReturnedHolder();
             }
             return value;
         }
@@ -2962,6 +3045,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (held instanceof PhpArray array) {
                     // php-src frees a TMP array once used: one nothing took gives its elements up
                     root.temporaryReleased(index, RELEASED_ARRAY);
+                    if (root.temporariesMoved[index]) {
+                        // sent to a built-in whose call never started (Refcount.toBuiltin)
+                        Refcount.moved(array);
+                    }
                     array.releaseTemporary();
                 } else if (root.temporariesMoved[index]) {
                     root.temporaryReleased(index, RELEASED_MOVED);

@@ -109,9 +109,12 @@ public final class PhpObject extends DynamicObject {
         if (Census.TRACE) {
             Census.traced(this, "-1");
         }
-        if (count == 0 || gcInfo == 0) {
-            // one out-of-line call for both events (HHVM's decref slow path), not two in every caller's code
-            Refcount.released(this, count);
+        if (count == 0) {
+            Refcount.zero(this);
+        } else if (gcInfo == 0) {
+            // a possible root: a flag, inline (Refcount.possibleRoot)
+            gcInfo = BUFFERED;
+            Refcount.rootStat();
         }
     }
 

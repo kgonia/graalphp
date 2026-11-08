@@ -23,6 +23,9 @@ import java.util.Set;
  * case-sensitive constant and property names, as PHP.
  */
 public final class PhpClass {
+    /** Refcount.freeProperties' layout for the shape its objects last had (immutable, replaced whole). */
+    Refcount.FreeLayout freeLayout;
+
     /**
      * A declared instance property: its default (or a thunk evaluating the constant expression; null for a typed
      * property without one, which starts uninitialized: not in the object), its visibility, the class that

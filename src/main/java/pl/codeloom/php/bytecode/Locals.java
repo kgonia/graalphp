@@ -231,8 +231,10 @@ final class Locals {
     }
 
     static void unset(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode) {
-        Variables.released(stored(frame, variable, bytecode));
+        // cleared first, as ZEND_UNSET_CV's ZVAL_UNDEF before the release: a destructor it runs sees it unset
+        Object old = stored(frame, variable, bytecode);
         variable.clear(bytecode, frame);
+        Variables.released(old);
     }
 
     /**

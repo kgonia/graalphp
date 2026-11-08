@@ -227,7 +227,8 @@ public final class Refcount {
      */
     public static void toBuiltin(PhpFunction function, Object value) {
         if (function.getBuiltin() != null && (value instanceof PhpObject object && object.refcount() == 0
-                || value instanceof PhpClosure closure && closure.refcount() == 0)) {
+                || value instanceof PhpClosure closure && closure.refcount() == 0
+                || value instanceof PhpArray array && array.isTemporary())) {
             movedToBuiltin(value);
         }
     }
@@ -256,6 +257,9 @@ public final class Refcount {
             if (argument instanceof PhpObject object && object.refcount() == 0 && !object.isDestructorCalled()
                     || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed()) {
                 inc(argument);
+                pending.add(argument);
+            } else if (argument instanceof PhpArray array && array.isTemporary()) {
+                // a TMP array: freed after the call unless something took it (releasePending)
                 pending.add(argument);
             }
         }
@@ -300,10 +304,18 @@ public final class Refcount {
 
     @TruffleBoundary
     public static void releasePending(java.util.ArrayList<Object> pending, int mark) {
+        releasePending(pending, mark, null);
+    }
+
+    /** As releasePending, but for a TMP array the call returned (array_values of a list...): the result has it. */
+    @TruffleBoundary
+    public static void releasePending(java.util.ArrayList<Object> pending, int mark, Object result) {
         while (pending.size() > mark) {
             Object value = pending.remove(pending.size() - 1);
             if (value instanceof PhpArray array) {
-                array.releaseTemporary();
+                if (array != result) {
+                    array.releaseTemporary();
+                }
             } else {
                 dec(value);
             }
@@ -362,7 +374,6 @@ public final class Refcount {
     }
 
     /** A decrement's event: the count reached zero, or else the object became a possible root. */
-    @TruffleBoundary
     static void released(PhpObject object, int count) {
         if (count == 0) {
             zero(object);
@@ -449,13 +460,39 @@ public final class Refcount {
     private static void freeProperties(PhpObject object) {
         PhpObject owner = object.propertyOwner();
         PhpClass phpClass = owner.getPhpClass();
-        for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
-            freeProperty(owner.getProperty(decl.name()));
+        com.oracle.truffle.api.object.Shape shape = owner.getShape();
+        FreeLayout layout = phpClass.freeLayout;
+        if (layout == null || layout.shape != shape) {
+            layout = FreeLayout.of(phpClass, shape);
+            phpClass.freeLayout = layout;
         }
-        for (Object name : owner.propertyNames()) {
-            if (!phpClass.isDeclaredProperty((String) name)) {
-                freeProperty(owner.getProperty((String) name));
+        for (com.oracle.truffle.api.object.Location location : layout.locations) {
+            freeProperty(location.get(owner, shape));
+        }
+    }
+
+    /**
+     * The property locations of a shape in freeProperties' order: the declared properties in their order, then the
+     * others in the shape's (a class's objects mostly share one shape: no key lookups per object).
+     */
+    record FreeLayout(com.oracle.truffle.api.object.Shape shape, com.oracle.truffle.api.object.Location[] locations) {
+        static FreeLayout of(PhpClass phpClass, com.oracle.truffle.api.object.Shape shape) {
+            java.util.List<com.oracle.truffle.api.object.Location> locations = new java.util.ArrayList<>();
+            java.util.Set<Object> declared = new java.util.HashSet<>();
+            for (PhpClass.PropertyDecl decl : phpClass.getProperties()) {
+                com.oracle.truffle.api.object.Property property = shape.getProperty(decl.name());
+                if (property != null && declared.add(decl.name())) {
+                    locations.add(property.getLocation());
+                }
             }
+            for (com.oracle.truffle.api.object.Property property : shape.getPropertyList()) {
+                // hidden ones (internal state) stay out, as getKeyArray leaves them out
+                if (!property.isHidden() && !declared.contains(property.getKey()) && !(property.getKey() instanceof String name
+                        && phpClass.isDeclaredProperty(name))) {
+                    locations.add(property.getLocation());
+                }
+            }
+            return new FreeLayout(shape, locations.toArray(new com.oracle.truffle.api.object.Location[0]));
         }
     }
 
@@ -471,12 +508,28 @@ public final class Refcount {
         }
     }
 
-    /** A decrement left the count above zero: php-src's gc_possible_root, which buffers the object once. */
-    @TruffleBoundary
+    /**
+     * A decrement left the count above zero: php-src's gc_possible_root, which buffers the object once. Inline (a
+     * flag): an object passed to an out-of-line call escapes, which kept partial evaluation from removing the
+     * allocation of every object released once. The cycle collector (step 6) finds the flagged objects some other
+     * way than a buffer filled here.
+     */
     static void possibleRoot(PhpObject object) {
         object.buffered();
         if (STATS) {
-            roots++;
+            rootSeen();
         }
+    }
+
+    /** PhpObject.release's possible root, for -Dphp.rc.stats. */
+    static void rootStat() {
+        if (STATS) {
+            rootSeen();
+        }
+    }
+
+    @TruffleBoundary
+    private static void rootSeen() {
+        roots++;
     }
 }
