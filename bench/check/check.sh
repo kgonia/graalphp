@@ -28,7 +28,7 @@
 # CONTROL=1 adds BASE a second time to Gate 1 (an A/A arm: how far two identical builds differ in this run; on
 # 2026-11-08 up to 9% on slugs over 8 rounds, the order's effect included).
 # Options: HOLDS (4), ITERATIONS (400), ROUNDS (6), VISITS (200), JAVA_OPTS_REF / JAVA_OPTS_BASE (e.g.
-# -Dphp.rc.destructors=true), QUIET (preflight's E-core load limit, %), MVN, JAVA_HOME.
+# -Dphp.rc.destructors=true), QUIET (preflight's E-core load limit, %), MVN, CHECK_JAVA_HOME (the JDK).
 set -euo pipefail
 export PATH=/usr/bin:/bin:/mingw64/bin:$PATH
 here=$(cd "$(dirname "$0")" && pwd)
@@ -36,7 +36,8 @@ WORK=${WORK:-/c/Users/krzgo/Projects/wordpress-checkhost}
 SEED=${SEED:-/c/Users/krzgo/Projects/wordpress}
 TOOLS=${TOOLS:-origin/main}
 args=("$@")
-export JAVA_HOME=${JAVA_HOME:-$HOME/.jdks/graalvm-25.4.4.1.1+1.1}
+# the project's JDK, whatever JAVA_HOME the shell has (the host's default is a JDK 21, which can't build release 25)
+export JAVA_HOME=${CHECK_JAVA_HOME:-$HOME/.jdks/graalvm-25.4.4.1.1+1.1}
 MVN=${MVN:-/c/Users/krzgo/.m2/wrapper/dists/apache-maven-3.9.16/0daed3be3ebd1c706f0e69e8b07c6b73f5cc4ea3dfce72a8d0ec2e849ca2ddb0/bin/mvn}
 MEMLOCK="python C:/Users/krzgo/Projects/memory-lock/memlock.py"
 CPU_LOCK=/c/Users/krzgo/Projects/.cpu-14-21.lock
