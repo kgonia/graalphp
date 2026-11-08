@@ -16,6 +16,7 @@ import json
 import os
 import sys
 
+sys.dont_write_bytecode = True  # no __pycache__ in the tools' checkout
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from results import STORE  # noqa: E402
 

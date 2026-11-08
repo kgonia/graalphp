@@ -7,3 +7,5 @@ target/
 .claude/
 bench/gate1/data/
 /bench/truffle/graalvm-linux.tar.gz
+__pycache__/
+*.pyc
