@@ -1663,7 +1663,7 @@ final class FilterFunctions {
                 out.write(b);
             }
         }
-        return out.size() == s.length ? value : Str.of(out.toByteArray());
+        return out.size() == s.length ? value : out.toStr();
     }
 
     /** php_filter_strip: FILTER_FLAG_STRIP_LOW (below 32), _HIGH (127 and up) and _BACKTICK. */
@@ -1693,7 +1693,7 @@ final class FilterFunctions {
                 out.write(b);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /** The bytes FILTER_FLAG_ENCODE_AMP, _LOW and _HIGH add to an encoding set. */
@@ -1760,7 +1760,7 @@ final class FilterFunctions {
                 out.write(HEX_DIGITS[c & 15]);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /** FILTER_SANITIZE_SPECIAL_CHARS (php_filter_special_chars): '"<>& and the bytes below 32 encoded. */

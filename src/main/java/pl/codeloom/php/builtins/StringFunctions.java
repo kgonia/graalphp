@@ -153,7 +153,7 @@ public final class StringFunctions {
                     out.write(0x80 | b & 0x3F);
                 }
             }
-            return Str.of(out.toByteArray());
+            return out.toStr();
         });
         r.fn("utf8_decode", (context, a) -> {
             deprecated(context, "utf8_decode", "8.2, visit the php.net documentation for various alternatives");
@@ -181,7 +181,7 @@ public final class StringFunctions {
                     chars.write(c);
                 }
             }
-            return mode < 3 ? result : Str.of(chars.toByteArray());
+            return mode < 3 ? result : chars.toStr();
         });
         r.fn("str_word_count", (context, a) -> {
             Args.arity(a, "str_word_count", 1, 3);
@@ -609,8 +609,8 @@ public final class StringFunctions {
             PhpArray out = new PhpArray();
             for (int p = subjects.firstPosition(); p >= 0; p = subjects.nextPosition(p)) {
                 Object item = subjects.valueAt(p);
-                out.put(subjects.keyAt(p), item instanceof PhpArray ? item
-                        : replaceOne(Convert.toStr(item), search, replacement, ignoreCase, count));
+                // (an array element converts as any other: "Array", with the warning)
+                out.put(subjects.keyAt(p), replaceOne(Convert.toStr(item), search, replacement, ignoreCase, count));
             }
             result = out;
         } else {
@@ -649,6 +649,7 @@ public final class StringFunctions {
         return result;
     }
 
+    @TruffleBoundary
     static TruffleString replaceAll(TruffleString subject, TruffleString search, TruffleString with,
                                     boolean ignoreCase, long[] count) {
         int searchLength = Str.length(search);
@@ -663,7 +664,8 @@ public final class StringFunctions {
         byte[] s = Str.readBytes(subject);
         byte[] f = Str.readBytes(search);
         byte[] w = Str.readBytes(with);
-        ByteBuilder out = ByteBuilder.borrow(s.length);
+        // sized for the hits so far: the result usually fits without growing, and toStr then wraps the buffer
+        ByteBuilder out = ByteBuilder.borrow(s.length + Math.max(0, w.length - f.length) * 4);
         try {
             int from = 0;
             while (index >= 0) {
@@ -674,7 +676,7 @@ public final class StringFunctions {
                 index = ignoreCase ? indexOf(s, f, from, true) : Str.indexOf(subject, search, from);
             }
             out.write(s, from, s.length - from);
-            return Str.of(out.toByteArray());
+            return out.toStr();
         } finally {
             out.release();
         }
@@ -728,7 +730,7 @@ public final class StringFunctions {
                 out.write(value, 0, value.length);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /**
@@ -777,7 +779,7 @@ public final class StringFunctions {
             return subject;
         }
         out.write(s, copied, s.length - copied);
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1146,21 +1148,17 @@ public final class StringFunctions {
                         + "array given");
             }
         }
-        ByteBuilder out = new ByteBuilder();
-        boolean firstPiece = true;
+        // as php_implode: each piece converted in order, then the lengths summed and the result filled once
+        Object[] parts = new Object[pieces.size()];
+        int count = 0;
         for (int p = pieces.firstPosition(); p >= 0; p = pieces.nextPosition(p)) {
-            if (!firstPiece) {
-                out.write(glue);
-            }
             Object piece = pieces.valueAt(p);
-            if (piece instanceof Long l) {
-                out.writeLong(l);
-            } else {
-                out.write(piece instanceof TruffleString s ? s : Convert.toStr(piece));
-            }
-            firstPiece = false;
+            parts[count++] = piece instanceof Long || piece instanceof TruffleString ? piece : Convert.toStr(piece);
         }
-        return Str.of(out.toByteArray());
+        if (count == 0) {
+            return Str.EMPTY;
+        }
+        return Str.join(glue, count == parts.length ? parts : java.util.Arrays.copyOf(parts, count));
     }
 
     @TruffleBoundary
@@ -1299,7 +1297,7 @@ public final class StringFunctions {
                 out.write(c);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1315,7 +1313,7 @@ public final class StringFunctions {
                 out.write(b[i]);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1349,7 +1347,7 @@ public final class StringFunctions {
                 out.write(c);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1398,7 +1396,7 @@ public final class StringFunctions {
                 }
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1416,7 +1414,7 @@ public final class StringFunctions {
                 out.write(b[i]);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -1437,7 +1435,7 @@ public final class StringFunctions {
                 out.write("0123456789ABCDEF".charAt(u & 15));
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /**
@@ -1510,7 +1508,7 @@ public final class StringFunctions {
                 out.write(b[i]);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary
@@ -2028,7 +2026,7 @@ public final class StringFunctions {
                 d.write(c);
             }
         }
-        return Str.of(d.toByteArray());
+        return d.toStr();
     }
 
     /** quoted_printable_decode: =XX, and soft line breaks (= then spaces or tabs then a line end); to a NUL. */
@@ -2058,7 +2056,7 @@ public final class StringFunctions {
                 out.write(s[i++]);
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /** PHP_UU_ENC. */
@@ -2108,7 +2106,7 @@ public final class StringFunctions {
         }
         p.write(uu(0));
         p.write('\n');
-        return Str.of(p.toByteArray());
+        return p.toStr();
     }
 
     /** PHP_UU_DEC. */
@@ -2479,7 +2477,7 @@ public final class StringFunctions {
             }
             i += skip;
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /** Lookahead: the letter how_far on, or the NUL before it. */

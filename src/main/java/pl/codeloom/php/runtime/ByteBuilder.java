@@ -35,6 +35,8 @@ public final class ByteBuilder {
     private static final int POOLED_FROM = 4096;
     private static final int POOLED_LIMIT = 1 << 22;
     private boolean pooled;
+    /** The buffer is a string's too (toStr): copied before the next write. */
+    private boolean shared;
 
     /** An empty builder for about expected bytes; call release() once its bytes are copied out. */
     public static ByteBuilder borrow(int expected) {
@@ -73,8 +75,9 @@ public final class ByteBuilder {
 
     private void ensure(int extra) {
         int needed = count + extra;
-        if (needed > buf.length) {
-            buf = Arrays.copyOf(buf, Math.max(needed, buf.length * 2));
+        if (needed > buf.length || shared) {
+            buf = Arrays.copyOf(buf, Math.max(needed, shared ? buf.length : buf.length * 2));
+            shared = false;
         }
     }
 
@@ -131,6 +134,7 @@ public final class ByteBuilder {
 
     /** Replaces the last byte written. */
     public void setLast(int b) {
+        ensure(0);
         buf[count - 1] = (byte) b;
     }
 
@@ -145,6 +149,22 @@ public final class ByteBuilder {
 
     public void reset() {
         count = 0;
+    }
+
+    /**
+     * The bytes written, as a string: the buffer itself when it is about full (a later write copies it first),
+     * else one exact copy. Str.of(toByteArray()) copied it, then TruffleString scanned the copy.
+     */
+    @TruffleBoundary
+    public TruffleString toStr() {
+        if (count == 0) {
+            return Str.EMPTY;
+        }
+        if (!pooled && buf.length - count <= Math.max(16, count >>> 3)) {
+            shared = true;
+            return TruffleString.fromByteArrayUncached(buf, 0, count, Str.ENC, false);
+        }
+        return Str.of(buf, 0, count);
     }
 
     public byte[] toByteArray() {

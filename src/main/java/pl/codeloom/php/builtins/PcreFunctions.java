@@ -877,7 +877,7 @@ public final class PcreFunctions {
                 return subjectString;
             }
             out.write(subject, lastEnd, subject.length - lastEnd);
-            return Str.of(out.toByteArray());
+            return out.toStr();
         } finally {
             if (out != null) {
                 out.release();
@@ -1081,7 +1081,7 @@ public final class PcreFunctions {
             }
             out.write(b);
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary

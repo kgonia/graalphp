@@ -332,7 +332,7 @@ public final class Backtrace {
             out.writeLong(number);
             out.writeAscii(" {main}");
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     private static void appendKey(ByteBuilder out, PhpArray entry, TruffleString key) {

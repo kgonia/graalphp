@@ -202,7 +202,7 @@ final class StripTags {
             }
             p++;
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     private static boolean doctype(byte[] b, int p) {

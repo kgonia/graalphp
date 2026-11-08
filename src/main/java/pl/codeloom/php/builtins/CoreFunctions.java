@@ -1337,6 +1337,6 @@ final class CoreFunctions {
                 space = true;
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 }
