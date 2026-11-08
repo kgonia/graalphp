@@ -47,6 +47,13 @@ CPUs 14–21, interleaved, reversing the order each round.
 
 The same work closes `tla-cow.md`'s F3 and F4.
 
+**Status 2026-11-08:**
+- Step 1 is built on `destructors-merged` (1183d27) with destructors at zero behind a flag. Its A/B exceeds every
+  threshold (destructors.md, work order item 7); a re-measure on a quiet machine is pending.
+- Step 3: the reachability check at zero, the count audit (in-degree against count) and the static release diff
+  against php-src's opcodes are built; the audit's WordPress findings are in issue 036, item 8.
+- The work order is in [destructors.md](destructors.md#status-2026-11-06).
+
 ## 6. Store-path tuning, with refcounts in place
 Ownership moves instead of increment/decrement pairs, and borrowed read-only parameters (destructors.md, P2).
 

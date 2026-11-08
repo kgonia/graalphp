@@ -170,3 +170,136 @@ killed. PEA removes counts only on virtualized values: array literals in inlined
 **Why only some objects can't be counted:** memory is still the JVM's GC for every object; the count only decides
 *when* a destructor runs. But any container can receive a destructible object later (`$box`, above), and PHP's
 properties are mostly untyped, so no container can be left uncounted.
+
+## Status (2026-11-06, updated 2026-11-08)
+**Where the code is (2026-11-08):**
+
+| Worktree | Branch | State |
+|---|---|---|
+| `../wordpress-destructors` | `destructors-merged` | **The current work**, pushed (last commit 1183d27), with its PR. It replaces `destructors` (PR #54) and `destructors-b` (PR #53). |
+| `../wordpress-destructors-b` | `destructors-b` | Prototype B (PR #53). An experiment, not to be merged. |
+
+`destructors-merged` is prototype A (counts on the store paths, owning temporaries in hidden locals) plus fixes,
+with B's profiled releases (`Refcount.Releases`) and `truffle_refcount` ported, then the audit, the operand
+releases and the static release diff below.
+
+The untracked `array_count_file` and `test.php` in that worktree are strays, not part of it.
+
+The differential fuzzer is in `tests/fuzz` (`gen.py`, `run.sh`, `compare.py`, `reduce.py`, `triage.py`). Its runs
+go to `target/fuzz/`.
+
+**Built:**
+- Counts on every `PhpObject` (P1's store paths), including properties that built-ins set (`setProperty` and
+  `initProperty` count since 2026-11-06), an exception in flight (`EG(exception)`'s count), and live temporaries
+  released before a `catch` (`cleanup_live_vars`).
+- `-Dphp.rc.destructors=true`: at zero, `__destruct` runs once with the object held (resurrection possible), then
+  the properties release what they hold (`zend_objects_store_del`, `zend_object_std_dtor`). `PhpArray` unlinks an
+  element before releasing it (`zend_hash_del`).
+- `-Dphp.rc.verify=true`: a reachability check at zero. It is **not** the census planned in step 3 above, which
+  compares each value's in-degree with its count. It only finds counts that are too low (objects destroyed early)
+  and can't see counts that are too high (objects destroyed late or never).
+- A differential fuzzer (`tests/fuzz`): generated programs whose destructors print their labels, compared with php-src
+  (OPcache off).
+
+**Results:**
+
+| Check | Result |
+|---|---|
+| Fuzzer, 1000 programs, all features | 915 match php-src |
+| Fuzzer, 1000 programs, without closures | 984 match |
+| Reachability check on Gate 2's WordPress (10 front-end pages, 16 wp-admin pages, REST writes; 6,356 zeros checked) | No early zero found |
+| 2026-11-08, 1183d27: fuzzer seed 1000, 1000 programs, all features | 999 match, no early destructor |
+| 2026-11-08, 1183d27: fixtures `tests/rcaudit/*` against PHP 8.5 with and without OPcache | all lines match one of the two (see the reference note below) |
+| 2026-11-08, 1183d27: count audit on Gate 2's WordPress | no group left |
+
+Performance against `main` hasn't been measured on this branch. `CompilationTest`'s IR budgets fail, as on
+prototype A.
+
+**Checks that don't need PHP (2026-11-08).** Comparing outputs with PHP only finds what a test happens to
+print. Three checks don't depend on that:
+1. **Verify at zero** (`-Dphp.rc.verify=true`, `php.rc.verify.every=n`). When an object's count reaches zero, the
+   census looks for a counted holder that still reaches it (`Census.heldAtZero`). It reports `rc-verify: EARLY
+   ... via PATH`, and every report is a bug. For it to be exact, a slot is cleared before its old value is
+   released, at every release-then-clear site, as php-src does (`unset` was the last one). Results: fuzzer seed
+   1000, every zero checked, 0 reports; Gate 2's WordPress, every 20th zero, 0 reports.
+2. **php-src's rule per opcode.** A destructor runs where an opcode frees a TMP or VAR operand (FREE_OP), or
+   where a moved one dies. The fixtures follow those rules rather than programs:
+   - `tests/rcaudit/opcodes.php`: one case per opcode with a temporary operand, with markers before and after;
+   - `sequence.php`: the free against the next thing the same expression does (a call that echoes).
+   `bench/destructors/opcode_coverage.sh` lists the opcodes the fixtures run with a temporary operand. With
+   `CORPUS=` it also lists the ones WordPress compiles to that no fixture covers. Both come from php-src's own
+   opcode dump, checked against the 130 opcodes of `zend_vm_def.h` that take one.
+   `bench/destructors/release_diff.py` checks the same rule on a whole corpus without running it. For each
+   body it compares, temporary by temporary, the opcode that frees, moves or passes on each TMP/VAR in php-src's
+   dump with the operation that releases it in our translator (`-Dphp.rc.releases=FILE` with
+   `truffle_translate`). Results on 2026-11-08 (1183d27):
+
+   | Corpus | Bodies | Temporaries aligned | Released as php-src | Elsewhere |
+   |---|---:|---:|---:|---:|
+   | Gate 2's WordPress | 14,826 | 101,443 | 93,914 | 1,202 |
+   | Fixtures | 290 | 591 | 582 | 9 |
+
+   831 of WordPress's 1,202 are a `sprintf` with a constant format, which php-src compiles to a rope. The diff
+   checks where values are released, not the counts: `one(...[new D])` released at the right place still
+   destroyed D early, because our argument list doesn't count what it unpacks. The fixtures and the verify at
+   zero cover the counts.
+3. **The count audit** (in-degree against count; item 1 below).
+
+**Reference: PHP with or without OPcache.** The optimizer moves some frees. Of the fixtures' 147 lines, 3 differ
+between the two, and `bench/destructors/fixtures.sh` reports each line against both:
+- `(string) new D` echoed: `~z sz` without OPcache, `sz~z` with it;
+- a match with only a default arm frees its subject first with OPcache;
+- `(string) make() . f()`: the cast is folded into the concatenation.
+The translator models OPcache's concatenation (the smoke test `concat-order` holds `__toString`'s order), so the
+third case follows OPcache and the other two follow PHP without it. The fuzzer runs PHP without OPcache;
+production and Gate 2's php-fpm run with it. **Which one is the reference is the owner's decision.**
+
+**Work order.** Every known gap is required work (D17): a late destructor is as wrong as an early one. Details are in
+issue [036](../issues/036-refcount-prototype-gaps.md).
+1. **Done 2026-11-06 (065bf8f): the count audit** (in-degree against count, at the end and at sampled statement
+   ends). On Gate 2's WordPress it finds 61 groups of late destructors and 14 of early ones; the table and causes
+   are in issue 036, item 8. The order below now follows its findings: the early ones first (generators' counts
+   reaching -1, closures' `$this` with the HTML API's tokens), then the late ones (temporary arrays and built-ins'
+   result arrays, a temporary argument moved into the call, closures' captures).
+2. **Done 2026-11-07 (70fd18e): temporary arrays, casts, and results of PHP code called from Java** (issue 036,
+   items 2-2c). Gate 2's WordPress: no LATE, EARLY or FREED finding left. Left: a fresh object offsetGet or __get
+   returns outside a built-in is released at the request's end.
+   **Done 2026-11-07 (3bde5ae): arguments move into calls, operands are freed once used** (issue 036, item 2d).
+   The audit samples statement ends only, so it missed both: an owning temporary lived to its statement's end
+   (an `if`'s condition past the body), where php-src frees a TMP when its opcode is done (FREE_OP) and moves an
+   argument into the call (SEND_VAL). Fixtures `tests/rcaudit/moves.php` and `operands.php` hold PHP 8.5's
+   output and match it. Left: a TypeError's trace keeps the call's arguments while `zend.exception_ignore_args`
+   is 0 (`moves.php` case 7); here they are freed before the catch.
+   **Done 2026-11-08 (11fe68c): every operand freed at php-src's opcode** (see "Checks that don't need PHP"
+   below). The new fixtures found 12 late releases and 1 early one:
+   - late: `??`, a concatenation chain, match's subject, `?->`, `(expr)::class`/`::C`/`::$p`, a TMP array sent to
+     a built-in (freed at the statement's end instead of the call's), `xor`, `&&`/`||` (freed after the other
+     operand), an in-place intrinsic's argument, and a temporary's property read (`make()->obj->m()`: the
+     container lived until the read's consumer, where php-src copies the value and frees the container at once);
+   - early: `(array) f()`, where the cast returned the operand's array and freed its elements while `foreach`
+     still iterated it. WordPress hit it in `get_post_class` (`foreach ((array) get_the_terms(...) as $term)`):
+     the verify found a `WP_Term` freed while `$term` held it.
+3. **Done 2026-11-06: closures counted** (issue 036, item 1). Fuzzer seed 1000, all features: 996 of 1000.
+4. **Done 2026-11-06 for registered callbacks and generators' frames** (issue 036, item 4); SPL storage is PHP code
+   and counts already. Left: curl and mysqli handles' callbacks, lazy objects' initializers.
+5. **The fuzzer's remaining groups (2026-11-06, seed 1000, all features):** `$x = &$x` and the `array_shift` of an
+   array are fixed (bind before release; a shifted or popped array keeps its elements). Left: p1741,
+   `$v2[] = $v0` with both the same reference: php-src fetches the container for write before the value, so the
+   array takes itself (a cycle, `*RECURSION*`); here the value is read first and the array separated. That is an
+   evaluation-order difference, visible without destructors too.
+6. **The cycle collector, the shutdown order (3a/3b), `WeakReference`/`WeakMap` cleared at zero.**
+7. **Cost:** an A/B against the thresholds of step 2. The numbers choose P1's tuning or P2; they don't decide
+   whether the work is done.
+   **Measured 2026-11-07** (`base` = main 851bb6d; `dt` = 70fd18e; `mv` = 3bde5ae; destructors on unless said;
+   CPUs 14-21 under the CPU lock, interleaved; the host was 25-60% busy with other sessions):
+   - Gate 1 (`bench/destructors/gate1.sh 4 400`, 8 rounds, median ratio to base): counting only (`dt` without
+     destructors) hooks 1.09, slugs 1.03, wpautop 1.18, wptexturize 1.34, blocks 1.15, kses 1.11; with
+     destructors blocks 1.65, kses 1.23; `mv` hooks 1.15, slugs 1.27, wpautop 1.03, wptexturize 1.51, blocks
+     1.65, kses 1.22. Peak memory 0.98-1.03. The prototype (697e6bc) was at most 1.03 everywhere.
+   - Gate 2 (`gate2.sh g2 6 200 base mv`): warm CPU per visit 4.7x (IQR 4.6-5.2), warm wait 1.47x (1.37-1.53),
+     memory.peak warm ~+10%. The warm CPU is the compiler: in the same time `mv` finishes 4,359 compilations
+     against base's 8,750. IR after PE (tier 1, 2,385 functions both compiled): median 1.17, total 1.30;
+     compile time 1.59x. `dt`'s first, partial run already had warm CPU 1.1-3.2 CPU-s against base's 0.86.
+   - Pages: `te` (7bff781) and base give the same 18 of 21 pages as PHP 8.5 (3 differ for both).
+   Every threshold is exceeded; the compiled size of the counting (statement-end and epilogue releases, the
+   new argument and operand releases) is the first thing to shrink, then the zero path's work (blocks).
