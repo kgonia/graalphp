@@ -75,6 +75,21 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
   - `build`: the build differs without the options too, and the base doesn't;
   - `not rerun`: a rerun has no outcome for it.
 
+  A class run alone leaves out the tests that run before it in the same process. A difference that depends on what
+  they leave behind (state, the database, a late destructor that cleans up during the next test) passes there and
+  would look `unstable`. Those tests get a second stage: their whole suite entries again, unfiltered, in the same
+  three configurations. A chunk is one PHPUnit process in the full run too, so this reproduces the full run's order
+  and state. A test stays `unstable` only if that rerun also gives PHP's outcome. Otherwise it gets the cause the
+  entry reruns show, with " (in order)" added. `target/check/SHA/wp-triage-classes.tsv` keeps the first stage's
+  causes, `wp-triage.tsv` the final ones.
+
+## For agents
+
+The rules for when to run which level, and the host's rules, are in the repository's [CLAUDE.md](../CLAUDE.md),
+which every Claude Code session loads. This page describes the tool. When a new kind of check is needed, add it to
+`check.sh` and `results.py` (a parser, a level), so it gets the same build, preflight, store and report. A
+one-off script would give results that nobody can compare.
+
 ## The host (2026-11-08)
 
 The host's CPU is a Core Ultra 9 275HX:

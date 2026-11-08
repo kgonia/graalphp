@@ -149,16 +149,33 @@ l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
       selected=$($PY "$here/wp_triage.py" select "$out/wp.txt" target/wp-phpunit/wordpress-develop)
       filter=$(sed -n 1p <<< "$selected") chunks=$(sed -n 2p <<< "$selected")
       build "$base"
-      rerun() { # RUN SHA JAVA_OPTS
-        RUN=$1 CLASSES=target/classes-$2 LIB=target/lib-$2 JAVA_OPTS=$3 CHUNKED=1 CHUNKS=$chunks \
-          bash tests/wp-phpunit/run.sh truffle --filter "$filter" > "$out/$1.txt" 2>&1 || true
+      rerun() { # RUN SHA JAVA_OPTS [PHPUNIT ARGS...]: the selected chunks again
+        local name=$1 build=$2 opts=$3; shift 3
+        RUN=$name CLASSES=target/classes-$build LIB=target/lib-$build JAVA_OPTS=$opts CHUNKED=1 CHUNKS=$chunks \
+          bash tests/wp-phpunit/run.sh truffle "$@" > "$out/$name.txt" 2>&1 || true
       }
-      rerun truffle-$s-again "$s" "${JAVA_OPTS:-}"
-      noopts=-
-      if [ -n "${JAVA_OPTS:-}" ]; then rerun truffle-$s-noopts "$s" ""; noopts=$runs/truffle-$s-noopts; fi
-      rerun truffle-$s-base-$base "$base" ""
+      three() { # SUFFIX [PHPUNIT ARGS...]: again, without JAVA_OPTS, on the base; sets noopts
+        local suffix=$1; shift
+        rerun truffle-$s-again$suffix "$s" "${JAVA_OPTS:-}" "$@"
+        noopts=-
+        if [ -n "${JAVA_OPTS:-}" ]; then
+          rerun truffle-$s-noopts$suffix "$s" "" "$@"; noopts=$runs/truffle-$s-noopts$suffix
+        fi
+        rerun truffle-$s-base-$base$suffix "$base" "" "$@"
+      }
+      three "" --filter "$filter"
       $PY "$here/wp_triage.py" classify "$out/wp.txt" $runs/php-all-chunked $runs/truffle-$s-again "$noopts" \
-        $runs/truffle-$s-base-$base > "$out/wp-triage.tsv"
+        $runs/truffle-$s-base-$base > "$out/wp-triage-classes.tsv"
+      # stage 2: a test that passed in its class alone may depend on what earlier tests of its process leave; its
+      # whole suite entries again, unfiltered (the full run's order and state), before it may be called unstable
+      chunks=$($PY "$here/wp_triage.py" entries "$out/wp-triage-classes.tsv" target/wp-phpunit/wordpress-develop)
+      if [ -n "$chunks" ]; then
+        three -order
+        $PY "$here/wp_triage.py" order "$out/wp-triage-classes.tsv" $runs/php-all-chunked \
+          $runs/truffle-$s-again-order "$noopts" $runs/truffle-$s-base-$base-order > "$out/wp-triage.tsv"
+      else
+        cp "$out/wp-triage-classes.tsv" "$out/wp-triage.tsv"
+      fi
       $PY "$here/results.py" wptriage "$s" "$out/wp-triage.tsv" --level L1
     fi
     unreserve l1-wp-$s

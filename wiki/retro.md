@@ -65,6 +65,8 @@ Written 2026-10-22. Sources:
 - Commit often, with explicit paths. Document findings in repo `.md` files.
 - Benchmarks: pinned cores, the app and the load generator never share a core, governor and power mode logged, a quiet host, std between reps and within a run, significance tests.
 - Use the harness defaults. Be honest in the README: lead strong, then list where we fall behind.
+- Since 2026-11-08, checks run through `bench/check/check.sh` ([checks.md](checks.md)), as the repository's `CLAUDE.md` says.
+  Its levels give every agent the same build, preflight, results store and report.
 
 ---
 
