@@ -1,9 +1,10 @@
 // k6 load scenario for tests/gate2/native.sh load: concurrent visitors of Gate 2's WordPress, without think time,
 // so the run measures the server's throughput at that concurrency. Each iteration is a reader (READERS of them,
 // default 0.8: a new cookie jar, the home page, a post, a page, a category, a search and the feed) or the admin
-// (the virtual user's own jar, logged in once on its first admin iteration so that the sessions don't pile up in
-// wp_usermeta: the dashboard and the posts list). Static files aren't fetched: nginx serves them alike for every
-// backend.
+// (the dashboard and the posts list, with the virtual user's own session). Static files aren't fetched: nginx serves
+// them alike for every backend. The admin sessions are made in setup(), one login after another: WordPress keeps a
+// user's sessions in one wp_usermeta row, read, changed and written back by each login, so concurrent logins of the
+// same user drop each other's sessions (their pages then redirect to wp-login.php?reauth=1, on php-fpm too).
 //
 // Env: BASE (http://172.30.0.10:8080), VUS, DURATION (e.g. 60s), READERS (0..1), SUMMARY (handleSummary's JSON).
 // A page with a PHP warning or error is logged as "PHPERROR <url> <message>".
@@ -13,6 +14,7 @@ import { Counter } from 'k6/metrics';
 
 const BASE = __ENV.BASE || 'http://172.30.0.10:8080';
 const READERS = parseFloat(__ENV.READERS || '0.8');
+const VUS = parseInt(__ENV.VUS || '1', 10);
 const HEADERS = { Host: 'localhost' };
 const READER_PAGES = [['home', '/'], ['post', '/?p=1'], ['page', '/?page_id=2'], ['category', '/?cat=1'],
     ['search', '/?s=hello'], ['feed', '/?feed=rss2']];
@@ -33,7 +35,7 @@ export const options = {
     scenarios: {
         visitors: {
             executor: 'constant-vus',
-            vus: parseInt(__ENV.VUS || '1', 10),
+            vus: VUS,
             duration: __ENV.DURATION || '60s',
             gracefulStop: '120s',
         },
@@ -56,9 +58,30 @@ function get(path, jar, name) {
     return counted(http.get(BASE + path, { headers: HEADERS, jar, redirects: 0, tags: { name } }));
 }
 
-let adminJar = null;
+// one admin session per virtual user, its cookies as {name: value}
+export function setup() {
+    const sessions = [];
+    for (let i = 0; i < VUS; i++) {
+        const login = http.post(BASE + '/wp-login.php', {
+            log: 'admin', pwd: 'admin', testcookie: '1', 'wp-submit': 'Log In',
+            redirect_to: 'http://localhost/wp-admin/',
+        }, { headers: HEADERS, redirects: 0, tags: { name: 'login' },
+            cookies: { wordpress_test_cookie: 'WP Cookie check' } });
+        if (login.status !== 302) {
+            throw new Error(`admin login failed: ${login.status}`);
+        }
+        const cookies = {};
+        for (const [name, values] of Object.entries(login.cookies)) {
+            if (values.length > 0 && values[values.length - 1].value !== 'deleted') {
+                cookies[name] = values[values.length - 1].value;
+            }
+        }
+        sessions.push(cookies);
+    }
+    return sessions;
+}
 
-export default function () {
+export default function (sessions) {
     if (Math.random() < READERS) {
         const jar = new http.CookieJar();
         for (const [name, path] of READER_PAGES) {
@@ -66,17 +89,9 @@ export default function () {
         }
         return;
     }
-    if (adminJar === null) {
-        adminJar = new http.CookieJar();
-        const login = counted(http.post(BASE + '/wp-login.php', {
-            log: 'admin', pwd: 'admin', testcookie: '1', 'wp-submit': 'Log In',
-            redirect_to: 'http://localhost/wp-admin/',
-        }, { headers: HEADERS, jar: adminJar, redirects: 0, tags: { name: 'login' },
-            cookies: { wordpress_test_cookie: 'WP Cookie check' } }));
-        check(login, { 'login 302': (r) => r.status === 302 });
-    }
+    const cookies = sessions[(__VU - 1) % sessions.length];
     for (const [name, path] of ADMIN_PAGES) {
-        const page = get(path, adminJar, name);
+        const page = counted(http.get(BASE + path, { headers: HEADERS, cookies, redirects: 0, tags: { name } }));
         if (!check(page, { [`${name} 200`]: (r) => r.status === 200 && String(r.body).includes('</html>') })) {
             console.log(`ADMINFAIL ${name} ${page.status} ${page.headers.Location || ''} ${String(page.body).length}`);
         }
