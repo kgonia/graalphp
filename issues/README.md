@@ -91,3 +91,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [085](085-native-resources-outlive-request.md) | Native resources outlive their request: a dropped socket's selector, `proc_open` children | Open |
 | [086](086-pcre-caches-unbounded.md) | PCRE caches never evict: one-off patterns stay for good, and a context's grow without bound | Open |
 | [087](087-uncancellable-waits-and-shared-statics.md) | Waits a cancel can't reach; diagnostics' shared state isn't thread-safe | Open |
+| [088](088-fpm-sapi-gaps.md) | Under the fpm SAPI, php-fpm's other functions and request handling are missing | Open |
+| [089](089-native-image-build-options.md) | The native image is built without PGO, G1 or a CPU target, and starts cold | Open |
