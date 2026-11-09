@@ -1,0 +1,2 @@
+# object ids: freed ones aren't reused yet
+s/)#[0-9]* (/)#N (/

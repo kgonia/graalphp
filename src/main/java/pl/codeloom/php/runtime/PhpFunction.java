@@ -69,7 +69,7 @@ public final class PhpFunction {
      */
     private Supplier<RootCallTarget> factory;
     /** A built-in's Java body, for DSL built-in nodes' fallbacks (BuiltinNodes.callFull); null for PHP functions. */
-    private Builtin builtin;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal private Builtin builtin;
     /** A built-in's key in BuiltinSignature's table, and the signature once a named call asked for it. */
     private String builtinKey;
     private volatile BuiltinSignature builtinSignature;
@@ -366,9 +366,19 @@ public final class PhpFunction {
         return PhpRef.deref(invokeRef(thisObject, staticClass, args));
     }
 
-    /** invoke, the result as the function returned it: a reference from a function returning by reference. */
+    /**
+     * invoke, the result as the function returned it: a reference from a function returning by reference. The count
+     * a returned value owns goes to the context's pending releases (Refcount.pending), given up when the built-in
+     * running ends: runtime code uses the result as a borrowed value.
+     */
     @TruffleBoundary
     public Object invokeRef(Object thisObject, PhpClass staticClass, Object... args) {
+        return Refcount.pending(invokeOwned(thisObject, staticClass, args));
+    }
+
+    /** invokeRef for a caller that gives up the result's own count itself (iteration, a destructor's call). */
+    @TruffleBoundary
+    public Object invokeOwned(Object thisObject, PhpClass staticClass, Object... args) {
         Object[] arguments = new Object[ARG_FIRST + args.length];
         arguments[ARG_THIS] = thisObject;
         arguments[ARG_STATIC] = staticClass;

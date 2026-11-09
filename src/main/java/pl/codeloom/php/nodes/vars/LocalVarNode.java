@@ -237,9 +237,11 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public void bindRef(VirtualFrame frame, PhpRef ref) {
-        Variables.released(storedObject(frame));
+        // the new binding first, as zend_assign_to_variable_reference (`$x = &$x`)
+        Object old = storedObject(frame);
         ref.bind();
         FrameSlots.setObject(frame, slot, ref);
+        Variables.released(old);
     }
 
     @Override
@@ -276,8 +278,9 @@ public final class LocalVarNode extends LValueNode {
 
     @Override
     public void unset(VirtualFrame frame) {
-        Variables.released(storedObject(frame));
+        Object old = storedObject(frame);
         frame.clear(slot);
+        Variables.released(old);
     }
 
     @Override

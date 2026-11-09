@@ -23,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -89,14 +90,15 @@ public final class BatchMain {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ByteArrayOutputStream err = new ByteArrayOutputStream();
                 AtomicReference<Context> running = new AtomicReference<>();
-                Future<String> outcome = worker.submit(() -> run(script, root, out, err, running));
+                AtomicBoolean closing = new AtomicBoolean();
+                Future<String> outcome = worker.submit(() -> run(script, root, out, err, running, closing));
                 String status;
                 try {
                     status = outcome.get(timeoutSeconds, TimeUnit.SECONDS);
                 } catch (TimeoutException e) {
                     // closing waits for the script's thread to stop, so it must not block this one
                     Context context = running.get();
-                    if (context != null) {
+                    if (context != null && closing.compareAndSet(false, true)) {
                         daemon(() -> context.close(true)).start();
                     }
                     try {
@@ -128,10 +130,15 @@ public final class BatchMain {
         }
     }
 
+    /**
+     * Runs one script. closing: whoever sets it closes the context, the script's thread or the timeout's cancel.
+     * Only one may: a close racing a cancel of a context with a fiber's thread deadlocks in Truffle 25.4 (its
+     * cleanup thread takes the context's locks in the other order).
+     */
     private static String run(String script, String astRoot, ByteArrayOutputStream out, ByteArrayOutputStream err,
-                              AtomicReference<Context> running) throws IOException {
+                              AtomicReference<Context> running, AtomicBoolean closing) throws IOException {
         Source source = Source.newBuilder("php", new File(script)).build();
-        try (Context context = Context.newBuilder("php")
+        Context context = Context.newBuilder("php")
                 .option("php.AstRoot", astRoot)
                 // the oracle's settings (tests/phpt/oracle.sh): errors logged (to stderr), not displayed
                 .option("php.Ini.display_errors", "0")
@@ -143,8 +150,11 @@ public final class BatchMain {
                 .allowIO(IOAccess.ALL)
                 .allowEnvironmentAccess(EnvironmentAccess.INHERIT)
                 .allowNativeAccess(true)
+                // a fiber runs on a thread of its own (PhpFiber)
+                .allowCreateThread(true)
                 .allowExperimentalOptions(true)
-                .build()) {
+                .build();
+        try {
             running.set(context);
             context.eval(source);
             return "ok";
@@ -161,6 +171,14 @@ public final class BatchMain {
                 return "internal " + oneLine(String.valueOf(e.getMessage()));
             }
             return "fatal " + oneLine(String.valueOf(e.getMessage()));
+        } finally {
+            if (closing.compareAndSet(false, true)) {
+                try {
+                    context.close();
+                } catch (PolyglotException closed) {
+                    // the exit or cancel eval already reported, which a context's close repeats
+                }
+            }
         }
     }
 

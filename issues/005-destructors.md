@@ -1,6 +1,6 @@
 # 005: Destructors never run
 
-**State:** Open, a decision for the owner (design below, 2026-11-03)
+**State:** Open. Decided 2026-11-03: exact php-src semantics, option A ([D17](../wiki/decisions.md)); being built (status in [destructors.md](../wiki/destructors.md), gaps in issue 036)
 
 **Symptom:** `__destruct` is never called: not when the last reference goes, not at the end of the script. A generator destroyed while suspended inside `try` doesn't run its `finally` blocks either:
 ```php
@@ -88,3 +88,29 @@ test suite (the try/finally and generator tests above, most `__destruct` phpt) n
 each be a documented deviation. Measure its cost on Gate 1 and Gate 2 first with a prototype that counts objects
 on the bytecode store paths only (no destructor calls), as the array holders were measured. If the cost is too
 high, the alternative is to keep destructors unsupported (state today) and list it; no partial option is exact.
+
+**2026-11-06:** option A is being prototyped on the `destructors-merged` branch: object counts, destructors at
+zero behind `-Dphp.rc.destructors=true`, and a census check (`-Dphp.rc.verify=true`). With destructors on, the
+census checked 6,356 zeros on Gate 2's WordPress and found no object still reachable, so none of the checked
+zeros came too early. It can't see leaks (counts too high, destructors late or never), so this doesn't show
+that destructors match PHP. Its known gaps (closures,
+temporary arrays, remaining fuzz groups, no cycle collector or shutdown order yet) are in issue 036.
+
+### Decision ([D17](../wiki/decisions.md), 2026-11-03; restated by the owner 2026-11-06)
+Object lifetimes must match php-src: option A, complete. Options B-E are out. This is for correct execution, not
+for test coverage: frameworks and plugins depend on when a destructor runs, so a late or missing one is a bug
+like any other. Examples:
+- releasing a lock or a transaction when its guard object goes out of scope;
+- flushing a buffered log handler;
+- stopping a child process;
+- removing temporary files;
+- `WP_HTML_Token`'s bookmarks.
+
+In long-running workers (queue consumers, application servers) the end of the script never comes, so "at the
+end" means never.
+
+On 2026-11-06 the owner made explicit that the measured cost decides how the work is done (P1, then P2), not
+whether it is done.
+
+**2026-11-09:** destructors are on by default (owner: without them PHP code doesn't work as written).
+`-Dphp.rc.destructors=false` stays as a switch to measure their cost, not as a mode to run code in.

@@ -224,6 +224,8 @@ public final class HttpMain {
                 // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
                 .allowIO(IOAccess.ALL)
                 .allowNativeAccess(true)
+                // a fiber runs on a thread of its own (PhpFiber)
+                .allowCreateThread(true)
                 .allowExperimentalOptions(true)
                 .allowEnvironmentAccess(EnvironmentAccess.NONE)
                 .environment(cgiEnvironment(exchange, script, scriptName, body.length))

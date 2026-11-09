@@ -146,7 +146,9 @@ public final class PcreFunctions {
      * Arena.ofAuto segment per subject cost ~6 us for a 10 KB post (zeroing, cleaner, reference processing), thirty
      * times the match itself, and preg_replace chains produce a new subject per call. An entry in use by an outer
      * call (a preg_replace_callback callback calling preg_* again) is never reused. Small subjects (most calls)
-     * skip the cache: they are copied into a scratch buffer per nesting depth, slot -1 - depth.
+     * skip the cache: they are copied into a free scratch buffer, slot -1 - index. Scratch buffers are leased and
+     * released one by one, not as a stack: a fiber suspended in a preg_replace_callback callback keeps its buffer
+     * while other code, or another fiber, matches and finishes.
      *
      * <p>Buffers come from automatic arenas, never shared ones: a downcall acquires and releases a shared
      * arena's session around the call, which took a 13-byte match from 12 to 23 ns. They go with the context.
@@ -154,7 +156,7 @@ public final class PcreFunctions {
     private static final class SubjectCache {
         private static final int LARGE = 4096;
         private MemorySegment[] scratch = new MemorySegment[4];
-        private int depth;
+        private boolean[] scratchInUse = new boolean[4];
         private byte[][] subjects = new byte[8][];
         private MemorySegment[] buffers = new MemorySegment[8];
         private int[] users = new int[8];
@@ -186,16 +188,22 @@ public final class PcreFunctions {
         }
 
         private int acquireScratch(byte[] subject) {
-            if (depth == scratch.length) {
-                scratch = Arrays.copyOf(scratch, depth * 2);
+            int index = 0;
+            while (index < scratch.length && scratchInUse[index]) {
+                index++;
             }
-            MemorySegment buffer = scratch[depth];
+            if (index == scratch.length) {
+                scratch = Arrays.copyOf(scratch, index * 2);
+                scratchInUse = Arrays.copyOf(scratchInUse, index * 2);
+            }
+            MemorySegment buffer = scratch[index];
             if (buffer == null || buffer.byteSize() < subject.length) {
                 buffer = Arena.ofAuto().allocate(LARGE);
-                scratch[depth] = buffer;
+                scratch[index] = buffer;
             }
             MemorySegment.copy(subject, 0, buffer, ValueLayout.JAVA_BYTE, 0, subject.length);
-            return -1 - depth++;
+            scratchInUse[index] = true;
+            return -1 - index;
         }
 
         MemorySegment segment(int slot) {
@@ -206,7 +214,7 @@ public final class PcreFunctions {
             if (slot >= 0) {
                 users[slot]--;
             } else {
-                depth--;
+                scratchInUse[-1 - slot] = false;
             }
         }
 
@@ -877,7 +885,7 @@ public final class PcreFunctions {
                 return subjectString;
             }
             out.write(subject, lastEnd, subject.length - lastEnd);
-            return Str.of(out.toByteArray());
+            return out.toStr();
         } finally {
             if (out != null) {
                 out.release();
@@ -1081,7 +1089,7 @@ public final class PcreFunctions {
             }
             out.write(b);
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     @TruffleBoundary

@@ -26,7 +26,10 @@ public final class CallableConvertNodes {
         if (function.isAbstract()) {
             throw new PhpError("Cannot call abstract method " + function.displayName() + "()");
         }
-        return new PhpClosure(function, self, scope, NO_CAPTURES, magicName);
+        PhpClosure closure = new PhpClosure(function, self, scope, NO_CAPTURES, magicName);
+        // the expression's result owns a count, as `new`'s object does (wiki/destructors.md, P1)
+        closure.addRef();
+        return closure;
     }
 
     /** `f(...)`: the function the name resolves to, the namespaced one first, as a call finds it. */
@@ -107,6 +110,7 @@ public final class CallableConvertNodes {
         @TruffleBoundary
         public static Object convert(PhpContext context, Object value, String scope) {
             if (value instanceof PhpClosure closure) {
+                closure.addRef();
                 return closure;
             }
             Callables.Target target = Callables.resolveCall(context, value, scope);

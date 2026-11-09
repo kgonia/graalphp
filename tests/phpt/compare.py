@@ -52,7 +52,8 @@ def php_reason(case):
 
 
 expected = results(os.path.join(base, "expected", "results.txt"))
-actual = {k.replace("target/phpt/cases/", "", 1): v for k, v in results(os.path.join(base, "actual", "results.txt")).items()}
+cases_prefix = base.replace(os.sep, "/").rstrip("/") + "/cases/"
+actual = {k.replace(cases_prefix, "", 1): v for k, v in results(os.path.join(base, "actual", "results.txt")).items()}
 
 kinds = collections.Counter()
 by_dir = collections.defaultdict(collections.Counter)
@@ -71,7 +72,7 @@ for case, (outcome, code) in sorted(expected.items()):
     else:
         status = actual[case][0]
         want = open(os.path.join(base, "expected", case + ".out"), "rb").read()
-        got_path = os.path.join(base, "actual", "target/phpt/cases", case + ".out")
+        got_path = os.path.join(base, "actual", cases_prefix, case + ".out")
         got = open(got_path, "rb").read() if os.path.exists(got_path) else b""
         php_died = code == "255"
         we_died = status.startswith("fatal") or status == "exit:255"

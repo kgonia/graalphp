@@ -557,7 +557,7 @@ final class Html {
                 }
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     /**
@@ -697,7 +697,7 @@ final class Html {
             return text;
         }
         out.write(old, copied, oldlen - copied);
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     // ---- decoding ----
@@ -803,7 +803,7 @@ final class Html {
             }
             current = entityEnd + 1;
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     private static int indexOf(byte[] s, int end, int from, int b) {
@@ -905,6 +905,6 @@ final class Html {
             int c = reader.next();
             out.write(reader.failure || c > 0xFF ? '?' : c);
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 }

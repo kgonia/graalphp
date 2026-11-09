@@ -364,7 +364,7 @@ final class UrlFunctions {
         ByteBuilder query = new ByteBuilder();
         encodeQuery(query, data, numericPrefix, null, argSeparator, Args.lng(a, 3, 1) == QUERY_RFC3986,
                 Collections.newSetFromMap(new IdentityHashMap<>()));
-        return Str.of(query.toByteArray());
+        return query.toStr();
     }
 
     /**

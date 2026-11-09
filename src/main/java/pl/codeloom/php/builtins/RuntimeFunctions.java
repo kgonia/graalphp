@@ -98,7 +98,8 @@ final class RuntimeFunctions {
                 CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
         // the called class of the calling code goes on to the callee (late static binding)
         r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
-                FORWARD_STATIC_CALL), "forward_static_call"), PhpArray.list(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length))));
+                FORWARD_STATIC_CALL), "forward_static_call"), pl.codeloom.php.runtime.Refcount.pendingTemporary(PhpArray.list(
+                Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length)))));
         r.fn("forward_static_call_array", (context, a) -> callArray(forwarded(Callables.parameter(context,
                 Args.get(a, 0), FORWARD_STATIC_CALL_ARRAY), "forward_static_call_array"), Args.array(a, 1, "forward_static_call_array", "args")));
         r.fn("set_time_limit", a -> Boolean.TRUE);
@@ -209,9 +210,40 @@ final class RuntimeFunctions {
         });
         r.fn("get_defined_constants", (context, a) -> context.constantsArray());
         r.fn("gc_collect_cycles", a -> 0L);
-        r.fn("gc_enable", a -> PhpNull.NULL);
+        // php-src's gc_enable/gc_disable alter zend.enable_gc; the cycle collector's numbers (gc_status) need not
+        // match (D18, answer 2): no collection has run
+        r.fn("gc_enable", (context, a) -> {
+            context.ini().set("zend.enable_gc", "1");
+            return PhpNull.NULL;
+        });
+        r.fn("gc_disable", (context, a) -> {
+            context.ini().set("zend.enable_gc", "0");
+            return PhpNull.NULL;
+        });
+        r.fn("gc_enabled", (context, a) -> context.ini().gcEnabled());
+        r.fn("gc_mem_caches", a -> 0L);
+        r.fn("gc_status", a -> gcStatus());
         r.fn("memory_get_usage", a -> Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
         r.fn("memory_get_peak_usage", a -> Runtime.getRuntime().totalMemory());
+    }
+
+    /** gc_status()'s keys, in php-src 8.3+'s order. */
+    @TruffleBoundary
+    private static PhpArray gcStatus() {
+        PhpArray status = new PhpArray();
+        status.put(Str.of("runs"), 0L);
+        status.put(Str.of("collected"), 0L);
+        status.put(Str.of("threshold"), 10001L);
+        status.put(Str.of("roots"), 0L);
+        status.put(Str.of("running"), false);
+        status.put(Str.of("protected"), false);
+        status.put(Str.of("full"), false);
+        status.put(Str.of("buffer_size"), 16384L);
+        status.put(Str.of("application_time"), 0.0);
+        status.put(Str.of("collector_time"), 0.0);
+        status.put(Str.of("destructor_time"), 0.0);
+        status.put(Str.of("free_time"), 0.0);
+        return status;
     }
 
     @TruffleBoundary
@@ -299,6 +331,7 @@ final class RuntimeFunctions {
             if (property instanceof PhpArray array) {
                 array.addHolder();
             }
+            // the copy's property holds an object too (zend_objects_clone_members' Z_ADDREF; initProperty counts it)
             copy.initProperty((String) name, property);
         }
         if (copy.getPhpClass().findMethod("__clone") != null) {
@@ -345,8 +378,8 @@ final class RuntimeFunctions {
     /** zend_call_function with named_params: the array bound as ZEND_SEND_ARRAY binds it (SpreadArguments). */
     @TruffleBoundary
     private static Object callArray(Callables.Target target, PhpArray arguments) {
-        return PhpRef.deref(target.function().getCallTarget().call(SpreadArguments.sendArray(target, arguments,
-                null)));
+        return pl.codeloom.php.runtime.Refcount.pending(PhpRef.deref(target.function().getCallTarget().call(
+                SpreadArguments.sendArray(target, arguments, null))));
     }
 
     /**

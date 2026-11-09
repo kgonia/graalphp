@@ -113,7 +113,7 @@ final class Serialization {
             serializer.release();
             serializeDestroy(state);
         }
-        return Str.of(serializer.out.toByteArray());
+        return serializer.out.toStr();
     }
 
     /** An array or object being written: its keys and (raw) values, the closing brace pending. */
@@ -1465,7 +1465,8 @@ final class Serialization {
             }
             state.lock++;
             try {
-                pl.codeloom.php.runtime.Callables.call(context, Str.of(callback), Str.of(name));
+                pl.codeloom.php.runtime.Refcount.done(pl.codeloom.php.runtime.Callables.call(context,
+                        Str.of(callback), Str.of(name)));
             } finally {
                 state.lock--;
             }

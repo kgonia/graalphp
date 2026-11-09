@@ -59,6 +59,26 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         this.max = max;
     }
 
+    private static final byte RESULT_OBJECT = 1;
+    private static final byte RESULT_CLOSURE = 2;
+    private static final byte PENDING = 4;
+    /** The counting cases met (a case not met yet deoptimizes once). */
+    @CompilationFinal private byte seen;
+
+    private void met(byte kind) {
+        if ((seen & kind) == 0) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            seen |= kind;
+        }
+    }
+
+    @TruffleBoundary
+    private static void releasePendingOnThrow(java.util.ArrayList<Object> pending, int mark) {
+        if (pending.size() > mark) {
+            pl.codeloom.php.runtime.Refcount.releasePending(pending, mark);
+        }
+    }
+
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
@@ -70,7 +90,39 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
         if (!noNamedExtras.isValid() && arguments[PhpFunction.ARG_CLOSURE] instanceof NamedExtras && !forwardsNamed) {
             throw unexpectedNamed(arguments);
         }
-        return call(body, arguments);
+        pl.codeloom.php.PhpContext context = pl.codeloom.php.PhpContext.get(this);
+        java.util.ArrayList<Object> pending = context.pendingReleases();
+        int mark = pending.size();
+        java.util.ArrayList<Object> moved = context.movedToBuiltins();
+        if (!moved.isEmpty()) {
+            // arguments moved into this call (Refcount.toBuiltin): counted while it runs
+            pl.codeloom.php.runtime.Refcount.takeMoved(arguments, pending, moved);
+        }
+        Object result;
+        try {
+            result = call(body, arguments);
+        } catch (RuntimeException | Error e) {
+            // what PHP code it called gave it goes (out of line: the handler stays small)
+            releasePendingOnThrow(pending, mark);
+            throw e;
+        }
+        // a call's result owns a count, as a user function's return gives it (wiki/destructors.md, P1); by the
+        // kinds this built-in returned, so the counting compiles only where it is met (and the root stays small
+        // enough to inline)
+        if (result instanceof PhpObject object) {
+            met(RESULT_OBJECT);
+            object.addRef();
+        } else if (result instanceof PhpClosure closureValue) {
+            met(RESULT_CLOSURE);
+            closureValue.addRef();
+        }
+        if (pending.size() > mark) {
+            // the counts results of PHP code it called owned (Refcount.pending): its work with them is done,
+            // after its own result took its count
+            met(PENDING);
+            pl.codeloom.php.runtime.Refcount.releasePending(pending, mark, result);
+        }
+        return result;
     }
 
     /**

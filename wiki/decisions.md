@@ -223,6 +223,10 @@ counting only destructible classes) is acceptable. The runtime counts the PHP ho
   ([destructors.md](destructors.md)). HHVM kept eager refcounting for the same reason.
 - **The cost is measured before it is accepted:** a counting-only prototype first, against thresholds.
 
+**2026-11-06, restated by the owner:** this is about correct execution, not coverage of PHP's behaviour, and it is
+not a question of cost. The measured cost picks the design (P1, then P2) and what to optimize. It doesn't decide
+whether destructors are exact. A late destructor is a bug just as an early one is.
+
 **Status:** [destructors.md](destructors.md), [../issues/005-destructors.md](../issues/005-destructors.md);
 after D16.
 

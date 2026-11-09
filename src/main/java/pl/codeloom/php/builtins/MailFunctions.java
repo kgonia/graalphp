@@ -255,7 +255,7 @@ final class MailFunctions {
                 message.writeAscii("\" must only contain numeric keys, \"");
                 message.write(cString(Str.bytes(key)));
                 message.writeAscii("\" found");
-                pending.add(new PhpError("TypeError", Str.of(message.toByteArray())));
+                pending.add(new PhpError("TypeError", message.toStr()));
                 return;
             }
             Object value = values.valueAt(p);
@@ -279,7 +279,7 @@ final class MailFunctions {
         message.writeAscii(before);
         message.write(cString(name));
         message.write(after.getBytes(StandardCharsets.UTF_8));
-        return new PhpError(phpClass, Str.of(message.toByteArray()));
+        return new PhpError(phpClass, message.toStr());
     }
 
     private static byte[] cString(byte[] s) {

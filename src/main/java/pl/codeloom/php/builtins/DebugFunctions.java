@@ -9,6 +9,7 @@ import pl.codeloom.php.runtime.ClassTemplate;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Str;
 
@@ -24,6 +25,11 @@ final class DebugFunctions {
 
     static void register(Registry r) {
         r.fn("truffle_translate", (context, a) -> translate(context, Str.java(Args.str(a, 0))));
+        // an object's reference count (Refcount), -1 for any other value; passing it to a built-in counts nothing
+        r.fn("truffle_refcount", (context, a) -> Args.get(a, 0) instanceof PhpObject object
+                ? (long) object.refcount() : Args.get(a, 0) instanceof pl.codeloom.php.runtime.PhpClosure closure
+                ? (long) closure.refcount() : Args.get(a, 0) instanceof pl.codeloom.php.runtime.PhpArray array
+                ? (long) array.holderCount() : -1L);
     }
 
     /**

@@ -23,6 +23,9 @@ import java.util.Set;
  * case-sensitive constant and property names, as PHP.
  */
 public final class PhpClass {
+    /** Refcount.freeProperties' layout for the shape its objects last had (immutable, replaced whole). */
+    Refcount.FreeLayout freeLayout;
+
     /**
      * A declared instance property: its default (or a thunk evaluating the constant expression; null for a typed
      * property without one, which starts uninitialized: not in the object), its visibility, the class that
@@ -100,6 +103,8 @@ public final class PhpClass {
     private final Set<String> ancestors = new HashSet<>();
     private final Map<String, PhpFunction> methods = new LinkedHashMap<>();
     private final Map<String, Object> constants = new LinkedHashMap<>();
+    /** Every constant evaluated, by {@link #updateConstants} (ZEND_ACC_CONSTANTS_UPDATED). */
+    private boolean constantsUpdated;
     /** The constants' types and declaring classes. */
     private final Map<String, ConstantType> constantTypes = new HashMap<>();
 
@@ -638,15 +643,80 @@ public final class PhpClass {
         return value instanceof com.oracle.truffle.api.strings.TruffleString s ? Str.key(s) : value;
     }
 
-    /** A class constant's value, evaluating its initializer on first use; null if the constant doesn't exist. */
+    /**
+     * A class constant's value, evaluating its initializer on first use (FETCH_CLASS_CONSTANT); null if the constant
+     * doesn't exist. A slot holds a {@link Thunk} until evaluated, then its value; while a constant expression's
+     * lookup evaluates it, {@link Evaluating}, which this lookup doesn't check (php-src's opcode doesn't either).
+     */
     @TruffleBoundary
     public Object getConstant(String constantName) {
         Object value = constants.get(constantName);
+        if (value instanceof Evaluating evaluating) {
+            return evaluating.thunk().evaluate();
+        }
         if (value instanceof Thunk thunk) {
             value = thunk.evaluate();
             constants.put(constantName, value);
         }
         return value;
+    }
+
+    /**
+     * A constant expression's lookup of a class constant (zend_get_class_constant_ex), the constant known to exist:
+     * its slot is {@link Evaluating} while its initializer runs, and a lookup that finds it so is a cycle. written is
+     * the class as the expression names it (self, or a name), as the Error gives it.
+     */
+    @TruffleBoundary
+    public Object getConstantInExpression(String constantName, String written) {
+        Object value = constants.get(constantName);
+        if (value instanceof Evaluating) {
+            throw new PhpError("Cannot declare self-referencing constant " + written + "::" + constantName);
+        }
+        if (value instanceof Thunk thunk) {
+            Evaluating evaluating = new Evaluating(thunk);
+            constants.put(constantName, evaluating);
+            try {
+                value = thunk.evaluate();
+            } catch (Throwable failed) {
+                // not evaluated: the next lookup runs the initializer again
+                constants.replace(constantName, evaluating, thunk);
+                throw failed;
+            }
+            constants.put(constantName, value);
+        }
+        return value;
+    }
+
+    /**
+     * zend_update_class_constants, before the class's first object or static property access: the parent's
+     * constants, then each of this class's in declaration order, evaluated as a plain lookup. The class counts as
+     * updated once all have been; an Error leaves it to be tried again at the next access.
+     */
+    @TruffleBoundary
+    public void updateConstants() {
+        if (constantsUpdated) {
+            return;
+        }
+        if (parent != null) {
+            parent.updateConstants();
+        }
+        for (Map.Entry<String, Object> entry : constants.entrySet()) {
+            if (entry.getValue() instanceof Thunk || entry.getValue() instanceof Evaluating) {
+                // a put of an existing key: the iteration goes on
+                getConstant(entry.getKey());
+            }
+        }
+        constantsUpdated = true;
+    }
+
+    /** Whether the class has the constant, evaluated or not. */
+    @TruffleBoundary
+    public boolean hasConstant(String constantName) {
+        return constants.containsKey(constantName);
+    }
+
+    /** A class constant's slot while a constant expression's lookup runs its initializer (IS_CONSTANT_VISITED). */
+    private record Evaluating(Thunk thunk) {
     }
 
     /** visibility: PropertyDecl's; a protected one keeps the class that first declared it (its prototype's). */
@@ -704,6 +774,7 @@ public final class PhpClass {
     /** A static property's declared default (default_static_members_table), whatever it holds now. */
     @TruffleBoundary
     public Object getStaticDefault(String propertyName) {
+        updateConstants();
         Object value = staticDefaults.get(propertyName);
         if (value instanceof Thunk thunk) {
             value = thunk.evaluate();
@@ -731,8 +802,15 @@ public final class PhpClass {
         context.getLanguage().staticPropertyRefs().invalidate();
     }
 
+    /** The static properties as they are, unevaluated initializers too (the refcount census reads them). */
+    public Map<String, PhpRef> staticPropertiesForCensus() {
+        return java.util.Collections.unmodifiableMap(staticProperties);
+    }
+
+    /** A static property's reference, its initializer evaluated (the class's constants first); null if none. */
     @TruffleBoundary
     public PhpRef getStaticProperty(String propertyName) {
+        updateConstants();
         PhpRef ref = staticProperties.get(propertyName);
         if (ref != null && ref.get() instanceof Thunk thunk) {
             ref.set(thunk.evaluate());
@@ -1005,6 +1083,10 @@ public final class PhpClass {
         if (isAbstract || isInterface) {
             throw new PhpError("Cannot instantiate " + (isInterface ? "interface " : "abstract class ") + name);
         }
+        if (!internal) {
+            // an enum's case is made bare (zend_enum_new), while its constants are being evaluated
+            updateConstants();
+        }
         PhpObject object = new PhpObject(rootShape, this, PhpContext.get(null).nextObjectId());
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
         String[] names = declaredNames();
@@ -1070,10 +1152,23 @@ public final class PhpClass {
     public Object[] defaults() {
         Object[] values = defaults;
         if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, values == null)) {
-            values = declaredDefaults();
+            values = firstDefaults();
             defaults = values;
         }
         return values;
+    }
+
+    /** The defaults at the class's first object: its constants evaluated first (object_and_properties_init). */
+    @TruffleBoundary
+    private Object[] firstDefaults() {
+        updateConstants();
+        return declaredDefaults();
+    }
+
+    /** Whether the class has the static property, without evaluating anything (property_exists). */
+    @TruffleBoundary
+    public boolean hasStaticProperty(String propertyName) {
+        return staticProperties.containsKey(propertyName);
     }
 
     public boolean isInstantiable() {

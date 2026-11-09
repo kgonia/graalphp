@@ -61,6 +61,18 @@ public final class Phases {
     private Phases() {
     }
 
+    /** The current thread's counters, for a fiber's thread to count into ({@link #share}); null when off. */
+    public static Phases ofThread() {
+        return ENABLED ? CURRENT.get() : null;
+    }
+
+    /** Makes phases, an {@link #ofThread}, the current thread's: a fiber's thread counts into its request's. */
+    public static void share(Phases phases) {
+        if (phases != null) {
+            CURRENT.set(phases);
+        }
+    }
+
     /** The current thread's counters, zeroed: a request begins. */
     public static Phases begin() {
         Phases phases = new Phases();

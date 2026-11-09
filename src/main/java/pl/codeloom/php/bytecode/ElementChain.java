@@ -21,6 +21,29 @@ final class ElementChain {
     private ElementChain() {
     }
 
+    /**
+     * What readForUpdate gives when the write is dropped: the "Undefined array key" warning's handler shared or
+     * released the array (zend_undefined_index_write's false).
+     */
+    static final Object DROPPED = new Object() {
+        @Override
+        public String toString() {
+            return "dropped";
+        }
+    };
+
+    /**
+     * "Undefined array key" before a read-modify-write creates the element (zend_undefined_index_write): the warning
+     * may run an error handler, which may share or release the array; true if the array's holders are as before, so
+     * the write goes on.
+     */
+    @TruffleBoundary
+    private static boolean undefinedForWrite(Node node, PhpArray array, Object normalized) {
+        int holders = array.holderCount();
+        ElementNodes.ElementReadNode.undefinedKey(node, normalized);
+        return array.holderCount() == holders;
+    }
+
     /** The key of an `[]` on the way (`$a[][k] = v`): a new array appended. */
     static final Object APPEND = new Object() {
         @Override
@@ -44,8 +67,9 @@ final class ElementChain {
                 return created;
             }
             Object normalized = toKey.execute(key);
-            if (update && !array.containsKey(normalized)) {
-                ElementNodes.ElementReadNode.undefinedKey(node, normalized);
+            if (update && !array.containsKey(normalized) && !undefinedForWrite(node, array, normalized)) {
+                // dropped: the rest of the chain works on a container nothing holds (php-src's null result)
+                return new PhpArray();
             }
             PhpArray nested = array.arrayForWrite(normalized);
             if (nested != null) {
@@ -90,11 +114,22 @@ final class ElementChain {
 
     /**
      * The element a read-modify-write reads once its container is writable: `[]` last (`$a[] .= v`, `$a[]++`) a
-     * new element, null (zend_binary_assign_op_dim appends one), an ArrayAccess object's offsetGet(null).
+     * new element, null (zend_binary_assign_op_dim appends one), an ArrayAccess object's offsetGet(null). A missing
+     * element of an array warns and is null, or {@link #DROPPED} when the warning's handler shared or released the
+     * array.
      */
-    static Object readForUpdate(ElementNodes.ElementReadNode read, Object container, Object key) {
+    static Object readForUpdate(Node node, ElementNodes.ElementReadNode read, ElementNodes.ArrayKeyNode toKey,
+                                Object container, Object key) {
         if (key == APPEND) {
             return container instanceof PhpArray ? PhpNull.NULL : read.execute(container, PhpNull.NULL);
+        }
+        if (container instanceof PhpArray array) {
+            Object normalized = toKey.execute(key);
+            Object element = array.get(normalized);
+            if (element != null) {
+                return PhpRef.deref(element);
+            }
+            return undefinedForWrite(node, array, normalized) ? PhpNull.NULL : DROPPED;
         }
         return read.execute(container, key);
     }
@@ -135,7 +170,7 @@ final class ElementChain {
             return current.containsKey(normalized) ? normalized : null;
         }
         if (container instanceof PhpObject object && object.isArrayAccess()) {
-            object.callMethod(node, "offsetunset", key);
+            pl.codeloom.php.runtime.Refcount.done(object.callMethod(node, "offsetunset", key));
         }
         return null;
     }

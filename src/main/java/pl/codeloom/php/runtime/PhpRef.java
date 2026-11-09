@@ -31,6 +31,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
         this.value = value;
     }
 
@@ -42,6 +43,7 @@ public final class PhpRef {
     public static PhpRef unbound(Object value) {
         PhpRef ref = new PhpRef(null);
         ref.value = value;
+        // like a released reference's value: counted once something binds it (takeBack)
         ref.released = true;
         return ref;
     }
@@ -61,6 +63,19 @@ public final class PhpRef {
         if (holds && old instanceof PhpArray array && old != newValue) {
             array.removeHolder();
         }
+        if (holds && (newValue instanceof PhpObject || old instanceof PhpObject)) {
+            countObjects(newValue, old);
+        }
+    }
+
+    /**
+     * set()'s counts of objects, out of line: the callers that compile it (writes through a reference with no node
+     * of their own) mostly store arrays and scalars, and an inlined release is two boundary calls.
+     */
+    @TruffleBoundary
+    private static void countObjects(Object newValue, Object old) {
+        Refcount.inc(newValue);
+        Refcount.dec(old);
     }
 
     /**
@@ -116,6 +131,40 @@ public final class PhpRef {
         }
     }
 
+    /** A temporary array that bound nothing dies: a reference no variable bound lets its value go. */
+    void releaseUnbound() {
+        if (bindings == 0 && !released) {
+            release();
+        }
+    }
+
+    /**
+     * A binding goes but the value keeps this reference's count (a returned array's references: the array is on its
+     * way to a holder, whose bind takes the binding back without counting the value again).
+     */
+    void unbindKeeping() {
+        if (bindings > 0) {
+            bindings--;
+        }
+    }
+
+    /**
+     * unbind for a reference whose array a function returns (its epilogue releases the variable while the value goes
+     * on to the caller): at its last binding the array loses this holder without giving its elements' counts up,
+     * as PhpArray.removeReturnedHolder.
+     */
+    @TruffleBoundary
+    public void unbindReturning() {
+        if (bindings > 0 && --bindings == 0) {
+            released = true;
+            if (value instanceof PhpArray array) {
+                array.removeReturnedHolder();
+            } else {
+                Refcount.dec(value);
+            }
+        }
+    }
+
     /**
      * Out of line: unbind is inlined wherever a variable is rebound or a frame releases its locals, and the
      * release is the rare end of it.
@@ -126,6 +175,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.removeHolder();
         }
+        Refcount.dec(value);
     }
 
     @TruffleBoundary
@@ -134,6 +184,7 @@ public final class PhpRef {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
     }
 
     /** More than one holder: php-src's refcount above 1, where var_dump marks the value with "&". */

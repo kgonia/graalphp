@@ -267,7 +267,8 @@ final class CoreFunctions {
                 // php-src warns "ob_start(): function ... not found" and starts no buffer
                 return false;
             }
-            context.startBuffer(handler == null || handler == PhpNull.NULL ? null : handler,
+            boolean none = handler == null || handler == PhpNull.NULL;
+            context.startBuffer(none ? null : handler, none ? null : Str.java(callableName(handler)),
                     Args.count(a) > 2 ? Convert.toLong(Args.get(a, 2))
                             : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE);
             return true;
@@ -276,36 +277,64 @@ final class CoreFunctions {
             TruffleString contents = context.bufferContents();
             return contents == null ? Boolean.FALSE : contents;
         });
+        // each as its PHP_FUNCTION in main/output.c, with its notices
         r.fn("ob_get_clean", (context, a) -> {
             TruffleString contents = context.bufferContents();
-            if (contents == null || !context.bufferAllows(PhpContext.REMOVABLE)) {
+            if (contents == null) {
                 return Boolean.FALSE;
             }
-            context.endBuffer();
+            if (!context.endBuffer(true, false, "ob_get_clean")) {
+                outputNotice(context, "ob_get_clean", "Failed to delete buffer of " + context.bufferDescription());
+            }
             return contents;
         });
-        r.fn("ob_end_clean", (context, a) -> context.bufferAllows(PhpContext.REMOVABLE) && context.endBuffer());
-        r.fn("ob_clean", (context, a) -> {
-            if (!context.bufferAllows(PhpContext.CLEANABLE)) {
+        r.fn("ob_end_clean", (context, a) -> {
+            if (context.bufferLevel() == 0) {
+                outputNotice(context, "ob_end_clean", "Failed to delete buffer. No buffer to delete");
                 return false;
             }
-            context.cleanBuffer();
+            return context.endBuffer(true, false, "ob_end_clean");
+        });
+        r.fn("ob_clean", (context, a) -> {
+            if (context.bufferLevel() == 0) {
+                outputNotice(context, "ob_clean", "Failed to delete buffer. No buffer to delete");
+                return false;
+            }
+            if (!context.cleanBuffer("ob_clean")) {
+                outputNotice(context, "ob_clean", "Failed to delete buffer of " + context.bufferDescription());
+                return false;
+            }
             return true;
         });
-        r.fn("ob_end_flush", (context, a) -> context.bufferAllows(PhpContext.REMOVABLE) && context.flushBuffer());
+        r.fn("ob_end_flush", (context, a) -> {
+            if (context.bufferLevel() == 0) {
+                outputNotice(context, "ob_end_flush",
+                        "Failed to delete and flush buffer. No buffer to delete or flush");
+                return false;
+            }
+            return context.endBuffer(false, false, "ob_end_flush");
+        });
         r.fn("ob_get_flush", (context, a) -> {
             TruffleString contents = context.bufferContents();
-            if (contents == null || !context.bufferAllows(PhpContext.REMOVABLE)) {
+            if (contents == null) {
+                outputNotice(context, "ob_get_flush",
+                        "Failed to delete and flush buffer. No buffer to delete or flush");
                 return Boolean.FALSE;
             }
-            context.flushBuffer();
+            if (!context.endBuffer(false, false, "ob_get_flush")) {
+                outputNotice(context, "ob_get_flush", "Failed to delete buffer of " + context.bufferDescription());
+            }
             return contents;
         });
         r.fn("ob_flush", (context, a) -> {
-            if (!context.bufferAllows(PhpContext.FLUSHABLE)) {
+            if (context.bufferLevel() == 0) {
+                outputNotice(context, "ob_flush", "Failed to flush buffer. No buffer to flush");
                 return false;
             }
-            context.flushBufferContents();
+            if (!context.flushBufferContents("ob_flush")) {
+                outputNotice(context, "ob_flush", "Failed to flush buffer of " + context.bufferDescription());
+                return false;
+            }
             return true;
         });
         r.fn("ob_get_level", (context, a) -> (long) context.bufferLevel());
@@ -323,12 +352,12 @@ final class CoreFunctions {
         });
         r.fn("var_dump", (context, a) -> {
             for (int i = 0; i < Args.count(a); i++) {
-                context.write(Dump.varDump(Args.get(a, i)));
+                Dump.varDump(context, Args.get(a, i));
             }
             return PhpNull.NULL;
         });
         r.fn("var_export", (context, a) -> {
-            TruffleString text = Dump.varExport(Args.get(a, 0));
+            TruffleString text = Dump.varExport(context, Args.get(a, 0));
             if (Args.bool(a, 1, false)) {
                 return text;
             }
@@ -336,7 +365,7 @@ final class CoreFunctions {
             return PhpNull.NULL;
         });
         r.fn("print_r", (context, a) -> {
-            TruffleString text = Dump.printR(Args.get(a, 0));
+            TruffleString text = Dump.printR(context, Args.get(a, 0));
             if (Args.bool(a, 1, false)) {
                 return text;
             }
@@ -747,7 +776,7 @@ final class CoreFunctions {
                         || decl.declaringClass().equals(phpClass.getLowerName());
             }
         }
-        return phpClass.getStaticProperty(name) != null;
+        return phpClass.hasStaticProperty(name);
     }
 
     /**
@@ -757,6 +786,12 @@ final class CoreFunctions {
     @TruffleBoundary
     private static PhpArray objectVars(Object value) {
         return value instanceof PhpObject object ? object.visibleProperties(null) : new PhpArray();
+    }
+
+    /** An ob_* function's E_NOTICE (php_error_docref "ref.outcontrol"). */
+    private static void outputNotice(PhpContext context, String function, String message) {
+        ErrorFunctions.raise(context, ErrorFunctions.E_NOTICE, Str.of(function + "(): " + message),
+                SourceLocation.current());
     }
 
     /** zend_get_callable_name_ex: is_callable()'s $callable_name. */
@@ -832,6 +867,7 @@ final class CoreFunctions {
         PhpClass scope = Callables.callerClass(context, "self");
         Map<String, PropertyInfo> infos = new LinkedHashMap<>();
         propertyInfos(context, phpClass, phpClass, infos);
+        phpClass.updateConstants();
         phpClass.declaredDefaults();
         PhpArray result = new PhpArray();
         for (boolean statics : new boolean[] {false, true}) {
@@ -1337,6 +1373,6 @@ final class CoreFunctions {
                 space = true;
             }
         }
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 }

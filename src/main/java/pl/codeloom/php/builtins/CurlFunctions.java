@@ -893,7 +893,7 @@ final class CurlFunctions {
             return Boolean.FALSE;
         }
         if (ch.write.method == RETURN && ch.write.buf != null) {
-            return Str.of(ch.write.buf.toByteArray());
+            return ch.write.buf.toStr();
         }
         return ch.write.method == RETURN ? (Object) Str.EMPTY : (Object) Boolean.TRUE;
     }
@@ -1973,7 +1973,7 @@ final class CurlFunctions {
         arity(a, "curl_multi_getcontent", 1, 1);
         Easy ch = easy(a, 0, "curl_multi_getcontent");
         if (ch.write.method == RETURN) {
-            return ch.write.buf == null ? Str.EMPTY : Str.of(ch.write.buf.toByteArray());
+            return ch.write.buf == null ? Str.EMPTY : ch.write.buf.toStr();
         }
         return PhpNull.NULL;
     }
@@ -2177,6 +2177,16 @@ final class CurlFunctions {
                 }
             });
         }
+    }
+
+    /** The current thread's persistent share handles, for a fiber's thread to share: they are its worker's. */
+    static Object persistentShares() {
+        return PERSISTENT_SHARES.get();
+    }
+
+    /** Makes shares, a {@link #persistentShares}, the current thread's. */
+    static void sharePersistentShares(Object shares) {
+        PERSISTENT_SHARES.set((PersistentShares) shares);
     }
 
     @TruffleBoundary

@@ -2,58 +2,117 @@ package pl.codeloom.php.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ByteBuilder;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpClass;
 import pl.codeloom.php.runtime.PhpClosure;
-import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpResource;
+import pl.codeloom.php.runtime.PhpThrowable;
+import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
 
 import java.nio.charset.StandardCharsets;
-import java.util.IdentityHashMap;
-import java.util.Map;
 
 /**
  * var_dump, var_export and print_r, as php-src's php_var_dump, php_var_export_ex (ext/standard/var.c) and
- * zend_print_zval_r (Zend/zend.c). Strings are written as their raw bytes. Arrays and objects being printed are
- * tracked for recursion as php-src's recursion guards. Uninitialized typed properties aren't printed.
+ * zend_print_zval_r (Zend/zend.c). Strings are written as their raw bytes. Arrays and objects being printed carry
+ * the context's recursion marks ({@link RecursionGuard}), which a var_dump that __debugInfo calls sees too.
+ * Uninitialized typed properties aren't printed.
  */
 final class Dump {
     private final ByteBuilder out = new ByteBuilder(64);
-    /** The arrays and objects being printed, by identity. */
-    private final Map<Object, Boolean> inProgress = new IdentityHashMap<>();
+    private final PhpContext context;
+    private final RecursionGuard guard;
+    /** The mark this walk sets on an object: DEBUG for var_dump and print_r, EXPORT for var_export. */
+    private final int objectMark;
+    /** var_dump writes as it goes (php_printf): what it has so far goes out before user code runs. */
+    private final boolean streaming;
 
-    private Dump() {
+    private Dump(PhpContext context, int objectMark, boolean streaming) {
+        this.context = context;
+        this.guard = context.builtinState().recursion;
+        this.objectMark = objectMark;
+        this.streaming = streaming;
+    }
+
+    /** var_dump of one value, written to the output. */
+    @TruffleBoundary
+    static void varDump(PhpContext context, Object value) {
+        Dump dump = new Dump(context, RecursionGuard.DEBUG, true);
+        int depth = dump.guard.depth();
+        try {
+            dump.varDump(value, 1);
+        } finally {
+            dump.guard.unwind(depth);
+        }
+        dump.flush();
     }
 
     @TruffleBoundary
-    static TruffleString varDump(Object value) {
-        Dump dump = new Dump();
-        dump.varDump(value, 1);
+    static TruffleString varExport(PhpContext context, Object value) {
+        Dump dump = new Dump(context, RecursionGuard.EXPORT, false);
+        int depth = dump.guard.depth();
+        try {
+            dump.varExport(value, 1);
+        } finally {
+            dump.guard.unwind(depth);
+        }
         return dump.result();
     }
 
     @TruffleBoundary
-    static TruffleString varExport(Object value) {
-        Dump dump = new Dump();
-        dump.varExport(value, 1);
+    static TruffleString printR(PhpContext context, Object value) {
+        Dump dump = new Dump(context, RecursionGuard.DEBUG, false);
+        int depth = dump.guard.depth();
+        try {
+            dump.printR(value, 0);
+        } finally {
+            dump.guard.unwind(depth);
+        }
         return dump.result();
     }
 
-    @TruffleBoundary
-    static TruffleString printR(Object value) {
-        Dump dump = new Dump();
-        dump.printR(value, 0);
-        return dump.result();
+    /** var_dump's output so far, written out. */
+    private void flush() {
+        context.write(out.toStr());
+        out.reset();
+    }
+
+    /**
+     * zend_std_get_debug_info: __debugInfo()'s array, an empty one for null (deprecated). Anything else, or an exception out of it,
+     * is a fatal error (the exception reported first, as a warning).
+     */
+    private PhpArray debugInfo(PhpObject object) {
+        if (streaming) {
+            flush();
+        }
+        Object info;
+        try {
+            info = PhpRef.deref(object.callMethod("__debuginfo"));
+        } catch (PhpThrowable pending) {
+            throw ErrorFunctions.fatalAfterException(context, pending, ErrorFunctions.E_ERROR,
+                    Str.of("__debuginfo() must return an array"), SourceLocation.current());
+        }
+        if (info instanceof PhpArray debug) {
+            return debug;
+        }
+        if (info == PhpNull.NULL) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Returning null from "
+                    + object.getPhpClass().getName() + "::__debugInfo() is deprecated, return an empty array instead"),
+                    SourceLocation.current());
+            return new PhpArray();
+        }
+        throw ErrorFunctions.fatal(context, ErrorFunctions.E_ERROR, Str.of("__debuginfo() must return an array"),
+                SourceLocation.current(), 0);
     }
 
     private TruffleString result() {
-        return Str.of(out.toByteArray());
+        return out.toStr();
     }
 
     private void ascii(String text) {
@@ -70,13 +129,14 @@ final class Dump {
         }
     }
 
-    /** Starts guarding a container; false if it is already being printed. */
+    /** Marks a container as being printed; false if it already is (here or in a walk this one runs inside). */
     private boolean enter(Object container) {
-        return inProgress.put(container, Boolean.TRUE) == null;
+        return guard.enter(container, container instanceof PhpArray ? RecursionGuard.ARRAY : objectMark);
     }
 
-    private void leave(Object container) {
-        inProgress.remove(container);
+    /** Clears the innermost container's mark. */
+    private void leave() {
+        guard.leave();
     }
 
     // ---- var_dump ----
@@ -110,7 +170,7 @@ final class Dump {
             }
             ascii(common + "array(" + array.size() + ") {\n");
             dumpEntries(array, level);
-            leave(array);
+            leave();
             closeBrace(level);
         } else if (value instanceof PhpObject object && object.getPhpClass().isEnum()) {
             ascii(common + "enum(");
@@ -125,15 +185,12 @@ final class Dump {
             }
             if (object.getPhpClass().findMethod("__debuginfo") != null) {
                 // zend_std_get_debug_info: __debugInfo()'s array stands for the properties
-                Object info = PhpRef.deref(object.callMethod("__debuginfo"));
-                if (!(info instanceof PhpArray debug)) {
-                    throw new PhpError("__debuginfo() must return an array");
-                }
+                PhpArray debug = debugInfo(object);
                 ascii(common + "object(");
                 utf8(object.getPhpClass().getName().split("\0", 2)[0]);
                 ascii(")#" + object.id() + " (" + debug.size() + ") {\n");
                 dumpEntries(debug, level);
-                leave(object);
+                leave();
                 closeBrace(level);
                 return;
             }
@@ -149,7 +206,7 @@ final class Dump {
                 spaces(level + 1);
                 ascii("[\"instance\"]=>\n");
                 varDump(lazy.instance(), level + 2);
-                leave(object);
+                leave();
                 closeBrace(level);
                 return;
             }
@@ -179,7 +236,7 @@ final class Dump {
             for (; t < table.length; t += 2) {
                 dumpProperty((String) table[t], table[t + 1], level);
             }
-            leave(object);
+            leave();
             closeBrace(level);
         } else if (value instanceof PhpClosure closure) {
             if (!enter(closure)) {
@@ -189,7 +246,7 @@ final class Dump {
             PhpArray debug = ClosureMethods.debugInfo(closure);
             ascii(common + "object(Closure)#" + closure.id() + " (" + debug.size() + ") {\n");
             dumpEntries(debug, level);
-            leave(closure);
+            leave();
             closeBrace(level);
         } else if (value instanceof PhpResource resource) {
             ascii(common + "resource(" + resource.getId() + ") of type (" + resource.getType() + ")\n");
@@ -214,10 +271,8 @@ final class Dump {
     }
 
     /** __debugInfo()'s array as a property table (zend_std_get_debug_info), its keys as strings. */
-    private static Object[] debugTable(PhpObject object) {
-        if (!(PhpRef.deref(object.callMethod("__debuginfo")) instanceof PhpArray debug)) {
-            throw new PhpError("__debuginfo() must return an array");
-        }
+    private Object[] debugTable(PhpObject object) {
+        PhpArray debug = debugInfo(object);
         Object[] table = new Object[debug.size() * 2];
         int i = 0;
         for (int p = debug.firstPosition(); p >= 0; p = debug.nextPosition(p)) {
@@ -304,7 +359,7 @@ final class Dump {
                 varExport(array.rawAt(p), level + 2);
                 ascii(",\n");
             }
-            leave(array);
+            leave();
             if (level > 1) {
                 spaces(level - 1);
             }
@@ -349,7 +404,7 @@ final class Dump {
                 varExport(table[i + 1], level + 2);
                 ascii(",\n");
             }
-            leave(object);
+            leave();
             if (level > 1) {
                 spaces(level - 1);
             }
@@ -399,19 +454,21 @@ final class Dump {
                 return;
             }
             printEntries(array, indent);
-            leave(array);
+            leave();
         } else if (value instanceof PhpObject object) {
             utf8(object.getPhpClass().getName());
             String backing = object.getPhpClass().backingType();
             ascii(!object.getPhpClass().isEnum() ? " Object\n" : backing == null ? " Enum\n" : " Enum:" + backing + "\n");
-            if (!enter(object)) {
+            // zend_print_zval_r_to_buf tests the mark before __debugInfo runs, and sets it only after
+            if (guard.isProtected(object, objectMark)) {
                 ascii(" *RECURSION*");
                 return;
             }
-            spaces(indent);
-            ascii("(\n");
             Object[] table = object.getPhpClass().findMethod("__debuginfo") != null ? debugTable(object)
                     : object.propertyTable();
+            enter(object);
+            spaces(indent);
+            ascii("(\n");
             for (int i = 0; i < table.length; i += 2) {
                 spaces(indent + 4);
                 property((String) table[i], false);
@@ -419,7 +476,7 @@ final class Dump {
                 printR(table[i + 1], indent + 8);
                 out.write('\n');
             }
-            leave(object);
+            leave();
             spaces(indent);
             ascii(")\n");
         } else if (value instanceof PhpClosure closure) {
@@ -429,7 +486,7 @@ final class Dump {
                 return;
             }
             printEntries(ClosureMethods.debugInfo(closure), indent);
-            leave(closure);
+            leave();
         } else {
             out.write(Convert.toStr(value == null ? PhpNull.NULL : value));
         }

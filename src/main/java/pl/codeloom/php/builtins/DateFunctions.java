@@ -109,11 +109,15 @@ final class DateFunctions {
     @TruffleBoundary
     private static Object construct(PhpContext context, String className, Object[] a) {
         PhpObject object = context.getClass(className).instantiate();
+        // held while the constructor runs, as `new`'s temporary holds it
+        object.addRef();
         try {
-            object.callMethod("__construct", arguments(a, 0));
+            pl.codeloom.php.runtime.Refcount.done(object.callMethod("__construct", arguments(a, 0)));
         } catch (PhpThrowable e) {
+            object.release();
             return Boolean.FALSE;
         }
+        object.disown();
         return object;
     }
 
@@ -689,7 +693,7 @@ final class DateFunctions {
             }
             bytes.write(out.toString().getBytes(StandardCharsets.ISO_8859_1));
         }
-        return Str.of(bytes.toByteArray());
+        return bytes.toStr();
     }
 
     private static String two(long value) {

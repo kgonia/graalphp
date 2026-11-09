@@ -6,12 +6,15 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
@@ -25,7 +28,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** ext/standard array functions. Sorts are stable, as php-src's zend_sort is since PHP 8.0. */
-final class ArrayFunctions {
+public final class ArrayFunctions {
     private ArrayFunctions() {
     }
 
@@ -193,16 +196,11 @@ final class ArrayFunctions {
         });
         r.fn("array_walk", "1", (context, a) -> {
             Args.arity(a, "array_walk", 2, 3);
-            PhpArray array = writable(Args.ref(a, 0), "array_walk");
+            PhpRef target = Args.ref(a, 0);
+            writable(target, "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                if (Args.has(a, 2)) {
-                    callback.call(array.refAtPosition(p), array.keyAt(p), Args.get(a, 2));
-                } else {
-                    callback.call(array.refAtPosition(p), array.keyAt(p));
-                }
-            }
+            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, false);
             return true;
         });
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
@@ -212,16 +210,22 @@ final class ArrayFunctions {
                     new Callables.Parameter("array_reduce", 2, false));
             Object carry = Args.get(a, 2, PhpNull.NULL);
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                carry = callback.call(carry, array.valueAt(p));
+                Object previous = carry;
+                carry = callback.call(previous, array.valueAt(p));
+                // the previous result: given up after the call that took it (php-src frees args[0])
+                if (previous != carry) {
+                    Refcount.done(previous);
+                }
             }
             return carry;
         });
         r.fn("array_walk_recursive", "1", (context, a) -> {
             Args.arity(a, "array_walk_recursive", 2, 3);
-            PhpArray array = writable(Args.ref(a, 0), "array_walk_recursive");
+            PhpRef target = Args.ref(a, 0);
+            writable(target, "array_walk_recursive");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));
-            walkRecursive(array, callback, Args.has(a, 2) ? Args.get(a, 2) : null);
+            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, true);
             return true;
         });
         r.fn("array_replace", a -> replace(a, false));
@@ -302,15 +306,22 @@ final class ArrayFunctions {
     // ---- helpers ----
 
     @TruffleBoundary
-    private static void walkRecursive(PhpArray array, Callables.Target callback, Object extra) {
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            PhpRef element = array.refAtPosition(p);
-            if (element.get() instanceof PhpArray) {
-                walkRecursive(element.arrayForWrite(), callback, extra);
-            } else if (extra != null) {
-                callback.call(element, array.keyAt(p), extra);
+    /** An element holding an array, walked by array_walk_recursive under the array's recursion mark. */
+    private static void walkNested(PhpContext context, PhpRef element, Callables.Target callback, Object extra) {
+        PhpArray nested = element.arrayForWrite();
+        RecursionGuard guard = context.builtinState().recursion;
+        if (!guard.enter(nested, RecursionGuard.ARRAY)) {
+            throw new PhpError("Recursion detected");
+        }
+        boolean walked = false;
+        try {
+            walk(context, element, callback, extra, true);
+            walked = true;
+        } finally {
+            if (walked && element.get() != nested) {
+                guard.leaveMarked();
             } else {
-                callback.call(element, array.keyAt(p));
+                guard.leave();
             }
         }
     }
@@ -484,6 +495,44 @@ final class ArrayFunctions {
     }
 
     /** The by-reference array argument of function, writable; anything else is php-src's TypeError. */
+    /**
+     * php_array_walk: a hash iterator on the referenced variable's array (RefIteration, as a foreach by reference),
+     * moved past each element before its callback runs; after it the array is taken from the reference again, the
+     * same one going on from the iterator, another (the callback assigned the variable) from its internal pointer.
+     * recursive (array_walk_recursive): an element holding an array is walked so in turn, through its reference,
+     * the array carrying the context's recursion mark ("Recursion detected" when it has it); the mark stays when the
+     * element was given another value meanwhile, as php-src's apply count does.
+     */
+    @TruffleBoundary
+    private static void walk(PhpContext context, PhpRef target, Callables.Target callback, Object extra,
+                             boolean recursive) {
+        RefIteration iteration = RefIteration.start(context, target);
+        try {
+            for (;;) {
+                PhpArray array = iteration.current();
+                if (array == null) {
+                    throw new PhpError("TypeError", "Iterated value is no longer an array or object");
+                }
+                int from = iteration.position();
+                int p = from == RefIteration.END ? -1 : array.positionFrom(from);
+                if (p < 0) {
+                    return;
+                }
+                iteration.setPosition(p + 1);
+                PhpRef element = array.refAtPosition(p);
+                if (recursive && element.get() instanceof PhpArray) {
+                    walkNested(context, element, callback, extra);
+                } else if (extra != null) {
+                    callback.callScalar(element, array.keyAt(p), extra);
+                } else {
+                    callback.callScalar(element, array.keyAt(p));
+                }
+            }
+        } finally {
+            iteration.end(context);
+        }
+    }
+
     private static PhpArray writable(PhpRef ref, String function) {
         if (!(ref.get() instanceof PhpArray)) {
             throw new PhpError("TypeError", function + "(): Argument #1 ($array) must be of type array, "
@@ -629,11 +678,11 @@ final class ArrayFunctions {
             if (callback == null) {
                 keep = Convert.toBool(value);
             } else if (mode == 2) {
-                keep = Convert.toBool(callback.call(key));
+                keep = Convert.toBool(callback.callScalar(key));
             } else if (mode == 1) {
-                keep = Convert.toBool(callback.call(value, key));
+                keep = Convert.toBool(callback.callScalar(value, key));
             } else {
-                keep = Convert.toBool(callback.call(value));
+                keep = Convert.toBool(callback.callScalar(value));
             }
             if (keep) {
                 result.putCopied(key, array.copiedAt(p));
@@ -654,7 +703,7 @@ final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static Object search(Object needle, PhpArray array, boolean strict) {
+    public static Object search(Object needle, PhpArray array, boolean strict) {
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object value = array.valueAt(p);
             if (strict ? Convert.strictEquals(value, needle) : Convert.looseEquals(value, needle)) {
@@ -921,10 +970,21 @@ final class ArrayFunctions {
         }
         if (value instanceof PhpArray nested) {
             nested.addHolder();
+        } else if (value instanceof PhpObject object) {
+            // held across the old array's release, which would take the element's count to zero
+            object.addRef();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         ref.set(result);
         if (value instanceof PhpArray nested) {
-            nested.removeHolder();
+            // the result: it keeps its elements on its way to the caller (php-src's retval holds the array)
+            nested.removeReturnedHolder();
+        } else if (value instanceof PhpObject object) {
+            // moved out to the caller as array_pop's element (a built-in's result holds no count): no event
+            object.disown();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         return value;
     }
@@ -947,7 +1007,7 @@ final class ArrayFunctions {
         Callables.Target callback = Callables.parameter(context, callable,
                 new Callables.Parameter(any ? "array_any" : "array_all", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            boolean match = Convert.toBool(callback.call(array.valueAt(p), array.keyAt(p)));
+            boolean match = Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)));
             if (match == any) {
                 return any;
             }
@@ -960,7 +1020,7 @@ final class ArrayFunctions {
         Callables.Target callback = Callables.parameter(context, callable,
                 new Callables.Parameter(wantKey ? "array_find_key" : "array_find", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            if (Convert.toBool(callback.call(array.valueAt(p), array.keyAt(p)))) {
+            if (Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)))) {
                 return wantKey ? array.keyAt(p) : array.valueAt(p);
             }
         }
@@ -1083,7 +1143,7 @@ final class ArrayFunctions {
             compare = (x, y) -> {
                 Object first = byKey ? x.key() : PhpRef.deref(x.value());
                 Object second = byKey ? y.key() : PhpRef.deref(y.value());
-                Object result = PhpRef.deref(callback.call(first, second));
+                Object result = PhpRef.deref(callback.callScalar(first, second));
                 if (result instanceof Boolean b) {
                     if (!deprecated[0]) {
                         deprecated[0] = true;
@@ -1093,7 +1153,7 @@ final class ArrayFunctions {
                     }
                     if (!b) {
                         // retried with the operands swapped
-                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.call(second, first))));
+                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.callScalar(second, first))));
                     }
                 }
                 return Long.signum(Convert.toLong(result));
@@ -1159,7 +1219,7 @@ final class ArrayFunctions {
      */
     private static int userCompare(PhpContext context, String name, Callables.Target callback, Object first,
                                    Object second, boolean[] deprecated) {
-        Object result = callback.call(first, second);
+        Object result = callback.callScalar(first, second);
         if (result instanceof Boolean b) {
             if (!deprecated[0]) {
                 deprecated[0] = true;
@@ -1168,7 +1228,7 @@ final class ArrayFunctions {
                         + "zero"), SourceLocation.current());
             }
             if (!b) {
-                return -Long.signum(Convert.toLong(callback.call(second, first)));
+                return -Long.signum(Convert.toLong(callback.callScalar(second, first)));
             }
         }
         return Long.signum(Convert.toLong(result));
@@ -1207,7 +1267,7 @@ final class ArrayFunctions {
             for (int i = 1; i < count && ok; i++) {
                 Object data = arrays[i].get(key);
                 boolean equal = data != null
-                        && Long.signum(Convert.toLong(callback.call(value, PhpRef.deref(data)))) == 0;
+                        && Long.signum(Convert.toLong(callback.callScalar(value, PhpRef.deref(data)))) == 0;
                 ok = diff ? !equal : equal;
             }
             if (ok) {

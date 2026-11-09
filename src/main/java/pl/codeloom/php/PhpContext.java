@@ -112,9 +112,13 @@ public final class PhpContext {
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
+    /** The files whose compile diagnostics this request raised: OPcache compiles a file once and doesn't replay them. */
+    private final Set<Object> compiled = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     /** The include sites (IncludeNode) that ran each file in this context, by canonical path. */
     private final Map<String, Set<Object>> includeSites = new HashMap<>();
     private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
+    /** OG(running): the buffer whose handler is running, or null; an output-buffer operation meanwhile is fatal. */
+    private OutputBuffer running;
     /** The next object id: ids start at 1 in each context, as in each php process. */
     private int nextObjectId = 1;
     private final BuiltinState builtinState;
@@ -227,6 +231,73 @@ public final class PhpContext {
 
     public static PhpContext get(Node node) {
         return CONTEXT.get(node);
+    }
+
+    /**
+     * The context's roots for the refcount census (Census, -Dphp.rc.verify=true): globals, static variables,
+     * constants and classes' static properties, each with a name for the report.
+     */
+    public void censusRoots(java.util.function.BiConsumer<String, Object> root) {
+        globals.forEach((name, ref) -> root.accept("$" + name, ref));
+        staticVariables.forEach((function, vars) -> vars.forEach((name, ref) ->
+                root.accept("static $" + name + " in " + function.getName(), ref)));
+        constants.forEach((name, value) -> root.accept("constant " + name, value));
+        for (PhpClass phpClass : classes.values()) {
+            phpClass.staticPropertiesForCensus().forEach((name, ref) ->
+                    root.accept(phpClass.getName() + "::$" + name, ref));
+        }
+    }
+
+    /**
+     * The values built-ins keep in Java state, each one a holder php-src counts (a zval it copied): autoloaders,
+     * shutdown functions and their arguments, output handlers, error and exception handlers. For the refcount
+     * census (Census.audit), which counts them as holders.
+     */
+    public void censusHolders(java.util.function.BiConsumer<String, Object> holder) {
+        autoloaders.forEach(callable -> holder.accept("autoloader", callable));
+        for (Object[] entry : shutdownFunctions) {
+            for (int i = 0; i < entry.length; i++) {
+                holder.accept(i == 0 ? "shutdown function" : "shutdown function argument " + i, entry[i]);
+            }
+        }
+        for (OutputBuffer buffer : buffers) {
+            if (buffer.handler != null) {
+                holder.accept("output handler", buffer.handler);
+            }
+        }
+        errors().forEachHandler(handler -> holder.accept("error/exception handler", handler));
+        pendingReleases.forEach(value -> holder.accept("pending release", value));
+    }
+
+    /**
+     * The counts results of PHP code called from runtime code still own (Refcount.pending). Built-ins drain it above
+     * their mark, so it is a stack's: each fiber has its own, swapped in while it runs (PhpFiber).
+     */
+    private ArrayList<Object> pendingReleases = new ArrayList<>();
+
+    /** Arguments moved into a built-in's call, waiting for it to start (Refcount.toBuiltin, takeMoved). */
+    private final ArrayList<Object> movedToBuiltins = new ArrayList<>();
+
+    public ArrayList<Object> movedToBuiltins() {
+        return movedToBuiltins;
+    }
+
+    public ArrayList<Object> pendingReleases() {
+        return pendingReleases;
+    }
+
+    /** Makes pending the running stack's pending releases; returns the list it replaces. */
+    public ArrayList<Object> swapPendingReleases(ArrayList<Object> pending) {
+        ArrayList<Object> replaced = pendingReleases;
+        pendingReleases = pending;
+        return replaced;
+    }
+
+    /** The objects made in this context, kept for the refcount audit (-Dphp.rc.audit=true); empty otherwise. */
+    private final ArrayList<Object> auditedObjects = new ArrayList<>();
+
+    public ArrayList<Object> auditedObjects() {
+        return auditedObjects;
     }
 
     /** get_resource_id()'s numbering: 1-3 are STDIN, STDOUT and STDERR in php-cli. */
@@ -373,6 +444,12 @@ public final class PhpContext {
     @TruffleBoundary
     public boolean includedBefore(String canonical, Object site) {
         return !includeSites.computeIfAbsent(canonical, path -> new HashSet<>(2)).add(site);
+    }
+
+    /** Whether the request compiles this file's translation (its diagnostics) for the first time. */
+    @TruffleBoundary
+    public boolean firstCompile(Object translation) {
+        return compiled.add(translation);
     }
 
     /** Marks a file as included; false if it already was (include_once / require_once). */
@@ -536,7 +613,7 @@ public final class PhpContext {
         }
         try {
             for (Object autoloader : List.copyOf(autoloaders)) {
-                Callables.call(this, autoloader, Str.of(className));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, autoloader, Str.of(className)));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -575,12 +652,18 @@ public final class PhpContext {
         } else {
             autoloaders.add(callable);
         }
+        pl.codeloom.php.runtime.Refcount.hold(callable);
         return true;
     }
 
     @TruffleBoundary
     public boolean removeAutoloader(Object callable) {
-        return autoloaders.remove(callable);
+        int index = autoloaders.indexOf(callable);
+        if (index < 0) {
+            return false;
+        }
+        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index));
+        return true;
     }
 
     @TruffleBoundary
@@ -739,6 +822,9 @@ public final class PhpContext {
         Object[] entry = new Object[arguments.length + 1];
         entry[0] = callable;
         System.arraycopy(arguments, 0, entry, 1, arguments.length);
+        for (Object value : entry) {
+            pl.codeloom.php.runtime.Refcount.hold(value);
+        }
         shutdownFunctions.add(entry);
     }
 
@@ -755,17 +841,31 @@ public final class PhpContext {
         guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
                 Object[] entry = shutdownFunctions.get(i);
-                Callables.call(this, entry[0], Arrays.copyOfRange(entry, 1, entry.length));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, entry[0],
+                        Arrays.copyOfRange(entry, 1, entry.length)));
             }
         });
+        // php_free_shutdown_functions: the entries let go once all ran
+        List<Object[]> ran = List.copyOf(shutdownFunctions);
         shutdownFunctions.clear();
+        guarded(() -> {
+            for (Object[] entry : ran) {
+                for (Object value : entry) {
+                    pl.codeloom.php.runtime.Refcount.unhold(value);
+                }
+            }
+        });
     }
 
     /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
     @TruffleBoundary
     public void exit(int status) {
+        if (!shuttingDown) {
+            pl.codeloom.php.runtime.Refcount.audit(this, "exit");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
+        destroyFibers();
         endRequest();
         env.getContext().closeExited(null, status);
     }
@@ -776,8 +876,13 @@ public final class PhpContext {
      */
     @TruffleBoundary
     public void endScript() {
+        if (!shuttingDown) {
+            guarded(() -> pl.codeloom.php.runtime.Refcount.releasePending(pendingReleases, 0));
+            pl.codeloom.php.runtime.Refcount.audit(this, "end of script");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
+        destroyFibers();
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
         guarded(this::endRequest);
         int status = errors().exitStatus();
@@ -832,6 +937,149 @@ public final class PhpContext {
             generatorsWithFinally.get(i).destroy();
         }
         generatorsWithFinally.clear();
+    }
+
+    /** EG(active_fiber): the fiber running, null on the request's own stack. */
+    private pl.codeloom.php.runtime.PhpFiber currentFiber;
+    /** The fibers started in this request, in the order they were started, for the request's end. */
+    private final List<pl.codeloom.php.runtime.PhpFiber> fibers = new ArrayList<>();
+    private int fibersPruneAt = 64;
+    /** Every fiber thread made here that may still be alive, for the request's end to wait for. */
+    private final List<pl.codeloom.php.runtime.FiberThread> fiberThreads = new ArrayList<>();
+    private int fiberThreadsPruneAt = 64;
+    /** Fiber threads waiting for a fiber, the last one freed on top. */
+    private final java.util.ArrayDeque<pl.codeloom.php.runtime.FiberThread> idleFiberThreads =
+            new java.util.ArrayDeque<>();
+    /** How many idle fiber threads a context keeps; one more ends instead. */
+    private static final int IDLE_FIBER_THREADS = 16;
+    /** Whether a fiber was started here: the context admits other threads until it is disposed. */
+    private boolean hadFibers;
+    /** The request's end is destroying the fibers: the list grows (a finally block starting one) but isn't pruned. */
+    private boolean drainingFibers;
+    /** zend_fiber_switch_blocking: the context is being finalized, PHP code can't switch fibers any more. */
+    private boolean fibersBlocked;
+
+    public boolean fibersBlocked() {
+        return fibersBlocked;
+    }
+
+    /** An idle fiber thread with a stack of stackSize at least, or null (one with a smaller stack ends). */
+    public pl.codeloom.php.runtime.FiberThread idleFiberThread(long stackSize) {
+        pl.codeloom.php.runtime.FiberThread idle;
+        while ((idle = idleFiberThreads.pollFirst()) != null) {
+            if (idle.stackSizeAtLeast(stackSize)) {
+                return idle;
+            }
+            idle.retire();
+        }
+        return null;
+    }
+
+    /** A new fiber thread, not started. */
+    public pl.codeloom.php.runtime.FiberThread newFiberThread(long stackSize) {
+        if (fiberThreads.size() >= fiberThreadsPruneAt) {
+            fiberThreads.removeIf(thread -> !thread.isAlive());
+            fiberThreadsPruneAt = Math.max(64, fiberThreads.size() * 2);
+        }
+        pl.codeloom.php.runtime.FiberThread thread = pl.codeloom.php.runtime.FiberThread.create(this, stackSize);
+        fiberThreads.add(thread);
+        return thread;
+    }
+
+    /**
+     * A fiber ended on thread: whether the thread waits for the next fiber. Not while the request's end destroys
+     * fibers or the context closes, nor beyond {@link #IDLE_FIBER_THREADS}.
+     */
+    public boolean keepFiberThread(pl.codeloom.php.runtime.FiberThread thread) {
+        if (drainingFibers || fibersBlocked || idleFiberThreads.size() >= IDLE_FIBER_THREADS) {
+            return false;
+        }
+        idleFiberThreads.addFirst(thread);
+        return true;
+    }
+
+    /** Ends the idle fiber threads. */
+    private void retireIdleFiberThreads() {
+        pl.codeloom.php.runtime.FiberThread idle;
+        while ((idle = idleFiberThreads.pollFirst()) != null) {
+            idle.retire();
+        }
+    }
+
+    /** The context is disposed: it no longer needs other threads admitted. */
+    public void disposeFibers() {
+        if (hadFibers) {
+            hadFibers = false;
+            pl.codeloom.php.runtime.PhpFiber.contextDisposed();
+        }
+    }
+
+    public pl.codeloom.php.runtime.PhpFiber currentFiber() {
+        return currentFiber;
+    }
+
+    public void setCurrentFiber(pl.codeloom.php.runtime.PhpFiber fiber) {
+        currentFiber = fiber;
+    }
+
+    /** A fiber's thread started: it must end before the context closes. */
+    public void fiberStarted(pl.codeloom.php.runtime.PhpFiber fiber) {
+        if (!hadFibers) {
+            hadFibers = true;
+            pl.codeloom.php.runtime.PhpFiber.contextHasFibers();
+        }
+        if (fibers.size() >= fibersPruneAt && !drainingFibers) {
+            fibers.removeIf(f -> f.status() == pl.codeloom.php.runtime.PhpFiber.Status.DEAD);
+            fibersPruneAt = Math.max(64, fibers.size() * 2);
+        }
+        fibers.add(fiber);
+    }
+
+    /**
+     * zend_objects_store_call_destructors for fibers: each fiber still suspended at the end of a request that ends
+     * cleanly unwinds, its finally blocks running, in the order the fibers were started. After a fatal error, which
+     * skips destructors, it unwinds without them. Either way its thread ends, as the context's close requires.
+     */
+    private void destroyFibers() {
+        boolean clean = errors().exitStatus() == 0;
+        drainingFibers = true;
+        try {
+            // by index: a finally block run here may start a fiber, which joins the end of the list
+            for (int i = 0; i < fibers.size(); i++) {
+                pl.codeloom.php.runtime.PhpFiber fiber = fibers.get(i);
+                if (clean) {
+                    guarded(fiber::destroy);
+                } else {
+                    fiber.abandon();
+                }
+            }
+            fibers.clear();
+            // every fiber has ended: the threads end too, and the request waits for them to leave the context
+            retireIdleFiberThreads();
+            for (int i = 0; i < fiberThreads.size(); i++) {
+                fiberThreads.get(i).join();
+            }
+            fiberThreads.clear();
+        } finally {
+            drainingFibers = false;
+        }
+    }
+
+    /**
+     * The context closes: a fiber still suspended (the request ended by exit() in a fiber) ends without running.
+     * Its thread isn't waited for here: the close holds the context's locks, which a thread leaving it needs, and
+     * Truffle waits for the threads itself.
+     */
+    public void abandonFibers() {
+        fibersBlocked = true;
+        drainingFibers = true;
+        // by index: what an abandoned fiber's end releases may run a destructor that starts one
+        for (int i = 0; i < fibers.size(); i++) {
+            fibers.get(i).abandon();
+        }
+        fibers.clear();
+        retireIdleFiberThreads();
+        fiberThreads.clear();
     }
 
     /** The error state: the handlers, the last error, the exit status. */
@@ -896,19 +1144,26 @@ public final class PhpContext {
     /** Output; site: the echo that writes it, where the output starts if it sends the headers (else the call's). */
     @TruffleBoundary
     public void write(TruffleString s, com.oracle.truffle.api.nodes.Node site) {
+        if (s.isEmpty()) {
+            // no bytes: no output, the headers stay unsent (ZEND_ECHO writes nothing for "")
+            return;
+        }
         try {
-            if (buffers.isEmpty()) {
-                if (s.isEmpty()) {
-                    // php_output_op: no bytes, no output, and the headers stay unsent
-                    return;
-                }
+            OutputBuffer target = buffers.peek();
+            if (target != null && target.state == HandlerState.DISABLED) {
+                target = writableBelow();
+            }
+            if (target == null) {
                 if (response != null && !response.isSent()) {
                     out.write(response.block(site != null ? pl.codeloom.php.runtime.SourceLocation.of(site)
                             : outputStartLocation()));
                 }
                 out.write(Str.readBytes(s));
             } else {
-                buffers.peek().bytes.write(Str.readBytes(s));
+                if (running != null) {
+                    target.producedOutput = true;
+                }
+                target.bytes.write(Str.readBytes(s));
             }
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());
@@ -924,28 +1179,73 @@ public final class PhpContext {
     public static final long FLUSHABLE = 32;
     public static final long REMOVABLE = 64;
 
+    /**
+     * A buffer's handler (PHP_OUTPUT_HANDLER_STARTED, _DISABLED): not called yet, called, or failed (it returned
+     * false or threw), after which it isn't called again and what is written passes on to the level below.
+     */
+    private enum HandlerState { NEW, STARTED, DISABLED }
+
     /** An ob_start() level: what was written to it, and the handler its contents pass through (or null). */
     private static final class OutputBuffer {
         final ByteBuilder bytes = new ByteBuilder();
         final Object handler;
+        /** The handler's name (ob_list_handlers, the notices): its callable name, or "default output handler". */
+        final String name;
         final long flags;
-        boolean started;
+        HandlerState state = HandlerState.NEW;
+        /** PHP_OUTPUT_HANDLER_PRODUCED_OUTPUT: written to while a handler ran, which a handler may not do. */
+        boolean producedOutput;
 
-        OutputBuffer(Object handler, long flags) {
+        OutputBuffer(Object handler, String name, long flags) {
             this.handler = handler;
+            this.name = name;
             this.flags = flags;
         }
     }
 
-    /** ob_start($handler, 0, $flags); handler is null for none. */
+    /**
+     * What a handler's run passes on (null for nothing), and the exception it threw, which the operation raises once
+     * it has finished (the buffer popped, the output written), as php-src leaves it pending.
+     */
+    private record Processed(TruffleString output, PhpThrowable thrown) {
+        static final Processed NONE = new Processed(null, null);
+
+        void rethrow() {
+            if (thrown != null) {
+                throw thrown;
+            }
+        }
+    }
+
+    /**
+     * ob_start($handler, 0, $flags); handler is null for none, name its callable name. While a handler runs, a fatal
+     * error (php_output_handler_start's lock check).
+     */
     @TruffleBoundary
-    public void startBuffer(Object handler, long flags) {
-        buffers.push(new OutputBuffer(handler, flags));
+    public void startBuffer(Object handler, String name, long flags) {
+        if (running != null) {
+            throw outputLocked("ob_start");
+        }
+        pl.codeloom.php.runtime.Refcount.hold(handler);
+        buffers.push(new OutputBuffer(handler, handler == null ? "default output handler" : name, flags));
+    }
+
+    /**
+     * Where a write goes when the current buffer's handler is disabled: the first buffer below whose handler isn't
+     * (php_output_stack_apply_op passes it on), or null for the output itself.
+     */
+    private OutputBuffer writableBelow() {
+        for (OutputBuffer buffer : buffers) {
+            if (buffer.state != HandlerState.DISABLED) {
+                return buffer;
+            }
+        }
+        return null;
     }
 
     /** ob_start() with no handler, everything allowed. */
     public void startBuffer() {
-        startBuffer(null, CLEANABLE | FLUSHABLE | REMOVABLE);
+        startBuffer(null, null, CLEANABLE | FLUSHABLE | REMOVABLE);
     }
 
     /** ob_get_contents(): the current buffer, or null if none. */
@@ -964,11 +1264,15 @@ public final class PhpContext {
     public List<String> bufferHandlerNames() {
         List<String> names = new java.util.ArrayList<>();
         for (java.util.Iterator<OutputBuffer> it = buffers.descendingIterator(); it.hasNext(); ) {
-            Object handler = it.next().handler;
-            names.add(handler == null ? "default output handler"
-                    : handler instanceof TruffleString name ? Str.java(name) : "Closure::__invoke");
+            names.add(it.next().name);
         }
         return names;
+    }
+
+    /** The current buffer as the ob_* notices name it, "NAME (LEVEL)"; there is one. */
+    @TruffleBoundary
+    public String bufferDescription() {
+        return buffers.peek().name + " (" + (buffers.size() - 1) + ")";
     }
 
     /** Whether the current buffer allows an operation (one of the flags); false if there is no buffer. */
@@ -977,69 +1281,158 @@ public final class PhpContext {
         return !buffers.isEmpty() && (buffers.peek().flags & flag) != 0;
     }
 
-    /** A buffer's contents through its handler, in a phase; false from the handler passes them unchanged. */
-    private TruffleString process(OutputBuffer buffer, int phase) {
-        TruffleString contents = Str.of(buffer.bytes.toByteArray());
-        if (buffer.handler == null) {
-            return contents;
+    /**
+     * php_output_handler_op: the buffer's contents through its handler in a phase, the buffer then empty. A disabled
+     * handler isn't called and passes nothing. The handler gets START with its first phase; false or an exception
+     * disables it and passes the contents on as they are; true, null or "" pass nothing. While another handler runs,
+     * any of this is a fatal error (php_output_lock_error), named after function.
+     */
+    private Processed process(OutputBuffer buffer, int phase, String function) {
+        if (buffer.state == HandlerState.DISABLED) {
+            return Processed.NONE;
         }
-        int mode = buffer.started ? phase : phase | PHASE_START;
-        buffer.started = true;
-        Object result = Callables.call(this, buffer.handler, contents, (long) mode);
-        return result == Boolean.FALSE ? contents : pl.codeloom.php.runtime.Convert.toStr(result);
+        if (running != null) {
+            throw outputLocked(function);
+        }
+        TruffleString contents = buffer.bytes.toStr();
+        if (buffer.handler == null) {
+            // the default handler passes its buffer on
+            buffer.state = HandlerState.STARTED;
+            buffer.bytes.reset();
+            return new Processed(contents, null);
+        }
+        int mode = buffer.state == HandlerState.NEW ? phase | PHASE_START : phase;
+        running = buffer;
+        Object result;
+        PhpThrowable thrown = null;
+        try {
+            result = PhpRef.deref(pl.codeloom.php.runtime.Refcount.done(Callables.call(this, buffer.handler,
+                    contents, (long) mode)));
+        } catch (PhpThrowable e) {
+            thrown = e;
+            result = Boolean.FALSE;
+        } catch (RuntimeException | Error e) {
+            running = null;
+            throw e;
+        }
+        if (thrown == null && buffer.producedOutput && !producedOutput(buffer, function)) {
+            // the handler ended its own buffer meanwhile
+            running = null;
+            return Processed.NONE;
+        }
+        TruffleString output = null;
+        if (result == Boolean.FALSE) {
+            // failed: from now on its buffer is passed by
+            buffer.state = HandlerState.DISABLED;
+            output = buffer.bytes.toStr();
+        } else {
+            buffer.state = HandlerState.STARTED;
+            if (result != Boolean.TRUE) {
+                // converted while the handler counts as running: a warning goes into the buffer, which is emptied
+                TruffleString text = pl.codeloom.php.runtime.Convert.toStr(result);
+                output = text.isEmpty() ? null : text;
+            }
+        }
+        running = null;
+        buffer.bytes.reset();
+        return new Processed(output, thrown);
     }
 
-    /** Ends the current buffer, passing its contents to the next level (ob_end_flush); false if there was none. */
+    /**
+     * A handler wrote output, which is lost with its buffer: Deprecated, written past the handler's buffer (disabled
+     * meanwhile). False if the handler's buffer isn't on the stack any more.
+     */
+    private boolean producedOutput(OutputBuffer buffer, String function) {
+        buffer.producedOutput = false;
+        HandlerState state = buffer.state;
+        buffer.state = HandlerState.DISABLED;
+        ErrorFunctions.raise(this, ErrorFunctions.E_DEPRECATED, Str.of(function
+                + "(): Producing output from user output handler " + buffer.name + " is deprecated"),
+                pl.codeloom.php.runtime.SourceLocation.current());
+        buffer.state = state;
+        return buffers.contains(buffer);
+    }
+
+    /**
+     * php_output_lock_error: an output-buffer operation while a handler runs ends the script; every buffer goes,
+     * unsent (php_output_deactivate), so the error is written straight out.
+     */
+    private PhpBailout outputLocked(String function) {
+        for (OutputBuffer buffer : buffers) {
+            pl.codeloom.php.runtime.Refcount.unhold(buffer.handler);
+        }
+        buffers.clear();
+        running = null;
+        return ErrorFunctions.fatal(this, ErrorFunctions.E_ERROR, Str.of(function
+                + "(): Cannot use output buffering in output buffering display handlers"),
+                pl.codeloom.php.runtime.SourceLocation.current(), 0);
+    }
+
+    /**
+     * php_output_stack_pop: ends the current buffer, its handler run a last time unless disabled, and writes what it
+     * passes on to the level below unless discard. A buffer that isn't removable stays unless force, with a notice
+     * named after function; false then, or if there is no buffer.
+     */
     @TruffleBoundary
-    public boolean flushBuffer() {
+    public boolean endBuffer(boolean discard, boolean force, String function) {
         OutputBuffer top = buffers.peek();
         if (top == null) {
             return false;
         }
-        TruffleString output = process(top, PHASE_FINAL);
-        buffers.poll();
-        write(output);
+        if (!force && (top.flags & REMOVABLE) == 0) {
+            ErrorFunctions.raise(this, ErrorFunctions.E_NOTICE, Str.of(function + "(): Failed to "
+                    + (discard ? "discard" : "send") + " buffer of " + bufferDescription()),
+                    pl.codeloom.php.runtime.SourceLocation.current());
+            return false;
+        }
+        Processed processed = process(top, discard ? PHASE_CLEAN | PHASE_FINAL : PHASE_FINAL, function);
+        if (buffers.peek() == top) {
+            buffers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(top.handler);
+        }
+        if (processed.output() != null && !discard) {
+            write(processed.output());
+        }
+        processed.rethrow();
         return true;
     }
 
-    /** ob_flush(): the current buffer's contents go to the next level, the buffer stays (empty). */
+    /** php_output_flush (ob_flush): the handler's output goes to the next level; false if not flushable. */
     @TruffleBoundary
-    public void flushBufferContents() {
+    public boolean flushBufferContents(String function) {
         OutputBuffer top = buffers.peek();
-        TruffleString output = process(top, PHASE_FLUSH);
-        top.bytes.reset();
-        buffers.poll();
-        write(output);
-        buffers.push(top);
+        if (top == null || (top.flags & FLUSHABLE) == 0) {
+            return false;
+        }
+        Processed processed = process(top, PHASE_FLUSH, function);
+        if (processed.output() != null && buffers.peek() == top) {
+            buffers.poll();
+            write(processed.output());
+            buffers.push(top);
+        }
+        processed.rethrow();
+        return true;
     }
 
-    /** ob_clean(): the current buffer's contents are discarded (its handler still sees them), the buffer stays. */
+    /** php_output_clean (ob_clean): the contents are discarded, the handler told; false if not cleanable. */
     @TruffleBoundary
-    public void cleanBuffer() {
+    public boolean cleanBuffer(String function) {
         OutputBuffer top = buffers.peek();
-        process(top, PHASE_CLEAN);
-        top.bytes.reset();
+        if (top == null || (top.flags & CLEANABLE) == 0) {
+            return false;
+        }
+        process(top, PHASE_CLEAN, function).rethrow();
+        return true;
     }
 
     /** The end of the script or request: open output buffers are flushed, then the output (and headers). */
     @TruffleBoundary
     public void endRequest() {
-        while (flushBuffer()) {
-            // each level passes its contents to the one below
+        while (!buffers.isEmpty()) {
+            // php_output_end_all: each level passes its contents to the one below, removable or not
+            endBuffer(false, true, "ob_end_flush");
         }
         flush();
-    }
-
-    /** Discards the current buffer (ob_end_clean); its handler sees the contents last. False if there was none. */
-    @TruffleBoundary
-    public boolean endBuffer() {
-        OutputBuffer top = buffers.peek();
-        if (top == null) {
-            return false;
-        }
-        process(top, PHASE_CLEAN | PHASE_FINAL);
-        buffers.poll();
-        return true;
     }
 
     /** php_output_header's OG(output_start_filename/lineno): the executing PHP code's place, if any runs. */

@@ -3,7 +3,10 @@ package pl.codeloom.php.nodes.vars;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
+import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Refcount;
 
 /**
  * A site's writes through references ({@link PhpRef#set}), with a profile of the holder updates they have met: a
@@ -16,6 +19,9 @@ public final class RefWrites {
     @CompilationFinal private int seen;
     private static final int NEW_ARRAY = 1;
     private static final int OLD_ARRAY = 1 << 1;
+    private static final int NEW_OBJECT = 1 << 2;
+    private static final int OLD_OBJECT = 1 << 3;
+    private final Refcount.Releases releases = Refcount.Releases.create();
 
     public static RefWrites create() {
         return new RefWrites();
@@ -29,13 +35,28 @@ public final class RefWrites {
             if (holds) {
                 array.addHolder();
             }
+        } else if (value instanceof PhpObject object) {
+            met(NEW_OBJECT);
+            if (holds) {
+                object.addRef();
+            }
+        } else if (value instanceof PhpClosure closureValue && holds) {
+            closureValue.addRef();
         }
         Object old = ref.exchange(value);
-        if (old instanceof PhpArray array && old != value) {
+        if (old instanceof PhpArray array) {
+            // also when it is the value: its holder was added above
             met(OLD_ARRAY);
             if (holds) {
                 array.removeHolder();
             }
+        } else if (old instanceof PhpObject object) {
+            met(OLD_OBJECT);
+            if (holds) {
+                releases.release(object);
+            }
+        } else if (old instanceof PhpClosure closureValue && holds) {
+            closureValue.release();
         }
     }
 
@@ -47,6 +68,13 @@ public final class RefWrites {
             if (ref.holdsArrays()) {
                 array.removeHolder();
             }
+        } else if (old instanceof PhpObject object) {
+            met(OLD_OBJECT);
+            if (ref.holdsArrays()) {
+                releases.release(object);
+            }
+        } else if (old instanceof PhpClosure closureValue && ref.holdsArrays()) {
+            closureValue.release();
         }
     }
 

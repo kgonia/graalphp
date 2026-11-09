@@ -58,6 +58,7 @@ public final class Ini {
         directives.put("error_reporting", new Directive(null, ALL));
         directives.put("fatal_error_backtraces", new Directive("1", ALL));
         directives.put("expose_php", new Directive("1", SYSTEM));
+        directives.put("fiber.stack_size", new Directive(null, ALL));
         directives.put("file_uploads", new Directive("1", SYSTEM));
         directives.put("highlight.comment", new Directive("#FF8000", ALL));
         directives.put("highlight.default", new Directive("#0000BB", ALL));
@@ -66,6 +67,8 @@ public final class Ini {
         directives.put("highlight.string", new Directive("#DD0000", ALL));
         directives.put("html_errors", new Directive("1", ALL));
         directives.put("ignore_repeated_errors", new Directive("0", ALL));
+        // PHP_INCLUDE_PATH of a build with the default prefix; the runtime looks in "." only (IncludeNode.located)
+        directives.put("include_path", new Directive(".:/usr/local/lib/php", ALL));
         directives.put("ignore_repeated_source", new Directive("0", ALL));
         directives.put("log_errors", new Directive("0", ALL));
         directives.put("mail.add_x_header", new Directive("0", SYSTEM | PERDIR));
@@ -91,6 +94,7 @@ public final class Ini {
         directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
         directives.put("unserialize_callback_func", new Directive(null, ALL));
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
+        directives.put("zend.enable_gc", new Directive("1", ALL));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
         directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
         // ext/standard's var.c
@@ -129,6 +133,10 @@ public final class Ini {
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
+    /** EG(fiber_stack_size), in bytes. */
+    private long fiberStackSize;
+    /** GC_G(gc_enabled): zend.enable_gc, which gc_enable() and gc_disable() set (OnUpdateGCEnabled). */
+    private boolean gcEnabled;
     /** PG(mail_x_header), PG(mail_mixed_lf_and_crlf), PG(mail_cr_lf_mode) and PG(mail_log) (null when empty). */
     private boolean mailAddXHeader;
     private boolean mailMixedLfAndCrlf;
@@ -221,6 +229,20 @@ public final class Ini {
             case "ignore_repeated_source" -> ignoreRepeatedSource = bool(value);
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
+            case "zend.enable_gc" -> gcEnabled = bool(value);
+            case "fiber.stack_size" -> {
+                // OnUpdateFiberStackSize: unset is ZEND_FIBER_DEFAULT_C_STACK_SIZE (2 MiB on 64 bits)
+                if (value == null) {
+                    fiberStackSize = 4096L * 512;
+                } else {
+                    long size = quantity(name, value);
+                    if (size < 0) {
+                        updateWarning = "fiber.stack_size must be a positive number";
+                        return false;
+                    }
+                    fiberStackSize = size;
+                }
+            }
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "short_open_tag" -> shortOpenTag = bool(value);
             case "serialize_precision" -> {
@@ -344,6 +366,15 @@ public final class Ini {
 
     public boolean exceptionIgnoreArgs() {
         return exceptionIgnoreArgs;
+    }
+
+    public boolean gcEnabled() {
+        return gcEnabled;
+    }
+
+    /** EG(fiber_stack_size): what Fiber::start() checks against its minimum. */
+    public long fiberStackSize() {
+        return fiberStackSize;
     }
 
     public int exceptionStringParamMaxLen() {

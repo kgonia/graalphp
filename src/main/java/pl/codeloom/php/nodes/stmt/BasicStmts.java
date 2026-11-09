@@ -51,8 +51,11 @@ public final class BasicStmts {
             if (value instanceof PhpArray array) {
                 array.addHolder();
             }
-            // an uninitialized (readonly) property is put with its flags
-            if (!DynamicObjectLibrary.getUncached().putIfPresent(self, name, value)) {
+            // an uninitialized (readonly) property is put with its flags, a present one keeps its own; either
+            // counts the object it now holds
+            if (DynamicObjectLibrary.getUncached().containsKey(self, name)) {
+                self.setProperty(name, value);
+            } else {
                 self.initProperty(name, value);
             }
         }

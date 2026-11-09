@@ -89,6 +89,14 @@ public final class ErrorFunctions {
         /** FATAL_EXIT_STATUS after a fatal error; the script's exit status unless exit() gives another. */
         int exitStatus;
 
+        /** The handlers kept (current and saved), each a value php-src holds a count of, for the refcount census. */
+        public void forEachHandler(java.util.function.Consumer<Object> each) {
+            each.accept(errorHandler);
+            errorHandlers.forEach(saved -> each.accept(saved.handler()));
+            each.accept(exceptionHandler);
+            exceptionHandlers.forEach(each);
+        }
+
         public int exitStatus() {
             return exitStatus;
         }
@@ -113,10 +121,14 @@ public final class ErrorFunctions {
         state.errorHandler = PhpNull.NULL;
         Object handled;
         try {
-            handled = Callables.call(context, handler, (long) type, message, Str.of(at.file()), (long) at.line());
+            handled = pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, (long) type, message,
+                    Str.of(at.file()), (long) at.line()));
         } finally {
             if (state.errorHandler == PhpNull.NULL) {
                 state.errorHandler = handler;
+            } else {
+                // the handler set another one: zend_error lets the original go
+                pl.codeloom.php.runtime.Refcount.unhold(handler);
             }
         }
         if (Boolean.FALSE.equals(PhpRef.deref(handled))) {
@@ -146,6 +158,20 @@ public final class ErrorFunctions {
     public static PhpBailout fatal(PhpContext context, int type, TruffleString message, SourceLocation at, int skip) {
         assert (type & E_FATAL_ERRORS & NOT_USER_HANDLED) == type : type;
         report(context, type, message, at, fatalBacktrace(context, type, skip), false);
+        return new PhpBailout();
+    }
+
+    /**
+     * fatal, raised while an exception is pending (zend_error_zstr_at): the exception is reported first, as
+     * zend_exception_error does at E_WARNING, and dropped; the fatal error then has no backtrace.
+     */
+    @TruffleBoundary
+    public static PhpBailout fatalAfterException(PhpContext context, PhpThrowable pending, int type,
+                                                 TruffleString message, SourceLocation at) {
+        assert (type & E_FATAL_ERRORS & NOT_USER_HANDLED) == type : type;
+        exceptionError(context, pending.toThrowable(context), E_WARNING);
+        context.errors().fatalBacktrace = null;
+        report(context, type, message, at, null, false);
         return new PhpBailout();
     }
 
@@ -208,7 +234,7 @@ public final class ErrorFunctions {
                         out.write('\n');
                     }
                     writeUtf8(out, ini.errorAppendString());
-                    context.write(Str.of(out.toByteArray()));
+                    context.write(out.toStr());
                 }
             }
         }
@@ -298,18 +324,18 @@ public final class ErrorFunctions {
         try {
             PhpObject throwable = exception.toThrowable(context);
             if (state.exceptionHandler == PhpNull.NULL) {
-                exceptionError(context, throwable);
+                exceptionError(context, throwable, E_ERROR);
                 return;
             }
             Object handler = state.exceptionHandler;
             state.exceptionHandlers.push(handler);
             state.exceptionHandler = PhpNull.NULL;
-            Callables.call(context, handler, throwable);
+            pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, throwable));
             if (state.exceptionHandler == PhpNull.NULL && !state.exceptionHandlers.isEmpty()) {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }
         } catch (PhpThrowable thrown) {
-            exceptionError(context, thrown.toThrowable(context));
+            exceptionError(context, thrown.toThrowable(context), E_ERROR);
         } catch (PhpBailout ended) {
             // reported where it was raised
         }
@@ -318,16 +344,16 @@ public final class ErrorFunctions {
     /** An exception thrown out of code the runtime called with no PHP frame below (a shutdown function). */
     @TruffleBoundary
     public static void uncaughtInternal(PhpContext context, PhpThrowable exception) {
-        exceptionError(context, exception.toThrowable(context));
+        exceptionError(context, exception.toThrowable(context), E_ERROR);
     }
 
     /**
      * zend_exception_error: the Throwable as its __toString() gives it (stored in its "string" property) is
      * reported as an uncaught fatal error, at its file and line, without a backtrace and without ending the script
-     * where it is (the script has ended). A ParseError or CompileError itself (not a subclass) is reported as the
+     * where it is (the script has ended); type E_WARNING for one a fatal error found pending. A ParseError or CompileError itself (not a subclass) is reported as the
      * error it stands for, a file that doesn't compile: E_PARSE or E_COMPILE_ERROR, its message at its file and line.
      */
-    private static void exceptionError(PhpContext context, PhpObject throwable) {
+    private static void exceptionError(PhpContext context, PhpObject throwable, int type) {
         State state = context.errors();
         state.fatalBacktrace = null;
         String lowerClass = throwable.getPhpClass().getLowerName();
@@ -356,7 +382,7 @@ public final class ErrorFunctions {
         text.writeAscii("Uncaught ");
         text.write(Convert.toStr(Builtins.property(throwable, "string")));
         text.writeAscii("\n  thrown");
-        report(context, E_ERROR, Str.of(text.toByteArray()), locationOf(throwable), null, false);
+        report(context, type, text.toStr(), locationOf(throwable), null, false);
     }
 
     private static SourceLocation locationOf(PhpObject throwable) {
@@ -383,6 +409,7 @@ public final class ErrorFunctions {
             }
             Object previous = state.errorHandler;
             state.errorHandlers.push(new SavedHandler(state.errorHandler, state.errorHandlerLevels));
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.errorHandler = handler;
             if (handler != PhpNull.NULL) {
                 state.errorHandlerLevels = (int) Args.lng(a, 1, E_ALL);
@@ -392,6 +419,7 @@ public final class ErrorFunctions {
         r.fn("restore_error_handler", (context, a) -> {
             State state = context.errors();
             SavedHandler previous = state.errorHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.errorHandler);
             if (previous == null) {
                 state.errorHandler = PhpNull.NULL;
             } else {
@@ -408,12 +436,14 @@ public final class ErrorFunctions {
             }
             Object previous = state.exceptionHandler;
             state.exceptionHandlers.push(state.exceptionHandler);
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.exceptionHandler = handler;
             return previous;
         });
         r.fn("restore_exception_handler", (context, a) -> {
             State state = context.errors();
             Object previous = state.exceptionHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.exceptionHandler);
             state.exceptionHandler = previous == null ? PhpNull.NULL : previous;
             return Boolean.TRUE;
         });
