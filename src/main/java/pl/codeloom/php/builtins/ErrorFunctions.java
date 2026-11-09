@@ -161,6 +161,20 @@ public final class ErrorFunctions {
         return new PhpBailout();
     }
 
+    /**
+     * fatal, raised while an exception is pending (zend_error_zstr_at): the exception is reported first, as
+     * zend_exception_error does at E_WARNING, and dropped; the fatal error then has no backtrace.
+     */
+    @TruffleBoundary
+    public static PhpBailout fatalAfterException(PhpContext context, PhpThrowable pending, int type,
+                                                 TruffleString message, SourceLocation at) {
+        assert (type & E_FATAL_ERRORS & NOT_USER_HANDLED) == type : type;
+        exceptionError(context, pending.toThrowable(context), E_WARNING);
+        context.errors().fatalBacktrace = null;
+        report(context, type, message, at, null, false);
+        return new PhpBailout();
+    }
+
     /** EG(last_fatal_error_backtrace), cleared by every error and taken for a fatal one: where it was raised. */
     private static PhpArray fatalBacktrace(PhpContext context, int type, int skip) {
         State state = context.errors();
@@ -310,7 +324,7 @@ public final class ErrorFunctions {
         try {
             PhpObject throwable = exception.toThrowable(context);
             if (state.exceptionHandler == PhpNull.NULL) {
-                exceptionError(context, throwable);
+                exceptionError(context, throwable, E_ERROR);
                 return;
             }
             Object handler = state.exceptionHandler;
@@ -321,7 +335,7 @@ public final class ErrorFunctions {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }
         } catch (PhpThrowable thrown) {
-            exceptionError(context, thrown.toThrowable(context));
+            exceptionError(context, thrown.toThrowable(context), E_ERROR);
         } catch (PhpBailout ended) {
             // reported where it was raised
         }
@@ -330,16 +344,16 @@ public final class ErrorFunctions {
     /** An exception thrown out of code the runtime called with no PHP frame below (a shutdown function). */
     @TruffleBoundary
     public static void uncaughtInternal(PhpContext context, PhpThrowable exception) {
-        exceptionError(context, exception.toThrowable(context));
+        exceptionError(context, exception.toThrowable(context), E_ERROR);
     }
 
     /**
      * zend_exception_error: the Throwable as its __toString() gives it (stored in its "string" property) is
      * reported as an uncaught fatal error, at its file and line, without a backtrace and without ending the script
-     * where it is (the script has ended). A ParseError or CompileError itself (not a subclass) is reported as the
+     * where it is (the script has ended); type E_WARNING for one a fatal error found pending. A ParseError or CompileError itself (not a subclass) is reported as the
      * error it stands for, a file that doesn't compile: E_PARSE or E_COMPILE_ERROR, its message at its file and line.
      */
-    private static void exceptionError(PhpContext context, PhpObject throwable) {
+    private static void exceptionError(PhpContext context, PhpObject throwable, int type) {
         State state = context.errors();
         state.fatalBacktrace = null;
         String lowerClass = throwable.getPhpClass().getLowerName();
@@ -368,7 +382,7 @@ public final class ErrorFunctions {
         text.writeAscii("Uncaught ");
         text.write(Convert.toStr(Builtins.property(throwable, "string")));
         text.writeAscii("\n  thrown");
-        report(context, E_ERROR, text.toStr(), locationOf(throwable), null, false);
+        report(context, type, text.toStr(), locationOf(throwable), null, false);
     }
 
     private static SourceLocation locationOf(PhpObject throwable) {

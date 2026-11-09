@@ -57,10 +57,9 @@ final class JsonFunctions {
     static final class State {
         int lastError;
         /**
-         * The arrays and objects being encoded (GC_PROTECT_RECURSION), and the objects whose jsonSerialize() runs
-         * (their JSON recursion guard): a json_encode() that jsonSerialize() calls sees them too.
+         * The objects whose jsonSerialize() runs (their JSON recursion guard): a json_encode() that jsonSerialize()
+         * calls sees them too. The arrays and objects being encoded carry the context's RecursionGuard marks.
          */
-        final ArrayList<Object> encoding = new ArrayList<>();
         final ArrayList<Object> serializing = new ArrayList<>();
     }
 
@@ -73,7 +72,7 @@ final class JsonFunctions {
             return decode(context, state(context), Args.str(a, 0), Args.get(a, 1, PhpNull.NULL), Args.lng(a, 2, 512),
                     Args.lng(a, 3, 0));
         });
-        r.fn("json_encode", (context, a) -> encode(state(context), Args.get(a, 0), Args.lng(a, 1, 0), Args.lng(a, 2, 512)));
+        r.fn("json_encode", (context, a) -> encode(state(context), context.builtinState().recursion, Args.get(a, 0), Args.lng(a, 1, 0), Args.lng(a, 2, 512)));
         r.fn("json_last_error", (context, a) -> {
             Args.arity(a, "json_last_error", 0, 0);
             return (long) state(context).lastError;
@@ -513,11 +512,11 @@ final class JsonFunctions {
 
     /** PHP_FUNCTION(json_encode). */
     @TruffleBoundary
-    private static Object encode(State state, Object value, long flags, long depth) {
-        Encoder encoder = new Encoder(state, flags, (int) depth);
+    private static Object encode(State state, RecursionGuard guard, Object value, long flags, long depth) {
+        Encoder encoder = new Encoder(state, guard, flags, (int) depth);
         boolean partial = (flags & PARTIAL_OUTPUT_ON_ERROR) != 0;
         boolean record = (flags & THROW_ON_ERROR) == 0 || partial;
-        int encoding = state.encoding.size();
+        int encoding = guard.depth();
         int serializing = state.serializing.size();
         try {
             encoder.value(value);
@@ -526,7 +525,7 @@ final class JsonFunctions {
                 state.lastError = encoder.error;
             }
             // what an exception left protected
-            state.encoding.subList(encoding, state.encoding.size()).clear();
+            guard.unwind(encoding);
             state.serializing.subList(serializing, state.serializing.size()).clear();
         }
         if (encoder.error != 0 && !partial) {
@@ -546,11 +545,12 @@ final class JsonFunctions {
         final int maxDepth;
         int depth;
         int error;
-        final ArrayList<Object> encoding;
+        /** The arrays (one mark every walk shares) and objects (JSON's mark) being encoded. */
+        final RecursionGuard guard;
         final ArrayList<Object> serializing;
 
-        Encoder(State state, long flags, int maxDepth) {
-            this.encoding = state.encoding;
+        Encoder(State state, RecursionGuard guard, long flags, int maxDepth) {
+            this.guard = guard;
             this.serializing = state.serializing;
             this.flags = flags;
             this.partial = (flags & PARTIAL_OUTPUT_ON_ERROR) != 0;
@@ -659,12 +659,11 @@ final class JsonFunctions {
         /** php_json_encode_array: an array, or an object's public properties (both null: no properties). */
         boolean container(Object holder, PhpArray array, PhpObject object) {
             boolean list = array != null && (flags & FORCE_OBJECT) == 0 && isList(array);
-            if (contains(encoding, holder)) {
+            if (!guard.enter(holder, holder instanceof PhpArray ? RecursionGuard.ARRAY : RecursionGuard.JSON)) {
                 error = ERROR_RECURSION;
                 ascii("null");
                 return false;
             }
-            encoding.add(holder);
             out.write(list ? '[' : '{');
             ++depth;
             boolean needComma = false;
@@ -683,7 +682,7 @@ final class JsonFunctions {
                         }
                     }
                     if (!value(array.valueAt(p)) && !partial) {
-                        encoding.remove(encoding.size() - 1);
+                        guard.leave();
                         return false;
                     }
                 }
@@ -700,12 +699,12 @@ final class JsonFunctions {
                     needComma = comma(needComma);
                     key(name.getBytes(StandardCharsets.ISO_8859_1));
                     if (!value(table[i + 1]) && !partial) {
-                        encoding.remove(encoding.size() - 1);
+                        guard.leave();
                         return false;
                     }
                 }
             }
-            encoding.remove(encoding.size() - 1);
+            guard.leave();
             if (depth > maxDepth) {
                 error = ERROR_DEPTH;
                 if (!partial) {

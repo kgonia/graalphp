@@ -28,7 +28,7 @@ Four read-only audits, one per area (runtime; bytecode and nodes; parser; built-
 | `ArrayIterator`: a snapshot of keys and an index | `spl.php:38-168` | [061](../issues/061-arrayiterator-snapshot.md) | `arrayiterator-unset-during-foreach` |
 | `DirectoryIterator`: `SplFileInfo` path fixed at entry 0 | `spl.php:856-976` | [062](../issues/062-directoryiterator-entry-path.md) | `directoryiterator-entry-type` |
 | `include_once` state: marked before the file opens; a missing file is an Error | `IncludeNode.java:37-44` | [063](../issues/063-include-once-missing-file.md) | `include-once-missing` |
-| `var_dump` recursion guard: per call, not per object | `Dump.java:29`, `74-80` | [064](../issues/064-var-dump-recursion-guard.md) | `var-dump-debuginfo-recursion` |
+| `var_dump` recursion guard: per call, not per object | `Dump.java:29`, `74-80` | [064](../issues/064-var-dump-recursion-guard.md), fixed | `var-dump-debuginfo-recursion` |
 | `flock`: a lock outlives its dropped handle; `FileLocks` is static | `FileFunctions.java:464`, `606-676` | [065](../issues/065-flock-dropped-handle.md) | `flock-dropped-handle` |
 | `array_walk`: holds the array it started with | `ArrayFunctions.java:194-219` | [066](../issues/066-array-walk-reassigned.md) | `array-walk-reassign` |
 | Translator one-shot effects (`made()`, compile warnings) run per copy of a finally body | `BytecodeTranslator.java:1738-1769`, `2152`, `6406` | [067](../issues/067-finally-emitted-per-exit.md) | `finally-emitted-once` |

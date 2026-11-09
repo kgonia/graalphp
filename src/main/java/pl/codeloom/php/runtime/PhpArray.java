@@ -376,8 +376,8 @@ public final class PhpArray implements TruffleObject {
         return holders == RELEASED;
     }
 
-    /** Frozen (shared, its holders uncounted), for the refcount census. */
-    boolean isFrozen() {
+    /** Frozen (a literal every run shares, its holders uncounted): php-src's immutable array. */
+    public boolean isFrozen() {
         return holders == FROZEN;
     }
 

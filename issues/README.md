@@ -67,7 +67,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Open |
 | [062](062-directoryiterator-entry-path.md) | `DirectoryIterator`'s `SplFileInfo` methods describe the first entry | Open |
 | [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Open |
-| [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Open |
+| [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Fixed |
 | [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
 | [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |
 | [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Open |
