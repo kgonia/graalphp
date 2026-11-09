@@ -109,6 +109,8 @@ public final class PhpMain {
                 .allowIO(IOAccess.ALL)
                 .allowEnvironmentAccess(EnvironmentAccess.INHERIT)
                 .allowNativeAccess(true)
+                // a fiber runs on a thread of its own (PhpFiber)
+                .allowCreateThread(true)
                 .allowExperimentalOptions(true)
                 .build()) {
             context.eval(source);

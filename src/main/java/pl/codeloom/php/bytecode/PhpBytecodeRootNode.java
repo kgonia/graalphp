@@ -106,6 +106,7 @@ import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpFunction;
+import pl.codeloom.php.runtime.PhpFiber;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
@@ -7101,14 +7102,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * Whether a finally block runs as exception leaves its try: for PHP's exceptions and a destroyed generator's
-     * unwinding; not for a bailout after a fatal error, which runs none (TryNode).
+     * Whether a finally block runs as exception leaves its try: for PHP's exceptions and a destroyed generator's or
+     * fiber's unwinding; not for a bailout after a fatal error, which runs none (TryNode).
      */
     @Operation
     public static final class FinallyRuns {
         @Specialization
         public static boolean runs(Object exception) {
-            return exception instanceof PhpThrowable || exception instanceof PhpGenerator.Destroyed;
+            return exception instanceof PhpThrowable || exception instanceof PhpGenerator.Destroyed
+                    || exception instanceof PhpFiber.Destroyed;
         }
     }
 

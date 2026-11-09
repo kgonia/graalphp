@@ -58,6 +58,7 @@ public final class Ini {
         directives.put("error_reporting", new Directive(null, ALL));
         directives.put("fatal_error_backtraces", new Directive("1", ALL));
         directives.put("expose_php", new Directive("1", SYSTEM));
+        directives.put("fiber.stack_size", new Directive(null, ALL));
         directives.put("file_uploads", new Directive("1", SYSTEM));
         directives.put("highlight.comment", new Directive("#FF8000", ALL));
         directives.put("highlight.default", new Directive("#0000BB", ALL));
@@ -132,6 +133,8 @@ public final class Ini {
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
+    /** EG(fiber_stack_size), in bytes. */
+    private long fiberStackSize;
     /** GC_G(gc_enabled): zend.enable_gc, which gc_enable() and gc_disable() set (OnUpdateGCEnabled). */
     private boolean gcEnabled;
     /** PG(mail_x_header), PG(mail_mixed_lf_and_crlf), PG(mail_cr_lf_mode) and PG(mail_log) (null when empty). */
@@ -227,6 +230,19 @@ public final class Ini {
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
             case "zend.enable_gc" -> gcEnabled = bool(value);
+            case "fiber.stack_size" -> {
+                // OnUpdateFiberStackSize: unset is ZEND_FIBER_DEFAULT_C_STACK_SIZE (2 MiB on 64 bits)
+                if (value == null) {
+                    fiberStackSize = 4096L * 512;
+                } else {
+                    long size = quantity(name, value);
+                    if (size < 0) {
+                        updateWarning = "fiber.stack_size must be a positive number";
+                        return false;
+                    }
+                    fiberStackSize = size;
+                }
+            }
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "short_open_tag" -> shortOpenTag = bool(value);
             case "serialize_precision" -> {
@@ -354,6 +370,11 @@ public final class Ini {
 
     public boolean gcEnabled() {
         return gcEnabled;
+    }
+
+    /** EG(fiber_stack_size): what Fiber::start() checks against its minimum. */
+    public long fiberStackSize() {
+        return fiberStackSize;
     }
 
     public int exceptionStringParamMaxLen() {

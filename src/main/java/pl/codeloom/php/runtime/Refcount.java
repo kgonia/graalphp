@@ -415,10 +415,11 @@ public final class Refcount {
      * they held to zero in turn (zend_object_std_dtor). An exception the destructor throws goes on after the release.
      */
     private static void destroy(PhpObject object) {
-        RuntimeException thrown = null;
+        Throwable thrown = null;
         PhpGenerator generator = object.getInternal() instanceof PhpGenerator g ? g : null;
+        PhpFiber fiber = object.getInternal() instanceof PhpFiber f ? f : null;
         if (!object.markDestructorCalled()
-                && (generator != null || object.getPhpClass().findMethod("__destruct") != null)) {
+                && (generator != null || fiber != null || object.getPhpClass().findMethod("__destruct") != null)) {
             object.addRef();
             if (Census.AUDIT) {
                 Census.destroying(object, true);
@@ -428,10 +429,14 @@ public final class Refcount {
                     // zend_generator_dtor_storage: a generator suspended in a try runs its finally blocks; its
                     // frame is freed (zend_generator_close)
                     generator.destroy();
+                } else if (fiber != null) {
+                    // zend_fiber_object_destroy: a suspended fiber unwinds, its finally blocks running
+                    fiber.destroy();
                 } else {
                     dec(object.callMethodOwned(null, "__destruct"));
                 }
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
+                // an Error too (a cancel, a stack overflow in a finally block): the counts below still settle
                 thrown = e;
             } finally {
                 if (Census.AUDIT) {
@@ -441,17 +446,28 @@ public final class Refcount {
             if (object.decrement() > 0) {
                 // resurrected: freed when its count next reaches zero, without its destructor
                 if (thrown != null) {
-                    throw thrown;
+                    throw rethrown(thrown);
                 }
                 return;
             }
         }
         if (!object.markFreed()) {
             freeProperties(object);
+            if (fiber != null) {
+                fiber.free();
+            }
         }
         if (thrown != null) {
-            throw thrown;
+            throw rethrown(thrown);
         }
+    }
+
+    /** What destroy caught, thrown on: a RuntimeException or an Error. */
+    private static RuntimeException rethrown(Throwable thrown) {
+        if (thrown instanceof Error error) {
+            throw error;
+        }
+        return (RuntimeException) thrown;
     }
 
     /**

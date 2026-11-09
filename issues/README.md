@@ -83,3 +83,11 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [077](077-prelude-classes-show-internals.md) | Prelude SPL classes show their implementation in dumps and reflection | Open |
 | [078](078-ob-start-chunk-size.md) | `ob_start`'s chunk size is ignored | Open |
 | [079](079-object-ids-not-reused.md) | Object ids are never reused | Open |
+| [080](080-recursion-depth.md) | Recursion a few hundred calls deep overflows the Java stack | Open |
+| [081](081-yield-from-aggregate-generator.md) | `yield from` an IteratorAggregate whose iterator is a generator stops after its first element | Open |
+| [082](082-max-execution-time-and-starvation.md) | `max_execution_time` isn't enforced, so a few runaway requests starve `HttpMain` | Open |
+| [083](083-language-state-grows-per-request.md) | Language-level state grows with every request that evaluates code or declares names | Open |
+| [084](084-flock-links-and-blocking.md) | `flock`: a hard link bypasses an exclusive lock, and a wait for another process can't be cancelled | Open |
+| [085](085-native-resources-outlive-request.md) | Native resources outlive their request: a dropped socket's selector, `proc_open` children | Open |
+| [086](086-pcre-caches-unbounded.md) | PCRE caches never evict: one-off patterns stay for good, and a context's grow without bound | Open |
+| [087](087-uncancellable-waits-and-shared-statics.md) | Waits a cancel can't reach; diagnostics' shared state isn't thread-safe | Open |
