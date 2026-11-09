@@ -96,3 +96,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [090](090-typed-property-write-slow.md) | A typed property's write costs 19 ns compiled, an untyped one's 0.3 ns | Fixed |
 | [091](091-splitting-volume.md) | Splitting copies a third of WordPress's compiled nodes; turning its two biggest sources off is slower | Open |
 | [092](092-typed-reference-unchecked.md) | A reference to a typed property takes any value | Open |
+| [093](093-per-request-name-lookups.md) | A server's requests look names up by hash and declare everything again: ~12% of its CPU | Open |
