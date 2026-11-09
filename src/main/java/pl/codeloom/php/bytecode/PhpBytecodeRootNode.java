@@ -351,7 +351,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             // a constant expression is evaluated in its class's scope, the class it was bound to
             return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass owner ? owner.getLowerName() : null;
         }
-        return closure || file ? PropNode.callingScope(frame, scopeName) : scopeName;
+        return hasVaryingScope() ? PropNode.callingScope(frame, scopeName) : scopeName;
     }
 
     /** Makes this a constant expression's root (BytecodeTranslator.Thunk). */
@@ -441,6 +441,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     public boolean isClosure() {
         return closure;
+    }
+
+    /**
+     * Whether the scope code here runs in changes between calls: a closure's is its bound class, a file's its
+     * includer's (zend_include_or_eval gives the included code the including function's scope). A cache that
+     * depends on the scope keeps the scope it was made for.
+     */
+    public boolean hasVaryingScope() {
+        return closure || file;
     }
 
     /** Whether the scope a cache entry was made for is still the calling one. */
@@ -4600,7 +4609,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = MethodSite.class)
     public static final class ResolveMethod {
         /**
-         * Per class key, as long as the answer follows from it (keyed) and, in a closure whose bound scope may
+         * Per class key, as long as the answer follows from it (keyed) and, in a closure or a file whose scope may
          * change, the scope is the entry's or doesn't matter (scoped: the method's visibility or a private method
          * of a scope decides). In a method the scope is the declaring class: both fold.
          */
@@ -5093,7 +5102,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = boolean.class, name = "cacheable")
     public static final class ClassConstant {
-        /** A constant that isn't public, read in a closure (whose bound scope may change), is looked up per call. */
+        /** A constant that isn't public, read in a closure or a file (whose scope may change), is looked up per call. */
         @Specialization(guards = {"cacheable", "phpClass == cachedClass", "!scoped"}, limit = "1",
                 assumptions = "singleContext()", excludeForUncached = true)
         public static Object single(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
@@ -5115,7 +5124,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
-            return root.isClosure() && phpClass.isRestrictedConstant(name);
+            return root.hasVaryingScope() && phpClass.isRestrictedConstant(name);
         }
 
         public static Assumption singleContext() {

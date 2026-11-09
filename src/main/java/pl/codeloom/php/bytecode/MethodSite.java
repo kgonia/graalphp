@@ -59,9 +59,9 @@ public final class MethodSite {
         return phpClass.isMethodAccessKeyed(lowerName, scope);
     }
 
-    /** Whether the lookup in a closure, whose bound scope may change, depends on the scope. */
+    /** Whether the lookup in a closure or a file, whose scope may change, depends on the scope. */
     public boolean isScoped(PhpBytecodeRootNode root, PhpClass phpClass) {
-        return root.isClosure() && phpClass.methodDependsOnScope(lowerName);
+        return root.hasVaryingScope() && phpClass.methodDependsOnScope(lowerName);
     }
 
     static boolean byValue(PhpFunction function) {

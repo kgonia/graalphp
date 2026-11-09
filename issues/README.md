@@ -61,7 +61,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [055](055-output-handler-state.md) | Output buffering doesn't know a handler is running, or that one failed | Fixed |
 | [056](056-callable-static-cache.md) | `'static::m'` as a callable is resolved once, not per called class | Open |
 | [057](057-self-referencing-constant.md) | Class constants that refer to each other overflow the Java stack | Fixed |
-| [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Open |
+| [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Fixed |
 | [059](059-element-write-handler-shares.md) | An element write lands in an array the error handler shared during it | Open |
 | [060](060-abandoned-generator-cleanup.md) | A generator destroyed while suspended doesn't undo its frame's state (`@`, foreach) | Open |
 | [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Open |

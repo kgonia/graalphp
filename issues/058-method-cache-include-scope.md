@@ -1,6 +1,6 @@
 # 058: An included file's method call cache ignores the class scope: private methods become callable
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **Symptom:** one file, included by `A::render` and by `B::render`, returns `$obj->hidden()` for an `A` object, and
 `hidden` is private in `A` (`method-cache-include-scope`):
@@ -17,6 +17,9 @@ classes are common in WordPress plugins.
 can. `MethodSite.isScoped` (`MethodSite.java:49`) treats only closures as scope-dependent. A file root's method
 cache (`PhpBytecodeRootNode.java:4113`, `4324`) keeps the lookup made, with visibility checked, in the first scope.
 
-**Fix:** to do. Treat a file root like a closure: its lookups depend on the scope.
+**Fix:** `PhpBytecodeRootNode.hasVaryingScope()`: a file's scope varies between runs, as a closure's does. The caches
+that depend on the scope use it, so each entry keeps the scope it was made for: the method lookups (`MethodSite.isScoped`,
+instance and static calls) and the class constant reads (`ClassConstant.scoped`). Property and static property reads
+already checked the scope.
 
-**Test:** `tests/smoke/method-cache-include-scope.php` (with `.inc`).
+**Test:** `tests/smoke/method-cache-include-scope.php` (with `.inc` and `-all.inc`).
