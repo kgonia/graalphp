@@ -105,7 +105,7 @@ volume() {
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
     for f in /w/target/native/wp-http* /w/target/native/wp-fcgi*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
-    for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
+    for d in /w/target/classes-*; do [ ! -d "$d" ] || cp -r "$d" /srv/target/; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     # the Gate 1 kernels, served (tests/gate2/kernels.php): the compile diagnosis runs them on the HTTP launcher
     rm -rf /srv/bench && mkdir -p /srv/bench && cp -r /w/bench/gate1 /srv/bench/gate1
