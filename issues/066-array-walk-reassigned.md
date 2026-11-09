@@ -20,4 +20,9 @@ from the reference and goes on from the iterator's position in it.
   from the copy's position, another array from its internal pointer;
 - a value that is no longer an array is the TypeError "Iterated value is no longer an array or object".
 
+`array_walk_recursive` walks each nested array so in turn, through the element's reference, under the array's
+recursion mark (the context's `RecursionGuard`): "Recursion detected" for an array inside itself, the TypeError when
+the element no longer holds an array, and the mark kept, as php-src's apply count, when the element was given another
+array meanwhile.
+
 **Test:** `tests/smoke/array-walk-reassign.php`.

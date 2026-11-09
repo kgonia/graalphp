@@ -73,6 +73,15 @@ final class RecursionGuard {
         }
     }
 
+    /**
+     * Leaves the innermost value entered and keeps its mark: array_walk_recursive's walk of an array the element
+     * no longer holds, whose apply count php-src leaves raised.
+     */
+    void leaveMarked() {
+        depth--;
+        values[depth] = null;
+    }
+
     int depth() {
         return depth;
     }

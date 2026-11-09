@@ -200,7 +200,7 @@ public final class ArrayFunctions {
             writable(target, "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
-            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null);
+            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, false);
             return true;
         });
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
@@ -221,10 +221,11 @@ public final class ArrayFunctions {
         });
         r.fn("array_walk_recursive", "1", (context, a) -> {
             Args.arity(a, "array_walk_recursive", 2, 3);
-            PhpArray array = writable(Args.ref(a, 0), "array_walk_recursive");
+            PhpRef target = Args.ref(a, 0);
+            writable(target, "array_walk_recursive");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));
-            walkRecursive(array, callback, Args.has(a, 2) ? Args.get(a, 2) : null);
+            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, true);
             return true;
         });
         r.fn("array_replace", a -> replace(a, false));
@@ -305,15 +306,22 @@ public final class ArrayFunctions {
     // ---- helpers ----
 
     @TruffleBoundary
-    private static void walkRecursive(PhpArray array, Callables.Target callback, Object extra) {
-        for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            PhpRef element = array.refAtPosition(p);
-            if (element.get() instanceof PhpArray) {
-                walkRecursive(element.arrayForWrite(), callback, extra);
-            } else if (extra != null) {
-                callback.callScalar(element, array.keyAt(p), extra);
+    /** An element holding an array, walked by array_walk_recursive under the array's recursion mark. */
+    private static void walkNested(PhpContext context, PhpRef element, Callables.Target callback, Object extra) {
+        PhpArray nested = element.arrayForWrite();
+        RecursionGuard guard = context.builtinState().recursion;
+        if (!guard.enter(nested, RecursionGuard.ARRAY)) {
+            throw new PhpError("Recursion detected");
+        }
+        boolean walked = false;
+        try {
+            walk(context, element, callback, extra, true);
+            walked = true;
+        } finally {
+            if (walked && element.get() != nested) {
+                guard.leaveMarked();
             } else {
-                callback.callScalar(element, array.keyAt(p));
+                guard.leave();
             }
         }
     }
@@ -491,9 +499,13 @@ public final class ArrayFunctions {
      * php_array_walk: a hash iterator on the referenced variable's array (RefIteration, as a foreach by reference),
      * moved past each element before its callback runs; after it the array is taken from the reference again, the
      * same one going on from the iterator, another (the callback assigned the variable) from its internal pointer.
+     * recursive (array_walk_recursive): an element holding an array is walked so in turn, through its reference,
+     * the array carrying the context's recursion mark ("Recursion detected" when it has it); the mark stays when the
+     * element was given another value meanwhile, as php-src's apply count does.
      */
     @TruffleBoundary
-    private static void walk(PhpContext context, PhpRef target, Callables.Target callback, Object extra) {
+    private static void walk(PhpContext context, PhpRef target, Callables.Target callback, Object extra,
+                             boolean recursive) {
         RefIteration iteration = RefIteration.start(context, target);
         try {
             for (;;) {
@@ -507,10 +519,13 @@ public final class ArrayFunctions {
                     return;
                 }
                 iteration.setPosition(p + 1);
-                if (extra != null) {
-                    callback.callScalar(array.refAtPosition(p), array.keyAt(p), extra);
+                PhpRef element = array.refAtPosition(p);
+                if (recursive && element.get() instanceof PhpArray) {
+                    walkNested(context, element, callback, extra);
+                } else if (extra != null) {
+                    callback.callScalar(element, array.keyAt(p), extra);
                 } else {
-                    callback.callScalar(array.refAtPosition(p), array.keyAt(p));
+                    callback.callScalar(element, array.keyAt(p));
                 }
             }
         } finally {
