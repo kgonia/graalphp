@@ -58,9 +58,15 @@ uses it:
   `PolyglotEngineImpl.singleThreadPerContext`, an assumption of the whole engine, and `HttpMain`'s contexts share
   one engine. Run L2 on a server where one request has used a fiber, against one where none has. If it regresses,
   the options are a separate engine for fiber requests, or keeping the cost.
-- Truffle 25.4 warns that polyglot contexts on virtual threads are experimental on HotSpot, and that a native image
-  runs each virtual thread on its own platform thread. Caller frames on virtual threads are readable only
-  (`READ_ONLY`), which is all this runtime uses (`Backtrace`, `Callables`, `Census`, `SourceLocation`).
+- Virtual threads in Truffle 25.4 (checked 2026-11-09, `PolyglotEngineImpl.validateVirtualThreadCreation`):
+  - HotSpot: real virtual threads, experimental. Caller frames on them are readable only (`READ_ONLY`), which is
+    all this runtime uses (`Backtrace`, `Callables`, `Census`, `SourceLocation`). Truffle debugging and CPU-time
+    limits don't work on them.
+  - Native image with JIT: still one platform thread per virtual thread (oracle/graal#7520, open; no change since
+    Truffle 24.1). A native-image server pays a platform thread per fiber, so measure step 1's numbers there too.
+  - Polyglot isolates refuse virtual threads.
+  - One context can be entered by at most 65535 threads (chumer on #7520); check whether ended fiber threads count
+    towards it.
 - Check `BatchMain`'s timeout, which cancels the context with `close(true)`: Truffle allows cancelling an active
   context only while it is single-threaded.
 - The gate keeps virtual threads or switches to platform threads.
