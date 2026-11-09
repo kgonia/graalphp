@@ -42,49 +42,102 @@ class ArrayIterator implements SeekableIterator, ArrayAccess, Countable
 
     private $storage;
     private $flags;
-    private $keys = [];
+    /**
+     * The storage's keys in the order of its hash slots, a deleted element's slot null (a hole), as php-src's
+     * HashTable keeps them; slotOf: each key's slot. Every change to the storage goes through the methods, which
+     * keep the slots: an append adds one at the end, a delete leaves a hole, a sort compacts them in the new order.
+     */
+    private $slots = [];
+    private $slotOf = [];
+    /**
+     * The hash iterator's position (php-src's ht_iter pos): a slot, or count($slots) at the end. Always a live slot
+     * or the end: deleting the element under it moves it to the next live one (zend_hash_iterators_update), so the
+     * next() after that skips one, as in PHP; a sort leaves the number as it is (zend_hash_sort_ex).
+     */
     private $position = 0;
 
     public function __construct($array = [], int $flags = 0)
     {
         $this->storage = is_object($array) ? get_object_vars($array) : $array;
         $this->flags = $flags;
-        $this->keys = array_keys($this->storage);
+        $this->slotsInOrder();
+        $this->position = 0;
+    }
+
+    /** The slots as the storage's order is now, without holes (a fresh table, or one a sort compacted). */
+    private function slotsInOrder(): void
+    {
+        $this->slots = array_keys($this->storage);
+        $this->slotOf = array_flip($this->slots);
+        $this->position = min($this->position, count($this->slots));
+    }
+
+    /**
+     * zend_hash_rehash: the holes go, the order stays, and the iterator moves with its element, so nothing shows.
+     * Run when holes are half the slots.
+     */
+    private function compact(): void
+    {
+        $live = 0;
+        for ($slot = 0; $slot < $this->position; $slot++) {
+            if ($this->slots[$slot] !== null) {
+                $live++;
+            }
+        }
+        $this->slots = array_keys($this->storage);
+        $this->slotOf = array_flip($this->slots);
+        $this->position = $live;
+    }
+
+    /** _zend_hash_get_valid_pos: the first live slot from $slot, or the end. */
+    private function live(int $slot): int
+    {
+        $used = count($this->slots);
+        while ($slot < $used && $this->slots[$slot] === null) {
+            $slot++;
+        }
+        return $slot;
     }
 
     public function current(): mixed
     {
-        return $this->valid() ? $this->storage[$this->keys[$this->position]] : null;
+        return $this->valid() ? $this->storage[$this->slots[$this->position]] : null;
     }
 
     public function key(): mixed
     {
-        return $this->valid() ? $this->keys[$this->position] : null;
+        return $this->valid() ? $this->slots[$this->position] : null;
     }
 
     public function next(): void
     {
-        $this->position++;
+        if ($this->position < count($this->slots)) {
+            $this->position = $this->live($this->position + 1);
+        }
     }
 
     public function rewind(): void
     {
-        $this->keys = array_keys($this->storage);
-        $this->position = 0;
+        $this->position = $this->live(0);
     }
 
     public function valid(): bool
     {
-        return $this->position < count($this->keys) && array_key_exists($this->keys[$this->position], $this->storage);
+        return $this->position < count($this->slots);
     }
 
     public function seek(int $offset): void
     {
-        if ($offset < 0 || $offset >= count($this->storage)) {
-            throw new OutOfBoundsException("Seek position $offset is out of range");
+        if ($offset >= 0) {
+            $this->rewind();
+            for ($i = 0; $i < $offset && $this->valid(); $i++) {
+                $this->next();
+            }
+            if ($this->valid()) {
+                return;
+            }
         }
-        $this->keys = array_keys($this->storage);
-        $this->position = $offset;
+        throw new OutOfBoundsException("Seek position $offset is out of range");
     }
 
     public function count(): int
@@ -104,23 +157,39 @@ class ArrayIterator implements SeekableIterator, ArrayAccess, Countable
 
     public function offsetSet($key, $value): void
     {
+        $added = $key === null || !array_key_exists($key, $this->storage);
         if ($key === null) {
             $this->storage[] = $value;
         } else {
             $this->storage[$key] = $value;
         }
-        $this->keys = array_keys($this->storage);
+        if ($added) {
+            if (count($this->slots) >= 8 && count($this->slots) >= 2 * count($this->storage)) {
+                $this->compact();
+            }
+            // a new element takes a new slot at the end, which the iterator reaches
+            $last = array_key_last($this->storage);
+            $this->slotOf[$last] = count($this->slots);
+            $this->slots[] = $last;
+        }
     }
 
     public function offsetUnset($key): void
     {
-        unset($this->storage[$key]);
+        if (!array_key_exists($key, $this->storage)) {
+            return;
+        }
+        $slot = $this->slotOf[$key];
+        unset($this->storage[$key], $this->slotOf[$key]);
+        $this->slots[$slot] = null;
+        if ($this->position === $slot) {
+            $this->position = $this->live($slot + 1);
+        }
     }
 
     public function append($value): void
     {
-        $this->storage[] = $value;
-        $this->keys = array_keys($this->storage);
+        $this->offsetSet(null, $value);
     }
 
     public function getArrayCopy(): array
@@ -141,28 +210,28 @@ class ArrayIterator implements SeekableIterator, ArrayAccess, Countable
     public function asort(int $flags = SORT_REGULAR): bool
     {
         asort($this->storage, $flags);
-        $this->keys = array_keys($this->storage);
+        $this->slotsInOrder();
         return true;
     }
 
     public function ksort(int $flags = SORT_REGULAR): bool
     {
         ksort($this->storage, $flags);
-        $this->keys = array_keys($this->storage);
+        $this->slotsInOrder();
         return true;
     }
 
     public function uasort($callback): bool
     {
         uasort($this->storage, $callback);
-        $this->keys = array_keys($this->storage);
+        $this->slotsInOrder();
         return true;
     }
 
     public function uksort($callback): bool
     {
         uksort($this->storage, $callback);
-        $this->keys = array_keys($this->storage);
+        $this->slotsInOrder();
         return true;
     }
 }

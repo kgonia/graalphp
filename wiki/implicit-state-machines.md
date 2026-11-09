@@ -25,7 +25,7 @@ Four read-only audits, one per area (runtime; bytecode and nodes; parser; built-
 | Method cache in a file root: the scope changes per include, the cache doesn't | `MethodSite.java:49`, `PhpBytecodeRootNode.java:4113`, `4324` | [058](../issues/058-method-cache-include-scope.md), fixed | `method-cache-include-scope` |
 | Element place protocol: separate, warn, write; the handler shares the array in between | `ElementChain.java:38-115` | [059](../issues/059-element-write-handler-shares.md), fixed | `element-write-handler-shares` |
 | Suspended generator frame: `@` level, foreach iterations, scope not undone on destroy | generator close path | [060](../issues/060-abandoned-generator-cleanup.md), fixed | `generator-abandoned-silence` |
-| `ArrayIterator`: a snapshot of keys and an index | `spl.php:38-168` | [061](../issues/061-arrayiterator-snapshot.md) | `arrayiterator-unset-during-foreach` |
+| `ArrayIterator`: a snapshot of keys and an index | `spl.php:38-168` | [061](../issues/061-arrayiterator-snapshot.md), fixed | `arrayiterator-unset-during-foreach` |
 | `DirectoryIterator`: `SplFileInfo` path fixed at entry 0 | `spl.php:856-976` | [062](../issues/062-directoryiterator-entry-path.md), fixed | `directoryiterator-entry-type` |
 | `include_once` state: marked before the file opens; a missing file is an Error | `IncludeNode.java:37-44` | [063](../issues/063-include-once-missing-file.md), fixed | `include-once-missing` |
 | `var_dump` recursion guard: per call, not per object | `Dump.java:29`, `74-80` | [064](../issues/064-var-dump-recursion-guard.md), fixed | `var-dump-debuginfo-recursion` |
