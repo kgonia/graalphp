@@ -131,6 +131,7 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final NameIds functionIds = new NameIds();
     private final NameIds constantIds = new NameIds();
     private final NameIds classIds = new NameIds();
+    private final NameIds globalIds = new NameIds();
     /** Interned class identities (see ClassKey). */
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
     /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
@@ -214,6 +215,11 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The id of a class name (lowercase); a context keeps its classes by id. */
     public int classId(String lowerName) {
         return classIds.id(lowerName);
+    }
+
+    /** The id of a global variable's name; a context keeps its globals' references by id too (globalAt). */
+    public int globalId(String name) {
+        return globalIds.id(name);
     }
 
     /** The one ClassKey for these declarations, in every context. */

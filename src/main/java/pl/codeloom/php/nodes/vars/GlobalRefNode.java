@@ -54,14 +54,23 @@ public abstract class GlobalRefNode extends Node {
         return ref;
     }
 
-    /** Several contexts: each has its own globals. */
+    /**
+     * Several contexts: each has its own globals, kept by the name's id too, so a global that exists is an array
+     * load; one that doesn't is looked up (and with create made) by name.
+     */
     @Specialization(replaces = {"constant", "checked"})
-    protected PhpRef uncached(PhpContext context, boolean create) {
-        return lookup(context, create);
+    protected PhpRef perContext(PhpContext context, boolean create,
+                                @Cached("globalId()") int id) {
+        PhpRef ref = context.globalAt(id);
+        return ref != null ? ref : lookup(context, create);
     }
 
     protected PhpRef lookup(PhpContext context, boolean create) {
         return create ? context.globalRef(name) : context.findGlobal(name);
+    }
+
+    protected int globalId() {
+        return PhpLanguage.get(this).globalId(name);
     }
 
     protected Assumption singleContext() {

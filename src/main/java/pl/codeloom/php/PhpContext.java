@@ -776,20 +776,44 @@ public final class PhpContext {
     // ---- global variables ----
 
     private int globalsVersion;
+    /**
+     * The globals' references by name id (PhpLanguage.globalId), as the map has them: a site of `global $x` that
+     * serves several contexts reads its id's slot (globalAt) instead of the map. Every change of the map changes
+     * the slot.
+     */
+    private PhpRef[] globalSlots = new PhpRef[256];
 
     /** The global variable's reference, created (holding null) if absent: `global $x`, top-level code. */
     @TruffleBoundary
     public PhpRef globalRef(String name) {
-        return globals.computeIfAbsent(name, n -> {
-            PhpRef ref = new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL);
-            ref.bind();
-            return ref;
-        });
+        PhpRef found = globals.get(name);
+        if (found != null) {
+            return found;
+        }
+        PhpRef ref = new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL);
+        ref.bind();
+        globals.put(name, ref);
+        setGlobalSlot(name, ref);
+        return ref;
     }
 
     @TruffleBoundary
     public PhpRef findGlobal(String name) {
         return globals.get(name);
+    }
+
+    /** The reference of the global whose name has this id (PhpLanguage.globalId), or null: see globalSlots. */
+    public PhpRef globalAt(int id) {
+        PhpRef[] slots = globalSlots;
+        return id < slots.length ? slots[id] : null;
+    }
+
+    private void setGlobalSlot(String name, PhpRef ref) {
+        int id = language.globalId(name);
+        if (id >= globalSlots.length) {
+            globalSlots = Arrays.copyOf(globalSlots, grown(globalSlots.length, id));
+        }
+        globalSlots[id] = ref;
     }
 
     @TruffleBoundary
@@ -799,6 +823,7 @@ public final class PhpContext {
         if (old != null) {
             old.unbind();
         }
+        setGlobalSlot(name, ref);
         globalsVersion++;
     }
 
@@ -807,6 +832,7 @@ public final class PhpContext {
         PhpRef old = globals.remove(name);
         if (old != null) {
             old.unbind();
+            setGlobalSlot(name, null);
         }
         globalsVersion++;
     }
