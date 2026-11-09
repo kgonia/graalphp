@@ -192,7 +192,8 @@ go to `target/fuzz/`.
 - Counts on every `PhpObject` (P1's store paths), including properties that built-ins set (`setProperty` and
   `initProperty` count since 2026-11-06), an exception in flight (`EG(exception)`'s count), and live temporaries
   released before a `catch` (`cleanup_live_vars`).
-- `-Dphp.rc.destructors=true`: at zero, `__destruct` runs once with the object held (resurrection possible), then
+- destructors, on by default since 2026-11-09 (`-Dphp.rc.destructors=false` turns them off, only to measure their
+  cost): at zero, `__destruct` runs once with the object held (resurrection possible), then
   the properties release what they hold (`zend_objects_store_del`, `zend_object_std_dtor`). `PhpArray` unlinks an
   element before releasing it (`zend_hash_del`).
 - `-Dphp.rc.verify=true`: a reachability check at zero. It is **not** the census planned in step 3 above, which

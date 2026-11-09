@@ -194,7 +194,6 @@ final class Census {
     private static final int AUDIT_GROUPS = Integer.getInteger("php.rc.audit.groups", 40);
     /** Where the report goes (appended), else stderr. */
     private static final String AUDIT_OUT = System.getProperty("php.rc.audit.out");
-    private static final boolean DESTRUCTORS = Boolean.getBoolean("php.rc.destructors");
 
     /**
      * The count changes of objects of one class (-Dphp.rc.trace.class=Name, with the audit): each +1 or -1 with the
@@ -713,7 +712,7 @@ final class Census {
                 .append(f.enums).append(" enum cases; ").append(f.leaks).append(" leaked, ").append(f.unders)
                 .append(" undercounted, ").append(f.zeroUnfreed).append(" at zero not freed; ")
                 .append(f.freedHeld).append(" freed while held; ").append(f.groups.size()).append(" groups")
-                .append(DESTRUCTORS ? "" : " (destructors off: zeros free nothing)").append('\n');
+                .append(Refcount.DESTRUCTORS ? "" : " (destructors off: zeros free nothing)").append('\n');
         report(out, f.groups, false);
         if (AUDIT_POINTS) {
             out.append("rc-audit (").append(pointAudits).append(" points, every ").append(AUDIT_EVERY)
