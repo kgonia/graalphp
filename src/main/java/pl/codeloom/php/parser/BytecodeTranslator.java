@@ -551,6 +551,13 @@ public final class BytecodeTranslator {
         private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
+        /**
+         * The made() index of each node's one-shot object in this run (madeOnce), and the nodes whose compile-time
+         * diagnostics this run raised (firstMeeting): a finally body is emitted once per way out of its try, and its
+         * copies share what php-src, which compiles it once, makes and reports once.
+         */
+        private final Map<Ast, Integer> madeFor = new java.util.IdentityHashMap<>();
+        private final Set<Ast> met = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
         /**
@@ -2750,7 +2757,7 @@ public final class BytecodeTranslator {
                     break;
                 case "AST_SHELL_EXEC":
                     // zend_compile_shell_exec: a call of shell_exec(), deprecated where it is compiled
-                    if (firstRun) {
+                    if (firstRun && firstMeeting(node)) {
                         ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_DEPRECATED,
                                 Str.of("The backtick (`) operator is deprecated, use shell_exec() instead"),
                                 new SourceLocation(path, node.line));
@@ -6361,7 +6368,7 @@ public final class BytecodeTranslator {
             ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                 // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs
-                anonymous = (ClassTemplate) made(() -> constants.anonymousClass(classNode));
+                anonymous = (ClassTemplate) madeOnce(classNode, () -> constants.anonymousClass(classNode));
                 b.beginBlock();
                 b.emitDeclareAnonymousClass(anonymous);
             }
@@ -7242,6 +7249,21 @@ public final class BytecodeTranslator {
             }
             Object constant = made(() -> constantValue(value));
             b.emitLoadConstant(constant);
+        }
+
+        /** made() for node, once per run however many copies of it are emitted (a finally body's). */
+        private Object madeOnce(Ast node, Supplier<Object> make) {
+            Integer index = madeFor.get(node);
+            if (index != null) {
+                return made.get(index);
+            }
+            madeFor.put(node, madeIndex);
+            return made(make);
+        }
+
+        /** Whether this run meets node for the first time: a finally body's other copies meet it again. */
+        private boolean firstMeeting(Ast node) {
+            return met.add(node);
         }
 
         /** The object the first run made at this point of the body; made now on the first run. */

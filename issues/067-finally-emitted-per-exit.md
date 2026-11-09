@@ -1,6 +1,6 @@
 # 067: A finally body is translated once per exit path, so its compile-time effects repeat
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **Symptom:** (`finally-emitted-once`)
 
@@ -17,7 +17,13 @@ copy:
 
 php-src compiles the body once and reaches it through `ZEND_FAST_CALL`.
 
-**Fix:** to do. Either translate the body once and dispatch on the way out, or key the one-shot effects by AST node
-and run them for the first copy only. The second keeps the copies' speed.
+**Fix:** the copies stay, for their speed: the DSL emits a finally body once per way out of its try. The one-shot
+effects are keyed by AST node within a translation, so the copies share them:
+- `madeOnce` gives every copy the anonymous class the first one declared;
+- `firstMeeting` raises a compile-time diagnostic (the backtick's Deprecated) once.
+
+With one context the test passes. With three contexts on one engine the Deprecated is missing in the later
+contexts, which reuse the translation; main does the same. That is 071's: compile-time diagnostics belong to every
+compile.
 
 **Test:** `tests/smoke/finally-emitted-once.php`.

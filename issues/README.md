@@ -70,7 +70,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Fixed |
 | [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
 | [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |
-| [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Open |
+| [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Fixed |
 | [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Fixed |
 | [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Fixed |
 | [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Fixed |
