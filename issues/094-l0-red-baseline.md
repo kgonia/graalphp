@@ -17,6 +17,16 @@ and a PR's L0 can't be green.
 | CompilationTest `large-function` | an OSR compilation of the file's loop deoptimizes (uncommon trap) after it is installed: "failed compilations or performance warnings" | this |
 | CompilationTest `query-builder` | `Query::sql` compiles to 27.2k IR nodes, its budget 24k (27248 on 8113e1c's runtime, 27232 after 090) | this |
 
+**2026-11-09, `fastcgi` at dfdd565:** `large-function` fails on something else than the table says: `Query::sql`'s
+Tier 1 compilation ends with "Code installation failed: code is too large" (HotSpot's `JVMCINMethodSizeLimit`,
+640 KB). With `-XX:+UnlockExperimentalVMOptions -XX:JVMCINMethodSizeLimit=4194304` both tiers install: 62,840 IR
+nodes and 689 KB of code in Tier 1, 62,781 and 689 KB in Tier 2, 6 s each. The budgets in these two files were set
+on 2026-11-01 under the tree interpreter; the bytecode interpreter has been the default since 2026-11-02, so they
+measure a different compilation unit now. In WordPress the same limit keeps `WP_Query::get_posts` in the
+interpreter in every mode; it is the only function of a front page's rendering that fails to compile, and its own
+interpreted code is 0.3% of a server's guest samples ([wiki/beat-php.md](../wiki/beat-php.md)), so the limit is not
+what the serving gap is made of.
+
 **Fix:**
 - `blocks`, `blocks-corpus`: run.sh fetches Gate 1's WordPress (or the two tests take their fixture from
   `target/gate2/wordpress`), or skip with a message when it is absent instead of failing.

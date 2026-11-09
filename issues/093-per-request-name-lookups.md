@@ -30,8 +30,13 @@ samples.
 - function declarations: dc4c494, the PhpFunction's lowercase name and id made once, the check by slot.
 - string callbacks: a0085e6, the generic path resolves the name as written through one language-level map (name
   to function id, 65536 names at most), then the context's slot (tests/smoke/callable-names.php).
-- class constants: 901b81e, one lookup of the entry; the access check only for a class with a constant that is not
-  public. The site's cache by ClassKey is not done.
+- class constants: 901b81e, then dfdd565: one call out of compiled code (`PhpClass.plainConstant`) answers an
+  evaluated constant of a class whose constants are all public; anything else takes the checks and `getConstant`
+  as before. 901b81e alone was a regression: it took the read out of its `@TruffleBoundary`, partial evaluation
+  followed a constant's initializer into the translator, and every function reading such a constant failed to
+  compile for good ("Too deep inlining": 42 of WordPress's functions on a shared engine, the HTML API and
+  WP_Theme_JSON among them). `src/test/resources/compile/class-constant.php` (CompilationTest) is red on 901b81e
+  and green on dfdd565. The site's cache by ClassKey is not done.
 
 **Measured (2026-11-09, `native.sh load`, 3 rounds, 12-minute warm-up, the `global` and declaration fixes against
 their base):** no gain outside the noise.
