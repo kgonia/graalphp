@@ -58,7 +58,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [052](052-ref-append-self.md) | `$r[] = $a`, with `$r` a reference to `$a`, appends a copy instead of the array itself | Open |
 | [053](053-destructor-backtrace-returning-frame.md) | A destructor that a function's return runs sees the returning function in its backtrace | Open |
 | [054](054-rc-verify-moved-temporaries.md) | `-Dphp.rc.verify` reports moved arguments as reachable from the caller's temporary | Open (check tool) |
-| [055](055-output-handler-state.md) | Output buffering doesn't know a handler is running, or that one failed | Open |
+| [055](055-output-handler-state.md) | Output buffering doesn't know a handler is running, or that one failed | Fixed |
 | [056](056-callable-static-cache.md) | `'static::m'` as a callable is resolved once, not per called class | Open |
 | [057](057-self-referencing-constant.md) | Class constants that refer to each other overflow the Java stack | Fixed |
 | [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Open |

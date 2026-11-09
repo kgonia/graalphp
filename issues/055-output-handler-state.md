@@ -1,6 +1,6 @@
 # 055: Output buffering doesn't know a handler is running, or that one failed
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **Symptom:**
 
@@ -17,8 +17,21 @@ output stack (`PhpContext.java:117`, `981-1043`) has one state per buffer, `star
 - `PHP_OUTPUT_HANDLER_DISABLED`, set on a handler that failed. Its buffer is passed on as it is, and the handler is
   not called again.
 
-**Fix:** to do. Add both states, as in php-src's `main/output.c`:
-- a per-context "handler running" mark, checked by every `ob_*` function;
-- a per-buffer "disabled" flag, set when the handler fails or throws.
+**Fix:** the output stack in `PhpContext` has php-src's states (`main/output.c`):
+- `running` (`OG(running)`): the buffer whose handler runs. An output-buffer operation meanwhile (`ob_start`, or
+  one that runs a handler: `ob_end_*`, `ob_get_*`, `ob_flush`, `ob_clean`) is the fatal error. It discards every
+  buffer unsent (`php_output_deactivate`).
+- A handler's `HandlerState`: `NEW`, `STARTED` or `DISABLED`. A handler that returns false or throws is disabled.
+  Its buffer is passed on as it is and the handler isn't called again; what is written then goes on to the level
+  below. The exception surfaces once the operation has finished.
+- Output from inside a handler is lost with its buffer, and Deprecated ("Producing output from user output handler
+  NAME is deprecated").
 
-**Test:** `tests/smoke/ob-handler-nested-end.php`, `tests/smoke/ob-handler-throws.php`.
+Also from `main/output.c`:
+- each `ob_*` function's notices ("Failed to delete buffer. No buffer to delete", "Failed to discard buffer of NAME
+  (LEVEL)");
+- `ob_get_clean` and `ob_get_flush` return the contents even when the buffer isn't removable;
+- handlers are named as `zend_fcall_info_init` names them (`{closure:FILE:LINE}`, `K::m`);
+- true, null or "" from a handler pass nothing.
+
+**Test:** `tests/smoke/ob-handler-nested-end.php`, `tests/smoke/ob-handler-throws.php`, `tests/smoke/ob-handler-states.php`, `tests/smoke/ob-start-in-handler.php`.

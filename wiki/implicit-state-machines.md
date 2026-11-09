@@ -19,7 +19,7 @@ Four read-only audits, one per area (runtime; bytecode and nodes; parser; built-
 
 | Machine | Where | Issue | Smoke test |
 |---|---|---|---|
-| Output-buffer stack: no "handler running" state, no "handler failed" state | `PhpContext.java:117`, `981-1043` | [055](../issues/055-output-handler-state.md) | `ob-handler-nested-end`, `ob-handler-throws` |
+| Output-buffer stack: no "handler running" state, no "handler failed" state | `PhpContext.java:117`, `981-1043` | [055](../issues/055-output-handler-state.md), fixed | `ob-handler-nested-end`, `ob-handler-throws` |
 | `Callables.LastCall` cache: not keyed on the scope for `static::`/`self::` | `Callables.java:455-536` | [056](../issues/056-callable-static-cache.md) | `callable-static-cache` |
 | Lazy class constants: no "being evaluated" state | `PhpClass.java:643-650` | [057](../issues/057-self-referencing-constant.md), fixed | `class-constant-self-reference` |
 | Method cache in a file root: the scope changes per include, the cache doesn't | `MethodSite.java:49`, `PhpBytecodeRootNode.java:4113`, `4324` | [058](../issues/058-method-cache-include-scope.md) | `method-cache-include-scope` |
