@@ -650,30 +650,30 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public Object getConstant(String constantName) {
-        return constantValue(constantName, constants.get(constantName));
-    }
-
-    /** The constants map's entry (a value, a Thunk or Evaluating), or null: a read's one lookup (constantValue). */
-    public Object constantEntry(String constantName) {
-        return constants.get(constantName);
-    }
-
-    /** getConstant of the entry constantEntry gave: an initializer runs on the first read. */
-    public Object constantValue(String constantName, Object entry) {
-        if (entry instanceof Evaluating evaluating) {
+        Object value = constants.get(constantName);
+        if (value instanceof Evaluating evaluating) {
             return evaluating.thunk().evaluate();
         }
-        if (entry instanceof Thunk thunk) {
-            Object value = thunk.evaluate();
+        if (value instanceof Thunk thunk) {
+            value = thunk.evaluate();
             constants.put(constantName, value);
-            return value;
         }
-        return entry;
+        return value;
     }
 
-    /** Whether a constant here isn't public: only then does a read check its scope (canAccessConstant). */
-    public boolean hasRestrictedConstants() {
-        return !restrictedConstants.isEmpty();
+    /**
+     * A read's common case in one lookup: the value of an evaluated constant of a class whose constants are all
+     * public (no scope to check); null otherwise, for the read to take the checks and getConstant. One call out of
+     * compiled code: the maps' lookups, and never an initializer's translation and run, which a compilation that
+     * followed it in failed on for good ("Too deep inlining").
+     */
+    @TruffleBoundary
+    public Object plainConstant(String constantName) {
+        if (!restrictedConstants.isEmpty()) {
+            return null;
+        }
+        Object value = constants.get(constantName);
+        return value instanceof Evaluating || value instanceof Thunk ? null : value;
     }
 
     /**

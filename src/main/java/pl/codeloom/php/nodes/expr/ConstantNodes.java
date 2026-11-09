@@ -90,13 +90,13 @@ public final class ConstantNodes {
      * scope may not access it.
      */
     public static Object classConstant(PhpClass phpClass, String name, String scope) {
-        // checkConstantAccess and getConstant with one lookup of the map, the scope's check for a class that has
-        // a constant that isn't public
-        Object entry = phpClass.constantEntry(name);
-        if (entry == null || phpClass.hasRestrictedConstants()) {
-            checkConstantAccess(phpClass, name, scope);
+        // the common case in one lookup: an evaluated constant of a class whose constants are all public
+        Object value = phpClass.plainConstant(name);
+        if (value != null) {
+            return value;
         }
-        return phpClass.constantValue(name, entry);
+        checkConstantAccess(phpClass, name, scope);
+        return phpClass.getConstant(name);
     }
 
     /**
