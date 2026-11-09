@@ -4,8 +4,7 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import pl.codeloom.php.PhpContext;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A Fiber's state (Zend/zend_fibers.c): its function runs on a virtual thread of its own, entered into the request's
@@ -35,14 +34,13 @@ public final class PhpFiber {
     }
 
     /**
-     * The threads a context may be entered by besides its first: fibers' threads, and the threads that started
-     * fibers (PhpLanguage.isThreadAccessAllowed). Any other thread keeps finding a context single-threaded, as PHP is.
-     * Truffle asks about every thread of a context each time one is added, so the lookup must be cheap. A fiber's
-     * thread leaves the set when it ends; a thread that started fibers (a request's worker) stays.
+     * The contexts alive that have started a fiber (PhpLanguage.isThreadAccessAllowed). While there are none, no
+     * context admits a second thread, as PHP is single-threaded. A context with fibers must admit threads it doesn't
+     * know besides its fibers': Truffle's own, which close the context after exit() or a cancel. Truffle asks about
+     * every thread of a context each time one enters, so the check is one read. Truffle doesn't say which context it
+     * asks for, so while any context has fibers, every context admits threads.
      */
-    private static final Set<Thread> FIBER_THREADS = ConcurrentHashMap.newKeySet();
-    /** Set on a thread while it builds a fiber's thread: Truffle asks about the new thread before build returns. */
-    private static final ThreadLocal<Boolean> BUILDING = new ThreadLocal<>();
+    private static final AtomicInteger CONTEXTS_WITH_FIBERS = new AtomicInteger();
 
     private final PhpContext context;
     private final PhpObject object;
@@ -60,6 +58,8 @@ public final class PhpFiber {
     /** ZEND_FIBER_FLAG_DESTROYED: destroyed while suspended, it unwinds; it can't suspend again. */
     private boolean destroyed;
 
+    /** The fiber's thread, once started. */
+    private Thread thread;
     /** The fiber's frame arguments, from start() until its thread takes them. */
     private Object[] arguments;
     /** What the function returned, once it has. */
@@ -100,9 +100,19 @@ public final class PhpFiber {
         return status;
     }
 
-    /** May thread enter a context that another thread has entered: a fiber's, or one that started a fiber. */
-    public static boolean mayEnter(Thread thread) {
-        return FIBER_THREADS.contains(thread) || BUILDING.get() != null;
+    /** May a second thread enter a context: only once one has started a fiber. */
+    public static boolean mayEnter() {
+        return CONTEXTS_WITH_FIBERS.get() > 0;
+    }
+
+    /** A context started its first fiber. */
+    public static void contextHasFibers() {
+        CONTEXTS_WITH_FIBERS.incrementAndGet();
+    }
+
+    /** A context that had fibers is disposed. */
+    public static void contextDisposed() {
+        CONTEXTS_WITH_FIBERS.decrementAndGet();
     }
 
     /** Fiber::start(): runs the function with arguments (frame arguments) until it suspends or ends. */
@@ -121,16 +131,8 @@ public final class PhpFiber {
                     + "(Context.Builder.allowCreateThread)");
         }
         this.arguments = arguments;
-        FIBER_THREADS.add(Thread.currentThread());
-        Thread thread;
-        BUILDING.set(Boolean.TRUE);
-        try {
-            thread = context.getEnv().newTruffleThreadBuilder(this::run).virtual(true).build();
-        } finally {
-            BUILDING.remove();
-        }
-        FIBER_THREADS.add(thread);
         context.fiberStarted(this);
+        thread = context.getEnv().newTruffleThreadBuilder(this::run).virtual(true).build();
         enter();
         thread.start();
         return awaitFiber();
@@ -230,6 +232,37 @@ public final class PhpFiber {
         }
     }
 
+    /**
+     * zend_fiber_object_free: the callable of a fiber that never ran goes (one that ran gave it up at its end). The
+     * result stays held, as a generator's return value does.
+     */
+    void free() {
+        Object held = callable;
+        if (held != null && status == Status.INIT) {
+            callable = null;
+            Refcount.unhold(held);
+        }
+    }
+
+    /**
+     * Waits until the fiber's thread has ended, past Truffle's leaving of the context: a request ending with
+     * exit() or a fatal error closes the context through closeExited, which does it on a cleanup thread while
+     * another thread is still active, and that thread races the embedder's own close (a deadlock in Truffle 25.4).
+     * A thread can't wait for itself (exit() in this fiber).
+     */
+    /** Whether the fiber is over and its thread gone: the request's end has nothing to wait for. */
+    public boolean ended() {
+        return status == Status.DEAD && (thread == null || !thread.isAlive());
+    }
+
+    @TruffleBoundary
+    public void join() {
+        Thread ended = thread;
+        if (ended != null && ended != Thread.currentThread() && status == Status.DEAD) {
+            com.oracle.truffle.api.TruffleSafepoint.setBlockedThreadInterruptible(null, Thread::join, ended);
+        }
+    }
+
     private void checkSuspended() {
         if (status != Status.SUSPENDED) {
             throw fiberError("Cannot resume a fiber that is not suspended");
@@ -288,7 +321,6 @@ public final class PhpFiber {
             error = thrown;
         } finally {
             end();
-            FIBER_THREADS.remove(Thread.currentThread());
             status = Status.DEAD;
             toCaller.open();
         }

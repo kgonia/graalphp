@@ -944,6 +944,16 @@ public final class PhpContext {
     /** The fibers started in this request, in the order they were started, for the request's end. */
     private final List<pl.codeloom.php.runtime.PhpFiber> fibers = new ArrayList<>();
     private int fibersPruneAt = 64;
+    /** Whether a fiber was started here: the context admits other threads until it is disposed. */
+    private boolean hadFibers;
+
+    /** The context is disposed: it no longer needs other threads admitted. */
+    public void disposeFibers() {
+        if (hadFibers) {
+            hadFibers = false;
+            pl.codeloom.php.runtime.PhpFiber.contextDisposed();
+        }
+    }
 
     public pl.codeloom.php.runtime.PhpFiber currentFiber() {
         return currentFiber;
@@ -955,8 +965,12 @@ public final class PhpContext {
 
     /** A fiber's thread started: it must end before the context closes. */
     public void fiberStarted(pl.codeloom.php.runtime.PhpFiber fiber) {
+        if (!hadFibers) {
+            hadFibers = true;
+            pl.codeloom.php.runtime.PhpFiber.contextHasFibers();
+        }
         if (fibers.size() >= fibersPruneAt) {
-            fibers.removeIf(f -> f.status() == pl.codeloom.php.runtime.PhpFiber.Status.DEAD);
+            fibers.removeIf(pl.codeloom.php.runtime.PhpFiber::ended);
             fibersPruneAt = Math.max(64, fibers.size() * 2);
         }
         fibers.add(fiber);
@@ -977,10 +991,17 @@ public final class PhpContext {
                 fiber.abandon();
             }
         }
+        for (pl.codeloom.php.runtime.PhpFiber fiber : fibers) {
+            fiber.join();
+        }
         fibers.clear();
     }
 
-    /** The context closes: a fiber still suspended (the request ended by exit() in a fiber) ends without running. */
+    /**
+     * The context closes: a fiber still suspended (the request ended by exit() in a fiber) ends without running.
+     * Its thread isn't waited for here: the close holds the context's locks, which a thread leaving it needs, and
+     * Truffle waits for the threads itself.
+     */
     public void abandonFibers() {
         for (pl.codeloom.php.runtime.PhpFiber fiber : fibers) {
             fiber.abandon();

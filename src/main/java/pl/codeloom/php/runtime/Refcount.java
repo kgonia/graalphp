@@ -417,8 +417,9 @@ public final class Refcount {
     private static void destroy(PhpObject object) {
         RuntimeException thrown = null;
         PhpGenerator generator = object.getInternal() instanceof PhpGenerator g ? g : null;
+        PhpFiber fiber = object.getInternal() instanceof PhpFiber f ? f : null;
         if (!object.markDestructorCalled()
-                && (generator != null || object.getPhpClass().findMethod("__destruct") != null)) {
+                && (generator != null || fiber != null || object.getPhpClass().findMethod("__destruct") != null)) {
             object.addRef();
             if (Census.AUDIT) {
                 Census.destroying(object, true);
@@ -428,6 +429,9 @@ public final class Refcount {
                     // zend_generator_dtor_storage: a generator suspended in a try runs its finally blocks; its
                     // frame is freed (zend_generator_close)
                     generator.destroy();
+                } else if (fiber != null) {
+                    // zend_fiber_object_destroy: a suspended fiber unwinds, its finally blocks running
+                    fiber.destroy();
                 } else {
                     dec(object.callMethodOwned(null, "__destruct"));
                 }
@@ -448,6 +452,9 @@ public final class Refcount {
         }
         if (!object.markFreed()) {
             freeProperties(object);
+            if (fiber != null) {
+                fiber.free();
+            }
         }
         if (thrown != null) {
             throw thrown;
