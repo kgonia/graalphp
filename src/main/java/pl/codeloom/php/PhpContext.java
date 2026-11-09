@@ -479,11 +479,10 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void declareFunction(PhpFunction function) {
-        String key = Str.lower(function.getName());
-        if (functions.putIfAbsent(key, function) != null) {
+        if (functions.putIfAbsent(function.lowerName(), function) != null) {
             throw new PhpError("Cannot redeclare function " + function.getName() + "()");
         }
-        int id = language.functionId(key);
+        int id = function.functionId(language);
         if (id >= functionSlots.length) {
             functionSlots = Arrays.copyOf(functionSlots, grown(functionSlots.length, id));
         }

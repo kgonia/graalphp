@@ -26,7 +26,8 @@ public final class DeclareNodes {
          */
         @TruffleBoundary
         public static void declare(PhpContext context, PhpFunction function, boolean compileTime, Node site) {
-            PhpFunction previous = context.findFunction(Str.lower(function.getName()));
+            // the slot of the name's id: the map's entry, without lowercasing the name every request
+            PhpFunction previous = context.functionAt(function.functionId(context.getLanguage()));
             if (previous == null) {
                 context.declareFunction(function);
                 return;
