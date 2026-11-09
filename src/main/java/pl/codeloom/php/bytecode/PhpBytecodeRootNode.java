@@ -973,7 +973,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = LocalAccessor.class)
     @ConstantOperand(type = int.class)
     public static final class TakeExtraArguments {
-        @Specialization
+        /** No call has passed extra arguments yet: a length test, no loop compiled. */
+        @Specialization(guards = "!hasExtras(frame, declared)")
+        public static void none(VirtualFrame frame, LocalAccessor extras, int declared) {
+        }
+
+        static boolean hasExtras(VirtualFrame frame, int declared) {
+            return frame.getArguments().length > PhpFunction.ARG_FIRST + declared;
+        }
+
+        @Specialization(replaces = "none")
         public static void take(VirtualFrame frame, LocalAccessor extras, int declared, @Bind BytecodeNode bytecode) {
             Object[] arguments = frame.getArguments();
             // inline, the test for a moved argument (most extra arguments are a variable's value, or not counted);
