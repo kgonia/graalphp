@@ -1,6 +1,6 @@
 # 070: The body of a `declare(...) { }` block never runs
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **State note:** not a state machine, found while reading the translator for the audit.
 
@@ -11,7 +11,8 @@ nothing for it.
 position check). The node's statement list is never translated. Related: a goto into such a block throws
 `Unsupported` (`BytecodeTranslator.java:1094`).
 
-**Fix:** to do. Translate the block's statements in place. `ticks` itself has no effect without
-`register_tick_function`, which the runtime doesn't have.
+**Fix:** a declare block's statements are translated in place, as `zend_compile_declare` compiles them as a statement.
+A function declared in the block is declared when the block runs. A goto finds labels inside the block (`labelsInside`),
+as it does inside an if.
 
 **Test:** `tests/smoke/declare-ticks-block.php`.

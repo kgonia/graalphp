@@ -1202,6 +1202,8 @@ public final class BytecodeTranslator {
                         throw compileError(node,
                                 "strict_types declaration must be the very first statement in the script");
                     }
+                    // `declare(...) { ... }`: the block runs in place (zend_compile_declare compiles it as a statement)
+                    statements(node.node("stmts"));
                     break;
                 case "AST_HALT_COMPILER":
                     // the scanner stopped at it; php-src's compile error elsewhere than the top level
@@ -1338,6 +1340,8 @@ public final class BytecodeTranslator {
                         }
                     }
                 }
+            } else if (statement.is("AST_DECLARE") && statement.node("stmts") != null) {
+                labels.addAll(labelsInside(statement.node("stmts")));
             } else if (statement.is("AST_TRY")) {
                 // into a try block or a catch block (into a finally block is JumpChecks' compile error)
                 labels.addAll(labelsInside(statement.node("try")));
