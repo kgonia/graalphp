@@ -24,8 +24,10 @@ import java.util.Set;
  * <p>-Dphp.sample.out=path turns it on: a daemon thread waits for path.start to exist, then every
  * php.sample.period milliseconds (default 10) takes a sample of every thread running PHP (CPUSampler.takeSample)
  * and counts each stack's top frame (self) by function and tier (0 the interpreter, 1, 2), and each function once
- * per stack (total). At the server's close the counts go to path. A thread blocked outside PHP's code (a database
- * read) answers late or not at all, so the samples lean to time on the CPU. For analysis, never for timing.
+ * per stack (total). "user" counts the sample for the nearest frame that has source, so a built-in's time is its
+ * calling PHP function's (what a PHP profiler such as Excimer reports); the pairs of a built-in on top and that
+ * caller follow the table. At the server's close the counts go to path. A thread blocked outside PHP's code (a
+ * database read) answers late or not at all, so the samples lean to time on the CPU. For analysis, never for timing.
  */
 final class GuestSampler {
     private static volatile GuestSampler running;
@@ -34,6 +36,8 @@ final class GuestSampler {
     private final Path out;
     private final Map<String, long[]> self = new HashMap<>();
     private final Map<String, Long> total = new HashMap<>();
+    private final Map<String, Long> user = new HashMap<>();
+    private final Map<String, Long> builtinUnder = new HashMap<>();
     private long samples;
     private long stacks;
 
@@ -90,6 +94,17 @@ final class GuestSampler {
                 stacks++;
                 StackTraceEntry top = stack.get(0);
                 self.computeIfAbsent(top.getRootName(), name -> new long[3])[Math.min(top.getTier(), 2)]++;
+                StackTraceEntry owner = top;
+                for (StackTraceEntry entry : stack) {
+                    if (entry.getSourceSection() != null) {
+                        owner = entry;
+                        break;
+                    }
+                }
+                user.merge(owner.getRootName(), 1L, Long::sum);
+                if (owner != top) {
+                    builtinUnder.merge(top.getRootName() + "\t" + owner.getRootName(), 1L, Long::sum);
+                }
                 Set<String> seen = new HashSet<>();
                 for (StackTraceEntry entry : stack) {
                     if (seen.add(entry.getRootName())) {
@@ -110,20 +125,29 @@ final class GuestSampler {
             }
             w.printf("samples %d, stacks %d; self by tier: T0 %d, T1 %d, T2 %d%n", samples, stacks, tiers[0],
                     tiers[1], tiers[2]);
-            w.println("self\tT0\tT1\tT2\ttotal\tfunction");
-            List<String> names = new ArrayList<>(self.keySet());
-            names.sort((a, b) -> Long.compare(sum(self.get(b)), sum(self.get(a))));
+            w.println("self\tT0\tT1\tT2\ttotal\tuser\tfunction");
+            Set<String> withTime = new HashSet<>(self.keySet());
+            withTime.addAll(user.keySet());
+            List<String> names = new ArrayList<>(withTime);
+            long[] none = new long[3];
+            names.sort((a, b) -> Long.compare(sum(self.getOrDefault(b, none)), sum(self.getOrDefault(a, none))));
             for (String name : names) {
-                long[] counts = self.get(name);
-                w.printf("%d\t%d\t%d\t%d\t%d\t%s%n", sum(counts), counts[0], counts[1], counts[2],
-                        total.getOrDefault(name, 0L), name);
+                long[] counts = self.getOrDefault(name, none);
+                w.printf("%d\t%d\t%d\t%d\t%d\t%d\t%s%n", sum(counts), counts[0], counts[1], counts[2],
+                        total.getOrDefault(name, 0L), user.getOrDefault(name, 0L), name);
             }
             w.println("total\tfunction (no self time)");
             List<String> others = new ArrayList<>(total.keySet());
-            others.removeAll(self.keySet());
+            others.removeAll(withTime);
             others.sort((a, b) -> Long.compare(total.get(b), total.get(a)));
             for (String name : others) {
                 w.printf("%d\t%s%n", total.get(name), name);
+            }
+            w.println("samples\tbuilt-in on top\tunder the PHP function");
+            List<String> pairs = new ArrayList<>(builtinUnder.keySet());
+            pairs.sort((a, b) -> Long.compare(builtinUnder.get(b), builtinUnder.get(a)));
+            for (String pair : pairs) {
+                w.printf("%d\t%s%n", builtinUnder.get(pair), pair);
             }
         } catch (IOException e) {
             System.err.println("guest sampler: " + e);

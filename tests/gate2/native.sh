@@ -26,7 +26,7 @@
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
 #        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | load ROUNDS VARIANT... | images
-#        | diag TAG DURATION [VARIANT] | k8 ROUNDS VARIANT... | clean
+#        | diag TAG DURATION [VARIANT] | k8 ROUNDS VARIANT... | k8-profile | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -149,7 +149,7 @@ start() {
          [ $variant != php-nojit ] || ini="-d opcache.jit=disable"
          [ $variant != php-noopc ] || ini="-d opcache.enable=0 -d opcache.enable_cli=0"
          cmd="cd target/gate2/wordpress && exec php -d auto_prepend_file= $ini -S 0.0.0.0:8080" ;;
-    fpm) image=$FPM_IMAGE; env=(-e FPM_CHILDREN=${WPN_THREADS:-4})
+    fpm) image=${FPM_RUN_IMAGE:-$FPM_IMAGE}; env=(-e FPM_CHILDREN=${WPN_THREADS:-4})
          cmd="exec /usr/local/bin/woo-fpm-start" ;;
     jvm-fcgi) image=$FCGI_IMAGE
               cmd="exec /usr/local/bin/fcgi-start ${JAVA#exec } $opts ${JAVA_OPTS:-} $FCGI_LAUNCHER $FCGI_ARGS"
@@ -447,6 +447,37 @@ k8_run() { # variant name
   echo "$name: $(grep -c . $dir/$name.k8.log) blocks, $(tail -1 $dir/$name.k8.log)"
 }
 
+# k8-profile: the hot renders' time per PHP function on both engines (k8_profile.py), on CPUs 6-13 and without the
+# CPU lock: for analysis, never for timing. Ours: launcher.GuestSampler over requests with k8=K8_PROF_N (default
+# 200, so 98% of a request is hot renders) after the load's warm-up and a few requests of the loop itself. PHP: the
+# php-fpm image with Excimer (FPM_PROF_IMAGE), the plugin's k8prof (iterations 3 and up, real time, every
+# K8_PROF_US microseconds). Into $out/k8: jvmprof-r1.k8.json, fpmprof-r1.k8.json, jvmprof/guest.txt.
+k8_profile() { # [variant]
+  local variant=${1:-jvm-fcgi} dir=$out/k8/jvmprof i
+  rm -rf $dir && mkdir -p $dir
+  stop "$variant"
+  reset_db
+  OUT_DIR=$dir JAVA_OPTS="-Dphp.http.closeFile=/out/close -Dphp.sample.out=/out/guest.txt -Dphp.sample.period=${K8_PROF_MS:-5} ${JAVA_OPTS:-}" start "$variant" "${K8_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  load_run "$variant" 8 "${WARM:-720s}" "k8prof-$variant-warm"
+  K8_PLAIN=0 K8_REQUESTS=2 K8_N=100 k8_run "$variant" jvmprof-warm
+  touch $dir/guest.txt.start
+  sleep 3 # the sampler looks for the file every second
+  K8_PLAIN=0 K8_REQUESTS=${K8_PROF_REQUESTS:-4} K8_N=${K8_PROF_N:-200} k8_run "$variant" jvmprof-r1
+  touch $dir/close
+  curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:${DIAG_PORT:-8097}/?p=1" || true
+  for i in $(seq 300); do
+    docker top $P-$variant 2> /dev/null | grep -q -e 'java' -e 'wp-fcgi' || break
+    sleep 1
+  done
+  docker logs $P-$variant > $dir/server.log 2>&1 || true
+  stop "$variant"
+  reset_db
+  FPM_RUN_IMAGE=${FPM_PROF_IMAGE:-gate2-fpm-excimer:8.5.12} start fpm "${K8_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  load_run fpm 8 "${FPM_WARM:-60s}" "k8prof-fpm-warm"
+  K8_EXTRA="&k8prof=${K8_PROF_US:-500}" K8_PLAIN=0 K8_REQUESTS=10 K8_N=50 k8_run fpm fpmprof-r1
+  stop fpm
+}
+
 # k8 ROUNDS VARIANT...: where a request's time goes on each engine, and the engines on WordPress's rendering code
 # alone (wiki/beat-php.md). Per round and variant (the order reversed every other round) one server's life on CPUs
 # 14-21 under the CPU lock, as load's: started on the seeded database, warmed up by WARM of k6 at K8_WARM_VUS (default
@@ -547,6 +578,7 @@ case ${1:-} in
   load) shift; load "$@" ;;
   k8) shift; k8 "$@" ;;
   k8-run) k8_run "$2" "$3" ;;
+  k8-profile) k8_profile "${2:-jvm-fcgi}" ;;
   diag) shift; diag "$@" ;;
   images) images ;;
   clean) clean ;;
