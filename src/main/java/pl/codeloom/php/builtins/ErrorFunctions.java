@@ -243,7 +243,8 @@ public final class ErrorFunctions {
             CgiSapi.Response response = context.response();
             if (displayMode == Ini.DisplayMode.OFF && response != null && !response.isSent()
                     && response.status() == 200) {
-                response.setStatus(500);
+                // php_error_cb's status line
+                response.header("HTTP/1.0 500 Internal Server Error", true, 0);
             }
             if (bail) {
                 throw new PhpBailout();

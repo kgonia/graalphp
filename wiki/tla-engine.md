@@ -196,7 +196,7 @@ The model now gives a bound engine one context and drops its caches when it clos
 
    Not done here: WordPress core defines constants under literal names.
 2. **Immutable values kept by identity caches.** `StableValueNode` and `ArrayKeyNode.constantString` keep one string per site, also one a request computed (a constant defined from a large string). That is bounded by the sites and never a context's mutable state, as in GraalJS's identity caches. Accepted.
-3. **`PHP_SAPI` is folded to `"cli"`**, also under the CGI SAPI, where php-fpm has `fpm-fcgi`. `Sapi` isn't in `areOptionsCompatible`, but nothing language-level depends on it, so this is a single-context deviation, not a leak between requests.
+3. **`PHP_SAPI` was folded to `"cli"`**, also under the CGI SAPI, where php-fpm has `fpm-fcgi`. Fixed 2026-11-09: the built-ins table (`Builtins.build`) takes the SAPI's name, and `Sapi` is in `areOptionsCompatible`, so contexts of another SAPI get a language instance of their own; the translator still folds `PHP_SAPI`, as php-src's compiler does.
 4. **Callables beyond this model's scope.** `[$obj, 'parent::m']` resolves `parent` against the object's class, where php-src uses the caller's scope, and method visibility isn't checked for callables. The caches agree with the uncached path, so these are single-context deviations.
 5. **flock after `exit()` and an uncaught exception.** Checked on the runtime: a lock taken before `exit(0)`, or before an uncaught exception, is free for the next request on the engine (`finalizeContext` runs).
 6. **`curl_share_init_persistent`** handles live per thread across requests, on purpose (ZTS php-src keeps them per thread). HttpMain's pool threads play php-fpm's workers.

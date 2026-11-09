@@ -108,7 +108,7 @@ final class RuntimeFunctions {
         // PG(connection_status): CONNECTION_NORMAL, the CLI's (a request's connection isn't watched)
         r.fn("php_sapi_name", (context, a) -> {
             Args.arity(a, "php_sapi_name", 0, 0);
-            return Str.of(context.response() != null ? "cgi-fcgi" : "cli");
+            return Str.of(context.sapiName());
         });
         r.fn("ini_parse_quantity", (context, a) -> {
             Args.arity(a, "ini_parse_quantity", 1, 1);
@@ -166,7 +166,7 @@ final class RuntimeFunctions {
                 return Boolean.FALSE;
             }
             long previous = context.response().status();
-            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL) {
+            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL && Args.lng(a, 0, 200) != 0) {
                 // PHP_FUNCTION(http_response_code): no new code once the headers are out
                 if (context.response().isSent()) {
                     SourceLocation start = context.response().outputStart();
@@ -176,7 +176,11 @@ final class RuntimeFunctions {
                             SourceLocation.current());
                     return Boolean.FALSE;
                 }
-                context.response().setStatus((int) Args.lng(a, 0, 200));
+                if (context.response().hasStatusLine()) {
+                    ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("http_response_code(): Calling "
+                            + "http_response_code() after header('HTTP/...') has no effect"), SourceLocation.current());
+                }
+                context.response().setCode((int) Args.lng(a, 0, 200));
             }
             return previous;
         });

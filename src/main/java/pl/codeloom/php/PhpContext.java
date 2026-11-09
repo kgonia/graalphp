@@ -56,6 +56,7 @@ public final class PhpContext {
     /** php.Parser=java: files are parsed by the runtime's parser ({@link SourceFiles}), not read from exports. */
     private final boolean javaParser;
     private final OutputStream out;
+    private final String sapiName;
 
     /** The declared functions by lowercase name, in declaration order, as php-src's function table. */
     private final Map<String, PhpFunction> functions = new java.util.LinkedHashMap<>();
@@ -135,8 +136,10 @@ public final class PhpContext {
     /** The request body (php://input): stdin under the CGI SAPI, empty under the CLI. */
     private final byte[] requestBody;
 
-    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
-                      boolean debug, Map<String, String> ini) {
+    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot,
+                      String sapiName, boolean debug, Map<String, String> ini) {
+        this.sapiName = sapiName;
+        boolean cgi = !sapiName.equals("cli");
         this.builtinState = new BuiltinState(cgi, ini);
         this.language = language;
         this.env = env;
@@ -144,7 +147,7 @@ public final class PhpContext {
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.javaParser = parser(env.getOptions().get(PhpLanguage.Parser));
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
-        Builtins.install(this, language.builtins(debug));
+        Builtins.install(this, language.builtins(debug, sapiName));
         if (!cgi) {
             Builtins.defineStdStreams(this);
         }
@@ -182,6 +185,11 @@ public final class PhpContext {
         } catch (IOException e) {
             throw new PhpError("reading the request body failed: " + e.getMessage());
         }
+    }
+
+    /** php_sapi_name(): cli, cgi-fcgi or fpm-fcgi. */
+    public String sapiName() {
+        return sapiName;
     }
 
     public pl.codeloom.php.builtins.CgiSapi.Response response() {
