@@ -24,6 +24,13 @@ import java.util.Map;
  * (launcher.FastCgiMain).
  */
 public final class CgiSapi {
+    /**
+     * The embedder's end of the request (php-fpm's fcgi_end_request), which fastcgi_finish_request() calls: set by
+     * the server (launcher.CgiRequests) on the thread that makes the request's context, which takes it as it is
+     * made.
+     */
+    public static final ThreadLocal<Runnable> REQUEST_END = new ThreadLocal<>();
+
     private CgiSapi() {
     }
 

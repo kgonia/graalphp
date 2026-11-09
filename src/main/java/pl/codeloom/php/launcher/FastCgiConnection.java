@@ -191,14 +191,12 @@ final class FastCgiConnection {
                     + environment.getOrDefault("PATH_INFO", ""));
             RequestPhases phases = CgiRequests.phases();
             String uri = environment.getOrDefault("REQUEST_URI", filename);
-            requests.run(script, environment, request.body(), stdout, phases, uri);
+            requests.run(script, environment, request.body(), stdout, stdout::finish, phases, uri);
             if (phases != null) {
                 phases.print(environment.getOrDefault("REQUEST_METHOD", "GET"), uri, stdout.status);
             }
         }
-        stdout.flush();
-        writeRecord(STDOUT, request.id, header, 0, 0);
-        endRequest(request.id, 0, REQUEST_COMPLETE);
+        stdout.end();
     }
 
     /** A response php-fpm writes without running a script: its status, X-Powered-By and php's content type. */
@@ -321,6 +319,8 @@ final class FastCgiConnection {
         private final int id;
         int status = 200;
         private boolean headerSeen;
+        /** The request was ended (fastcgi_finish_request, or the script's end): later output goes nowhere. */
+        private boolean ended;
 
         Stdout(int id) {
             this.id = id;
@@ -333,6 +333,9 @@ final class FastCgiConnection {
 
         @Override
         public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (ended) {
+                return;
+            }
             if (!headerSeen && length > 0) {
                 headerSeen = true;
                 status = status(bytes, offset, length);
@@ -347,7 +350,31 @@ final class FastCgiConnection {
 
         @Override
         public void flush() throws IOException {
-            out.flush();
+            if (!ended) {
+                out.flush();
+            }
+        }
+
+        /** The request's end: the empty STDOUT and END_REQUEST, once. */
+        void end() throws IOException {
+            if (!ended) {
+                ended = true;
+                out.flush();
+                writeRecord(STDOUT, id, header, 0, 0);
+                endRequest(id, 0, REQUEST_COMPLETE);
+            }
+        }
+
+        /**
+         * fastcgi_finish_request(): the web server gets the end of the response while the script goes on (php-fpm's
+         * fcgi_end_request); a web server gone ends it too.
+         */
+        void finish() {
+            try {
+                end();
+            } catch (IOException e) {
+                ended = true;
+            }
         }
 
         @Override

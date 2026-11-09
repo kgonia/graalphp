@@ -150,6 +150,22 @@ class FastCgiConnectionTest {
     }
 
     @Test
+    void finishesTheRequestWhileTheScriptGoesOn() throws IOException {
+        Path marker = dir.resolve("finished.txt");
+        Path script = Files.writeString(dir.resolve("finish.php"), "<?php echo 'sent'; ob_start(); echo ' too';"
+                + " $first = fastcgi_finish_request(); echo 'lost'; $second = fastcgi_finish_request();"
+                + " file_put_contents('" + marker.toString().replace('\\', '/')
+                + "', var_export([$first, $second], true));");
+        ByteArrayOutputStream in = new ByteArrayOutputStream();
+        request(in, 1, false, params(script, "GET", ""), "");
+        List<Record> records = serve(in);
+        assertTrue(stdout(records, 1).endsWith("\r\n\r\nsent too"), stdout(records, 1));
+        assertEquals(1, records.stream().filter(r -> r.type == FastCgiConnection.END_REQUEST).count());
+        assertEquals(FastCgiConnection.END_REQUEST, records.get(records.size() - 1).type);
+        assertEquals("array (\n  0 => true,\n  1 => false,\n)", Files.readString(marker));
+    }
+
+    @Test
     void keepsTheConnectionForTheNextRequest() throws IOException {
         Path script = Files.writeString(dir.resolve("echo.php"), "<?php echo $_GET['n'];");
         ByteArrayOutputStream in = new ByteArrayOutputStream();

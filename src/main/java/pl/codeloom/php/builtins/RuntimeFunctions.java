@@ -72,6 +72,14 @@ final class RuntimeFunctions {
         };
     }
 
+    /** php-fpm's own functions (sapi/fpm/fpm/fpm_main.c), declared under the fpm SAPI only. */
+    static void registerFpm(Registry r) {
+        r.fn("fastcgi_finish_request", (context, a) -> {
+            Args.arity(a, "fastcgi_finish_request", 0, 0);
+            return context.finishRequest();
+        });
+    }
+
     static void register(Registry r) {
         // ---- lifecycle ----
         r.fn("exit", (context, a) -> exit(context, Args.get(a, 0, 0L)));

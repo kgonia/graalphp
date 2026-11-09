@@ -110,6 +110,9 @@ public final class Builtins {
         JsonFunctions.register(registry);
         MbFunctions.register(registry);
         RuntimeFunctions.register(registry);
+        if (sapiName.equals("fpm-fcgi")) {
+            RuntimeFunctions.registerFpm(registry);
+        }
         DateFunctions.register(registry);
         EncodingFunctions.register(registry);
         PasswordFunctions.register(registry);

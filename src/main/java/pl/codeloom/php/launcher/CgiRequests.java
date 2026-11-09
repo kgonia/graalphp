@@ -1,5 +1,6 @@
 package pl.codeloom.php.launcher;
 
+import pl.codeloom.php.builtins.CgiSapi;
 import pl.codeloom.php.runtime.Phases;
 
 import org.graalvm.polyglot.Context;
@@ -45,14 +46,17 @@ final class CgiRequests {
     }
 
     /**
-     * Runs script with the request's environment and body, its output (the CGI response) written to out and flushed.
+     * Runs script with the request's environment and body, its output (the CGI response) written to out and flushed;
+     * requestEnd (or null) is the server's end of the request for fastcgi_finish_request().
      * A failure outside PHP's own error handling is logged with label (the request's URI); PHP reports its errors
      * itself, to the server's stderr.
      */
-    void run(Path script, Map<String, String> environment, byte[] body, OutputStream out, RequestPhases phases,
-             String label) {
+    void run(Path script, Map<String, String> environment, byte[] body, OutputStream out, Runnable requestEnd,
+             RequestPhases phases, String label) {
         started.incrementAndGet();
         HeapProbe.IN_FLIGHT.incrementAndGet();
+        // fastcgi_finish_request()'s end of the request, for the context this thread makes (CgiSapi.REQUEST_END)
+        CgiSapi.REQUEST_END.set(requestEnd);
         try (Context context = Context.newBuilder("php")
                 .engine(engine)
                 // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
@@ -96,6 +100,7 @@ final class CgiRequests {
             System.err.println("PHP Fatal error:  reading " + script + " failed: " + e.getMessage() + " (" + label
                     + ")");
         } finally {
+            CgiSapi.REQUEST_END.remove();
             HeapProbe.IN_FLIGHT.decrementAndGet();
         }
     }

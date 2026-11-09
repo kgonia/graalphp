@@ -192,7 +192,7 @@ public final class HttpMain {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         // -Dphp.phases=true: the request's phases, printed once it is answered
         RequestPhases phases = CgiRequests.phases();
-        requests.run(script, cgiEnvironment(exchange, script, scriptName, body.length), body, out, phases,
+        requests.run(script, cgiEnvironment(exchange, script, scriptName, body.length), body, out, null, phases,
                 exchange.getRequestURI().toString());
         int status = sendCgiResponse(exchange, out.toByteArray());
         if (phases != null) {

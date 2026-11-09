@@ -135,6 +135,9 @@ public final class PhpContext {
     private final pl.codeloom.php.builtins.CgiSapi.Response response;
     /** The request body (php://input): stdin under the CGI SAPI, empty under the CLI. */
     private final byte[] requestBody;
+    /** The server's end of the request (CgiSapi.REQUEST_END), or null; whether fastcgi_finish_request() ran it. */
+    private final Runnable requestEnd;
+    private boolean requestEnded;
 
     public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot,
                       String sapiName, boolean debug, Map<String, String> ini) {
@@ -165,6 +168,7 @@ public final class PhpContext {
             response.header("X-Powered-By: PHP/" + Builtins.PHP_VERSION, true, 0);
         }
         requestBody = cgi ? readRequestBody(env) : new byte[0];
+        requestEnd = cgi ? pl.codeloom.php.builtins.CgiSapi.REQUEST_END.get() : null;
         builtinState.startupErrors(this, cgi);
         superglobals(argv);
         if (cgi) {
@@ -1441,6 +1445,23 @@ public final class PhpContext {
             endBuffer(false, true, "ob_end_flush");
         }
         flush();
+    }
+
+    /**
+     * fastcgi_finish_request(): the output buffers ended and the output (headers first) sent as at the request's
+     * end, then the server ends the request; later output goes nowhere. False when it ran already.
+     */
+    @TruffleBoundary
+    public boolean finishRequest() {
+        if (requestEnded) {
+            return false;
+        }
+        endRequest();
+        requestEnded = true;
+        if (requestEnd != null) {
+            requestEnd.run();
+        }
+        return true;
     }
 
     /** php_output_header's OG(output_start_filename/lineno): the executing PHP code's place, if any runs. */
