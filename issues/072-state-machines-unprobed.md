@@ -11,7 +11,7 @@ failure to show, so none has a smoke test yet. Lines are on main 438231d.
 | Sockets, TLS | `blocked` and `hasBufferedData` aren't restored when an error handler throws; `stream_socket_enable_crypto` on a never-connected socket throws NullPointerException | `SslSocketStream.java:615-1070`, `FileFunctions.java:93-280` |
 | curl | `curl_multi_close` iterates `mh.easyh` while a warning can run a handler that adds a handle (ConcurrentModificationException); a denied server push leaves `cp == null`, and later calls throw NullPointerException | `CurlFunctions.java:2018-2106` |
 | mysqli | "never connected" and "closed" are both `connection == null`: NullPointerException instead of "mysqli object is already closed", a second close returns true, results are usable after free | `MysqliFunctions.java:43-533` |
-| Request end | `exit()` calls `endRequest` unguarded: a throwing output handler's exception escapes `exit` and user code can catch it | `PhpContext.java:766-771` |
+| Request end | `exit()` calls `endRequest` unguarded: a throwing output handler's exception escapes `exit` and user code can catch it. Its shutdown also runs before the frames unwind (073) | `PhpContext.java:766-771` |
 | Request end | `destroyGenerators` walks by index while `removeIf(isClosed)` can shift the list (a probe with 70 generators matched PHP; the trigger needs a finally that makes generators while the list is pruned) | `PhpContext.java:807-835` |
 | Engine | the `strict_types` registry only grows: a file once strict stays strict after an edit removes the declare (a long-running server) | `PhpLanguage.java:233-249` |
 | Engine | the prelude file is marked loaded before it runs: a failure part-way is never retried | `PhpContext.java:484-515` |

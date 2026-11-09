@@ -17,7 +17,25 @@ and another request on the server waits on it too.
 request end release it. php-src releases a stream when its last reference goes, which closes the descriptor and with
 it the lock.
 
-**Fix:** with reference counts for resources (005, 036), release on the last reference. Until then, at the least,
-release a context's locks at its request end, and key `FileLocks` by context.
+**Fix:** to do, and a design decision. The lock lives as long as the stream, so this is reference counting for
+resources: php-src frees a stream when its last reference goes, which closes it and releases the lock. Other effects
+of that release are observable too:
+- `tmpfile()`'s file goes;
+- buffered writes are flushed;
+- `proc_open`'s pipes close.
+
+The rest is in place:
+- request end releases the locks already (`FileLocks`, `openStreams`);
+- `FILES` is right to be shared by the contexts, since locks contend across requests as across processes.
+
+What resource counting takes (looked at 2026-11-09):
+- a fifth counted kind beside arrays, objects, closures and references, on the P1 store paths (wiki/destructors.md);
+  about 40 sites in `Refcount`, `PhpArray`, `Locals`, `PropNode`, `BuiltinRootNode` and the frame epilogue;
+- every built-in that keeps a resource internally (a curl handle's `CURLOPT_FILE`, stream contexts, `proc_open`) must
+  hold a count, or a stream closes too early;
+- the census (`Census`) must know resources.
+
+Its compiled-code cost is of the same kind as the destructors work's (Gate 2), so it is the owner's call. A shared
+counted supertype of `PhpClosure` and `PhpResource` would keep the number of type checks per release site as it is.
 
 **Test:** `tests/smoke/flock-dropped-handle.php`.

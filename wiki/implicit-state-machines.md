@@ -96,3 +96,20 @@ Totals: 71 machines.
 | Built-ins | 20 (11 with gaps, 9 clean) |
 
 Of these, 15 have confirmed defects (19 cases), and 12 are likely and unprobed.
+
+## Found while fixing (2026-11-09)
+
+Each was probed on PHP 8.5 while fixing 055-071, and each is an issue:
+
+| Finding | Issue |
+|---|---|
+| `exit()` runs the shutdown functions before the frames unwind (the live ranges, `@` included, are undone after) | [073](../issues/073-exit-before-unwind.md) |
+| `include_path` is used only in error messages; `set_include_path` and the others are missing | [074](../issues/074-include-path.md) |
+| `get_included_files`, `debug_zval_dump`, `ReflectionFunction::isGenerator` are missing | [075](../issues/075-missing-functions-found-probing.md) |
+| `var_export` of a circular structure doesn't warn | [076](../issues/076-var-export-circular-warning.md) |
+| prelude SPL classes show their private state in dumps and their helpers in reflection | [077](../issues/077-prelude-classes-show-internals.md) |
+| `ob_start`'s chunk size is ignored | [078](../issues/078-ob-start-chunk-size.md) |
+| object ids are never reused | [079](../issues/079-object-ids-not-reused.md) |
+
+065 stays open: it needs reference counts on resources, a design step whose cost is the owner's call (the issue
+has what it takes).

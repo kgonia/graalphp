@@ -32,7 +32,6 @@ The smoke test passes with `-Dphp.rc.destructors=true` (checked; it failed befor
 the default, a generator is destroyed only at request end (005, 036), which the test can't show.
 
 Found on the way: `exit()` runs the shutdown functions inside the call, before the frames unwind. PHP 8 unwinds
-first (`unwind_exit`), so `@exit()` leaves the shutdown functions silenced here. That belongs to `exit()`'s order
-(072).
+first (`unwind_exit`), so `@exit()` leaves the shutdown functions silenced here. That is 073.
 
 **Test:** `tests/smoke/generator-abandoned-silence.php`.

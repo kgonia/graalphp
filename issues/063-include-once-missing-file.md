@@ -25,6 +25,6 @@ false. Only `require` is fatal. The file counts as included only once it has ope
 
 A path counts as included only once it has opened. An empty path is a ValueError. `include_path` is an ini
 directive now, with the default of a PHP built with the default prefix (`.:/usr/local/lib/php`). Only its message
-uses it; lookup is still in "." and the including file's directory.
+uses it; lookup is still in "." and the including file's directory (074).
 
 **Test:** `tests/smoke/include-once-missing.php`.

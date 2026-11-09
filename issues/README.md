@@ -76,3 +76,10 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Fixed |
 | [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Fixed |
 | [072](072-state-machines-unprobed.md) | Implicit state machines with likely defects, not probed yet | Open |
+| [073](073-exit-before-unwind.md) | `exit()` runs the shutdown functions before the stack unwinds | Open |
+| [074](074-include-path.md) | `include_path` is used only in error messages | Open |
+| [075](075-missing-functions-found-probing.md) | Built-ins missing that the state-machine probes needed | Open |
+| [076](076-var-export-circular-warning.md) | `var_export` of a circular structure doesn't warn | Open |
+| [077](077-prelude-classes-show-internals.md) | Prelude SPL classes show their implementation in dumps and reflection | Open |
+| [078](078-ob-start-chunk-size.md) | `ob_start`'s chunk size is ignored | Open |
+| [079](079-object-ids-not-reused.md) | Object ids are never reused | Open |
