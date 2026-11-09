@@ -81,9 +81,6 @@ public final class HttpMain {
     }
 
     public static void main(String[] args) throws IOException {
-        // a fiber's virtual thread (PhpFiber) would have Truffle print its experimental-support warning on stderr
-        System.setProperty("polyglot.engine.WarnVirtualThreadSupport",
-                System.getProperty("polyglot.engine.WarnVirtualThreadSupport", "false"));
         PhpMain.compilerDefaults();
         String host = "127.0.0.1";
         int port = 8080;

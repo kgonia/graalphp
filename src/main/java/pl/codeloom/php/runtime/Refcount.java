@@ -415,7 +415,7 @@ public final class Refcount {
      * they held to zero in turn (zend_object_std_dtor). An exception the destructor throws goes on after the release.
      */
     private static void destroy(PhpObject object) {
-        RuntimeException thrown = null;
+        Throwable thrown = null;
         PhpGenerator generator = object.getInternal() instanceof PhpGenerator g ? g : null;
         PhpFiber fiber = object.getInternal() instanceof PhpFiber f ? f : null;
         if (!object.markDestructorCalled()
@@ -435,7 +435,8 @@ public final class Refcount {
                 } else {
                     dec(object.callMethodOwned(null, "__destruct"));
                 }
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
+                // an Error too (a cancel, a stack overflow in a finally block): the counts below still settle
                 thrown = e;
             } finally {
                 if (Census.AUDIT) {
@@ -445,7 +446,7 @@ public final class Refcount {
             if (object.decrement() > 0) {
                 // resurrected: freed when its count next reaches zero, without its destructor
                 if (thrown != null) {
-                    throw thrown;
+                    throw rethrown(thrown);
                 }
                 return;
             }
@@ -457,8 +458,16 @@ public final class Refcount {
             }
         }
         if (thrown != null) {
-            throw thrown;
+            throw rethrown(thrown);
         }
+    }
+
+    /** What destroy caught, thrown on: a RuntimeException or an Error. */
+    private static RuntimeException rethrown(Throwable thrown) {
+        if (thrown instanceof Error error) {
+            throw error;
+        }
+        return (RuntimeException) thrown;
     }
 
     /**

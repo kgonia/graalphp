@@ -7,10 +7,17 @@ import pl.codeloom.php.PhpContext;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A Fiber's state (Zend/zend_fibers.c): its function runs on a virtual thread of its own, entered into the request's
- * context, so that it can suspend from any depth of the PHP stack. The fiber and the code that started or resumed it
- * hand over to each other: the one running opens the other's gate and waits at its own ({@link FiberGate}), so
- * exactly one thread of the context runs PHP code at any time, and the gates order the memory of what they pass.
+ * A Fiber's state (Zend/zend_fibers.c): its function runs on a thread of its own, entered into the request's context,
+ * so that it can suspend from any depth of the PHP stack. The fiber and the code that started or resumed it hand over
+ * to each other: the one running opens the other's gate and waits at its own ({@link FiberGate}), so exactly one
+ * thread of the context runs PHP code at any time, and the gates order the memory of what they pass.
+ *
+ * <p>The threads are platform threads, not virtual ones (decided 2026-11-09, issue 031). A fiber suspended under a
+ * native frame (a curl callback below curl_exec) can't unmount from its carrier, the JDK adds no carrier for it, and
+ * once every carrier is pinned so, no fiber of any request in the JVM can run: a deadlock reproduced with two
+ * carriers. A native image runs a virtual thread on a platform thread anyway (oracle/graal#7520). Virtual threads
+ * would start fibers faster and hold less memory; going back takes {@code .virtual(true)} in {@link FiberThread} and
+ * a way around the pinning. A context reuses its threads for later fibers ({@link FiberThread}).
  *
  * <p>The states are php-src's: {@link Status}, with its flags {@link #threw}, {@link #bailout} and
  * {@link #destroyed}. EG(active_fiber) is {@link PhpContext#currentFiber}, swapped at each hand-over.
@@ -42,6 +49,13 @@ public final class PhpFiber {
      */
     private static final AtomicInteger CONTEXTS_WITH_FIBERS = new AtomicInteger();
 
+    /**
+     * A fiber thread's stack, at least. PHP calls nest on the Java stack here (issue 080), while php-src's
+     * fiber.stack_size bounds only the C stack, so a fiber gets fiber.stack_size or this, whichever is larger. A
+     * thread's stack is reserved address space; only the pages used are committed.
+     */
+    private static final long MIN_STACK_BYTES = 16L << 20;
+
     private final PhpContext context;
     private final PhpObject object;
     /** The callable, held while the fiber can still run it (php-src's fci.function_name), and its target. */
@@ -58,8 +72,8 @@ public final class PhpFiber {
     /** ZEND_FIBER_FLAG_DESTROYED: destroyed while suspended, it unwinds; it can't suspend again. */
     private boolean destroyed;
 
-    /** The fiber's thread, once started. */
-    private Thread thread;
+    /** The thread running the fiber, once started. */
+    private FiberThread thread;
     /** The fiber's frame arguments, from start() until its thread takes them. */
     private Object[] arguments;
     /** What the function returned, once it has. */
@@ -121,20 +135,30 @@ public final class PhpFiber {
         if (status != Status.INIT) {
             throw fiberError("Cannot start a fiber that has already been started");
         }
-        // zend_fiber_stack_allocate: a page and a guard page at least. The thread's stack is the JVM's, so the size
-        // is only checked.
-        if (context.ini().fiberStackSize() < 2 * 4096) {
+        // zend_fiber_stack_allocate: a page and a guard page at least
+        long stackSize = context.ini().fiberStackSize();
+        if (stackSize < 2 * 4096) {
             throw new PhpError("Exception", "Fiber stack size is too small, it needs to be at least 8192 bytes");
         }
+        checkSwitchable();
         if (!context.getEnv().isCreateThreadAllowed()) {
             throw new PhpError("Error", "Fibers need a context that may create threads "
                     + "(Context.Builder.allowCreateThread)");
         }
         this.arguments = arguments;
         context.fiberStarted(this);
-        thread = context.getEnv().newTruffleThreadBuilder(this::run).virtual(true).build();
+        long threadStack = Math.max(stackSize, MIN_STACK_BYTES);
+        FiberThread idle = context.idleFiberThread(threadStack);
+        FiberThread runner = idle != null ? idle : context.newFiberThread(threadStack);
+        thread = runner;
         enter();
-        thread.start();
+        try {
+            runner.run(this, idle == null);
+        } catch (RuntimeException | Error notStarted) {
+            leave();
+            status = Status.DEAD;
+            throw notStarted;
+        }
         return awaitFiber();
     }
 
@@ -142,6 +166,7 @@ public final class PhpFiber {
     @TruffleBoundary
     public Object resume(Object value) {
         checkSuspended();
+        checkSwitchable();
         this.value = value;
         return switchIn();
     }
@@ -150,6 +175,7 @@ public final class PhpFiber {
     @TruffleBoundary
     public Object throwInto(PhpObject exception) {
         checkSuspended();
+        checkSwitchable();
         this.error = PhpException.inFlight(exception);
         return switchIn();
     }
@@ -184,6 +210,7 @@ public final class PhpFiber {
         if (fiber.destroyed) {
             throw fiberError("Cannot suspend in a force-closed fiber");
         }
+        fiber.checkSwitchable();
         fiber.status = Status.SUSPENDED;
         fiber.value = value;
         fiber.error = null;
@@ -244,28 +271,19 @@ public final class PhpFiber {
         }
     }
 
-    /**
-     * Waits until the fiber's thread has ended, past Truffle's leaving of the context: a request ending with
-     * exit() or a fatal error closes the context through closeExited, which does it on a cleanup thread while
-     * another thread is still active, and that thread races the embedder's own close (a deadlock in Truffle 25.4).
-     * A thread can't wait for itself (exit() in this fiber).
-     */
-    /** Whether the fiber is over and its thread gone: the request's end has nothing to wait for. */
-    public boolean ended() {
-        return status == Status.DEAD && (thread == null || !thread.isAlive());
-    }
-
-    @TruffleBoundary
-    public void join() {
-        Thread ended = thread;
-        if (ended != null && ended != Thread.currentThread() && status == Status.DEAD) {
-            com.oracle.truffle.api.TruffleSafepoint.setBlockedThreadInterruptible(null, Thread::join, ended);
-        }
-    }
-
     private void checkSuspended() {
         if (status != Status.SUSPENDED) {
             throw fiberError("Cannot resume a fiber that is not suspended");
+        }
+    }
+
+    /**
+     * zend_fiber_switch_blocked: once the context is being finalized, PHP code can't switch fibers (a fiber's thread
+     * could no longer enter it). Destroying and abandoning fibers still does.
+     */
+    private void checkSwitchable() {
+        if (context.fibersBlocked()) {
+            throw fiberError("Cannot switch fibers in current execution context");
         }
     }
 
@@ -275,6 +293,27 @@ public final class PhpFiber {
         context.setCurrentFiber(this);
         pending = context.swapPendingReleases(pending);
         status = Status.RUNNING;
+    }
+
+    /** The calling thread takes back what {@link #enter} gave the fiber. */
+    private void leave() {
+        context.setCurrentFiber(previous);
+        previous = null;
+        pending = context.swapPendingReleases(pending);
+    }
+
+    /**
+     * On the fiber's thread, when Truffle failed to enter the context, so run() never ran: the caller waiting at
+     * start() gets the failure instead of waiting forever.
+     */
+    void notRun(Throwable problem) {
+        if (status == Status.RUNNING && arguments != null) {
+            arguments = null;
+            bailout = true;
+            error = problem;
+            status = Status.DEAD;
+            toCaller.open();
+        }
     }
 
     /** Hands over to the suspended fiber and waits until it suspends or ends. */
@@ -287,9 +326,7 @@ public final class PhpFiber {
     /** On the calling thread: waits for the fiber to suspend or end; what it handed over is returned or thrown. */
     private Object awaitFiber() {
         toCaller.await();
-        context.setCurrentFiber(previous);
-        previous = null;
-        pending = context.swapPendingReleases(pending);
+        leave();
         Throwable thrown = error;
         if (thrown != null) {
             error = null;
@@ -300,8 +337,15 @@ public final class PhpFiber {
         return handed;
     }
 
-    /** The fiber's thread: the function, then the hand-back of its end. */
-    private void run() {
+    /**
+     * On the fiber's thread: the function, then the hand-back of its end. Truffle's cancel or exit (a ThreadDeath)
+     * ends it without running PHP code on the way out: the context is going away, and the caller's thread gets its
+     * own. Returns whether the thread waits for another fiber: the context keeps it, decided before the hand-back,
+     * while this thread still has the context's turn.
+     */
+    @SuppressWarnings("removal")
+    boolean runOn(FiberThread runner) {
+        boolean kept = false;
         try {
             onThread.run();
             Object[] frame = arguments;
@@ -312,6 +356,9 @@ public final class PhpFiber {
         } catch (Destroyed unwound) {
             // the graceful exit of a destroyed fiber: it ends quietly
             value = PhpNull.NULL;
+        } catch (ThreadDeath cancelled) {
+            bailout = true;
+            error = cancelled;
         } catch (Throwable thrown) {
             if (thrown instanceof PhpBailout) {
                 bailout = true;
@@ -320,10 +367,14 @@ public final class PhpFiber {
             }
             error = thrown;
         } finally {
-            end();
+            if (!(error instanceof ThreadDeath)) {
+                end();
+                kept = context.keepFiberThread(runner);
+            }
             status = Status.DEAD;
             toCaller.open();
         }
+        return kept;
     }
 
     /**

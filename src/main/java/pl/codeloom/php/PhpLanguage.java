@@ -358,8 +358,8 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
 
     @Override
     protected void finalizeContext(PhpContext context) {
-        context.abandonFibers();
         try {
+            context.abandonFibers();
             context.endRequest();
         } finally {
             context.builtinState().close();

@@ -46,9 +46,6 @@ public final class PhpMain {
     }
 
     public static void main(String[] args) throws IOException {
-        // a fiber's virtual thread (PhpFiber) would have Truffle print its experimental-support warning on stderr
-        System.setProperty("polyglot.engine.WarnVirtualThreadSupport",
-                System.getProperty("polyglot.engine.WarnVirtualThreadSupport", "false"));
         compilerDefaults();
         String astRoot = "target/ast";
         String sourceRoot = ".";

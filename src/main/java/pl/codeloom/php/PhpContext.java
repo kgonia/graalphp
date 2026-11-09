@@ -944,8 +944,67 @@ public final class PhpContext {
     /** The fibers started in this request, in the order they were started, for the request's end. */
     private final List<pl.codeloom.php.runtime.PhpFiber> fibers = new ArrayList<>();
     private int fibersPruneAt = 64;
+    /** Every fiber thread made here that may still be alive, for the request's end to wait for. */
+    private final List<pl.codeloom.php.runtime.FiberThread> fiberThreads = new ArrayList<>();
+    private int fiberThreadsPruneAt = 64;
+    /** Fiber threads waiting for a fiber, the last one freed on top. */
+    private final java.util.ArrayDeque<pl.codeloom.php.runtime.FiberThread> idleFiberThreads =
+            new java.util.ArrayDeque<>();
+    /** How many idle fiber threads a context keeps; one more ends instead. */
+    private static final int IDLE_FIBER_THREADS = 16;
     /** Whether a fiber was started here: the context admits other threads until it is disposed. */
     private boolean hadFibers;
+    /** The request's end is destroying the fibers: the list grows (a finally block starting one) but isn't pruned. */
+    private boolean drainingFibers;
+    /** zend_fiber_switch_blocking: the context is being finalized, PHP code can't switch fibers any more. */
+    private boolean fibersBlocked;
+
+    public boolean fibersBlocked() {
+        return fibersBlocked;
+    }
+
+    /** An idle fiber thread with a stack of stackSize at least, or null (one with a smaller stack ends). */
+    public pl.codeloom.php.runtime.FiberThread idleFiberThread(long stackSize) {
+        pl.codeloom.php.runtime.FiberThread idle;
+        while ((idle = idleFiberThreads.pollFirst()) != null) {
+            if (idle.stackSizeAtLeast(stackSize)) {
+                return idle;
+            }
+            idle.retire();
+        }
+        return null;
+    }
+
+    /** A new fiber thread, not started. */
+    public pl.codeloom.php.runtime.FiberThread newFiberThread(long stackSize) {
+        if (fiberThreads.size() >= fiberThreadsPruneAt) {
+            fiberThreads.removeIf(thread -> !thread.isAlive());
+            fiberThreadsPruneAt = Math.max(64, fiberThreads.size() * 2);
+        }
+        pl.codeloom.php.runtime.FiberThread thread = pl.codeloom.php.runtime.FiberThread.create(this, stackSize);
+        fiberThreads.add(thread);
+        return thread;
+    }
+
+    /**
+     * A fiber ended on thread: whether the thread waits for the next fiber. Not while the request's end destroys
+     * fibers or the context closes, nor beyond {@link #IDLE_FIBER_THREADS}.
+     */
+    public boolean keepFiberThread(pl.codeloom.php.runtime.FiberThread thread) {
+        if (drainingFibers || fibersBlocked || idleFiberThreads.size() >= IDLE_FIBER_THREADS) {
+            return false;
+        }
+        idleFiberThreads.addFirst(thread);
+        return true;
+    }
+
+    /** Ends the idle fiber threads. */
+    private void retireIdleFiberThreads() {
+        pl.codeloom.php.runtime.FiberThread idle;
+        while ((idle = idleFiberThreads.pollFirst()) != null) {
+            idle.retire();
+        }
+    }
 
     /** The context is disposed: it no longer needs other threads admitted. */
     public void disposeFibers() {
@@ -969,8 +1028,8 @@ public final class PhpContext {
             hadFibers = true;
             pl.codeloom.php.runtime.PhpFiber.contextHasFibers();
         }
-        if (fibers.size() >= fibersPruneAt) {
-            fibers.removeIf(pl.codeloom.php.runtime.PhpFiber::ended);
+        if (fibers.size() >= fibersPruneAt && !drainingFibers) {
+            fibers.removeIf(f -> f.status() == pl.codeloom.php.runtime.PhpFiber.Status.DEAD);
             fibersPruneAt = Math.max(64, fibers.size() * 2);
         }
         fibers.add(fiber);
@@ -983,18 +1042,27 @@ public final class PhpContext {
      */
     private void destroyFibers() {
         boolean clean = errors().exitStatus() == 0;
-        for (int i = 0; i < fibers.size(); i++) {
-            pl.codeloom.php.runtime.PhpFiber fiber = fibers.get(i);
-            if (clean) {
-                guarded(fiber::destroy);
-            } else {
-                fiber.abandon();
+        drainingFibers = true;
+        try {
+            // by index: a finally block run here may start a fiber, which joins the end of the list
+            for (int i = 0; i < fibers.size(); i++) {
+                pl.codeloom.php.runtime.PhpFiber fiber = fibers.get(i);
+                if (clean) {
+                    guarded(fiber::destroy);
+                } else {
+                    fiber.abandon();
+                }
             }
+            fibers.clear();
+            // every fiber has ended: the threads end too, and the request waits for them to leave the context
+            retireIdleFiberThreads();
+            for (int i = 0; i < fiberThreads.size(); i++) {
+                fiberThreads.get(i).join();
+            }
+            fiberThreads.clear();
+        } finally {
+            drainingFibers = false;
         }
-        for (pl.codeloom.php.runtime.PhpFiber fiber : fibers) {
-            fiber.join();
-        }
-        fibers.clear();
     }
 
     /**
@@ -1003,10 +1071,15 @@ public final class PhpContext {
      * Truffle waits for the threads itself.
      */
     public void abandonFibers() {
-        for (pl.codeloom.php.runtime.PhpFiber fiber : fibers) {
-            fiber.abandon();
+        fibersBlocked = true;
+        drainingFibers = true;
+        // by index: what an abandoned fiber's end releases may run a destructor that starts one
+        for (int i = 0; i < fibers.size(); i++) {
+            fibers.get(i).abandon();
         }
         fibers.clear();
+        retireIdleFiberThreads();
+        fiberThreads.clear();
     }
 
     /** The error state: the handlers, the last error, the exit status. */
