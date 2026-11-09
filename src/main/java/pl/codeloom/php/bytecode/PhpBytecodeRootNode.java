@@ -1871,7 +1871,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // zend_binary_assign_op_dim's assign_dim_op_ret_null
+                return PhpNull.NULL;
+            }
+            Object result = compounded(node, op, old, operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1895,7 +1900,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = propertyForWrite(frame, access, object, name);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // zend_binary_assign_op_dim's assign_dim_op_ret_null
+                return PhpNull.NULL;
+            }
+            Object result = compounded(node, op, old, operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1935,7 +1945,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -1964,7 +1979,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -2066,8 +2086,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 int last = keys.length - 1;
                 Object container = ElementChain.forUpdate(node, fetched[1], keys, last, toKey);
-                Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]),
-                        operand);
+                Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+                if (old == ElementChain.DROPPED) {
+                    return PhpNull.NULL;
+                }
+                Object result = compounded(node, op, old, operand);
                 ElementChain.write(node, container, keys[last], result, write, objectWrite);
                 return result;
             } finally {
@@ -2119,7 +2142,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;

@@ -62,7 +62,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [056](056-callable-static-cache.md) | `'static::m'` as a callable is resolved once, not per called class | Fixed |
 | [057](057-self-referencing-constant.md) | Class constants that refer to each other overflow the Java stack | Fixed |
 | [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Fixed |
-| [059](059-element-write-handler-shares.md) | An element write lands in an array the error handler shared during it | Open |
+| [059](059-element-write-handler-shares.md) | An element write lands in an array the error handler shared during it | Fixed |
 | [060](060-abandoned-generator-cleanup.md) | A generator destroyed while suspended doesn't undo its frame's state (`@`, foreach) | Fixed (observable with destructors on) |
 | [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Open |
 | [062](062-directoryiterator-entry-path.md) | `DirectoryIterator`'s `SplFileInfo` methods describe the first entry | Open |

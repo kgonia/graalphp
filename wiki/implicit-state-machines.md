@@ -23,7 +23,7 @@ Four read-only audits, one per area (runtime; bytecode and nodes; parser; built-
 | `Callables.LastCall` cache: not keyed on the scope for `static::`/`self::` | `Callables.java:455-536` | [056](../issues/056-callable-static-cache.md), fixed | `callable-static-cache` |
 | Lazy class constants: no "being evaluated" state | `PhpClass.java:643-650` | [057](../issues/057-self-referencing-constant.md), fixed | `class-constant-self-reference` |
 | Method cache in a file root: the scope changes per include, the cache doesn't | `MethodSite.java:49`, `PhpBytecodeRootNode.java:4113`, `4324` | [058](../issues/058-method-cache-include-scope.md), fixed | `method-cache-include-scope` |
-| Element place protocol: separate, warn, write; the handler shares the array in between | `ElementChain.java:38-115` | [059](../issues/059-element-write-handler-shares.md) | `element-write-handler-shares` |
+| Element place protocol: separate, warn, write; the handler shares the array in between | `ElementChain.java:38-115` | [059](../issues/059-element-write-handler-shares.md), fixed | `element-write-handler-shares` |
 | Suspended generator frame: `@` level, foreach iterations, scope not undone on destroy | generator close path | [060](../issues/060-abandoned-generator-cleanup.md), fixed | `generator-abandoned-silence` |
 | `ArrayIterator`: a snapshot of keys and an index | `spl.php:38-168` | [061](../issues/061-arrayiterator-snapshot.md) | `arrayiterator-unset-during-foreach` |
 | `DirectoryIterator`: `SplFileInfo` path fixed at entry 0 | `spl.php:856-976` | [062](../issues/062-directoryiterator-entry-path.md) | `directoryiterator-entry-type` |
