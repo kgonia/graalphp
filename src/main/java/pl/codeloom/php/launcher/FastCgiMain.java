@@ -19,6 +19,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A FastCGI server in php-fpm's place (wiki/decisions.md, D11): a web server (nginx's fastcgi_pass) sends it
@@ -30,6 +32,11 @@ import java.util.concurrent.Executors;
  * <p>{@code FastCgiMain [--listen=127.0.0.1:9000 | --listen=/path/to.sock] [--threads=n] [--ast-root=dir]
  * [--source-root=dir] [-d name=value...]}: -d is php.ini's, with php's defaults when none is given, as php-fpm
  * without a php.ini. A request body is read up to post_max_size's default, 8 MB (413 past it).
+ *
+ * <p>For profiling, as HttpMain's: -Dphp.http.closeAfter=n closes the engine after n PHP requests,
+ * -Dphp.http.closeFile=path after the first connection that ends with the file there; the server stops taking
+ * connections, lets the requests in flight finish (a minute at most), closes the engine (its tools write their output:
+ * the compilation statistics, the splitting summary) and exits.
  */
 public final class FastCgiMain {
     private static final long MAX_BODY = 8 * 1024 * 1024;
@@ -91,13 +98,44 @@ public final class FastCgiMain {
         }
         System.err.println("listening on " + listen + " (FastCGI, " + threads + " threads)");
         int maxConns = threads;
-        while (true) {
-            SocketChannel channel = server.accept();
+        int closeAfter = Integer.getInteger("php.http.closeAfter", 0);
+        String closeFileName = System.getProperty("php.http.closeFile");
+        Path closeFile = closeFileName == null ? null : Path.of(closeFileName);
+        AtomicBoolean closing = new AtomicBoolean();
+        ServerSocketChannel listener = server;
+        Runnable close = () -> {
+            try {
+                listener.close();
+                pool.shutdown();
+                pool.awaitTermination(60, TimeUnit.SECONDS);
+            } catch (IOException | InterruptedException e) {
+                System.err.println("closing: " + e);
+            }
+            engine.close(true);
+            System.exit(0);
+        };
+        while (!closing.get()) {
+            SocketChannel channel;
+            try {
+                channel = server.accept();
+            } catch (IOException e) {
+                if (closing.get()) {
+                    break;
+                }
+                throw e;
+            }
             if (!unix) {
                 // a response's last records (END_REQUEST) go out at once, not after the peer's delayed ACK
                 channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
             }
-            pool.execute(() -> serve(requests, maxConns, channel));
+            pool.execute(() -> {
+                serve(requests, maxConns, channel);
+                boolean done = (closeAfter > 0 && requests.started() >= closeAfter)
+                        || (closeFile != null && Files.exists(closeFile));
+                if (done && closing.compareAndSet(false, true)) {
+                    new Thread(close).start();
+                }
+            });
         }
     }
 

@@ -26,7 +26,7 @@
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
 #        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | load ROUNDS VARIANT... | images
-#        | clean
+#        | diag TAG DURATION [VARIANT] | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -432,6 +432,33 @@ load() { # rounds variants...
   done
 }
 
+# diag TAG DURATION [VARIANT]: a diagnosis run, not timed (wiki/pe-round4-diagnosis.md): one server's life of
+# VARIANT (default jvm-fcgi) on DIAG_CPUS (default 6-13, off the benchmark cores) with WPN_THREADS workers, under k6
+# at VUS (default 8) users for DURATION. JAVA_OPTS carries the trace options (DIAG_OPTS: by default compilation,
+# splitting and the engine's statistics); the engine's log goes to $out/diag/TAG/engine.log, the server's output to
+# server.log, the k6 run to $out/load/TAG-diag.*. At the end the server closes its engine (php.http.closeFile),
+# which prints what an engine prints at its close (CompilationStatistics, TraceSplittingSummary); nginx stays.
+# Report: tests/gate2/pe4_report.py $out/diag/TAG/engine.log compile|splits|deopts|kinds.
+diag() { # tag duration [variant]
+  local tag=$1 duration=$2 variant=${3:-jvm-fcgi} dir=$out/diag/$1 opts i
+  opts=${DIAG_OPTS:-"-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationStatistics=true -Dpolyglot.engine.SplittingTraceEvents=true -Dpolyglot.engine.TraceSplitting=true -Dpolyglot.engine.TraceSplittingSummary=true -Dpolyglot.engine.CompilationFailureAction=Print"}
+  rm -rf "$dir" && mkdir -p "$dir"
+  stop "$variant"
+  reset_db
+  OUT_DIR=$dir JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close $opts ${JAVA_OPTS:-}"     start "$variant" "${DIAG_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  load_run "$variant" "${VUS:-8}" "$duration" "$tag-diag"
+  # the engine closes after the next PHP request (a static file is nginx's), then the server exits
+  touch "$dir/close"
+  curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:${DIAG_PORT:-8097}/?p=1" || true
+  for i in $(seq 900); do
+    docker top $P-$variant 2> /dev/null | grep -q -e 'java' -e 'wp-fcgi' || break
+    sleep 1
+  done
+  docker logs $P-$variant > "$dir/server.log" 2>&1 || true
+  stop "$variant"
+  echo "$tag: $(grep -c '^\[engine\] opt done' "$dir/engine.log" || true) compilations, engine.log $(du -h "$dir/engine.log" | cut -f1)"
+}
+
 # the deployment variants' images: php-fpm behind nginx, Truffle PHP's FastCGI server behind the same nginx
 images() {
   docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm/Dockerfile tests/gate2/woo-fpm
@@ -456,6 +483,7 @@ case ${1:-} in
   compare) compare "$2" "$3" ;;
   measure) shift; measure "$@" ;;
   load) shift; load "$@" ;;
+  diag) shift; diag "$@" ;;
   images) images ;;
   clean) clean ;;
   *) sed -n 2,20p "$0"; exit 2 ;;
