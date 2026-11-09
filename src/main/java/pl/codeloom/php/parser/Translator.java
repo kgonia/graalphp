@@ -9,6 +9,7 @@ import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.bytecode.DefinedSite;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
+import pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic;
 import pl.codeloom.php.parser.zend.ZendParser;
 import pl.codeloom.php.nodes.expr.UnaryNodes;
 import pl.codeloom.php.nodes.vars.ExtractNode;
@@ -155,15 +156,20 @@ public final class Translator {
      * strict_types, and the jumps of every op_array (JumpChecks). reread gives the file's tree again.
      */
     public PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread) {
-        return translateFile(file, reread, false);
+        return translateFile(file, reread, false, List.of());
+    }
+
+    /** translateFile for a file whose parse raised diagnostics: the file's code raises them, then its compile's. */
+    public PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread, List<Diagnostic> parsed) {
+        return translateFile(file, reread, false, parsed);
     }
 
     /** eval'd code (SourceFiles.eval): a file's top level whose value without `return` is null. */
     public PhpBytecodeRootNode translateEval(Ast file, Supplier<Ast> reread) {
-        return translateFile(file, reread, true);
+        return translateFile(file, reread, true, List.of());
     }
 
-    private PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread, boolean eval) {
+    private PhpBytecodeRootNode translateFile(Ast file, Supplier<Ast> reread, boolean eval, List<Diagnostic> parsed) {
         // zend_compile_declare's strict_types: first in the file (after other declares), no block, 0 or 1
         boolean first = true;
         for (Object child : file.children()) {
@@ -189,14 +195,19 @@ public final class Translator {
                 first = false;
             }
         }
+        List<Diagnostic> diagnostics = new ArrayList<>(parsed);
         if (!internal) {
             try {
-                JumpChecks.file(file);
+                diagnostics.addAll(JumpChecks.file(file));
             } catch (JumpChecks.Failure failure) {
+                // what the compile raised before the error, then the error
+                diagnostics.addAll(failure.before);
+                new pl.codeloom.php.bytecode.CompileDiagnostics(path, diagnostics).raise(PhpContext.get(null));
                 throw compileError(failure.line, failure.getMessage());
             }
         }
-        return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval);
+        return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval,
+                List.copyOf(diagnostics));
     }
 
     /** The names of the classes this file's compile has linked so far (lowercase), for {@link #topLevelClass}. */

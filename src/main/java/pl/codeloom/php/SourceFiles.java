@@ -24,7 +24,6 @@ import com.oracle.truffle.api.strings.TruffleString;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Files as php.Parser=java loads them: the file itself parsed by the runtime's parser (pl.codeloom.php.parser.zend),
@@ -52,21 +51,13 @@ public final class SourceFiles {
     /** The translated top-level code of the file at canonical (path as the script named it). */
     @TruffleBoundary
     static RootNode load(PhpContext context, String path, String canonical) {
-        // the lookup and a translation it makes; the parse's diagnostics, which may run PHP's error handler, after
-        AtomicReference<List<CompilerGlobals.Diagnostic>> parsed = new AtomicReference<>();
+        // the lookup and a translation it makes; the file's diagnostics are its code's to raise (CompileDiagnostics)
         RootNode root;
         int outer = Phases.enter(Phases.INCLUDE);
         try {
-            root = lookUp(context, path, canonical, parsed);
+            root = lookUp(context, path, canonical);
         } finally {
             Phases.exit(outer);
-        }
-        List<CompilerGlobals.Diagnostic> diagnostics = parsed.get();
-        if (diagnostics != null) {
-            for (CompilerGlobals.Diagnostic diagnostic : diagnostics) {
-                ErrorFunctions.raise(context, diagnostic.type(), Str.of(diagnostic.message()),
-                        new SourceLocation(canonical, diagnostic.line()));
-            }
         }
         return root;
     }
@@ -111,9 +102,8 @@ public final class SourceFiles {
         }
     }
 
-    /** The file's translation: the cached one for its version, else a new one, whose diagnostics go to parsed. */
-    private static RootNode lookUp(PhpContext context, String path, String canonical,
-                                       AtomicReference<List<CompilerGlobals.Diagnostic>> parsed) {
+    /** The file's translation: the cached one for its version, else a new one. */
+    private static RootNode lookUp(PhpContext context, String path, String canonical) {
         TruffleFile file = context.getEnv().getPublicTruffleFile(canonical);
         long modified;
         long size;
@@ -128,7 +118,7 @@ public final class SourceFiles {
         long version = modified * 2 + (shortTags ? 1 : 0);
         try {
             return context.getLanguage().file(canonical, version, size,
-                    () -> translate(context.getLanguage(), path, canonical, file, shortTags, parsed));
+                    () -> translate(context.getLanguage(), path, canonical, file, shortTags));
         } catch (ZendCompileError error) {
             if (SourceLocation.current().equals(SourceLocation.UNKNOWN)) {
                 // no PHP code runs: this is the script
@@ -139,8 +129,7 @@ public final class SourceFiles {
     }
 
     private static RootNode translate(PhpLanguage language, String path, String canonical, TruffleFile file,
-                                          boolean shortTags,
-                                          AtomicReference<List<CompilerGlobals.Diagnostic>> diagnostics) {
+                                          boolean shortTags) {
         byte[] script;
         Source source;
         ScriptText text;
@@ -162,11 +151,11 @@ public final class SourceFiles {
         } finally {
             Phases.exit(outer);
         }
-        diagnostics.set(parsed.diagnostics());
         outer = Phases.enter(Phases.FILE_TRANSLATE);
         try {
             return new Translator(language, canonical, source, false).translateFile(parsed.ast(),
-                    () -> ZendParser.parse(text.text().getBytes(text.charset()), text, shortTags).ast());
+                    () -> ZendParser.parse(text.text().getBytes(text.charset()), text, shortTags).ast(),
+                    parsed.diagnostics());
         } finally {
             Phases.exit(outer);
         }

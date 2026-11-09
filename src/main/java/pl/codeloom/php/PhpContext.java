@@ -112,6 +112,8 @@ public final class PhpContext {
     private Object[] constantSlots = new Object[256];
     private final Map<String, PhpRef> globals = new HashMap<>();
     private final Set<String> included = new HashSet<>();
+    /** The files whose compile diagnostics this request raised: OPcache compiles a file once and doesn't replay them. */
+    private final Set<Object> compiled = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     /** The include sites (IncludeNode) that ran each file in this context, by canonical path. */
     private final Map<String, Set<Object>> includeSites = new HashMap<>();
     private final java.util.ArrayDeque<OutputBuffer> buffers = new java.util.ArrayDeque<>();
@@ -432,6 +434,12 @@ public final class PhpContext {
     @TruffleBoundary
     public boolean includedBefore(String canonical, Object site) {
         return !includeSites.computeIfAbsent(canonical, path -> new HashSet<>(2)).add(site);
+    }
+
+    /** Whether the request compiles this file's translation (its diagnostics) for the first time. */
+    @TruffleBoundary
+    public boolean firstCompile(Object translation) {
+        return compiled.add(translation);
     }
 
     /** Marks a file as included; false if it already was (include_once / require_once). */

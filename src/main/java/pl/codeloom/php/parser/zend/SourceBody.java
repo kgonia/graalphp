@@ -20,9 +20,12 @@ final class SourceBody extends AstBody {
     private final long firstDeclId;
     private final int declKind;
     private final boolean shortTags;
+    /** Its compile-time diagnostics, found when the file's parse checked it. */
+    private final java.util.List<CompilerGlobals.Diagnostic> diagnostics;
 
     SourceBody(ScriptText text, int charFrom, int charTo, int line, byte[] docComment, long firstDeclId,
-               int declKind, boolean shortTags) {
+               int declKind, boolean shortTags, java.util.List<CompilerGlobals.Diagnostic> diagnostics) {
+        this.diagnostics = diagnostics;
         this.text = text;
         this.charFrom = charFrom;
         this.charTo = charTo;
@@ -36,6 +39,11 @@ final class SourceBody extends AstBody {
     @Override
     protected Ast read() {
         return ZendParser.parseBody(text, charFrom, charTo, line, docComment, firstDeclId, declKind, shortTags);
+    }
+
+    @Override
+    public java.util.List<CompilerGlobals.Diagnostic> compileDiagnostics() {
+        return diagnostics;
     }
 
     @Override

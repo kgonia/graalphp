@@ -1,5 +1,7 @@
 package pl.codeloom.php.parser;
 
+import pl.codeloom.php.bytecode.CompileDiagnostics;
+import pl.codeloom.php.parser.zend.CompilerGlobals;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
@@ -115,6 +117,8 @@ public final class BytecodeTranslator {
     private Ast thunk;
     /** A function's defaults target ({@link #defaults}): declaration has only the parameter list. */
     private boolean defaults;
+    /** A file's compile-time diagnostics (null for none), which its code raises as it starts. */
+    private CompileDiagnostics diagnostics;
     /** Whether the code has a loop, a foreach or a goto label (prepareForCompilation), as the first run found. */
     private boolean loops;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
@@ -244,11 +248,13 @@ public final class BytecodeTranslator {
      * file's function bodies keep anyway (the export's bytes or the script's text), so the root keeps no tree.
      */
     static PhpBytecodeRootNode translateFile(PhpLanguage language, String path, Source source, boolean internal,
-                                             Ast file, Supplier<Ast> reread, boolean eval) {
+                                             Ast file, Supplier<Ast> reread, boolean eval,
+                                             List<CompilerGlobals.Diagnostic> diagnostics) {
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, null, file, null,
                 null, path, new PhpFunction.Param[0], new String[0], new boolean[0], Names.GLOBAL, false);
         translator.reread = reread;
         translator.eval = eval;
+        translator.diagnostics = diagnostics.isEmpty() ? null : new CompileDiagnostics(path, diagnostics);
         PhpBytecodeRootNode root;
         try {
             root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse).getNode(0);
@@ -552,12 +558,10 @@ public final class BytecodeTranslator {
         /** The next object of made to take, or to make. */
         private int madeIndex;
         /**
-         * The made() index of each node's one-shot object in this run (madeOnce), and the nodes whose compile-time
-         * diagnostics this run raised (firstMeeting): a finally body is emitted once per way out of its try, and its
-         * copies share what php-src, which compiles it once, makes and reports once.
+         * The made() index of each node's one-shot object in this run (madeOnce): a finally body is emitted once per
+         * way out of its try, and its copies share what php-src, which compiles it once, makes once.
          */
         private final Map<Ast, Integer> madeFor = new java.util.IdentityHashMap<>();
-        private final Set<Ast> met = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
         /**
@@ -708,6 +712,10 @@ public final class BytecodeTranslator {
             if (source != null) {
                 b.beginSource(source);
                 b.beginSourceSection(0, source.getLength());
+            }
+            if (diagnostics != null) {
+                // php-src raises them as it compiles the file, before it runs
+                b.emitRaiseCompileDiagnostics(diagnostics);
             }
             List<Object> body = new ArrayList<>();
             List<Runnable> early = new ArrayList<>();
@@ -2756,12 +2764,7 @@ public final class BytecodeTranslator {
                     include(node);
                     break;
                 case "AST_SHELL_EXEC":
-                    // zend_compile_shell_exec: a call of shell_exec(), deprecated where it is compiled
-                    if (firstRun && firstMeeting(node)) {
-                        ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_DEPRECATED,
-                                Str.of("The backtick (`) operator is deprecated, use shell_exec() instead"),
-                                new SourceLocation(path, node.line));
-                    }
+                    // zend_compile_shell_exec: a call of shell_exec(), deprecated where it is compiled (JumpChecks)
                     call(new Ast("AST_CALL", 0, node.line, node.endLine, null, Map.of(
                             "expr", new Ast("AST_NAME", 0, node.line, node.line, null, Map.of("name", "shell_exec")),
                             "args", new Ast("AST_ARG_LIST", 0, node.line, node.line,
@@ -7259,11 +7262,6 @@ public final class BytecodeTranslator {
             }
             madeFor.put(node, madeIndex);
             return made(make);
-        }
-
-        /** Whether this run meets node for the first time: a finally body's other copies meet it again. */
-        private boolean firstMeeting(Ast node) {
-            return met.add(node);
         }
 
         /** The object the first run made at this point of the body; made now on the first run. */

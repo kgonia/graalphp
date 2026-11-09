@@ -22,8 +22,6 @@ effects are keyed by AST node within a translation, so the copies share them:
 - `madeOnce` gives every copy the anonymous class the first one declared;
 - `firstMeeting` raises a compile-time diagnostic (the backtick's Deprecated) once.
 
-With one context the test passes. With three contexts on one engine the Deprecated is missing in the later
-contexts, which reuse the translation; main does the same. That is 071's: compile-time diagnostics belong to every
-compile.
+With three contexts on one engine, the Deprecated also comes in each context since 071.
 
 **Test:** `tests/smoke/finally-emitted-once.php`.

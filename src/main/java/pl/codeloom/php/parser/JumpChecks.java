@@ -1,5 +1,8 @@
 package pl.codeloom.php.parser;
 
+import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -19,12 +22,17 @@ public final class JumpChecks {
     static final class Failure extends RuntimeException {
         private static final long serialVersionUID = 1L;
         final int line;
+        /** The compile's diagnostics before the error, which php-src reported before it. */
+        transient List<Diagnostic> before = List.of();
 
         Failure(int line, String message) {
             super(message, null, false, false);
             this.line = line;
         }
     }
+
+    /** The backtick's, deprecated where it is compiled (zend_compile_shell_exec). */
+    private static final String BACKTICK = "The backtick (`) operator is deprecated, use shell_exec() instead";
 
     /**
      * A loop or switch (php-src's brk_cont element) and the finally blocks around it, by number in the order of
@@ -49,30 +57,43 @@ public final class JumpChecks {
     private int line;
     /** Inside a constant expression (a default, a constant's value, an attribute's argument). */
     private boolean constant;
+    /** The compile's diagnostics so far, in the order php-src's compile raises them (the file's and its bodies'). */
+    private final List<Diagnostic> diagnostics;
 
-    private JumpChecks() {
+    private JumpChecks(List<Diagnostic> diagnostics) {
+        this.diagnostics = diagnostics;
     }
 
     /**
      * Checks a file's code, a function body left unread by the Java parser being one it checked when it parsed the
-     * file ({@link #passes}); throws the first error.
+     * file ({@link #passes}); throws the first error, with the diagnostics before it. The compile's diagnostics.
      */
-    static void file(Ast file) {
-        opArray(file);
+    static List<Diagnostic> file(Ast file) {
+        List<Diagnostic> diagnostics = new ArrayList<>();
+        try {
+            opArray(file, diagnostics);
+        } catch (Failure failure) {
+            failure.before = List.copyOf(diagnostics);
+            throw failure;
+        }
+        return List.copyOf(diagnostics);
     }
 
-    /** Whether a function body, all of it read, passes (the Java parser keeps one that doesn't for {@link #file}). */
-    public static boolean passes(Ast body) {
+    /**
+     * Whether a function body, all of it read, passes (the Java parser keeps one that doesn't for {@link #file});
+     * its compile diagnostics go to into, which the body left unread keeps for the file's compile.
+     */
+    public static boolean passes(Ast body, List<Diagnostic> into) {
         try {
-            opArray(body);
+            opArray(body, into);
             return true;
         } catch (Failure failure) {
             return false;
         }
     }
 
-    private static void opArray(Ast statements) {
-        JumpChecks checks = new JumpChecks();
+    private static void opArray(Ast statements, List<Diagnostic> diagnostics) {
+        JumpChecks checks = new JumpChecks(diagnostics);
         checks.visit(statements);
         for (Jump jump : checks.jumps) {
             checks.resolve(jump);
@@ -113,7 +134,10 @@ public final class JumpChecks {
                 visitChildren(node, "stmts");
                 Object stmts = node.get("stmts");
                 if (stmts instanceof Ast || stmts instanceof ExportBody) {
-                    opArray(node.body());
+                    opArray(node.body(), diagnostics);
+                } else if (stmts instanceof AstBody unread) {
+                    // checked when the Java parser left it, its diagnostics kept then
+                    diagnostics.addAll(unread.compileDiagnostics());
                 }
             }
             case "AST_WHILE", "AST_DO_WHILE", "AST_FOR", "AST_FOREACH", "AST_SWITCH" -> {
@@ -137,6 +161,10 @@ public final class JumpChecks {
                 finallies = inside;
                 visit(node.get("finally"));
                 finallies = outer;
+            }
+            case "AST_SHELL_EXEC" -> {
+                diagnostics.add(new Diagnostic(ErrorFunctions.E_DEPRECATED, BACKTICK, node.line));
+                visitChildren(node, null);
             }
             case "AST_BREAK", "AST_CONTINUE" -> breakOrContinue(node);
             case "AST_GOTO" -> jumps.add(new Jump(node.line, (String) node.get("label"), loop, null, finallies));

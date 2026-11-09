@@ -4177,6 +4177,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** A file's compile-time diagnostics, raised as its code starts (each include, each request). */
+    @Operation
+    @ConstantOperand(type = CompileDiagnostics.class)
+    public static final class RaiseCompileDiagnostics {
+        @Specialization
+        public static void raise(CompileDiagnostics diagnostics, @Bind Node node) {
+            diagnostics.raise(PhpContext.get(node));
+        }
+    }
+
     /** func_num_args(): how many arguments the call passed. */
     @Operation
     public static final class FuncNumArgs {

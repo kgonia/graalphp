@@ -74,5 +74,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Fixed |
 | [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Fixed |
 | [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Fixed |
-| [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Open |
+| [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Fixed |
 | [072](072-state-machines-unprobed.md) | Implicit state machines with likely defects, not probed yet | Open |

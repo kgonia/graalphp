@@ -5,4 +5,7 @@ function never() { if (false) `true`; }
 function later() { if (false) `true`; }
 echo "start\n";
 later();
+include __DIR__ . '/compile-diagnostics-in-function.inc';
+include __DIR__ . '/compile-diagnostics-in-function.inc';
+eval('if (false) `e`; echo "eval\n";');
 echo "end\n";
