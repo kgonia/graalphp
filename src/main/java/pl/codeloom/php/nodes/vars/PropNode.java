@@ -59,6 +59,11 @@ public final class PropNode extends Node {
      * once the context is closed nor be the only class the shortcut serves.
      */
     @CompilationFinal private ClassKey accessibleKey;
+    /** A typed property's type for the classes of one key (checked()); one field, so threads see both or none. */
+    @CompilationFinal private TypedSlot typedSlot;
+
+    private record TypedSlot(ClassKey key, PhpType type) {
+    }
     /**
      * What writes (and reads of non-objects) here have met, one bit per case (the SEEN_ constants), as LocalVarNode's:
      * compiled code leaves out a reference's write, __set() and the holder updates until a write meets them.
@@ -522,9 +527,33 @@ public final class PropNode extends Node {
         return (objects.getPropertyFlagsOrDefault(phpObject, name, 0) & PhpClass.PROPERTY_TYPED) != 0;
     }
 
-    /** A value for a typed property: converted in the writing code's mode, or the TypeError. */
-    @TruffleBoundary
+    /**
+     * A value for a typed property: converted in the writing code's mode, or the TypeError. A value the type takes
+     * as it is (PhpType.fast: the same in both modes) needs neither the declaration's lookup nor the mode, so a
+     * site with a constant name keeps the type of its first object's class, by key (as accessibleKey), and
+     * compiled code tests the value inline; a conversion or an error goes the slow way.
+     */
     private Object checked(PhpObject phpObject, String name, Object value) {
+        TypedSlot slot = typedSlot;
+        if (constantName != null) {
+            ClassKey key = phpObject.getPhpClass().getKey();
+            if (slot == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                slot = new TypedSlot(key, phpObject.getPhpClass().findProperty(name).type());
+                typedSlot = slot;
+            }
+            if (slot.key == key) {
+                Object accepted = slot.type.fast(PhpRef.deref(value));
+                if (accepted != null) {
+                    return accepted;
+                }
+            }
+        }
+        return checkedSlow(phpObject, name, value);
+    }
+
+    @TruffleBoundary
+    private Object checkedSlow(PhpObject phpObject, String name, Object value) {
         PhpClass.PropertyDecl decl = phpObject.getPhpClass().findProperty(name);
         return decl.type().assign(PhpRef.deref(value), strict(), decl, this);
     }
