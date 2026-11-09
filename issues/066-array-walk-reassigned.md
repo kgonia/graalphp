@@ -1,6 +1,6 @@
 # 066: `array_walk` keeps walking the array it started with after the callback replaces it
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **Symptom:** `array_walk($a, ...)` whose callback assigns `$a = ['x' => 1]` at the first key (`array-walk-reassign`):
 
@@ -13,7 +13,11 @@
 keeps a hash iterator on the referenced variable's current array. After each callback, it takes the array again
 from the reference and goes on from the iterator's position in it.
 
-**Fix:** to do. After each callback, take the array again from the reference, with a position that survives the
-change, as php-src does.
+**Fix:** `array_walk` walks with a `RefIteration`, the hash iterator a foreach by reference has, as
+`php_array_walk` does:
+- it moves past each element before the element's callback runs;
+- after the callback it takes the array from the reference again, the same one going on from the iterator, a copy
+  from the copy's position, another array from its internal pointer;
+- a value that is no longer an array is the TypeError "Iterated value is no longer an array or object".
 
 **Test:** `tests/smoke/array-walk-reassign.php`.

@@ -69,7 +69,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Fixed |
 | [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Fixed |
 | [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
-| [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |
+| [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Fixed |
 | [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Fixed |
 | [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Fixed |
 | [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Fixed |

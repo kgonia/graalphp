@@ -14,6 +14,7 @@ import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.RefIteration;
 import pl.codeloom.php.runtime.PhpResource;
 import pl.codeloom.php.runtime.SourceLocation;
 import pl.codeloom.php.runtime.Str;
@@ -195,16 +196,11 @@ public final class ArrayFunctions {
         });
         r.fn("array_walk", "1", (context, a) -> {
             Args.arity(a, "array_walk", 2, 3);
-            PhpArray array = writable(Args.ref(a, 0), "array_walk");
+            PhpRef target = Args.ref(a, 0);
+            writable(target, "array_walk");
             Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
-            for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                if (Args.has(a, 2)) {
-                    callback.callScalar(array.refAtPosition(p), array.keyAt(p), Args.get(a, 2));
-                } else {
-                    callback.callScalar(array.refAtPosition(p), array.keyAt(p));
-                }
-            }
+            walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null);
             return true;
         });
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
@@ -491,6 +487,37 @@ public final class ArrayFunctions {
     }
 
     /** The by-reference array argument of function, writable; anything else is php-src's TypeError. */
+    /**
+     * php_array_walk: a hash iterator on the referenced variable's array (RefIteration, as a foreach by reference),
+     * moved past each element before its callback runs; after it the array is taken from the reference again, the
+     * same one going on from the iterator, another (the callback assigned the variable) from its internal pointer.
+     */
+    @TruffleBoundary
+    private static void walk(PhpContext context, PhpRef target, Callables.Target callback, Object extra) {
+        RefIteration iteration = RefIteration.start(context, target);
+        try {
+            for (;;) {
+                PhpArray array = iteration.current();
+                if (array == null) {
+                    throw new PhpError("TypeError", "Iterated value is no longer an array or object");
+                }
+                int from = iteration.position();
+                int p = from == RefIteration.END ? -1 : array.positionFrom(from);
+                if (p < 0) {
+                    return;
+                }
+                iteration.setPosition(p + 1);
+                if (extra != null) {
+                    callback.callScalar(array.refAtPosition(p), array.keyAt(p), extra);
+                } else {
+                    callback.callScalar(array.refAtPosition(p), array.keyAt(p));
+                }
+            }
+        } finally {
+            iteration.end(context);
+        }
+    }
+
     private static PhpArray writable(PhpRef ref, String function) {
         if (!(ref.get() instanceof PhpArray)) {
             throw new PhpError("TypeError", function + "(): Argument #1 ($array) must be of type array, "
