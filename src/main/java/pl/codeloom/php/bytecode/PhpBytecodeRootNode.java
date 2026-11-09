@@ -5123,6 +5123,44 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * `Cls::NAME` in a constant expression (zend_get_class_constant_ex): as ClassConstant, but a cycle among the
+     * initializers is an Error naming the class as written. Once evaluated, the value stays as ClassConstant's.
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = String.class, name = "written")
+    public static final class ClassConstantInExpression {
+        @Specialization(guards = {"phpClass == cachedClass", "!scoped"}, limit = "1",
+                assumptions = "singleContext()", excludeForUncached = true)
+        public static Object single(VirtualFrame frame, String name, String written, PhpClass phpClass,
+                                    @Bind PhpBytecodeRootNode root,
+                                    @Cached("phpClass") PhpClass cachedClass,
+                                    @Cached("scoped(root, cachedClass, name)") boolean scoped,
+                                    @Cached("lookup(cachedClass, name, written, root.callingScope(frame))")
+                                    Object value) {
+            return value;
+        }
+
+        @Specialization(replaces = "single")
+        public static Object perCall(VirtualFrame frame, String name, String written, PhpClass phpClass,
+                                     @Bind PhpBytecodeRootNode root) {
+            return lookup(phpClass, name, written, root.callingScope(frame));
+        }
+
+        public static Object lookup(PhpClass phpClass, String name, String written, String scope) {
+            return ConstantNodes.classConstantInExpression(phpClass, name, written, scope);
+        }
+
+        public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
+            return ClassConstant.scoped(root, phpClass, name);
+        }
+
+        public static Assumption singleContext() {
+            return PhpLanguage.get(null).singleContext();
+        }
+    }
+
     /** `$obj::class` (ObjectClassNameNode): a value that isn't an object is a TypeError. */
     @Operation
     public static final class ObjectClassName {

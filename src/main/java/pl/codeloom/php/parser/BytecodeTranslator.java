@@ -6495,6 +6495,13 @@ public final class BytecodeTranslator {
             boolean cacheable = classNode instanceof Ast named && named.is("AST_NAME")
                     && !classNameOf(named).equalsIgnoreCase("static")
                     && !(inClosure() && Str.lower(classNameOf(named)).matches("self|parent"));
+            if (constantExpression && cacheable) {
+                // a cycle among initializers is an Error; a closure's self is its bound scope's, a lookup outside them
+                b.beginClassConstantInExpression(constantName, classNameOf((Ast) classNode));
+                classRef(classNode);
+                b.endClassConstantInExpression();
+                return;
+            }
             b.beginClassConstant(constantName, cacheable);
             classRef(classNode);
             b.endClassConstant();

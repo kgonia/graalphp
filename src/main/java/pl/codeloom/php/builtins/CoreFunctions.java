@@ -747,7 +747,7 @@ final class CoreFunctions {
                         || decl.declaringClass().equals(phpClass.getLowerName());
             }
         }
-        return phpClass.getStaticProperty(name) != null;
+        return phpClass.hasStaticProperty(name);
     }
 
     /**
@@ -832,6 +832,7 @@ final class CoreFunctions {
         PhpClass scope = Callables.callerClass(context, "self");
         Map<String, PropertyInfo> infos = new LinkedHashMap<>();
         propertyInfos(context, phpClass, phpClass, infos);
+        phpClass.updateConstants();
         phpClass.declaredDefaults();
         PhpArray result = new PhpArray();
         for (boolean statics : new boolean[] {false, true}) {
