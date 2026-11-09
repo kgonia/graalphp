@@ -55,6 +55,15 @@ public final class PhpArray implements TruffleObject {
      */
     private boolean mayHoldRefs;
     /**
+     * Whether an object, a closure or a reference may be among the elements or in the nested arrays: set when one
+     * is stored, when an array that has it is stored, and when a nested array is taken for an in-place write
+     * (arrayForWrite, which can store one there). Without it the array's death can't run a destructor or change a
+     * reference, so losing its last holder only drops the count, as on an array that was never released: the nested
+     * arrays keep this one's holder (they are copied at their next write if another holder writes them) and the
+     * array isn't walked. An array tree of strings (a parse result) dies in O(1), not in a walk of every element.
+     */
+    private boolean deep;
+    /**
      * How many foreach loops by reference walk this array or an array it was copied from ({@link RefIteration}),
      * as php-src counts the hash iterators on a table: its copies and rehashes are reported there, as php-src's
      * iterators are copied and moved. At {@link #ITERATED_MAX} it stays there (a few needless reports, never a
@@ -129,7 +138,7 @@ public final class PhpArray implements TruffleObject {
         int count = holders;
         if (count > 0) {
             holders = count - 1;
-            if (count == 1 && (holdsCounted || mayHoldRefs)) {
+            if (count == 1 && deep) {
                 // one out-of-line call for both walks
                 lastHolderGone();
             }
@@ -209,7 +218,7 @@ public final class PhpArray implements TruffleObject {
 
     private static void releaseElement(Object raw, int depth) {
         if (raw instanceof PhpArray nested) {
-            if (nested.holders == 1 && nested.holdsCounted) {
+            if (nested.holders == 1 && nested.deep && nested.holdsCounted) {
                 // its last holder goes: released in place (removeHolder's lastHolderGone)
                 nested.holders = RELEASED;
                 if (depth < RELEASE_RECURSION) {
@@ -247,7 +256,7 @@ public final class PhpArray implements TruffleObject {
             position[0] = array.nextPosition(p);
             Object raw = array.rawAt(p);
             if (raw instanceof PhpArray nested) {
-                if (nested.holders == 1 && nested.holdsCounted) {
+                if (nested.holders == 1 && nested.deep && nested.holdsCounted) {
                     // its last holder goes: released in place (removeHolder's lastHolderGone)
                     nested.holders = RELEASED;
                     arrays.push(nested);
@@ -329,7 +338,7 @@ public final class PhpArray implements TruffleObject {
      * Released at its temporary's end unless something took it ({@link #releaseTemporary}).
      */
     public boolean isTemporary() {
-        return holders == 0 && (holdsCounted || mayHoldRefs);
+        return holders == 0 && deep;
     }
 
     /**
@@ -338,7 +347,7 @@ public final class PhpArray implements TruffleObject {
      */
     public void releaseTemporary() {
         // inline: most temporaries hold nothing counted, or were taken
-        if (holders == 0 && (holdsCounted || mayHoldRefs)) {
+        if (holders == 0 && deep) {
             releaseTemporarySlow();
         }
     }
@@ -398,6 +407,7 @@ public final class PhpArray implements TruffleObject {
         copy.pointer = pointer;
         copy.mayHoldRefs = mayHoldRefs;
         copy.holdsCounted = holdsCounted;
+        copy.deep = deep;
         if (store instanceof long[] longs) {
             copy.store = longs.length == 0 ? NO_LONGS : longs.clone();
         } else if (store instanceof Object[] packed) {
@@ -709,6 +719,7 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     public void putRef(Object key, PhpRef ref) {
         mayHoldRefs = true;
+        deep = true;
         if (holders > 0) {
             ref.bind();
         }
@@ -873,6 +884,8 @@ public final class PhpArray implements TruffleObject {
      */
     @TruffleBoundary
     public PhpArray arrayForWrite(Object key) {
+        // the nested array may receive an object or a reference in place, which this array wouldn't see
+        deep = true;
         Object raw = getRaw(key);
         if (raw instanceof PhpRef ref) {
             Object inner = ref.get();
@@ -1093,16 +1106,21 @@ public final class PhpArray implements TruffleObject {
     private void countIn(Object value) {
         if (value instanceof PhpArray array) {
             holdsCounted = true;
+            if (array.deep) {
+                deep = true;
+            }
             if (holders >= 0) {
                 array.addHolder();
             }
         } else if (value instanceof PhpObject object) {
             holdsCounted = true;
+            deep = true;
             if (holders >= 0) {
                 object.addRef();
             }
         } else if (value instanceof PhpClosure closureValue) {
             holdsCounted = true;
+            deep = true;
             if (holders >= 0) {
                 closureValue.addRef();
             }
@@ -1324,6 +1342,7 @@ public final class PhpArray implements TruffleObject {
         }
         PhpRef ref = new PhpRef(raw);
         mayHoldRefs = true;
+        deep = true;
         if (holders > 0) {
             ref.bind();
         }
