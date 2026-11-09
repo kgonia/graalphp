@@ -72,7 +72,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |
 | [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Open |
 | [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Open |
-| [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Open |
+| [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Fixed |
 | [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Open |
 | [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Open |
 | [072](072-state-machines-unprobed.md) | Implicit state machines with likely defects, not probed yet | Open |

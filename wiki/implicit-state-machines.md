@@ -33,7 +33,7 @@ Four read-only audits, one per area (runtime; bytecode and nodes; parser; built-
 | `array_walk`: holds the array it started with | `ArrayFunctions.java:194-219` | [066](../issues/066-array-walk-reassigned.md) | `array-walk-reassign` |
 | Translator one-shot effects (`made()`, compile warnings) run per copy of a finally body | `BytecodeTranslator.java:1738-1769`, `2152`, `6406` | [067](../issues/067-finally-emitted-per-exit.md) | `finally-emitted-once` |
 | goto's pending target (`entering`) is shared with a goto inside the finally | `BytecodeTranslator.java:379-380`, `1079`, `1264` | [068](../issues/068-goto-in-finally-loses-pending.md) | `goto-inside-finally` |
-| Generator mode decided by node kind: arrow functions excluded | `Translator.java:898` | [069](../issues/069-arrow-fn-yield.md) | `arrow-fn-yield` |
+| Generator mode decided by node kind: arrow functions excluded | `Translator.java:898` | [069](../issues/069-arrow-fn-yield.md), fixed | `arrow-fn-yield` |
 
 Found on the way, not state machines:
 - A `declare(...) { }` block's body is never translated ([070](../issues/070-declare-block-body.md),

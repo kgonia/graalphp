@@ -895,7 +895,8 @@ public final class Translator {
                                          Names declaredNames) {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
-        boolean generator = !node.is("AST_ARROW_FUNC") && containsYield(stmts);
+        // an arrow function too: its body is a return of its expression, a generator's return when it yields
+        boolean generator = containsYield(stmts);
         if (generator && target.getDeclaredReturn() != null) {
             generatorReturn(stmts, target.getDeclaredReturn());
         }

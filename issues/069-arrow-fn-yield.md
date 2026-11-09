@@ -1,6 +1,6 @@
 # 069: An arrow function with `yield` isn't a generator
 
-**State:** Open. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
+**State:** Fixed. Found 2026-11-08 by the audit of implicit state machines ([implicit-state-machines.md](../wiki/implicit-state-machines.md)); confirmed on PHP 8.5 and on main 438231d.
 
 **Symptom:** `$f = fn() => yield 1; foreach ($f() as $v) echo $v;` (`arrow-fn-yield`):
 
@@ -13,7 +13,7 @@
 `AST_ARROW_FUNC`. php-src marks any function, arrow functions included, whose body contains `yield` as a generator
 (`ZEND_ACC_GENERATOR`).
 
-**Fix:** to do. Look for `yield` in an arrow function's expression too. An arrow function's body is an expression,
-so it is wrapped in a return, as php-src does.
+**Fix:** `Translator.translateBody` looks for `yield` in an arrow function too. Its body is already a return of
+its expression, which in a generator is the generator's return value (`getReturn()`).
 
 **Test:** `tests/smoke/arrow-fn-yield.php`.
