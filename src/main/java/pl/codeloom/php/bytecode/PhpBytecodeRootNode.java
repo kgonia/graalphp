@@ -976,10 +976,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void take(VirtualFrame frame, LocalAccessor extras, int declared, @Bind BytecodeNode bytecode) {
             Object[] arguments = frame.getArguments();
-            if (arguments.length > PhpFunction.ARG_FIRST + declared) {
-                Object[] taken = Refcount.takeExtras(arguments, PhpFunction.ARG_FIRST + declared);
-                if (taken != null) {
-                    extras.setObject(bytecode, frame, taken);
+            // inline, the test for a moved argument (most extra arguments are a variable's value, or not counted);
+            // out of line, the taking from the first one on
+            for (int i = PhpFunction.ARG_FIRST + declared; i < arguments.length; i++) {
+                if (Refcount.isMoved(arguments[i])) {
+                    Object[] taken = Refcount.takeExtras(arguments, i);
+                    if (taken != null) {
+                        extras.setObject(bytecode, frame, taken);
+                    }
+                    return;
                 }
             }
         }

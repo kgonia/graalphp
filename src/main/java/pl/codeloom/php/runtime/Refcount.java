@@ -172,9 +172,7 @@ public final class Refcount {
         return array;
     }
 
-    /** Gives up the pending releases from mark on (BuiltinRootNode's return, the request's end). */
-    @TruffleBoundary
-    /** An argument's temporary (StoreTemp): its count moves into the call. */
+    /** An argument's temporary (StoreTemp): its count moves into the call. Inline: two field writes. */
     public static void disown(Object value) {
         if (value instanceof PhpObject object) {
             object.disown();
@@ -274,16 +272,19 @@ public final class Refcount {
         return -1;
     }
 
+    /** An argument the call moved in (StoreTemp): at zero, not yet destroyed. */
+    public static boolean isMoved(Object argument) {
+        return argument instanceof PhpObject object && object.refcount() == 0 && !object.isDestructorCalled()
+                || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed();
+    }
+
     /** TakeExtraArguments: the arguments from `from` on that the call moved in, counted, or null if none. */
     @TruffleBoundary
     public static Object[] takeExtras(Object[] arguments, int from) {
         java.util.ArrayList<Object> taken = null;
         for (int i = from; i < arguments.length; i++) {
             Object argument = arguments[i];
-            boolean moved = argument instanceof PhpObject object && object.refcount() == 0
-                    && !object.isDestructorCalled()
-                    || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed();
-            if (moved) {
+            if (isMoved(argument)) {
                 inc(argument);
                 if (taken == null) {
                     taken = new java.util.ArrayList<>();
