@@ -13,13 +13,19 @@
 #   (target/classes-main and target/native/wp-http-main, for comparing two builds); jvm-phases, native-phases:
 #   jvm-java and native-java with the phase counters (target/native/wp-http-phases, built with -Dphp.phases=true
 #   -Dphp.nativeclock=true). The java-parser variants get no AST root, so a file that needed the export would fail.
+# - The deployment's variants, nginx in front of each (tests/gate2/woo-fpm/nginx.conf, port 8080, FastCGI on
+#   127.0.0.1:9000 inside the container, which holds both, so its CPU and memory count nginx for every variant):
+#   fpm (php-fpm 8.5.12, OPcache with the tracing JIT, pm=static with WPN_THREADS workers; image gate2-fpm:8.5.12
+#   from tests/gate2/woo-fpm), jvm-fcgi, native-fcgi (launcher.FastCgiMain on the JVM, or natively as
+#   target/native/wp-fcgi: NI_MAIN=pl.codeloom.php.launcher.FastCgiMain NI_NAME=wp-fcgi; our parser, image
+#   gate2-fcgi:graal25.4 from tests/gate2/fcgi). The images are built by `images`.
 # Run after tests/gate2/fetch.sh (or a copy of the main checkout's site), mvn compile and bench/native's build of
 # the HTTP launcher (NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http).
 # - measure: rounds of paced visits (tests/gate2/visits.py, CPUs 0-5), the server on CPUs 14-21, the variants
 #   interleaved and each round's order reversed, every run on a server just started and a database just reset.
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
-#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | clean
+#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | images | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -44,6 +50,11 @@ LAUNCHER=pl.codeloom.php.launcher.HttpMain
 # errors shown as php -S shows them (http.sh's)
 HTTP_ARGS="--port=8080 --threads=${WPN_THREADS:-4} --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
 HTTP_ARGS+=" -ddisplay_errors=1 -dhtml_errors=0"
+# the FastCGI server behind nginx, with the php-fpm image's php.ini error settings (tests/gate2/woo-fpm/php.ini)
+FCGI_LAUNCHER=pl.codeloom.php.launcher.FastCgiMain
+FCGI_ARGS="--listen=127.0.0.1:9000 --threads=${WPN_THREADS:-4} -ddisplay_errors=1 -dhtml_errors=0 -dlog_errors=1"
+FPM_IMAGE=gate2-fpm:8.5.12
+FCGI_IMAGE=gate2-fcgi:graal25.4
 pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?rest_route=/wp/v2/posts"
        "/?s=hello" /nonexistent-page/ "/?fatal=exception" "/?fatal=error")
 admin=(/wp-admin/ /wp-admin/edit.php /wp-admin/post-new.php /wp-admin/options-general.php /wp-admin/users.php
@@ -92,7 +103,7 @@ volume() {
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    for f in /w/target/native/wp-http*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
+    for f in /w/target/native/wp-http* /w/target/native/wp-fcgi*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
     for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     # the Gate 1 kernels, served (tests/gate2/kernels.php): the compile diagnosis runs them on the HTTP launcher
@@ -126,7 +137,7 @@ start() {
     # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
     # (target/native/wp-http-phases: the flags are static finals, fixed at build time)
     *-phases) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.nativeclock=true" ;;
-    *-bc) opts="-Dpolyglot.php.Parser=java" ;;
+    *-bc|*-fcgi) opts="-Dpolyglot.php.Parser=java" ;;
   esac
   case $variant in
     # php-nojit: OPcache without its JIT; php-noopc: no OPcache (each request compiles every file it includes)
@@ -135,6 +146,14 @@ start() {
          [ $variant != php-nojit ] || ini="-d opcache.jit=disable"
          [ $variant != php-noopc ] || ini="-d opcache.enable=0 -d opcache.enable_cli=0"
          cmd="cd target/gate2/wordpress && exec php -d auto_prepend_file= $ini -S 0.0.0.0:8080" ;;
+    fpm) image=$FPM_IMAGE; env=(-e FPM_CHILDREN=${WPN_THREADS:-4})
+         cmd="exec /usr/local/bin/woo-fpm-start" ;;
+    jvm-fcgi) image=$FCGI_IMAGE
+              cmd="exec /usr/local/bin/fcgi-start ${JAVA#exec } $opts ${JAVA_OPTS:-} $FCGI_LAUNCHER $FCGI_ARGS"
+              cmd+=" --ast-root=/none" ;;
+    native-fcgi) image=$FCGI_IMAGE
+                 cmd="exec /usr/local/bin/fcgi-start target/native/${NATIVE_BIN:-wp-fcgi} \$JAVA_OPTS_BASE -Xmx1g $opts"
+                 cmd+=" ${JAVA_OPTS:-} -Djava.net.preferIPv6Addresses=system $FCGI_ARGS --ast-root=/none" ;;
     jvm-export) cmd="$JAVA ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=target/ast" ;;
     jvm-main) cmd="${JAVA/target\/classes:/target/classes-main:} $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS"
               cmd+=" --ast-root=/none" ;;
@@ -354,6 +373,12 @@ measure() { # rounds visits pause variants...
   done
 }
 
+# the deployment variants' images: php-fpm behind nginx, Truffle PHP's FastCGI server behind the same nginx
+images() {
+  docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm/Dockerfile tests/gate2/woo-fpm
+  docker build -q -t $FCGI_IMAGE -f tests/gate2/fcgi/Dockerfile tests/gate2
+}
+
 clean() {
   for c in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f "$c" > /dev/null; done
   docker volume rm $P-site > /dev/null 2>&1 || true
@@ -371,6 +396,7 @@ case ${1:-} in
   pages) pages "$2" "$3" ;;
   compare) compare "$2" "$3" ;;
   measure) shift; measure "$@" ;;
+  images) images ;;
   clean) clean ;;
   *) sed -n 2,20p "$0"; exit 2 ;;
 esac
