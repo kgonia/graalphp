@@ -378,13 +378,14 @@ public final class PhpGenerator {
             return this;
         }
         // php-src caches the end of the chain (node.ptr.root): a chain only grows at its end until a link is
-        // removed, which unlinkVersion counts, so a deep chain isn't walked again at every step
-        PhpGenerator root = rootCache != null && rootCacheVersion == unlinkVersion ? rootCache : parent;
+        // removed, which UNLINK_VERSION counts, so a deep chain isn't walked again at every step
+        int version = UNLINK_VERSION.get();
+        PhpGenerator root = rootCache != null && rootCacheVersion == version ? rootCache : parent;
         while (root.parent != null) {
             root = root.parent;
         }
         rootCache = root;
-        rootCacheVersion = unlinkVersion;
+        rootCacheVersion = version;
         if (root.open) {
             return root;
         }
@@ -394,14 +395,19 @@ public final class PhpGenerator {
     /** The end of this one's chain when it was last looked up, valid while no link was removed since. */
     private PhpGenerator rootCache;
     private int rootCacheVersion;
-    /** Counts the links removed from delegation chains (in any context: it only invalidates caches). */
-    private static int unlinkVersion;
+    /**
+     * Counts the links removed from delegation chains, in every context: it only invalidates caches. Atomic: the
+     * request threads of a server all count here, and a lost increment could bring an old version back, so that a
+     * cache from before an unlink passed as current.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger UNLINK_VERSION =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /** Removes the link from child to the generator it delegates to. */
     private static void unlink(PhpGenerator child) {
         child.parent.children.remove(child);
         child.parent = null;
-        unlinkVersion++;
+        UNLINK_VERSION.incrementAndGet();
     }
 
     /** zend_generator_update_current: the end of the chain, oldRoot, has finished. */
@@ -415,7 +421,7 @@ public final class PhpGenerator {
         unlink(newRoot);
         if (newRoot != this) {
             rootCache = newRoot;
-            rootCacheVersion = unlinkVersion;
+            rootCacheVersion = UNLINK_VERSION.get();
         }
         if (!exceptionPending) {
             if (newRootParent.returned == null) {
