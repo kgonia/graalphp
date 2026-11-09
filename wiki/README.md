@@ -29,6 +29,7 @@
 | [graalvm-25-5.md](graalvm-25-5.md) | What GraalVM 25.5 brings for Truffle PHP: the upgrade (GR-79787 released, the stock DSL processor may suffice), the auxiliary engine cache for the cold visit on native image, native-only calling and dispatch items, `unwindExceptions` for generator destruction; the order to try them |
 | [destructors.md](destructors.md) | Destructors exactly as php-src: what must be reproduced (probed on PHP 8.5), why no scheme cheaper than full reference counting is exact, the recommended design, expected cost, prototype thresholds, open questions |
 | [destructors-prototype.md](destructors-prototype.md) | Roadmap step 5.1: the counting-only refcount prototype, what it counts and approximates, its checks and its A/B against main (Gate 1, IR after PE, Gate 2) |
+| [implicit-state-machines.md](implicit-state-machines.md) | The audit of implicit state machines (flags, phases, protocols, reentrancy guards) on 2026-11-08: 71 machines, the confirmed defects with their issues (055-071) and smoke tests, the likely ones (072), the benign ones |
 | [first-principles.md](first-principles.md) | What graalphp solved and how; the int array strategy and the "cold path = deopt" rule; K0 arithmetic kernels; php-src conformance baseline |
 | [../issues/README.md](../issues/README.md) | One file per finding or problem |
 

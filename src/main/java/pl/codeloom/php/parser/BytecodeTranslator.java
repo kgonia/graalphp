@@ -1,5 +1,7 @@
 package pl.codeloom.php.parser;
 
+import pl.codeloom.php.bytecode.CompileDiagnostics;
+import pl.codeloom.php.parser.zend.CompilerGlobals;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.bytecode.BytecodeConfig;
@@ -115,6 +117,8 @@ public final class BytecodeTranslator {
     private Ast thunk;
     /** A function's defaults target ({@link #defaults}): declaration has only the parameter list. */
     private boolean defaults;
+    /** A file's compile-time diagnostics (null for none), which its code raises as it starts. */
+    private CompileDiagnostics diagnostics;
     /** Whether the code has a loop, a foreach or a goto label (prepareForCompilation), as the first run found. */
     private boolean loops;
     /** What the first run made per place in the body, in the order it met them; later runs take them. */
@@ -135,8 +139,8 @@ public final class BytecodeTranslator {
     private LocalAccessor extraArgumentsLocal;
     /** A variadic function's (and its defaults target's) hidden local for the named extras (NamedExtras), or -1. */
     private int namedExtrasOffset = -1;
-    /** The foreach loops' state locals, as the first run met them. */
-    private final List<LocalAccessor> foreachStates = new ArrayList<>();
+    /** The live ranges' locals (PhpBytecodeRootNode.liveRanges): foreach loops' and `@`'s, as the first run met them. */
+    private final List<LocalAccessor> liveRanges = new ArrayList<>();
     /** The hidden locals of owning temporaries (Run.temporary), made by the first run. */
     private final List<LocalAccessor> temporaries = new ArrayList<>();
     /** Which of them hold an argument the call takes (Run.argumentTemporary). */
@@ -214,7 +218,7 @@ public final class BytecodeTranslator {
         }
         root.initialize(display, path, internal, translator.functionSection(), params, parameterLocals,
                 Translator.checkedReturn(function, generator), translator.variableLocals,
-                translator.foreachStates.toArray(new LocalAccessor[0]),
+                translator.liveRanges.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
@@ -244,11 +248,13 @@ public final class BytecodeTranslator {
      * file's function bodies keep anyway (the export's bytes or the script's text), so the root keeps no tree.
      */
     static PhpBytecodeRootNode translateFile(PhpLanguage language, String path, Source source, boolean internal,
-                                             Ast file, Supplier<Ast> reread, boolean eval) {
+                                             Ast file, Supplier<Ast> reread, boolean eval,
+                                             List<CompilerGlobals.Diagnostic> diagnostics) {
         BytecodeTranslator translator = new BytecodeTranslator(language, path, source, internal, null, file, null,
                 null, path, new PhpFunction.Param[0], new String[0], new boolean[0], Names.GLOBAL, false);
         translator.reread = reread;
         translator.eval = eval;
+        translator.diagnostics = diagnostics.isEmpty() ? null : new CompileDiagnostics(path, diagnostics);
         PhpBytecodeRootNode root;
         try {
             root = PhpBytecodeRootNodeGen.create(language, BytecodeConfig.DEFAULT, translator::parse).getNode(0);
@@ -257,7 +263,7 @@ public final class BytecodeTranslator {
         }
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
-                translator.foreachStates.toArray(new LocalAccessor[0]), null);
+                translator.liveRanges.toArray(new LocalAccessor[0]), null);
         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
                 translator.movedArguments(), translator.extraArgumentsLocal,
                 translator.uncountedOffsets());
@@ -335,7 +341,7 @@ public final class BytecodeTranslator {
                                 translator::parse).getNode(0);
                         root.initialize(display, path, internal, translator.functionSection(),
                                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
-                                translator.foreachStates.toArray(new LocalAccessor[0]),
+                                translator.liveRanges.toArray(new LocalAccessor[0]),
                                 owner == null ? null : owner.name());
                         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
                                 translator.movedArguments(), translator.extraArgumentsLocal,
@@ -551,6 +557,11 @@ public final class BytecodeTranslator {
         private BytecodeLocal callScope;
         /** The next object of made to take, or to make. */
         private int madeIndex;
+        /**
+         * The made() index of each node's one-shot object in this run (madeOnce): a finally body is emitted once per
+         * way out of its try, and its copies share what php-src, which compiles it once, makes once.
+         */
+        private final Map<Ast, Integer> madeFor = new java.util.IdentityHashMap<>();
         /** While a parameter's default is translated: its `->` and `[]` check their objects (ConstantObject). */
         private boolean constantExpression;
         /**
@@ -701,6 +712,10 @@ public final class BytecodeTranslator {
             if (source != null) {
                 b.beginSource(source);
                 b.beginSourceSection(0, source.getLength());
+            }
+            if (diagnostics != null) {
+                // php-src raises them as it compiles the file, before it runs
+                b.emitRaiseCompileDiagnostics(diagnostics);
             }
             List<Object> body = new ArrayList<>();
             List<Runnable> early = new ArrayList<>();
@@ -1202,6 +1217,8 @@ public final class BytecodeTranslator {
                         throw compileError(node,
                                 "strict_types declaration must be the very first statement in the script");
                     }
+                    // `declare(...) { ... }`: the block runs in place (zend_compile_declare compiles it as a statement)
+                    statements(node.node("stmts"));
                     break;
                 case "AST_HALT_COMPILER":
                     // the scanner stopped at it; php-src's compile error elsewhere than the top level
@@ -1338,6 +1355,8 @@ public final class BytecodeTranslator {
                         }
                     }
                 }
+            } else if (statement.is("AST_DECLARE") && statement.node("stmts") != null) {
+                labels.addAll(labelsInside(statement.node("stmts")));
             } else if (statement.is("AST_TRY")) {
                 // into a try block or a catch block (into a finally block is JumpChecks' compile error)
                 labels.addAll(labelsInside(statement.node("try")));
@@ -1787,7 +1806,7 @@ public final class BytecodeTranslator {
             BytecodeLocal state = b.createLocal();
             BytecodeLocal position = b.createLocal();
             if (firstRun) {
-                foreachStates.add(LocalAccessor.constantOf(state));
+                liveRanges.add(LocalAccessor.constantOf(state));
             }
             b.beginForeachStart(state, position);
             expression(node.get("expr"));
@@ -1851,7 +1870,7 @@ public final class BytecodeTranslator {
             b.beginBlock();
             BytecodeLocal state = b.createLocal();
             if (firstRun) {
-                foreachStates.add(LocalAccessor.constantOf(state));
+                liveRanges.add(LocalAccessor.constantOf(state));
             }
             b.beginForeachRefStart(state);
             foreachRefSubject(node.get("expr"));
@@ -1946,7 +1965,22 @@ public final class BytecodeTranslator {
                 labelScopes.clear();
                 labelScopes.addAll(labelsAround);
                 labelScopesOutsideFinally = labelsAround.size();
-                statements(finallyBody);
+                if (entering != null && gotoTo(finallyBody, entries.keySet())) {
+                    // a goto out of the try waits in entering while the finally runs: the finally's own gotos
+                    // keep it aside, as php-src's finally keeps the pending jump in its fast_call variable
+                    b.beginBlock();
+                    BytecodeLocal pendingEntry = b.createLocal();
+                    b.beginStoreLocal(pendingEntry);
+                    b.emitLoadLocal(entering);
+                    b.endStoreLocal();
+                    statements(finallyBody);
+                    b.beginStoreLocal(entering);
+                    b.emitLoadLocal(pendingEntry);
+                    b.endStoreLocal();
+                    b.endBlock();
+                } else {
+                    statements(finallyBody);
+                }
                 loopsOutsideFinally = outside;
                 labelScopesOutsideFinally = labelsOutside;
                 loops.clear();
@@ -2730,12 +2764,7 @@ public final class BytecodeTranslator {
                     include(node);
                     break;
                 case "AST_SHELL_EXEC":
-                    // zend_compile_shell_exec: a call of shell_exec(), deprecated where it is compiled
-                    if (firstRun) {
-                        ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_DEPRECATED,
-                                Str.of("The backtick (`) operator is deprecated, use shell_exec() instead"),
-                                new SourceLocation(path, node.line));
-                    }
+                    // zend_compile_shell_exec: a call of shell_exec(), deprecated where it is compiled (JumpChecks)
                     call(new Ast("AST_CALL", 0, node.line, node.endLine, null, Map.of(
                             "expr", new Ast("AST_NAME", 0, node.line, node.line, null, Map.of("name", "shell_exec")),
                             "args", new Ast("AST_ARG_LIST", 0, node.line, node.line,
@@ -3827,11 +3856,10 @@ public final class BytecodeTranslator {
             b.beginStoreLocal(saved);
             b.emitSilenceStart();
             b.endStoreLocal();
-            b.beginTryFinally(() -> {
-                b.beginSilenceEnd();
-                b.emitLoadLocal(saved);
-                b.endSilenceEnd();
-            });
+            if (firstRun) {
+                liveRanges.add(LocalAccessor.constantOf(saved));
+            }
+            b.beginTryFinally(() -> b.emitSilenceEnd(saved));
             b.beginStoreLocal(value);
             expression(operand);
             b.endStoreLocal();
@@ -6343,7 +6371,7 @@ public final class BytecodeTranslator {
             ClassTemplate anonymous = null;
             if (node.get("class") instanceof Ast classNode && classNode.is("AST_CLASS")) {
                 // `new class(...) {...}` (NewAnonymousClassNode): declared the first time it runs
-                anonymous = (ClassTemplate) made(() -> constants.anonymousClass(classNode));
+                anonymous = (ClassTemplate) madeOnce(classNode, () -> constants.anonymousClass(classNode));
                 b.beginBlock();
                 b.emitDeclareAnonymousClass(anonymous);
             }
@@ -6495,6 +6523,13 @@ public final class BytecodeTranslator {
             boolean cacheable = classNode instanceof Ast named && named.is("AST_NAME")
                     && !classNameOf(named).equalsIgnoreCase("static")
                     && !(inClosure() && Str.lower(classNameOf(named)).matches("self|parent"));
+            if (constantExpression && cacheable) {
+                // a cycle among initializers is an Error; a closure's self is its bound scope's, a lookup outside them
+                b.beginClassConstantInExpression(constantName, classNameOf((Ast) classNode));
+                classRef(classNode);
+                b.endClassConstantInExpression();
+                return;
+            }
             b.beginClassConstant(constantName, cacheable);
             classRef(classNode);
             b.endClassConstant();
@@ -7217,6 +7252,16 @@ public final class BytecodeTranslator {
             }
             Object constant = made(() -> constantValue(value));
             b.emitLoadConstant(constant);
+        }
+
+        /** made() for node, once per run however many copies of it are emitted (a finally body's). */
+        private Object madeOnce(Ast node, Supplier<Object> make) {
+            Integer index = madeFor.get(node);
+            if (index != null) {
+                return made.get(index);
+            }
+            madeFor.put(node, madeIndex);
+            return made(make);
         }
 
         /** The object the first run made at this point of the body; made now on the first run. */

@@ -14,4 +14,12 @@ public abstract class AstBody {
 
     /** The body's size where it is kept: characters of the source text, or bytes of the export. */
     protected abstract int size();
+
+    /**
+     * The compile-time diagnostics of the body, nested bodies too, as the check that left it unread found them
+     * (JumpChecks.passes); none if it wasn't checked so.
+     */
+    public java.util.List<pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic> compileDiagnostics() {
+        return java.util.List.of();
+    }
 }

@@ -81,7 +81,7 @@ public final class Callables {
             String text = Str.name(name);
             int separator = text.indexOf("::");
             if (separator > 0) {
-                return method(namedClass(context, text.substring(0, separator), direct, true), null,
+                return method(classPart(context, text.substring(0, separator), direct, true), null,
                         text.substring(separator + 2), direct, scope);
             }
             PhpFunction function = context.findFunction(Str.lower(stripNamespace(text)));
@@ -94,13 +94,15 @@ public final class Callables {
                 return null;
             }
             if (first instanceof PhpObject object) {
-                return method(object.getPhpClass(), object, Str.name(methodName), direct, scope);
+                PhpClass phpClass = object.getPhpClass();
+                return method(new ClassPart(phpClass, phpClass, object, null), object, Str.name(methodName), direct,
+                        scope);
             }
             if (first instanceof PhpClosure closure && Str.lower(Str.name(methodName)).equals("__invoke")) {
                 return resolve(context, closure, direct, scope);
             }
             if (first instanceof TruffleString className) {
-                return method(namedClass(context, Str.name(className), direct, true), null, Str.name(methodName),
+                return method(classPart(context, Str.name(className), direct, true), null, Str.name(methodName),
                         direct, scope);
             }
             return null;
@@ -177,8 +179,9 @@ public final class Callables {
      * zend_std_get_static_method; an inaccessible one is a missing one (__call, __callStatic), and a direct call
      * of it without them is zend_bad_method_call's Error.
      */
-    private static Target method(PhpClass phpClass, PhpObject object, String methodName, boolean direct,
+    private static Target method(ClassPart part, PhpObject object, String methodName, boolean direct,
                                  String scope) {
+        PhpClass phpClass = part.calling();
         if (phpClass == null) {
             return null;
         }
@@ -197,9 +200,8 @@ public final class Callables {
         PhpFunction method = object != null ? phpClass.accessibleMethod(lower, scope)
                 : phpClass.accessibleStaticMethod(lower, scope);
         if (!direct && object == null && (method == null || !method.isStatic())) {
-            // a class callable reached from code running on an instance of the class binds that $this
-            // (zend_is_callable_check_func), for a non-static method or __call
-            object = callerThisOf(phpClass);
+            // the $this zend_is_callable_check_class took from the caller, for a non-static method or __call
+            object = part.object();
         }
         if (method == null) {
             Target magic = magic(phpClass, object, methodName, direct);
@@ -212,8 +214,73 @@ public final class Callables {
             // "non-static method Cls::m() cannot be called statically"
             return null;
         }
-        PhpClass staticClass = object != null ? object.getPhpClass() : phpClass;
+        PhpClass staticClass = object != null && !method.isStatic() ? object.getPhpClass() : part.called();
         return new Target(method, method.isStatic() ? null : object, staticClass, null);
+    }
+
+    /**
+     * zend_is_callable_check_class: the class a callable's method is looked up in (calling_scope), the class the
+     * call gets as static (called_scope), the $this it gets from the caller, or why the name names none.
+     */
+    private record ClassPart(PhpClass calling, PhpClass called, PhpObject object, String error) {
+        static ClassPart none(String error) {
+            return new ClassPart(null, null, null, error);
+        }
+    }
+
+    /**
+     * The class part of a callable. In a call `$f()` (direct, zend_init_dynamic_call_*), the class named, literally.
+     * Given to a built-in, from the code calling it: self is its scope, parent the scope's parent, static its called
+     * class, each with its $this, the called class kept when it is a subclass; a named class gets the caller's $this
+     * when that is an instance of the caller's scope and the scope one of the class. A named class is autoloaded
+     * unless autoload is false (an error message's lookup, after the one that failed).
+     */
+    private static ClassPart classPart(PhpContext context, String name, boolean direct, boolean autoload) {
+        String lower = Str.lower(stripNamespace(name));
+        if (direct) {
+            PhpClass named = autoload ? context.findClassAutoloading(stripNamespace(name)) : context.findClass(lower);
+            return named == null ? ClassPart.none("class \"" + name + "\" not found")
+                    : new ClassPart(named, named, null, null);
+        }
+        Caller caller = caller();
+        String scopeName = caller == null ? null : caller.scopeName();
+        PhpClass scope = scopeName == null ? null : context.findClass(scopeName);
+        PhpClass calledByCaller = caller != null && caller.argument(PhpFunction.ARG_STATIC) instanceof PhpClass c
+                ? c : null;
+        PhpObject callerThis = caller != null && caller.argument(PhpFunction.ARG_THIS) instanceof PhpObject self
+                ? self : null;
+        switch (lower) {
+            case "self", "parent": {
+                if (scope == null) {
+                    return ClassPart.none("cannot access \"" + lower + "\" when no class scope is active");
+                }
+                PhpClass calling = lower.equals("self") ? scope : scope.getParent();
+                if (calling == null) {
+                    return ClassPart.none("cannot access \"parent\" when current class scope has no parent");
+                }
+                PhpClass called = calledByCaller != null && calledByCaller.isSubclassOf(calling.getLowerName())
+                        ? calledByCaller : calling;
+                return new ClassPart(calling, called, callerThis, null);
+            }
+            case "static": {
+                if (calledByCaller == null) {
+                    return ClassPart.none("cannot access \"static\" when no class scope is active");
+                }
+                return new ClassPart(calledByCaller, calledByCaller, callerThis, null);
+            }
+            default: {
+                PhpClass named = autoload ? context.findClassAutoloading(stripNamespace(name))
+                        : context.findClass(lower);
+                if (named == null) {
+                    return ClassPart.none("class \"" + name + "\" not found");
+                }
+                if (scope != null && callerThis != null && callerThis.getPhpClass().isSubclassOf(scope.getLowerName())
+                        && scope.isSubclassOf(named.getLowerName())) {
+                    return new ClassPart(named, callerThis.getPhpClass(), callerThis, null);
+                }
+                return new ClassPart(named, named, null, null);
+            }
+        }
     }
 
     /**
@@ -390,9 +457,10 @@ public final class Callables {
     }
 
     private static String methodReason(PhpContext context, String className, String methodName) {
-        PhpClass phpClass = namedClass(context, className, false, false);
+        ClassPart part = classPart(context, className, false, false);
+        PhpClass phpClass = part.calling();
         if (phpClass == null) {
-            return "class \"" + className + "\" not found";
+            return part.error();
         }
         PhpFunction method = phpClass.findMethod(Str.lower(methodName));
         if (method != null && !method.isStatic()) {
@@ -508,6 +576,31 @@ public final class Callables {
         return phpClass.methodDependsOnScope(Str.lower(name.substring(name.indexOf("::") + 2)));
     }
 
+    /**
+     * Whether the callable names a class relative to the caller: "self::m", ["static", "m"], [$obj, "parent::m"]
+     * (zend_is_callable_check_class's self, parent and static, resolved against the calling scope and class).
+     */
+    private static boolean callerRelative(Object callable) {
+        if (callable instanceof TruffleString text) {
+            return relativeClass(Str.java(text));
+        }
+        if (callable instanceof PhpArray array) {
+            return PhpRef.deref(array.get(0L)) instanceof TruffleString cls && relativeClass(Str.java(cls) + "::")
+                    || PhpRef.deref(array.get(1L)) instanceof TruffleString method && relativeClass(Str.java(method));
+        }
+        return false;
+    }
+
+    /** Whether name starts with self::, parent:: or static:: (any case). */
+    private static boolean relativeClass(String name) {
+        int separator = name.indexOf("::");
+        if (separator < 0) {
+            return false;
+        }
+        String cls = name.substring(0, separator);
+        return cls.equalsIgnoreCase("self") || cls.equalsIgnoreCase("parent") || cls.equalsIgnoreCase("static");
+    }
+
     private static Target target(PhpContext context, Object callable, Parameter parameter) {
         LastCall last = context.lastCall();
         if (callable == last.callable && (!(callable instanceof PhpArray array)
@@ -530,11 +623,11 @@ public final class Callables {
         } else {
             target = resolveOrThrow(context, callable, parameter);
         }
-        // a class callable bound to the caller's $this, or a method whose visibility the caller's scope decides,
-        // depends on the caller: not kept
+        // a class callable bound to the caller's $this, a method whose visibility the caller's scope decides, or
+        // a class named relative to the caller (self::, parent::, static::) depends on the caller: not kept
         boolean boundByCaller = target.thisObject() != null && !(callable instanceof PhpClosure)
                 && !(callable instanceof PhpArray array && array.get(0L) instanceof PhpObject);
-        last.callable = boundByCaller || scoped(callable, target) ? null : callable;
+        last.callable = boundByCaller || scoped(callable, target) || callerRelative(callable) ? null : callable;
         last.target = target;
         if (callable instanceof PhpArray array) {
             last.first = array.get(0L);

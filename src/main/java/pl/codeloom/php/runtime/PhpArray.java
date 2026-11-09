@@ -366,7 +366,11 @@ public final class PhpArray implements TruffleObject {
         }
     }
 
-    /** The holders, for truffle_refcount (debugging): negative when frozen or released. */
+    /**
+     * The holders, negative when frozen or released: for truffle_refcount (debugging), and taken before and after
+     * user code runs, where a change shows that the code shared or released the array (php-src's GC_ADDREF /
+     * GC_DELREF != 1 around a warning: ElementChain.undefinedForWrite).
+     */
     public int holderCount() {
         return holders;
     }
@@ -376,8 +380,8 @@ public final class PhpArray implements TruffleObject {
         return holders == RELEASED;
     }
 
-    /** Frozen (shared, its holders uncounted), for the refcount census. */
-    boolean isFrozen() {
+    /** Frozen (a literal every run shares, its holders uncounted): php-src's immutable array. */
+    public boolean isFrozen() {
         return holders == FROZEN;
     }
 

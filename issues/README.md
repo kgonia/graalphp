@@ -58,3 +58,28 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [052](052-ref-append-self.md) | `$r[] = $a`, with `$r` a reference to `$a`, appends a copy instead of the array itself | Open |
 | [053](053-destructor-backtrace-returning-frame.md) | A destructor that a function's return runs sees the returning function in its backtrace | Open |
 | [054](054-rc-verify-moved-temporaries.md) | `-Dphp.rc.verify` reports moved arguments as reachable from the caller's temporary | Open (check tool) |
+| [055](055-output-handler-state.md) | Output buffering doesn't know a handler is running, or that one failed | Fixed |
+| [056](056-callable-static-cache.md) | `'static::m'` as a callable is resolved once, not per called class | Fixed |
+| [057](057-self-referencing-constant.md) | Class constants that refer to each other overflow the Java stack | Fixed |
+| [058](058-method-cache-include-scope.md) | An included file's method call cache ignores the class scope, so private methods can be called | Fixed |
+| [059](059-element-write-handler-shares.md) | An element write lands in an array the error handler shared during it | Fixed |
+| [060](060-abandoned-generator-cleanup.md) | A generator destroyed while suspended doesn't undo its frame's state (`@`, foreach) | Fixed (observable with destructors on) |
+| [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Fixed |
+| [062](062-directoryiterator-entry-path.md) | `DirectoryIterator`'s `SplFileInfo` methods describe the first entry | Fixed |
+| [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Fixed |
+| [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Fixed |
+| [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
+| [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Fixed |
+| [067](067-finally-emitted-per-exit.md) | A finally body is translated once per exit path, so its compile-time effects repeat | Fixed |
+| [068](068-goto-in-finally-loses-pending.md) | A goto inside a finally loses the pending goto out of its try | Fixed |
+| [069](069-arrow-fn-yield.md) | An arrow function with `yield` isn't a generator | Fixed |
+| [070](070-declare-block-body.md) | The body of a `declare(...) { }` block never runs | Fixed |
+| [071](071-compile-diagnostics-at-first-call.md) | Compile-time diagnostics in a function body come at its first call, or never | Fixed |
+| [072](072-state-machines-unprobed.md) | Implicit state machines with likely defects, not probed yet | Open |
+| [073](073-exit-before-unwind.md) | `exit()` runs the shutdown functions before the stack unwinds | Open |
+| [074](074-include-path.md) | `include_path` is used only in error messages | Open |
+| [075](075-missing-functions-found-probing.md) | Built-ins missing that the state-machine probes needed | Open |
+| [076](076-var-export-circular-warning.md) | `var_export` of a circular structure doesn't warn | Open |
+| [077](077-prelude-classes-show-internals.md) | Prelude SPL classes show their implementation in dumps and reflection | Open |
+| [078](078-ob-start-chunk-size.md) | `ob_start`'s chunk size is ignored | Open |
+| [079](079-object-ids-not-reused.md) | Object ids are never reused | Open |

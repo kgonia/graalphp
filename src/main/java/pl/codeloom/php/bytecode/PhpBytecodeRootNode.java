@@ -238,8 +238,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private LocalAccessor extraArguments;
     /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesMoved = new boolean[0];
-    /** The hidden locals in which foreach loops keep what they iterate (an array they hold), cleared at the end. */
-    @CompilationFinal(dimensions = 1) private LocalAccessor[] foreachStates;
+    /**
+     * The live ranges (php-src's op_array live_range): hidden locals an unfinished statement holds state in, which a
+     * frame left without finishing it (a generator destroyed while suspended, an internal exception) must undo. A
+     * foreach loop's what it iterates (an array it holds, an iteration); `@`'s error_reporting before it (an int).
+     * Each is cleared when its statement ends.
+     */
+    @CompilationFinal(dimensions = 1) private LocalAccessor[] liveRanges;
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
     @CompilationFinal private String className;
     @CompilationFinal private String scopeName;
@@ -326,7 +331,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** What the translator knows of the function, set once its bytecode is built (a reparse keeps it). */
     public void initialize(String functionName, String file, boolean internalCode, SourceSection section,
                     PhpFunction.Param[] parameters, int[] parameterOffsets, PhpType returns,
-                    LocalAccessor[] variableLocals, LocalAccessor[] foreachLocals, String declaringClass) {
+                    LocalAccessor[] variableLocals, LocalAccessor[] liveRangeLocals, String declaringClass) {
         this.name = functionName;
         this.path = file;
         this.internal = internalCode;
@@ -336,7 +341,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.returnType = returns;
         this.variables = variableLocals;
         this.releasedVariables = new byte[variableLocals.length];
-        this.foreachStates = foreachLocals;
+        this.liveRanges = liveRangeLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
         this.closure = functionName.startsWith("{closure");
@@ -351,7 +356,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             // a constant expression is evaluated in its class's scope, the class it was bound to
             return frame.getArguments()[PhpFunction.ARG_STATIC] instanceof PhpClass owner ? owner.getLowerName() : null;
         }
-        return closure || file ? PropNode.callingScope(frame, scopeName) : scopeName;
+        return hasVaryingScope() ? PropNode.callingScope(frame, scopeName) : scopeName;
     }
 
     /** Makes this a constant expression's root (BytecodeTranslator.Thunk). */
@@ -441,6 +446,15 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     public boolean isClosure() {
         return closure;
+    }
+
+    /**
+     * Whether the scope code here runs in changes between calls: a closure's is its bound class, a file's its
+     * includer's (zend_include_or_eval gives the included code the including function's scope). A cache that
+     * depends on the scope keeps the scope it was made for.
+     */
+    public boolean hasVaryingScope() {
+        return closure || file;
     }
 
     /** Whether the scope a cache entry was made for is still the calling one. */
@@ -659,19 +673,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * The variables and the running foreach loops let go of what they hold: on an internal exception, and when a
-     * suspended generator's frame is freed (php-src's zend_generator_close).
+     * The variables let go of what they hold, and the live ranges are undone (php-src's cleanup_live_vars): on an
+     * internal exception, and when a suspended generator's frame is freed (zend_generator_close).
      */
     @Override
     @ExplodeLoop
     public void releaseFrame(VirtualFrame frame, BytecodeNode bytecodeNode) {
         releaseVariables(frame, bytecodeNode);
-        for (LocalAccessor state : foreachStates) {
+        for (LocalAccessor state : liveRanges) {
             if (state.isCleared(bytecodeNode, frame)) {
                 continue;
             }
             Object held = state.getObject(bytecodeNode, frame);
-            if (held instanceof PhpArray array) {
+            if (held instanceof Integer saved) {
+                // ZEND_LIVE_SILENCE: error_reporting as it was before the `@`
+                state.clear(bytecodeNode, frame);
+                UnaryNodes.SilenceNode.end(PhpContext.get(bytecodeNode).ini(), saved);
+            } else if (held instanceof PhpArray array) {
                 state.clear(bytecodeNode, frame);
                 array.removeHolder();
             } else if (held instanceof RefIteration iteration) {
@@ -1853,7 +1871,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = variableForUpdate(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // zend_binary_assign_op_dim's assign_dim_op_ret_null
+                return PhpNull.NULL;
+            }
+            Object result = compounded(node, op, old, operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1877,7 +1900,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             Object base = propertyForWrite(frame, access, object, name);
             int last = keys.length - 1;
             Object container = ElementChain.forUpdate(node, base, keys, last, toKey);
-            Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]), operand);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // zend_binary_assign_op_dim's assign_dim_op_ret_null
+                return PhpNull.NULL;
+            }
+            Object result = compounded(node, op, old, operand);
             ElementChain.write(node, container, keys[last], result, write, objectWrite);
             return result;
         }
@@ -1917,7 +1945,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -1946,7 +1979,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -2048,8 +2086,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 int last = keys.length - 1;
                 Object container = ElementChain.forUpdate(node, fetched[1], keys, last, toKey);
-                Object result = compounded(node, op, ElementChain.readForUpdate(read, container, keys[last]),
-                        operand);
+                Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+                if (old == ElementChain.DROPPED) {
+                    return PhpNull.NULL;
+                }
+                Object result = compounded(node, op, old, operand);
                 ElementChain.write(node, container, keys[last], result, write, objectWrite);
                 return result;
             } finally {
@@ -2101,7 +2142,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (container instanceof PhpObject) {
                 return stepOverloaded(node, container, keys[last], increment, prefix);
             }
-            Object old = ElementChain.readForUpdate(read, container, keys[last]);
+            Object old = ElementChain.readForUpdate(node, read, toKey, container, keys[last]);
+            if (old == ElementChain.DROPPED) {
+                // FETCH_DIM_RW gave null: the step works on it, and nothing is written
+                Object stepped = AssignNodes.IncDecNode.stepped(node, PhpNull.NULL, increment);
+                return prefix ? stepped : PhpNull.NULL;
+            }
             Object updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             ElementChain.write(node, container, keys[last], updated, write, objectWrite);
             return prefix ? updated : old;
@@ -4143,12 +4189,29 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before. */
+    /**
+     * `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before, from the live
+     * range's local, which is then cleared (the `@` is over: a frame abandoned later has nothing to undo).
+     */
     @Operation
+    @ConstantOperand(type = LocalAccessor.class)
     public static final class SilenceEnd {
         @Specialization
-        public static void end(int saved, @Bind Node node) {
-            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), saved);
+        public static void end(VirtualFrame frame, LocalAccessor saved, @Bind BytecodeNode bytecode,
+                               @Bind Node node) {
+            int before = (Integer) saved.getObject(bytecode, frame);
+            saved.clear(bytecode, frame);
+            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), before);
+        }
+    }
+
+    /** A file's compile-time diagnostics, raised as its code starts (each include, each request). */
+    @Operation
+    @ConstantOperand(type = CompileDiagnostics.class)
+    public static final class RaiseCompileDiagnostics {
+        @Specialization
+        public static void raise(CompileDiagnostics diagnostics, @Bind Node node) {
+            diagnostics.raise(PhpContext.get(node));
         }
     }
 
@@ -4600,7 +4663,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = MethodSite.class)
     public static final class ResolveMethod {
         /**
-         * Per class key, as long as the answer follows from it (keyed) and, in a closure whose bound scope may
+         * Per class key, as long as the answer follows from it (keyed) and, in a closure or a file whose scope may
          * change, the scope is the entry's or doesn't matter (scoped: the method's visibility or a private method
          * of a scope decides). In a method the scope is the declaring class: both fold.
          */
@@ -5093,7 +5156,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = String.class, name = "name")
     @ConstantOperand(type = boolean.class, name = "cacheable")
     public static final class ClassConstant {
-        /** A constant that isn't public, read in a closure (whose bound scope may change), is looked up per call. */
+        /** A constant that isn't public, read in a closure or a file (whose scope may change), is looked up per call. */
         @Specialization(guards = {"cacheable", "phpClass == cachedClass", "!scoped"}, limit = "1",
                 assumptions = "singleContext()", excludeForUncached = true)
         public static Object single(VirtualFrame frame, String name, boolean cacheable, PhpClass phpClass,
@@ -5115,7 +5178,45 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
 
         public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
-            return root.isClosure() && phpClass.isRestrictedConstant(name);
+            return root.hasVaryingScope() && phpClass.isRestrictedConstant(name);
+        }
+
+        public static Assumption singleContext() {
+            return PhpLanguage.get(null).singleContext();
+        }
+    }
+
+    /**
+     * `Cls::NAME` in a constant expression (zend_get_class_constant_ex): as ClassConstant, but a cycle among the
+     * initializers is an Error naming the class as written. Once evaluated, the value stays as ClassConstant's.
+     */
+    @Operation
+    @ConstantOperand(type = String.class, name = "name")
+    @ConstantOperand(type = String.class, name = "written")
+    public static final class ClassConstantInExpression {
+        @Specialization(guards = {"phpClass == cachedClass", "!scoped"}, limit = "1",
+                assumptions = "singleContext()", excludeForUncached = true)
+        public static Object single(VirtualFrame frame, String name, String written, PhpClass phpClass,
+                                    @Bind PhpBytecodeRootNode root,
+                                    @Cached("phpClass") PhpClass cachedClass,
+                                    @Cached("scoped(root, cachedClass, name)") boolean scoped,
+                                    @Cached("lookup(cachedClass, name, written, root.callingScope(frame))")
+                                    Object value) {
+            return value;
+        }
+
+        @Specialization(replaces = "single")
+        public static Object perCall(VirtualFrame frame, String name, String written, PhpClass phpClass,
+                                     @Bind PhpBytecodeRootNode root) {
+            return lookup(phpClass, name, written, root.callingScope(frame));
+        }
+
+        public static Object lookup(PhpClass phpClass, String name, String written, String scope) {
+            return ConstantNodes.classConstantInExpression(phpClass, name, written, scope);
+        }
+
+        public static boolean scoped(PhpBytecodeRootNode root, PhpClass phpClass, String name) {
+            return ClassConstant.scoped(root, phpClass, name);
         }
 
         public static Assumption singleContext() {

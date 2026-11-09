@@ -15,6 +15,8 @@ public final class BuiltinState {
     final ErrorFunctions.State errors = new ErrorFunctions.State();
     final PcreFunctions pcre = new PcreFunctions();
     final JsonFunctions.State json = new JsonFunctions.State();
+    /** The recursion marks on the arrays and objects var_dump, print_r, var_export and json_encode are inside. */
+    final RecursionGuard recursion = new RecursionGuard();
     final MbFunctions.State mb = new MbFunctions.State();
     /** ext/curl's handles and the exception a callback left pending. */
     final CurlFunctions.State curl = new CurlFunctions.State();

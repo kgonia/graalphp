@@ -90,8 +90,22 @@ public final class ConstantNodes {
      * scope may not access it.
      */
     public static Object classConstant(PhpClass phpClass, String name, String scope) {
-        Object found = phpClass.getConstant(name);
-        if (found == null) {
+        checkConstantAccess(phpClass, name, scope);
+        return phpClass.getConstant(name);
+    }
+
+    /**
+     * classConstant in a constant expression (zend_get_class_constant_ex): a constant whose initializer is running
+     * for another such lookup is a cycle, an Error naming the class as written.
+     */
+    public static Object classConstantInExpression(PhpClass phpClass, String name, String written, String scope) {
+        checkConstantAccess(phpClass, name, scope);
+        return phpClass.getConstantInExpression(name, written);
+    }
+
+    /** Before the initializer runs, as php-src checks: the constant exists, and scope may access it. */
+    private static void checkConstantAccess(PhpClass phpClass, String name, String scope) {
+        if (!phpClass.hasConstant(name)) {
             CompilerDirectives.transferToInterpreter();
             throw new PhpError("Undefined constant " + phpClass.getName() + "::" + name);
         }
@@ -99,7 +113,6 @@ public final class ConstantNodes {
             CompilerDirectives.transferToInterpreter();
             throw phpClass.constantAccessError(name);
         }
-        return found;
     }
 
     /** The class name `$value::class` gives: a Closure's is Closure; a value that isn't an object is a TypeError. */
