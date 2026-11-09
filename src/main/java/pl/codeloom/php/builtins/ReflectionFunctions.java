@@ -641,7 +641,8 @@ final class ReflectionFunctions {
         PhpClass staticClass = object != null ? object.getPhpClass() : phpClass;
         // zend_call_function with the arguments as named_params (ZEND_SEND_ARRAY's binding)
         Callables.Target target = new Callables.Target(method, method.isStatic() ? null : object, staticClass, null);
-        return PhpRef.deref(method.getCallTarget().call(SpreadArguments.sendArray(target, arguments, null)));
+        return pl.codeloom.php.runtime.Refcount.pending(PhpRef.deref(method.getCallTarget().call(SpreadArguments.sendArray(target, arguments,
+                null))));
     }
 
     /**
@@ -656,7 +657,13 @@ final class ReflectionFunctions {
         PhpFunction constructor = phpClass.getConstructor();
         if (constructor != null) {
             Callables.Target target = new Callables.Target(constructor, object, phpClass, null);
-            constructor.getCallTarget().call(SpreadArguments.sendArray(target, arguments, null));
+            // held while the constructor runs, as `new`'s temporary holds it; the built-in's result counts it after
+            object.addRef();
+            try {
+                pl.codeloom.php.runtime.Refcount.done(constructor.getCallTarget().call(SpreadArguments.sendArray(target, arguments, null)));
+            } finally {
+                object.disown();
+            }
         }
         return object;
     }

@@ -193,6 +193,11 @@ public class IncludeScope {
         }
     }
 
+    /** The variables the call has no slot for, for the refcount census (Census.audit). */
+    public void forEachOther(java.util.function.BiConsumer<String, PhpRef> each) {
+        others.forEach(each);
+    }
+
     /** The call ends: the variables it has no slot for give up their values (php-src destroys the table). */
     @TruffleBoundary
     public void release() {

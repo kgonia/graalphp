@@ -40,10 +40,29 @@ public final class PhpArray implements TruffleObject {
     private int holders;
     private static final int FROZEN = Integer.MIN_VALUE;
     /**
+     * An array that held arrays or objects and lost its last holder ({@link #release}): its elements' counts were
+     * given up. Above 1 as an unsigned number, so it is shared.
+     */
+    private static final int RELEASED = -1;
+    /**
+     * Whether an element may be an array or an object, whose counts this array holds: set when one is stored, so an
+     * array of scalars isn't walked when it loses its last holder.
+     */
+    private boolean holdsCounted;
+    /**
      * Whether an element may be a reference: set when one is stored, so the arrays that never had one skip the
      * scan when they gain their first holder or lose their last (see {@link PhpRef}).
      */
     private boolean mayHoldRefs;
+    /**
+     * Whether an object, a closure or a reference may be among the elements or in the nested arrays: set when one
+     * is stored, when an array that has it is stored, and when a nested array is taken for an in-place write
+     * (arrayForWrite, which can store one there). Without it the array's death can't run a destructor or change a
+     * reference, so losing its last holder only drops the count, as on an array that was never released: the nested
+     * arrays keep this one's holder (they are copied at their next write if another holder writes them) and the
+     * array isn't walked. An array tree of strings (a parse result) dies in O(1), not in a walk of every element.
+     */
+    private boolean deep;
     /**
      * How many foreach loops by reference walk this array or an array it was copied from ({@link RefIteration}),
      * as php-src counts the hash iterators on a table: its copies and rehashes are reported there, as php-src's
@@ -110,6 +129,8 @@ public final class PhpArray implements TruffleObject {
             if (count == 0 && mayHoldRefs) {
                 countReferences(true);
             }
+        } else if (count == RELEASED) {
+            regain();
         }
     }
 
@@ -117,8 +138,175 @@ public final class PhpArray implements TruffleObject {
         int count = holders;
         if (count > 0) {
             holders = count - 1;
+            if (count == 1 && deep) {
+                // one out-of-line call for both walks
+                lastHolderGone();
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private void lastHolderGone() {
+        if (holdsCounted) {
+            release();
+        } else {
+            countReferences(false);
+        }
+    }
+
+    /**
+     * removeHolder for the array a function returns, which its epilogue gives up while the value goes on to the
+     * caller: at its last holder it stays alive, its elements' counts held (php-src's return keeps a count), so the
+     * caller's store doesn't count them again.
+     */
+    public void removeReturnedHolder() {
+        int count = holders;
+        if (count > 0) {
+            holders = count - 1;
             if (count == 1 && mayHoldRefs) {
-                countReferences(false);
+                returnedReferences();
+            }
+        }
+    }
+
+    /** Its references lose this binding but keep their values' counts, as the elements do (out of line). */
+    @TruffleBoundary
+    private void returnedReferences() {
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            if (rawAt(p) instanceof PhpRef ref) {
+                ref.unbindKeeping();
+            }
+        }
+    }
+
+    /**
+     * The last holder of an array of arrays or objects went (tla-cow.md, F4): php-src frees it, and with it the
+     * counts it held. Its nested arrays lose this holder, its objects their count, its references their binding.
+     * It may still be on its way somewhere (a returned array): while released it is shared (written only as a copy),
+     * and a holder taking it counts its elements again ({@link #regain}).
+     */
+    @TruffleBoundary
+    private void release() {
+        holders = RELEASED;
+        releaseElements(0);
+    }
+
+    /** Nested arrays walked by recursion up to this depth, deeper from an explicit stack (releaseDeep). */
+    private static final int RELEASE_RECURSION = 128;
+
+    /**
+     * Depth first, in element order, as php-src's recursive zend_array_destroy: a nested array whose last holder
+     * this was is walked in place (recursion allocates nothing; past RELEASE_RECURSION levels, unserialize()'s
+     * thousands, the explicit stack of releaseDeep).
+     */
+    private void releaseElements(int depth) {
+        // by layout, without rawAt's dispatch per element; longs and doubles hold nothing counted
+        Object elements = store;
+        if (elements instanceof Object[] packed) {
+            for (int i = 0; i < size; i++) {
+                releaseElement(packed[i], depth);
+            }
+        } else if (elements instanceof Hash hash) {
+            Object[] entries = hash.entries;
+            for (int i = 0; i < hash.used; i++) {
+                if (entries[2 * i] != null) {
+                    releaseElement(entries[2 * i + 1], depth);
+                }
+            }
+        }
+    }
+
+    private static void releaseElement(Object raw, int depth) {
+        if (raw instanceof PhpArray nested) {
+            if (nested.holders == 1 && nested.deep && nested.holdsCounted) {
+                // its last holder goes: released in place (removeHolder's lastHolderGone)
+                nested.holders = RELEASED;
+                if (depth < RELEASE_RECURSION) {
+                    nested.releaseElements(depth + 1);
+                } else {
+                    nested.releaseDeep();
+                }
+            } else {
+                nested.removeHolder();
+            }
+        } else if (raw instanceof PhpObject object) {
+            object.release();
+        } else if (raw instanceof PhpClosure closureValue) {
+            closureValue.release();
+        } else if (raw instanceof PhpRef ref) {
+            ref.unbind();
+        }
+    }
+
+    /** releaseElements from an explicit stack, for nesting past RELEASE_RECURSION. */
+    private void releaseDeep() {
+        java.util.ArrayDeque<PhpArray> arrays = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<int[]> positions = new java.util.ArrayDeque<>();
+        arrays.push(this);
+        positions.push(new int[]{firstPosition()});
+        while (!arrays.isEmpty()) {
+            PhpArray array = arrays.peek();
+            int[] position = positions.peek();
+            int p = position[0];
+            if (p < 0) {
+                arrays.pop();
+                positions.pop();
+                continue;
+            }
+            position[0] = array.nextPosition(p);
+            Object raw = array.rawAt(p);
+            if (raw instanceof PhpArray nested) {
+                if (nested.holders == 1 && nested.deep && nested.holdsCounted) {
+                    // its last holder goes: released in place (removeHolder's lastHolderGone)
+                    nested.holders = RELEASED;
+                    arrays.push(nested);
+                    positions.push(new int[]{nested.firstPosition()});
+                } else {
+                    nested.removeHolder();
+                }
+            } else if (raw instanceof PhpObject object) {
+                object.release();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.release();
+            } else if (raw instanceof PhpRef ref) {
+                ref.unbind();
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private void regain() {
+        holders = 1;
+        countElements(true);
+    }
+
+    private void countElements(boolean in) {
+        for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+            Object raw = rawAt(p);
+            if (raw instanceof PhpArray nested) {
+                if (in) {
+                    nested.addHolder();
+                } else {
+                    nested.removeHolder();
+                }
+            } else if (raw instanceof PhpObject object) {
+                if (in) {
+                    object.addRef();
+                } else {
+                    object.release();
+                }
+            } else if (raw instanceof PhpClosure closureValue) {
+                if (in) {
+                    closureValue.addRef();
+                } else {
+                    closureValue.release();
+                }
+            } else if (raw instanceof PhpRef ref) {
+                if (in) {
+                    ref.bind();
+                } else {
+                    ref.unbind();
+                }
             }
         }
     }
@@ -146,6 +334,54 @@ public final class PhpArray implements TruffleObject {
     }
 
     /**
+     * A temporary: no holder, its elements' counts still held (a literal or a returned array on its way somewhere).
+     * Released at its temporary's end unless something took it ({@link #releaseTemporary}).
+     */
+    public boolean isTemporary() {
+        return holders == 0 && deep;
+    }
+
+    /**
+     * The temporary's end (php-src frees a TMP): an array nothing took gives its elements' counts up, as at its
+     * last holder; its references, which no holder bound, let their values go.
+     */
+    public void releaseTemporary() {
+        // inline: most temporaries hold nothing counted, or were taken
+        if (holders == 0 && deep) {
+            releaseTemporarySlow();
+        }
+    }
+
+    @TruffleBoundary
+    private void releaseTemporarySlow() {
+        if (holdsCounted) {
+            release();
+        }
+        if (mayHoldRefs) {
+            for (int p = firstPosition(); p >= 0; p = nextPosition(p)) {
+                if (rawAt(p) instanceof PhpRef ref) {
+                    ref.releaseUnbound();
+                }
+            }
+        }
+    }
+
+    /** The holders, for truffle_refcount (debugging): negative when frozen or released. */
+    public int holderCount() {
+        return holders;
+    }
+
+    /** Released (its last holder went: its elements gave their counts up), for the refcount census. */
+    boolean isReleased() {
+        return holders == RELEASED;
+    }
+
+    /** Frozen (shared, its holders uncounted), for the refcount census. */
+    boolean isFrozen() {
+        return holders == FROZEN;
+    }
+
+    /**
      * Makes this array and the arrays nested in it immutable: language-level data shared by every context (and
      * thread). Call it before the array is published, while one thread holds it.
      */
@@ -170,6 +406,8 @@ public final class PhpArray implements TruffleObject {
         copy.nextIndex = nextIndex;
         copy.pointer = pointer;
         copy.mayHoldRefs = mayHoldRefs;
+        copy.holdsCounted = holdsCounted;
+        copy.deep = deep;
         if (store instanceof long[] longs) {
             copy.store = longs.length == 0 ? NO_LONGS : longs.clone();
         } else if (store instanceof Object[] packed) {
@@ -218,6 +456,10 @@ public final class PhpArray implements TruffleObject {
         }
         if (values[i] instanceof PhpArray nested) {
             nested.addHolder();
+        } else if (values[i] instanceof PhpObject object) {
+            object.addRef();
+        } else if (values[i] instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
     }
 
@@ -477,6 +719,7 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     public void putRef(Object key, PhpRef ref) {
         mayHoldRefs = true;
+        deep = true;
         if (holders > 0) {
             ref.bind();
         }
@@ -484,8 +727,10 @@ public final class PhpArray implements TruffleObject {
             toObjects();
         }
         if (store instanceof Object[] packed && key instanceof Long index && index >= 0 && index < size) {
-            countOut(packed[(int) (long) index], null);
+            Object old = packed[(int) (long) index];
             packed[(int) (long) index] = ref;
+            // after the store, as php-src: a destructor the release runs sees the array as it is now
+            countOut(old, null);
             return;
         }
         if (store instanceof Object[] && key instanceof Long index && index == size && index >= nextIndex) {
@@ -496,8 +741,9 @@ public final class PhpArray implements TruffleObject {
         int h = hash(key);
         int slot = hash.find(key, h);
         if (slot >= 0) {
-            countOut(hash.value(slot), null);
+            Object old = hash.value(slot);
             hash.setValue(slot, ref);
+            countOut(old, null);
         } else {
             insert(hash, key, h, ref);
         }
@@ -601,8 +847,14 @@ public final class PhpArray implements TruffleObject {
                     size--;
                 } else {
                     Object[] packed = (Object[]) store;
-                    countOut(packed[size - 1], null);
+                    Object old = packed[size - 1];
                     packed[--size] = null;
+                    if (pointer >= size) {
+                        pointer = -1;
+                    }
+                    // once removed, as php-src's zend_hash_del: a destructor the release runs doesn't see it
+                    countOut(old, null);
+                    return;
                 }
                 if (pointer >= size) {
                     pointer = -1;
@@ -615,12 +867,14 @@ public final class PhpArray implements TruffleObject {
         if (slot < 0) {
             return;
         }
-        countOut(hash.value(slot), null);
+        Object old = hash.value(slot);
         hash.clear(slot);
         size--;
         if (pointer == slot) {
             pointer = nextPosition(slot);
         }
+        // once removed, as php-src's zend_hash_del: a destructor the release runs doesn't see it
+        countOut(old, null);
     }
 
     /**
@@ -630,6 +884,8 @@ public final class PhpArray implements TruffleObject {
      */
     @TruffleBoundary
     public PhpArray arrayForWrite(Object key) {
+        // the nested array may receive an object or a reference in place, which this array wouldn't see
+        deep = true;
         Object raw = getRaw(key);
         if (raw instanceof PhpRef ref) {
             Object inner = ref.get();
@@ -706,7 +962,23 @@ public final class PhpArray implements TruffleObject {
                 Object[] packed = (Object[]) store;
                 Object raw = packed[last];
                 packed[last] = null;
-                countOut(raw, null);
+                if (raw instanceof PhpObject object) {
+                    // moved out to the caller (php-src's array_pop copies it, then deletes the slot): no event
+                    if (holders >= 0) {
+                        object.disown();
+                    }
+                } else if (raw instanceof PhpClosure closureValue) {
+                    if (holders >= 0) {
+                        closureValue.disown();
+                    }
+                } else if (raw instanceof PhpArray nested) {
+                    // the result: it keeps its elements on its way to the caller
+                    if (holders >= 0) {
+                        nested.removeReturnedHolder();
+                    }
+                } else {
+                    countOut(raw, null);
+                }
                 value = PhpRef.deref(raw);
             }
             if (last == nextIndex - 1) {
@@ -779,6 +1051,10 @@ public final class PhpArray implements TruffleObject {
             if (raw instanceof PhpArray nested) {
                 // ponytail: rebuilt counted it again; the old store's count goes with the old store
                 nested.removeHolder();
+            } else if (raw instanceof PhpObject object) {
+                object.disown();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.disown();
             }
         }
         store = rebuilt.store;
@@ -800,11 +1076,20 @@ public final class PhpArray implements TruffleObject {
         Object key = keyAt(p);
         if (value instanceof PhpArray nested) {
             nested.addHolder();
+        } else if (value instanceof PhpObject object) {
+            object.addRef();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         remove(key);
         rewindNextIndex(key);
         if (value instanceof PhpArray nested) {
-            nested.removeHolder();
+            // on its way to the caller as the result: it keeps its elements (php-src's retval holds the array)
+            nested.removeReturnedHolder();
+        } else if (value instanceof PhpObject object) {
+            object.disown();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         setPointer(firstPosition());
         return value;
@@ -817,20 +1102,54 @@ public final class PhpArray implements TruffleObject {
         }
     }
 
-    private static void countIn(Object value) {
+    /** An element enters its slot: a nested array gains this array as a holder, an object its count. */
+    private void countIn(Object value) {
         if (value instanceof PhpArray array) {
-            array.addHolder();
+            holdsCounted = true;
+            if (array.deep) {
+                deep = true;
+            }
+            if (holders >= 0) {
+                array.addHolder();
+            }
+        } else if (value instanceof PhpObject object) {
+            holdsCounted = true;
+            deep = true;
+            if (holders >= 0) {
+                object.addRef();
+            }
+        } else if (value instanceof PhpClosure closureValue) {
+            holdsCounted = true;
+            deep = true;
+            if (holders >= 0) {
+                closureValue.addRef();
+            }
         }
     }
 
-    /** An element leaves its slot: a nested array loses this holder, a reference this array's count. */
+    /**
+     * An element leaves its slot: a nested array loses this holder, an object its count, a reference this array's
+     * binding. A released array ({@link #RELEASED}) gave its elements' counts up already.
+     */
     private void countOut(Object old, Object replacement) {
-        if (old == replacement) {
+        if (old instanceof PhpObject object) {
+            if (holders >= 0) {
+                object.release();
+            }
+            return;
+        }
+        if (old instanceof PhpClosure closureValue) {
+            if (holders >= 0) {
+                closureValue.release();
+            }
             return;
         }
         if (old instanceof PhpArray array) {
-            array.removeHolder();
-        } else if (old instanceof PhpRef ref && holders > 0) {
+            // also when it is the replacement: countIn added the replacement's holder
+            if (holders >= 0) {
+                array.removeHolder();
+            }
+        } else if (old instanceof PhpRef ref && old != replacement && holders > 0) {
             ref.unbind();
         }
     }
@@ -1023,11 +1342,17 @@ public final class PhpArray implements TruffleObject {
         }
         PhpRef ref = new PhpRef(raw);
         mayHoldRefs = true;
+        deep = true;
         if (holders > 0) {
             ref.bind();
         }
         if (raw instanceof PhpArray array) {
             array.removeHolder();
+        } else if (raw instanceof PhpObject object && holders >= 0) {
+            // the slot's count moves to the reference, which counted it
+            object.disown();
+        } else if (raw instanceof PhpClosure closureValue && holders >= 0) {
+            closureValue.disown();
         }
         if (store instanceof long[]) {
             toObjects();

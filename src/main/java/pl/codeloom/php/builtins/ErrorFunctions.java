@@ -89,6 +89,14 @@ public final class ErrorFunctions {
         /** FATAL_EXIT_STATUS after a fatal error; the script's exit status unless exit() gives another. */
         int exitStatus;
 
+        /** The handlers kept (current and saved), each a value php-src holds a count of, for the refcount census. */
+        public void forEachHandler(java.util.function.Consumer<Object> each) {
+            each.accept(errorHandler);
+            errorHandlers.forEach(saved -> each.accept(saved.handler()));
+            each.accept(exceptionHandler);
+            exceptionHandlers.forEach(each);
+        }
+
         public int exitStatus() {
             return exitStatus;
         }
@@ -113,10 +121,14 @@ public final class ErrorFunctions {
         state.errorHandler = PhpNull.NULL;
         Object handled;
         try {
-            handled = Callables.call(context, handler, (long) type, message, Str.of(at.file()), (long) at.line());
+            handled = pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, (long) type, message,
+                    Str.of(at.file()), (long) at.line()));
         } finally {
             if (state.errorHandler == PhpNull.NULL) {
                 state.errorHandler = handler;
+            } else {
+                // the handler set another one: zend_error lets the original go
+                pl.codeloom.php.runtime.Refcount.unhold(handler);
             }
         }
         if (Boolean.FALSE.equals(PhpRef.deref(handled))) {
@@ -304,7 +316,7 @@ public final class ErrorFunctions {
             Object handler = state.exceptionHandler;
             state.exceptionHandlers.push(handler);
             state.exceptionHandler = PhpNull.NULL;
-            Callables.call(context, handler, throwable);
+            pl.codeloom.php.runtime.Refcount.done(Callables.call(context, handler, throwable));
             if (state.exceptionHandler == PhpNull.NULL && !state.exceptionHandlers.isEmpty()) {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }
@@ -383,6 +395,7 @@ public final class ErrorFunctions {
             }
             Object previous = state.errorHandler;
             state.errorHandlers.push(new SavedHandler(state.errorHandler, state.errorHandlerLevels));
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.errorHandler = handler;
             if (handler != PhpNull.NULL) {
                 state.errorHandlerLevels = (int) Args.lng(a, 1, E_ALL);
@@ -392,6 +405,7 @@ public final class ErrorFunctions {
         r.fn("restore_error_handler", (context, a) -> {
             State state = context.errors();
             SavedHandler previous = state.errorHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.errorHandler);
             if (previous == null) {
                 state.errorHandler = PhpNull.NULL;
             } else {
@@ -408,12 +422,14 @@ public final class ErrorFunctions {
             }
             Object previous = state.exceptionHandler;
             state.exceptionHandlers.push(state.exceptionHandler);
+            pl.codeloom.php.runtime.Refcount.hold(handler);
             state.exceptionHandler = handler;
             return previous;
         });
         r.fn("restore_exception_handler", (context, a) -> {
             State state = context.errors();
             Object previous = state.exceptionHandlers.poll();
+            pl.codeloom.php.runtime.Refcount.unhold(state.exceptionHandler);
             state.exceptionHandler = previous == null ? PhpNull.NULL : previous;
             return Boolean.TRUE;
         });

@@ -120,6 +120,44 @@ public final class PhpGenerator {
         this.hasFinally = false;
     }
 
+    /**
+     * What the generator holds, as php-src's zend_generator does, for the refcount census (Census.audit): while it
+     * can run, its frame's locals (CVs and temporaries); the last key and value; the return value; what a
+     * `yield from` walks; the value the next resume gives.
+     */
+    void censusChildren(java.util.function.Predicate<Object> frameWalked,
+                        java.util.function.BiConsumer<String, Object> child) {
+        if (open && continuation != null && !frameWalked.test(frame)) {
+            com.oracle.truffle.api.bytecode.BytecodeLocation location = continuation.getLocation();
+            if (location != null) {
+                try {
+                    Object[] locals = location.getBytecodeNode().getLocalValues(location.getBytecodeIndex(), frame);
+                    for (int i = 0; i < locals.length; i++) {
+                        child.accept(" frame local " + i, locals[i]);
+                    }
+                } catch (RuntimeException e) {
+                    child.accept(" frame unreadable", null);
+                }
+            }
+        }
+        child.accept(" key", key);
+        child.accept(" value", value);
+        child.accept(" returned", returned);
+        child.accept(" values", values);
+        child.accept(" resume value", resumeValue);
+    }
+
+    /** zend_generator_close's freeing of a suspended body's frame: its variables and foreach loops let go. */
+    private void releaseFrame() {
+        if (continuation == null) {
+            return;
+        }
+        com.oracle.truffle.api.bytecode.BytecodeRootNode code = continuation.getSourceRootNode();
+        // the root's current bytecode node: the continuation's location may be of a tier the frame has left (its
+        // slots typed since by the cached interpreter)
+        ((Refcount.Variables) code).releaseFrame(frame, code.getBytecodeNode());
+    }
+
     /** The Generator object over a new generator. */
     @TruffleBoundary
     public PhpObject newObject(PhpContext context) {
@@ -302,12 +340,12 @@ public final class PhpGenerator {
                 iterator.callMethod("next");
             }
             iteratorStarted = true;
-            if (!Convert.toBool(iterator.callMethod("valid"))) {
+            if (!Convert.toBool(Refcount.done(iterator.callMethod("valid")))) {
                 endValues();
                 return false;
             }
-            value = PhpRef.deref(iterator.callMethod("current"));
-            key = PhpRef.deref(iterator.callMethod("key"));
+            value = Refcount.borrowed(PhpRef.deref(iterator.callMethod("current")));
+            key = Refcount.borrowed(PhpRef.deref(iterator.callMethod("key")));
             return true;
         } catch (PhpThrowable e) {
             endValues();
@@ -675,6 +713,11 @@ public final class PhpGenerator {
             unlink(this);
         }
         if (!open || running || !hasFinally || continuation == start) {
+            if (open && !running) {
+                // suspended (or not started): its frame is freed, the variables give up what they hold (the
+                // finally path below unwinds, which releases them)
+                releaseFrame();
+            }
             close();
             return;
         }

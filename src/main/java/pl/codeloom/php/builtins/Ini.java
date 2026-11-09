@@ -91,6 +91,7 @@ public final class Ini {
         directives.put("upload_max_filesize", new Directive("2M", SYSTEM | PERDIR));
         directives.put("unserialize_callback_func", new Directive(null, ALL));
         directives.put("upload_tmp_dir", new Directive(null, SYSTEM));
+        directives.put("zend.enable_gc", new Directive("1", ALL));
         directives.put("zend.exception_ignore_args", new Directive("0", ALL));
         directives.put("zend.exception_string_param_max_len", new Directive("15", ALL));
         // ext/standard's var.c
@@ -129,6 +130,8 @@ public final class Ini {
     /** FG(default_socket_timeout), in seconds. */
     private long defaultSocketTimeout;
     private boolean shortOpenTag;
+    /** GC_G(gc_enabled): zend.enable_gc, which gc_enable() and gc_disable() set (OnUpdateGCEnabled). */
+    private boolean gcEnabled;
     /** PG(mail_x_header), PG(mail_mixed_lf_and_crlf), PG(mail_cr_lf_mode) and PG(mail_log) (null when empty). */
     private boolean mailAddXHeader;
     private boolean mailMixedLfAndCrlf;
@@ -221,6 +224,7 @@ public final class Ini {
             case "ignore_repeated_source" -> ignoreRepeatedSource = bool(value);
             case "fatal_error_backtraces" -> fatalErrorBacktraces = bool(value);
             case "zend.exception_ignore_args" -> exceptionIgnoreArgs = bool(value);
+            case "zend.enable_gc" -> gcEnabled = bool(value);
             case "default_socket_timeout" -> defaultSocketTimeout = quantity(name, value); // OnUpdateLong
             case "short_open_tag" -> shortOpenTag = bool(value);
             case "serialize_precision" -> {
@@ -344,6 +348,10 @@ public final class Ini {
 
     public boolean exceptionIgnoreArgs() {
         return exceptionIgnoreArgs;
+    }
+
+    public boolean gcEnabled() {
+        return gcEnabled;
     }
 
     public int exceptionStringParamMaxLen() {

@@ -229,6 +229,63 @@ public final class PhpContext {
         return CONTEXT.get(node);
     }
 
+    /**
+     * The context's roots for the refcount census (Census, -Dphp.rc.verify=true): globals, static variables,
+     * constants and classes' static properties, each with a name for the report.
+     */
+    public void censusRoots(java.util.function.BiConsumer<String, Object> root) {
+        globals.forEach((name, ref) -> root.accept("$" + name, ref));
+        staticVariables.forEach((function, vars) -> vars.forEach((name, ref) ->
+                root.accept("static $" + name + " in " + function.getName(), ref)));
+        constants.forEach((name, value) -> root.accept("constant " + name, value));
+        for (PhpClass phpClass : classes.values()) {
+            phpClass.staticPropertiesForCensus().forEach((name, ref) ->
+                    root.accept(phpClass.getName() + "::$" + name, ref));
+        }
+    }
+
+    /**
+     * The values built-ins keep in Java state, each one a holder php-src counts (a zval it copied): autoloaders,
+     * shutdown functions and their arguments, output handlers, error and exception handlers. For the refcount
+     * census (Census.audit), which counts them as holders.
+     */
+    public void censusHolders(java.util.function.BiConsumer<String, Object> holder) {
+        autoloaders.forEach(callable -> holder.accept("autoloader", callable));
+        for (Object[] entry : shutdownFunctions) {
+            for (int i = 0; i < entry.length; i++) {
+                holder.accept(i == 0 ? "shutdown function" : "shutdown function argument " + i, entry[i]);
+            }
+        }
+        for (OutputBuffer buffer : buffers) {
+            if (buffer.handler != null) {
+                holder.accept("output handler", buffer.handler);
+            }
+        }
+        errors().forEachHandler(handler -> holder.accept("error/exception handler", handler));
+        pendingReleases.forEach(value -> holder.accept("pending release", value));
+    }
+
+    /** The counts results of PHP code called from runtime code still own (Refcount.pending). */
+    private final ArrayList<Object> pendingReleases = new ArrayList<>();
+
+    /** Arguments moved into a built-in's call, waiting for it to start (Refcount.toBuiltin, takeMoved). */
+    private final ArrayList<Object> movedToBuiltins = new ArrayList<>();
+
+    public ArrayList<Object> movedToBuiltins() {
+        return movedToBuiltins;
+    }
+
+    public ArrayList<Object> pendingReleases() {
+        return pendingReleases;
+    }
+
+    /** The objects made in this context, kept for the refcount audit (-Dphp.rc.audit=true); empty otherwise. */
+    private final ArrayList<Object> auditedObjects = new ArrayList<>();
+
+    public ArrayList<Object> auditedObjects() {
+        return auditedObjects;
+    }
+
     /** get_resource_id()'s numbering: 1-3 are STDIN, STDOUT and STDERR in php-cli. */
     private int nextResourceId = 4;
 
@@ -536,7 +593,7 @@ public final class PhpContext {
         }
         try {
             for (Object autoloader : List.copyOf(autoloaders)) {
-                Callables.call(this, autoloader, Str.of(className));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, autoloader, Str.of(className)));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -575,12 +632,18 @@ public final class PhpContext {
         } else {
             autoloaders.add(callable);
         }
+        pl.codeloom.php.runtime.Refcount.hold(callable);
         return true;
     }
 
     @TruffleBoundary
     public boolean removeAutoloader(Object callable) {
-        return autoloaders.remove(callable);
+        int index = autoloaders.indexOf(callable);
+        if (index < 0) {
+            return false;
+        }
+        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index));
+        return true;
     }
 
     @TruffleBoundary
@@ -739,6 +802,9 @@ public final class PhpContext {
         Object[] entry = new Object[arguments.length + 1];
         entry[0] = callable;
         System.arraycopy(arguments, 0, entry, 1, arguments.length);
+        for (Object value : entry) {
+            pl.codeloom.php.runtime.Refcount.hold(value);
+        }
         shutdownFunctions.add(entry);
     }
 
@@ -755,15 +821,28 @@ public final class PhpContext {
         guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
                 Object[] entry = shutdownFunctions.get(i);
-                Callables.call(this, entry[0], Arrays.copyOfRange(entry, 1, entry.length));
+                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, entry[0],
+                        Arrays.copyOfRange(entry, 1, entry.length)));
             }
         });
+        // php_free_shutdown_functions: the entries let go once all ran
+        List<Object[]> ran = List.copyOf(shutdownFunctions);
         shutdownFunctions.clear();
+        guarded(() -> {
+            for (Object[] entry : ran) {
+                for (Object value : entry) {
+                    pl.codeloom.php.runtime.Refcount.unhold(value);
+                }
+            }
+        });
     }
 
     /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
     @TruffleBoundary
     public void exit(int status) {
+        if (!shuttingDown) {
+            pl.codeloom.php.runtime.Refcount.audit(this, "exit");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
         endRequest();
@@ -776,6 +855,10 @@ public final class PhpContext {
      */
     @TruffleBoundary
     public void endScript() {
+        if (!shuttingDown) {
+            guarded(() -> pl.codeloom.php.runtime.Refcount.releasePending(pendingReleases, 0));
+            pl.codeloom.php.runtime.Refcount.audit(this, "end of script");
+        }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
@@ -940,6 +1023,7 @@ public final class PhpContext {
     /** ob_start($handler, 0, $flags); handler is null for none. */
     @TruffleBoundary
     public void startBuffer(Object handler, long flags) {
+        pl.codeloom.php.runtime.Refcount.hold(handler);
         buffers.push(new OutputBuffer(handler, flags));
     }
 
@@ -985,7 +1069,8 @@ public final class PhpContext {
         }
         int mode = buffer.started ? phase : phase | PHASE_START;
         buffer.started = true;
-        Object result = Callables.call(this, buffer.handler, contents, (long) mode);
+        Object result = pl.codeloom.php.runtime.Refcount.done(Callables.call(this, buffer.handler, contents,
+                (long) mode));
         return result == Boolean.FALSE ? contents : pl.codeloom.php.runtime.Convert.toStr(result);
     }
 
@@ -998,6 +1083,7 @@ public final class PhpContext {
         }
         TruffleString output = process(top, PHASE_FINAL);
         buffers.poll();
+        pl.codeloom.php.runtime.Refcount.unhold(top.handler);
         write(output);
         return true;
     }
@@ -1039,6 +1125,7 @@ public final class PhpContext {
         }
         process(top, PHASE_CLEAN | PHASE_FINAL);
         buffers.poll();
+        pl.codeloom.php.runtime.Refcount.unhold(top.handler);
         return true;
     }
 

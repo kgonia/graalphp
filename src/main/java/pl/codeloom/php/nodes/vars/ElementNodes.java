@@ -271,7 +271,7 @@ public final class ElementNodes {
 
         @Specialization(guards = "object.isArrayAccess()")
         public static Object arrayAccess(PhpObject object, Object key, @Bind Node node) {
-            return PhpRef.deref(object.callMethod(node, "offsetget", key));
+            return pl.codeloom.php.runtime.Refcount.borrowed(PhpRef.deref(object.callMethod(node, "offsetget", key)));
         }
 
         @Fallback
@@ -383,7 +383,7 @@ public final class ElementNodes {
 
         @Specialization(guards = "object.isArrayAccess()")
         public static Object arrayAccess(PhpObject object, Object key, @Bind Node node) {
-            return PhpRef.deref(object.callMethod(node, "offsetget", key));
+            return pl.codeloom.php.runtime.Refcount.borrowed(PhpRef.deref(object.callMethod(node, "offsetget", key)));
         }
 
         /** A scalar or null reads as null (php-src's warning); an object that isn't ArrayAccess is an error. */

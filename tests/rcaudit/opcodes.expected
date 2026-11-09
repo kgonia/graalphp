@@ -1,0 +1,71 @@
+1 FETCH_OBJ_R: ~a a after |
+2 FETCH_DIM_R: ~b b after |
+3 ISSET_ISEMPTY_PROP_OBJ: ~c set after |
+4 ISSET_ISEMPTY_DIM_OBJ: ~d set after |
+5 INIT_METHOD_CALL: ~e e after |
+6 INIT_DYNAMIC_CALL: ~f inv after |
+7 INIT_STATIC_METHOD_CALL: ~g sm after |
+8 SEND_VAL: in ~h after |
+9 SEND_VAR_NO_REF: in ~i after |
+10 SEND_USER: in ~j after |
+11 SEND_UNPACK: in ~k after |
+12 SEND_ARRAY: in ~l after |
+13 ASSIGN (TMP): set ~m after |
+14 ASSIGN_OBJ (OP_DATA): set ~n after ~n0 |
+15 ASSIGN_DIM (OP_DATA): set ~o after |
+16 ASSIGN_OP (.=): ~p xsp after |
+17 QM_ASSIGN: set ~q after |
+18 JMP_SET (?:): ~r r after |
+19 COALESCE: ~s null after |
+20 JMPZ: ~t body after |
+21 JMPNZ_EX (||): ~u y after |
+22 JMPZ_EX (&&): ~v y after |
+23 BOOL: ~w y after |
+24 BOOL_NOT: ~x n after |
+25 CAST (array): ~y 3 after |
+26 CAST (string): ~z sz after |
+27 TYPE_CHECK: ~aa y after |
+28 INSTANCEOF: ~ab y after |
+29 IS_IDENTICAL: ~ac n after |
+30 IS_EQUAL: ~ad ~ad2 n after |
+31 CONCAT: ~ae saex after |
+32 ROPE: ~af o<saf>o after |
+33 ECHO: sag~ag  after |
+34 PRINT: sah~ah  after |
+35 COUNT: ~ai 1 after |
+36 GET_CLASS: ~aj D after |
+37 GET_TYPE: ~ak object after |
+38 STRLEN: ~al 3 after |
+39 INIT_ARRAY (discarded): ~am after |
+40 ADD_ARRAY_UNPACK: ~an 1 after |
+41 FE_RESET_R / FE_FREE (array): body loop ~ao after |
+42 FE_RESET_R (object): n p arr ~ap after |
+43 FE_RESET_RW: body ~aq after |
+44 RETURN: ~ar ar after |
+45 YIELD: body g loop ~as after |
+46 YIELD_FROM: body loop ~at after |
+47 THROW: ~au catch after |
+48 CLONE: ~av ~av av after |
+49 FREE: ~aw after |
+50 MATCH: ~ax hit after |
+51 MATCH (subject object): ~ay other after ~ay0 |
+52 SWITCH / CASE: ~az case after |
+53 PRE_INC_OBJ: 2 after ~ba0 |
+54 FETCH_LIST_R: set ~bb after |
+55 CALLABLE_CONVERT: made bc ~bc after |
+56 JMP_NULL (?->): ~bd bd after |
+57 BEGIN_SILENCE: ~be be after |
+58 VERIFY_RETURN_TYPE: ~bf after |
+59 FUNC_GET_ARGS: ~bg 1 after |
+60 FETCH_CLASS_NAME: ~bh D after |
+61 FETCH_CLASS_CONSTANT: ~bi c after |
+62 FETCH_STATIC_PROP_R: ~bj sp after |
+63 FETCH_OBJ_W (nested): ~bl after |
+64 PIPE: ~bm bm after |
+65 NEW args: made ~sbn ~bn after |
+66 ARRAY_KEY_EXISTS: ~bo y after |
+67 IN_ARRAY: ~bp y after |
+68 ASSIGN_OP (.=) expression: ~bq xsbq after |
+69 ASSIGN_OP (.=) in place: ~br ~bs 5007 after |
+70 ASSIGN_OP (.=) loop: ~bt0 ~bt1 ~bt2 sbt0sbt1sbt2 after |
+end

@@ -6,10 +6,12 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.runtime.ArrayKey;
 import pl.codeloom.php.runtime.Callables;
 import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
 import pl.codeloom.php.runtime.PhpResource;
@@ -198,9 +200,9 @@ public final class ArrayFunctions {
                     new Callables.Parameter("array_walk", 2, false));
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
                 if (Args.has(a, 2)) {
-                    callback.call(array.refAtPosition(p), array.keyAt(p), Args.get(a, 2));
+                    callback.callScalar(array.refAtPosition(p), array.keyAt(p), Args.get(a, 2));
                 } else {
-                    callback.call(array.refAtPosition(p), array.keyAt(p));
+                    callback.callScalar(array.refAtPosition(p), array.keyAt(p));
                 }
             }
             return true;
@@ -212,7 +214,12 @@ public final class ArrayFunctions {
                     new Callables.Parameter("array_reduce", 2, false));
             Object carry = Args.get(a, 2, PhpNull.NULL);
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-                carry = callback.call(carry, array.valueAt(p));
+                Object previous = carry;
+                carry = callback.call(previous, array.valueAt(p));
+                // the previous result: given up after the call that took it (php-src frees args[0])
+                if (previous != carry) {
+                    Refcount.done(previous);
+                }
             }
             return carry;
         });
@@ -308,9 +315,9 @@ public final class ArrayFunctions {
             if (element.get() instanceof PhpArray) {
                 walkRecursive(element.arrayForWrite(), callback, extra);
             } else if (extra != null) {
-                callback.call(element, array.keyAt(p), extra);
+                callback.callScalar(element, array.keyAt(p), extra);
             } else {
-                callback.call(element, array.keyAt(p));
+                callback.callScalar(element, array.keyAt(p));
             }
         }
     }
@@ -629,11 +636,11 @@ public final class ArrayFunctions {
             if (callback == null) {
                 keep = Convert.toBool(value);
             } else if (mode == 2) {
-                keep = Convert.toBool(callback.call(key));
+                keep = Convert.toBool(callback.callScalar(key));
             } else if (mode == 1) {
-                keep = Convert.toBool(callback.call(value, key));
+                keep = Convert.toBool(callback.callScalar(value, key));
             } else {
-                keep = Convert.toBool(callback.call(value));
+                keep = Convert.toBool(callback.callScalar(value));
             }
             if (keep) {
                 result.putCopied(key, array.copiedAt(p));
@@ -921,10 +928,21 @@ public final class ArrayFunctions {
         }
         if (value instanceof PhpArray nested) {
             nested.addHolder();
+        } else if (value instanceof PhpObject object) {
+            // held across the old array's release, which would take the element's count to zero
+            object.addRef();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.addRef();
         }
         ref.set(result);
         if (value instanceof PhpArray nested) {
-            nested.removeHolder();
+            // the result: it keeps its elements on its way to the caller (php-src's retval holds the array)
+            nested.removeReturnedHolder();
+        } else if (value instanceof PhpObject object) {
+            // moved out to the caller as array_pop's element (a built-in's result holds no count): no event
+            object.disown();
+        } else if (value instanceof PhpClosure closureValue) {
+            closureValue.disown();
         }
         return value;
     }
@@ -947,7 +965,7 @@ public final class ArrayFunctions {
         Callables.Target callback = Callables.parameter(context, callable,
                 new Callables.Parameter(any ? "array_any" : "array_all", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            boolean match = Convert.toBool(callback.call(array.valueAt(p), array.keyAt(p)));
+            boolean match = Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)));
             if (match == any) {
                 return any;
             }
@@ -960,7 +978,7 @@ public final class ArrayFunctions {
         Callables.Target callback = Callables.parameter(context, callable,
                 new Callables.Parameter(wantKey ? "array_find_key" : "array_find", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
-            if (Convert.toBool(callback.call(array.valueAt(p), array.keyAt(p)))) {
+            if (Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)))) {
                 return wantKey ? array.keyAt(p) : array.valueAt(p);
             }
         }
@@ -1083,7 +1101,7 @@ public final class ArrayFunctions {
             compare = (x, y) -> {
                 Object first = byKey ? x.key() : PhpRef.deref(x.value());
                 Object second = byKey ? y.key() : PhpRef.deref(y.value());
-                Object result = PhpRef.deref(callback.call(first, second));
+                Object result = PhpRef.deref(callback.callScalar(first, second));
                 if (result instanceof Boolean b) {
                     if (!deprecated[0]) {
                         deprecated[0] = true;
@@ -1093,7 +1111,7 @@ public final class ArrayFunctions {
                     }
                     if (!b) {
                         // retried with the operands swapped
-                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.call(second, first))));
+                        return -Long.signum(Convert.toLong(PhpRef.deref(callback.callScalar(second, first))));
                     }
                 }
                 return Long.signum(Convert.toLong(result));
@@ -1159,7 +1177,7 @@ public final class ArrayFunctions {
      */
     private static int userCompare(PhpContext context, String name, Callables.Target callback, Object first,
                                    Object second, boolean[] deprecated) {
-        Object result = callback.call(first, second);
+        Object result = callback.callScalar(first, second);
         if (result instanceof Boolean b) {
             if (!deprecated[0]) {
                 deprecated[0] = true;
@@ -1168,7 +1186,7 @@ public final class ArrayFunctions {
                         + "zero"), SourceLocation.current());
             }
             if (!b) {
-                return -Long.signum(Convert.toLong(callback.call(second, first)));
+                return -Long.signum(Convert.toLong(callback.callScalar(second, first)));
             }
         }
         return Long.signum(Convert.toLong(result));
@@ -1207,7 +1225,7 @@ public final class ArrayFunctions {
             for (int i = 1; i < count && ok; i++) {
                 Object data = arrays[i].get(key);
                 boolean equal = data != null
-                        && Long.signum(Convert.toLong(callback.call(value, PhpRef.deref(data)))) == 0;
+                        && Long.signum(Convert.toLong(callback.callScalar(value, PhpRef.deref(data)))) == 0;
                 ok = diff ? !equal : equal;
             }
             if (ok) {

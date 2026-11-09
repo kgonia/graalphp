@@ -78,6 +78,110 @@ public final class PhpObject extends DynamicObject {
         super(shape);
         this.phpClass = phpClass;
         this.id = id;
+        if (Census.AUDIT) {
+            Census.track(this);
+        }
+    }
+
+    /** The reference count (see {@link Refcount}): the slots and owning temporaries holding this object. */
+    private int rc;
+    /** The cycle collector's state: 0, or {@link #BUFFERED} once the object was a possible root (php-src's GC_INFO). */
+    private int gcInfo;
+    private static final int BUFFERED = 1;
+    private static final int DESTRUCTOR_CALLED = 1 << 1;
+    private static final int FREED = 1 << 2;
+
+    /** One more slot or owning temporary holds the object. */
+    public void addRef() {
+        rc++;
+        if (Census.TRACE) {
+            Census.traced(this, "+1");
+        }
+    }
+
+    /**
+     * A slot or an owning temporary gives the object up: at zero it would be destroyed, else it becomes a possible
+     * root of a garbage cycle unless it already is one (php-src's zval_ptr_dtor of an object).
+     */
+    public void release() {
+        int count = rc - 1;
+        rc = count;
+        if (Census.TRACE) {
+            Census.traced(this, "-1");
+        }
+        if (count == 0) {
+            Refcount.zero(this);
+        } else if (gcInfo == 0) {
+            // a possible root: a flag, inline (Refcount.possibleRoot)
+            gcInfo = BUFFERED;
+            Refcount.rootStat();
+        }
+    }
+
+    /**
+     * An owning temporary's count moves to the slot about to store it, which counts it again: the count stays at
+     * least 1 across the store, so no event (HHVM's DecRefNZ).
+     */
+    public void disown() {
+        rc--;
+        if (Census.TRACE) {
+            Census.traced(this, "-1 disown");
+        }
+    }
+
+    /** A skipped increment/decrement pair (a method call on a variable): the possible-root event it would raise. */
+    public void possibleRoot() {
+        if (gcInfo == 0) {
+            Refcount.possibleRoot(this);
+        }
+    }
+
+    void buffered() {
+        gcInfo |= BUFFERED;
+    }
+
+    /** Its destructor ran or won't run (php-src's IS_OBJ_DESTRUCTOR_CALLED): set by the caller, true if it was. */
+    boolean markDestructorCalled() {
+        boolean was = (gcInfo & DESTRUCTOR_CALLED) != 0;
+        gcInfo |= DESTRUCTOR_CALLED;
+        return was;
+    }
+
+    /** Whether its destructor ran or won't run. */
+    public boolean isDestructorCalled() {
+        return (gcInfo & DESTRUCTOR_CALLED) != 0;
+    }
+
+    /** Its properties were released (php-src's free_obj): set by the caller, true if they were already. */
+    boolean markFreed() {
+        boolean was = (gcInfo & FREED) != 0;
+        gcInfo |= FREED;
+        return was;
+    }
+
+    /** The count less one, for a site that profiles the events itself (Refcount.Releases). */
+    int decrement() {
+        int count = rc - 1;
+        rc = count;
+        if (Census.TRACE) {
+            Census.traced(this, "-1 decrement");
+        }
+        return count;
+    }
+
+    /** Whether its properties were released (php-src's free_obj ran). */
+    boolean isFreed() {
+        return (gcInfo & FREED) != 0;
+    }
+
+    /** Not a possible root yet (php-src's GC_INFO is 0). */
+    boolean unbuffered() {
+        return gcInfo == 0;
+    }
+
+    /** The count, for tests. */
+    public int refcount() {
+        return rc;
     }
 
     /**
@@ -110,8 +214,12 @@ public final class PhpObject extends DynamicObject {
             Object[] arguments = new Object[args.length + 1];
             arguments[0] = Str.ofKey(name);
             System.arraycopy(args, 0, arguments, 1, args.length);
-            return keepRef ? phpClass.findMethod(lowerMethod).invokeRef(this, phpClass, arguments)
-                    : callMethod(lowerMethod, arguments);
+            if (keepRef) {
+                return phpClass.findMethod(lowerMethod).invokeRef(this, phpClass, arguments);
+            }
+            Object result = callMethod(lowerMethod, arguments);
+            // __get's value is read as a property's is; __set's, __isset's and __unset's are used up at once
+            return lowerMethod.equals("__get") ? Refcount.borrowed(result) : Refcount.done(result);
         } finally {
             guards.remove(guard);
         }
@@ -183,7 +291,7 @@ public final class PhpObject extends DynamicObject {
     public Object visibleValue(String name) {
         PhpClass.Hooks hooks = phpClass.findHooks(name);
         if (hooks != null && hooks.get() != null) {
-            return hooks.get().invoke(this, phpClass);
+            return Refcount.borrowed(hooks.get().invoke(this, phpClass));
         }
         return PhpRef.deref(getProperty(name));
     }
@@ -195,6 +303,11 @@ public final class PhpObject extends DynamicObject {
      * there.
      */
     @TruffleBoundary
+    /** The object whose properties propertyTable lists: an initialized proxy's instance, else this one. */
+    PhpObject propertyOwner() {
+        return lazy != null && lazy.instance != null ? lazy.instance.propertyOwner() : this;
+    }
+
     public Object[] propertyTable() {
         if (lazy != null && lazy.instance != null) {
             // an initialized proxy's are its instance's (zend_std_get_properties)
@@ -604,12 +717,19 @@ public final class PhpObject extends DynamicObject {
                 && !DynamicObjectLibrary.getUncached().containsKey(this, name);
     }
 
-    /** Puts a property with its shape flags: a declared one's visibility and set checks, none for a dynamic one. */
+    /**
+     * Puts a property with its shape flags: a declared one's visibility and set checks, none for a dynamic one. As
+     * {@link #setProperty}, the property counts the object it now holds and gives up the one it held (the caller
+     * moves arrays' holders).
+     */
     @TruffleBoundary
     public void initProperty(String name, Object value) {
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
-        DynamicObjectLibrary.getUncached().putWithFlags(this, name, value,
-                decl == null ? 0 : phpClass.propertyFlags(decl));
+        DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
+        Object old = library.getOrDefault(this, name, null);
+        Refcount.inc(value);
+        library.putWithFlags(this, name, value, decl == null ? 0 : phpClass.propertyFlags(decl));
+        Refcount.dec(old);
     }
 
     /**
@@ -818,16 +938,22 @@ public final class PhpObject extends DynamicObject {
         }
     }
 
-    /** Stores the property; an uninitialized typed one gets its declaration's flags. */
+    /**
+     * Stores the property; an uninitialized typed one gets its declaration's flags. The property counts the object
+     * it now holds and gives up the one it held, after the store (the caller moves arrays' holders).
+     */
     @TruffleBoundary
     public void setProperty(String name, Object value) {
         DynamicObjectLibrary library = DynamicObjectLibrary.getUncached();
         PhpClass.PropertyDecl decl = phpClass.findProperty(name);
+        Object old = library.getOrDefault(this, name, null);
+        Refcount.inc(value);
         if (decl != null && decl.type() != null && !library.containsKey(this, name)) {
             library.putWithFlags(this, name, value, phpClass.propertyFlags(decl));
         } else {
             library.put(this, name, value);
         }
+        Refcount.dec(old);
     }
 
     /**
@@ -844,8 +970,11 @@ public final class PhpObject extends DynamicObject {
         if (value instanceof PhpArray array) {
             array.addHolder();
         }
+        Refcount.inc(value);
         DynamicObjectLibrary.getUncached().putWithFlags(this, name, value, phpClass.propertyFlags(name));
-        if (old instanceof PhpArray array && old != value) {
+        Refcount.dec(old);
+        if (old instanceof PhpArray array) {
+            // also when it is the value: its holder was added above
             array.removeHolder();
         }
     }
@@ -874,6 +1003,20 @@ public final class PhpObject extends DynamicObject {
     @TruffleBoundary
     public Object callMethodRef(Node site, String lowerName, Object... args) {
         return Backtrace.callFrom(site, () -> phpClass.findMethod(lowerName).invokeRef(this, phpClass, args));
+    }
+
+    /**
+     * callMethod for a caller that gives up the result's own count itself (Refcount.pending's exception): foreach's
+     * steps, getIterator(), a destructor.
+     */
+    @TruffleBoundary
+    public Object callMethodOwned(Node site, String lowerName, Object... args) {
+        PhpFunction method = phpClass.findMethod(lowerName);
+        if (method == null) {
+            throw new PhpError("Call to undefined method " + phpClass.getName() + "::" + lowerName + "()");
+        }
+        return site == null ? PhpRef.deref(method.invokeOwned(this, phpClass, args))
+                : Backtrace.callFrom(site, () -> PhpRef.deref(method.invokeOwned(this, phpClass, args)));
     }
 
     /** callMethod for a node's operation (ArrayAccess, iteration): the node is where traces show the call made. */

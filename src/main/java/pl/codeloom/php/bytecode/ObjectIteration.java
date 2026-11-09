@@ -9,6 +9,7 @@ import pl.codeloom.php.nodes.stmt.ForeachNode;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.Str;
 
 import java.util.List;
@@ -18,7 +19,7 @@ import java.util.List;
  * Iterator through its methods, called from the loop's instruction, or the public properties the scope may access,
  * each as it is when the loop reaches it.
  */
-final class ObjectIteration {
+final class ObjectIteration implements Refcount.Holder {
     /** The Iterator, or null for a walk over properties. */
     private final PhpObject iterator;
     private final PhpObject object;
@@ -26,23 +27,53 @@ final class ObjectIteration {
     private final String scope;
     private boolean started;
     private int index;
+    /**
+     * What the loop holds a count of until it ends ({@link #end}): the object it was given (FE_RESET's copy), or the
+     * iterator an IteratorAggregate's getIterator() returned (that call's own count).
+     */
+    private PhpObject held;
 
-    private ObjectIteration(PhpObject iterator, PhpObject object, List<String> properties, String scope) {
+    private ObjectIteration(PhpObject iterator, PhpObject object, List<String> properties, String scope,
+                            PhpObject held) {
         this.iterator = iterator;
         this.object = object;
         this.properties = properties;
         this.scope = scope;
+        this.held = held;
+    }
+
+    @Override
+    public Object held() {
+        return held;
+    }
+
+    /** The loop ends however it ends (FE_FREE): it lets go of what it held. Out of line: rare, and in every loop. */
+    @TruffleBoundary
+    void end() {
+        PhpObject was = held;
+        held = null;
+        Refcount.dec(was);
     }
 
     /** The iteration of subject for code whose calling scope is scope: an Iterator is rewound here. */
     @TruffleBoundary
     static ObjectIteration start(Node site, PhpObject subject, String scope) {
-        PhpObject object = ForeachNode.unwrapAggregates(site, subject).initialized();
-        if (object.getPhpClass().isSubclassOf("iterator")) {
-            ForeachNode.step(site, object, "rewind");
-            return new ObjectIteration(object, null, null, null);
+        PhpObject unwrapped = ForeachNode.unwrapAggregates(site, subject);
+        if (unwrapped == subject) {
+            subject.addRef();
         }
-        return new ObjectIteration(null, object, object.visiblePropertyNames(scope), scope);
+        PhpObject object = unwrapped.initialized();
+        if (object.getPhpClass().isSubclassOf("iterator")) {
+            try {
+                ForeachNode.step(site, object, "rewind");
+            } catch (RuntimeException e) {
+                // FE_RESET threw: its result is freed
+                Refcount.dec(unwrapped);
+                throw e;
+            }
+            return new ObjectIteration(object, null, null, null, unwrapped);
+        }
+        return new ObjectIteration(null, object, object.visiblePropertyNames(scope), scope, unwrapped);
     }
 
     /** Binds the next element's key (hasKey) and value; false at the end. */
@@ -58,9 +89,13 @@ final class ObjectIteration {
             }
             Object current = PhpRef.deref(ForeachNode.step(site, iterator, "current"));
             if (hasKey) {
-                keyWrites.write(frame, key, bytecode, PhpRef.deref(ForeachNode.step(site, iterator, "key")));
+                Object k = PhpRef.deref(ForeachNode.step(site, iterator, "key"));
+                keyWrites.write(frame, key, bytecode, k);
+                Refcount.dec(k);
             }
             valueWrites.write(frame, value, bytecode, current);
+            // the calls' own counts: the variables counted theirs
+            Refcount.dec(current);
             return true;
         }
         Object[] property = nextProperty();
