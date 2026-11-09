@@ -78,6 +78,14 @@ public final class Callables {
             return new Target(closure.getFunction(), closure.getBoundThis(), bound, closure, closure.getMagicName());
         }
         if (callable instanceof TruffleString name) {
+            // a name seen before: its function id, the context's slot (the functions map's mirror)
+            int known = context.getLanguage().callableFunctionId(name);
+            if (known >= 0) {
+                PhpFunction function = context.functionAt(known);
+                if (function != null) {
+                    return new Target(function, null, null, null);
+                }
+            }
             String text = Str.name(name);
             int separator = text.indexOf("::");
             if (separator > 0) {
@@ -85,7 +93,11 @@ public final class Callables {
                         text.substring(separator + 2), direct, scope);
             }
             PhpFunction function = context.findFunction(Str.lower(stripNamespace(text)));
-            return function == null ? null : new Target(function, null, null, null);
+            if (function == null) {
+                return null;
+            }
+            context.getLanguage().rememberCallable(name, function.functionId(context.getLanguage()));
+            return new Target(function, null, null, null);
         }
         if (callable instanceof PhpArray array && array.size() == 2) {
             Object first = array.get(0L);

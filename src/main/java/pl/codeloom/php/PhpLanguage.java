@@ -132,6 +132,13 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final NameIds constantIds = new NameIds();
     private final NameIds classIds = new NameIds();
     private final NameIds globalIds = new NameIds();
+    /**
+     * A callable string's function id, for names that named a function (Callables.resolve): a hook's call site
+     * meets more names than its cache keeps, and the generic path then skips the conversion, the lowercasing and
+     * the map. Bounded as Str's name cache.
+     */
+    private final ConcurrentHashMap<TruffleString, Integer> callableFunctionIds = new ConcurrentHashMap<>();
+    private static final int CALLABLE_IDS_MAX = 1 << 16;
     /** Interned class identities (see ClassKey). */
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
     /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
@@ -215,6 +222,19 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The id of a class name (lowercase); a context keeps its classes by id. */
     public int classId(String lowerName) {
         return classIds.id(lowerName);
+    }
+
+    /** The function id a callable string named before (rememberCallable), or -1. */
+    public int callableFunctionId(TruffleString name) {
+        Integer id = callableFunctionIds.get(name);
+        return id == null ? -1 : id;
+    }
+
+    /** Remembers that a callable string (a plain function name, any case, maybe with a leading \) names an id. */
+    public void rememberCallable(TruffleString name, int functionId) {
+        if (callableFunctionIds.size() < CALLABLE_IDS_MAX) {
+            callableFunctionIds.putIfAbsent(name, functionId);
+        }
     }
 
     /** The id of a global variable's name; a context keeps its globals' references by id too (globalAt). */
