@@ -755,6 +755,15 @@ class SplFileInfo implements Stringable
         $this->pathname = $filename;
     }
 
+    /**
+     * The file the methods describe (spl_filesystem_object_get_file_name): this one's path; a DirectoryIterator's
+     * current entry's.
+     */
+    protected function entryPath(): string
+    {
+        return $this->pathname;
+    }
+
     public function getPathname(): string
     {
         return $this->pathname;
@@ -786,58 +795,58 @@ class SplFileInfo implements Stringable
 
     public function getRealPath(): string|false
     {
-        return realpath($this->pathname);
+        return realpath($this->entryPath());
     }
 
     public function getSize(): int|false
     {
-        return filesize($this->pathname);
+        return filesize($this->entryPath());
     }
 
     public function getMTime(): int|false
     {
-        return filemtime($this->pathname);
+        return filemtime($this->entryPath());
     }
 
     public function getPerms(): int|false
     {
-        return fileperms($this->pathname);
+        return fileperms($this->entryPath());
     }
 
     public function getType(): string|false
     {
-        return is_link($this->pathname) ? 'link' : (is_dir($this->pathname) ? 'dir' : 'file');
+        return is_link($this->entryPath()) ? 'link' : (is_dir($this->entryPath()) ? 'dir' : 'file');
     }
 
     public function isDir(): bool
     {
-        return is_dir($this->pathname);
+        return is_dir($this->entryPath());
     }
 
     public function isFile(): bool
     {
-        return is_file($this->pathname);
+        return is_file($this->entryPath());
     }
 
     public function isLink(): bool
     {
-        return is_link($this->pathname);
+        return is_link($this->entryPath());
     }
 
     public function isReadable(): bool
     {
-        return is_readable($this->pathname);
+        return is_readable($this->entryPath());
     }
 
     public function isWritable(): bool
     {
-        return is_writable($this->pathname);
+        return is_writable($this->entryPath());
     }
 
     public function getFileInfo(?string $class = null): SplFileInfo
     {
         $class = $class ?? SplFileInfo::class;
-        return new $class($this->pathname);
+        return new $class($this->entryPath());
     }
 
     public function getPathInfo(?string $class = null): ?SplFileInfo
@@ -932,41 +941,9 @@ class DirectoryIterator extends SplFileInfo implements SeekableIterator
         return $this->directory;
     }
 
-    public function isDir(): bool
-    {
-        return is_dir($this->entryPath());
-    }
-
-    public function isFile(): bool
-    {
-        return is_file($this->entryPath());
-    }
-
-    public function getSize(): int|false
-    {
-        return filesize($this->entryPath());
-    }
-
-    public function getMTime(): int|false
-    {
-        return filemtime($this->entryPath());
-    }
-
-    public function getExtension(): string
-    {
-        $name = $this->getFilename();
-        $dot = strrpos($name, '.');
-        return $dot === false ? '' : substr($name, $dot + 1);
-    }
-
     public function getBasename(string $suffix = ""): string
     {
         return basename($this->getFilename(), $suffix);
-    }
-
-    public function getRealPath(): string|false
-    {
-        return realpath($this->entryPath());
     }
 
     public function __toString(): string

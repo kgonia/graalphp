@@ -3,11 +3,13 @@
 $d = sys_get_temp_dir() . '/smoke-diriter-' . getmypid();
 @mkdir($d);
 @mkdir("$d/sub");
-touch("$d/f.txt");
+file_put_contents("$d/f.txt", "abc");
 $r = [];
 foreach (new DirectoryIterator($d) as $f) {
     if ($f->isDot()) continue;
-    $r[$f->getFilename()] = ($f->isDir() ? 'dir' : 'file') . ' ' . $f->getType() . ' ' . $f->getExtension();
+    $r[$f->getFilename()] = [$f->getType(), $f->isDir(), $f->isFile(), $f->isReadable(), $f->isWritable(),
+        $f->getExtension(), $f->getBasename('.txt'), $f->getFileInfo()->getFilename(),
+        $f->isDir() ? 0 : $f->getSize(), (string) $f, $f->getRealPath() !== false];
 }
 ksort($r);
 echo json_encode($r), "\n";
