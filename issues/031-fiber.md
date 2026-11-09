@@ -1,7 +1,7 @@
 # 031: No Fiber class
 
-**State:** In progress on branch `fiber` (2026-11-09): steps 1, 2 and 4 done in part, `Zend/tests/fibers` at 68
-of 103 (Status below).
+**State:** In progress on branch `fiber` (2026-11-09): steps 1, 2 and 4 done in part, on platform threads (Design),
+`Zend/tests/fibers` at 68 of 103 (Status below).
 
 **Symptom:** `new Fiber(fn() => ...)` is "Class "Fiber" not found". With named arguments, `Fiber::start(b: 'B')`
 passes the names on to the fiber's function (Z_PARAM_VARIADIC_WITH_NAMED; `tests/smoke/named-args-fiber.php`,
@@ -15,21 +15,44 @@ throw/getReturn/isStarted/isSuspended/isRunning/isTerminated/getCurrent`, `Fiber
 
 A fiber suspends its whole PHP stack, from any depth below its function. The Bytecode DSL's `yield` (generators)
 suspends one frame (wiki/bytecode-dsl.md); suspending a stack with it would make every call a suspension point and
-cost all code, fibers or not. Truffle has no continuations for guest languages. So each fiber runs on its own
-**virtual thread** entered into the request's context (`env.newTruffleThreadBuilder(body).virtual(true)`, in
-Truffle 25.4), as TruffleRuby's fibers do:
+cost all code, fibers or not. Truffle has no continuations for guest languages. So each fiber runs on a **thread
+of its own** entered into the request's context (`env.newTruffleThreadBuilder`):
 
-- **Hand-over:** `start`, `resume`, `throw` and `suspend` park the running thread and unpark the other, passing a
-  transfer (a value or a throwable, php-src's `zend_fiber_transfer`). Exactly one thread of a context runs at any
-  time, and park/unpark orders memory, so the request's state needs no locks.
+- **Hand-over:** `start`, `resume`, `throw` and `suspend` open the other side's gate and wait at their own
+  (`FiberGate`: spin for 20 us, then park at a Truffle safepoint), passing a value or a throwable (php-src's
+  `zend_fiber_transfer`). Exactly one thread of a context runs at any time, and the gates' volatile handshake
+  orders memory, so the request's state needs no locks.
 - **Shared state:** what php-src keeps in `EG` beside the VM state stays on `PhpContext`, shared by the fibers:
-  output buffers, globals, functions and classes, error handlers, the object store.
+  output buffers, globals, functions and classes, error handlers, the object store. A fiber's thread shares its
+  request thread's thread-locals (`Phases`, the `ByteBuilder` pool, curl's persistent shares).
 - **Switched state:** what `zend_fiber_capture_vm_state` and `_restore_vm_state` swap moves with the fiber.
   `error_reporting` is the observable one (the `@` level). A fiber starts with the `error_reporting` ini value,
-  not the caller's current level (`zend_fiber_execute`).
-- **Cost when unused:** the thread is created at `start()`, so a script without fibers keeps the context
+  not the caller's current level (`zend_fiber_execute`). The pending-release list built-ins drain above their mark
+  is a stack's, so it is swapped too.
+- **Cost when unused:** no thread exists until `start()`, so a script without fibers keeps its context
   single-threaded.
-- **Fallback:** platform threads, if virtual threads fail step 1's gate. The hand-over is the same.
+
+**Platform threads, not virtual ones (decided 2026-11-09, by the owner).** Step 1 began on virtual threads. The
+concurrency reviews (Codex, Opus, Fable) found, and Opus reproduced (`issues/031-reviews/repro/pin.php` with two
+carriers), that a fiber suspended under a native frame pins its carrier: a `CURLOPT_WRITEFUNCTION` callback that
+calls `Fiber::suspend()` parks with `curl_exec`'s native frame below it. The JDK adds no carrier for a thread pinned
+by a native frame, and the carriers are shared by every request in the JVM, so once as many fibers as cores are
+suspended that way, no fiber anywhere can start or resume: a deadlock. Raising the scheduler's parallelism only
+moves the threshold. A native image runs each virtual thread on a platform thread anyway (oracle/graal#7520).
+- **What platform threads cost:** a thread per live fiber, its stack reserved (`fiber.stack_size` or 16 MB,
+  whichever is larger, since PHP calls nest on the Java stack: 080) and committed only as used. Creating one took
+  196 us against php-src's 8 us, so a context keeps up to 16 idle fiber threads (`FiberThread`) and a start reuses
+  one: create-and-finish 8.2 us.
+- **Going back to virtual threads** takes `.virtual(true)` in `FiberThread` once suspending under a native frame
+  can't pin: curl's callbacks run off the fiber's thread, a JDK that unmounts across native frames, or a context
+  that never ran native callbacks choosing virtual threads.
+
+| Measured 2026-11-09 (WSL VM, E-cores, single runs) | PHP 8.5 | virtual threads | platform threads, reused |
+|---|---|---|---|
+| suspend and resume, one fiber in a loop | 51-62 ns | 1.8 us | 1.5-1.7 us |
+| a fiber created, started and finished | 7.5-8 us | 19-30 us | 8.2 us (196 us without reuse) |
+| 10,000 fibers suspended at once: start each / resume each to its end | 10-16 / 6-8 us | 290 / 110 us | 680 / 210 us |
+| the same: peak memory (cgroup) | 143 MB | 325 MB | 880 MB |
 
 ## Plan
 
@@ -105,7 +128,8 @@ A/B.
   is linear in the live fibers; `isThreadAccessAllowed` answers from a concurrent set to keep that cheap.
 - **Stack depth:** a fiber reaches the depth `-Xss` allows, as the main thread does. On the default 1 MB stack
   both overflow within a few hundred to two thousand calls, a problem without fibers too (080).
-- **Decision:** virtual threads stay. Platform threads would have the same wake-ups and a reserved stack each.
+- **Decision then:** virtual threads stay. Platform threads would have the same wake-ups and a reserved stack each.
+  Superseded the same day by platform threads, after the reviews found the native-frame pinning (Design).
 
 Still open from step 1:
 - L2 on a server after a request that used a fiber (the engine-wide assumption);
@@ -138,6 +162,24 @@ monitor and its cancel lock are taken in opposite orders. A thread dump caught i
 - an embedder closes a context once: `BatchMain` from the script's thread or from the timeout's cancel, whichever
   comes first. `HttpMain` and `PhpMain` have no cancel. `exit()` inside a fiber still closes from the fiber's thread
   with the caller's thread blocked: to fix with 073's unwinding exit.
+
+**Concurrency reviews (2026-11-09, 0effc2b).** Codex (gpt-6-astra, xhigh), Opus and Fable read the fiber code and the
+runtime under `HttpMain` for races, deadlocks and starvation (reports in `issues/031-reviews/`). Fixed in 0effc2b:
+- the native-frame pinning above: platform threads;
+- `destroyFibers` walked the list by index while a finally block's new fiber pruned it, so a fiber was skipped and
+  left parked, and the close failed (Opus reproduced it): no pruning while draining;
+- PCRE's scratch buffers were taken and given back as a stack, but fibers give them back in any order: a fiber's
+  subject was overwritten under another's suspended `preg_replace_callback` (reproduced: `"zz"` became a fiber
+  ending early). Each buffer is leased by itself now;
+- a fiber thread that fails to enter a closing context left its caller waiting forever: the thread's uncaught
+  handler hands the failure back, and switching from PHP code during finalization is php-src's
+  "Cannot switch fibers in current execution context";
+- Truffle's cancel or exit inside a fiber no longer runs PHP destructors on its way out, and `Refcount.destroy`
+  settles its counts under an `Error` too.
+
+Checked and found sound by all three: `FiberGate`'s handshake (no lost wake-up), the per-stack pending releases,
+the request's end joining the fiber threads, the admission counter, `BatchMain`'s single close, cancels with fibers.
+What they found outside fibers is in issues 082-087.
 
 **Step 2: the full API as an explicit state machine.**
 - States as an enum: php-src's INIT, RUNNING, SUSPENDED, DEAD, with its flags THREW, BAILOUT and DESTROYED (the
@@ -198,9 +240,10 @@ monitor and its cancel lock are taken in opposite orders. A thread dump caught i
 - This issue, the wiki, `issues/README.md`.
 
 **Risks:**
-- virtual threads under libgraal (step 1 decides);
 - the engine-wide single-thread assumption: one request using a fiber may slow every later request on the same
   engine (step 1 measures it);
+- a thread per live fiber: 10,000 suspended fibers take 880 MB and are bounded by the process's thread limit
+  (`ulimit -u`, a container's pids limit);
 - the cost of traces inside fibers (step 5);
 - a per-stack field missed in step 3, which would leak state between fibers.
 
