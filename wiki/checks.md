@@ -97,7 +97,8 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
   three configurations. A chunk is one PHPUnit process in the full run too, so this reproduces the full run's order
   and state. A test stays `unstable` only if that rerun also gives PHP's outcome. Otherwise it gets the cause the
   entry reruns show, with " (in order)" added. `target/check/SHA/wp-triage-classes.tsv` keeps the first stage's
-  causes, `wp-triage.tsv` the final ones.
+  causes, `wp-triage.tsv` the final ones. `WP_REUSE=1 WP=1 L1=wp check.sh l1 SHA` repeats the comparison and the
+  triage on the build's existing full run, without running the suite again.
 
 ## For agents
 

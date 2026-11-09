@@ -189,16 +189,20 @@ l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
     # JAVA_OPTS reaches its JVMs
     local runs=target/wp-phpunit/runs
     reserve l1-wp-$s 8 300 "L1 of $s (WordPress PHPUnit on CPUs 6-13)"
-    CLASSES=target/classes-$s LIB=target/lib-$s RUN=truffle-$s-chunked CHUNKED=1 \
-      bash tests/wp-phpunit/run.sh truffle > "$out/wp-run.txt" 2>&1 || true
+    # WP_REUSE=1: the build's earlier full run, when there is one (only the comparison and the triage again)
+    if [ -z "${WP_REUSE:-}" ] || [ ! -d $runs/truffle-$s-chunked ]; then
+      CLASSES=target/classes-$s LIB=target/lib-$s RUN=truffle-$s-chunked CHUNKED=1 \
+        bash tests/wp-phpunit/run.sh truffle > "$out/wp-run.txt" 2>&1 || true
+    fi
+    # compare.py prints a summary; the frozen fail-set's NEW and AGREES lines are only in --out (wp-report.txt)
     python tests/wp-phpunit/compare.py diff $runs/php-all-chunked $runs/truffle-$s-chunked \
       --frozen tests/wp-phpunit/wordpress.failset.tsv --out "$out/wp-report.txt" > "$out/wp.txt" 2>&1 || true
-    $PY "$here/results.py" wp "$s" "$out/wp.txt" --level L1
-    if grep -q '^ *NEW ' "$out/wp.txt"; then
+    $PY "$here/results.py" wp "$s" "$out/wp-report.txt" --level L1
+    if grep -q '^ *NEW ' "$out/wp-report.txt"; then
       # triage (wp_triage.py): the classes with a new difference again, on this build with and without JAVA_OPTS,
       # and on the base; then a cause per test
       local selected filter chunks
-      selected=$($PY "$here/wp_triage.py" select "$out/wp.txt" target/wp-phpunit/wordpress-develop)
+      selected=$($PY "$here/wp_triage.py" select "$out/wp-report.txt" target/wp-phpunit/wordpress-develop)
       filter=$(sed -n 1p <<< "$selected") chunks=$(sed -n 2p <<< "$selected")
       build "$base"
       rerun() { # RUN SHA JAVA_OPTS [PHPUNIT ARGS...]: the selected chunks again
@@ -216,7 +220,7 @@ l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
         rerun truffle-$s-base-$base$suffix "$base" "" "$@"
       }
       three "" --filter "$filter"
-      $PY "$here/wp_triage.py" classify "$out/wp.txt" $runs/php-all-chunked $runs/truffle-$s-again "$noopts" \
+      $PY "$here/wp_triage.py" classify "$out/wp-report.txt" $runs/php-all-chunked $runs/truffle-$s-again "$noopts" \
         $runs/truffle-$s-base-$base > "$out/wp-triage-classes.tsv"
       # stage 2: a test that passed in its class alone may depend on what earlier tests of its process leave; its
       # whole suite entries again, unfiltered (the full run's order and state), before it may be called unstable
