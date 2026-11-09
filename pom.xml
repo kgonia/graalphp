@@ -38,12 +38,12 @@
             <version>${graalvm.version}</version>
             <scope>runtime</scope>
         </dependency>
-        <!-- CPU sampler (polyglot.cpusampler) for finding where PHP time goes -->
+        <!-- CPU sampler (polyglot.cpusampler) for finding where PHP time goes; compile scope for the launcher's
+             GuestSampler (a server's steady-state profile) -->
         <dependency>
             <groupId>org.graalvm.tools</groupId>
             <artifactId>profiler-tool</artifactId>
             <version>${graalvm.version}</version>
-            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

@@ -93,6 +93,7 @@ public final class FastCgiMain {
         server.bind(address, 511);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         HeapProbe.startIfAsked();
+        GuestSampler.startIfAsked(engine);
         if (Phases.ENABLED) {
             RequestPhases.printStart();
         }
@@ -111,6 +112,7 @@ public final class FastCgiMain {
             } catch (IOException | InterruptedException e) {
                 System.err.println("closing: " + e);
             }
+            GuestSampler.writeIfRunning();
             engine.close(true);
             System.exit(0);
         };

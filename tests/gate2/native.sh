@@ -438,14 +438,21 @@ load() { # rounds variants...
 # splitting and the engine's statistics); the engine's log goes to $out/diag/TAG/engine.log, the server's output to
 # server.log, the k6 run to $out/load/TAG-diag.*. At the end the server closes its engine (php.http.closeFile),
 # which prints what an engine prints at its close (CompilationStatistics, TraceSplittingSummary); nginx stays.
-# Report: tests/gate2/pe4_report.py $out/diag/TAG/engine.log compile|splits|deopts|kinds.
+# Report: tests/gate2/pe4_report.py $out/diag/TAG/engine.log compile|splits|deopts|kinds; with SAMPLE_WARM, guest.txt.
 diag() { # tag duration [variant]
   local tag=$1 duration=$2 variant=${3:-jvm-fcgi} dir=$out/diag/$1 opts i
   opts=${DIAG_OPTS:-"-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationStatistics=true -Dpolyglot.engine.SplittingTraceEvents=true -Dpolyglot.engine.TraceSplitting=true -Dpolyglot.engine.TraceSplittingSummary=true -Dpolyglot.engine.CompilationFailureAction=Print"}
   rm -rf "$dir" && mkdir -p "$dir"
   stop "$variant"
   reset_db
+  # SAMPLE_WARM: the PHP stacks sampled at steady state (launcher.GuestSampler) after that much of the load, into
+  # guest.txt (the default traces are then off unless DIAG_OPTS gives them)
+  [ -z "${SAMPLE_WARM:-}" ] || opts="${DIAG_OPTS:-} -Dphp.sample.out=/out/guest.txt"
   OUT_DIR=$dir JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close $opts ${JAVA_OPTS:-}"     start "$variant" "${DIAG_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  if [ -n "${SAMPLE_WARM:-}" ]; then
+    load_run "$variant" "${VUS:-8}" "$SAMPLE_WARM" "$tag-warm"
+    touch "$dir/guest.txt.start"
+  fi
   load_run "$variant" "${VUS:-8}" "$duration" "$tag-diag"
   # the engine closes after the next PHP request (a static file is nginx's), then the server exits
   touch "$dir/close"
