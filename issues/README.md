@@ -83,3 +83,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [077](077-prelude-classes-show-internals.md) | Prelude SPL classes show their implementation in dumps and reflection | Open |
 | [078](078-ob-start-chunk-size.md) | `ob_start`'s chunk size is ignored | Open |
 | [079](079-object-ids-not-reused.md) | Object ids are never reused | Open |
+| [080](080-recursion-depth.md) | Recursion a few hundred calls deep overflows the Java stack | Open |
+| [081](081-yield-from-aggregate-generator.md) | `yield from` an IteratorAggregate whose iterator is a generator stops after its first element | Open |

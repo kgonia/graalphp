@@ -71,6 +71,47 @@ uses it:
   context only while it is single-threaded.
 - The gate keeps virtual threads or switches to platform threads.
 
+**Step 1 results (2026-11-09, commit 064367a).** The tracer bullet runs: `start`, `suspend`, `resume`, `throw`,
+`getReturn`, `getCurrent`, the `is*` predicates, named arguments, exceptions both ways, deep stacks, and the
+request's end destroying suspended fibers (their finally blocks run). `Zend/tests/fibers`: 58 of 103 pass. The
+failures fall into the later steps:
+- a fiber destroyed when its last reference goes (`unset`, `= null`; `destructors_*`, `unfinished-fiber-*`,
+  `gh9735-*`): step 4;
+- traces (`debug-backtrace`): step 5;
+- a fiber suspended inside a generator (`gh15108-*`): `yield from` an IteratorAggregate whose iterator is a
+  generator never resumes it, without fibers too (081); `gh9916-*` still to look at;
+- `new FiberError` must throw, and the `fiber.stack_size` ini (`gh10249`): step 2;
+- `register_tick_function` is missing (`ticks`), outside 031.
+
+Measured in containers on the WSL VM (its E-cores), single runs, JVM (GraalVM 25.4): orders of magnitude, not an
+A/B.
+
+| | PHP 8.5 | Truffle PHP |
+|---|---|---|
+| suspend and resume, one fiber in a loop | 52-60 ns | 1.8 us |
+| a fiber created, started and finished | 7.7 us | 19-30 us |
+| 10,000 fibers suspended at once: start each | 16 us | 290 us |
+| the same: resume each to its end | 7 us | 110 us |
+| the same: peak memory (cgroup) | 142 MB | 325 MB |
+
+- **Parking on each hand-over cost 49 us a round trip**: waking a parked thread goes through the OS, slow in the VM.
+  The waiter now spins for 20 us before it parks (`FiberGate`), which keeps a busy fiber's hand-overs off the OS.
+  Without the spin, virtual threads alone took 7 us.
+- **Running the request on a virtual thread too didn't help** (1.5 us with the spin), so the launchers keep
+  platform threads.
+- **A long-suspended fiber still costs two wake-ups** (its carrier's and the caller's), which the 10,000-fiber rows
+  show. Truffle also checks every thread of the context each time one is added (`checkAllThreadAccesses`), which
+  is linear in the live fibers; `isThreadAccessAllowed` answers from a concurrent set to keep that cheap.
+- **Stack depth:** a fiber reaches the depth `-Xss` allows, as the main thread does. On the default 1 MB stack
+  both overflow within a few hundred to two thousand calls, a problem without fibers too (080).
+- **Decision:** virtual threads stay. Platform threads would have the same wake-ups and a reserved stack each.
+
+Still open from step 1:
+- L2 on a server after a request that used a fiber (the engine-wide assumption);
+- the same numbers on the native image;
+- `BatchMain`'s `close(true)` with a fiber suspended;
+- the 65535-thread limit per context.
+
 **Step 2: the full API as an explicit state machine.**
 - States as an enum: php-src's INIT, RUNNING, SUSPENDED, DEAD, with its flags THREW, BAILOUT and DESTROYED (the
   fiber was force-closed).
