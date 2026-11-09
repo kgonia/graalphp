@@ -25,7 +25,8 @@
 #   interleaved and each round's order reversed, every run on a server just started and a database just reset.
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
-#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | images | clean
+#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | load ROUNDS VARIANT... | images
+#        | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -373,6 +374,62 @@ measure() { # rounds visits pause variants...
   done
 }
 
+# One k6 run of tests/gate2/wp-load.js (CPUs 0-5) against the server at $NET.10, VUS users for DURATION, the
+# server's container sampled meanwhile (woo_sample.py, CPUs 0-5): $out/load/NAME.k6.json, .k6.log, .sample.json.
+load_run() { # variant vus duration name
+  local variant=$1 vus=$2 duration=$3 name=$4 dir=$out/load sampler
+  mkdir -p $dir && rm -f $dir/$name.* $dir/stop
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-sampler --cpuset-cpus 0-5 --pid=host --cgroupns=host \
+    -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
+    python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json > $dir/$name.sampler.log 2>&1 &
+  sampler=$!
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-k6 --cpuset-cpus 0-5 --network $P-net \
+    -v "$root/tests/gate2:/scripts:ro" -v "$root/$dir:/out" -e BASE=http://$NET.10:8080 -e VUS=$vus \
+    -e DURATION=$duration -e SUMMARY=/out/$name.k6.json grafana/k6:1.3.0 run -q --no-color \
+    /scripts/wp-load.js > $dir/$name.k6.log 2>&1 || true
+  touch $dir/stop
+  wait $sampler || true
+  python -I tests/gate2/wp_load_report.py line "$dir/$name"
+}
+
+# load ROUNDS VARIANT...: concurrent visitors through nginx. Per round and variant (the order reversed every other
+# round) one server's life on CPUs 14-21, holding the CPU lock (/c/Users/krzgo/Projects/.cpu-14-21.lock): started on
+# the seeded database with WPN_THREADS workers (set it for the run, e.g. 8), warmed up by WARM of k6 at the highest
+# level (default 300s, php-fpm's 60s), then DURATION (default 60s) of k6 at each of LEVELS (default "1 8 16") users.
+# Runs: $out/load/VARIANT-rROUND-LEVEL.*; the table by `wp_load_report.py table $out/load OUT`.
+load() { # rounds variants...
+  local rounds=$1 r i order variant level warm levels=(${LEVELS:-1 8 16})
+  shift
+  local variants=("$@") n=$#
+  local lock=/c/Users/krzgo/Projects/.cpu-14-21.lock
+  for r in $(seq "$rounds"); do
+    if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
+    for i in $order; do
+      variant=${variants[$i]}
+      [ "$variant" = fpm ] && warm=${FPM_WARM:-60s} || warm=${WARM:-300s}
+      until mkdir $lock 2> /dev/null; do
+        echo "CPUs 14-21 are taken: $(cat $lock/* 2> /dev/null | head -1); waiting"; sleep 60
+      done
+      echo "claude-wordpress-$P ($(basename "$root")): native.sh load $variant round $r, since $(date '+%F %T')" \
+        > $lock/note
+      trap 'rm -rf /c/Users/krzgo/Projects/.cpu-14-21.lock' EXIT
+      while ! host_quiet; do sleep 30; done
+      stop "$variant"
+      reset_db
+      start "$variant" 14-21 ${WPN_MEASURE_PORT:-8096}
+      load_run "$variant" "${levels[-1]}" "$warm" "$variant-r$r-warm"
+      for level in "${levels[@]}"; do
+        load_run "$variant" "$level" "${DURATION:-60s}" "$variant-r$r-$level"
+      done
+      docker logs $P-$variant > $out/load/$variant-r$r.server.log 2>&1
+      stop "$variant"
+      rm -rf $lock
+      trap - EXIT
+    done
+  done
+}
+
 # the deployment variants' images: php-fpm behind nginx, Truffle PHP's FastCGI server behind the same nginx
 images() {
   docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm/Dockerfile tests/gate2/woo-fpm
@@ -396,6 +453,7 @@ case ${1:-} in
   pages) pages "$2" "$3" ;;
   compare) compare "$2" "$3" ;;
   measure) shift; measure "$@" ;;
+  load) shift; load "$@" ;;
   images) images ;;
   clean) clean ;;
   *) sed -n 2,20p "$0"; exit 2 ;;
