@@ -28,15 +28,30 @@ samples.
 **Fixed:**
 - `global $x`: 1ff0501, a per-context `PhpRef[]` by the name's language id.
 - function declarations: dc4c494, the PhpFunction's lowercase name and id made once, the check by slot.
+- string callbacks: a0085e6, the generic path resolves the name as written through one language-level map (name
+  to function id, 65536 names at most), then the context's slot (tests/smoke/callable-names.php).
+- class constants: 901b81e, one lookup of the entry; the access check only for a class with a constant that is not
+  public. The site's cache by ClassKey is not done.
+
+**Measured (2026-11-09, `native.sh load`, 3 rounds, 12-minute warm-up, the `global` and declaration fixes against
+their base):** no gain outside the noise.
+
+| variant | users | pages/s (range) | p50 ms | CPU-ms/page | memory.peak MB (range) |
+|---|---|---|---|---|---|
+| base | 1 | 13.2 (9.4-13.6) | 74 | 72 | 2053 (1982-2103) |
+| names | 1 | 12.5 (11.6-13.7) | 78 | 73 | 1979 (1878-2193) |
+| base | 8 | 60.7 (53.3-66.7) | 120 | 115 | 2053 (1982-2103) |
+| names | 8 | 54.5 (52.8-81.2) | 115 | 128 | 1979 (1878-2193) |
+
+The rounds' ranges are wider than the 6% the two fixes could give at best, and the samples' shares are lower bounds
+of time under a profiler, not of the request's time. So these fixes are kept for what they are (fewer lookups, no
+behaviour change), and the request's time is looked for elsewhere: [wiki/beat-php.md](../wiki/beat-php.md).
 
 **To do**, in the order of the table:
 - class declarations: link a class's language-level parts once per ClassKey (methods table, interfaces, checks),
   per context only what is the context's (statics, constants' values, the PhpClass itself) — php-src's opcache
   keeps linked classes immutable in shared memory and a request only inserts them into its class table.
-- string callbacks: the generic path resolves a TruffleString name through one language-level map (name to
-  function id), then the context's slot.
-- class constants: one lookup (the value, the access check only for a class with restricted constants), then a
-  site's cache by ClassKey of the constant's index in a per-class array.
+- class constants: a site's cache by ClassKey of the constant's index in a per-class array.
 - PCRE: a site with a constant pattern keeps its compiled pattern (language-level, immutable).
 - `static $x`, method visibility: as `global`.
 

@@ -26,7 +26,7 @@
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
 #        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | load ROUNDS VARIANT... | images
-#        | diag TAG DURATION [VARIANT] | clean
+#        | diag TAG DURATION [VARIANT] | k8 ROUNDS VARIANT... | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -97,6 +97,7 @@ volume() {
   cp tests/gate2/wp-config.php target/gate2/wordpress/wp-config.php
   mkdir -p target/gate2/wordpress/wp-content/mu-plugins
   cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
+  cp tests/gate2/k8-plugin.php target/gate2/wordpress/wp-content/mu-plugins/k8-plugin.php
   MSYS_NO_PATHCONV=1 CPUSET=${WPN_AUX_CPUS:-0-5} bash bench/gate1/php.sh php tools/ast-export.php target/ast \
     target/gate2/wordpress/wp-config.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php > /dev/null
   docker volume create $P-site > /dev/null
@@ -432,6 +433,60 @@ load() { # rounds variants...
   done
 }
 
+# One user's K8 requests against a running server (tests/gate2/k8_drive.py, CPUs 0-5): per page of K8_PAGES,
+# K8_PLAIN (default 200) requests of the page itself, then K8_REQUESTS (default 100) with k8=K8_N (default 10: the
+# request's phases and that many renders inside it, tests/gate2/k8-plugin.php), into $out/k8/NAME.k8.json.
+k8_run() { # variant name
+  local variant=$1 name=$2 dir=$out/k8 pages=(${K8_PAGES:-/ /?p=1 /?page_id=2 /?cat=1 /?s=hello})
+  mkdir -p $dir && rm -f $dir/$name.k8.*
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-k8 --cpuset-cpus 0-5 --network $P-net --cgroupns=host \
+    -e K8_EXTRA="${K8_EXTRA:-}" -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
+    python -u /t/k8_drive.py $NET.10:8080 /out/$name.id /out/$name.k8.json ${K8_PLAIN:-200} ${K8_REQUESTS:-100} \
+    ${K8_N:-10} "${pages[@]}" > $dir/$name.k8.log 2>&1 || { tail -5 $dir/$name.k8.log; return 1; }
+  echo "$name: $(grep -c . $dir/$name.k8.log) blocks, $(tail -1 $dir/$name.k8.log)"
+}
+
+# k8 ROUNDS VARIANT...: where a request's time goes on each engine, and the engines on WordPress's rendering code
+# alone (wiki/beat-php.md). Per round and variant (the order reversed every other round) one server's life on CPUs
+# 14-21 under the CPU lock, as load's: started on the seeded database, warmed up by WARM of k6 at K8_WARM_VUS (default
+# 8) users (default 300s, php-fpm's 60s), then k8_run at one user. The table by
+# `k8_report.py $out/k8 OUT VARIANT...`. K8_CPUS (default 14-21) with K8_NOLOCK=1: a trial run off the benchmark
+# cores, without the lock.
+k8() { # rounds variants...
+  local rounds=$1 r i order variant warm
+  shift
+  local variants=("$@") n=$#
+  local lock=/c/Users/krzgo/Projects/.cpu-14-21.lock
+  for r in $(seq "$rounds"); do
+    if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
+    for i in $order; do
+      variant=${variants[$i]}
+      [ "${variant%%.*}" = fpm ] && warm=${FPM_WARM:-60s} || warm=${WARM:-300s}
+      if [ -z "${K8_NOLOCK:-}" ]; then
+        until mkdir $lock 2> /dev/null; do
+          echo "CPUs 14-21 are taken: $(cat $lock/* 2> /dev/null | head -1); waiting"; sleep 60
+        done
+        echo "claude-wordpress-$P ($(basename "$root")): native.sh k8 $variant round $r, since $(date '+%F %T')" \
+          > $lock/note
+        trap 'rm -rf /c/Users/krzgo/Projects/.cpu-14-21.lock' EXIT
+        while ! host_quiet; do sleep 30; done
+      fi
+      stop "$variant"
+      reset_db
+      start "$variant" "${K8_CPUS:-14-21}" ${WPN_MEASURE_PORT:-8096}
+      load_run "$variant" "${K8_WARM_VUS:-8}" "$warm" "k8-$variant-r$r-warm"
+      k8_run "$variant" "$variant-r$r"
+      docker logs $P-$variant > $out/k8/$variant-r$r.server.log 2>&1
+      stop "$variant"
+      if [ -z "${K8_NOLOCK:-}" ]; then
+        rm -rf $lock
+        trap - EXIT
+      fi
+    done
+  done
+}
+
 # diag TAG DURATION [VARIANT]: a diagnosis run, not timed (wiki/pe-round4-diagnosis.md): one server's life of
 # VARIANT (default jvm-fcgi) on DIAG_CPUS (default 6-13, off the benchmark cores) with WPN_THREADS workers, under k6
 # at VUS (default 8) users for DURATION. JAVA_OPTS carries the trace options (DIAG_OPTS: by default compilation,
@@ -490,6 +545,8 @@ case ${1:-} in
   compare) compare "$2" "$3" ;;
   measure) shift; measure "$@" ;;
   load) shift; load "$@" ;;
+  k8) shift; k8 "$@" ;;
+  k8-run) k8_run "$2" "$3" ;;
   diag) shift; diag "$@" ;;
   images) images ;;
   clean) clean ;;
