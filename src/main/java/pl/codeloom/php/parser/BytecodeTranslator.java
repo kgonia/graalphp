@@ -1950,7 +1950,22 @@ public final class BytecodeTranslator {
                 labelScopes.clear();
                 labelScopes.addAll(labelsAround);
                 labelScopesOutsideFinally = labelsAround.size();
-                statements(finallyBody);
+                if (entering != null && gotoTo(finallyBody, entries.keySet())) {
+                    // a goto out of the try waits in entering while the finally runs: the finally's own gotos
+                    // keep it aside, as php-src's finally keeps the pending jump in its fast_call variable
+                    b.beginBlock();
+                    BytecodeLocal pendingEntry = b.createLocal();
+                    b.beginStoreLocal(pendingEntry);
+                    b.emitLoadLocal(entering);
+                    b.endStoreLocal();
+                    statements(finallyBody);
+                    b.beginStoreLocal(entering);
+                    b.emitLoadLocal(pendingEntry);
+                    b.endStoreLocal();
+                    b.endBlock();
+                } else {
+                    statements(finallyBody);
+                }
                 loopsOutsideFinally = outside;
                 labelScopesOutsideFinally = labelsOutside;
                 loops.clear();
