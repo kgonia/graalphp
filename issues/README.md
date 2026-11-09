@@ -55,3 +55,6 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [049](049-missing-extensions-wp-suite.md) | Extensions and built-ins that WordPress's test suite needs and the runtime lacks | Open |
 | [050](050-launcher-stdin-slf4j.md) | The launcher can't run a script from stdin; every JVM prints an SLF4J notice on stderr | Open |
 | [051](051-wp-suite-undiagnosed.md) | WordPress PHPUnit suite: differences not diagnosed yet | Open |
+| [052](052-ref-append-self.md) | `$r[] = $a`, with `$r` a reference to `$a`, appends a copy instead of the array itself | Open |
+| [053](053-destructor-backtrace-returning-frame.md) | A destructor that a function's return runs sees the returning function in its backtrace | Open |
+| [054](054-rc-verify-moved-temporaries.md) | `-Dphp.rc.verify` reports moved arguments as reachable from the caller's temporary | Open (check tool) |

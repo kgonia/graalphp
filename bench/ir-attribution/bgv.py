@@ -259,6 +259,11 @@ def read(path):
                 title = fmt % tuple(args) if args else fmt
             except (TypeError, ValueError):
                 title = fmt
-            yield list(groups), title, r.graph_body()
+            try:
+                body = r.graph_body()
+            except struct.error:
+                # the dump's last graph, cut off when the JVM exited while writing it
+                return
+            yield list(groups), title, body
         else:
             raise ValueError(f'record type {t} at {r.i - 1}')

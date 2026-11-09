@@ -211,6 +211,8 @@ go to `target/fuzz/`.
 | 2026-11-08, 1183d27: fuzzer seed 1000, 1000 programs, all features | 999 match, no early destructor |
 | 2026-11-08, 1183d27: fixtures `tests/rcaudit/*` against PHP 8.5 with and without OPcache | all lines match one of the two (see the reference note below) |
 | 2026-11-08, 1183d27: count audit on Gate 2's WordPress | no group left |
+| 2026-11-09, c4b04cb (`deep` flag): fuzzer seed 1000, 1000 programs | 999 match; p1741 is issue 052 (not destructors, on main too) |
+| 2026-11-09, c4b04cb: count audit and verify (every 20th zero) on Gate 2's WordPress | no group, 0 reports |
 
 Performance against `main` hasn't been measured on this branch. `CompilationTest`'s IR budgets fail, as on
 prototype A.
@@ -219,9 +221,11 @@ prototype A.
 print. Three checks don't depend on that:
 1. **Verify at zero** (`-Dphp.rc.verify=true`, `php.rc.verify.every=n`). When an object's count reaches zero, the
    census looks for a counted holder that still reaches it (`Census.heldAtZero`). It reports `rc-verify: EARLY
-   ... via PATH`, and every report is a bug. For it to be exact, a slot is cleared before its old value is
-   released, at every release-then-clear site, as php-src does (`unset` was the last one). Results: fuzzer seed
-   1000, every zero checked, 0 reports; Gate 2's WordPress, every 20th zero, 0 reports.
+   ... via PATH`. For it to be exact, a slot is cleared before its old value is released, at every
+   release-then-clear site, as php-src does (`unset` was the last one). One exception is left: an argument moved
+   into a call is still in the caller's hidden temporary, so a zero in the callee reports `via ... local N` with no
+   variable name (issue 054). Every other report is a bug. Results: fuzzer seed 1000, every zero checked: 51
+   reports on 1183d27 and on c4b04cb, all from moved arguments; Gate 2's WordPress, every 20th zero, 0 reports.
 2. **php-src's rule per opcode.** A destructor runs where an opcode frees a TMP or VAR operand (FREE_OP), or
    where a moved one dies. The fixtures follow those rules rather than programs:
    - `tests/rcaudit/opcodes.php`: one case per opcode with a temporary operand, with markers before and after;
