@@ -66,7 +66,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [060](060-abandoned-generator-cleanup.md) | A generator destroyed while suspended doesn't undo its frame's state (`@`, foreach) | Open |
 | [061](061-arrayiterator-snapshot.md) | `ArrayIterator` walks a snapshot of its keys, so `offsetUnset` and `offsetSet` during foreach are missed | Open |
 | [062](062-directoryiterator-entry-path.md) | `DirectoryIterator`'s `SplFileInfo` methods describe the first entry | Open |
-| [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Open |
+| [063](063-include-once-missing-file.md) | `include_once` of a missing file throws an Error instead of warning and returning false | Fixed |
 | [064](064-var-dump-recursion-guard.md) | `var_dump` from inside `__debugInfo` crashes the JVM instead of printing `*RECURSION*` | Fixed |
 | [065](065-flock-dropped-handle.md) | A lock held by a handle that went out of scope is never released | Open |
 | [066](066-array-walk-reassigned.md) | `array_walk` keeps walking the array it started with after the callback replaces it | Open |

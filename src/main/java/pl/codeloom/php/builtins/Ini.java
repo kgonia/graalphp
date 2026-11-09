@@ -66,6 +66,8 @@ public final class Ini {
         directives.put("highlight.string", new Directive("#DD0000", ALL));
         directives.put("html_errors", new Directive("1", ALL));
         directives.put("ignore_repeated_errors", new Directive("0", ALL));
+        // PHP_INCLUDE_PATH of a build with the default prefix; the runtime looks in "." only (IncludeNode.located)
+        directives.put("include_path", new Directive(".:/usr/local/lib/php", ALL));
         directives.put("ignore_repeated_source", new Directive("0", ALL));
         directives.put("log_errors", new Directive("0", ALL));
         directives.put("mail.add_x_header", new Directive("0", SYSTEM | PERDIR));
