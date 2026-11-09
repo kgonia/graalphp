@@ -1,6 +1,7 @@
 # 031: No Fiber class
 
-**State:** Open. Plan written 2026-11-09 (below); nothing implemented yet.
+**State:** In progress on branch `fiber` (2026-11-09): steps 1, 2 and 4 done in part, `Zend/tests/fibers` at 68
+of 103 (Status below).
 
 **Symptom:** `new Fiber(fn() => ...)` is "Class "Fiber" not found". With named arguments, `Fiber::start(b: 'B')`
 passes the names on to the fiber's function (Z_PARAM_VARIADIC_WITH_NAMED; `tests/smoke/named-args-fiber.php`,
@@ -111,6 +112,32 @@ Still open from step 1:
 - the same numbers on the native image;
 - `BatchMain`'s `close(true)` with a fiber suspended;
 - the 65535-thread limit per context.
+
+**Status after step 4's first part (2026-11-09, 2190670).** 68 of 103, the same over repeated runs, with no hangs:
+- done: `FiberError::__construct` and `fiber.stack_size` (step 2); a suspended fiber destroyed at its last
+  reference (step 4: `unfinished-fiber-*`);
+- the 23 about garbage cycles need the cycle collector, which this runtime doesn't have yet (005, 036): an object
+  that references itself never gets its destructor, fibers or not (`destructors_*`, `gc-cycle-*`, `gh9735-*`,
+  `gh10340-003`, `gh10496-001`, `oss-fuzz-*`);
+- 6 are 081 (`gh15108-*`);
+- `gh9916-*`: a fiber destroyed while suspended inside generators (an outer generator's finally runs that PHP's
+  doesn't, and "Cannot resume an already running generator");
+- `throw-in-multiple-destroyed-fibers-after-shutdown`: when two fibers throw while destroyed, which exception
+  surfaces differs;
+- `debug-backtrace` (step 5) and `ticks` (`register_tick_function`, outside 031).
+
+**Closing a context with fibers, Truffle 25.4.** exit() and a fatal error close the context through
+`closeExited`, and a cancel through `close(true)`. While another thread of the context is still active, Truffle
+does that on a cleanup thread, and that thread deadlocks against the embedder's own `close()`: the context's
+monitor and its cancel lock are taken in opposite orders. A thread dump caught it in `BatchMain`. What avoids it:
+- the request's end waits for its fibers' threads to end (`PhpFiber.join`), so `closeExited` closes on the
+  calling thread;
+- a context that started a fiber admits any thread until it is disposed: Truffle's cleanup thread enters it to
+  finish the close. `isThreadAccessAllowed` isn't told which context it is asked about, so while any context has
+  fibers, every context admits threads;
+- an embedder closes a context once: `BatchMain` from the script's thread or from the timeout's cancel, whichever
+  comes first. `HttpMain` and `PhpMain` have no cancel. `exit()` inside a fiber still closes from the fiber's thread
+  with the caller's thread blocked: to fix with 073's unwinding exit.
 
 **Step 2: the full API as an explicit state machine.**
 - States as an enum: php-src's INIT, RUNNING, SUSPENDED, DEAD, with its flags THREW, BAILOUT and DESTROYED (the
