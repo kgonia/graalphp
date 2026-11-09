@@ -135,8 +135,8 @@ public final class BytecodeTranslator {
     private LocalAccessor extraArgumentsLocal;
     /** A variadic function's (and its defaults target's) hidden local for the named extras (NamedExtras), or -1. */
     private int namedExtrasOffset = -1;
-    /** The foreach loops' state locals, as the first run met them. */
-    private final List<LocalAccessor> foreachStates = new ArrayList<>();
+    /** The live ranges' locals (PhpBytecodeRootNode.liveRanges): foreach loops' and `@`'s, as the first run met them. */
+    private final List<LocalAccessor> liveRanges = new ArrayList<>();
     /** The hidden locals of owning temporaries (Run.temporary), made by the first run. */
     private final List<LocalAccessor> temporaries = new ArrayList<>();
     /** Which of them hold an argument the call takes (Run.argumentTemporary). */
@@ -214,7 +214,7 @@ public final class BytecodeTranslator {
         }
         root.initialize(display, path, internal, translator.functionSection(), params, parameterLocals,
                 Translator.checkedReturn(function, generator), translator.variableLocals,
-                translator.foreachStates.toArray(new LocalAccessor[0]),
+                translator.liveRanges.toArray(new LocalAccessor[0]),
                 owner == null ? null : owner.name());
         root.initializeNames(translator.variableNames, translator.scopeLocal);
         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
@@ -257,7 +257,7 @@ public final class BytecodeTranslator {
         }
         root.initialize(path, path, internal, source == null ? null : source.createSection(0, source.getLength()),
                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
-                translator.foreachStates.toArray(new LocalAccessor[0]), null);
+                translator.liveRanges.toArray(new LocalAccessor[0]), null);
         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
                 translator.movedArguments(), translator.extraArgumentsLocal,
                 translator.uncountedOffsets());
@@ -335,7 +335,7 @@ public final class BytecodeTranslator {
                                 translator::parse).getNode(0);
                         root.initialize(display, path, internal, translator.functionSection(),
                                 new PhpFunction.Param[0], new int[0], null, new LocalAccessor[0],
-                                translator.foreachStates.toArray(new LocalAccessor[0]),
+                                translator.liveRanges.toArray(new LocalAccessor[0]),
                                 owner == null ? null : owner.name());
                         root.initializeTemporaries(translator.temporaries.toArray(new LocalAccessor[0]),
                                 translator.movedArguments(), translator.extraArgumentsLocal,
@@ -1787,7 +1787,7 @@ public final class BytecodeTranslator {
             BytecodeLocal state = b.createLocal();
             BytecodeLocal position = b.createLocal();
             if (firstRun) {
-                foreachStates.add(LocalAccessor.constantOf(state));
+                liveRanges.add(LocalAccessor.constantOf(state));
             }
             b.beginForeachStart(state, position);
             expression(node.get("expr"));
@@ -1851,7 +1851,7 @@ public final class BytecodeTranslator {
             b.beginBlock();
             BytecodeLocal state = b.createLocal();
             if (firstRun) {
-                foreachStates.add(LocalAccessor.constantOf(state));
+                liveRanges.add(LocalAccessor.constantOf(state));
             }
             b.beginForeachRefStart(state);
             foreachRefSubject(node.get("expr"));
@@ -3827,11 +3827,10 @@ public final class BytecodeTranslator {
             b.beginStoreLocal(saved);
             b.emitSilenceStart();
             b.endStoreLocal();
-            b.beginTryFinally(() -> {
-                b.beginSilenceEnd();
-                b.emitLoadLocal(saved);
-                b.endSilenceEnd();
-            });
+            if (firstRun) {
+                liveRanges.add(LocalAccessor.constantOf(saved));
+            }
+            b.beginTryFinally(() -> b.emitSilenceEnd(saved));
             b.beginStoreLocal(value);
             expression(operand);
             b.endStoreLocal();

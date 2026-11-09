@@ -238,8 +238,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @CompilationFinal private LocalAccessor extraArguments;
     /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesMoved = new boolean[0];
-    /** The hidden locals in which foreach loops keep what they iterate (an array they hold), cleared at the end. */
-    @CompilationFinal(dimensions = 1) private LocalAccessor[] foreachStates;
+    /**
+     * The live ranges (php-src's op_array live_range): hidden locals an unfinished statement holds state in, which a
+     * frame left without finishing it (a generator destroyed while suspended, an internal exception) must undo. A
+     * foreach loop's what it iterates (an array it holds, an iteration); `@`'s error_reporting before it (an int).
+     * Each is cleared when its statement ends.
+     */
+    @CompilationFinal(dimensions = 1) private LocalAccessor[] liveRanges;
     /** The class the function is declared in (a method's, a trait's user), or null; and its lowercase name. */
     @CompilationFinal private String className;
     @CompilationFinal private String scopeName;
@@ -326,7 +331,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** What the translator knows of the function, set once its bytecode is built (a reparse keeps it). */
     public void initialize(String functionName, String file, boolean internalCode, SourceSection section,
                     PhpFunction.Param[] parameters, int[] parameterOffsets, PhpType returns,
-                    LocalAccessor[] variableLocals, LocalAccessor[] foreachLocals, String declaringClass) {
+                    LocalAccessor[] variableLocals, LocalAccessor[] liveRangeLocals, String declaringClass) {
         this.name = functionName;
         this.path = file;
         this.internal = internalCode;
@@ -336,7 +341,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         this.returnType = returns;
         this.variables = variableLocals;
         this.releasedVariables = new byte[variableLocals.length];
-        this.foreachStates = foreachLocals;
+        this.liveRanges = liveRangeLocals;
         this.className = declaringClass;
         this.scopeName = declaringClass == null ? null : Str.lower(declaringClass);
         this.closure = functionName.startsWith("{closure");
@@ -668,19 +673,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     }
 
     /**
-     * The variables and the running foreach loops let go of what they hold: on an internal exception, and when a
-     * suspended generator's frame is freed (php-src's zend_generator_close).
+     * The variables let go of what they hold, and the live ranges are undone (php-src's cleanup_live_vars): on an
+     * internal exception, and when a suspended generator's frame is freed (zend_generator_close).
      */
     @Override
     @ExplodeLoop
     public void releaseFrame(VirtualFrame frame, BytecodeNode bytecodeNode) {
         releaseVariables(frame, bytecodeNode);
-        for (LocalAccessor state : foreachStates) {
+        for (LocalAccessor state : liveRanges) {
             if (state.isCleared(bytecodeNode, frame)) {
                 continue;
             }
             Object held = state.getObject(bytecodeNode, frame);
-            if (held instanceof PhpArray array) {
+            if (held instanceof Integer saved) {
+                // ZEND_LIVE_SILENCE: error_reporting as it was before the `@`
+                state.clear(bytecodeNode, frame);
+                UnaryNodes.SilenceNode.end(PhpContext.get(bytecodeNode).ini(), saved);
+            } else if (held instanceof PhpArray array) {
                 state.clear(bytecodeNode, frame);
                 array.removeHolder();
             } else if (held instanceof RefIteration iteration) {
@@ -4152,12 +4161,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
-    /** `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before. */
+    /**
+     * `@expr`'s end (END_SILENCE), however the expression is left: error_reporting as it was before, from the live
+     * range's local, which is then cleared (the `@` is over: a frame abandoned later has nothing to undo).
+     */
     @Operation
+    @ConstantOperand(type = LocalAccessor.class)
     public static final class SilenceEnd {
         @Specialization
-        public static void end(int saved, @Bind Node node) {
-            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), saved);
+        public static void end(VirtualFrame frame, LocalAccessor saved, @Bind BytecodeNode bytecode,
+                               @Bind Node node) {
+            int before = (Integer) saved.getObject(bytecode, frame);
+            saved.clear(bytecode, frame);
+            UnaryNodes.SilenceNode.end(PhpContext.get(node).ini(), before);
         }
     }
 
