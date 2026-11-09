@@ -34,29 +34,35 @@ Truffle 25.4), as TruffleRuby's fibers do:
 
 One commit per step, each with L0 and its own tests.
 
-**Step 0: groundwork, no behaviour change.**
-- `ThreadLocal`s become what a fiber's thread must see the same as its request's thread:
-  - `Phases.CURRENT`: a `ScopedValue` bound for the request (`RequestPhases`, the launchers).
-  - `CurlFunctions.PERSISTENT_SHARES`: a `ScopedValue` bound for the worker's lifetime. `HttpMain`'s pool gets a
-    `ThreadFactory` that binds it and frees the share handles in `finally`, as php-src's module shutdown does.
-    `PhpMain` and `BatchMain` bind it in `main`; an embedder that binds nothing gets one per context. The binding
-    code lives in the runtime, and the launchers call it.
-  - `ByteBuilder.POOL` stays a `ThreadLocal`: it is a cache on a hot path, also used outside requests. A fiber's
-    thread sets it to its request thread's pool, safe because one thread runs at a time.
-- Multi-threaded contexts:
-  - `PhpLanguage.isThreadAccessAllowed` returns true.
-  - The launchers set `allowCreateThread(true)`. Without it `isCreateThreadAllowed()` is false and a fiber can't
-    start. Embedders must set it too; document that.
-- Gate: L0 passes and L2 doesn't regress. Truffle keeps its single-thread assumption until a second thread
-  enters, so no change is expected, but it must be measured.
+**Step 0 was folded into step 1** (2026-11-09). Each part of it turned out to belong with the fiber thread that
+uses it:
+- **The `ThreadLocal`s:** a fiber's thread must see its request thread's `Phases`, persistent curl shares and
+  `ByteBuilder` pool. The fiber's thread takes them over when it starts, and that is a few lines of the fiber's
+  start, not a migration. Binding the persistent shares to the worker through `HttpMain`'s `ThreadFactory` gains
+  nothing: the `ThreadLocal` already lives as long as the worker, and a `Cleaner` already frees the handles when the
+  thread ends (`PersistentShares`). An embedder's threads bind nothing, so the `ThreadLocal` would stay as the
+  fallback anyway.
+- **Thread access:** `isThreadAccessAllowed` should allow a second thread only when it is one of the context's
+  fiber threads, not any thread. A context stays as single-threaded as PHP for embedders, so it goes in with the
+  fibers. The launchers set `allowCreateThread(true)`; embedders must too, which needs documenting.
 
 **Step 1: tracer bullet, the go/no-go gate.**
-- A minimal `Fiber`: `start`, `suspend`, `resume`, `getReturn` on a virtual Truffle thread, with the hand-over.
+- A minimal `Fiber`: `start`, `suspend`, `resume`, `getReturn` on a virtual Truffle thread, with the hand-over,
+  the thread-access check and the takeover of the request thread's thread-local state.
 - Measure against PHP 8.5, time and peak memory:
   - switch and creation cost;
   - 10,000 suspended fibers;
   - deep recursion inside a fiber (stack depth, the stack-overflow error);
   - code compiled by libgraal running on a virtual thread.
+- **The engine-wide cost.** The first time any context gets a second active thread, Truffle invalidates
+  `PolyglotEngineImpl.singleThreadPerContext`, an assumption of the whole engine, and `HttpMain`'s contexts share
+  one engine. Run L2 on a server where one request has used a fiber, against one where none has. If it regresses,
+  the options are a separate engine for fiber requests, or keeping the cost.
+- Truffle 25.4 warns that polyglot contexts on virtual threads are experimental on HotSpot, and that a native image
+  runs each virtual thread on its own platform thread. Caller frames on virtual threads are readable only
+  (`READ_ONLY`), which is all this runtime uses (`Backtrace`, `Callables`, `Census`, `SourceLocation`).
+- Check `BatchMain`'s timeout, which cancels the context with `close(true)`: Truffle allows cancelling an active
+  context only while it is single-threaded.
 - The gate keeps virtual threads or switches to platform threads.
 
 **Step 2: the full API as an explicit state machine.**
@@ -84,6 +90,9 @@ One commit per step, each with L0 and its own tests.
   - `lastCall`;
   - `RecursionGuard`'s depth.
 - Swap the per-stack ones on each hand-over, as `zend_fiber_restore_vm_state` does.
+- The reference-count census (`Census.roots`) walks the current thread's frames for roots. A suspended fiber's
+  locals are roots too, so it must also walk every suspended fiber's frames, which only the fiber's own thread can
+  do. That is the same request to a parked thread as step 5's.
 - Block switching where php-src calls `zend_fiber_switch_block()`: after the request's shutdown
   (`zend_fiber_shutdown`) and in `pcntl`'s signal handlers.
 
@@ -116,6 +125,8 @@ One commit per step, each with L0 and its own tests.
 
 **Risks:**
 - virtual threads under libgraal (step 1 decides);
+- the engine-wide single-thread assumption: one request using a fiber may slow every later request on the same
+  engine (step 1 measures it);
 - the cost of traces inside fibers (step 5);
 - a per-stack field missed in step 3, which would leak state between fibers.
 
