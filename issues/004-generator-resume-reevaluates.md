@@ -1,7 +1,8 @@
 # 004: A resumed generator evaluates the yielding statement again
 
-**State:** Fixed for every generator whose body the bytecode translator covers (2026-11-02, branch
-`bytecode-generators`); open for the few that stay on the tree (below).
+**State:** Fixed. Generators whose body the bytecode translator covered were fixed on 2026-11-02 (branch
+`bytecode-generators`); since #44 (D16, bytecode only) every generator runs on bytecode, and the tree with
+`GeneratorNodes` is deleted. A construct the translator doesn't cover is now a PHP Error, not a fallback.
 
 **Symptom:** side effects in a statement before its `yield` happen twice, and some statements can't hold a yield:
 ```php
@@ -18,7 +19,8 @@ function h() { $log[] = yield; }                                 // the array ta
 - `PhpGenerator` follows `zend_generators.c`: the delegation tree of `yield from`, send targets, throw, rewind and the closed-generator errors, and destruction running `finally` blocks.
 - Tests: `tests/smoke/generators-resume.php` (issue 004's cases, yields in every expression position, `switch`, `match`, foreach by reference and `list()` around a yield) and `tests/smoke/generators-api.php`. Both failed on the tree and pass on bytecode.
 
-**Still on the tree, so still resumed by re-evaluation:** generators that use a construct the bytecode translator doesn't cover. `-Dphp.bytecode.report=all` lists them with the construct. In the inventory (`wiki/bytecode-dsl.md`, S3) these are:
+**History: what stayed on the tree until #44** (#44 implemented these constructs or made them php-src's compile
+error): generators that use a construct the bytecode translator doesn't cover. `-Dphp.bytecode.report=all` lists them with the construct. In the inventory (`wiki/bytecode-dsl.md`, S3) these are:
 - an anonymous class (`new class ... {}`): 3 of php-src's generator tests;
 - a superglobal (`$_GET`) as an argument: 1;
 - an assignment to a property of an expression (`f()->x = v`): 1.

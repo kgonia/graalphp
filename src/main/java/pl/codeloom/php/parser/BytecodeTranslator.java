@@ -55,9 +55,8 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * Translates a function's body into Bytecode DSL bytecode ({@link PhpBytecodeRootNode}), for the constructs it
- * covers; a function using anything else stays on the tree ({@link Translator}), which a report
- * (-Dphp.bytecode.report=true) lists with the reason.
+ * Translates a function's body into Bytecode DSL bytecode ({@link PhpBytecodeRootNode}), the only interpreter. A
+ * construct it doesn't cover raises a PHP Error naming it; there is no fallback.
  *
  * <p>The DSL keeps the parser (this object, through the lambda it gives the DSL) as long as the function's
  * bytecode, to run it again when a location's line is first asked for ({@code ensureSourceInformation}). So it

@@ -436,7 +436,7 @@ Not measured yet: jargraal's time. Its warmup is the known cost. That A/B was st
 
 For a server this is a fixed cost per process, not per request: PHP-FPM pays its ~30 MB for each worker. The comparison that matters for Gate 3 is one JVM serving N concurrent requests against N workers.
 
-### Native image: tried, not better (2026-10-27)
+### Native image: tried, not better (2026-10-27; regex fixed 2026-10-31)
 
 Truffle PHP built as a native standalone with Oracle GraalVM 25 (`native-image`, runtime compilation included; scripts kept in `tests/scratch/native-*.sh`, not committed). It is an 80 MB binary, and it gives the same checksums as PHP on the Gate 1 and K0 kernels. Running it: `PHP_NATIVE=target/native/php` for `bin-php.sh` and `truffle.sh`, or the `ab.sh` variant `native/php`.
 
@@ -449,7 +449,11 @@ Truffle PHP built as a native standalone with Oracle GraalVM 25 (`native-image`,
 - **PHP code is slower** (hooks: 11–12 ms against 9 ms).
 - **Memory is no lower:** hooks over 400 iterations peaked at 881 MB native, and at 1040 MB with `-Xmx256m`, against 695 MB for the JVM at `-Xmx256m`. The limit doesn't cover runtime compilation's memory.
 
-Native image is shelved. It would be worth reopening for startup time (per-request processes), not for throughput or footprint.
+Native image was shelved on 2026-10-27 for throughput and footprint. Since then its regex is fixed (above), and it is
+back in the plan for the cold visit: roadmap step 7 ([roadmap.md](roadmap.md)), with GraalVM 25.5's auxiliary engine
+cache and PGO ([graalvm-25-5.md](graalvm-25-5.md)). With regex fixed it is still slower than the JVM at steady
+state (0.59× on Gate 1) and under load (WooCommerce, [woocommerce.md](woocommerce.md): 0.8 orders/s against the JVM's
+2.1).
 
 ## Roadmap step 4: the steady state on bytecode only (2026-11-04, branch `perf-step4`)
 The base is `bytecode-only` (#44, `fb291f3`) with #46 merged (`ElementIfSetNode` without `@ReportPolymorphism`, the
