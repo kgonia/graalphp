@@ -650,15 +650,30 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public Object getConstant(String constantName) {
-        Object value = constants.get(constantName);
-        if (value instanceof Evaluating evaluating) {
+        return constantValue(constantName, constants.get(constantName));
+    }
+
+    /** The constants map's entry (a value, a Thunk or Evaluating), or null: a read's one lookup (constantValue). */
+    public Object constantEntry(String constantName) {
+        return constants.get(constantName);
+    }
+
+    /** getConstant of the entry constantEntry gave: an initializer runs on the first read. */
+    public Object constantValue(String constantName, Object entry) {
+        if (entry instanceof Evaluating evaluating) {
             return evaluating.thunk().evaluate();
         }
-        if (value instanceof Thunk thunk) {
-            value = thunk.evaluate();
+        if (entry instanceof Thunk thunk) {
+            Object value = thunk.evaluate();
             constants.put(constantName, value);
+            return value;
         }
-        return value;
+        return entry;
+    }
+
+    /** Whether a constant here isn't public: only then does a read check its scope (canAccessConstant). */
+    public boolean hasRestrictedConstants() {
+        return !restrictedConstants.isEmpty();
     }
 
     /**
