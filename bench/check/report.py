@@ -9,7 +9,8 @@ Every check gets one verdict:
   "regressed" (the verdict is "worse"), names fixed are listed too; a count without the base's is reported as is.
 - compiled code (ir): each IR budget's size against the base's, at most 8% more (wiki/destructors.md); a size over
   its budget is listed.
-- wp-phpunit's newly differing tests and the fixtures' lines matching neither PHP must be 0.
+- wp-phpunit's newly differing tests, the fixtures' lines matching neither PHP and the native image's failed build
+  must be 0.
 
 Usage: python -I report.py SHA BASE [--out FILE]
 """
@@ -34,7 +35,7 @@ THRESHOLDS = {
 GATE1_KERNEL = 1.03
 IR_GROWTH = 1.08
 MUST_BE_ZERO = {('wp-phpunit', 'newly differing'), ('fixtures', 'lines matching neither PHP'),
-                ('gate2', 'failed visits')}
+                ('gate2', 'failed visits'), ('native', 'build failing')}
 NAME_SETS = {('smoke', 'failing'), ('phpt', 'failing'), ('fixtures', 'lines matching neither PHP')}
 
 

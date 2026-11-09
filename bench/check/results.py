@@ -11,6 +11,8 @@ Each subcommand reads one existing tool's output and appends its records:
   fixtures SHA FILE           bench/destructors/fixtures.sh's output: lines matching neither PHP behaviour
   surefire SHA DIR            target/surefire-reports: failed tests per class (CompilationTest: IR budgets)
   ir SHA FILE                 mvn test's output: each IR budget's size after partial evaluation (CompilationTest)
+  native SHA LOG BINARY       bench/native/build.sh's log (target/native-build.log) and its image: whether it built,
+                              the runtime-compilation violations that stopped it, the image's size
   wp SHA FILE                 tests/wp-phpunit/compare.py --frozen's output: tests that newly differ
   wptriage SHA FILE           wp_triage.py classify's output: the new differences per cause
   gate1 SHA BASE DIR          bench/gate1/ab.sh's runs (DIR/INDEX-ROUND.txt, BASE index 0, SHA index 1): per kernel
@@ -99,6 +101,20 @@ def fixtures(sha, path):
     names = re.findall(r'^(\S+): (?:line counts differ|.*[1-9]\d* as neither)', text, re.M)
     return [{'sha': sha, 'check': 'fixtures', 'metric': 'lines matching neither PHP', 'value': neither,
              'unit': 'lines', 'names': sorted(set(names))}]
+
+
+def native(sha, log, binary):
+    text = read(log) if os.path.exists(log) else ''
+    built = 'Finished generating' in text and os.path.exists(binary)
+    # each violation: the blocklisted method, or the error line naming what is reachable
+    names = sorted(set(re.findall(r'^Blocklisted method\n\s+(\S+)', text, re.M)
+                       + re.findall(r'^(Error: .+?)(?: from \d+ places)?:?$', text, re.M)))
+    records = [{'sha': sha, 'check': 'native', 'metric': 'build failing', 'value': 0 if built else 1,
+                'unit': 'builds', 'names': names}]
+    if built:
+        records.append({'sha': sha, 'check': 'native', 'metric': 'image size', 'value':
+                        round(os.path.getsize(binary) / 2**20, 1), 'unit': 'MB'})
+    return records
 
 
 def surefire(sha, directory):
@@ -226,7 +242,7 @@ def main():
         i = args.index('--host'); host = json.loads(args[i + 1]); del args[i:i + 2]
     command, rest = args[0], args[1:]
     parsers = {'smoke': smoke, 'phpt': phpt, 'fixtures': fixtures, 'surefire': surefire, 'ir': ir, 'wp': wp,
-               'wptriage': wptriage, 'gate1': gate1,
+               'wptriage': wptriage, 'gate1': gate1, 'native': native,
                'gate2': gate2}
     if command not in parsers:
         print(__doc__)

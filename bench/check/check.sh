@@ -6,8 +6,9 @@
 #                               that L0 and L1 run their tests in (the commit's own tests)
 #   l0 [REF] [--base REF]       ~10 min, no CPU lock: unit tests (IR budgets: CompilationTest), smoke, the destructor
 #                               fixtures (when the commit has them)
-#   l1 [REF] [--base REF]       ~1 h: php-src's .phpt (CPUs 6-13); WP=1 adds WordPress's PHPUnit suite (~2.5 h),
-#                               L1="wp" with WP=1 runs only that
+#   l1 [REF] [--base REF]       ~1 h: php-src's .phpt (CPUs 6-13) and the native image's build (~4 min, CPUs 6-13);
+#                               WP=1 adds WordPress's PHPUnit suite (~2.5 h); L1 names the parts ("phpt native"
+#                               by default, L1="wp" with WP=1 runs only that)
 #   l2 [REF] [--base REF]       ~3 h, timed, on CPUs 14-21 under the CPU lock: Gate 1 (HOLDS x 2 rounds, ITERATIONS)
 #                               and Gate 2 (ROUNDS of VISITS), REF and BASE interleaved
 #   report [REF] [--base REF]   the Markdown report (report.py) to target/check/report-SHA-BASE.md; exit 1 when a
@@ -182,6 +183,23 @@ l1() { # SHA: L1 (default "phpt"; WP=1 adds "wp")
     (cd "$src" && CPUSET=6-13 bash tests/phpt/run.sh > "$WORK/$out/phpt.txt" 2>&1) || true
     $PY "$here/results.py" phpt "$s" "$src/target/phpt" --level L1
     unreserve l1-$s
+  fi
+  if [[ " ${L1:-phpt native} " == *" native "* ]]; then
+    # the native image (bench/native/build.sh, CPUs 6-13): its build checks what runtime compilation reaches (a
+    # node made, a HashMap or a string concatenation in compiled code), which the JVM runs without a complaint; on
+    # main it stopped building from 2026-11-03 to 11-09 unseen. The metadata is WORK's target/native/config
+    # (tests/gate2/native.sh agent's), or none: the build is checked, not the image's run.
+    reserve l1-native-$s 10 40 "L1 of $s (native image on CPUs 6-13)"
+    rm -rf "$src/target/native" && mkdir -p "$src/target/native"
+    if [ -d target/native/config ]; then
+      cp -r target/native/config "$src/target/native/config"
+    else
+      mkdir -p "$src/target/native/config" && echo '{}' > "$src/target/native/config/reachability-metadata.json"
+    fi
+    (cd "$src" && SKIP_AGENT=1 NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http CPUSET=6-13 \
+      bash bench/native/build.sh > "$WORK/$out/native.txt" 2>&1) || true
+    $PY "$here/results.py" native "$s" "$src/target/native-build.log" "$src/target/native/wp-http" --level L1
+    unreserve l1-native-$s
   fi
   if [ -n "${WP:-}" ]; then
     # WordPress's PHPUnit suite in WORK (its wordpress-develop tree and PHP's reference run,

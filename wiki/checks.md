@@ -24,7 +24,7 @@ Most measurement problems came from the environment, not from the code, and each
 | Level | What | Time | Runs on |
 |---|---|---|---|
 | `l0` | unit tests (IR budgets: `CompilationTest`), smoke, destructor fixtures (when the commit has them) | ~10 min | host P-cores; reference PHP in docker |
-| `l1` | php-src `.phpt`; with `WP=1` WordPress's PHPUnit suite against its frozen fail-set | ~1 h (+2.5 h) | CPUs 6-13 |
+| `l1` | php-src `.phpt`; the native image's build (HttpMain, its runtime-compilation checks: a failed build is "worse"); with `WP=1` WordPress's PHPUnit suite against its frozen fail-set | ~1 h (+2.5 h) | CPUs 6-13 |
 | `l2` | Gate 1 A/B (4 holds of 2 rounds, 400 iterations), Gate 2 (6 rounds of 200 visits, compilations counted), the build and its base interleaved | ~3 h | CPUs 14-21, CPU lock, preflight before every timed run |
 
 ```sh
