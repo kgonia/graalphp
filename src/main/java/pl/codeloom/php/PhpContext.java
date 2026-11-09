@@ -269,8 +269,11 @@ public final class PhpContext {
         pendingReleases.forEach(value -> holder.accept("pending release", value));
     }
 
-    /** The counts results of PHP code called from runtime code still own (Refcount.pending). */
-    private final ArrayList<Object> pendingReleases = new ArrayList<>();
+    /**
+     * The counts results of PHP code called from runtime code still own (Refcount.pending). Built-ins drain it above
+     * their mark, so it is a stack's: each fiber has its own, swapped in while it runs (PhpFiber).
+     */
+    private ArrayList<Object> pendingReleases = new ArrayList<>();
 
     /** Arguments moved into a built-in's call, waiting for it to start (Refcount.toBuiltin, takeMoved). */
     private final ArrayList<Object> movedToBuiltins = new ArrayList<>();
@@ -281,6 +284,13 @@ public final class PhpContext {
 
     public ArrayList<Object> pendingReleases() {
         return pendingReleases;
+    }
+
+    /** Makes pending the running stack's pending releases; returns the list it replaces. */
+    public ArrayList<Object> swapPendingReleases(ArrayList<Object> pending) {
+        ArrayList<Object> replaced = pendingReleases;
+        pendingReleases = pending;
+        return replaced;
     }
 
     /** The objects made in this context, kept for the refcount audit (-Dphp.rc.audit=true); empty otherwise. */
@@ -855,6 +865,7 @@ public final class PhpContext {
         }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
+        destroyFibers();
         endRequest();
         env.getContext().closeExited(null, status);
     }
@@ -871,6 +882,7 @@ public final class PhpContext {
         }
         runShutdownFunctions();
         guarded(this::destroyGenerators);
+        destroyFibers();
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
         guarded(this::endRequest);
         int status = errors().exitStatus();
@@ -925,6 +937,55 @@ public final class PhpContext {
             generatorsWithFinally.get(i).destroy();
         }
         generatorsWithFinally.clear();
+    }
+
+    /** EG(active_fiber): the fiber running, null on the request's own stack. */
+    private pl.codeloom.php.runtime.PhpFiber currentFiber;
+    /** The fibers started in this request, in the order they were started, for the request's end. */
+    private final List<pl.codeloom.php.runtime.PhpFiber> fibers = new ArrayList<>();
+    private int fibersPruneAt = 64;
+
+    public pl.codeloom.php.runtime.PhpFiber currentFiber() {
+        return currentFiber;
+    }
+
+    public void setCurrentFiber(pl.codeloom.php.runtime.PhpFiber fiber) {
+        currentFiber = fiber;
+    }
+
+    /** A fiber's thread started: it must end before the context closes. */
+    public void fiberStarted(pl.codeloom.php.runtime.PhpFiber fiber) {
+        if (fibers.size() >= fibersPruneAt) {
+            fibers.removeIf(f -> f.status() == pl.codeloom.php.runtime.PhpFiber.Status.DEAD);
+            fibersPruneAt = Math.max(64, fibers.size() * 2);
+        }
+        fibers.add(fiber);
+    }
+
+    /**
+     * zend_objects_store_call_destructors for fibers: each fiber still suspended at the end of a request that ends
+     * cleanly unwinds, its finally blocks running, in the order the fibers were started. After a fatal error, which
+     * skips destructors, it unwinds without them. Either way its thread ends, as the context's close requires.
+     */
+    private void destroyFibers() {
+        boolean clean = errors().exitStatus() == 0;
+        for (int i = 0; i < fibers.size(); i++) {
+            pl.codeloom.php.runtime.PhpFiber fiber = fibers.get(i);
+            if (clean) {
+                guarded(fiber::destroy);
+            } else {
+                fiber.abandon();
+            }
+        }
+        fibers.clear();
+    }
+
+    /** The context closes: a fiber still suspended (the request ended by exit() in a fiber) ends without running. */
+    public void abandonFibers() {
+        for (pl.codeloom.php.runtime.PhpFiber fiber : fibers) {
+            fiber.abandon();
+        }
+        fibers.clear();
     }
 
     /** The error state: the handlers, the last error, the exit status. */

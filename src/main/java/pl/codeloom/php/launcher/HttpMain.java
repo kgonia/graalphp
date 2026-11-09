@@ -81,6 +81,9 @@ public final class HttpMain {
     }
 
     public static void main(String[] args) throws IOException {
+        // a fiber's virtual thread (PhpFiber) would have Truffle print its experimental-support warning on stderr
+        System.setProperty("polyglot.engine.WarnVirtualThreadSupport",
+                System.getProperty("polyglot.engine.WarnVirtualThreadSupport", "false"));
         PhpMain.compilerDefaults();
         String host = "127.0.0.1";
         int port = 8080;
@@ -224,6 +227,8 @@ public final class HttpMain {
                 // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
                 .allowIO(IOAccess.ALL)
                 .allowNativeAccess(true)
+                // a fiber runs on a thread of its own (PhpFiber)
+                .allowCreateThread(true)
                 .allowExperimentalOptions(true)
                 .allowEnvironmentAccess(EnvironmentAccess.NONE)
                 .environment(cgiEnvironment(exchange, script, scriptName, body.length))

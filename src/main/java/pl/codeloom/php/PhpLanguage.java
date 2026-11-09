@@ -342,8 +342,18 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return pcrePatterns;
     }
 
+    /**
+     * PHP is single-threaded: a context may have a second thread only for fibers, each running on a thread of its
+     * own (PhpFiber).
+     */
+    @Override
+    protected boolean isThreadAccessAllowed(Thread thread, boolean singleThreaded) {
+        return singleThreaded || pl.codeloom.php.runtime.PhpFiber.mayEnter(thread);
+    }
+
     @Override
     protected void finalizeContext(PhpContext context) {
+        context.abandonFibers();
         try {
             context.endRequest();
         } finally {

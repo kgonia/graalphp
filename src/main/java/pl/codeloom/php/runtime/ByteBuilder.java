@@ -38,6 +38,17 @@ public final class ByteBuilder {
     /** The buffer is a string's too (toStr): copied before the next write. */
     private boolean shared;
 
+    /** The current thread's pool, for a fiber's thread to share (PhpFiber: one thread of a context runs at a time). */
+    public static Object threadPool() {
+        return POOL.get();
+    }
+
+    /** Makes pool, a {@link #threadPool}, the current thread's. */
+    @SuppressWarnings("unchecked")
+    public static void sharePool(Object pool) {
+        POOL.set((ArrayDeque<ByteBuilder>) pool);
+    }
+
     /** An empty builder for about expected bytes; call release() once its bytes are copied out. */
     public static ByteBuilder borrow(int expected) {
         if (expected < POOLED_FROM) {

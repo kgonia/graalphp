@@ -46,6 +46,9 @@ public final class BatchMain {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        // a fiber's virtual thread (PhpFiber) would have Truffle print its experimental-support warning on stderr
+        System.setProperty("polyglot.engine.WarnVirtualThreadSupport",
+                System.getProperty("polyglot.engine.WarnVirtualThreadSupport", "false"));
         PhpMain.compilerDefaults();
         String astRoot = "target/ast";
         String list = null;
@@ -143,6 +146,8 @@ public final class BatchMain {
                 .allowIO(IOAccess.ALL)
                 .allowEnvironmentAccess(EnvironmentAccess.INHERIT)
                 .allowNativeAccess(true)
+                // a fiber runs on a thread of its own (PhpFiber)
+                .allowCreateThread(true)
                 .allowExperimentalOptions(true)
                 .build()) {
             running.set(context);

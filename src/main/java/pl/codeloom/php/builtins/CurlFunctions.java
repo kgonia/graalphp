@@ -2179,6 +2179,16 @@ final class CurlFunctions {
         }
     }
 
+    /** The current thread's persistent share handles, for a fiber's thread to share: they are its worker's. */
+    static Object persistentShares() {
+        return PERSISTENT_SHARES.get();
+    }
+
+    /** Makes shares, a {@link #persistentShares}, the current thread's. */
+    static void sharePersistentShares(Object shares) {
+        PERSISTENT_SHARES.set((PersistentShares) shares);
+    }
+
     @TruffleBoundary
     private static Object curlShareInitPersistent(PhpContext context, Object[] a) {
         arity(a, "curl_share_init_persistent", 1, 1);
