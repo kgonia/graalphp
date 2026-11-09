@@ -25,8 +25,17 @@ final class Fibers {
     private Fibers() {
     }
 
-    static List<PhpFunction> methods(Registry registry) {
-        return List.of(
+    /** Fiber's methods, and FiberError's constructor. */
+    record Methods(List<PhpFunction> fiber, PhpFunction errorConstructor) {
+    }
+
+    static Methods methods(Registry registry) {
+        // zend_fibers.c's FiberError::__construct: only the engine makes one
+        PhpFunction errorConstructor = registry.method("FiberError", "__construct", false, a -> {
+            throw new PhpError("Error", "The \"" + ((PhpObject) a[PhpFunction.ARG_THIS]).getPhpClass().getName()
+                    + "\" class is reserved for internal use and cannot be manually instantiated");
+        });
+        return new Methods(List.of(
                 registry.method("Fiber", "__construct", false, Fibers::construct),
                 registry.method("Fiber", "start", false, Fibers::start),
                 registry.method("Fiber", "resume", false, a -> fiber(a).resume(Args.get(a, 0, PhpNull.NULL))),
@@ -45,16 +54,24 @@ final class Fibers {
                 registry.method("Fiber", "getCurrent", true, a -> {
                     PhpFiber current = PhpContext.get(null).currentFiber();
                     return current == null ? PhpNull.NULL : current.object();
-                }));
+                })), errorConstructor);
     }
 
-    static void declare(PhpContext context, List<PhpFunction> methods) {
+    static void declare(PhpContext context, Methods methods) {
         PhpClass phpClass = new PhpClass("Fiber", null, false, false, context.getLanguage().rootShape(), "Fiber");
         // zend_register_fiber_ce: final, not cloneable, not serializable
         phpClass.setHandlers(new PhpClass.ObjectHandlers(null, null, true, false, true, false));
-        for (PhpFunction method : methods) {
+        for (PhpFunction method : methods.fiber()) {
             phpClass.addMethod(method);
         }
+        context.declareClass(phpClass);
+    }
+
+    /** FiberError, once Error is declared. */
+    static void declareError(PhpContext context, Methods methods) {
+        PhpClass phpClass = new PhpClass("FiberError", context.getClass("Error"), false, false,
+                context.getLanguage().rootShape(), "FiberError");
+        phpClass.addMethod(methods.errorConstructor());
         context.declareClass(phpClass);
     }
 

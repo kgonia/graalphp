@@ -111,6 +111,11 @@ public final class PhpFiber {
         if (status != Status.INIT) {
             throw fiberError("Cannot start a fiber that has already been started");
         }
+        // zend_fiber_stack_allocate: a page and a guard page at least. The thread's stack is the JVM's, so the size
+        // is only checked.
+        if (context.ini().fiberStackSize() < 2 * 4096) {
+            throw new PhpError("Exception", "Fiber stack size is too small, it needs to be at least 8192 bytes");
+        }
         if (!context.getEnv().isCreateThreadAllowed()) {
             throw new PhpError("Error", "Fibers need a context that may create threads "
                     + "(Context.Builder.allowCreateThread)");

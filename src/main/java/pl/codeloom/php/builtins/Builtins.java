@@ -57,14 +57,14 @@ public final class Builtins {
         private final List<PhpFunction> generatorMethods;
         private final List<PhpFunction> closureMethods;
         private final List<PhpFunction> weakReferenceMethods;
-        private final List<PhpFunction> fiberMethods;
+        private final Fibers.Methods fiberMethods;
         private final List<PhpFunction> enumMethods;
         /** CURLFile's and CURLStringFile's methods; null when libcurl isn't there (no curl extension). */
         private final CurlFunctions.Methods curlMethods;
 
         private Table(Map<String, Object> constants, List<PhpFunction> functions, List<PhpFunction> throwableMethods,
                       List<PhpFunction> generatorMethods, List<PhpFunction> closureMethods,
-                      List<PhpFunction> weakReferenceMethods, List<PhpFunction> fiberMethods,
+                      List<PhpFunction> weakReferenceMethods, Fibers.Methods fiberMethods,
                       List<PhpFunction> enumMethods, CurlFunctions.Methods curlMethods) {
             this.weakReferenceMethods = weakReferenceMethods;
             this.fiberMethods = fiberMethods;
@@ -310,7 +310,7 @@ public final class Builtins {
                 {"CompileError", "Error"}, {"ParseError", "CompileError"},
                 {"TypeError", "Error"}, {"ValueError", "Error"}, {"ArithmeticError", "Error"},
                 {"DivisionByZeroError", "ArithmeticError"}, {"ArgumentCountError", "TypeError"},
-                {"UnhandledMatchError", "Error"}, {"FiberError", "Error"},
+                {"UnhandledMatchError", "Error"},
                 {"Filter\\FilterException", "Exception"},
                 {"Filter\\FilterFailedException", "Filter\\FilterException"},
         };
@@ -319,6 +319,7 @@ public final class Builtins {
                     context.getLanguage().rootShape(), pair[0]);
             context.declareClass(phpClass);
         }
+        Fibers.declareError(context, table.fiberMethods);
     }
 
     private static PhpClass declare(PhpContext context, String name, PhpClass parent, boolean isInterface) {
