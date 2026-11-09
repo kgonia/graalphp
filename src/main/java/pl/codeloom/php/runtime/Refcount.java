@@ -9,8 +9,8 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * a slot holds (a variable, an element of a held array, a property, a reference, a parameter, a capture) and every
  * owning temporary (the result of `new` or a call, until it is stored, returned or dropped). The two events a
  * decrement can raise, the count reaching zero and the object becoming a possible root of a garbage cycle, go out
- * of line here. At zero, with -Dphp.rc.destructors=true, the destructor runs and the properties are released
- * ({@link #destroy}); without it nothing runs yet. The possible-root event only marks the object (no cycle collector).
+ * of line here. At zero the destructor runs and the properties are released ({@link #destroy}); with
+ * -Dphp.rc.destructors=false, a switch for measuring their cost, nothing runs. The possible-root event only marks the object (no cycle collector).
  * <p>
  * Counts are plain ints: a context runs on one thread at a time (D18, answer 7). With {@code -Dphp.rc.stats=true}
  * the number of events is printed at exit.
@@ -404,10 +404,10 @@ public final class Refcount {
     private static final boolean TRACE = Boolean.getBoolean("php.rc.trace");
 
     /**
-     * Destructors at zero (-Dphp.rc.destructors=true, wiki/destructors.md prototype step 2), off by default until
-     * the counts are verified on WordPress: what zend_objects_store_del does.
+     * Destructors at zero, what zend_objects_store_del does. On by default: PHP code relies on them (005);
+     * -Dphp.rc.destructors=false turns them off to measure their cost, not to run code.
      */
-    private static final boolean DESTRUCTORS = Boolean.getBoolean("php.rc.destructors");
+    static final boolean DESTRUCTORS = !"false".equals(System.getProperty("php.rc.destructors"));
 
     /**
      * zend_objects_store_del: the destructor runs once, with the object held for its duration (GC_ADDREF); an object

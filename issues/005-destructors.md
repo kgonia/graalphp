@@ -111,3 +111,6 @@ end" means never.
 
 On 2026-11-06 the owner made explicit that the measured cost decides how the work is done (P1, then P2), not
 whether it is done.
+
+**2026-11-09:** destructors are on by default (owner: without them PHP code doesn't work as written).
+`-Dphp.rc.destructors=false` stays as a switch to measure their cost, not as a mode to run code in.
