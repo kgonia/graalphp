@@ -118,9 +118,10 @@ public final class DeclareNodes {
      * instantiates it. The name, as in php-src, is "class@anonymous", a NUL and the declaration's place.
      */
     public static final class NewAnonymousClassNode {
+        /** Its lowercase name is taken here, behind the boundary (Str.lower isn't for compiled code). */
         @TruffleBoundary
-        public static void declareOnce(PhpContext context, ClassTemplate template, String lowerName) {
-            if (context.findClass(lowerName) == null) {
+        public static void declareOnce(PhpContext context, ClassTemplate template) {
+            if (context.findClass(Str.lower(template.getName())) == null) {
                 context.declareClass(linked(context, template.instantiate(context), null));
             }
         }

@@ -421,6 +421,8 @@ public final class PropNode extends Node {
     private PropNode twin() {
         PropNode access = twin;
         if (access == null) {
+            // made once, in the interpreter: a node isn't created in compiled code
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             access = new PropNode(constantName, lexicalClass, scopeInFrame, thisInMethod, hookOf,
                     DynamicObjectLibrary.getUncached());
             twin = access;
@@ -685,7 +687,7 @@ public final class PropNode extends Node {
         }
         if (setChecked) {
             // a readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared)
-            phpObject.unmark("reinit:" + name);
+            phpObject.unmarkReinit(name);
         }
         return value;
     }

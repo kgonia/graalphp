@@ -41,7 +41,13 @@ public final class PhpClosure {
                       Object[] captured, TruffleString magicName) {
         this(function, boundThis, scope, calledScope, captured, magicName, PhpContext.get(null).nextObjectId(),
                 function.getClosureVariables() != null && function.getClosureVariables().length > captured.length
-                        ? new HashMap<>() : null);
+                        ? newStatics() : null);
+    }
+
+    /** A closure's own static variables: a map, made behind a boundary (HashMap isn't for compiled code). */
+    @TruffleBoundary
+    private static Map<String, PhpRef> newStatics() {
+        return new HashMap<>();
     }
 
     private PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,

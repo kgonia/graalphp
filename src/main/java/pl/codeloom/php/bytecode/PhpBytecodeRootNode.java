@@ -2451,6 +2451,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             } catch (PhpError e) {
+                // an error's path (an overflow on a readonly property, a non-numeric string): not compiled
+                CompilerDirectives.transferToInterpreter();
                 // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
                 if (target.isReadonly(name)) {
                     access.writeOn(frame.getArguments(), target, name, old);
@@ -7208,8 +7210,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class DeclareAnonymousClass {
         @Specialization
         public static void declare(ClassTemplate template, @Bind Node node) {
-            DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template,
-                    Str.lower(template.getName()));
+            DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template);
         }
     }
 
