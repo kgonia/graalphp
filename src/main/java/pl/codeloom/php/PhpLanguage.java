@@ -57,8 +57,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
             stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Parser = new OptionKey<>("export");
 
-    @Option(help = "The server API: cli (php-cli) or cgi (a request from the environment and stdin, a CGI response "
-            + "on stdout).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
+    @Option(help = "The server API: cli (php-cli), cgi (a request from the environment and stdin, a CGI response "
+            + "on stdout; php_sapi_name() cgi-fcgi) or fpm (the same request and response, as php-fpm runs it: "
+            + "fpm-fcgi).", category = OptionCategory.USER, stability = OptionStability.EXPERIMENTAL)
     static final OptionKey<String> Sapi = new OptionKey<>("cli");
 
     @Option(help = "A php.ini setting, as php -d gives it (php.Ini.display_errors=0): display_errors, "
@@ -130,6 +131,14 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     private final NameIds functionIds = new NameIds();
     private final NameIds constantIds = new NameIds();
     private final NameIds classIds = new NameIds();
+    private final NameIds globalIds = new NameIds();
+    /**
+     * A callable string's function id, for names that named a function (Callables.resolve): a hook's call site
+     * meets more names than its cache keeps, and the generic path then skips the conversion, the lowercasing and
+     * the map. Bounded as Str's name cache.
+     */
+    private final ConcurrentHashMap<TruffleString, Integer> callableFunctionIds = new ConcurrentHashMap<>();
+    private static final int CALLABLE_IDS_MAX = 1 << 16;
     /** Interned class identities (see ClassKey). */
     private final Map<ClassKey.Id, ClassKey> classKeys = new ConcurrentHashMap<>();
     /** Interned literals, so equal literals across files are one object (array keys then match by identity). */
@@ -162,14 +171,17 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return table;
     }
 
-    /** The built-in functions, with the debugging ones when debug is set (the same for every context). */
-    public Builtins.Table builtins(boolean debug) {
+    /**
+     * The built-in functions, with the debugging ones when debug is set, PHP_SAPI sapiName's (the same for every
+     * context).
+     */
+    public Builtins.Table builtins(boolean debug, String sapiName) {
         Builtins.Table table = builtins;
         if (table == null) {
             synchronized (this) {
                 table = builtins;
                 if (table == null) {
-                    table = Builtins.build(this, debug);
+                    table = Builtins.build(this, debug, sapiName);
                     builtins = table;
                 }
             }
@@ -180,8 +192,18 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     @Override
     protected PhpContext createContext(Env env) {
         return new PhpContext(this, env, env.getOptions().get(AstRoot), env.getOptions().get(SourceRoot),
-                env.getOptions().get(Sapi).equals("cgi"), env.getOptions().get(Debug),
+                sapiName(env.getOptions().get(Sapi)), env.getOptions().get(Debug),
                 iniSettings(env.getOptions().get(Ini)));
+    }
+
+    /** php_sapi_name() of a php.Sapi option. */
+    private static String sapiName(String option) {
+        return switch (option) {
+            case "cli" -> "cli";
+            case "cgi" -> "cgi-fcgi";
+            case "fpm" -> "fpm-fcgi";
+            default -> throw new IllegalArgumentException("php.Sapi is cli, cgi or fpm, not " + option);
+        };
     }
 
     private static Map<String, String> iniSettings(OptionMap<String> option) {
@@ -200,6 +222,24 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
     /** The id of a class name (lowercase); a context keeps its classes by id. */
     public int classId(String lowerName) {
         return classIds.id(lowerName);
+    }
+
+    /** The function id a callable string named before (rememberCallable), or -1. */
+    public int callableFunctionId(TruffleString name) {
+        Integer id = callableFunctionIds.get(name);
+        return id == null ? -1 : id;
+    }
+
+    /** Remembers that a callable string (a plain function name, any case, maybe with a leading \) names an id. */
+    public void rememberCallable(TruffleString name, int functionId) {
+        if (callableFunctionIds.size() < CALLABLE_IDS_MAX) {
+            callableFunctionIds.putIfAbsent(name, functionId);
+        }
+    }
+
+    /** The id of a global variable's name; a context keeps its globals' references by id too (globalAt). */
+    public int globalId(String name) {
+        return globalIds.id(name);
     }
 
     /** The one ClassKey for these declarations, in every context. */
@@ -325,7 +365,9 @@ public final class PhpLanguage extends TruffleLanguage<PhpContext> {
         return firstOptions.get(AstRoot).equals(newOptions.get(AstRoot))
                 && firstOptions.get(Parser).equals(newOptions.get(Parser))
                 && firstOptions.get(SourceRoot).equals(newOptions.get(SourceRoot))
-                && firstOptions.get(Debug).equals(newOptions.get(Debug));
+                && firstOptions.get(Debug).equals(newOptions.get(Debug))
+                // PHP_SAPI is the built-ins' (Builtins.build), folded into the shared translations
+                && firstOptions.get(Sapi).equals(newOptions.get(Sapi));
     }
 
     @Override

@@ -13,13 +13,20 @@
 #   (target/classes-main and target/native/wp-http-main, for comparing two builds); jvm-phases, native-phases:
 #   jvm-java and native-java with the phase counters (target/native/wp-http-phases, built with -Dphp.phases=true
 #   -Dphp.nativeclock=true). The java-parser variants get no AST root, so a file that needed the export would fail.
+# - The deployment's variants, nginx in front of each (tests/gate2/woo-fpm/nginx.conf, port 8080, FastCGI on
+#   127.0.0.1:9000 inside the container, which holds both, so its CPU and memory count nginx for every variant):
+#   fpm (php-fpm 8.5.12, OPcache with the tracing JIT, pm=static with WPN_THREADS workers; image gate2-fpm:8.5.12
+#   from tests/gate2/woo-fpm), jvm-fcgi, native-fcgi (launcher.FastCgiMain on the JVM, or natively as
+#   target/native/wp-fcgi: NI_MAIN=pl.codeloom.php.launcher.FastCgiMain NI_NAME=wp-fcgi; our parser, image
+#   gate2-fcgi:graal25.4 from tests/gate2/fcgi). The images are built by `images`.
 # Run after tests/gate2/fetch.sh (or a copy of the main checkout's site), mvn compile and bench/native's build of
 # the HTTP launcher (NI_MAIN=pl.codeloom.php.launcher.HttpMain NI_NAME=wp-http).
 # - measure: rounds of paced visits (tests/gate2/visits.py, CPUs 0-5), the server on CPUs 14-21, the variants
 #   interleaved and each round's order reversed, every run on a server just started and a database just reset.
 #   Runs: target/wpn/runs/<variant>-<round>.json, tables by tests/gate2/visits_report.py.
 # Usage: tests/gate2/native.sh db | volume | agent | check | reset-db | start VARIANT [CPUSET] [PORT] | stop VARIANT
-#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | clean
+#        | pages VARIANT PORT | compare A B | measure ROUNDS VISITS PAUSE VARIANT... | load ROUNDS VARIANT... | images
+#        | diag TAG DURATION [VARIANT] | k8 ROUNDS VARIANT... | k8-profile | clean
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tests/gate2/mask.sh
@@ -44,6 +51,11 @@ LAUNCHER=pl.codeloom.php.launcher.HttpMain
 # errors shown as php -S shows them (http.sh's)
 HTTP_ARGS="--port=8080 --threads=${WPN_THREADS:-4} --docroot=target/gate2/wordpress --server-name=0.0.0.0 --host=0.0.0.0"
 HTTP_ARGS+=" -ddisplay_errors=1 -dhtml_errors=0"
+# the FastCGI server behind nginx, with the php-fpm image's php.ini error settings (tests/gate2/woo-fpm/php.ini)
+FCGI_LAUNCHER=pl.codeloom.php.launcher.FastCgiMain
+FCGI_ARGS="--listen=127.0.0.1:9000 --threads=${WPN_THREADS:-4} -ddisplay_errors=1 -dhtml_errors=0 -dlog_errors=1"
+FPM_IMAGE=gate2-fpm:8.5.12
+FCGI_IMAGE=gate2-fcgi:graal25.4
 pages=(/ "/?p=1" "/?page_id=2" "/?cat=1" "/?feed=rss2" /wp-login.php "/?rest_route=/" "/?rest_route=/wp/v2/posts"
        "/?s=hello" /nonexistent-page/ "/?fatal=exception" "/?fatal=error")
 admin=(/wp-admin/ /wp-admin/edit.php /wp-admin/post-new.php /wp-admin/options-general.php /wp-admin/users.php
@@ -85,6 +97,7 @@ volume() {
   cp tests/gate2/wp-config.php target/gate2/wordpress/wp-config.php
   mkdir -p target/gate2/wordpress/wp-content/mu-plugins
   cp tests/gate2/fatal-plugin.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php
+  cp tests/gate2/k8-plugin.php target/gate2/wordpress/wp-content/mu-plugins/k8-plugin.php
   MSYS_NO_PATHCONV=1 CPUSET=${WPN_AUX_CPUS:-0-5} bash bench/gate1/php.sh php tools/ast-export.php target/ast \
     target/gate2/wordpress/wp-config.php target/gate2/wordpress/wp-content/mu-plugins/fatal-plugin.php > /dev/null
   docker volume create $P-site > /dev/null
@@ -92,8 +105,8 @@ volume() {
     rm -rf /srv/target && mkdir -p /srv/target/gate2 /srv/target/ast/target /srv/target/native
     cp -r /w/target/gate2/wordpress /srv/target/gate2/ && cp -r /w/target/ast/target/gate2 /srv/target/ast/target/
     cp -r /w/target/classes /srv/target/classes && cp -r /w/target/lib /srv/target/lib
-    for f in /w/target/native/wp-http*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
-    for d in classes-main classes-s2; do [ ! -d /w/target/$d ] || cp -r /w/target/$d /srv/target/$d; done
+    for f in /w/target/native/wp-http* /w/target/native/wp-fcgi*; do [ ! -f "$f" ] || cp "$f" /srv/target/native/; done
+    for d in /w/target/classes-*; do [ ! -d "$d" ] || cp -r "$d" /srv/target/; done
     cp /w/bench/native/check.php /srv/target/gate2/wordpress/wpn-check.php
     # the Gate 1 kernels, served (tests/gate2/kernels.php): the compile diagnosis runs them on the HTTP launcher
     rm -rf /srv/bench && mkdir -p /srv/bench && cp -r /w/bench/gate1 /srv/bench/gate1
@@ -112,12 +125,13 @@ check() {
 start() {
   local name=$1 cpus=${2:-0-5} port=${3:-8090} image=${TRUFFLE_IMAGE:-gate1-truffle:8.5-graal25.4} cmd opts= env=()
   # VARIANT.TAG: the variant with the tag's own settings, so one measurement compares builds and options:
-  # CLASSES_TAG, NATIVE_BIN_TAG, JAVA_OPTS_TAG (added to JAVA_OPTS), e.g. native-phases.base with
-  # NATIVE_BIN_base=wp-http-phases-base
+  # CLASSES_TAG, LIB_TAG (the build's libraries, as CLASSES_TAG under target/), NATIVE_BIN_TAG, JAVA_OPTS_TAG
+  # (added to JAVA_OPTS), e.g. native-phases.base with NATIVE_BIN_base=wp-http-phases-base
   local variant=${name%%.*} tag= setting
   [ "$variant" = "$name" ] || tag=${name#*.}
   if [ -n "$tag" ]; then
     setting=CLASSES_$tag; [ -z "${!setting:-}" ] || local CLASSES=${!setting}
+    setting=LIB_$tag; [ -z "${!setting:-}" ] || local LIB=${!setting}
     setting=NATIVE_BIN_$tag; [ -z "${!setting:-}" ] || local NATIVE_BIN=${!setting}
     setting=JAVA_OPTS_$tag; [ -z "${!setting:-}" ] || local JAVA_OPTS="${JAVA_OPTS:-} ${!setting}"
   fi
@@ -126,7 +140,7 @@ start() {
     # the phase counters (wiki/visit-phases.md): on the JVM the properties, natively a build made with them
     # (target/native/wp-http-phases: the flags are static finals, fixed at build time)
     *-phases) opts="-Dpolyglot.php.Parser=java -Dphp.phases=true -Dphp.nativeclock=true" ;;
-    *-bc) opts="-Dpolyglot.php.Parser=java" ;;
+    *-bc|*-fcgi) opts="-Dpolyglot.php.Parser=java" ;;
   esac
   case $variant in
     # php-nojit: OPcache without its JIT; php-noopc: no OPcache (each request compiles every file it includes)
@@ -135,6 +149,14 @@ start() {
          [ $variant != php-nojit ] || ini="-d opcache.jit=disable"
          [ $variant != php-noopc ] || ini="-d opcache.enable=0 -d opcache.enable_cli=0"
          cmd="cd target/gate2/wordpress && exec php -d auto_prepend_file= $ini -S 0.0.0.0:8080" ;;
+    fpm) image=${FPM_RUN_IMAGE:-$FPM_IMAGE}; env=(-e FPM_CHILDREN=${WPN_THREADS:-4})
+         cmd="exec /usr/local/bin/woo-fpm-start" ;;
+    jvm-fcgi) image=$FCGI_IMAGE
+              cmd="exec /usr/local/bin/fcgi-start ${JAVA#exec } $opts ${JAVA_OPTS:-} $FCGI_LAUNCHER $FCGI_ARGS"
+              cmd+=" --ast-root=/none" ;;
+    native-fcgi) image=$FCGI_IMAGE
+                 cmd="exec /usr/local/bin/fcgi-start target/native/${NATIVE_BIN:-wp-fcgi} \$JAVA_OPTS_BASE -Xmx1g $opts"
+                 cmd+=" ${JAVA_OPTS:-} -Djava.net.preferIPv6Addresses=system $FCGI_ARGS --ast-root=/none" ;;
     jvm-export) cmd="$JAVA ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS --ast-root=target/ast" ;;
     jvm-main) cmd="${JAVA/target\/classes:/target/classes-main:} $opts ${JAVA_OPTS:-} $LAUNCHER $HTTP_ARGS"
               cmd+=" --ast-root=/none" ;;
@@ -150,6 +172,7 @@ start() {
   esac
   # CLASSES, NATIVE: another build's classes (under target/) or native launcher, for profiling a build of its own
   [ -z "${CLASSES:-}" ] || cmd=${cmd/target\/classes:/$CLASSES:}
+  [ -z "${LIB:-}" ] || cmd=${cmd/target\/lib\//$LIB/}
   [ -z "${NATIVE:-}" ] || cmd=${cmd/target\/native\/wp-http /$NATIVE }
   # OUT_DIR: a host directory the server may write to, at /out (a profiler's output)
   local extra=()
@@ -354,6 +377,192 @@ measure() { # rounds visits pause variants...
   done
 }
 
+# One k6 run of tests/gate2/wp-load.js (CPUs 0-5) against the server at $NET.10, VUS users for DURATION, the
+# server's container sampled meanwhile (woo_sample.py, CPUs 0-5): $out/load/NAME.k6.json, .k6.log, .sample.json.
+load_run() { # variant vus duration name
+  local variant=$1 vus=$2 duration=$3 name=$4 dir=$out/load sampler
+  mkdir -p $dir && rm -f $dir/$name.* $dir/stop
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-sampler --cpuset-cpus 0-5 --pid=host --cgroupns=host \
+    -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
+    python -u /t/woo_sample.py /out/$name.id /out/stop /out/$name.sample.json > $dir/$name.sampler.log 2>&1 &
+  sampler=$!
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-k6 --cpuset-cpus 0-5 --network $P-net \
+    -v "$root/tests/gate2:/scripts:ro" -v "$root/$dir:/out" -e BASE=http://$NET.10:8080 -e VUS=$vus \
+    -e DURATION=$duration -e SUMMARY=/out/$name.k6.json grafana/k6:1.3.0 run -q --no-color \
+    /scripts/wp-load.js > $dir/$name.k6.log 2>&1 || true
+  touch $dir/stop
+  wait $sampler || true
+  python -I tests/gate2/wp_load_report.py line "$dir/$name"
+}
+
+# load ROUNDS VARIANT...: concurrent visitors through nginx. Per round and variant (the order reversed every other
+# round) one server's life on CPUs 14-21, holding the CPU lock (/c/Users/krzgo/Projects/.cpu-14-21.lock): started on
+# the seeded database with WPN_THREADS workers (set it for the run, e.g. 8), warmed up by WARM of k6 at the highest
+# level (default 300s, php-fpm's 60s), then DURATION (default 60s) of k6 at each of LEVELS (default "1 8 16") users.
+# Runs: $out/load/VARIANT-rROUND-LEVEL.*; the table by `wp_load_report.py table $out/load OUT`.
+load() { # rounds variants...
+  local rounds=$1 r i order variant level warm levels=(${LEVELS:-1 8 16})
+  shift
+  local variants=("$@") n=$#
+  local lock=/c/Users/krzgo/Projects/.cpu-14-21.lock
+  for r in $(seq "$rounds"); do
+    if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
+    for i in $order; do
+      variant=${variants[$i]}
+      [ "$variant" = fpm ] && warm=${FPM_WARM:-60s} || warm=${WARM:-300s}
+      until mkdir $lock 2> /dev/null; do
+        echo "CPUs 14-21 are taken: $(cat $lock/* 2> /dev/null | head -1); waiting"; sleep 60
+      done
+      echo "claude-wordpress-$P ($(basename "$root")): native.sh load $variant round $r, since $(date '+%F %T')" \
+        > $lock/note
+      trap 'rm -rf /c/Users/krzgo/Projects/.cpu-14-21.lock' EXIT
+      while ! host_quiet; do sleep 30; done
+      stop "$variant"
+      reset_db
+      start "$variant" 14-21 ${WPN_MEASURE_PORT:-8096}
+      load_run "$variant" "${levels[-1]}" "$warm" "$variant-r$r-warm"
+      for level in "${levels[@]}"; do
+        load_run "$variant" "$level" "${DURATION:-60s}" "$variant-r$r-$level"
+      done
+      docker logs $P-$variant > $out/load/$variant-r$r.server.log 2>&1
+      stop "$variant"
+      rm -rf $lock
+      trap - EXIT
+    done
+  done
+}
+
+# One user's K8 requests against a running server (tests/gate2/k8_drive.py, CPUs 0-5): per page of K8_PAGES,
+# K8_PLAIN (default 200) requests of the page itself, then K8_REQUESTS (default 100) with k8=K8_N (default 10: the
+# request's phases and that many renders inside it, tests/gate2/k8-plugin.php), into $out/k8/NAME.k8.json.
+k8_run() { # variant name
+  local variant=$1 name=$2 dir=$out/k8 pages=(${K8_PAGES:-/ /?p=1 /?page_id=2 /?cat=1 /?s=hello})
+  mkdir -p $dir && rm -f $dir/$name.k8.*
+  docker inspect -f '{{.Id}} {{.State.Pid}}' $P-$variant > $dir/$name.id
+  MSYS_NO_PATHCONV=1 docker run --rm --name $P-k8 --cpuset-cpus 0-5 --network $P-net --cgroupns=host \
+    -e K8_EXTRA="${K8_EXTRA:-}" -v /sys/fs/cgroup:/hostcg:ro -v "$root/tests/gate2:/t:ro" -v "$root/$dir:/out" python:3.13-slim \
+    python -u /t/k8_drive.py $NET.10:8080 /out/$name.id /out/$name.k8.json ${K8_PLAIN:-200} ${K8_REQUESTS:-100} \
+    ${K8_N:-10} "${pages[@]}" > $dir/$name.k8.log 2>&1 || { tail -5 $dir/$name.k8.log; return 1; }
+  echo "$name: $(grep -c . $dir/$name.k8.log) blocks, $(tail -1 $dir/$name.k8.log)"
+}
+
+# k8-profile: the hot renders' time per PHP function on both engines (k8_profile.py), on CPUs 6-13 and without the
+# CPU lock: for analysis, never for timing. Ours: launcher.GuestSampler over requests with k8=K8_PROF_N (default
+# 200, so 98% of a request is hot renders) after the load's warm-up and a few requests of the loop itself. PHP: the
+# php-fpm image with Excimer (FPM_PROF_IMAGE), the plugin's k8prof (iterations 3 and up, real time, every
+# K8_PROF_US microseconds). Into $out/k8: jvmprof-r1.k8.json, fpmprof-r1.k8.json, jvmprof/guest.txt.
+k8_profile() { # [variant]
+  local variant=${1:-jvm-fcgi} dir=$out/k8/jvmprof i
+  rm -rf $dir && mkdir -p $dir
+  stop "$variant"
+  reset_db
+  OUT_DIR=$dir JAVA_OPTS="-Dphp.http.closeFile=/out/close -Dphp.sample.out=/out/guest.txt -Dphp.sample.period=${K8_PROF_MS:-5} ${JAVA_OPTS:-}" start "$variant" "${K8_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  load_run "$variant" 8 "${WARM:-720s}" "k8prof-$variant-warm"
+  K8_PLAIN=0 K8_REQUESTS=2 K8_N=100 k8_run "$variant" jvmprof-warm
+  touch $dir/guest.txt.start
+  sleep 3 # the sampler looks for the file every second
+  K8_PLAIN=0 K8_REQUESTS=${K8_PROF_REQUESTS:-4} K8_N=${K8_PROF_N:-200} k8_run "$variant" jvmprof-r1
+  touch $dir/close
+  curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:${DIAG_PORT:-8097}/?p=1" || true
+  for i in $(seq 300); do
+    docker top $P-$variant 2> /dev/null | grep -q -e 'java' -e 'wp-fcgi' || break
+    sleep 1
+  done
+  docker logs $P-$variant > $dir/server.log 2>&1 || true
+  stop "$variant"
+  reset_db
+  FPM_RUN_IMAGE=${FPM_PROF_IMAGE:-gate2-fpm-excimer:8.5.12} start fpm "${K8_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  load_run fpm 8 "${FPM_WARM:-60s}" "k8prof-fpm-warm"
+  K8_EXTRA="&k8prof=${K8_PROF_US:-500}" K8_PLAIN=0 K8_REQUESTS=10 K8_N=50 k8_run fpm fpmprof-r1
+  stop fpm
+}
+
+# k8 ROUNDS VARIANT...: where a request's time goes on each engine, and the engines on WordPress's rendering code
+# alone (wiki/beat-php.md). Per round and variant (the order reversed every other round) one server's life on CPUs
+# 14-21 under the CPU lock, as load's: started on the seeded database, warmed up by WARM of k6 at K8_WARM_VUS (default
+# 8) users (default 300s, php-fpm's 60s), then k8_run at one user. The table by
+# `k8_report.py $out/k8 OUT VARIANT...`. K8_CPUS (default 14-21) with K8_NOLOCK=1: a trial run off the benchmark
+# cores, without the lock.
+k8() { # rounds variants...
+  local rounds=$1 r i order variant warm
+  shift
+  local variants=("$@") n=$#
+  local lock=/c/Users/krzgo/Projects/.cpu-14-21.lock
+  for r in $(seq "$rounds"); do
+    if [ $((r % 2)) = 1 ]; then order=$(seq 0 $((n - 1))); else order=$(seq $((n - 1)) -1 0); fi
+    for i in $order; do
+      variant=${variants[$i]}
+      [ "${variant%%.*}" = fpm ] && warm=${FPM_WARM:-60s} || warm=${WARM:-300s}
+      if [ -z "${K8_NOLOCK:-}" ]; then
+        until mkdir $lock 2> /dev/null; do
+          echo "CPUs 14-21 are taken: $(cat $lock/* 2> /dev/null | head -1); waiting"; sleep 60
+        done
+        echo "claude-wordpress-$P ($(basename "$root")): native.sh k8 $variant round $r, since $(date '+%F %T')" \
+          > $lock/note
+        trap 'rm -rf /c/Users/krzgo/Projects/.cpu-14-21.lock' EXIT
+        while ! host_quiet; do sleep 30; done
+      fi
+      stop "$variant"
+      # the servers read the plugin from the site volume, which only `volume` fills: a run with a stale copy
+      # measures the old plugin under the new name
+      MSYS_NO_PATHCONV=1 docker run --rm -i --cpuset-cpus ${WPN_AUX_CPUS:-0-5} -v $P-site:/srv:ro alpine:3 \
+        cmp -s - /srv/target/gate2/wordpress/wp-content/mu-plugins/k8-plugin.php < tests/gate2/k8-plugin.php ||
+        { echo "the site volume's k8-plugin.php is not tests/gate2/k8-plugin.php: run native.sh volume first"; exit 1; }
+      reset_db
+      start "$variant" "${K8_CPUS:-14-21}" ${WPN_MEASURE_PORT:-8096}
+      load_run "$variant" "${K8_WARM_VUS:-8}" "$warm" "k8-$variant-r$r-warm"
+      k8_run "$variant" "$variant-r$r"
+      docker logs $P-$variant > $out/k8/$variant-r$r.server.log 2>&1
+      stop "$variant"
+      if [ -z "${K8_NOLOCK:-}" ]; then
+        rm -rf $lock
+        trap - EXIT
+      fi
+    done
+  done
+}
+
+# diag TAG DURATION [VARIANT]: a diagnosis run, not timed (wiki/pe-round4-diagnosis.md): one server's life of
+# VARIANT (default jvm-fcgi) on DIAG_CPUS (default 6-13, off the benchmark cores) with WPN_THREADS workers, under k6
+# at VUS (default 8) users for DURATION. JAVA_OPTS carries the trace options (DIAG_OPTS: by default compilation,
+# splitting and the engine's statistics); the engine's log goes to $out/diag/TAG/engine.log, the server's output to
+# server.log, the k6 run to $out/load/TAG-diag.*. At the end the server closes its engine (php.http.closeFile),
+# which prints what an engine prints at its close (CompilationStatistics, TraceSplittingSummary); nginx stays.
+# Report: tests/gate2/pe4_report.py $out/diag/TAG/engine.log compile|splits|deopts|kinds; with SAMPLE_WARM, guest.txt.
+diag() { # tag duration [variant]
+  local tag=$1 duration=$2 variant=${3:-jvm-fcgi} dir=$out/diag/$1 opts i
+  opts=${DIAG_OPTS:-"-Dpolyglot.engine.TraceCompilation=true -Dpolyglot.engine.CompilationStatistics=true -Dpolyglot.engine.SplittingTraceEvents=true -Dpolyglot.engine.TraceSplitting=true -Dpolyglot.engine.TraceSplittingSummary=true -Dpolyglot.engine.CompilationFailureAction=Print"}
+  rm -rf "$dir" && mkdir -p "$dir"
+  stop "$variant"
+  reset_db
+  # SAMPLE_WARM: the PHP stacks sampled at steady state (launcher.GuestSampler) after that much of the load, into
+  # guest.txt (the default traces are then off unless DIAG_OPTS gives them)
+  [ -z "${SAMPLE_WARM:-}" ] || opts="${DIAG_OPTS:-} -Dphp.sample.out=/out/guest.txt"
+  OUT_DIR=$dir JAVA_OPTS="-Dpolyglot.log.file=/out/engine.log -Dphp.http.closeFile=/out/close $opts ${JAVA_OPTS:-}"     start "$variant" "${DIAG_CPUS:-6-13}" ${DIAG_PORT:-8097}
+  if [ -n "${SAMPLE_WARM:-}" ]; then
+    load_run "$variant" "${VUS:-8}" "$SAMPLE_WARM" "$tag-warm"
+    touch "$dir/guest.txt.start"
+  fi
+  load_run "$variant" "${VUS:-8}" "$duration" "$tag-diag"
+  # the engine closes after the next PHP request (a static file is nginx's), then the server exits
+  touch "$dir/close"
+  curl -s -o /dev/null -H 'Host: localhost' "http://127.0.0.1:${DIAG_PORT:-8097}/?p=1" || true
+  for i in $(seq 900); do
+    docker top $P-$variant 2> /dev/null | grep -q -e 'java' -e 'wp-fcgi' || break
+    sleep 1
+  done
+  docker logs $P-$variant > "$dir/server.log" 2>&1 || true
+  stop "$variant"
+  echo "$tag: $(grep -c '^\[engine\] opt done' "$dir/engine.log" || true) compilations, engine.log $(du -h "$dir/engine.log" | cut -f1)"
+}
+
+# the deployment variants' images: php-fpm behind nginx, Truffle PHP's FastCGI server behind the same nginx
+images() {
+  docker build -q -t $FPM_IMAGE -f tests/gate2/woo-fpm/Dockerfile tests/gate2/woo-fpm
+  docker build -q -t $FCGI_IMAGE -f tests/gate2/fcgi/Dockerfile tests/gate2
+}
+
 clean() {
   for c in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f "$c" > /dev/null; done
   docker volume rm $P-site > /dev/null 2>&1 || true
@@ -371,6 +580,12 @@ case ${1:-} in
   pages) pages "$2" "$3" ;;
   compare) compare "$2" "$3" ;;
   measure) shift; measure "$@" ;;
+  load) shift; load "$@" ;;
+  k8) shift; k8 "$@" ;;
+  k8-run) k8_run "$2" "$3" ;;
+  k8-profile) k8_profile "${2:-jvm-fcgi}" ;;
+  diag) shift; diag "$@" ;;
+  images) images ;;
   clean) clean ;;
   *) sed -n 2,20p "$0"; exit 2 ;;
 esac

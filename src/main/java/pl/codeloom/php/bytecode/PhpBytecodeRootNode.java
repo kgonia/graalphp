@@ -52,6 +52,7 @@ import pl.codeloom.php.nodes.LargeCode;
 import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
+import pl.codeloom.php.nodes.call.BuiltinRootNode;
 import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.CallNode;
@@ -1763,6 +1764,58 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * `isset($container[key])` that the read of the same element follows at once (BytecodeTranslator.keepFor): as
+     * IssetElement, and an array's element found by a string or an int key is kept in a hidden local for that read
+     * (TakeKept), which then has no lookup of its own: _wp_array_get's loop is this pair, two lookups an element
+     * in php-src (wiki/ceiling.md). Any other container or key leaves the local cleared and the read runs as
+     * written: a key's deprecation, an ArrayAccess object's offsetGet() and a string's offset are the read's own.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class IssetElementKeep {
+        @Specialization
+        public static boolean array(VirtualFrame frame, LocalAccessor kept, PhpArray container, Object key,
+                                    @Bind BytecodeNode bytecode, @Cached ElementNodes.ElementIfSetNode read) {
+            Object element = read.execute(container, key);
+            if (element != PhpNull.NULL && (key instanceof TruffleString || key instanceof Long)) {
+                kept.setObject(bytecode, frame, element);
+                return true;
+            }
+            kept.clear(bytecode, frame);
+            return element != PhpNull.NULL;
+        }
+
+        @Fallback
+        public static boolean other(VirtualFrame frame, LocalAccessor kept, Object container, Object key,
+                                    @Bind BytecodeNode bytecode, @Bind Node node) {
+            kept.clear(bytecode, frame);
+            return container != PhpNull.NULL && DimNode.isSetIn(node, container, key);
+        }
+    }
+
+    /** Whether the isset() before this read kept the element it found (IssetElementKeep). */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class HasKept {
+        @Specialization
+        public static boolean has(VirtualFrame frame, LocalAccessor kept, @Bind BytecodeNode bytecode) {
+            return !kept.isCleared(bytecode, frame);
+        }
+    }
+
+    /** The element IssetElementKeep kept, taken out of its hidden local: the read's value. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class TakeKept {
+        @Specialization
+        public static Object take(VirtualFrame frame, LocalAccessor kept, @Bind BytecodeNode bytecode) {
+            Object element = kept.getObject(bytecode, frame);
+            kept.clear(bytecode, frame);
+            return element;
+        }
+    }
+
     // ---- nested elements (DimNode chains, ElementChain) ----
 
     /**
@@ -2451,6 +2504,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             try {
                 updated = AssignNodes.IncDecNode.stepped(node, old, increment);
             } catch (PhpError e) {
+                // an error's path (an overflow on a readonly property, a non-numeric string): not compiled
+                CompilerDirectives.transferToInterpreter();
                 // zend_pre_incdec_overloaded_property writes the value unchanged: a readonly property's error wins
                 if (target.isReadonly(name)) {
                     access.writeOn(frame.getArguments(), target, name, old);
@@ -3278,15 +3333,41 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** The root of a built-in function (a method's static-class slot is its own), or null: Call's passCaller. */
+    static BuiltinRootNode builtinRootOf(PhpFunction function) {
+        return function.getCallTarget().getRootNode() instanceof BuiltinRootNode builtin && !builtin.isMethod()
+                ? builtin : null;
+    }
+
+    /**
+     * A built-in function whose body resolves callables against the code calling it (a class's name, a method's
+     * visibility: Callables.From) gets that code with the call, in the static-class slot a function leaves empty,
+     * once it has asked for it (BuiltinRootNode.wantCaller); until then, and from any other call, its body finds
+     * the code on the stack.
+     */
+    static void passCaller(BuiltinRootNode builtin, Object[] arguments, VirtualFrame frame, PhpBytecodeRootNode root) {
+        if (builtin != null && builtin.wantsCaller()) {
+            arguments[PhpFunction.ARG_STATIC] = new Callables.Caller(frame.getArguments(), root.callingScope(frame));
+        }
+    }
+
     /** A call: directly while the site sees one function (nearly always), else indirectly; the value it returns. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
     public static final class Call {
+        static BuiltinRootNode builtinRoot(PhpFunction function) {
+            return builtinRootOf(function);
+        }
+
         @Specialization(guards = "function == cachedFunction", limit = "1")
-        public static Object direct(CallInfo call, PhpFunction function,
+        public static Object direct(VirtualFrame frame, CallInfo call, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("function") PhpFunction cachedFunction,
+                                    @Cached(value = "builtinRoot(cachedFunction)", adopt = false, neverDefault = false)
+                                    BuiltinRootNode builtin,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            passCaller(builtin, arguments, frame, root);
             return callResult(callNode.call(arguments));
         }
 
@@ -3302,11 +3383,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = CallInfo.class)
     public static final class CallRef {
+        static BuiltinRootNode builtinRoot(PhpFunction function) {
+            return builtinRootOf(function);
+        }
+
         @Specialization(guards = "function == cachedFunction", limit = "1")
-        public static Object direct(CallInfo call, PhpFunction function,
+        public static Object direct(VirtualFrame frame, CallInfo call, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("function") PhpFunction cachedFunction,
+                                    @Cached(value = "builtinRoot(cachedFunction)", adopt = false, neverDefault = false)
+                                    BuiltinRootNode builtin,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            passCaller(builtin, arguments, frame, root);
             return callNode.call(arguments);
         }
 
@@ -3996,15 +4085,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, @Variadic Object[] values,
+        public static Object cached(VirtualFrame frame, boolean keepRef, Object callable, @Variadic Object[] values,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
-            return dispatch.execute(callable, values);
+            return dispatch.execute(frame.getArguments(), root.callingScope(frame), callable, values);
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(boolean keepRef, Object callable, @Variadic Object[] values,
-                                      @Bind Node node) {
-            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        public static Object uncached(VirtualFrame frame, boolean keepRef, Object callable,
+                                      @Variadic Object[] values, @Bind Node node, @Bind PhpBytecodeRootNode root) {
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    frame.getArguments(), root.callingScope(frame)), values, keepRef);
         }
     }
 
@@ -4018,27 +4109,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func_array", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, Object args, @Bind Node node,
+        public static Object cached(VirtualFrame frame, boolean keepRef, Object callable, Object args,
+                                    @Bind Node node, @Bind PhpBytecodeRootNode root,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
             Object[] values = CallableCallNode.arrayArguments(args);
             if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
+                return callNamed(callable, (PhpArray) args, keepRef, node, frame.getArguments(),
+                        root.callingScope(frame));
             }
-            return dispatch.execute(callable, values);
+            return dispatch.execute(frame.getArguments(), root.callingScope(frame), callable, values);
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(boolean keepRef, Object callable, Object args, @Bind Node node) {
+        public static Object uncached(VirtualFrame frame, boolean keepRef, Object callable, Object args,
+                                      @Bind Node node, @Bind PhpBytecodeRootNode root) {
             Object[] values = CallableCallNode.arrayArguments(args);
             if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
+                return callNamed(callable, (PhpArray) args, keepRef, node, frame.getArguments(),
+                        root.callingScope(frame));
             }
-            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    frame.getArguments(), root.callingScope(frame)), values, keepRef);
         }
 
         @TruffleBoundary
-        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node) {
-            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER);
+        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node,
+                                        Object[] callerArguments, String callerScope) {
+            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    callerArguments, callerScope);
             Object[] frame = SpreadArguments.sendArray(target, args, node);
             return result(Backtrace.callFrom(node, () -> target.function().getCallTarget().call(frame)), keepRef);
         }
@@ -4700,7 +4798,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         /** The method from the scope (zend_std_get_method), BY_VALUE for __call standing in for it. */
         public static PhpFunction find(MethodSite site, PhpClass phpClass, String scope) {
-            PhpFunction method = phpClass.methodFrom(site.name, scope);
+            PhpFunction method = phpClass.methodFrom(site.name, site.lowerName, scope);
             return method == null ? MethodSite.BY_VALUE : method;
         }
     }
@@ -5979,6 +6077,68 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** ord of a one-byte string: the byte. Other lengths and other types are the built-in's (it has things to say). */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Ord {
+        @Specialization(guards = "isOneByte(s)")
+        public static long string(CallInfo call, TruffleString s, @Cached TruffleString.ReadByteNode read) {
+            return read.execute(s, 0, Str.ENC);
+        }
+
+        static boolean isOneByte(TruffleString s) {
+            return s.byteLength(Str.ENC) == 1;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
+        }
+    }
+
+    /** chr of a byte's int: its one-byte string. Other ints and other types are the built-in's. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Chr {
+        @Specialization(guards = {"code >= 0", "code <= 255"})
+        public static TruffleString code(CallInfo call, long code) {
+            return Str.singleByte((int) code);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
+        }
+    }
+
+    /**
+     * array_key_exists of an int or string key in an array: the lookup isset() makes (ElementNodes.SlotCacheNode),
+     * true for a null element too.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayKeyExists {
+        @Specialization
+        public static boolean intKey(CallInfo call, long key, PhpArray array) {
+            return array.containsKey(key);
+        }
+
+        @Specialization
+        public static boolean stringKey(CallInfo call, TruffleString key, PhpArray array,
+                                        @Cached ElementNodes.ArrayKeyNode keyNode,
+                                        @Cached ElementNodes.SlotCacheNode slots) {
+            return slots.has(array, key, keyNode);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object key, Object array, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, key, array);
+        }
+    }
+
     /** ucfirst: unchanged unless the first byte is a lowercase ASCII letter. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
@@ -7208,8 +7368,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class DeclareAnonymousClass {
         @Specialization
         public static void declare(ClassTemplate template, @Bind Node node) {
-            DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template,
-                    Str.lower(template.getName()));
+            DeclareNodes.NewAnonymousClassNode.declareOnce(PhpContext.get(node), template);
         }
     }
 
@@ -7914,6 +8073,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 large = getBytecodeNode().getInstructionsAsList().size() >= LargeCode.LARGE ? (byte) 2 : (byte) 1;
         }
         return large == 2;
+    }
+
+    /** The {@link LargeCode#RICH rich} sites given out; a copy (a split) has its own sites, so its own count. */
+    private byte rich;
+
+    @Override
+    public boolean takeRich() {
+        if (rich >= LargeCode.RICH) {
+            return false;
+        }
+        rich++;
+        return true;
+    }
+
+    @Override
+    public Node copy() {
+        PhpBytecodeRootNode copy = (PhpBytecodeRootNode) super.copy();
+        copy.rich = 0;
+        return copy;
     }
 
     /** What self:: means in this function's code (FunctionRootNode.getScopeName). */

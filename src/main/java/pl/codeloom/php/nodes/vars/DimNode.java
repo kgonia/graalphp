@@ -1,13 +1,14 @@
 package pl.codeloom.php.nodes.vars;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.Operators;
 import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpClosure;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.nodes.call.CallNode;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -27,14 +28,16 @@ public final class DimNode {
 
     /**
      * `$o[key] = value` (key null for `$o[]`) where the container's arrayForWrite gave no array: an ArrayAccess
-     * object's offsetSet(), called from site; anything else is an error.
+     * object's offsetSet(), called from site; anything else is an error. Out of line: a write's site whose
+     * variable or property may hold an object has it as one call, where the class test, offsetSet()'s call and
+     * its result's release were three (0.4 KB a statement of `$q['x'] = $n`, wiki/ceiling.md).
      */
+    @TruffleBoundary
     public static void writeToObject(Node site, Object target, Object key, Object value) {
         if (target instanceof PhpObject object && object.isArrayAccess()) {
             Refcount.done(object.callMethod(site, "offsetset", key, value));
             return;
         }
-        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(target) + " as array");
     }
 
@@ -84,22 +87,44 @@ public final class DimNode {
     }
 
     /**
-     * isset() of an element of a string (an offset in range) or an ArrayAccess object (offsetExists(), called from
-     * site); false for other values.
+     * isset() of an element of a string (an offset in range; zend_isset_dim_slow: an int, a float, a bool, null or
+     * an integer numeric string, no offset of another type is set) or an ArrayAccess object (offsetExists(), called
+     * from site); another object is php-src's Error (zend_std_has_dimension), false for other values.
      */
     public static boolean isSetIn(Node site, Object value, Object offsetValue) {
         if (value instanceof TruffleString string) {
-            if (offsetValue instanceof TruffleString s && Convert.numericValue(s) == null) {
+            long offset;
+            if (offsetValue instanceof Long l) {
+                offset = l;
+            } else if (offsetValue instanceof TruffleString s) {
+                if (!(Convert.numericValue(s) instanceof Long l)) {
+                    return false;
+                }
+                offset = l;
+            } else if (offsetValue instanceof Double || offsetValue instanceof Boolean
+                    || offsetValue == PhpNull.NULL) {
+                offset = Convert.toLong(offsetValue);
+            } else {
                 return false;
             }
-            long offset = Convert.toLong(offsetValue);
             int length = string.byteLength(Str.ENC);
             return offset < 0 ? -offset <= length : offset < length;
         }
-        if (value instanceof PhpObject object && object.isArrayAccess()) {
-            return Convert.toBool(Refcount.done(object.callMethod(site, "offsetexists", offsetValue)));
+        if (value instanceof PhpObject object) {
+            if (object.isArrayAccess()) {
+                return Convert.toBool(Refcount.done(object.callMethod(site, "offsetexists", offsetValue)));
+            }
+            throw notAnArray(value);
+        }
+        if (value instanceof PhpClosure) {
+            throw notAnArray(value);
         }
         return false;
+    }
+
+    @TruffleBoundary
+    private static PhpError notAnArray(Object object) {
+        return new PhpError("Cannot use object of type " + Operators.zvalTypeName(object) + " as array");
     }
 
 }

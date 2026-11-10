@@ -56,6 +56,7 @@ public final class PhpContext {
     /** php.Parser=java: files are parsed by the runtime's parser ({@link SourceFiles}), not read from exports. */
     private final boolean javaParser;
     private final OutputStream out;
+    private final String sapiName;
 
     /** The declared functions by lowercase name, in declaration order, as php-src's function table. */
     private final Map<String, PhpFunction> functions = new java.util.LinkedHashMap<>();
@@ -134,9 +135,14 @@ public final class PhpContext {
     private final pl.codeloom.php.builtins.CgiSapi.Response response;
     /** The request body (php://input): stdin under the CGI SAPI, empty under the CLI. */
     private final byte[] requestBody;
+    /** The server's end of the request (CgiSapi.REQUEST_END), or null; whether fastcgi_finish_request() ran it. */
+    private final Runnable requestEnd;
+    private boolean requestEnded;
 
-    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot, boolean cgi,
-                      boolean debug, Map<String, String> ini) {
+    public PhpContext(PhpLanguage language, TruffleLanguage.Env env, String astRoot, String sourceRoot,
+                      String sapiName, boolean debug, Map<String, String> ini) {
+        this.sapiName = sapiName;
+        boolean cgi = !sapiName.equals("cli");
         this.builtinState = new BuiltinState(cgi, ini);
         this.language = language;
         this.env = env;
@@ -144,7 +150,7 @@ public final class PhpContext {
         this.sourceRoot = Path.of(sourceRoot).toAbsolutePath().normalize();
         this.javaParser = parser(env.getOptions().get(PhpLanguage.Parser));
         this.out = new BufferedOutputStream(env.out(), 1 << 16);
-        Builtins.install(this, language.builtins(debug));
+        Builtins.install(this, language.builtins(debug, sapiName));
         if (!cgi) {
             Builtins.defineStdStreams(this);
         }
@@ -162,6 +168,7 @@ public final class PhpContext {
             response.header("X-Powered-By: PHP/" + Builtins.PHP_VERSION, true, 0);
         }
         requestBody = cgi ? readRequestBody(env) : new byte[0];
+        requestEnd = cgi ? pl.codeloom.php.builtins.CgiSapi.REQUEST_END.get() : null;
         builtinState.startupErrors(this, cgi);
         superglobals(argv);
         if (cgi) {
@@ -182,6 +189,11 @@ public final class PhpContext {
         } catch (IOException e) {
             throw new PhpError("reading the request body failed: " + e.getMessage());
         }
+    }
+
+    /** php_sapi_name(): cli, cgi-fcgi or fpm-fcgi. */
+    public String sapiName() {
+        return sapiName;
     }
 
     public pl.codeloom.php.builtins.CgiSapi.Response response() {
@@ -467,11 +479,10 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void declareFunction(PhpFunction function) {
-        String key = Str.lower(function.getName());
-        if (functions.putIfAbsent(key, function) != null) {
+        if (functions.putIfAbsent(function.lowerName(), function) != null) {
             throw new PhpError("Cannot redeclare function " + function.getName() + "()");
         }
-        int id = language.functionId(key);
+        int id = function.functionId(language);
         if (id >= functionSlots.length) {
             functionSlots = Arrays.copyOf(functionSlots, grown(functionSlots.length, id));
         }
@@ -764,20 +775,44 @@ public final class PhpContext {
     // ---- global variables ----
 
     private int globalsVersion;
+    /**
+     * The globals' references by name id (PhpLanguage.globalId), as the map has them: a site of `global $x` that
+     * serves several contexts reads its id's slot (globalAt) instead of the map. Every change of the map changes
+     * the slot.
+     */
+    private PhpRef[] globalSlots = new PhpRef[256];
 
     /** The global variable's reference, created (holding null) if absent: `global $x`, top-level code. */
     @TruffleBoundary
     public PhpRef globalRef(String name) {
-        return globals.computeIfAbsent(name, n -> {
-            PhpRef ref = new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL);
-            ref.bind();
-            return ref;
-        });
+        PhpRef found = globals.get(name);
+        if (found != null) {
+            return found;
+        }
+        PhpRef ref = new PhpRef(pl.codeloom.php.runtime.PhpNull.NULL);
+        ref.bind();
+        globals.put(name, ref);
+        setGlobalSlot(name, ref);
+        return ref;
     }
 
     @TruffleBoundary
     public PhpRef findGlobal(String name) {
         return globals.get(name);
+    }
+
+    /** The reference of the global whose name has this id (PhpLanguage.globalId), or null: see globalSlots. */
+    public PhpRef globalAt(int id) {
+        PhpRef[] slots = globalSlots;
+        return id < slots.length ? slots[id] : null;
+    }
+
+    private void setGlobalSlot(String name, PhpRef ref) {
+        int id = language.globalId(name);
+        if (id >= globalSlots.length) {
+            globalSlots = Arrays.copyOf(globalSlots, grown(globalSlots.length, id));
+        }
+        globalSlots[id] = ref;
     }
 
     @TruffleBoundary
@@ -787,6 +822,7 @@ public final class PhpContext {
         if (old != null) {
             old.unbind();
         }
+        setGlobalSlot(name, ref);
         globalsVersion++;
     }
 
@@ -795,6 +831,7 @@ public final class PhpContext {
         PhpRef old = globals.remove(name);
         if (old != null) {
             old.unbind();
+            setGlobalSlot(name, null);
         }
         globalsVersion++;
     }
@@ -1433,6 +1470,23 @@ public final class PhpContext {
             endBuffer(false, true, "ob_end_flush");
         }
         flush();
+    }
+
+    /**
+     * fastcgi_finish_request(): the output buffers ended and the output (headers first) sent as at the request's
+     * end, then the server ends the request; later output goes nowhere. False when it ran already.
+     */
+    @TruffleBoundary
+    public boolean finishRequest() {
+        if (requestEnded) {
+            return false;
+        }
+        endRequest();
+        requestEnded = true;
+        if (requestEnd != null) {
+            requestEnd.run();
+        }
+        return true;
     }
 
     /** php_output_header's OG(output_start_filename/lineno): the executing PHP code's place, if any runs. */

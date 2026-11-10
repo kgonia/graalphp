@@ -310,11 +310,25 @@ public final class StringFunctions {
         r.fn("bin2hex", a -> Str.of(java.util.HexFormat.of().formatHex(Str.readBytes(Args.str(a, 0)))));
         r.fn("chr", (context, a) -> {
             Args.arity(a, "chr", 1, 1);
-            return Str.singleByte((int) Math.floorMod(Args.integer(context, a, 0, "chr", "codepoint", "int"), 256));
+            long code = Args.integer(context, a, 0, "chr", "codepoint", "int");
+            if (code < 0 || code > 255) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("chr(): Providing a value not"
+                        + " in-between 0 and 255 is deprecated, this is because a byte value must be in the [0, 255]"
+                        + " interval. The value used will be constrained using % 256"), SourceLocation.current());
+            }
+            return Str.singleByte((int) Math.floorMod(code, 256));
         });
-        r.fn("ord", a -> {
-            TruffleString s = Args.str(a, 0);
-            return Str.length(s) == 0 ? 0L : (long) Str.byteAt(s, 0);
+        r.fn("ord", (context, a) -> {
+            Args.arity(a, "ord", 1, 1);
+            TruffleString s = Args.string(context, a, 0, "ord", "character", false);
+            int length = Str.length(s);
+            if (length != 1) {
+                ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of(length == 0
+                        ? "ord(): Providing an empty string is deprecated"
+                        : "ord(): Providing a string that is not one byte long is deprecated."
+                                + " Use ord($str[0]) instead"), SourceLocation.current());
+            }
+            return length == 0 ? 0L : (long) Str.byteAt(s, 0);
         });
         // the C locale's conventions: php-src sets only LC_CTYPE from the environment at startup, and setlocale()
         // isn't there to change LC_NUMERIC or LC_MONETARY (CHAR_MAX, 127, for the unspecified numbers)

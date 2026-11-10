@@ -72,6 +72,14 @@ final class RuntimeFunctions {
         };
     }
 
+    /** php-fpm's own functions (sapi/fpm/fpm/fpm_main.c), declared under the fpm SAPI only. */
+    static void registerFpm(Registry r) {
+        r.fn("fastcgi_finish_request", (context, a) -> {
+            Args.arity(a, "fastcgi_finish_request", 0, 0);
+            return context.finishRequest();
+        });
+    }
+
     static void register(Registry r) {
         // ---- lifecycle ----
         r.fn("exit", (context, a) -> exit(context, Args.get(a, 0, 0L)));
@@ -85,7 +93,7 @@ final class RuntimeFunctions {
         // zend.assertions = -1, as in production: assert() is compiled out and returns true
         r.fn("assert", a -> Boolean.TRUE);
         r.fn("call_user_func", (context, a) -> {
-            Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC);
+            Callables.Target target = Callables.parameter(context, a, Args.get(a, 0), CALL_USER_FUNC);
             // its extra named arguments go on to the callable (Z_PARAM_VARIADIC_WITH_NAMED)
             PhpArray named = NamedExtras.forwarded(a, 1);
             if (named != null) {
@@ -94,8 +102,8 @@ final class RuntimeFunctions {
             return target.call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
         });
         // zend_call_function with the array as named_params: its string keys name parameters
-        r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, Args.get(a, 0),
-                CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
+        r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, a,
+                Args.get(a, 0), CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
         // the called class of the calling code goes on to the callee (late static binding)
         r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
                 FORWARD_STATIC_CALL), "forward_static_call"), pl.codeloom.php.runtime.Refcount.pendingTemporary(PhpArray.list(
@@ -108,7 +116,7 @@ final class RuntimeFunctions {
         // PG(connection_status): CONNECTION_NORMAL, the CLI's (a request's connection isn't watched)
         r.fn("php_sapi_name", (context, a) -> {
             Args.arity(a, "php_sapi_name", 0, 0);
-            return Str.of(context.response() != null ? "cgi-fcgi" : "cli");
+            return Str.of(context.sapiName());
         });
         r.fn("ini_parse_quantity", (context, a) -> {
             Args.arity(a, "ini_parse_quantity", 1, 1);
@@ -166,7 +174,7 @@ final class RuntimeFunctions {
                 return Boolean.FALSE;
             }
             long previous = context.response().status();
-            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL) {
+            if (Args.has(a, 0) && Args.get(a, 0) != PhpNull.NULL && Args.lng(a, 0, 200) != 0) {
                 // PHP_FUNCTION(http_response_code): no new code once the headers are out
                 if (context.response().isSent()) {
                     SourceLocation start = context.response().outputStart();
@@ -176,7 +184,11 @@ final class RuntimeFunctions {
                             SourceLocation.current());
                     return Boolean.FALSE;
                 }
-                context.response().setStatus((int) Args.lng(a, 0, 200));
+                if (context.response().hasStatusLine()) {
+                    ErrorFunctions.raise(context, ErrorFunctions.E_WARNING, Str.of("http_response_code(): Calling "
+                            + "http_response_code() after header('HTTP/...') has no effect"), SourceLocation.current());
+                }
+                context.response().setCode((int) Args.lng(a, 0, 200));
             }
             return previous;
         });

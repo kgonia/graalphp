@@ -20,9 +20,17 @@ import java.util.Map;
 /**
  * The CGI SAPI (php.Sapi=cgi), as a server runs a script per request: the request comes as CGI variables in the
  * environment and the body on stdin; the response goes to stdout as a CGI response, the header block (a Status
- * line, then the headers) before the first byte of output. The embedder (launcher.HttpMain) speaks HTTP.
+ * line, then the headers) before the first byte of output. The embedder speaks HTTP (launcher.HttpMain) or FastCGI
+ * (launcher.FastCgiMain).
  */
 public final class CgiSapi {
+    /**
+     * The embedder's end of the request (php-fpm's fcgi_end_request), which fastcgi_finish_request() calls: set by
+     * the server (launcher.CgiRequests) on the thread that makes the request's context, which takes it as it is
+     * made.
+     */
+    public static final ThreadLocal<Runnable> REQUEST_END = new ThreadLocal<>();
+
     private CgiSapi() {
     }
 
@@ -85,9 +93,71 @@ public final class CgiSapi {
         return false;
     }
 
+    /**
+     * The reason php's CGI SAPIs (php-cgi, php-fpm) write after a status code without a status line
+     * (main/http_status_codes.h), or null: read from php-fpm 8.5.12's FastCGI output for every code 100-599.
+     */
+    static String reason(int code) {
+        return switch (code) {
+            case 100 -> "Continue";
+            case 101 -> "Switching Protocols";
+            case 201 -> "Created";
+            case 202 -> "Accepted";
+            case 203 -> "Non-Authoritative Information";
+            case 204 -> "No Content";
+            case 205 -> "Reset Content";
+            case 206 -> "Partial Content";
+            case 300 -> "Multiple Choices";
+            case 301 -> "Moved Permanently";
+            case 302 -> "Found";
+            case 303 -> "See Other";
+            case 304 -> "Not Modified";
+            case 305 -> "Use Proxy";
+            case 307 -> "Temporary Redirect";
+            case 308 -> "Permanent Redirect";
+            case 400 -> "Bad Request";
+            case 401 -> "Unauthorized";
+            case 402 -> "Payment Required";
+            case 403 -> "Forbidden";
+            case 404 -> "Not Found";
+            case 405 -> "Method Not Allowed";
+            case 406 -> "Not Acceptable";
+            case 407 -> "Proxy Authentication Required";
+            case 408 -> "Request Timeout";
+            case 409 -> "Conflict";
+            case 410 -> "Gone";
+            case 411 -> "Length Required";
+            case 412 -> "Precondition Failed";
+            case 413 -> "Request Entity Too Large";
+            case 414 -> "Request-URI Too Long";
+            case 415 -> "Unsupported Media Type";
+            case 416 -> "Requested Range Not Satisfiable";
+            case 417 -> "Expectation Failed";
+            case 426 -> "Upgrade Required";
+            case 428 -> "Precondition Required";
+            case 429 -> "Too Many Requests";
+            case 431 -> "Request Header Fields Too Large";
+            case 451 -> "Unavailable For Legal Reasons";
+            case 500 -> "Internal Server Error";
+            case 501 -> "Not Implemented";
+            case 502 -> "Bad Gateway";
+            case 503 -> "Service Unavailable";
+            case 504 -> "Gateway Timeout";
+            case 505 -> "HTTP Version Not Supported";
+            case 506 -> "Variant Also Negotiates";
+            case 511 -> "Network Authentication Required";
+            default -> null;
+        };
+    }
+
     /** The response's status and headers, as header(), setcookie() and http_response_code() leave them. */
     public static final class Response {
         private int status = 200;
+        /**
+         * header('HTTP/...')'s line (SG(sapi_headers).http_status_line), sent as the Status; dropped when a header()
+         * changes the code (sapi_update_response_code), kept by http_response_code().
+         */
+        private String statusLine;
         /** Header lines ("Name: value") in the order set. */
         private final List<String> headers = new ArrayList<>();
         private boolean sent;
@@ -106,8 +176,39 @@ public final class CgiSapi {
             return status;
         }
 
-        public void setStatus(int status) {
+        /** http_response_code(): the code, a status line kept (it is still what is sent). */
+        public void setCode(int status) {
             this.status = status;
+        }
+
+        public boolean hasStatusLine() {
+            return statusLine != null;
+        }
+
+        /** sapi_update_response_code: a new code drops the status line. */
+        private void updateStatus(int code) {
+            if (status != code) {
+                statusLine = null;
+                status = code;
+            }
+        }
+
+        /** sapi_extract_response_code: atoi of what follows the line's first space not followed by one, else 200. */
+        private static int extractCode(String line) {
+            for (int i = 0; i < line.length(); i++) {
+                if (line.charAt(i) == ' ' && (i + 1 == line.length() || line.charAt(i + 1) != ' ')) {
+                    int end = i + 1;
+                    if (end < line.length() && (line.charAt(end) == '-' || line.charAt(end) == '+')) {
+                        end++;
+                    }
+                    int digits = end;
+                    while (end < line.length() && Character.isDigit(line.charAt(end)) && end - digits < 9) {
+                        end++;
+                    }
+                    return end == digits ? 0 : Integer.parseInt(line.substring(i + 1, end));
+                }
+            }
+            return 200;
         }
 
         public List<String> headers() {
@@ -119,10 +220,8 @@ public final class CgiSapi {
         public void header(String line, boolean replace, int code) {
             String header = line.stripTrailing();
             if (header.regionMatches(true, 0, "HTTP/", 0, 5)) {
-                String[] parts = header.split(" ", 3);
-                if (parts.length > 1 && parts[1].matches("\\d{3}")) {
-                    status = Integer.parseInt(parts[1]);
-                }
+                updateStatus(extractCode(header));
+                statusLine = header;
                 return;
             }
             int colon = header.indexOf(':');
@@ -131,22 +230,28 @@ public final class CgiSapi {
             }
             String name = header.substring(0, colon).trim();
             String value = header.substring(colon + 1).trim();
-            if (name.equalsIgnoreCase("Status")) {
-                if (value.length() >= 3 && value.substring(0, 3).matches("\\d{3}")) {
-                    status = Integer.parseInt(value.substring(0, 3));
-                }
-                return;
-            }
-            if (name.equalsIgnoreCase("Location") && code == 0 && status != 201 && (status < 300 || status > 399)) {
-                status = 302;
+            // a Status header stays a header, the code as it was: the CGI SAPIs send it as the status
+            if (name.equalsIgnoreCase("Location") && status != 201 && (status < 300 || status > 399)) {
+                // a redirect unless the code is one: the code given, else a 302 (the 303 sapi_header_op gives a POST
+                // over HTTP/1.1 needs SG(request_info).proto_num, which the CGI SAPIs leave at 1000: php-fpm sends 302)
+                updateStatus(code > 0 ? code : 302);
             }
             if (code > 0) {
-                status = code;
+                updateStatus(code);
             }
             if (replace) {
                 remove(name);
             }
             headers.add(name + ": " + value);
+        }
+
+        private boolean hasStatusHeader() {
+            for (String header : headers) {
+                if (header.length() > 7 && header.regionMatches(true, 0, "Status:", 0, 7)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /** header_remove(): one header by name, or all (name null). */
@@ -174,7 +279,19 @@ public final class CgiSapi {
             if (!contentType) {
                 headers.add("Content-type: text/html; charset=UTF-8");
             }
-            StringBuilder block = new StringBuilder("Status: ").append(status).append("\r\n");
+            StringBuilder block = new StringBuilder();
+            // sapi_cgi_send_headers: a Status for a code that isn't 200, from the status line, or else from the code
+            // unless a Status header gives it
+            if (status != 200) {
+                int space = statusLine == null ? -1 : statusLine.indexOf(' ');
+                if (space >= 5) {
+                    block.append("Status:").append(statusLine, space, statusLine.length()).append("\r\n");
+                } else if (!hasStatusHeader()) {
+                    String reason = reason(status);
+                    block.append("Status: ").append(status).append(reason == null ? "" : " " + reason)
+                            .append("\r\n");
+                }
+            }
             for (String header : headers) {
                 block.append(header).append("\r\n");
             }

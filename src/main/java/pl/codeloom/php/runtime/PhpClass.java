@@ -337,7 +337,13 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public PhpFunction methodFrom(String name, String scope) {
-        PhpFunction method = accessibleMethod(Str.lower(name), scope);
+        return methodFrom(name, Str.lower(name), scope);
+    }
+
+    /** methodFrom for a caller that has the name in lowercase too (a call site). */
+    @TruffleBoundary
+    public PhpFunction methodFrom(String name, String lower, String scope) {
+        PhpFunction method = accessibleMethod(lower, scope);
         if (method != null || methods.containsKey("__call")) {
             return method;
         }
@@ -495,7 +501,7 @@ public final class PhpClass {
 
     /** The class (lowercase) that declared a method, or null for a built-in class's shared one. */
     private static String declaringClass(PhpFunction method) {
-        return method.getClassName() == null ? null : Str.lower(method.getClassName());
+        return method.getScopeName();
     }
 
     /** The methods by lowercase name (own, imported and inherited), for Reflection; read only. */
@@ -659,6 +665,21 @@ public final class PhpClass {
             constants.put(constantName, value);
         }
         return value;
+    }
+
+    /**
+     * A read's common case in one lookup: the value of an evaluated constant of a class whose constants are all
+     * public (no scope to check); null otherwise, for the read to take the checks and getConstant. One call out of
+     * compiled code: the maps' lookups, and never an initializer's translation and run, which a compilation that
+     * followed it in failed on for good ("Too deep inlining").
+     */
+    @TruffleBoundary
+    public Object plainConstant(String constantName) {
+        if (!restrictedConstants.isEmpty()) {
+            return null;
+        }
+        Object value = constants.get(constantName);
+        return value instanceof Evaluating || value instanceof Thunk ? null : value;
     }
 
     /**

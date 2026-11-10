@@ -95,7 +95,11 @@ public final class Builtins {
     }
 
     /** The built-in functions; debug adds the runtime's own tools (DebugFunctions, the PCRE measurements). */
-    public static Table build(PhpLanguage language, boolean debug) {
+    /**
+     * The language's built-ins; sapiName is PHP_SAPI, which the translator folds as php-src's compiler does, so a
+     * language serves one SAPI (php.Sapi is among the options its contexts must share).
+     */
+    public static Table build(PhpLanguage language, boolean debug, String sapiName) {
         Registry registry = new Registry(language);
         CoreFunctions.register(registry);
         ErrorFunctions.register(registry);
@@ -106,6 +110,9 @@ public final class Builtins {
         JsonFunctions.register(registry);
         MbFunctions.register(registry);
         RuntimeFunctions.register(registry);
+        if (sapiName.equals("fpm-fcgi")) {
+            RuntimeFunctions.registerFpm(registry);
+        }
         DateFunctions.register(registry);
         EncodingFunctions.register(registry);
         PasswordFunctions.register(registry);
@@ -129,7 +136,7 @@ public final class Builtins {
             DebugFunctions.register(registry);
             PcreFunctions.registerDebug(registry);
         }
-        return new Table(constants(curl), List.copyOf(registry.functions()), throwableMethods(registry),
+        return new Table(constants(curl, sapiName), List.copyOf(registry.functions()), throwableMethods(registry),
                 generatorMethods(registry), ClosureMethods.methods(registry), WeakReferences.methods(registry),
                 Fibers.methods(registry), enumMethods(registry), curlMethods);
     }
@@ -154,7 +161,7 @@ public final class Builtins {
             "FILTER_SANITIZE_STRING", "since 8.1, use htmlspecialchars() instead",
             "FILTER_SANITIZE_STRIPPED", "since 8.1, use htmlspecialchars() instead");
 
-    private static Map<String, Object> constants(boolean curl) {
+    private static Map<String, Object> constants(boolean curl, String sapiName) {
         Object[][] table = {
                 {"PHP_EOL", Str.of("\n")}, {"PHP_INT_MAX", Long.MAX_VALUE}, {"PHP_INT_MIN", Long.MIN_VALUE},
                 {"PHP_INT_SIZE", 8L}, {"PHP_FLOAT_EPSILON", Math.ulp(1.0)}, {"PHP_FLOAT_MAX", Double.MAX_VALUE},
@@ -206,7 +213,7 @@ public final class Builtins {
                 {"CONNECTION_ABORTED", 1L}, {"CONNECTION_NORMAL", 0L}, {"CONNECTION_TIMEOUT", 2L},
                 {"LC_CTYPE", 0L}, {"LC_NUMERIC", 1L}, {"LC_TIME", 2L}, {"LC_COLLATE", 3L}, {"LC_MONETARY", 4L},
                 {"LC_MESSAGES", 5L}, {"LC_ALL", 6L},
-                {"PHP_SAPI", Str.of("cli")}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
+                {"PHP_SAPI", Str.of(sapiName)}, {"PHP_BINARY", Str.of("/usr/local/bin/php")},
                 {"PHP_MAXPATHLEN", 4096L}, {"PHP_DEBUG", 0L}, {"PHP_ZTS", 0L}, {"PHP_EXTRA_VERSION", Str.EMPTY},
                 {"PHP_FLOAT_DIG", 15L}, {"M_E", Math.E}, {"M_SQRT2", Math.sqrt(2)},
                 {"FILE_USE_INCLUDE_PATH", 1L}, {"FILE_IGNORE_NEW_LINES", 2L}, {"FILE_SKIP_EMPTY_LINES", 4L},

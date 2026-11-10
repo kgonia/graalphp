@@ -49,6 +49,12 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
     private final Assumption noNamedExtras = Truffle.getRuntime().createAssumption("no named extras");
     /** Whether the built-in passes such names on (Z_PARAM_VARIADIC_WITH_NAMED), else refuses them. */
     @CompilationFinal private boolean forwardsNamed;
+    /**
+     * Valid until the body asks for the PHP code calling it (a callable's class or visibility, resolved against
+     * that code: Callables.From) and has to walk the stack for it: from then on the built-in function's calls pass
+     * the caller in the frame arguments' static-class slot (wantsCaller).
+     */
+    private final Assumption noCallerWanted = Truffle.getRuntime().createAssumption("no caller wanted");
 
     public BuiltinRootNode(PhpLanguage language, String name, Builtin body, boolean method, int min, int max) {
         super(language);
@@ -123,6 +129,25 @@ public final class BuiltinRootNode extends RootNode implements Backtrace.Callee 
             pl.codeloom.php.runtime.Refcount.releasePending(pending, mark, result);
         }
         return result;
+    }
+
+    /**
+     * Whether a call of this built-in function is to pass the calling code (a Callables.Caller) in the frame
+     * arguments' static-class slot, which only a method uses. A constant of compiled code.
+     */
+    public boolean wantsCaller() {
+        return !noCallerWanted.isValid();
+    }
+
+    public boolean isMethod() {
+        return method;
+    }
+
+    /** The body walked the stack for the calling code: its calls pass it from now on (a function's only). */
+    public void wantCaller() {
+        if (!method && noCallerWanted.isValid()) {
+            noCallerWanted.invalidate();
+        }
     }
 
     /**

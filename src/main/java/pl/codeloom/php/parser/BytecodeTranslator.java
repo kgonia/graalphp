@@ -458,6 +458,15 @@ public final class BytecodeTranslator {
          * being short-circuited (in the rest of the chain), the keys of a place evaluated before its value (onceKey).
          */
         private final Map<Ast, BytecodeLocal> nullsafeObjects = new java.util.IdentityHashMap<>();
+        /**
+         * `isset($a[$k])` whose element is read as soon as it held (keepFor): the isset keeps the element it found
+         * in this hidden local (IssetElementKeep) and the read takes it from there (TakeKept), one lookup where the
+         * source has two. One local serves the function: nothing runs between an isset and its read.
+         */
+        private BytecodeLocal keptElement;
+        /** The elements under isset() that keep what they find, and the reads that take it (keepFor). */
+        private final Set<Ast> keepingIssets = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        private final Set<Ast> keptReads = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         /** Each `.=` variable's hidden local for its in-place appends (AppendVar). */
         private final Map<BytecodeLocal, BytecodeLocal> appenders = new java.util.IdentityHashMap<>();
 
@@ -1599,6 +1608,7 @@ public final class BytecodeTranslator {
                 enteringOneOf(later);
                 b.endNot();
             }
+            Ast kept = keepFor(condition, element.node("stmts"));
             condition(condition);
             if (!later.isEmpty()) {
                 b.endAnd();
@@ -1607,6 +1617,7 @@ public final class BytecodeTranslator {
                 b.endOr();
             }
             statements(element.node("stmts"));
+            keptReads.remove(kept);
             if (more) {
                 ifChain(node, index + 1);
                 b.endIfThenElse();
@@ -2563,6 +2574,18 @@ public final class BytecodeTranslator {
                         refPlace(node).read();
                         break;
                     }
+                    if (keptReads.remove(node)) {
+                        // the element the isset() before it found, or the read as written when it kept none
+                        b.beginConditional();
+                        b.emitHasKept(keptElement);
+                        b.emitTakeKept(keptElement);
+                        b.beginReadElement();
+                        constantObject(node.get("expr"), true);
+                        key(node.get("dim"));
+                        b.endReadElement();
+                        b.endConditional();
+                        break;
+                    }
                     b.beginReadElement();
                     constantObject(node.get("expr"), true);
                     key(node.get("dim"));
@@ -2687,9 +2710,11 @@ public final class BytecodeTranslator {
                         expression(node.get("false"));
                         b.endElvis();
                     } else {
+                        Ast kept = keepFor(node.get("cond"), node.get("true"));
                         b.beginConditional();
                         condition(node.get("cond"));
                         expression(node.get("true"));
+                        keptReads.remove(kept);
                         expression(node.get("false"));
                         b.endConditional();
                     }
@@ -4529,6 +4554,13 @@ public final class BytecodeTranslator {
                 if (target.get("dim") == null) {
                     throw compileError(target, "Cannot use [] for reading");
                 }
+                if (keepingIssets.remove(target)) {
+                    b.beginIssetElementKeep(keptElement);
+                    readIfSet(target.get("expr"));
+                    key(target.get("dim"));
+                    b.endIssetElementKeep();
+                    return;
+                }
                 b.beginIssetElement();
                 readIfSet(target.get("expr"));
                 key(target.get("dim"));
@@ -4552,6 +4584,86 @@ public final class BytecodeTranslator {
             readIfSet(target.get("expr"));
             propName(prop);
             b.endIssetPropNamed();
+        }
+
+        /**
+         * Pairs an isset() with the read of the same element that runs as soon as it held: `if (isset($a[$k])) {
+         * $v = $a[$k]; ...}`, `{ return $a[$k]; }`, `isset($a[$k]) ? $a[$k] : ...`, also as the last of an &&
+         * (`isset($k, $a[$k])`). condition: the test; then: what runs when it held. $a is a variable of the
+         * function and $k one too, or a constant string or int: reading them again has no effect and nothing runs
+         * in between, so the read's value is the element the isset found (PhpBytecodeRootNode.IssetElementKeep
+         * says when it keeps one; _wp_array_get's loop, wiki/ceiling.md). Returns the read paired, or null.
+         */
+        private Ast keepFor(Object condition, Object then) {
+            Object last = condition;
+            while (last instanceof Ast and && and.is("AST_BINARY_OP") && and.flags == 259) {
+                last = and.get("right");
+            }
+            if (!(last instanceof Ast isset && isset.is("AST_ISSET") && isset.get("var") instanceof Ast tested
+                    && keepable(tested))) {
+                return null;
+            }
+            Ast read = firstRead(then);
+            if (read == null || !sameOperand(tested.get("expr"), read.get("expr"))
+                    || !sameOperand(tested.get("dim"), read.get("dim"))) {
+                return null;
+            }
+            if (keptElement == null) {
+                keptElement = b.createLocal();
+            }
+            keepingIssets.add(tested);
+            keptReads.add(read);
+            return read;
+        }
+
+        /** `$a[$k]` of a variable of the function, by one too or by a constant string or int. */
+        private boolean keepable(Ast element) {
+            Object key = element.get("dim");
+            return element.is("AST_DIM") && element.get("expr") instanceof Ast container && isVariable(container)
+                    && (key instanceof Ast variable ? isVariable(variable)
+                            : key instanceof String || key instanceof Long);
+        }
+
+        /**
+         * The element (keepable) that code reads before it does anything else: of `$v = E`, `return E`, and of E's
+         * own element by a key that runs no code (plainKey: `E['x']`, `E[$j]`), E; a statement list's first
+         * statement's. `E[f()]` is none: php-src evaluates f() before it fetches E (zend_delayed_compile_dim), and
+         * f() may change the array.
+         */
+        private Ast firstRead(Object code) {
+            if (!(code instanceof Ast node)) {
+                return null;
+            }
+            switch (node.kind) {
+                case "AST_STMT_LIST":
+                    for (Object child : node.children()) {
+                        if (child instanceof Ast) {
+                            return firstRead(child);
+                        }
+                    }
+                    return null;
+                case "AST_ASSIGN":
+                    return node.get("var") instanceof Ast target && isVariable(target)
+                            ? firstRead(node.get("expr")) : null;
+                case "AST_RETURN":
+                    return returnsRef() ? null : firstRead(node.get("expr"));
+                case "AST_DIM":
+                    if (keepable(node)) {
+                        return node;
+                    }
+                    return node.get("dim") != null && plainKey(node.get("dim")) && !isGlobals(node.get("expr"))
+                            ? firstRead(node.get("expr")) : null;
+                default:
+                    return null;
+            }
+        }
+
+        /** The same variable of the function, or the same constant key. */
+        private static boolean sameOperand(Object one, Object other) {
+            if (one instanceof Ast a) {
+                return other instanceof Ast c && a.get("name") instanceof String name && name.equals(c.get("name"));
+            }
+            return one != null && one.equals(other);
         }
 
         /**
@@ -5174,7 +5286,7 @@ public final class BytecodeTranslator {
                 "key", "next", "prev", "reset", "end", "array_pop", "array_push", "array_unshift", "substr",
                 "strpos", "str_contains", "str_starts_with", "str_ends_with", "strspn", "strcspn", "strtolower",
                 "strtoupper", "trim", "ltrim", "rtrim", "chop", "ucfirst", "str_replace", "in_array",
-                "array_slice", "array_keys", "explode");
+                "array_slice", "array_keys", "explode", "ord", "chr", "array_key_exists", "key_exists");
 
         /**
          * A small, hot built-in compiled in place (the tree's Intrinsics; PhpBytecodeRootNode's TypeTest...
@@ -5220,6 +5332,30 @@ public final class BytecodeTranslator {
                     b.beginUcfirst(info);
                     expression(args.child(0));
                     b.endUcfirst();
+                }
+                case "ord" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginOrd(info);
+                    expression(args.child(0));
+                    b.endOrd();
+                }
+                case "chr" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginChr(info);
+                    expression(args.child(0));
+                    b.endChr();
+                }
+                case "array_key_exists", "key_exists" -> {
+                    if (n != 2) {
+                        return false;
+                    }
+                    b.beginArrayKeyExists(info);
+                    operands(args, 2);
+                    b.endArrayKeyExists();
                 }
                 case "array_keys" -> {
                     if (n != 1) {

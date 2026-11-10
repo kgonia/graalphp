@@ -90,6 +90,11 @@ public final class ConstantNodes {
      * scope may not access it.
      */
     public static Object classConstant(PhpClass phpClass, String name, String scope) {
+        // the common case in one lookup: an evaluated constant of a class whose constants are all public
+        Object value = phpClass.plainConstant(name);
+        if (value != null) {
+            return value;
+        }
         checkConstantAccess(phpClass, name, scope);
         return phpClass.getConstant(name);
     }

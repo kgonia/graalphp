@@ -709,6 +709,15 @@ public final class PhpObject extends DynamicObject {
         return guards != null && guards.remove(state);
     }
 
+    /**
+     * A readonly property's one write in __clone is taken (IS_PROP_REINITABLE cleared): its mark built behind the
+     * boundary, for compiled callers.
+     */
+    @TruffleBoundary
+    public void unmarkReinit(String name) {
+        unmark("reinit:" + name);
+    }
+
     /** A declared typed property this object doesn't have and never unset: IS_PROP_UNINIT, no magic method runs. */
     @TruffleBoundary
     public boolean isUninitialized(String name) {

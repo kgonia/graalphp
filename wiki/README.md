@@ -8,11 +8,14 @@
 |---|---|
 | [retro.md](retro.md) | Lessons from once-campfire-java and stable-diffusion.cpp, and the standing rules for this project |
 | [plan.md](plan.md) | Goal, precedents (graalphp, HHVM, PeachPie, TruffleRuby), architecture, size estimate, gates 0–4, risks |
+| [checks.md](checks.md) | One entry point for a build's checks (bench/check): levels L0-L2, builds by commit, the host's preflight, one results store, the report against the base |
 | [decisions.md](decisions.md) | Numbered decisions with the reason for each |
 | [graalphp-assessment.md](graalphp-assessment.md) | Why graalphp is a reference, not a base to fork |
 | [gate-1.md](gate-1.md) | Gate 1 spec, method, go/no-go criteria and status log |
 | [gate-2.md](gate-2.md) | Gate 2 probe: syntax and built-in gaps of WordPress core |
 | [woocommerce.md](woocommerce.md) | WooCommerce on Truffle PHP against PHP 8.5: what broke and its fixes, a load test of concurrent orders (one JVM, the native image, php-fpm), and where the JVM's memory goes under load |
+| [beat-php.md](beat-php.md) | The overnight proof of 2026-11-10: can the engine beat native PHP on WordPress? No: a hot render of the front page is 1.94× PHP's in the engine's best case (one context kept alive, 2 GB heap) and 2.1× as served (2.4–2.5× when the measured requests end in `exit`: issue 103, found by it). The K8 experiment (the render loop inside a request and from the command line), the warm-up, the machine's two speeds, the collector, where a render's time goes, memory, and what beating PHP would take |
+| [ceiling.md](ceiling.md) | The ceiling experiment of 2026-11-10: is the gap to PHP ours or the price of PHP's semantics? The kernels reach PHP with the semantics exact (`_wp_array_get` 1.94× → 1.13×, 47 elementary operations at a geometric mean of 0.66×); the page does not follow (1.89× → 1.86×): a render is half compiled code and half runtime calls with no part above 5.3%, and its time follows the amount of last-tier machine code (huge pages and a quarter of the inlining budget: 1.65×; G1 in place of ParallelGC: 2.08×). Verdict: parity not shown in either direction. The method, what was tried and dropped, and the tools (`ops.php`, `hot.php`, `bench/code-size`, `k8_compcmp.py`, `k8-jfr.sh`, `JfrSplit.java`) |
 | [bootstrap-share.md](bootstrap-share.md) | How much of a WordPress request on PHP 8.5 is bootstrap, what of it depends on the request, and what a post-bootstrap snapshot could gain |
 | [tla-cow.md](tla-cow.md) | TLA+ model of copy-on-write arrays and PHP references against php-src, with its findings |
 | [tla-curl.md](tla-curl.md) | TLA+ model of the curl handles' lifecycle (Cleaner, multi, share, threads), with its findings |

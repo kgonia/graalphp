@@ -503,9 +503,9 @@ public final class PhpArray implements TruffleObject {
     }
 
     /**
-     * The hash slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} and {@link #rawAt} a lookup
-     * site can remember where a key was and confirm it next time with one identity check: arrays built the same
-     * way keep a key at the same slot.
+     * The hash slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} a lookup site can remember
+     * where a key was and confirm it next time with one identity check: arrays built the same way keep a key at
+     * the same slot.
      */
     @TruffleBoundary
     public int slotOf(Object key) {
@@ -551,6 +551,85 @@ public final class PhpArray implements TruffleObject {
             }
         }
         return null;
+    }
+
+    /** Whether a hash slot holds this very key instance ({@link #rawIfKeyAt}), for a caller that needs the slot. */
+    public boolean isKeyAt(int slot, Object key) {
+        return rawIfKeyAt(slot, key) != null;
+    }
+
+    /** {@link #slotAtHome}: the key's home is free, so the array doesn't hold the key. */
+    public static final int ABSENT = -1;
+    /** {@link #slotAtHome}: the home leads to another key instance; only {@link #slotOf} can tell. */
+    public static final int UNSURE = -2;
+
+    /**
+     * The hash slot of a string key whose hash is h, if the key is the first at its hash's home (a small store's
+     * cell, a larger one's bucket head) and this very instance: found with no call, no loop and no string
+     * comparison. {@link #ABSENT} when the home is free (also in a packed array, which has no string key): a cell or
+     * a bucket once taken stays taken, so no slot has the hash. {@link #UNSURE} for the rest, which is
+     * {@link #slotOf}'s: a key displaced from its home or further down its chain, an equal string made elsewhere, an
+     * int key, a deleted slot.
+     *
+     * <p>The first step alone, because a site holds this inline: the whole walk, as php-src's
+     * zend_hash_find_known_hash, was 2.3-2.8 KB of machine code a site, and WordPress's front page 6% slower for it
+     * (ElementNodes.SlotCacheNode, wiki/ceiling.md).
+     *
+     * <p>A key not normalized yet can be asked for too: a slot found is its slot (the stored keys are normalized, so
+     * the key is), the other two answers then mean nothing.
+     */
+    public int slotAtHome(TruffleString key, int h) {
+        if (!(store instanceof Hash hash)) {
+            return ABSENT;
+        }
+        int[] buckets = hash.buckets;
+        int slot = buckets == null ? ((int) (hash.cells >>> ((h & Hash.CELL_MASK) << 2)) & Hash.CELL_MASK) - 1
+                : buckets[h & (buckets.length - 1)];
+        if (slot < 0) {
+            return ABSENT;
+        }
+        return hash.entries[2 * slot] == key ? slot : UNSURE;
+    }
+
+    /**
+     * put() into a hash slot known to hold the key (slotAtHome), where it is the store alone: neither the
+     * element there nor the value is counted ({@link #counted}). False, with nothing done, for the rest, which is
+     * put()'s: inline, the counting was 1.5 KB of machine code and eight calls a write (wiki/ceiling.md). The
+     * caller has made this array exclusive.
+     */
+    public boolean replacePlainAt(int slot, Object value) {
+        Hash hash = hashStore(store);
+        if (counted(hash.value(slot)) || counted(value)) {
+            return false;
+        }
+        hash.setValue(slot, value);
+        return true;
+    }
+
+    /** {@link #replacePlainAt} into a slot that holds this very key instance ({@link #rawIfKeyAt}), else false. */
+    public boolean replacePlainIfKeyAt(int slot, Object key, Object value) {
+        if (store instanceof Hash hash) {
+            Object[] entries = hash.entries;
+            int at = 2 * slot;
+            if (Integer.compareUnsigned(at + 1, entries.length) < 0 && entries[at] == key
+                    && !counted(entries[at + 1]) && !counted(value)) {
+                entries[at + 1] = value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** What a slot counts in and out (countIn, countOut), or receives a value for (a reference). */
+    private static boolean counted(Object value) {
+        return value instanceof PhpArray || value instanceof PhpObject || value instanceof PhpClosure
+                || value instanceof PhpRef;
+    }
+
+    /** put() under a normalized string key, out of line; the slot the key is at afterwards, for a site to remember. */
+    @TruffleBoundary
+    public int putString(TruffleString key, Object value) {
+        return putSlow(key, value);
     }
 
     /**
@@ -820,8 +899,9 @@ public final class PhpArray implements TruffleObject {
         store = boxed;
     }
 
+    /** The slot the key is at afterwards. */
     @TruffleBoundary
-    private void putSlow(Object key, Object value) {
+    private int putSlow(Object key, Object value) {
         Hash hash = toHash();
         int h = hash(key);
         int slot = hash.find(key, h);
@@ -829,15 +909,15 @@ public final class PhpArray implements TruffleObject {
             Object old = hash.value(slot);
             if (old instanceof PhpRef ref) {
                 ref.set(value);
-                return;
+                return slot;
             }
             countIn(value);
             hash.setValue(slot, value);
             countOut(old, value);
-        } else {
-            countIn(value);
-            insert(hash, key, h, value);
+            return slot;
         }
+        countIn(value);
+        return insert(hash, key, h, value);
     }
 
     @TruffleBoundary
@@ -1428,16 +1508,19 @@ public final class PhpArray implements TruffleObject {
         return hash;
     }
 
-    private void insert(Hash hash, Object key, int h, Object value) {
+    /** The slot the key went to. */
+    private int insert(Hash hash, Object key, int h, Object value) {
         Hash target = hash;
         if (target.used == target.capacity()) {
             target = grow(target);
         }
+        int slot = target.used;
         target.add(key, h, value);
         size++;
         if (key instanceof Long index && index >= nextIndex) {
             nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
         }
+        return slot;
     }
 
     /** Doubles capacity, or just compacts when many slots are deleted; keeps order and fixes the pointer. */
@@ -1481,10 +1564,12 @@ public final class PhpArray implements TruffleObject {
     /**
      * The hash strategy's store, php-src's layout: slots in insertion order (keys, their hashes, values; a deleted
      * slot's key is null) and, once there are more than {@link #MIN_CAPACITY} slots, an index of bucket heads with
-     * a chain per slot. Below that a lookup scans the hashes, as TruffleRuby's packed hashes do: most hashed PHP
-     * arrays are small records, which then also copy as three arrays instead of five.
+     * a chain per slot. Below that the index is {@link #cells}, one word: most hashed PHP arrays are small
+     * records, which then also copy as three arrays instead of five.
      */
     private static final class Hash {
+        static final int CELLS = 16;
+        static final int CELL_MASK = CELLS - 1;
         /**
          * Slot i's key at 2i and its value at 2i + 1: one array, so a lookup that checks a slot's key reads its
          * value under the same bounds test and with no other load (a remembered slot's check, at every string-key
@@ -1497,6 +1582,14 @@ public final class PhpArray implements TruffleObject {
         final int[] chain;
         /** The slots used, including deleted ones. */
         int used;
+        /**
+         * A small store's index (while buckets is null: eight slots): sixteen four-bit cells, each one more than a
+         * slot, or 0 when free. A key takes the first free cell from its hash's low four bits on, so a lookup walks
+         * from there to the key, or to a free cell when the store doesn't hold it: no loop over the slots, whose
+         * end would depend on where the key is. A cell is never freed (a removed slot's cell fails the key check),
+         * and a store takes eight slots in its life, so half the cells stay free.
+         */
+        long cells;
 
         Hash(int capacity) {
             entries = new Object[2 * capacity];
@@ -1517,6 +1610,7 @@ public final class PhpArray implements TruffleObject {
             buckets = original.buckets == null ? null : original.buckets.clone();
             chain = original.chain == null ? null : original.chain.clone();
             used = original.used;
+            cells = original.cells;
         }
 
         Hash copy() {
@@ -1564,14 +1658,23 @@ public final class PhpArray implements TruffleObject {
                 int bucket = h & (buckets.length - 1);
                 chain[slot] = buckets[bucket];
                 buckets[bucket] = slot;
+            } else {
+                long taken = cells;
+                int shift = (h & CELL_MASK) << 2;
+                while (((taken >>> shift) & CELL_MASK) != 0) {
+                    shift = (shift + 4) & 63;
+                }
+                cells = taken | (long) (slot + 1) << shift;
             }
         }
 
         int find(Object key, int h) {
             if (buckets == null) {
-                for (int slot = 0; slot < used; slot++) {
-                    if (hashes[slot] == h && keyEquals(key(slot), key)) {
-                        return slot;
+                long taken = cells;
+                int shift = (h & CELL_MASK) << 2;
+                for (int cell; (cell = (int) (taken >>> shift) & CELL_MASK) != 0; shift = (shift + 4) & 63) {
+                    if (hashes[cell - 1] == h && keyEquals(key(cell - 1), key)) {
+                        return cell - 1;
                     }
                 }
                 return -1;

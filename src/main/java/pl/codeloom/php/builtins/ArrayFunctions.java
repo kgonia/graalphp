@@ -41,10 +41,10 @@ public final class ArrayFunctions {
             Args.arity(a, "array_map", 2, Integer.MAX_VALUE);
             return map(context, a);
         });
-        r.fn("array_filter", (context, a) -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
+        r.fn("array_filter", (context, a) -> filter(context, a, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
-        r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
-        r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
+        r.fn("array_key_exists", (context, a) -> keyExists(context, "array_key_exists", a));
+        r.fn("key_exists", (context, a) -> keyExists(context, "key_exists", a));
         r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array", "haystack"), Args.bool(a, 2, false)) != null);
         r.fn("array_search", a -> {
             Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search", "haystack"), Args.bool(a, 2, false));
@@ -111,10 +111,10 @@ public final class ArrayFunctions {
             int p = array.lastPosition();
             return p < 0 ? PhpNull.NULL : array.valueAt(p);
         });
-        r.fn("array_any", (context, a) -> anyAll(context, Args.array(a, 0, "array_any"), Args.get(a, 1), true));
-        r.fn("array_all", (context, a) -> anyAll(context, Args.array(a, 0, "array_all"), Args.get(a, 1), false));
-        r.fn("array_find", (context, a) -> find(context, Args.array(a, 0, "array_find"), Args.get(a, 1), false));
-        r.fn("array_find_key", (context, a) -> find(context, Args.array(a, 0, "array_find_key"), Args.get(a, 1), true));
+        r.fn("array_any", (context, a) -> anyAll(context, a, Args.array(a, 0, "array_any"), Args.get(a, 1), true));
+        r.fn("array_all", (context, a) -> anyAll(context, a, Args.array(a, 0, "array_all"), Args.get(a, 1), false));
+        r.fn("array_find", (context, a) -> find(context, a, Args.array(a, 0, "array_find"), Args.get(a, 1), false));
+        r.fn("array_find_key", (context, a) -> find(context, a, Args.array(a, 0, "array_find_key"), Args.get(a, 1), true));
         r.fn("array_is_list", a -> {
             PhpArray array = Args.array(a, 0, "array_is_list");
             long expected = 0;
@@ -198,7 +198,7 @@ public final class ArrayFunctions {
             Args.arity(a, "array_walk", 2, 3);
             PhpRef target = Args.ref(a, 0);
             writable(target, "array_walk");
-            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+            Callables.Target callback = Callables.parameter(context, a, Args.get(a, 1),
                     new Callables.Parameter("array_walk", 2, false));
             walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, false);
             return true;
@@ -206,7 +206,7 @@ public final class ArrayFunctions {
         r.fn("range", a -> range(Args.get(a, 0), Args.get(a, 1), Args.get(a, 2, 1L)));
         r.fn("array_reduce", (context, a) -> {
             PhpArray array = Args.array(a, 0, "array_reduce");
-            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+            Callables.Target callback = Callables.parameter(context, a, Args.get(a, 1),
                     new Callables.Parameter("array_reduce", 2, false));
             Object carry = Args.get(a, 2, PhpNull.NULL);
             for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
@@ -223,7 +223,7 @@ public final class ArrayFunctions {
             Args.arity(a, "array_walk_recursive", 2, 3);
             PhpRef target = Args.ref(a, 0);
             writable(target, "array_walk_recursive");
-            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+            Callables.Target callback = Callables.parameter(context, a, Args.get(a, 1),
                     new Callables.Parameter("array_walk_recursive", 2, false));
             walk(context, target, callback, Args.has(a, 2) ? Args.get(a, 2) : null, true);
             return true;
@@ -619,7 +619,7 @@ public final class ArrayFunctions {
     @TruffleBoundary
     private static PhpArray map(PhpContext context, Object[] a) {
         Callables.Target callback = Args.get(a, 0) == PhpNull.NULL ? null
-                : Callables.parameter(context, Args.get(a, 0), new Callables.Parameter("array_map", 1, true));
+                : Callables.parameter(context, a, Args.get(a, 0), new Callables.Parameter("array_map", 1, true));
         int arrays = Args.count(a) - 1;
         if (arrays == 1) {
             PhpArray array = Args.array(a, 1, "array_map", "array");
@@ -667,9 +667,9 @@ public final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static PhpArray filter(PhpContext context, PhpArray array, Object callable, long mode) {
+    private static PhpArray filter(PhpContext context, Object[] a, PhpArray array, Object callable, long mode) {
         Callables.Target callback = callable == null || callable == PhpNull.NULL ? null
-                : Callables.parameter(context, callable, new Callables.Parameter("array_filter", 2, true));
+                : Callables.parameter(context, a, callable, new Callables.Parameter("array_filter", 2, true));
         PhpArray result = new PhpArray();
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             Object key = array.keyAt(p);
@@ -692,14 +692,23 @@ public final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static boolean keyExists(Object key, Object container) {
-        if (container instanceof PhpArray array) {
-            return array.containsKey(ArrayKey.of(key == null ? PhpNull.NULL : key));
+    /**
+     * array_key_exists (PHP_FUNCTION(array_key_exists)): an array only (objects went with PHP 8), under the key an
+     * element access would use; an array or an object is no key.
+     */
+    private static boolean keyExists(PhpContext context, String function, Object[] a) {
+        Args.arity(a, function, 2, 2);
+        Object key = Args.get(a, 0);
+        PhpArray array = Args.array(a, 1, function, "array");
+        if (key == PhpNull.NULL) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Using null as the key parameter for"
+                    + " array_key_exists() is deprecated, use an empty string instead"), SourceLocation.current());
+        } else if (key instanceof Double d && (!Double.isFinite(d) || (double) Convert.doubleToLong(d) != d)) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Implicit conversion from float "
+                    + Convert.doubleToRepr(d) + " to int loses precision"), SourceLocation.current());
         }
-        if (container instanceof PhpObject object) {
-            return object.getProperty(Str.key(Convert.toStr(key))) != null;
-        }
-        throw new PhpError("TypeError", "array_key_exists(): Argument #2 ($array) must be of type array");
+        // any other type: "Cannot access offset of type T on array" (zend_illegal_container_offset)
+        return array.containsKey(ArrayKey.of(key));
     }
 
     @TruffleBoundary
@@ -1003,8 +1012,8 @@ public final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static Object anyAll(PhpContext context, PhpArray array, Object callable, boolean any) {
-        Callables.Target callback = Callables.parameter(context, callable,
+    private static Object anyAll(PhpContext context, Object[] a, PhpArray array, Object callable, boolean any) {
+        Callables.Target callback = Callables.parameter(context, a, callable,
                 new Callables.Parameter(any ? "array_any" : "array_all", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             boolean match = Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)));
@@ -1016,8 +1025,8 @@ public final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static Object find(PhpContext context, PhpArray array, Object callable, boolean wantKey) {
-        Callables.Target callback = Callables.parameter(context, callable,
+    private static Object find(PhpContext context, Object[] a, PhpArray array, Object callable, boolean wantKey) {
+        Callables.Target callback = Callables.parameter(context, a, callable,
                 new Callables.Parameter(wantKey ? "array_find_key" : "array_find", 2, false));
         for (int p = array.firstPosition(); p >= 0; p = array.nextPosition(p)) {
             if (Convert.toBool(callback.callScalar(array.valueAt(p), array.keyAt(p)))) {
@@ -1134,7 +1143,7 @@ public final class ArrayFunctions {
         }
         Comparator<Sorted> compare;
         if (user) {
-            Callables.Target callback = Callables.parameter(context, Args.get(a, 1),
+            Callables.Target callback = Callables.parameter(context, a, Args.get(a, 1),
                     new Callables.Parameter(name, 2, false));
             if (array.size() == 0) {
                 return true;
@@ -1253,7 +1262,7 @@ public final class ArrayFunctions {
     private static PhpArray keyedUserDiff(PhpContext context, Object[] a, String name, boolean diff) {
         Args.arity(a, name, 2, Integer.MAX_VALUE);
         int count = Args.count(a) - 1;
-        Callables.Target callback = Callables.parameter(context, Args.get(a, count),
+        Callables.Target callback = Callables.parameter(context, a, Args.get(a, count),
                 new Callables.Parameter(name, count + 1, false, null));
         PhpArray[] arrays = new PhpArray[count];
         for (int i = 0; i < count; i++) {
@@ -1290,9 +1299,9 @@ public final class ArrayFunctions {
         int callbacks = (userData ? 1 : 0) + (userKey ? 1 : 0);
         Args.arity(a, name, 1 + callbacks, Integer.MAX_VALUE);
         int count = Args.count(a) - callbacks;
-        Callables.Target first = Callables.parameter(context, Args.get(a, count),
+        Callables.Target first = Callables.parameter(context, a, Args.get(a, count),
                 new Callables.Parameter(name, count + 1, false, null));
-        Callables.Target second = callbacks == 2 ? Callables.parameter(context, Args.get(a, count + 1),
+        Callables.Target second = callbacks == 2 ? Callables.parameter(context, a, Args.get(a, count + 1),
                 new Callables.Parameter(name, count + 2, false, null)) : null;
         Callables.Target dataCallback = userData ? first : null;
         Callables.Target keyCallback = userKey ? (userData ? second : first) : null;

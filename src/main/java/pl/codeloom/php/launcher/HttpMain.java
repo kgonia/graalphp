@@ -6,14 +6,8 @@ import pl.codeloom.php.runtime.Str;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
-import org.graalvm.polyglot.EnvironmentAccess;
-import org.graalvm.polyglot.PolyglotException;
-import org.graalvm.polyglot.Source;
-import org.graalvm.polyglot.io.IOAccess;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -28,7 +22,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * An HTTP server running PHP scripts as php-fpm would: each request in a new context on one shared engine (the
@@ -58,25 +51,15 @@ public final class HttpMain {
 
     private static final int MAX_BODY = 8 * 1024 * 1024;
 
-    private final Engine engine;
+    private final CgiRequests requests;
     private final Path docroot;
-    private final String astRoot;
-    private final String sourceRoot;
     private final int port;
     private final String serverName;
-    /** Each request's php.ini settings, as php.Ini options. */
-    private final Map<String, String> ini;
-    /** The PHP requests begun so far (for php.http.closeAfter, with requests that come one at a time). */
-    private final AtomicInteger scripts = new AtomicInteger();
 
-    private HttpMain(Engine engine, Path docroot, String astRoot, String sourceRoot, int port, String serverName,
-                     Map<String, String> ini) {
+    private HttpMain(CgiRequests requests, Path docroot, int port, String serverName) {
+        this.requests = requests;
         this.serverName = serverName;
-        this.ini = ini;
-        this.engine = engine;
         this.docroot = docroot;
-        this.astRoot = astRoot;
-        this.sourceRoot = sourceRoot;
         this.port = port;
     }
 
@@ -124,8 +107,8 @@ public final class HttpMain {
         System.setProperty("sun.net.httpserver.maxReqTime", System.getProperty("sun.net.httpserver.maxReqTime", "30"));
         // the language's experimental options (php.Parser) come as system properties, as PhpMain's
         Engine engine = Engine.newBuilder("php").allowExperimentalOptions(true).build();
-        HttpMain server = new HttpMain(engine, Path.of(docroot).toRealPath(), astRoot, sourceRoot, port, serverName,
-                ini);
+        HttpMain server = new HttpMain(new CgiRequests(engine, "cgi", ini, astRoot, sourceRoot),
+                Path.of(docroot).toRealPath(), port, serverName);
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 128);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         http.setExecutor(pool);
@@ -143,7 +126,7 @@ public final class HttpMain {
             } catch (RuntimeException | IOException e) {
                 System.err.println("request failed: " + e);
             }
-            boolean close = (closeAfter > 0 && server.scripts.get() >= closeAfter)
+            boolean close = (closeAfter > 0 && server.requests.started() >= closeAfter)
                     || (closeFile != null && Files.exists(closeFile));
             if (close && closing.compareAndSet(false, true)) {
                 new Thread(() -> {
@@ -201,16 +184,6 @@ public final class HttpMain {
 
     /** Runs a script as a CGI request and sends its CGI response. */
     private void runScript(HttpExchange exchange, Path script, String scriptName) throws IOException {
-        scripts.incrementAndGet();
-        HeapProbe.IN_FLIGHT.incrementAndGet();
-        try {
-            runScriptCounted(exchange, script, scriptName);
-        } finally {
-            HeapProbe.IN_FLIGHT.decrementAndGet();
-        }
-    }
-
-    private void runScriptCounted(HttpExchange exchange, Path script, String scriptName) throws IOException {
         byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
         if (body.length > MAX_BODY) {
             respond(exchange, 413, "text/plain", "Request body too large".getBytes(StandardCharsets.UTF_8));
@@ -218,46 +191,9 @@ public final class HttpMain {
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         // -Dphp.phases=true: the request's phases, printed once it is answered
-        RequestPhases phases = Phases.ENABLED ? new RequestPhases() : null;
-        try (Context context = Context.newBuilder("php")
-                .engine(engine)
-                // files and native code (PCRE2); the environment is the request's CGI variables, not the server's
-                .allowIO(IOAccess.ALL)
-                .allowNativeAccess(true)
-                // a fiber runs on a thread of its own (PhpFiber)
-                .allowCreateThread(true)
-                .allowExperimentalOptions(true)
-                .allowEnvironmentAccess(EnvironmentAccess.NONE)
-                .environment(cgiEnvironment(exchange, script, scriptName, body.length))
-                // a web SAPI runs the script in its directory (php_execute_script's VCWD_CHDIR_FILE)
-                .currentWorkingDirectory(script.getParent())
-                .in(new ByteArrayInputStream(body))
-                .out(out)
-                .option("php.Sapi", "cgi")
-                .options(ini)
-                .option("php.AstRoot", astRoot)
-                .option("php.SourceRoot", sourceRoot)
-                .arguments("php", new String[] {script.toString()})
-                .build()) {
-            if (phases != null) {
-                phases.contextReady();
-            }
-            try {
-                context.eval(Source.newBuilder("php", script.toFile()).build());
-            } finally {
-                if (phases != null) {
-                    phases.evaluated();
-                }
-            }
-        } catch (PolyglotException e) {
-            if (!e.isExit()) {
-                // the runtime reports PHP's errors itself (to stderr with log_errors); this failed outside them
-                System.err.println("PHP Fatal error:  " + e.getMessage() + " (" + exchange.getRequestURI() + ")");
-                if (e.isInternalError() || !e.isGuestException()) {
-                    e.printStackTrace();
-                }
-            }
-        }
+        RequestPhases phases = CgiRequests.phases();
+        requests.run(script, cgiEnvironment(exchange, script, scriptName, body.length), body, out, null, phases,
+                exchange.getRequestURI().toString());
         int status = sendCgiResponse(exchange, out.toByteArray());
         if (phases != null) {
             phases.print(exchange.getRequestMethod(), exchange.getRequestURI().toString(), status);

@@ -48,10 +48,14 @@ public abstract class CallableDispatchNode extends Node {
         return CallableDispatchNodeGen.create(parameter, keepRef);
     }
 
-    public abstract Object execute(Object callable, Object[] values);
+    /**
+     * callerArguments, callerScope: the frame arguments and the scope of the PHP code making the call, which a
+     * class's name and a method's visibility are resolved against (zend_is_callable_check_class and _func).
+     */
+    public abstract Object execute(Object[] callerArguments, String callerScope, Object callable, Object[] values);
 
     @Specialization(guards = "callable.getFunction() == cachedFunction", limit = "LIMIT")
-    protected Object closure(PhpClosure callable, Object[] values,
+    protected Object closure(Object[] callerArguments, String callerScope, PhpClosure callable, Object[] values,
                              @Cached("callable.getFunction()") PhpFunction cachedFunction,
                              @Cached("create(cachedFunction.getCallTarget())") DirectCallNode call) {
         return result(call.call(closureArguments(callable, values, this)));
@@ -76,11 +80,11 @@ public abstract class CallableDispatchNode extends Node {
      */
     @Specialization(guards = {"equal.execute(callable, cachedName, ENC)", "functionId >= 0",
             "functionAt(functionId) == function"}, limit = "LIMIT")
-    protected Object named(TruffleString callable, Object[] values,
+    protected Object named(Object[] callerArguments, String callerScope, TruffleString callable, Object[] values,
                            @Cached("callable") TruffleString cachedName,
                            @Cached TruffleString.EqualNode equal,
-                           @Cached("resolve(callable).function()") PhpFunction function,
-                           @Cached("functionId(callable)") int functionId,
+                           @Cached("resolve(callerArguments, callerScope, callable).function()") PhpFunction function,
+                           @Cached("functionId(callerArguments, callerScope, callable)") int functionId,
                            @Cached("create(function.getCallTarget())") DirectCallNode call) {
         return result(call.call(ArgumentsNode.frameArguments(null, null, null,
                 Callables.sendValues(function, values, this))));
@@ -92,13 +96,15 @@ public abstract class CallableDispatchNode extends Node {
      */
     @Specialization(guards = {"isObjectMethod(callable)", "classOf(callable).getKey() == cachedKey",
             "equal.execute(methodName(callable), cachedMethod, ENC)", "!scoped"}, limit = "LIMIT")
-    protected Object objectMethod(PhpArray callable, Object[] values,
+    protected Object objectMethod(Object[] callerArguments, String callerScope, PhpArray callable, Object[] values,
                                   @Cached("classOf(callable).getKey()") ClassKey cachedKey,
                                   @Cached("methodName(callable)") TruffleString cachedMethod,
                                   @Cached TruffleString.EqualNode equal,
                                   @Cached("scoped(classOf(callable), cachedMethod)") boolean scoped,
-                                  @Cached("resolve(callable).function()") PhpFunction method,
-                                  @Cached("resolve(callable).magicName()") TruffleString magicName,
+                                  @Cached("resolve(callerArguments, callerScope, callable).function()")
+                                  PhpFunction method,
+                                  @Cached("resolve(callerArguments, callerScope, callable).magicName()")
+                                  TruffleString magicName,
                                   @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object self = method.isStatic() ? null : callable.get(0L);
         Object[] arguments = magicName == null ? Callables.sendValues(method, values, this)
@@ -108,33 +114,39 @@ public abstract class CallableDispatchNode extends Node {
 
     /**
      * `['Cls', 'method']`: the class is the calling context's, looked up by name id and checked by key; there is
-     * no receiver. A 'parent::method' name resolves to another class and takes the generic path.
+     * no receiver, and the class the method gets as static is the calling code's $this's when that is an instance
+     * of the class through the code's scope (Callables.calledClass). A 'parent::method' name resolves to another
+     * class and takes the generic path.
      */
     @Specialization(guards = {"isClassMethod(callable)", "equalClass.execute(className(callable), cachedClassName, ENC)",
             "isStaticCall(method, magicName)",
             "equalMethod.execute(methodName(callable), cachedMethod, ENC)", "classId >= 0",
             "keyAt(classId) == cachedKey", "!scoped"}, limit = "LIMIT")
-    protected Object classMethod(PhpArray callable, Object[] values,
+    protected Object classMethod(Object[] callerArguments, String callerScope, PhpArray callable, Object[] values,
                                  @Cached("className(callable)") TruffleString cachedClassName,
                                  @Cached("methodName(callable)") TruffleString cachedMethod,
                                  @Cached TruffleString.EqualNode equalClass,
                                  @Cached TruffleString.EqualNode equalMethod,
-                                 @Cached("resolve(callable).function()") PhpFunction method,
-                                 @Cached("resolve(callable).magicName()") TruffleString magicName,
+                                 @Cached("resolve(callerArguments, callerScope, callable).function()")
+                                 PhpFunction method,
+                                 @Cached("resolve(callerArguments, callerScope, callable).magicName()")
+                                 TruffleString magicName,
                                  @Cached("classId(cachedClassName, cachedMethod)") int classId,
                                  @Cached("keyAt(classId)") ClassKey cachedKey,
                                  @Cached("scoped(classAt(classId), cachedMethod)") boolean scoped,
                                  @Cached("create(method.getCallTarget())") DirectCallNode call) {
         Object[] arguments = magicName == null ? Callables.sendValues(method, values, this)
                 : Callables.magicValues(magicName, values);
+        PhpContext context = PhpContext.get(this);
         return result(call.call(ArgumentsNode.frameArguments(null,
-                PhpContext.get(this).classAt(classId), null, arguments)));
+                Callables.calledClass(context, context.classAt(classId), callerArguments, callerScope), null,
+                arguments)));
     }
 
     @Specialization(replaces = {"closure", "named", "objectMethod", "classMethod"})
-    protected Object generic(Object callable, Object[] values,
+    protected Object generic(Object[] callerArguments, String callerScope, Object callable, Object[] values,
                              @Cached IndirectCallNode call) {
-        Callables.Target target = resolve(callable);
+        Callables.Target target = resolve(callerArguments, callerScope, callable);
         return result(call.call(target.function().getCallTarget(), target.frameArguments(values)));
     }
 
@@ -152,8 +164,8 @@ public abstract class CallableDispatchNode extends Node {
     }
 
     /** A built-in's callable resolves against its caller. */
-    protected Callables.Target resolve(Object callable) {
-        return Callables.resolveOrThrow(PhpContext.get(this), callable, parameter);
+    protected Callables.Target resolve(Object[] callerArguments, String callerScope, Object callable) {
+        return Callables.resolveOrThrow(PhpContext.get(this), callable, parameter, callerArguments, callerScope);
     }
 
     /**
@@ -170,8 +182,8 @@ public abstract class CallableDispatchNode extends Node {
     }
 
     /** The function name id of a callable naming a plain function, or -1 for a method ("Cls::m"). */
-    protected int functionId(Object callable) {
-        Callables.Target target = resolve(callable);
+    protected int functionId(Object[] callerArguments, String callerScope, Object callable) {
+        Callables.Target target = resolve(callerArguments, callerScope, callable);
         if (target.thisObject() != null || target.staticClass() != null || target.closure() != null) {
             return -1;
         }
