@@ -34,7 +34,8 @@ allocation.
    same from every caller, kept by the one-entry cache without the string copies. `"Cls::m"` still takes the
    caller-dependent path.
 
-Host JVM (P-cores), `target/scratch/hot.php`, final round, ns per op (one run each, a run's noise is ±20%):
+Host JVM (P-cores), `tests/gate2/kernels/hot.php`, final round, ns per op (one run each; on this box a single kernel
+moves by up to 1.8× between runs, see [101](101-machine-two-speeds.md)):
 
 | kernel | before | after |
 |---|---|---|

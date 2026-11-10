@@ -39,4 +39,4 @@ PHP does one hash lookup per property on each side (`zend_std_get_properties` ha
   enough for a loop over one array.
 
 **Test:** none yet (no change). The behaviour is covered by `tests/smoke/property-visibility.php`,
-`property-names.php` and `variable-variables.php`; the cost by the `post` kernel of `target/scratch/hot.php`.
+`property-names.php` and `variable-variables.php`; the cost by the `post` kernel of `tests/gate2/kernels/hot.php`.

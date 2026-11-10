@@ -36,8 +36,8 @@ no single one above 2.4% (`clone` 2.4, `md5` 1.7, `json_encode`'s strings 1.2, `
   `-` cannot be an integer and is the key itself, decided in the compiled code; only the rest goes to
   `ArrayKey.ofString`.
 
-Host JVM (P-cores), `target/scratch/hot.php`, ns per op, final round (one run each; a run's noise is ±20%, see
-[101](101-compiled-state-lottery.md)):
+Host JVM (P-cores), `tests/gate2/kernels/hot.php`, ns per op, final round (one run each; on this box a single kernel
+moves by up to 1.8× between runs, see [101](101-machine-two-speeds.md)):
 
 | kernel | before | after |
 |---|---|---|
@@ -56,4 +56,4 @@ they are the "builtin" quarter of the gap to PHP.
 **Test:** `tests/smoke/intrinsics-ord-chr-key.php`: every operand type of the three functions in a loop (so the
 compiled form runs too), the integer-like string keys (`"5"`, `"05"`, `"-3"`, `"-0"`, `" 1"`,
 `"9223372036854775808"`), `null`, `bool` and `float` keys, an object with `__toString`, and the two hot loops the
-kernels are made of. The kernels: `uri`, `aget`, `hasf` of `target/scratch/hot.php`.
+kernels are made of. The kernels: `uri`, `aget`, `hasf` of `tests/gate2/kernels/hot.php`.
