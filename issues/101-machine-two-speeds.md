@@ -2,9 +2,9 @@
 
 **State:** Open (a property of the box; what is open is the measurement rule and a box that holds its frequency).
 Found 2026-11-10 during [wiki/beat-php.md](../wiki/beat-php.md): 18–28% of a steady K8 loop's renders took twice
-the others' time, in runs of ≈ 125 ms every ≈ 0.3 s, and whole minutes of a run sat at twice the level of the
-minutes after. It was first read as an engine effect (a "lottery" of compiled states, deoptimization, the garbage
-collector). It is the CPU.
+the others' time, in runs of ≈ 125 ms every ≈ 0.3 s, and the median of a thousand renders moved by up to 1.7×
+between runs of one build. It was first read as an engine effect (a "lottery" of compiled states, deoptimization,
+the garbage collector). It is the CPU.
 
 **What happens:** the box is a laptop (Intel Core Ultra 9 275HX: 8 P-cores, 16 E-cores, power plan "high
 performance", on AC). Under load its cores run near their base frequency with turbo in bursts.
@@ -35,19 +35,34 @@ performance", on AC). Under load its cores run near their base frequency with tu
   One busy thread in an idle VM spends a quarter of its time at half speed, in runs of 0.12 s every 0.35 s. The
   three cpusets give the same 1.31 ns an iteration in the fast mode: the guest's CPU number does not select a kind
   of host core.
-- **In the K8 loops:** the steady renders of a 10,000-render loop on the JVM split into a fast mode and one at 2×:
-  20–23% of the renders above 1.5× the first decile in two runs, 66% in the last thousand renders of a third; 8%
-  for php-cli. The slow renders come in runs, with and without a collection in them. One run with JFR and the
-  compilation trace on had four minutes (renders 7000–11000) at a first decile of 47–49 ms, then 22 ms to the end.
+- **The same loop on our engine** (`calib.sh NAME CPUS SECONDS jvm`), one run after the other on CPU 17:
+
+  | engine, cpuset | fast mode, ns per iteration | slow chunks | slow runs: length, period, slowdown | mean over first decile |
+  |---|---|---|---|---|
+  | php-cli with its JIT, 17 | 1.315 | 15.9% of chunks, 29.1% of time | 0.119 s, one every 0.368 s, ×2.34 | 1.21 |
+  | our engine, 17 | 0.872 | 15.8%, 32.0% | 0.124 s, one every 0.350 s, ×2.37 | 1.25 |
+  | our engine, 14-21 | 0.872 | 8.7%, 17.7% | 0.125 s, one every 0.367 s, ×2.38 | 1.16 |
+
+  Both engines see the same slow runs and the same share. (The engine's compiled loop is 1.5× faster than PHP's
+  JIT here.)
+- **In the K8 loops:** the steady renders of a loop on the JVM split into a fast mode and one at 2×: 12–23% of
+  the last thousand renders above 1.5× the first decile in six runs, 66% in a seventh; for php-cli 6% in a quiet
+  thousand, 17% over 10,000. The slow renders come in runs, with and without a collection in them.
+- **What is not the machine:** a shift of the first decile itself. One run with JFR and the compilation trace on
+  had four minutes (renders 7000–11000) at a first decile of 47–49 ms, then 22 ms to the end. It was first put
+  here. The trace says otherwise: no compilation during the four minutes, HotSpot's code-cache sweeper had
+  unloaded compiled code as cold before them ("opt reprof" in the trace, a profile reset), and they end with 241
+  last-tier compilations. [100](100-warm-up.md).
 
 **Why it matters:**
 
 1. A median or a mean over a window is the engine's level times the window's share of slow time. php-cli's K8 loop
-   has the calibration's ratio (mean 11.05 ms over a first decile of 9.40 = 1.18): the whole distance between PHP's
-   first decile and its mean is the machine. Two runs of one
-   build differ by up to 2× for minutes. Conclusions drawn tonight from such differences and withdrawn: "the
-   garbage collector's concurrent cycles double the render", "a state of the compiled code chosen at random per
-   run", "renders 7000–11000 wait for the tier-2 threshold".
+   has the calibration's ratio (mean over first decile 1.11–1.18): the whole distance between PHP's first decile
+   and its mean is the machine. The medians of two runs of one build differ by up to 1.7× over a thousand renders
+   with the first decile in place. Conclusions drawn tonight from such differences and withdrawn: "the garbage
+   collector's concurrent cycles double the render", "a state of the compiled code chosen at random per run".
+   (G1's concurrent cycles do cost something: the median falls from 25–37 ms to 22 when they stop, the first
+   decile stays; [100](100-warm-up.md). It was the factor of two that was the machine.)
 2. The slow share grows with the number of busy cores anywhere on the box (other agents' jobs, and the JVM's own
    compiler and collector threads). A single-threaded PHP process is slowed less than a JVM that is still compiling:
    part of the JVM's mean on this box is the box.
@@ -63,6 +78,8 @@ performance", on AC). Under load its cores run near their base frequency with tu
   `calib.py`: the two levels, the slow share, the runs' length and period) beside a measurement whose conclusion
   hangs on a level shift.
 - A difference between two builds counts when it shows in the first decile, or in the mean of interleaved rounds.
+- A shift of the median or the mean with the first decile in place is the machine; a shift of the first decile is
+  the engine, and a compilation trace (`-Dpolyglot.engine.TraceCompilation=true`) beside the run says what it did.
 
 **Open:**
 
