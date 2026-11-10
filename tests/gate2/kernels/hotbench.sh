@@ -7,6 +7,7 @@
 # A single kernel's value moves by up to 1.8x between runs on this box (issue 101).
 #
 # Usage: WPN_NAME=.. tests/gate2/kernels/hotbench.sh NAME ROUNDS [KERNELS] [ENGINES]   ENGINES: "php one shared"
+# HOT_SCRIPT=ops.php runs that file of this directory in place of hot.php (the elementary operations).
 set -uo pipefail
 cd "$(dirname "$0")/../../.."
 root=$(pwd -W 2> /dev/null || pwd)
@@ -38,7 +39,7 @@ for engine in $engines; do
   start=$(date +%s)
   MSYS_NO_PATHCONV=1 docker run --rm --name $P-hot --cpuset-cpus "${K8_CPUS:-14-21}" \
     -v $P-site:/srv:ro -v "$root/tests/gate2/kernels:/s:ro" -w /srv $image \
-    sh -c "$cmd /s/hot.php /srv/target/gate2/wordpress $rounds $kernels; s=\$?; echo peak \$(cat /sys/fs/cgroup/memory.peak) >&2; exit \$s" \
+    sh -c "$cmd /s/${HOT_SCRIPT:-hot.php} /srv/target/gate2/wordpress $rounds $kernels; s=\$?; echo peak \$(cat /sys/fs/cgroup/memory.peak) >&2; exit \$s" \
     > $dir/$name.$engine.out 2> $dir/$name.$engine.err || echo "$name $engine: exit $?"
   echo "$name $engine: $(($(date +%s) - start)) s, $(wc -l < $dir/$name.$engine.out) lines, $(tail -n 1 $dir/$name.$engine.err)"
 done
