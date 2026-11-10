@@ -11,10 +11,7 @@ import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Cached.Shared;
 import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
-import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.RepeatingNode;
-import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
 import com.oracle.truffle.api.profiles.InlinedBranchProfile;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -104,17 +101,25 @@ public final class ElementNodes {
      * arrays differ in layout, or the key is absent (isset() of an optional key). Such a site made a call at every
      * access. The probe answers for an interned key, present or absent, as php-src's zend_hash_find_known_hash
      * does; an equal key of another instance is the call's.
-     * <li><b>the call alone</b>, in a {@link LargeCode large} function outside any loop: the inline check and its
+     * <li><b>the call alone</b>, in a {@link LargeCode large} function: the inline check and its
      * miss's call were about 550 bytes of machine code a site, the call alone 240, and WP_Query::get_posts has 460
      * such reads, which run once per call of it; its code was 9% under HotSpot's install limit.
      * </ul>
      *
+     * <p>The probe is about 1 KB of machine code a site more than the remembered slot, and so is a write's inline
+     * store more than its call. These are a function's rich sites, {@link LargeCode#RICH} of them: a site takes one
+     * when it has shown, in the interpreter, that it needs it (the remembered slot kept missing; a write kept
+     * overwriting), so the sites that run most take them first. The others stay as they were.
+     *
+     * <p>A write's site ({@link #store}) starts as the call: a site that builds an array inserts, which no inline
+     * form does. One that overwrites earns the inline store, and from there may become a probe as any site.
+     *
      * <p>The key comes as written and is normalized ({@link ArrayKeyNode}) only when no slot was found: a key found
      * by identity is a stored key, so it is normalized already.
      *
-     * <p>A site becomes a probe only while it runs in the interpreter, and its compiled code is not invalidated for
-     * it: either form is complete, and invalidating a function once per site would be a deoptimization cycle (Graal
-     * gives a function up after fifteen recompilations).
+     * <p>A site changes its form only while it runs in the interpreter, and its compiled code is not invalidated
+     * for it: every form is complete, and invalidating a function once per site would be a deoptimization cycle
+     * (Graal gives a function up after fifteen recompilations).
      *
      * <p>A read's lookup (warns: ElementReadNode's) raises "Undefined array key" for a missing string key in a
      * call, so the warning adds nothing to the inline code.
@@ -127,18 +132,30 @@ public final class ElementNodes {
         private static final byte INLINE = 1;
         private static final byte CALL = 2;
         private static final byte PROBE = 3;
-        /** {@link #doubt}: a miss adds this, a hit takes one off, so a site missing once in eight stays as it is. */
+        /** A write's site before it earned the inline store: compiled as {@link #CALL}. */
+        private static final byte EARNING = 4;
+        /** {@link #score}: a miss adds this, a hit takes one off, so a site missing once in eight stays as it is. */
         private static final int MISS = 8;
-        /** {@link #doubt} at which the site becomes a probe: fifteen misses more than its hits pay for. */
+        /** {@link #score} at which the site becomes a probe: fifteen misses more than its hits pay for. */
         private static final int PROBES_AT = 120;
+        /** {@link #score} at which a write's site earned the inline store. */
+        private static final int EARNS_AT = 16;
+        /** {@link #score} of a site that asked for a rich form and got none: it asks no more. */
+        private static final byte SETTLED = -1;
 
         private final boolean remembers;
         private final boolean warns;
         private int slotGuess = -1;
-        /** How compiled code finds the slot (decided on first use; {@link #INLINE} may become {@link #PROBE}). */
+        /**
+         * How compiled code finds the slot, decided on first use. In the interpreter {@link #EARNING} becomes
+         * {@link #INLINE} or {@link #CALL}, and {@link #INLINE} may become {@link #PROBE}.
+         */
         @CompilationFinal private byte form = UNDECIDED;
-        /** How badly the remembered slot does, counted in the interpreter only. */
-        private byte doubt;
+        /**
+         * Counted in the interpreter only. {@link #INLINE}: how badly the remembered slot does ({@link #judge}).
+         * {@link #EARNING}: the overwrites more than the inserts ({@link #earn}).
+         */
+        private byte score;
         /** The key's hash for the probe; null until the site is one. */
         @Child private TruffleString.HashCodeNode hashCode;
 
@@ -176,7 +193,7 @@ public final class ElementNodes {
         public Object lookup(PhpArray array, Object rawKey, ArrayKeyNode toKey) {
             int slot = PhpArray.UNSURE;
             if (remembers && rawKey instanceof TruffleString string) {
-                byte f = form();
+                byte f = form(false);
                 if (f == INLINE) {
                     // the key's check loads the value with it (rawIfKeyAt)
                     Object raw = array.rawIfKeyAt(slotGuess, string);
@@ -204,13 +221,29 @@ public final class ElementNodes {
             return find(array, key);
         }
 
-        /** Whether the array has an element under a key as written (array_key_exists: a null element counts). */
+        /**
+         * Whether the array has an element under a key as written (array_key_exists: a null element counts). Each
+         * form answers on its own branch, as in {@link #lookup}: a slot handed on as an int, tested once more
+         * after the forms met, made the compiler copy what follows per answer (4.4 calls a site, 1.1 KB for 150
+         * bytes; wiki/ceiling.md).
+         */
         public boolean has(PhpArray array, Object rawKey, ArrayKeyNode toKey) {
             int slot = PhpArray.UNSURE;
             if (remembers && rawKey instanceof TruffleString string) {
-                slot = inlineSlot(array, string);
-                if (slot >= 0) {
-                    return true;
+                byte f = form(false);
+                if (f == INLINE) {
+                    boolean hit = array.isKeyAt(slotGuess, string);
+                    if (CompilerDirectives.inInterpreter()) {
+                        judge(hit);
+                    }
+                    if (hit) {
+                        return true;
+                    }
+                } else if (f == PROBE) {
+                    slot = probe(array, string);
+                    if (slot >= 0) {
+                        return true;
+                    }
                 }
             }
             Object key = toKey.execute(rawKey);
@@ -220,45 +253,42 @@ public final class ElementNodes {
             return holds(array, key);
         }
 
-        /** `$array[key] = value` under a key as written, into an array the caller has made writable. */
+        /**
+         * `$array[key] = value` under a key as written, into an array the caller has made writable. Inline is the
+         * store of a plain value over a plain one (PhpArray.replacePlainAt) at a site that earned it; an insert, a
+         * counted value and a reference's slot are put()'s call.
+         */
         public void store(PhpArray array, Object rawKey, Object value, ArrayKeyNode toKey) {
             if (remembers && rawKey instanceof TruffleString string) {
-                int slot = inlineSlot(array, string);
-                if (slot >= 0) {
-                    array.replaceAt(slot, value);
-                    return;
+                byte f = form(true);
+                if (f == INLINE) {
+                    int guess = slotGuess;
+                    if (CompilerDirectives.inInterpreter()) {
+                        judge(array.isKeyAt(guess, string));
+                    }
+                    if (array.replacePlainIfKeyAt(guess, string, value)) {
+                        return;
+                    }
+                } else if (f == PROBE) {
+                    int slot = probe(array, string);
+                    if (slot >= 0 && array.replacePlainAt(slot, value)) {
+                        return;
+                    }
                 }
             }
             Object key = toKey.execute(rawKey);
             if (key instanceof TruffleString string) {
-                put(array, string, value);
+                put(array, string, value, CompilerDirectives.inInterpreter());
             } else {
                 array.put(key, value);
             }
         }
 
-        /**
-         * The slot of a string key as written, found without a call: a slot, {@link PhpArray#UNSURE} when only a
-         * full lookup can tell, or (a probe's) {@link PhpArray#ABSENT}, which holds if the key is a normalized one.
-         */
-        private int inlineSlot(PhpArray array, TruffleString key) {
-            byte f = form();
-            if (f == INLINE) {
-                int guess = slotGuess;
-                boolean hit = array.isKeyAt(guess, key);
-                if (CompilerDirectives.inInterpreter()) {
-                    judge(hit);
-                }
-                return hit ? guess : PhpArray.UNSURE;
-            }
-            return f == PROBE ? probe(array, key) : PhpArray.UNSURE;
-        }
-
-        private byte form() {
+        private byte form(boolean writes) {
             byte f = form;
             if (f == UNDECIDED) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
-                form = f = decideForm();
+                form = f = decideForm(writes);
             }
             return f;
         }
@@ -268,36 +298,62 @@ public final class ElementNodes {
             return hasher == null ? PhpArray.UNSURE : array.slotByString(key, hasher.execute(key, Str.ENC));
         }
 
-        /** In the interpreter: a site whose remembered slot keeps missing becomes a probe, with no invalidation. */
+        /**
+         * In the interpreter: a site whose remembered slot keeps missing becomes a probe if its function has a
+         * rich site left, and stays as it is if not; with no invalidation.
+         */
         private void judge(boolean hit) {
-            int d = doubt;
+            int s = score;
+            if (s == SETTLED) {
+                return;
+            }
             if (hit) {
-                if (d > 0) {
-                    doubt = (byte) (d - 1);
+                if (s > 0) {
+                    score = (byte) (s - 1);
                 }
-            } else if (d + MISS < PROBES_AT) {
-                doubt = (byte) (d + MISS);
-            } else {
+            } else if (s + MISS < PROBES_AT) {
+                score = (byte) (s + MISS);
+            } else if (takeRich()) {
                 hashCode = insert(TruffleString.HashCodeNode.create());
                 form = PROBE;
+            } else {
+                score = SETTLED;
             }
         }
 
         /**
-         * The call alone in a large function outside any loop, else the inline check. ponytail: the bytecode
-         * interpreter's loops are no nodes, so in a large bytecode function every site is the call, in loops too.
+         * In the interpreter, a write's site that is the call so far ({@link #EARNING}): after {@link #EARNS_AT}
+         * overwrites more than inserts it takes the inline store, if its function has a rich site left, and is the
+         * call for good if not.
          */
-        private byte decideForm() {
-            RootNode root = getRootNode();
-            if (!(root instanceof LargeCode code) || !code.isLarge()) {
-                return INLINE;
-            }
-            for (Node node = getParent(); node != null && node != root; node = node.getParent()) {
-                if (node instanceof RepeatingNode || node instanceof LoopNode) {
-                    return INLINE;
+        private void earn(boolean overwrote) {
+            int s = score;
+            if (!overwrote) {
+                if (s > 0) {
+                    score = (byte) (s - 1);
                 }
+            } else if (s + 1 < EARNS_AT) {
+                score = (byte) (s + 1);
+            } else {
+                score = 0;
+                form = takeRich() ? INLINE : CALL;
             }
-            return CALL;
+        }
+
+        private boolean takeRich() {
+            return !(getRootNode() instanceof LargeCode code) || code.takeRich();
+        }
+
+        /**
+         * The call alone in a large function (in its loops too: the bytecode interpreter's loops are no nodes a
+         * site could find itself in); elsewhere a read's and a test's site starts with the remembered slot, a
+         * write's with the call it has to earn more than.
+         */
+        private byte decideForm(boolean writes) {
+            if (getRootNode() instanceof LargeCode code && code.isLarge()) {
+                return CALL;
+            }
+            return writes ? EARNING : INLINE;
         }
 
         @TruffleBoundary
@@ -324,11 +380,16 @@ public final class ElementNodes {
             return slot >= 0;
         }
 
+        /** learns: in the interpreter, where a site that is {@link #EARNING} counts what its writes did. */
         @TruffleBoundary
-        private void put(PhpArray array, TruffleString key, Object value) {
+        private void put(PhpArray array, TruffleString key, Object value, boolean learns) {
+            int before = array.size();
             int slot = array.putString(key, value);
             if (remembers) {
                 slotGuess = slot;
+                if (learns && form == EARNING) {
+                    earn(array.size() == before);
+                }
             }
         }
 

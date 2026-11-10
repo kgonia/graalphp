@@ -8023,6 +8023,25 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         return large == 2;
     }
 
+    /** The {@link LargeCode#RICH rich} sites given out; a copy (a split) has its own sites, so its own count. */
+    private byte rich;
+
+    @Override
+    public boolean takeRich() {
+        if (rich >= LargeCode.RICH) {
+            return false;
+        }
+        rich++;
+        return true;
+    }
+
+    @Override
+    public Node copy() {
+        PhpBytecodeRootNode copy = (PhpBytecodeRootNode) super.copy();
+        copy.rich = 0;
+        return copy;
+    }
+
     /** What self:: means in this function's code (FunctionRootNode.getScopeName). */
     public String getScopeName() {
         return scopeName;

@@ -612,19 +612,38 @@ public final class PhpArray implements TruffleObject {
     }
 
     /**
-     * put() into a hash slot known to hold the key (rawIfKeyAt, slotByString): the element is replaced where it
-     * is, a PhpRef slot receives the value. The caller has made this array exclusive.
+     * put() into a hash slot known to hold the key (slotByString), where it is the store alone: neither the
+     * element there nor the value is counted ({@link #counted}). False, with nothing done, for the rest, which is
+     * put()'s: inline, the counting was 1.5 KB of machine code and eight calls a write (wiki/ceiling.md). The
+     * caller has made this array exclusive.
      */
-    public void replaceAt(int slot, Object value) {
+    public boolean replacePlainAt(int slot, Object value) {
         Hash hash = hashStore(store);
-        Object old = hash.value(slot);
-        if (old instanceof PhpRef ref) {
-            ref.set(value);
-            return;
+        if (counted(hash.value(slot)) || counted(value)) {
+            return false;
         }
-        countIn(value);
         hash.setValue(slot, value);
-        countOut(old, value);
+        return true;
+    }
+
+    /** {@link #replacePlainAt} into a slot that holds this very key instance ({@link #rawIfKeyAt}), else false. */
+    public boolean replacePlainIfKeyAt(int slot, Object key, Object value) {
+        if (store instanceof Hash hash) {
+            Object[] entries = hash.entries;
+            int at = 2 * slot;
+            if (Integer.compareUnsigned(at + 1, entries.length) < 0 && entries[at] == key
+                    && !counted(entries[at + 1]) && !counted(value)) {
+                entries[at + 1] = value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** What a slot counts in and out (countIn, countOut), or receives a value for (a reference). */
+    private static boolean counted(Object value) {
+        return value instanceof PhpArray || value instanceof PhpObject || value instanceof PhpClosure
+                || value instanceof PhpRef;
     }
 
     /** put() under a normalized string key, out of line; the slot the key is at afterwards, for a site to remember. */

@@ -1,6 +1,5 @@
 package pl.codeloom.php.nodes.vars;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -27,14 +26,16 @@ public final class DimNode {
 
     /**
      * `$o[key] = value` (key null for `$o[]`) where the container's arrayForWrite gave no array: an ArrayAccess
-     * object's offsetSet(), called from site; anything else is an error.
+     * object's offsetSet(), called from site; anything else is an error. Out of line: a write's site whose
+     * variable or property may hold an object has it as one call, where the class test, offsetSet()'s call and
+     * its result's release were three (0.4 KB a statement of `$q['x'] = $n`, wiki/ceiling.md).
      */
+    @TruffleBoundary
     public static void writeToObject(Node site, Object target, Object key, Object value) {
         if (target instanceof PhpObject object && object.isArrayAccess()) {
             Refcount.done(object.callMethod(site, "offsetset", key, value));
             return;
         }
-        CompilerDirectives.transferToInterpreter();
         throw new PhpError("Cannot use object of type " + Operators.zvalTypeName(target) + " as array");
     }
 

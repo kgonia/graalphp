@@ -44,6 +44,27 @@ class Ops_P {
     public static function make($x) { return $x + 2; }
 }
 
+class Ops_Q {
+    public $vars = ['p' => 0, 'name' => 'x', 'status' => 1];
+    public function fill() { // hash_write_const through a reference, as WP_Query's `$q = &$this->query_vars`
+        $q = &$this->vars;
+        $v = 0;
+        for ($i = 0; $i < OPS; $i++) {
+            $q['status'] = $i;
+            $v += $q['status'];
+        }
+        return $v;
+    }
+}
+
+class Ops_Bag implements ArrayAccess {
+    public $items = [];
+    public function offsetExists($offset): bool { return isset($this->items[$offset]); }
+    public function offsetGet($offset): mixed { return $this->items[$offset]; }
+    public function offsetSet($offset, $value): void { $this->items[$offset] = $value; }
+    public function offsetUnset($offset): void { unset($this->items[$offset]); }
+}
+
 $settings = ['color' => ['palette' => ['default' => [['slug' => 'black', 'color' => '#000']], 'theme' => []],
     'gradients' => null, 'custom' => true], 'typography' => ['fontSizes' => ['default' => [1, 2, 3]]],
     'spacing' => ['units' => ['px', 'em']]];
@@ -429,6 +450,19 @@ $kernels = [
             $v += ($objects[$i & 3] instanceof Ops_P ? 1 : 0) + ($dynamic[$i & 3] instanceof Ops_P ? 1 : 0);
         }
         return $v;
+    },
+
+    // --- writes that are not a local array's (added last: the kernels above keep their place in a run)
+    'ref_write' => static function () {
+        $query = new Ops_Q;
+        return $query->fill();
+    },
+    'object_write' => static function () { // an ArrayAccess object's offsetSet()
+        $bag = new Ops_Bag;
+        for ($i = 0; $i < OPS; $i++) {
+            $bag['status'] = $i;
+        }
+        return $bag->items['status'];
     },
 ];
 
