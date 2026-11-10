@@ -337,7 +337,13 @@ public final class PhpClass {
      */
     @TruffleBoundary
     public PhpFunction methodFrom(String name, String scope) {
-        PhpFunction method = accessibleMethod(Str.lower(name), scope);
+        return methodFrom(name, Str.lower(name), scope);
+    }
+
+    /** methodFrom for a caller that has the name in lowercase too (a call site). */
+    @TruffleBoundary
+    public PhpFunction methodFrom(String name, String lower, String scope) {
+        PhpFunction method = accessibleMethod(lower, scope);
         if (method != null || methods.containsKey("__call")) {
             return method;
         }
@@ -495,7 +501,7 @@ public final class PhpClass {
 
     /** The class (lowercase) that declared a method, or null for a built-in class's shared one. */
     private static String declaringClass(PhpFunction method) {
-        return method.getClassName() == null ? null : Str.lower(method.getClassName());
+        return method.getScopeName();
     }
 
     /** The methods by lowercase name (own, imported and inherited), for Reflection; read only. */

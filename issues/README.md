@@ -101,3 +101,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [095](095-callable-resolution-walks-stack.md) | A class-name callable walks the stack on every resolution (6–22 µs), and two of its results were wrong | Fixed |
 | [096](096-callable-deprecations-missing.md) | `self`, `parent` and `static` in a callable never raise PHP 8.2's deprecation | Open |
 | [097](097-builtins-behind-a-boundary.md) | A built-in function is a call out of the compiled code (≈ 22% of a hot render, no one above 2.4%), and a string key two more | Partly fixed 2026-11-10 (`ord`, `chr`, `array_key_exists`, the key); the rest Open |
+| [098](098-per-call-name-work-in-lookups.md) | Three lookups did a name's work on every call: a megamorphic method call (9.6% of a render's allocation), `global`, a function-name callable | Fixed |

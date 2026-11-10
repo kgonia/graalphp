@@ -76,6 +76,8 @@ public final class PhpFunction {
     private volatile BuiltinSignature builtinSignature;
     /** The declaring class's name for messages ("C::m"); null for functions and shared built-in methods. */
     private String className;
+    /** className in lowercase, as scopes are compared (PhpClass.canCall on every method lookup). */
+    private String scopeName;
 
     /** Made on first call; volatile because contexts on several threads share the function. */
     @CompilationFinal private volatile RootCallTarget callTarget;
@@ -226,6 +228,7 @@ public final class PhpFunction {
         copy.setDeclaration(adapted, returnType, docComment, endLine);
         copy.declaredAt = declaredAt;
         copy.className = className;
+        copy.scopeName = scopeName;
         copy.builtin = builtin;
         copy.builtinKey = builtinKey;
         copy.usesThis = usesThis;
@@ -304,6 +307,12 @@ public final class PhpFunction {
 
     public void setClassName(String className) {
         this.className = className;
+        this.scopeName = className == null ? null : Str.lower(className);
+    }
+
+    /** The declaring class's name in lowercase (a scope's form), or null where getClassName is. */
+    public String getScopeName() {
+        return scopeName;
     }
 
     public Builtin getBuiltin() {

@@ -4746,7 +4746,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         /** The method from the scope (zend_std_get_method), BY_VALUE for __call standing in for it. */
         public static PhpFunction find(MethodSite site, PhpClass phpClass, String scope) {
-            PhpFunction method = phpClass.methodFrom(site.name, scope);
+            PhpFunction method = phpClass.methodFrom(site.name, site.lowerName, scope);
             return method == null ? MethodSite.BY_VALUE : method;
         }
     }

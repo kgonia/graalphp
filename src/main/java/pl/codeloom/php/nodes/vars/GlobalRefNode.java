@@ -12,12 +12,12 @@ import pl.codeloom.php.runtime.PhpRef;
  * A global variable's reference: with create, made (holding null) if the global doesn't exist; without, null
  * then. A global keeps its reference until it is rebound or unset, which changes the context's globals version.
  * While the language serves one context, a site keeps the reference it found as a compile-time constant for that
- * version; a site that has seen more versions (code that runs while top-level code still rebinds and unsets
- * globals) keeps the last reference it found, checked against the version on each access. A site never keeps
- * the absence of a global: one may be created without a new version.
+ * version; a site that has seen more versions (code that runs while globals are rebound and unset, as a page's
+ * render does on every request) reads the context's table of globals by name id, as a site that serves several
+ * contexts does. A site never keeps the absence of a global: one may be created without a new version.
  */
 public abstract class GlobalRefNode extends Node {
-    /** Versions a site keeps as constants before it switches to the checked reference. */
+    /** Versions a site keeps as constants before it reads the table. */
     static final int LIMIT = 3;
 
     protected final String name;
@@ -40,27 +40,13 @@ public abstract class GlobalRefNode extends Node {
         return cachedRef != null ? cachedRef : lookup(context, create);
     }
 
-    @Specialization(replaces = "constant", assumptions = "singleContext()")
-    protected PhpRef checked(PhpContext context, boolean create, @Cached("newLastRef()") LastRef last) {
-        int version = context.globalsVersion();
-        PhpRef ref = last.ref;
-        if (ref == null || last.version != version) {
-            ref = lookup(context, create);
-            if (ref != null) {
-                last.ref = ref;
-                last.version = version;
-            }
-        }
-        return ref;
-    }
-
     /**
-     * Several contexts: each has its own globals, kept by the name's id too, so a global that exists is an array
-     * load; one that doesn't is looked up (and with create made) by name.
+     * A site whose globals keep changing, or one that serves several contexts (each has its own globals): the
+     * context keeps its globals' references by the name's id too, so a global that exists is an array load; one
+     * that doesn't is looked up (and with create made) by name.
      */
-    @Specialization(replaces = {"constant", "checked"})
-    protected PhpRef perContext(PhpContext context, boolean create,
-                                @Cached("globalId()") int id) {
+    @Specialization(replaces = "constant")
+    protected PhpRef bySlot(PhpContext context, boolean create, @Cached("globalId()") int id) {
         PhpRef ref = context.globalAt(id);
         return ref != null ? ref : lookup(context, create);
     }
@@ -75,15 +61,5 @@ public abstract class GlobalRefNode extends Node {
 
     protected Assumption singleContext() {
         return PhpLanguage.get(this).singleContext();
-    }
-
-    protected static LastRef newLastRef() {
-        return new LastRef();
-    }
-
-    /** The reference a site found last and the globals version it was found in. */
-    protected static final class LastRef {
-        PhpRef ref;
-        int version;
     }
 }

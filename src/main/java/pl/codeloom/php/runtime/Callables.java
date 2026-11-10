@@ -715,9 +715,12 @@ public final class Callables {
     /** Whether what a method callable resolves to depends on the calling scope (PhpClass.methodDependsOnScope). */
     public static boolean scoped(Object callable, Target target) {
         PhpClass phpClass = target.staticClass();
+        if (phpClass == null || callable instanceof PhpClosure) {
+            return false;
+        }
         String name = callable instanceof PhpArray array && array.get(1L) instanceof TruffleString method
                 ? Str.java(method) : callable instanceof TruffleString text ? Str.java(text) : null;
-        if (phpClass == null || callable instanceof PhpClosure || name == null) {
+        if (name == null) {
             return false;
         }
         return phpClass.methodDependsOnScope(Str.lower(name.substring(name.indexOf("::") + 2)));
@@ -775,7 +778,10 @@ public final class Callables {
         // a class named relative to the caller (self::, parent::, static::) depends on the caller: not kept
         boolean boundByCaller = target.thisObject() != null && !(callable instanceof PhpClosure)
                 && !(callable instanceof PhpArray array && array.get(0L) instanceof PhpObject);
-        last.callable = boundByCaller || scoped(callable, target) || callerRelative(callable) ? null : callable;
+        // a function's name (no class part: only "Cls::m" has a static class) is the same from every caller
+        boolean function = callable instanceof TruffleString && target.staticClass() == null;
+        last.callable = boundByCaller || !function && (scoped(callable, target) || callerRelative(callable))
+                ? null : callable;
         last.target = target;
         last.byCaller = last.callable != null && from.used;
         if (last.byCaller) {
