@@ -93,7 +93,7 @@ final class RuntimeFunctions {
         // zend.assertions = -1, as in production: assert() is compiled out and returns true
         r.fn("assert", a -> Boolean.TRUE);
         r.fn("call_user_func", (context, a) -> {
-            Callables.Target target = Callables.parameter(context, Args.get(a, 0), CALL_USER_FUNC);
+            Callables.Target target = Callables.parameter(context, a, Args.get(a, 0), CALL_USER_FUNC);
             // its extra named arguments go on to the callable (Z_PARAM_VARIADIC_WITH_NAMED)
             PhpArray named = NamedExtras.forwarded(a, 1);
             if (named != null) {
@@ -102,8 +102,8 @@ final class RuntimeFunctions {
             return target.call(Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
         });
         // zend_call_function with the array as named_params: its string keys name parameters
-        r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, Args.get(a, 0),
-                CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
+        r.fn("call_user_func_array", (context, a) -> callArray(Callables.parameter(context, a,
+                Args.get(a, 0), CALL_USER_FUNC_ARRAY), Args.array(a, 1, "call_user_func_array", "args")));
         // the called class of the calling code goes on to the callee (late static binding)
         r.fn("forward_static_call", (context, a) -> callArray(forwarded(Callables.parameter(context, Args.get(a, 0),
                 FORWARD_STATIC_CALL), "forward_static_call"), pl.codeloom.php.runtime.Refcount.pendingTemporary(PhpArray.list(

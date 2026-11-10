@@ -76,7 +76,7 @@ final class CoreFunctions {
                 Args.ref(a, 2).set(callableName(value));
             }
             if (!Args.bool(a, 1, false)) {
-                return Callables.resolve(context, value) != null;
+                return Callables.resolve(context, a, value) != null;
             }
             // IS_CALLABLE_CHECK_SYNTAX_ONLY: a string, a [class or object, method] pair, an object with __invoke
             if (value instanceof PhpArray pair) {
@@ -85,7 +85,7 @@ final class CoreFunctions {
                         && (target instanceof TruffleString || target instanceof PhpObject
                         || target instanceof PhpClosure);
             }
-            return value instanceof TruffleString || Callables.resolve(context, value) != null;
+            return value instanceof TruffleString || Callables.resolve(context, a, value) != null;
         });
         r.fn("gettype", a -> Str.of(Convert.typeName(Args.get(a, 0, PhpNull.NULL))));
         r.fn("get_debug_type", a -> Str.of(Convert.debugType(Args.get(a, 0, PhpNull.NULL))));

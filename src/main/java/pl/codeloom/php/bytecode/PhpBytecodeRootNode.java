@@ -52,6 +52,7 @@ import pl.codeloom.php.nodes.LargeCode;
 import pl.codeloom.php.nodes.ToStrNode;
 import pl.codeloom.php.nodes.SubclassTestNode;
 import pl.codeloom.php.nodes.call.ArgumentsNode;
+import pl.codeloom.php.nodes.call.BuiltinRootNode;
 import pl.codeloom.php.nodes.call.CallableCallNode;
 import pl.codeloom.php.nodes.call.CallableConvertNodes;
 import pl.codeloom.php.nodes.call.CallNode;
@@ -3280,15 +3281,41 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** The root of a built-in function (a method's static-class slot is its own), or null: Call's passCaller. */
+    static BuiltinRootNode builtinRootOf(PhpFunction function) {
+        return function.getCallTarget().getRootNode() instanceof BuiltinRootNode builtin && !builtin.isMethod()
+                ? builtin : null;
+    }
+
+    /**
+     * A built-in function whose body resolves callables against the code calling it (a class's name, a method's
+     * visibility: Callables.From) gets that code with the call, in the static-class slot a function leaves empty,
+     * once it has asked for it (BuiltinRootNode.wantCaller); until then, and from any other call, its body finds
+     * the code on the stack.
+     */
+    static void passCaller(BuiltinRootNode builtin, Object[] arguments, VirtualFrame frame, PhpBytecodeRootNode root) {
+        if (builtin != null && builtin.wantsCaller()) {
+            arguments[PhpFunction.ARG_STATIC] = new Callables.Caller(frame.getArguments(), root.callingScope(frame));
+        }
+    }
+
     /** A call: directly while the site sees one function (nearly always), else indirectly; the value it returns. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
     public static final class Call {
+        static BuiltinRootNode builtinRoot(PhpFunction function) {
+            return builtinRootOf(function);
+        }
+
         @Specialization(guards = "function == cachedFunction", limit = "1")
-        public static Object direct(CallInfo call, PhpFunction function,
+        public static Object direct(VirtualFrame frame, CallInfo call, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("function") PhpFunction cachedFunction,
+                                    @Cached(value = "builtinRoot(cachedFunction)", adopt = false, neverDefault = false)
+                                    BuiltinRootNode builtin,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            passCaller(builtin, arguments, frame, root);
             return callResult(callNode.call(arguments));
         }
 
@@ -3304,11 +3331,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @Operation
     @ConstantOperand(type = CallInfo.class)
     public static final class CallRef {
+        static BuiltinRootNode builtinRoot(PhpFunction function) {
+            return builtinRootOf(function);
+        }
+
         @Specialization(guards = "function == cachedFunction", limit = "1")
-        public static Object direct(CallInfo call, PhpFunction function,
+        public static Object direct(VirtualFrame frame, CallInfo call, PhpFunction function,
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("function") PhpFunction cachedFunction,
+                                    @Cached(value = "builtinRoot(cachedFunction)", adopt = false, neverDefault = false)
+                                    BuiltinRootNode builtin,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            passCaller(builtin, arguments, frame, root);
             return callNode.call(arguments);
         }
 
@@ -3998,15 +4033,17 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, @Variadic Object[] values,
+        public static Object cached(VirtualFrame frame, boolean keepRef, Object callable, @Variadic Object[] values,
+                                    @Bind PhpBytecodeRootNode root,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
-            return dispatch.execute(callable, values);
+            return dispatch.execute(frame.getArguments(), root.callingScope(frame), callable, values);
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(boolean keepRef, Object callable, @Variadic Object[] values,
-                                      @Bind Node node) {
-            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        public static Object uncached(VirtualFrame frame, boolean keepRef, Object callable,
+                                      @Variadic Object[] values, @Bind Node node, @Bind PhpBytecodeRootNode root) {
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    frame.getArguments(), root.callingScope(frame)), values, keepRef);
         }
     }
 
@@ -4020,27 +4057,34 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func_array", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, Object args, @Bind Node node,
+        public static Object cached(VirtualFrame frame, boolean keepRef, Object callable, Object args,
+                                    @Bind Node node, @Bind PhpBytecodeRootNode root,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
             Object[] values = CallableCallNode.arrayArguments(args);
             if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
+                return callNamed(callable, (PhpArray) args, keepRef, node, frame.getArguments(),
+                        root.callingScope(frame));
             }
-            return dispatch.execute(callable, values);
+            return dispatch.execute(frame.getArguments(), root.callingScope(frame), callable, values);
         }
 
         @Specialization(replaces = "cached")
-        public static Object uncached(boolean keepRef, Object callable, Object args, @Bind Node node) {
+        public static Object uncached(VirtualFrame frame, boolean keepRef, Object callable, Object args,
+                                      @Bind Node node, @Bind PhpBytecodeRootNode root) {
             Object[] values = CallableCallNode.arrayArguments(args);
             if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
+                return callNamed(callable, (PhpArray) args, keepRef, node, frame.getArguments(),
+                        root.callingScope(frame));
             }
-            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    frame.getArguments(), root.callingScope(frame)), values, keepRef);
         }
 
         @TruffleBoundary
-        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node) {
-            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER);
+        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node,
+                                        Object[] callerArguments, String callerScope) {
+            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER,
+                    callerArguments, callerScope);
             Object[] frame = SpreadArguments.sendArray(target, args, node);
             return result(Backtrace.callFrom(node, () -> target.function().getCallTarget().call(frame)), keepRef);
         }

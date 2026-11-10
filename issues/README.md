@@ -98,3 +98,5 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [092](092-typed-reference-unchecked.md) | A reference to a typed property takes any value | Open |
 | [093](093-per-request-name-lookups.md) | A server's requests look names up by hash and declare everything again: ~12% of its CPU | Open |
 | [094](094-l0-red-baseline.md) | L0 is red on main: four smoke tests fail on the harness, two CompilationTest cases on budgets | Open |
+| [095](095-callable-resolution-walks-stack.md) | A class-name callable walks the stack on every resolution (6–22 µs), and two of its results were wrong | Fixed |
+| [096](096-callable-deprecations-missing.md) | `self`, `parent` and `static` in a callable never raise PHP 8.2's deprecation | Open |

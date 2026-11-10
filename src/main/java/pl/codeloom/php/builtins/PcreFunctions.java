@@ -766,7 +766,7 @@ public final class PcreFunctions {
         Object replacement;
         if (callback) {
             // resolved once: every match calls the same target, whatever the callback calls in between
-            replacement = Callables.parameter(context, Args.get(a, 1),
+            replacement = Callables.parameter(context, a, Args.get(a, 1),
                     new Callables.Parameter("preg_replace_callback", 2, false));
         } else {
             replacement = Args.arrayOrString(context, a, 1, function, "replacement");
