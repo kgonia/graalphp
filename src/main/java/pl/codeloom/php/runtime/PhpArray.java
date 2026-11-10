@@ -565,11 +565,11 @@ public final class PhpArray implements TruffleObject {
 
     /**
      * The hash slot of a normalized string key whose hash is h, found with no call and no string comparison, as
-     * php-src's zend_hash_find_known_hash finds an interned key: the first slot with that hash, if its key is this
-     * very instance. {@link #ABSENT} when no slot has the hash (also in a packed array, which has no string key);
-     * {@link #UNSURE} when the slot with the hash holds another instance (an equal string made elsewhere, a
-     * collision, an int key, a deleted slot). A key not normalized yet can be asked for too: a slot found is its
-     * slot (the stored keys are normalized, so the key is), the other two answers then mean nothing.
+     * php-src's zend_hash_find_known_hash finds an interned key: the slot the index leads to, if its key is this
+     * very instance. {@link #ABSENT} when the index has no slot with the hash (also in a packed array, which has no
+     * string key); {@link #UNSURE} when a slot with the hash holds another instance (an equal string made
+     * elsewhere, a collision, an int key, a deleted slot). A key not normalized yet can be asked for too: a slot
+     * found is its slot (the stored keys are normalized, so the key is), the other two answers then mean nothing.
      */
     public int slotByString(TruffleString key, int h) {
         if (!(store instanceof Hash hash)) {
@@ -579,18 +579,33 @@ public final class PhpArray implements TruffleObject {
         Object[] entries = hash.entries;
         int[] buckets = hash.buckets;
         if (buckets == null) {
-            int used = hash.used;
-            for (int slot = 0; slot < used; slot++) {
-                if (hashes[slot] == h) {
-                    return entries[2 * slot] == key ? slot : UNSURE;
+            long cells = hash.cells;
+            int shift = (h & Hash.CELL_MASK) << 2;
+            // a counted walk, which the compiler unrolls: as a loop that ends at a free cell, isset() of an absent
+            // key was 0.3-0.7 ns of 3.5 slower (wiki/ceiling.md). A free cell ends it (Hash.cells: half stay free).
+            for (int n = 0; n < Hash.CELLS; n++) {
+                int cell = (int) (cells >>> shift) & Hash.CELL_MASK;
+                if (cell == 0) {
+                    return ABSENT;
                 }
+                int slot = cell - 1;
+                if (entries[2 * slot] == key) {
+                    return slot;
+                }
+                if (hashes[slot] == h) {
+                    return UNSURE;
+                }
+                shift = (shift + 4) & 63;
             }
-            return ABSENT;
+            return UNSURE;
         }
         int[] chain = hash.chain;
         for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
+            if (entries[2 * slot] == key) {
+                return slot;
+            }
             if (hashes[slot] == h) {
-                return entries[2 * slot] == key ? slot : UNSURE;
+                return UNSURE;
             }
         }
         return ABSENT;
@@ -1550,10 +1565,12 @@ public final class PhpArray implements TruffleObject {
     /**
      * The hash strategy's store, php-src's layout: slots in insertion order (keys, their hashes, values; a deleted
      * slot's key is null) and, once there are more than {@link #MIN_CAPACITY} slots, an index of bucket heads with
-     * a chain per slot. Below that a lookup scans the hashes, as TruffleRuby's packed hashes do: most hashed PHP
-     * arrays are small records, which then also copy as three arrays instead of five.
+     * a chain per slot. Below that the index is {@link #cells}, one word: most hashed PHP arrays are small
+     * records, which then also copy as three arrays instead of five.
      */
     private static final class Hash {
+        static final int CELLS = 16;
+        static final int CELL_MASK = CELLS - 1;
         /**
          * Slot i's key at 2i and its value at 2i + 1: one array, so a lookup that checks a slot's key reads its
          * value under the same bounds test and with no other load (a remembered slot's check, at every string-key
@@ -1566,6 +1583,14 @@ public final class PhpArray implements TruffleObject {
         final int[] chain;
         /** The slots used, including deleted ones. */
         int used;
+        /**
+         * A small store's index (while buckets is null: eight slots): sixteen four-bit cells, each one more than a
+         * slot, or 0 when free. A key takes the first free cell from its hash's low four bits on, so a lookup walks
+         * from there to the key, or to a free cell when the store doesn't hold it: no loop over the slots, whose
+         * end would depend on where the key is. A cell is never freed (a removed slot's cell fails the key check),
+         * and a store takes eight slots in its life, so half the cells stay free.
+         */
+        long cells;
 
         Hash(int capacity) {
             entries = new Object[2 * capacity];
@@ -1586,6 +1611,7 @@ public final class PhpArray implements TruffleObject {
             buckets = original.buckets == null ? null : original.buckets.clone();
             chain = original.chain == null ? null : original.chain.clone();
             used = original.used;
+            cells = original.cells;
         }
 
         Hash copy() {
@@ -1633,14 +1659,23 @@ public final class PhpArray implements TruffleObject {
                 int bucket = h & (buckets.length - 1);
                 chain[slot] = buckets[bucket];
                 buckets[bucket] = slot;
+            } else {
+                long taken = cells;
+                int shift = (h & CELL_MASK) << 2;
+                while (((taken >>> shift) & CELL_MASK) != 0) {
+                    shift = (shift + 4) & 63;
+                }
+                cells = taken | (long) (slot + 1) << shift;
             }
         }
 
         int find(Object key, int h) {
             if (buckets == null) {
-                for (int slot = 0; slot < used; slot++) {
-                    if (hashes[slot] == h && keyEquals(key(slot), key)) {
-                        return slot;
+                long taken = cells;
+                int shift = (h & CELL_MASK) << 2;
+                for (int cell; (cell = (int) (taken >>> shift) & CELL_MASK) != 0; shift = (shift + 4) & 63) {
+                    if (hashes[cell - 1] == h && keyEquals(key(cell - 1), key)) {
+                        return cell - 1;
                     }
                 }
                 return -1;

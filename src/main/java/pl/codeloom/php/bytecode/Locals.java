@@ -101,6 +101,15 @@ final class Locals {
         private static final int NEW_CLOSURE = 1 << 8;
         private static final int OLD_CLOSURE = 1 << 9;
         @CompilationFinal private int seen;
+        /**
+         * The class of the values the site wrote: null before the first, Object once there were two. While it is
+         * one class, compiled code knows a value's kind by one check, where the tests below ask one by one (a
+         * string: no int, no float, no array, no object, no closure), and so does every read of the variable after
+         * the write, the next write's read of what it replaces among them (wiki/ceiling.md: _wp_array_get's loop
+         * ran a third fewer instructions). The replaced value has no profile of its own: with one, the same loop
+         * was 3 ns of 16 slower.
+         */
+        @CompilationFinal private Class<?> valueClass;
         private final RefWrites refWrites = RefWrites.create();
         private final Refcount.Releases releases = Refcount.Releases.create();
 
@@ -119,7 +128,17 @@ final class Locals {
             }
         }
 
-        void write(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object value) {
+        void write(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, Object written) {
+            Object value = written;
+            Class<?> expected = valueClass;
+            if (expected != Object.class && written != null) {
+                value = known(written, expected);
+                if (value == null) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    valueClass = expected == null ? written.getClass() : Object.class;
+                    value = written;
+                }
+            }
             if (value instanceof Long l) {
                 met(LONG);
                 writeLong(frame, variable, bytecode, l);
@@ -130,6 +149,14 @@ final class Locals {
                 met(OBJECT);
                 writeObject(frame, variable, bytecode, value);
             }
+        }
+
+        /** The value as one of the expected class, which compiled code then knows it to be; null if it isn't. */
+        private static Object known(Object value, Class<?> expected) {
+            if (expected == null || value.getClass() != expected) {
+                return null;
+            }
+            return CompilerDirectives.inInterpreter() ? value : CompilerDirectives.castExact(value, expected);
         }
 
         void writeLong(VirtualFrame frame, LocalAccessor variable, BytecodeNode bytecode, long value) {

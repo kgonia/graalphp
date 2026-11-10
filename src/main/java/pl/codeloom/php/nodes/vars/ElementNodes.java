@@ -99,11 +99,11 @@ public final class ElementNodes {
      * <li><b>the remembered slot</b> (PhpArray.slotOf, then one identity check before anything else): arrays built
      * the same way keep a key at the same slot. Every site starts with it: larger inline lookups at every site grew
      * the graphs of PHP functions enough to stop their calls being inlined.
-     * <li><b>the probe</b> (PhpArray.slotByString: the key's hash against the slots', then the identity), for a site
-     * whose remembered slot keeps missing: the key varies ($row[$column]), the arrays differ in layout, or the key
-     * is absent (isset() of an optional key). Such a site made a call at every access. The probe answers for an
-     * interned key, present or absent, as php-src's zend_hash_find_known_hash does; an equal key of another
-     * instance is the call's.
+     * <li><b>the probe</b> (PhpArray.slotByString: the key's hash into the index, then the identity of the key it
+     * leads to), for a site whose remembered slot keeps missing: the key varies ($row[$column]), the
+     * arrays differ in layout, or the key is absent (isset() of an optional key). Such a site made a call at every
+     * access. The probe answers for an interned key, present or absent, as php-src's zend_hash_find_known_hash
+     * does; an equal key of another instance is the call's.
      * <li><b>the call alone</b>, in a {@link LargeCode large} function outside any loop: the inline check and its
      * miss's call were about 550 bytes of machine code a site, the call alone 240, and WP_Query::get_posts has 460
      * such reads, which run once per call of it; its code was 9% under HotSpot's install limit.
@@ -176,9 +176,21 @@ public final class ElementNodes {
         public Object lookup(PhpArray array, Object rawKey, ArrayKeyNode toKey) {
             int slot = PhpArray.UNSURE;
             if (remembers && rawKey instanceof TruffleString string) {
-                slot = inlineSlot(array, string);
-                if (slot >= 0) {
-                    return PhpRef.deref(array.hashValueAt(slot));
+                byte f = form();
+                if (f == INLINE) {
+                    // the key's check loads the value with it (rawIfKeyAt)
+                    Object raw = array.rawIfKeyAt(slotGuess, string);
+                    if (CompilerDirectives.inInterpreter()) {
+                        judge(raw != null);
+                    }
+                    if (raw != null) {
+                        return PhpRef.deref(raw);
+                    }
+                } else if (f == PROBE) {
+                    slot = probe(array, string);
+                    if (slot >= 0) {
+                        return PhpRef.deref(array.hashValueAt(slot));
+                    }
                 }
             }
             Object key = toKey.execute(rawKey);
@@ -230,11 +242,7 @@ public final class ElementNodes {
          * full lookup can tell, or (a probe's) {@link PhpArray#ABSENT}, which holds if the key is a normalized one.
          */
         private int inlineSlot(PhpArray array, TruffleString key) {
-            byte f = form;
-            if (f == UNDECIDED) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                form = f = decideForm();
-            }
+            byte f = form();
             if (f == INLINE) {
                 int guess = slotGuess;
                 boolean hit = array.isKeyAt(guess, key);
@@ -243,13 +251,21 @@ public final class ElementNodes {
                 }
                 return hit ? guess : PhpArray.UNSURE;
             }
-            if (f == PROBE) {
-                TruffleString.HashCodeNode hasher = hashCode;
-                if (hasher != null) {
-                    return array.slotByString(key, hasher.execute(key, Str.ENC));
-                }
+            return f == PROBE ? probe(array, key) : PhpArray.UNSURE;
+        }
+
+        private byte form() {
+            byte f = form;
+            if (f == UNDECIDED) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                form = f = decideForm();
             }
-            return PhpArray.UNSURE;
+            return f;
+        }
+
+        private int probe(PhpArray array, TruffleString key) {
+            TruffleString.HashCodeNode hasher = hashCode;
+            return hasher == null ? PhpArray.UNSURE : array.slotByString(key, hasher.execute(key, Str.ENC));
         }
 
         /** In the interpreter: a site whose remembered slot keeps missing becomes a probe, with no invalidation. */
