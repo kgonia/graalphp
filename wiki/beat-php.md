@@ -533,6 +533,12 @@ every 0.3–1.1 s and stays in concurrent cycles through the warm-up (436 in 549
   a render's allocation). Open: [099](../issues/099-object-vars-and-dynamic-property-writes.md) (`new WP_Post`,
   8–13× PHP, 0.13 ms of a render). At equal warm-up (renders 1000–2000 of one context, first decile): 33.9 ms
   before, 28.4 after 095, 26.6–26.8 after 097 and 098.
+- **The fixes under the check suite** (`bench/check/check.sh l0` on the branch against `main`, `8113e1c`): the
+  unit tests and the destructor fixtures are as on `main` (`CompilationTest`'s two failures are `main`'s:
+  [094](../issues/094-l0-red-baseline.md)). The smoke suite has `main`'s eight failures and one more,
+  `callable-deprecated`: the test added with 095 for a gap `main` has too
+  ([096](../issues/096-callable-deprecations-missing.md), open: PHP 8.2's deprecation of `self`, `parent` and
+  `static` in a callable is never raised).
 - **Kernels of the functions the differential profile ranked worst** (`tests/gate2/kernels/hot.php`, 11 kernels on
   WordPress's own code, php-cli against one context, CPUs 14-21): geometric mean 2.51× PHP's time before the fixes,
   2.04× after (a shared engine's code: 2.69 → 2.21). From 0.68–0.90× (`args`: `wp_parse_args`, faster than PHP) and
