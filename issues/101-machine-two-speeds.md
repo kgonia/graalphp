@@ -45,6 +45,25 @@ performance", on AC). Under load its cores run near their base frequency with tu
 
   Both engines see the same slow runs and the same share. (The engine's compiled loop is 1.5× faster than PHP's
   JIT here.)
+- **How many cores are busy decides how slow.** `calib.php` on several of the benchmark CPUs at once (one php-cli
+  per CPU, 30 s, nothing else in the VM), and what each trace does to 20 ms of fast-mode work, a hot render's
+  size (the chunks summed to 20 ms of work at 1.315 ns an iteration, over that: `tests/gate2/calib_par.py`):
+
+  | busy CPUs | first decile of a chunk, ns per iteration | mean, ns per iteration | million iterations a second per CPU | slow chunks (> 1.4× the fast level), share of the time | 20 ms of work: first decile / median / mean / 90th percentile, × the fast level |
+  |---|---|---|---|---|---|
+  | 1 (CPU 17; three runs, before, between and after the others) | 1.307–1.317 | 1.584–1.635 | 611–631 | 15–20% of chunks, 29–34% | 1.00 / 1.02 / 1.20–1.24 / 1.89–2.04 |
+  | 2 (16, 17) | 1.315–1.317 | 1.745–1.746 | 573 | 26–29%, 43–45% | 1.00 / 1.04–1.05 / 1.33 / 2.34 |
+  | 4 (14–17) | 1.315 on each | 1.888–1.890 | 529 | 36–37%, 54–55% | 1.01 / 1.23–1.24 / 1.44 / 2.34 |
+  | 5 (14–18) | 1.315–1.318 | 1.870–1.871 | 534–535 | 39–46%, 55–59% | 1.01–1.02 / 1.31–1.32 / 1.42 / 2.09–2.12 |
+  | 6 (14–19) | 1.307–1.320 | 2.067–2.070 | 483–484 | 46–60%, 64–72% | **1.12–1.15** / 1.44–1.45 / 1.57 / 2.34–2.35 |
+  | 7 (14–20) | 1.307–1.363 | 2.090–2.094 | 477–478 | 48–67%, 66–76% | **1.30** / 1.45–1.46 / 1.59 / 2.34 |
+  | 8 (14–21) | 1.315–1.323 on five, 1.55–1.56 on three | 2.196–2.203 | 454–455 | 54–76%, 71–83% | **1.40** / 1.52–1.53 / 1.67–1.68 / 2.34 |
+
+  The fast mode's level does not move; the time spent out of it does. Up to five busy cores a stretch of 20 ms
+  still fits into the fast mode often enough for the first decile to hold (1.00–1.02×); with six it is 1.12–1.15×,
+  with seven 1.30×, with eight 1.40×, the same on every CPU. The median moves from the second busy core on.
+  Eight busy CPUs do 5.9 times one CPU's work. (Four and eight were measured an hour before two, five, six and
+  seven.)
 - **In the K8 loops:** the steady renders of a loop on the JVM split into a fast mode and one at 2×: 12–23% of
   the last thousand renders above 1.5× the first decile in six runs, 66% in a seventh; for php-cli 6% in a quiet
   thousand, 17% over 10,000. The slow renders come in runs, with and without a collection in them.
@@ -78,8 +97,12 @@ performance", on AC). Under load its cores run near their base frequency with tu
   `calib.py`: the two levels, the slow share, the runs' length and period) beside a measurement whose conclusion
   hangs on a level shift.
 - A difference between two builds counts when it shows in the first decile, or in the mean of interleaved rounds.
-- A shift of the median or the mean with the first decile in place is the machine; a shift of the first decile is
-  the engine, and a compilation trace (`-Dpolyglot.engine.TraceCompilation=true`) beside the run says what it did.
+- A shift of the median or the mean with the first decile in place is the machine; a shift of the first decile
+  **at an equal number of busy cores, or with at most five busy,** is the engine, and a compilation trace
+  (`-Dpolyglot.engine.TraceCompilation=true`) beside the run says what it did.
+- Count the busy cores of both sides before comparing: a single-threaded loop against a single-threaded loop is
+  the one-core row for both; a JVM with six compiler threads working, or a server at eight users, is not. With
+  six or more busy cores the first decile itself carries 12–40% of machine.
 
 **Open:**
 
@@ -87,5 +110,7 @@ performance", on AC). Under load its cores run near their base frequency with tu
   firmware's setting) would trade the fast mode for one level. Not tried: it is the owner's machine and its other
   jobs' speed.
 - `native.sh`'s reports (k6's medians, `k8_report.py`'s medians of block halves) do not print a first decile.
-- The slow share in the VM with eight workers busy: not measured (the table above is one busy thread in an idle
-  VM; the host's 67–75% was measured while a server benchmark loaded the VM's eight CPUs).
+- What the calibration cannot see: it is integer arithmetic in a register. Whether busy neighbours also cost a
+  render through the shared cache and memory was not measured; the 30–45% by which one context's first decile
+  rises while its compiler threads work ([100](100-warm-up.md)) is at most a third frequency (four to six busy
+  cores: 1–15%).

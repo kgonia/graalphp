@@ -1,4 +1,4 @@
-# 100: Warm-up: one context needs 2.5–3.5 minutes and 9 CPU-minutes of compilation to reach its level; a server at eight users is still warming after twelve
+# 100: Warm-up: one context needs 2.5–3.5 minutes and 9 CPU-minutes of compilation to reach its level; a server at eight users compiles through all of its first twelve
 
 **State:** Open. Found 2026-11-10 during [wiki/beat-php.md](../wiki/beat-php.md) (the K8 loop: one context, the
 front page rendered N times in a row by one thread, CPUs 14-21). PHP with OPcache and its JIT is at its level
@@ -25,9 +25,19 @@ within the first hundred renders (first decile 9.3 ms over renders 0–500, 9.4 
   in 30 s. During it no render takes less than 24–28 ms for 10–20 s (level: 20.2). The same in the run with
   `-XX:-UseCodeCacheFlushing` (26.2–28.1 ms). Why the level itself rises while the compiler threads work, before
   the step and here: see "Open".
+- **More compiler threads bring the level earlier** (`par-ct6`: the best case's options, ParallelGC with a 2 GB
+  heap and the threshold of 1000, and `-Dpolyglot.engine.CompilerThreads=6`): within 5% of the level from render
+  2550 (123 s) against render 5450–5650 (201–208 s) in three runs without. The level is the same (first decile
+  18.2 ms over renders 3000–4000, 18.59 over the last thousand against 18.07–18.28). Before the level it is
+  slower (first decile 32.6 ms over renders 1000–2000 against 26.7–27.3): seven busy threads on eight CPUs, see
+  "The machine" below. 7000 renders take the same 238–240 s either way; the peak is 2728 MB against 2339–2404.
 - **`WP_Query::get_posts` never compiles.** Its first-tier compilation fails after 9.4 s: "Code installation
   failed: code is too large" (HotSpot's `JVMCINMethodSizeLimit`, [094](094-l0-red-baseline.md)). It runs in the
-  interpreter in every render of every run.
+  interpreter in every render of every run. With the limit raised (`par-big`: the best case's options and
+  `-XX:+UnlockExperimentalVMOptions -XX:JVMCINMethodSizeLimit=4194304`) it compiles: 10.0 s in the first tier
+  (512 KB of code), 9.4 s in the last (520 KB), nothing fails. The level moves by 1%, inside the spread between
+  runs: 18.07 / 19.24 / 22.50 ms (first decile / median / mean of the last thousand) against 18.26–18.28 /
+  19.40–19.53 / 22.53–22.91; the warm-up is the same (render 5450, 205 s), the peak 2389 MB.
 - **Profile resets ("opt reprof" in the trace).** 39 of them: HotSpot's code-cache sweeper unloads a compiled
   method as cold, Truffle finds the target's profile reset when it next prepares a compilation
   (`HotSpotOptimizedCallTarget.prepareForCompilation`), and the target starts again from the interpreter and from
@@ -51,6 +61,13 @@ within the first hundred renders (first decile 9.3 ms over renders 0–500, 9.4 
   decile was 47–49 ms over renders 7000–11000, then 22 ms to the end: no compilation during the four minutes, 62
   profile resets before them, 241 last-tier compilations at their end. Seen once, only with JFR on; the run
   without flushing was not repeated under JFR, so the resets are a suspect and no more.
+- **The machine.** Its cores slow down as more of them are busy ([101](101-machine-two-speeds.md)): 20 ms of
+  work takes 1.00–1.02× its fast time by the first decile with up to five busy cores, 1.12–1.15× with six, 1.30×
+  with seven, 1.40× with eight. One context that is compiling keeps four to six busy (the render thread, three
+  compiler threads at 2.6–2.9 threads' worth, G1's concurrent threads): 1–15% of its first decile. The rise seen
+  while the last tier's queue is busy is 30–45%, so at most a third of it is the cores' frequency; the engine's
+  part and the cores' shared cache were not separated. With six compiler threads seven cores are busy, and
+  `par-ct6`'s 21% before its level is inside that row's 1.30×.
 
 **What happens, later contexts on a shared engine** (the server's kind: one engine, a context per request):
 
@@ -65,10 +82,25 @@ The compiled code carries over, more of it with every context. A context's first
 in the sixth (93 ms against 21): caches that are the context's own are filled again. A served request is exactly
 that render.
 
-**What happens in the server** (nginx → FastCGI, eight users): the K8 block of the first page measured after 720 s
-of warm-up (≈ 29,000 requests at 40.8 pages a second) still falls from 45–47 ms to 26–29 ms per hot render within
-its own thousand renders. Eight request threads and the compiler threads share eight CPUs, and each request is a
-new context that runs the boot and one first render.
+**What happens in the server** (nginx → FastCGI, eight users; `jvm-fcgi.trace`: the compilation trace on through
+720 s of warm-up, ≈ 28,000 requests at 39.2 pages a second; `tests/gate2/k8_complog.py` on the server's log):
+
+- **8322 compilations** against one context's 2632: each request is a new context that runs the boot and one
+  first render, so the boot's functions are hot too. Eight request threads and three compiler threads share eight
+  CPUs.
+- **The last tier's queue never drains.** The first tier is done after four minutes (47–56 s of compiler time per
+  30 s until then). From 240 s to the end of the warm-up the last tier takes 65–89 s of compiler time per 30 s,
+  96–237 compilations: saturated, as in one context, for eight minutes instead of one and a half.
+- **A third of the server's CPU is the compiler.** ≈ 2014 s of compiler time in the 720 s (≈ 1500 s last tier,
+  ≈ 514 s first tier): 2.8 of its 7.5 busy cores, ≈ 71 of its 193 CPU-ms per page. The "pages a second" of a
+  twelve-minute run (39–42) is an average over that; the steady state was not reached and not measured.
+- **The measurement after the warm-up starts with a compile burst of its own.** The first measured page's hot
+  render falls from 45–49 ms to 26–29 ms within its own K8 block in every served run: the K8 path (a page rendered
+  again inside one request) is new code to a server warmed by plain requests, and its first block takes 143
+  CPU-seconds in 45 s of wall time. The night's runs added a defect to that: their K8 requests ended in `exit`,
+  which invalidates the compiled code of every function on the stack ([103](103-exit-deopt-cycle.md): 183–185
+  CPU-seconds in 49–50 s, and the block ends at 25 ms where it ends at 22.6 without the `exit`; 40.2 → 22.9 ms by
+  the block's quarters).
 
 **Why it matters:** [beat-php.md](../wiki/beat-php.md) compares the engines at their levels; this is the time
 before the level. A restart or a deploy costs minutes at 2–4× the level and 9 CPU-minutes per page type, against
@@ -77,13 +109,14 @@ none for php-fpm. Short benchmarks of this engine measure the warm-up: every "st
 
 **Open:**
 
-- More compiler threads for one context (`-Dpolyglot.engine.CompilerThreads=N`): if the queue is the bound, the
-  step should come earlier. Measured below when the run is in.
+- The server's steady state: how long at eight users until its last-tier queue drains, and its throughput then.
+  Twelve minutes are not enough. More compiler threads bring one context's level earlier (above); in the server
+  they would take the requests' cores. A warm-up at a lower load was not tried.
 - Why the first decile is 30–45% above the level while the last tier's queue is busy (150–165 s and 220–230 s),
-  with the first-tier code of every function still installed. Either the machine (its fast mode's frequency with
-  four cores busy instead of one, [101](101-machine-two-speeds.md)) or the engine. The parallel calibration below
-  decides.
-- `WP_Query::get_posts` in the interpreter: a larger `JVMCINMethodSizeLimit`, or a root that is split.
+  with the first-tier code of every function still installed: at most a third is the machine (above). The rest
+  is open.
+- `WP_Query::get_posts` in the interpreter: with a larger `JVMCINMethodSizeLimit` it compiles, for 1% (above). A
+  root that is split would not need the flag.
 - The 139 once-per-render functions of the second burst: they pay 48 s of compilation for 10–20 s at +30%; they
   are a third of a render's functions by count.
 - Nothing is kept between JVM runs. Truffle's engine cache needs a native image

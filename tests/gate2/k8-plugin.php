@@ -15,6 +15,11 @@
  * ?k8=N&k8dump=1 answers with the last iteration's page instead. ?k8=N&k8prof=MICROSECONDS, on a PHP with the
  * Excimer extension: iterations 3 and up are sampled at that period, and the answer's "profile" is the samples per
  * function, [name, self, inclusive] (a built-in's time is its calling PHP function's).
+ * ?k8=N&k8noexit=1: the callback returns instead of ending the request with `exit`. WordPress goes on to its own
+ * render of the page, and a buffer's callback replaces that output with the JSON (issues/103-exit-deopt-cycle.md:
+ * what an `exit` under compiled frames does to our engine).
+ * The servers read this file from the site volume: `native.sh volume` after a change (`native.sh k8` stops when
+ * the volume's copy is not this file).
  *
  * Every iteration starts from the state the request had at template_redirect in what a render fills once and
  * prints at its end: the hooks (a render adds closures to wp_head and wp_footer), the registered scripts and styles
@@ -117,9 +122,16 @@ if (isset($_GET['k8'])) {
         }
         $phases['end'] = round(1000 * ($end - $t['start']), 3);
         header('Content-Type: application/json');
-        echo json_encode(['engine' => PHP_VERSION . ' ' . PHP_SAPI, 'phases' => $phases, 'iterations' => $rows,
+        $json = json_encode(['engine' => PHP_VERSION . ' ' . PHP_SAPI, 'phases' => $phases, 'iterations' => $rows,
             'peak' => memory_get_peak_usage(), 'queries' => $wpdb->num_queries, 'profile' => $profile,
-            'loop_start' => $loop[0]]), "\n";
+            'loop_start' => $loop[0]]) . "\n";
+        if (isset($_GET['k8noexit'])) {
+            ob_start(static function () use ($json) {
+                return $json;
+            });
+            return;
+        }
+        echo $json;
         exit;
     }, PHP_INT_MAX);
 }

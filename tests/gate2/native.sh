@@ -504,6 +504,11 @@ k8() { # rounds variants...
         while ! host_quiet; do sleep 30; done
       fi
       stop "$variant"
+      # the servers read the plugin from the site volume, which only `volume` fills: a run with a stale copy
+      # measures the old plugin under the new name
+      MSYS_NO_PATHCONV=1 docker run --rm -i --cpuset-cpus ${WPN_AUX_CPUS:-0-5} -v $P-site:/srv:ro alpine:3 \
+        cmp -s - /srv/target/gate2/wordpress/wp-content/mu-plugins/k8-plugin.php < tests/gate2/k8-plugin.php ||
+        { echo "the site volume's k8-plugin.php is not tests/gate2/k8-plugin.php: run native.sh volume first"; exit 1; }
       reset_db
       start "$variant" "${K8_CPUS:-14-21}" ${WPN_MEASURE_PORT:-8096}
       load_run "$variant" "${K8_WARM_VUS:-8}" "$warm" "k8-$variant-r$r-warm"
