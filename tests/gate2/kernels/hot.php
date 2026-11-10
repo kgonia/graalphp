@@ -1,6 +1,6 @@
 <?php
 // Kernels of the functions the K8 differential profile ranks worst (wiki/beat-php.md), on WordPress's own code.
-// Usage: php hot.php WORDPRESS_DIR ROUNDS [kernel,...]   prints "kernel round ns/op checksum".
+// Usage: php hot.php WORDPRESS_DIR ROUNDS [kernel,...]   prints "kernel round ns/op checksum" per round.
 error_reporting(E_ALL);
 define('ABSPATH', rtrim($argv[1], '/') . '/');
 define('WPINC', 'wp-includes');
@@ -189,8 +189,7 @@ foreach ($selected as $name) {
             $sum += $kernel();
         }
         $ns = (hrtime(true) - $t) / $inner;
-        if ($round >= $rounds - 3 || $round === 0) {
-            printf("%s %d %.0f %d\n", $name, $round, $ns, $sum);
-        }
+        // every round, as ops.php: opstable.py's first decile of the last half is what compares here (issue 101)
+        printf("%s %d %.0f %d\n", $name, $round, $ns, $sum);
     }
 }

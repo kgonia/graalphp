@@ -10,16 +10,16 @@ import com.oracle.truffle.api.nodes.RootNode;
  * per call (outside any loop) takes the form with the least code, even where another form is faster
  * (ElementNodes.SlotCacheNode).
  *
- * <p>A root of any size also gives out its rich sites: the forms that are faster and several times larger than a
- * site's first one go to the {@link #RICH} sites that prove they need one first, which are the ones that run most
- * (a loop's). Without the bound a function of 200 element accesses whose keys vary compiled to 1.7 times the
- * code (src/test/resources/compile/query-builder.php, wiki/ceiling.md).
+ * <p>A root of any size also gives out its rich sites: the forms that are faster and larger than a site's first
+ * one go to the {@link #RICH} sites that prove they need one first, which are the ones that run most (a loop's).
+ * Without the bound, and with a whole hash walk as the rich form, a function of 200 element accesses whose keys
+ * vary compiled to 1.7 times the code (src/test/resources/compile/query-builder.php, wiki/ceiling.md).
  */
 public interface LargeCode {
     /** The nodes over which a root is large; Gate 1's kernels' functions are all smaller. */
     int LARGE = 3000;
 
-    /** The rich sites of one root: about 1 KB of machine code each over the form they replace. */
+    /** The rich sites of one root: 0.2 to 0.6 KB of machine code each over the form they replace. */
     int RICH = 8;
 
     /** Whether the root is large; asked in the interpreter only, so it may count its nodes once. */

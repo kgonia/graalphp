@@ -113,7 +113,12 @@ public final class PhpMain {
                 .allowCreateThread(true)
                 .allowExperimentalOptions(true)
                 .build()) {
-            context.eval(source);
+            GuestSampler.startIfAsked(context.getEngine());
+            try {
+                context.eval(source);
+            } finally {
+                GuestSampler.writeIfRunning();
+            }
         } catch (PolyglotException e) {
             if (e.isExit()) {
                 // exit() ends this run; an earlier run of --contexts=n goes on to the next

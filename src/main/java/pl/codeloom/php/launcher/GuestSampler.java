@@ -21,7 +21,9 @@ import java.util.Set;
  * across all the requests' contexts and summed, from a moment the driver picks to the engine's close. The CPU
  * sampler's own output is a histogram per context, so per request, and from the start (warm-up included).
  *
- * <p>-Dphp.sample.out=path turns it on: a daemon thread waits for path.start to exist, then every
+ * <p>-Dphp.sample.out=path turns it on: a daemon thread waits for path.start to exist (or, with
+ * php.sample.after=SECONDS, that long from its start: a script's run, PhpMain, where the counts are written when
+ * the script ends), then every
  * php.sample.period milliseconds (default 10) takes a sample of every thread running PHP (CPUSampler.takeSample)
  * and counts each stack's top frame (self) by function and tier (0 the interpreter, 1, 2), and each function once
  * per stack (total). "user" counts the sample for the nearest frame of PHP code, so a built-in's time is its
@@ -46,21 +48,26 @@ final class GuestSampler {
         this.out = out;
     }
 
-    /** Starts the sampler if -Dphp.sample.out is set. */
+    /** Starts the sampler if -Dphp.sample.out is set and it doesn't run yet. */
     static void startIfAsked(Engine engine) {
         String outName = System.getProperty("php.sample.out");
-        if (outName == null) {
+        if (outName == null || running != null) {
             return;
         }
         long period = Long.getLong("php.sample.period", 10);
+        long after = Long.getLong("php.sample.after", -1);
         Path out = Path.of(outName);
         Path start = Path.of(outName + ".start");
         GuestSampler guest = new GuestSampler(CPUSampler.find(engine), out);
         running = guest;
         Thread thread = new Thread(() -> {
             try {
-                while (!Files.exists(start)) {
-                    Thread.sleep(1000);
+                if (after >= 0) {
+                    Thread.sleep(after * 1000);
+                } else {
+                    while (!Files.exists(start)) {
+                        Thread.sleep(1000);
+                    }
                 }
                 System.err.println("guest sampler: sampling every " + period + " ms");
                 while (true) {

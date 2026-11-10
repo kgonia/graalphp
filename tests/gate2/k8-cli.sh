@@ -13,8 +13,12 @@
 # checksum) and NAME.INDEX.err (the process's stderr, then "peak BYTES": the container's memory.peak).
 # The server on K8_CPUS (default 14-21, under the CPU lock unless K8_NOLOCK=1), the database as native.sh's (reset
 # first: `native.sh reset-db`), the site from native.sh's volume. JAVA_OPTS: more JVM options; PHP_OPTS: more of php's
-# (`-d opcache.jit=disable`: PHP without its JIT). The table by
+# (`-d opcache.jit=disable`: PHP without its JIT); K8_CLASSES: another build's classes in the volume
+# (target/classes-TAG, which `native.sh volume` copies from the worktree's target/); K8_ENV: NAME=VALUE pairs for
+# the process's environment (`USE_ZEND_ALLOC_HUGE_PAGES=1`: PHP's allocator asks for huge pages). The table by
 # `k8_cli_report.py`.
+# K8_SAMPLE=SECONDS (the engine only): launcher.GuestSampler's profile of the loop from that many seconds on, every
+# K8_SAMPLE_PERIOD ms (default 5), in NAME.INDEX.guest.txt: for `k8_profile.py`, never beside a timed run.
 #
 # Usage: WPN_NAME=.. WPN_NET=.. tests/gate2/k8-cli.sh ENGINE NAME N [PAGE...]
 set -euo pipefail
@@ -33,8 +37,15 @@ java="\$GRAALVM_HOME/bin/java --enable-native-access=ALL-UNNAMED --sun-misc-unsa
 java+=" \$JAVA_OPTS_BASE -Xmx1g -XX:TrimNativeHeapInterval=5000 -XX:G1PeriodicGCInterval=10000"
 java+=" -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:ReservedCodeCacheSize=512m"
 java+=" -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterOnly=false"
-java+=" -Dpolyglot.php.Parser=java ${JAVA_OPTS:-} -cp 'target/classes:target/lib/*' pl.codeloom.php.launcher.PhpMain"
-java+=" --ast-root=/none"
+java+=" -Dpolyglot.php.Parser=java ${JAVA_OPTS:-}"
+out=()
+for pair in ${K8_ENV:-}; do out+=(-e "$pair"); done
+if [ -n "${K8_SAMPLE:-}" ]; then
+  out=(-v "$root/$dir:/out")
+  java+=" -Dphp.sample.out=/out/$name.\$K8_PAGE.guest.txt -Dphp.sample.after=$K8_SAMPLE"
+  java+=" -Dphp.sample.period=${K8_SAMPLE_PERIOD:-5}"
+fi
+java+=" -cp '${K8_CLASSES:-target/classes}:target/lib/*' pl.codeloom.php.launcher.PhpMain --ast-root=/none"
 case $engine in
   php) image=${FPM_RUN_IMAGE:-gate2-fpm:8.5.12}; cmd="php -d opcache.enable_cli=1 ${PHP_OPTS:-}" ;;
   one) image=gate2-fcgi:graal25.4; cmd="$java -ddisplay_errors=1 -dhtml_errors=0" ;;
@@ -54,7 +65,8 @@ for page in "${pages[@]}"; do
   i=$((i + 1))
   start=$(date +%s)
   MSYS_NO_PATHCONV=1 docker run --rm --name $P-k8cli --cpuset-cpus "${K8_CPUS:-14-21}" --network $P-net \
-    --add-host host.docker.internal:$NET.2 -v $P-site:/srv:ro -v "$root/tests/gate2:/t:ro" -w /srv $image \
+    --add-host host.docker.internal:$NET.2 -v $P-site:/srv:ro -v "$root/tests/gate2:/t:ro" \
+    ${out[@]+"${out[@]}"} -e K8_PAGE=$i -w /srv $image \
     sh -c "$cmd /t/k8-cli.php '$page' $n; s=\$?; echo peak \$(cat /sys/fs/cgroup/memory.peak) >&2; exit \$s" \
     > $dir/$name.$i.json 2> $dir/$name.$i.err || echo "$name $page: exit $?"
   echo "$name $page: $(($(date +%s) - start)) s, $(wc -c < $dir/$name.$i.json) bytes, $(tail -1 $dir/$name.$i.err)"

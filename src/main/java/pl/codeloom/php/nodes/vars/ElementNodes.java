@@ -94,22 +94,25 @@ public final class ElementNodes {
      *
      * <ul>
      * <li><b>the remembered slot</b> (PhpArray.slotOf, then one identity check before anything else): arrays built
-     * the same way keep a key at the same slot. Every site starts with it: larger inline lookups at every site grew
-     * the graphs of PHP functions enough to stop their calls being inlined.
-     * <li><b>the probe</b> (PhpArray.slotByString: the key's hash into the index, then the identity of the key it
-     * leads to), for a site whose remembered slot keeps missing: the key varies ($row[$column]), the
-     * arrays differ in layout, or the key is absent (isset() of an optional key). Such a site made a call at every
-     * access. The probe answers for an interned key, present or absent, as php-src's zend_hash_find_known_hash
-     * does; an equal key of another instance is the call's.
+     * the same way keep a key at the same slot. Every read's and test's site starts with it.
+     * <li><b>the probe</b> (PhpArray.slotAtHome: the key's hash to its home in the index, then the identity of the
+     * key there), for a site whose remembered slot keeps missing: the key varies ($row[$column]), the arrays differ
+     * in layout, or the key is absent (isset() of an optional key). Such a site made a call at every access. The
+     * probe answers for an interned key that is first at its home and for an absent one whose home is free; a key
+     * displaced from its home and an equal key of another instance are the call's.
      * <li><b>the call alone</b>, in a {@link LargeCode large} function: the inline check and its
      * miss's call were about 550 bytes of machine code a site, the call alone 240, and WP_Query::get_posts has 460
      * such reads, which run once per call of it; its code was 9% under HotSpot's install limit.
      * </ul>
      *
-     * <p>The probe is about 1 KB of machine code a site more than the remembered slot, and so is a write's inline
-     * store more than its call. These are a function's rich sites, {@link LargeCode#RICH} of them: a site takes one
-     * when it has shown, in the interpreter, that it needs it (the remembered slot kept missing; a write kept
-     * overwriting), so the sites that run most take them first. The others stay as they were.
+     * <p>What a site holds inline is bounded by its machine code, and WordPress's render is what measures that, no
+     * kernel does (wiki/ceiling.md). The probe as the index's whole walk (php-src's zend_hash_find_known_hash) was
+     * 2.3-2.8 KB a site: the front page rendered 6% slower with it, after twice the warm-up and with a quarter
+     * more compiled code. Its first step alone keeps the kernels' gain but for a write under a varying key (5.3
+     * to 7.5 ns), at about 0.2 KB a site over the remembered slot; a write's inline store is about 0.6 KB over its
+     * call. Both are a function's rich sites, {@link LargeCode#RICH} of them: a site takes one when it has shown, in
+     * the interpreter, that it needs it (the remembered slot kept missing; a write kept overwriting), so the sites
+     * that run most take them first. The others stay as they were.
      *
      * <p>A write's site ({@link #store}) starts as the call: a site that builds an array inserts, which no inline
      * form does. One that overwrites earns the inline store, and from there may become a probe as any site.
@@ -158,6 +161,13 @@ public final class ElementNodes {
         private byte score;
         /** The key's hash for the probe; null until the site is one. */
         @Child private TruffleString.HashCodeNode hashCode;
+        /**
+         * The key a site became a probe with and its hash, null once the interpreter met another key there: a
+         * site with one key (a literal) has the hash as a constant. Compiled code that holds a stale one still
+         * compares the key.
+         */
+        @CompilationFinal private TruffleString hashedKey;
+        @CompilationFinal private int keyHash;
 
         private SlotCacheNode(boolean remembers, boolean warns) {
             this.remembers = remembers;
@@ -198,7 +208,7 @@ public final class ElementNodes {
                     // the key's check loads the value with it (rawIfKeyAt)
                     Object raw = array.rawIfKeyAt(slotGuess, string);
                     if (CompilerDirectives.inInterpreter()) {
-                        judge(raw != null);
+                        judge(raw != null, string);
                     }
                     if (raw != null) {
                         return PhpRef.deref(raw);
@@ -234,7 +244,7 @@ public final class ElementNodes {
                 if (f == INLINE) {
                     boolean hit = array.isKeyAt(slotGuess, string);
                     if (CompilerDirectives.inInterpreter()) {
-                        judge(hit);
+                        judge(hit, string);
                     }
                     if (hit) {
                         return true;
@@ -264,7 +274,7 @@ public final class ElementNodes {
                 if (f == INLINE) {
                     int guess = slotGuess;
                     if (CompilerDirectives.inInterpreter()) {
-                        judge(array.isKeyAt(guess, string));
+                        judge(array.isKeyAt(guess, string), string);
                     }
                     if (array.replacePlainIfKeyAt(guess, string, value)) {
                         return;
@@ -295,14 +305,23 @@ public final class ElementNodes {
 
         private int probe(PhpArray array, TruffleString key) {
             TruffleString.HashCodeNode hasher = hashCode;
-            return hasher == null ? PhpArray.UNSURE : array.slotByString(key, hasher.execute(key, Str.ENC));
+            if (hasher == null) {
+                return PhpArray.UNSURE;
+            }
+            TruffleString hashed = hashedKey;
+            if (CompilerDirectives.inInterpreter() && hashed != null && hashed != key) {
+                hashedKey = hashed = null;
+            }
+            // a literal key is a constant here, as hashed is: the hash folds
+            int h = hashed != null && hashed == key ? keyHash : hasher.execute(key, Str.ENC);
+            return array.slotAtHome(key, h);
         }
 
         /**
          * In the interpreter: a site whose remembered slot keeps missing becomes a probe if its function has a
          * rich site left, and stays as it is if not; with no invalidation.
          */
-        private void judge(boolean hit) {
+        private void judge(boolean hit, TruffleString key) {
             int s = score;
             if (s == SETTLED) {
                 return;
@@ -315,6 +334,8 @@ public final class ElementNodes {
                 score = (byte) (s + MISS);
             } else if (takeRich()) {
                 hashCode = insert(TruffleString.HashCodeNode.create());
+                hashedKey = key;
+                keyHash = key.hashCode();
                 form = PROBE;
             } else {
                 score = SETTLED;

@@ -1764,6 +1764,58 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /**
+     * `isset($container[key])` that the read of the same element follows at once (BytecodeTranslator.keepFor): as
+     * IssetElement, and an array's element found by a string or an int key is kept in a hidden local for that read
+     * (TakeKept), which then has no lookup of its own: _wp_array_get's loop is this pair, two lookups an element
+     * in php-src (wiki/ceiling.md). Any other container or key leaves the local cleared and the read runs as
+     * written: a key's deprecation, an ArrayAccess object's offsetGet() and a string's offset are the read's own.
+     */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class IssetElementKeep {
+        @Specialization
+        public static boolean array(VirtualFrame frame, LocalAccessor kept, PhpArray container, Object key,
+                                    @Bind BytecodeNode bytecode, @Cached ElementNodes.ElementIfSetNode read) {
+            Object element = read.execute(container, key);
+            if (element != PhpNull.NULL && (key instanceof TruffleString || key instanceof Long)) {
+                kept.setObject(bytecode, frame, element);
+                return true;
+            }
+            kept.clear(bytecode, frame);
+            return element != PhpNull.NULL;
+        }
+
+        @Fallback
+        public static boolean other(VirtualFrame frame, LocalAccessor kept, Object container, Object key,
+                                    @Bind BytecodeNode bytecode, @Bind Node node) {
+            kept.clear(bytecode, frame);
+            return container != PhpNull.NULL && DimNode.isSetIn(node, container, key);
+        }
+    }
+
+    /** Whether the isset() before this read kept the element it found (IssetElementKeep). */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class HasKept {
+        @Specialization
+        public static boolean has(VirtualFrame frame, LocalAccessor kept, @Bind BytecodeNode bytecode) {
+            return !kept.isCleared(bytecode, frame);
+        }
+    }
+
+    /** The element IssetElementKeep kept, taken out of its hidden local: the read's value. */
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class TakeKept {
+        @Specialization
+        public static Object take(VirtualFrame frame, LocalAccessor kept, @Bind BytecodeNode bytecode) {
+            Object element = kept.getObject(bytecode, frame);
+            kept.clear(bytecode, frame);
+            return element;
+        }
+    }
+
     // ---- nested elements (DimNode chains, ElementChain) ----
 
     /**

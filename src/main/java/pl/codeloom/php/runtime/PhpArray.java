@@ -558,61 +558,41 @@ public final class PhpArray implements TruffleObject {
         return rawIfKeyAt(slot, key) != null;
     }
 
-    /** {@link #slotByString}: no slot holds the key's hash, so the array doesn't hold the key. */
+    /** {@link #slotAtHome}: the key's home is free, so the array doesn't hold the key. */
     public static final int ABSENT = -1;
-    /** {@link #slotByString}: a slot holds the key's hash under another instance; only {@link #slotOf} can tell. */
+    /** {@link #slotAtHome}: the home leads to another key instance; only {@link #slotOf} can tell. */
     public static final int UNSURE = -2;
 
     /**
-     * The hash slot of a normalized string key whose hash is h, found with no call and no string comparison, as
-     * php-src's zend_hash_find_known_hash finds an interned key: the slot the index leads to, if its key is this
-     * very instance. {@link #ABSENT} when the index has no slot with the hash (also in a packed array, which has no
-     * string key); {@link #UNSURE} when a slot with the hash holds another instance (an equal string made
-     * elsewhere, a collision, an int key, a deleted slot). A key not normalized yet can be asked for too: a slot
-     * found is its slot (the stored keys are normalized, so the key is), the other two answers then mean nothing.
+     * The hash slot of a string key whose hash is h, if the key is the first at its hash's home (a small store's
+     * cell, a larger one's bucket head) and this very instance: found with no call, no loop and no string
+     * comparison. {@link #ABSENT} when the home is free (also in a packed array, which has no string key): a cell or
+     * a bucket once taken stays taken, so no slot has the hash. {@link #UNSURE} for the rest, which is
+     * {@link #slotOf}'s: a key displaced from its home or further down its chain, an equal string made elsewhere, an
+     * int key, a deleted slot.
+     *
+     * <p>The first step alone, because a site holds this inline: the whole walk, as php-src's
+     * zend_hash_find_known_hash, was 2.3-2.8 KB of machine code a site, and WordPress's front page 6% slower for it
+     * (ElementNodes.SlotCacheNode, wiki/ceiling.md).
+     *
+     * <p>A key not normalized yet can be asked for too: a slot found is its slot (the stored keys are normalized, so
+     * the key is), the other two answers then mean nothing.
      */
-    public int slotByString(TruffleString key, int h) {
+    public int slotAtHome(TruffleString key, int h) {
         if (!(store instanceof Hash hash)) {
             return ABSENT;
         }
-        int[] hashes = hash.hashes;
-        Object[] entries = hash.entries;
         int[] buckets = hash.buckets;
-        if (buckets == null) {
-            long cells = hash.cells;
-            int shift = (h & Hash.CELL_MASK) << 2;
-            // a counted walk, which the compiler unrolls: as a loop that ends at a free cell, isset() of an absent
-            // key was 0.3-0.7 ns of 3.5 slower (wiki/ceiling.md). A free cell ends it (Hash.cells: half stay free).
-            for (int n = 0; n < Hash.CELLS; n++) {
-                int cell = (int) (cells >>> shift) & Hash.CELL_MASK;
-                if (cell == 0) {
-                    return ABSENT;
-                }
-                int slot = cell - 1;
-                if (entries[2 * slot] == key) {
-                    return slot;
-                }
-                if (hashes[slot] == h) {
-                    return UNSURE;
-                }
-                shift = (shift + 4) & 63;
-            }
-            return UNSURE;
+        int slot = buckets == null ? ((int) (hash.cells >>> ((h & Hash.CELL_MASK) << 2)) & Hash.CELL_MASK) - 1
+                : buckets[h & (buckets.length - 1)];
+        if (slot < 0) {
+            return ABSENT;
         }
-        int[] chain = hash.chain;
-        for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
-            if (entries[2 * slot] == key) {
-                return slot;
-            }
-            if (hashes[slot] == h) {
-                return UNSURE;
-            }
-        }
-        return ABSENT;
+        return hash.entries[2 * slot] == key ? slot : UNSURE;
     }
 
     /**
-     * put() into a hash slot known to hold the key (slotByString), where it is the store alone: neither the
+     * put() into a hash slot known to hold the key (slotAtHome), where it is the store alone: neither the
      * element there nor the value is counted ({@link #counted}). False, with nothing done, for the rest, which is
      * put()'s: inline, the counting was 1.5 KB of machine code and eight calls a write (wiki/ceiling.md). The
      * caller has made this array exclusive.

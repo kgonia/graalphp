@@ -464,6 +464,29 @@ $kernels = [
         }
         return $bag->items['status'];
     },
+
+    // --- isset() and at once the read of the same element (the pair _wp_array_get's loop is; added last too)
+    'isset_read' => static function () use ($rows, $keys) {
+        $v = 0;
+        $row = $rows[2];
+        for ($i = 0; $i < OPS; $i++) {
+            $k = $keys[$i & 3];
+            if (isset($row[$k])) {
+                $x = $row[$k];
+                $v += $x === 7 ? 1 : 2;
+            }
+        }
+        return $v;
+    },
+    'isset_ternary' => static function () use ($rows) { // `isset($args['x']) ? $args['x'] : $default`
+        $v = 0;
+        for ($i = 0; $i < OPS; $i++) {
+            $row = $rows[$i & 3];
+            $v += isset($row['status']) ? $row['status'] : 1;
+            $v += isset($row['missing']) ? $row['missing'] : 1;
+        }
+        return $v;
+    },
 ];
 
 $rounds = (int) ($argv[2] ?? 100);
