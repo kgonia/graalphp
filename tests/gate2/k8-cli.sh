@@ -7,8 +7,8 @@
 # ENGINE: php     php-cli of the php-fpm image, OPcache and its tracing JIT on (opcache.enable_cli);
 #         one     launcher.PhpMain with its one context: the engine's single-context mode (a site's caches keep what
 #                 they found as constants);
-#         shared  PhpMain --contexts=2: a shared engine as the servers', so code that any context may run; the first
-#                 context's loop warms the code up, the second's is the one reported.
+#         shared  PhpMain --contexts=${K8_CONTEXTS:-2}: a shared engine as the servers', so code that any context may
+#                 run; the earlier contexts' loops warm the code up, the last one's is the one reported.
 # Per page a file target/$WPN_NAME/k8cli/NAME.INDEX.json (the plugin's answer: every iteration's time, length and
 # checksum) and NAME.INDEX.err (the process's stderr, then "peak BYTES": the container's memory.peak).
 # The server on K8_CPUS (default 14-21, under the CPU lock unless K8_NOLOCK=1), the database as native.sh's (reset
@@ -38,7 +38,7 @@ java+=" --ast-root=/none"
 case $engine in
   php) image=${FPM_RUN_IMAGE:-gate2-fpm:8.5.12}; cmd="php -d opcache.enable_cli=1 ${PHP_OPTS:-}" ;;
   one) image=gate2-fcgi:graal25.4; cmd="$java -ddisplay_errors=1 -dhtml_errors=0" ;;
-  shared) image=gate2-fcgi:graal25.4; cmd="$java --contexts=2 -ddisplay_errors=1 -dhtml_errors=0" ;;
+  shared) image=gate2-fcgi:graal25.4; cmd="$java --contexts=${K8_CONTEXTS:-2} -ddisplay_errors=1 -dhtml_errors=0" ;;
   *) echo "unknown engine $engine"; exit 2 ;;
 esac
 lock=/c/Users/krzgo/Projects/.cpu-14-21.lock
