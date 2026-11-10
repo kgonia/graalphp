@@ -89,7 +89,9 @@ bench/check/check.sh report my-branch             # target/check/report-SHA-BASE
   - `base`: the base differs from PHP too;
   - `option`: without the options the build gives PHP's outcome;
   - `build`: the build differs without the options too, and the base doesn't;
-  - `not rerun`: a rerun has no outcome for it.
+  - `not rerun`: a rerun has no outcome for it. A test whose process ends before it, in the build's rerun and
+    in the base's, gets this cause too, though the difference is the base's: compare the two reruns'
+    `outcomes.tsv` by hand ([issue 109](../issues/109-l1-wordpress-suite-worse-on-main.md)).
 
   A class run alone leaves out the tests that run before it in the same process. A difference that depends on what
   they leave behind (state, the database, a late destructor that cleans up during the next test) passes there and
