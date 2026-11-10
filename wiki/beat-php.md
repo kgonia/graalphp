@@ -213,7 +213,7 @@ rows are the run of the table above:
   in the run whose measured requests do not end in `exit`** (geometric mean 2.12), the boot 2.3×, the first
   render 1.8×. A plain request is 2.20–2.32× by geometric mean in the fixed build's five runs (1.7–2.8× on single
   pages). Under eight concurrent users the JVM serves 39.0–41.7 pages a second against 149.1 and 152.7, with
-  4.4–4.8× the CPU per page and 14–16× the memory.
+  4.5–4.9× the CPU per page and 14–16× the memory.
 - **The four runs before it read 2.40–2.51× (2.33–2.39× on the four later pages): that was the measurement's own
   `exit` meeting a defect of the engine.** In our engine an `exit` invalidates the compiled code of every function
   on the call stack, and after fifteen recompilations Graal gives such a function up. From the first page's K8

@@ -52,7 +52,9 @@ that fail:
   other target: the cycle is 43% of the compiler's work while it lasts.
 - After its failure no target of the eight has another compile event in the remaining four minutes of the run.
   **The hook dispatch (`do_action`, `WP_Hook::do_action`, `WP_Hook::apply_filters`) and the main scripts run in the
-  interpreter from then on.**
+  interpreter from then on,** wherever they are called as targets of their own. A copy inlined into another
+  function's compiled code is a part of that function's compilation and stays: in the server's profile
+  `WP_Hook::apply_filters` is in the interpreter in 60% of its samples, not in all.
 - The run's other failures are two of "code is too large" (`WP_Query::get_posts`, `wp-admin/menu.php`:
   [094](094-l0-red-baseline.md)). In all: 8322 compilations, 569 deoptimizations, 53 invalidations, 10 failures.
 - One context that never exits (the K8 loop from the command line) deoptimizes 179 times in 8000 renders and has
