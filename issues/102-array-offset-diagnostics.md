@@ -33,3 +33,20 @@ not in PHP. WordPress's front page raises none of the five (its 10,000 renders a
 the fast path (`ArrayKey.of` tests `Long` and `TruffleString` first); they need the context to raise through and
 the access kind for the `TypeError`'s wording ("on array", "in isset or empty", "in unset"). Tests: the 39 cases as
 a `.phpt` with PHP 8.5.12's output as the expectation.
+
+**More cases (2026-11-10, found by `tests/smoke/isset-then-read.php` of [wiki/ceiling.md](../wiki/ceiling.md);
+73 cases compared with PHP 8.5.12, `target/ceil/isset-key.php`, not tracked):**
+
+| case | PHP 8.5.12 | ours |
+|---|---|---|
+| an object as the key in `isset`/`empty`, also of a nested element, of a property's element and as `isset`'s second argument | `TypeError: Cannot access offset of type stdClass in isset or empty` | `… of type stdClass on array` (as the array's row above) |
+| `unset($a[[]])`, `unset($a[$object])` | `TypeError: Cannot unset offset of type array on array` | `Cannot access offset of type array on array` |
+| `$string[[]] ?? 'd'`, `$string[$object] ?? 'd'`, a resource | `TypeError: Cannot access offset of type array on string` | `'d'`, silently |
+| `$string['1x'] ?? 'd'`, `$string['0x1'] ?? 'd'` | `E_WARNING` "Illegal string offset "1x"", then the byte at 1 (at 0) | `'d'`, silently |
+
+Fixed with the same commit as the test, in `DimNode.isSetIn`: `isset`, `empty` and `??` of an element of an object
+that is not `ArrayAccess` (a `stdClass`, a closure) were false, null and the default, and are PHP's
+`Error: Cannot use object of type stdClass as array`; `isset($string[[]])` and `isset($string[$object])` were true
+(the offset read as 0) and `isset($string['1.5'])`, `isset($string['1e0'])` were true (the string read as a float):
+all are false, as `zend_isset_dim_slow` has them (an int, a float, a bool, null or an integer numeric string is an
+offset, nothing else).

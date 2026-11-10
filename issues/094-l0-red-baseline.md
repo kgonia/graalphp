@@ -27,6 +27,13 @@ interpreter in every mode; it is the only function of a front page's rendering t
 interpreted code is 0.3% of a server's guest samples ([wiki/beat-php.md](../wiki/beat-php.md)), so the limit is not
 what the serving gap is made of.
 
+**Corrected 2026-11-10** ([wiki/ceiling.md](../wiki/ceiling.md)): "in every mode" is wrong. The limit catches
+`WP_Query::get_posts` with G1, where it is 765 KB of machine code, and not with ParallelGC (492 KB; 512–518 KB at
+`f9ae538`), where it installs: G1's barriers are the difference. On the front page in one context G1 with the
+limit raised is 3.9% faster than G1 without (19.30 and 19.58 ms against 20.23 and 20.22), so the limit is a small
+part of the gap of a run with G1, not none: the guest sampler's 0.3% was the function's own samples, the 3.9% is
+what leaving it in the interpreter costs the render.
+
 **Fix:**
 - `blocks`, `blocks-corpus`: run.sh fetches Gate 1's WordPress (or the two tests take their fixture from
   `target/gate2/wordpress`), or skip with a message when it is absent instead of failing.

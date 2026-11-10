@@ -293,7 +293,8 @@ without its cycle collector.
   (its write barrier is cheaper than G1's: the likely reason, not measured apart). A second run with the same
   options an hour later gave 18.28 / 19.40 / 22.53 ms at 2339 MB (the table of pages below), and two more with one
   option added each (section 3) 18.59 ms with six compiler threads and 18.07 ms with `WP_Query::get_posts`
-  compiled: 1.92–1.98× over the four runs, the spread of one configuration on this machine.
+  compiled (it was compiled in all four: the correction in section 3): 1.92–1.98× over the four runs, the spread
+  of one configuration on this machine.
 - Of 98,200 renders of the front page on the JVM in the night's loops the fastest took 17.42 ms. 96% of PHP's
   renders at its level are faster than that (renders 200–1200: its 90th percentile is 11.6 ms), and 86% of all
   10,000 of php-long; the rest are PHP's renders while the machine is in its slow mode (section 4).
@@ -344,6 +345,12 @@ the servers' options and `-Dpolyglot.engine.TraceCompilation=true`):
   compiles, 10.0 s in the first tier and 9.4 s in the last for 520 KB of code, and the last thousand renders take
   18.07 / 19.24 / 22.50 ms against 18.26–18.28 / 19.40–19.53 / 22.53–22.91 without: 1%, inside the spread between
   runs; the same warm-up (render 5450, 205 s), 2389 MB.
+
+  **Corrected 2026-11-10** ([ceiling.md](ceiling.md), "The page: where a render's time is"): it never compiles
+  with G1, which the traced runs of this section and the servers used: there it is 765 KB of machine code, over
+  HotSpot's 640 KB. With ParallelGC (the best case) it is 512–520 KB and installs without the flag, so the 1%
+  above compared two runs that both had it compiled. Under G1 the flag is worth 3.9% of a render in one context
+  (20.2 ms without, 19.4 ms with), and G1 itself 7.1% more against ParallelGC's 18.15 ms.
 - **HotSpot's code-cache sweeper** unloads compiled code of hot functions as cold and Truffle resets their profiles
   (39 "opt reprof" events, `WP_Object_Cache::get` and `WP_Hook::do_action` among them). With
   `-XX:-UseCodeCacheFlushing` there are none, and the curve is the same: not the cause of anything above.
@@ -522,7 +529,7 @@ every 0.3–1.1 s and stays in concurrent cycles through the warm-up (436 in 549
   interpreter in 3.3%: `WP_Hook::apply_filters` 2.7% (60% of its own samples; in one context it is in the last
   tier within the first minute and stays there; the profiled requests end in `exit`, which costs the functions on
   the stack their compiled code: issue [103](../issues/103-exit-deopt-cycle.md)) and `WP_Query::get_posts` 0.4%
-  (too large to compile, section 3). One context deoptimizes 179 times in 8000 renders, 144 of them one loop in
+  (too large to install with G1, section 3). One context deoptimizes 179 times in 8000 renders, 144 of them one loop in
   its first minute: a loop that never exits has no deoptimization cycle to remove.
 - **What the differential profile found, and tonight's fixes.** Against Excimer's profile of the same renders on
   PHP, three places stood far out and are fixed: a class-name callable walked the stack on every resolution

@@ -3,6 +3,10 @@
 **State:** Open. Found 2026-11-10 by the kernels of [wiki/beat-php.md](../wiki/beat-php.md): the `post` kernel
 (`new WP_Post($row)`, 24 properties) is the one furthest from PHP, 8–13× in the container runs.
 
+**2026-11-10:** still the furthest after the element work of [wiki/ceiling.md](../wiki/ceiling.md), which did not
+touch it: 7.5–7.6× PHP in `tests/gate2/kernels/hot.php` at 3,000 rounds (70.6 µs an op before that work, 71.1 µs
+after, PHP 9.4 µs).
+
 **What happens:** `WP_Post::__construct` (and `WP_Term`, `WP_User`, `WP_Comment`, `WP_Site`: every row class of
 WordPress) is
 

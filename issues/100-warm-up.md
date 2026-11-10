@@ -38,6 +38,14 @@ within the first hundred renders (first decile 9.3 ms over renders 0–500, 9.4 
   (512 KB of code), 9.4 s in the last (520 KB), nothing fails. The level moves by 1%, inside the spread between
   runs: 18.07 / 19.24 / 22.50 ms (first decile / median / mean of the last thousand) against 18.26–18.28 /
   19.40–19.53 / 22.53–22.91; the warm-up is the same (render 5450, 205 s), the peak 2389 MB.
+
+  **Corrected 2026-11-10** ([wiki/ceiling.md](../wiki/ceiling.md), "The page: where a render's time is"): the
+  failure is G1's. With G1 (`trace-one`, `trace-long`, `trace-noflush`, the servers) the function is 765 KB of
+  machine code, over the limit; with ParallelGC (the `par-*` runs, the best case) it is 512–520 KB at that commit
+  and installs without the flag, so `par-big`'s 1% compared two runs that both had it compiled. Measured under G1
+  on the build of `3eb6dacf` (the best case's other options, two runs a side, 8,000 renders): 20.23 and 20.22 ms
+  without the flag (2416–2512 MB), 19.30 and 19.58 ms with it (2553–2614 MB): 3.9%. ParallelGC beside them:
+  18.15 ms (2316–2558 MB), so G1 costs this page 11.5% as the servers run it and 7.1% with the limit raised.
 - **Profile resets ("opt reprof" in the trace).** 39 of them: HotSpot's code-cache sweeper unloads a compiled
   method as cold, Truffle finds the target's profile reset when it next prepares a compilation
   (`HotSpotOptimizedCallTarget.prepareForCompilation`), and the target starts again from the interpreter and from
@@ -115,8 +123,9 @@ none for php-fpm. Short benchmarks of this engine measure the warm-up: every "st
 - Why the first decile is 30–45% above the level while the last tier's queue is busy (150–165 s and 220–230 s),
   with the first-tier code of every function still installed: at most a third is the machine (above). The rest
   is open.
-- `WP_Query::get_posts` in the interpreter: with a larger `JVMCINMethodSizeLimit` it compiles, for 1% (above). A
-  root that is split would not need the flag.
+- `WP_Query::get_posts` in the interpreter with G1: with a larger `JVMCINMethodSizeLimit` it compiles, for 3.9%
+  of a render in one context (the correction above). A root that is split would not need the flag, and ParallelGC
+  does not need it. Not measured in a server: the flag, and ParallelGC at the servers' heap with several contexts.
 - The 139 once-per-render functions of the second burst: they pay 48 s of compilation for 10–20 s at +30%; they
   are a third of a render's functions by count.
 - Nothing is kept between JVM runs. Truffle's engine cache needs a native image
