@@ -7,7 +7,8 @@
  * runs what wp-blog-header.php runs after the bootstrap, N times: wp() (the request parsed, the main query) and
  * template-loader.php (template_redirect's callbacks, the template found and included), each time into a buffer.
  * The answer is JSON: the times at which the bootstrap's hooks ended (ms since the request's start), and per
- * iteration its time and wp()'s part of it (ns), its output's length and crc32, and the queries it sent. The first
+ * iteration its time and wp()'s part of it (ns), its output's length and crc32, the queries it sent, and when it
+ * started (ns after "loop_start", the loop's start as a Unix time: what places a render beside a log's lines). The first
  * iteration is a request's own work with the request's caches cold (the object cache, the theme's JSON, the
  * registries' lazy parts); the later ones are the same PHP code with those caches warm, so they measure the engine
  * on WordPress's rendering code alone.
@@ -17,8 +18,9 @@
  *
  * Every iteration starts from the state the request had at template_redirect in what a render fills once and
  * prints at its end: the hooks (a render adds closures to wp_head and wp_footer), the registered scripts and styles
- * (their inline parts are appended to), and the style engine's stores. Without that the page grows with each
- * iteration (?k8raw=1 leaves them as they are). The copies are made outside the measured time. What is printed
+ * (their inline parts are appended to), the style engine's stores, and the response's headers (a render adds its
+ * Link headers to those there are: after some fifty renders nginx refuses the response's header as too big). Without
+ * that the page grows with each iteration (?k8raw=1 leaves them as they are). The copies are made outside the measured time. What is printed
  * once in a request whatever the hooks say is missing from the later iterations: the script modules' tags and the
  * emoji loader's inline script, 4 KB of the home page's 77 KB.
  */
@@ -62,15 +64,21 @@ if (isset($_GET['k8'])) {
         $hooks = k8_hooks($wp_filter);
         $styles = k8_dependencies(wp_styles());
         $scripts = k8_dependencies(wp_scripts());
+        $headers = headers_list();
         $rows = [];
         $html = '';
         $profiler = null;
+        $loop = [microtime(true), hrtime(true)];
         for ($i = 0; $i < $n; $i++) {
             if ($reset) {
                 $wp_filter = k8_hooks($hooks);
                 $wp_styles = k8_dependencies($styles);
                 $wp_scripts = k8_dependencies($scripts);
                 WP_Style_Engine_CSS_Rules_Store::remove_all_stores();
+                header_remove();
+                foreach ($headers as $header) {
+                    header($header, false);
+                }
             }
             if ($i === 3 && isset($_GET['k8prof']) && class_exists('ExcimerProfiler')) {
                 $profiler = new ExcimerProfiler();
@@ -86,7 +94,8 @@ if (isset($_GET['k8'])) {
             $t1 = hrtime(true);
             require ABSPATH . WPINC . '/template-loader.php';
             $html = ob_get_clean();
-            $rows[] = [hrtime(true) - $t0, $t1 - $t0, strlen($html), crc32($html), $wpdb->num_queries - $queries];
+            $rows[] = [hrtime(true) - $t0, $t1 - $t0, strlen($html), crc32($html), $wpdb->num_queries - $queries,
+                $t0 - $loop[1]];
         }
         $end = microtime(true);
         $profile = null;
@@ -109,7 +118,8 @@ if (isset($_GET['k8'])) {
         $phases['end'] = round(1000 * ($end - $t['start']), 3);
         header('Content-Type: application/json');
         echo json_encode(['engine' => PHP_VERSION . ' ' . PHP_SAPI, 'phases' => $phases, 'iterations' => $rows,
-            'peak' => memory_get_peak_usage(), 'queries' => $wpdb->num_queries, 'profile' => $profile]), "\n";
+            'peak' => memory_get_peak_usage(), 'queries' => $wpdb->num_queries, 'profile' => $profile,
+            'loop_start' => $loop[0]]), "\n";
         exit;
     }, PHP_INT_MAX);
 }

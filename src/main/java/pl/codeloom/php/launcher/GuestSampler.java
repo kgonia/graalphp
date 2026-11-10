@@ -24,7 +24,7 @@ import java.util.Set;
  * <p>-Dphp.sample.out=path turns it on: a daemon thread waits for path.start to exist, then every
  * php.sample.period milliseconds (default 10) takes a sample of every thread running PHP (CPUSampler.takeSample)
  * and counts each stack's top frame (self) by function and tier (0 the interpreter, 1, 2), and each function once
- * per stack (total). "user" counts the sample for the nearest frame that has source, so a built-in's time is its
+ * per stack (total). "user" counts the sample for the nearest frame of PHP code, so a built-in's time is its
  * calling PHP function's (what a PHP profiler such as Excimer reports); the pairs of a built-in on top and that
  * caller follow the table. At the server's close the counts go to path. A thread blocked outside PHP's code (a
  * database read) answers late or not at all, so the samples lean to time on the CPU. For analysis, never for timing.
@@ -96,7 +96,8 @@ final class GuestSampler {
                 self.computeIfAbsent(top.getRootName(), name -> new long[3])[Math.min(top.getTier(), 2)]++;
                 StackTraceEntry owner = top;
                 for (StackTraceEntry entry : stack) {
-                    if (entry.getSourceSection() != null) {
+                    // a built-in's root has the built-ins' unavailable section; a function's has none, a file's its own
+                    if (entry.getSourceSection() == null || entry.getSourceSection().isAvailable()) {
                         owner = entry;
                         break;
                     }

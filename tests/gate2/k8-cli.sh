@@ -12,7 +12,8 @@
 # Per page a file target/$WPN_NAME/k8cli/NAME.INDEX.json (the plugin's answer: every iteration's time, length and
 # checksum) and NAME.INDEX.err (the process's stderr, then "peak BYTES": the container's memory.peak).
 # The server on K8_CPUS (default 14-21, under the CPU lock unless K8_NOLOCK=1), the database as native.sh's (reset
-# first: `native.sh reset-db`), the site from native.sh's volume. JAVA_OPTS: more JVM options. The table by
+# first: `native.sh reset-db`), the site from native.sh's volume. JAVA_OPTS: more JVM options; PHP_OPTS: more of php's
+# (`-d opcache.jit=disable`: PHP without its JIT). The table by
 # `k8_cli_report.py`.
 #
 # Usage: WPN_NAME=.. WPN_NET=.. tests/gate2/k8-cli.sh ENGINE NAME N [PAGE...]
@@ -35,7 +36,7 @@ java+=" -Djava.net.preferIPv6Addresses=system -Dpolyglot.engine.WarnInterpreterO
 java+=" -Dpolyglot.php.Parser=java ${JAVA_OPTS:-} -cp 'target/classes:target/lib/*' pl.codeloom.php.launcher.PhpMain"
 java+=" --ast-root=/none"
 case $engine in
-  php) image=${FPM_RUN_IMAGE:-gate2-fpm:8.5.12}; cmd="php -d opcache.enable_cli=1" ;;
+  php) image=${FPM_RUN_IMAGE:-gate2-fpm:8.5.12}; cmd="php -d opcache.enable_cli=1 ${PHP_OPTS:-}" ;;
   one) image=gate2-fcgi:graal25.4; cmd="$java -ddisplay_errors=1 -dhtml_errors=0" ;;
   shared) image=gate2-fcgi:graal25.4; cmd="$java --contexts=2 -ddisplay_errors=1 -dhtml_errors=0" ;;
   *) echo "unknown engine $engine"; exit 2 ;;
