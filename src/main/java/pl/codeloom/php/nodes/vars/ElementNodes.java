@@ -92,17 +92,32 @@ public final class ElementNodes {
     }
 
     /**
-     * A string-key lookup that remembers the slot where the key was found (PhpArray.slotOf) and confirms it next
-     * time with one identity check before hashing: arrays built the same way keep a key at the same slot. Kept to
-     * that one check inline: every element access site carries it, and larger inline lookups (a scan, string
-     * equality) grew the graphs of PHP functions enough to stop their calls being inlined.
+     * A string-key access that finds the key's slot with no call where it can, in one of three forms a site settles
+     * on before it is compiled:
      *
-     * <p>In a {@link LargeCode large} function, a site outside any loop is only the call: the inline check and its
-     * miss's call were about 550 bytes of machine code a site, the call alone 240, and WP_Query::get_posts has
-     * 460 such reads, which run once per call of it; its code was 9% under HotSpot's install limit.
+     * <ul>
+     * <li><b>the remembered slot</b> (PhpArray.slotOf, then one identity check before anything else): arrays built
+     * the same way keep a key at the same slot. Every site starts with it: larger inline lookups at every site grew
+     * the graphs of PHP functions enough to stop their calls being inlined.
+     * <li><b>the probe</b> (PhpArray.slotByString: the key's hash against the slots', then the identity), for a site
+     * whose remembered slot keeps missing: the key varies ($row[$column]), the arrays differ in layout, or the key
+     * is absent (isset() of an optional key). Such a site made a call at every access. The probe answers for an
+     * interned key, present or absent, as php-src's zend_hash_find_known_hash does; an equal key of another
+     * instance is the call's.
+     * <li><b>the call alone</b>, in a {@link LargeCode large} function outside any loop: the inline check and its
+     * miss's call were about 550 bytes of machine code a site, the call alone 240, and WP_Query::get_posts has 460
+     * such reads, which run once per call of it; its code was 9% under HotSpot's install limit.
+     * </ul>
      *
-     * <p>A read's lookup (warns: ElementReadNode's) raises "Undefined array key" for a missing string key in the
-     * call a miss makes anyway, so the warning adds nothing to the inline code.
+     * <p>The key comes as written and is normalized ({@link ArrayKeyNode}) only when no slot was found: a key found
+     * by identity is a stored key, so it is normalized already.
+     *
+     * <p>A site becomes a probe only while it runs in the interpreter, and its compiled code is not invalidated for
+     * it: either form is complete, and invalidating a function once per site would be a deoptimization cycle (Graal
+     * gives a function up after fifteen recompilations).
+     *
+     * <p>A read's lookup (warns: ElementReadNode's) raises "Undefined array key" for a missing string key in a
+     * call, so the warning adds nothing to the inline code.
      */
     public static final class SlotCacheNode extends Node {
         /** For the uncached bytecode interpreter: shared, so it remembers nothing. */
@@ -111,12 +126,21 @@ public final class ElementNodes {
         private static final byte UNDECIDED = 0;
         private static final byte INLINE = 1;
         private static final byte CALL = 2;
+        private static final byte PROBE = 3;
+        /** {@link #doubt}: a miss adds this, a hit takes one off, so a site missing once in eight stays as it is. */
+        private static final int MISS = 8;
+        /** {@link #doubt} at which the site becomes a probe: fifteen misses more than its hits pay for. */
+        private static final int PROBES_AT = 120;
 
         private final boolean remembers;
         private final boolean warns;
         private int slotGuess = -1;
-        /** Whether compiled code checks the remembered slot inline or only calls (decided on first use). */
+        /** How compiled code finds the slot (decided on first use; {@link #INLINE} may become {@link #PROBE}). */
         @CompilationFinal private byte form = UNDECIDED;
+        /** How badly the remembered slot does, counted in the interpreter only. */
+        private byte doubt;
+        /** The key's hash for the probe; null until the site is one. */
+        @Child private TruffleString.HashCodeNode hashCode;
 
         private SlotCacheNode(boolean remembers, boolean warns) {
             this.remembers = remembers;
@@ -146,28 +170,101 @@ public final class ElementNodes {
         }
 
         /**
-         * The dereferenced element under a normalized key, PhpNull.NULL when absent (after the warning, for a
-         * read's). Only the remembered slot's check is inline; a miss (another slot, an absent key, a packed array)
-         * is one call, which remembers the slot.
+         * The dereferenced element under a key as written, PhpNull.NULL when absent (after the warning, for a
+         * read's).
          */
-        public Object lookup(PhpArray array, Object key) {
+        public Object lookup(PhpArray array, Object rawKey, ArrayKeyNode toKey) {
+            int slot = PhpArray.UNSURE;
+            if (remembers && rawKey instanceof TruffleString string) {
+                slot = inlineSlot(array, string);
+                if (slot >= 0) {
+                    return PhpRef.deref(array.hashValueAt(slot));
+                }
+            }
+            Object key = toKey.execute(rawKey);
             if (!(key instanceof TruffleString)) {
                 Object element = array.get(key);
                 return element != null ? element : warns ? missing(key) : PhpNull.NULL;
             }
-            if (remembers) {
-                if (form == UNDECIDED) {
-                    CompilerDirectives.transferToInterpreterAndInvalidate();
-                    form = decideForm();
-                }
-                if (form == INLINE) {
-                    Object raw = array.rawIfKeyAt(slotGuess, key);
-                    if (raw != null) {
-                        return PhpRef.deref(raw);
-                    }
-                }
+            if (slot == PhpArray.ABSENT) {
+                return warns ? missing(key) : PhpNull.NULL;
             }
             return find(array, key);
+        }
+
+        /** Whether the array has an element under a key as written (array_key_exists: a null element counts). */
+        public boolean has(PhpArray array, Object rawKey, ArrayKeyNode toKey) {
+            int slot = PhpArray.UNSURE;
+            if (remembers && rawKey instanceof TruffleString string) {
+                slot = inlineSlot(array, string);
+                if (slot >= 0) {
+                    return true;
+                }
+            }
+            Object key = toKey.execute(rawKey);
+            if (slot == PhpArray.ABSENT && key instanceof TruffleString) {
+                return false;
+            }
+            return holds(array, key);
+        }
+
+        /** `$array[key] = value` under a key as written, into an array the caller has made writable. */
+        public void store(PhpArray array, Object rawKey, Object value, ArrayKeyNode toKey) {
+            if (remembers && rawKey instanceof TruffleString string) {
+                int slot = inlineSlot(array, string);
+                if (slot >= 0) {
+                    array.replaceAt(slot, value);
+                    return;
+                }
+            }
+            Object key = toKey.execute(rawKey);
+            if (key instanceof TruffleString string) {
+                put(array, string, value);
+            } else {
+                array.put(key, value);
+            }
+        }
+
+        /**
+         * The slot of a string key as written, found without a call: a slot, {@link PhpArray#UNSURE} when only a
+         * full lookup can tell, or (a probe's) {@link PhpArray#ABSENT}, which holds if the key is a normalized one.
+         */
+        private int inlineSlot(PhpArray array, TruffleString key) {
+            byte f = form;
+            if (f == UNDECIDED) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                form = f = decideForm();
+            }
+            if (f == INLINE) {
+                int guess = slotGuess;
+                boolean hit = array.isKeyAt(guess, key);
+                if (CompilerDirectives.inInterpreter()) {
+                    judge(hit);
+                }
+                return hit ? guess : PhpArray.UNSURE;
+            }
+            if (f == PROBE) {
+                TruffleString.HashCodeNode hasher = hashCode;
+                if (hasher != null) {
+                    return array.slotByString(key, hasher.execute(key, Str.ENC));
+                }
+            }
+            return PhpArray.UNSURE;
+        }
+
+        /** In the interpreter: a site whose remembered slot keeps missing becomes a probe, with no invalidation. */
+        private void judge(boolean hit) {
+            int d = doubt;
+            if (hit) {
+                if (d > 0) {
+                    doubt = (byte) (d - 1);
+                }
+            } else if (d + MISS < PROBES_AT) {
+                doubt = (byte) (d + MISS);
+            } else {
+                hashCode = insert(TruffleString.HashCodeNode.create());
+                form = PROBE;
+            }
         }
 
         /**
@@ -197,6 +294,26 @@ public final class ElementNodes {
                 slotGuess = slot;
             }
             return PhpRef.deref(array.hashValueAt(slot));
+        }
+
+        @TruffleBoundary
+        private boolean holds(PhpArray array, Object key) {
+            if (!(key instanceof TruffleString)) {
+                return array.containsKey(key);
+            }
+            int slot = array.slotOf(key);
+            if (slot >= 0 && remembers) {
+                slotGuess = slot;
+            }
+            return slot >= 0;
+        }
+
+        @TruffleBoundary
+        private void put(PhpArray array, TruffleString key, Object value) {
+            int slot = array.putString(key, value);
+            if (remembers) {
+                slotGuess = slot;
+            }
         }
 
         /** A missing key of a read: null after the warning. */
@@ -257,7 +374,7 @@ public final class ElementNodes {
         public static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
                                       @Cached(value = "readSlots()", uncached = "uncachedReadSlots()")
                                       SlotCacheNode slots) {
-            return slots.lookup(array, toKey.execute(key));
+            return slots.lookup(array, key, toKey);
         }
 
         public static SlotCacheNode readSlots() {
@@ -376,7 +493,7 @@ public final class ElementNodes {
         @Specialization
         public static Object otherKey(PhpArray array, Object key, @Cached ArrayKeyNode toKey,
                                       @Cached SlotCacheNode slots) {
-            return slots.lookup(array, toKey.execute(key));
+            return slots.lookup(array, key, toKey);
         }
 
         @Specialization
@@ -428,8 +545,9 @@ public final class ElementNodes {
         }
 
         @Specialization
-        protected static void otherKey(PhpArray array, Object key, Object value, @Cached ArrayKeyNode toKey) {
-            array.put(toKey.execute(key), value);
+        protected static void otherKey(PhpArray array, Object key, Object value, @Cached ArrayKeyNode toKey,
+                                       @Cached SlotCacheNode slots) {
+            slots.store(array, key, value, toKey);
         }
     }
 

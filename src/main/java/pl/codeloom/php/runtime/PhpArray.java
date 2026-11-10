@@ -503,9 +503,9 @@ public final class PhpArray implements TruffleObject {
     }
 
     /**
-     * The hash slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} and {@link #rawAt} a lookup
-     * site can remember where a key was and confirm it next time with one identity check: arrays built the same
-     * way keep a key at the same slot.
+     * The hash slot holding key, or -1 (also for packed arrays). With {@link #isKeyAt} a lookup site can remember
+     * where a key was and confirm it next time with one identity check: arrays built the same way keep a key at
+     * the same slot.
      */
     @TruffleBoundary
     public int slotOf(Object key) {
@@ -551,6 +551,71 @@ public final class PhpArray implements TruffleObject {
             }
         }
         return null;
+    }
+
+    /** Whether a hash slot holds this very key instance ({@link #rawIfKeyAt}), for a caller that needs the slot. */
+    public boolean isKeyAt(int slot, Object key) {
+        return rawIfKeyAt(slot, key) != null;
+    }
+
+    /** {@link #slotByString}: no slot holds the key's hash, so the array doesn't hold the key. */
+    public static final int ABSENT = -1;
+    /** {@link #slotByString}: a slot holds the key's hash under another instance; only {@link #slotOf} can tell. */
+    public static final int UNSURE = -2;
+
+    /**
+     * The hash slot of a normalized string key whose hash is h, found with no call and no string comparison, as
+     * php-src's zend_hash_find_known_hash finds an interned key: the first slot with that hash, if its key is this
+     * very instance. {@link #ABSENT} when no slot has the hash (also in a packed array, which has no string key);
+     * {@link #UNSURE} when the slot with the hash holds another instance (an equal string made elsewhere, a
+     * collision, an int key, a deleted slot). A key not normalized yet can be asked for too: a slot found is its
+     * slot (the stored keys are normalized, so the key is), the other two answers then mean nothing.
+     */
+    public int slotByString(TruffleString key, int h) {
+        if (!(store instanceof Hash hash)) {
+            return ABSENT;
+        }
+        int[] hashes = hash.hashes;
+        Object[] entries = hash.entries;
+        int[] buckets = hash.buckets;
+        if (buckets == null) {
+            int used = hash.used;
+            for (int slot = 0; slot < used; slot++) {
+                if (hashes[slot] == h) {
+                    return entries[2 * slot] == key ? slot : UNSURE;
+                }
+            }
+            return ABSENT;
+        }
+        int[] chain = hash.chain;
+        for (int slot = buckets[h & (buckets.length - 1)]; slot >= 0; slot = chain[slot]) {
+            if (hashes[slot] == h) {
+                return entries[2 * slot] == key ? slot : UNSURE;
+            }
+        }
+        return ABSENT;
+    }
+
+    /**
+     * put() into a hash slot known to hold the key (rawIfKeyAt, slotByString): the element is replaced where it
+     * is, a PhpRef slot receives the value. The caller has made this array exclusive.
+     */
+    public void replaceAt(int slot, Object value) {
+        Hash hash = hashStore(store);
+        Object old = hash.value(slot);
+        if (old instanceof PhpRef ref) {
+            ref.set(value);
+            return;
+        }
+        countIn(value);
+        hash.setValue(slot, value);
+        countOut(old, value);
+    }
+
+    /** put() under a normalized string key, out of line; the slot the key is at afterwards, for a site to remember. */
+    @TruffleBoundary
+    public int putString(TruffleString key, Object value) {
+        return putSlow(key, value);
     }
 
     /**
@@ -820,8 +885,9 @@ public final class PhpArray implements TruffleObject {
         store = boxed;
     }
 
+    /** The slot the key is at afterwards. */
     @TruffleBoundary
-    private void putSlow(Object key, Object value) {
+    private int putSlow(Object key, Object value) {
         Hash hash = toHash();
         int h = hash(key);
         int slot = hash.find(key, h);
@@ -829,15 +895,15 @@ public final class PhpArray implements TruffleObject {
             Object old = hash.value(slot);
             if (old instanceof PhpRef ref) {
                 ref.set(value);
-                return;
+                return slot;
             }
             countIn(value);
             hash.setValue(slot, value);
             countOut(old, value);
-        } else {
-            countIn(value);
-            insert(hash, key, h, value);
+            return slot;
         }
+        countIn(value);
+        return insert(hash, key, h, value);
     }
 
     @TruffleBoundary
@@ -1428,16 +1494,19 @@ public final class PhpArray implements TruffleObject {
         return hash;
     }
 
-    private void insert(Hash hash, Object key, int h, Object value) {
+    /** The slot the key went to. */
+    private int insert(Hash hash, Object key, int h, Object value) {
         Hash target = hash;
         if (target.used == target.capacity()) {
             target = grow(target);
         }
+        int slot = target.used;
         target.add(key, h, value);
         size++;
         if (key instanceof Long index && index >= nextIndex) {
             nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
         }
+        return slot;
     }
 
     /** Doubles capacity, or just compacts when many slots are deleted; keeps order and fixes the pointer. */

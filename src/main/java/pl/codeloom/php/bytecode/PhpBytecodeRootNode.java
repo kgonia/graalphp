@@ -6075,13 +6075,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         @Specialization
         public static boolean stringKey(CallInfo call, TruffleString key, PhpArray array,
-                                        @Cached ElementNodes.ArrayKeyNode keyNode) {
-            return contains(array, keyNode.execute(key));
-        }
-
-        @TruffleBoundary
-        private static boolean contains(PhpArray array, Object key) {
-            return array.containsKey(key);
+                                        @Cached ElementNodes.ArrayKeyNode keyNode,
+                                        @Cached ElementNodes.SlotCacheNode slots) {
+            return slots.has(array, key, keyNode);
         }
 
         @Fallback
