@@ -5174,7 +5174,7 @@ public final class BytecodeTranslator {
                 "key", "next", "prev", "reset", "end", "array_pop", "array_push", "array_unshift", "substr",
                 "strpos", "str_contains", "str_starts_with", "str_ends_with", "strspn", "strcspn", "strtolower",
                 "strtoupper", "trim", "ltrim", "rtrim", "chop", "ucfirst", "str_replace", "in_array",
-                "array_slice", "array_keys", "explode");
+                "array_slice", "array_keys", "explode", "ord", "chr", "array_key_exists", "key_exists");
 
         /**
          * A small, hot built-in compiled in place (the tree's Intrinsics; PhpBytecodeRootNode's TypeTest...
@@ -5220,6 +5220,30 @@ public final class BytecodeTranslator {
                     b.beginUcfirst(info);
                     expression(args.child(0));
                     b.endUcfirst();
+                }
+                case "ord" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginOrd(info);
+                    expression(args.child(0));
+                    b.endOrd();
+                }
+                case "chr" -> {
+                    if (n != 1) {
+                        return false;
+                    }
+                    b.beginChr(info);
+                    expression(args.child(0));
+                    b.endChr();
+                }
+                case "array_key_exists", "key_exists" -> {
+                    if (n != 2) {
+                        return false;
+                    }
+                    b.beginArrayKeyExists(info);
+                    operands(args, 2);
+                    b.endArrayKeyExists();
                 }
                 case "array_keys" -> {
                     if (n != 1) {

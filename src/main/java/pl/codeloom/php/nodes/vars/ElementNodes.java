@@ -64,8 +64,20 @@ public final class ElementNodes {
             return normalized;
         }
 
+        /**
+         * A key that can't be an int ("" or longer than an int's digits, or starting with neither a digit nor a
+         * minus) is itself, decided inline; the rest is {@link ArrayKey#ofString}'s call.
+         */
         @Specialization(replaces = "constantString")
-        protected static Object string(TruffleString key) {
+        protected static Object string(TruffleString key, @Cached TruffleString.ReadByteNode read) {
+            int length = key.byteLength(Str.ENC);
+            if (length == 0 || length > 20) {
+                return key;
+            }
+            int first = read.execute(key, 0, Str.ENC);
+            if (first > '9' || first < '0' && first != '-') {
+                return key;
+            }
             return ArrayKey.ofString(key);
         }
 

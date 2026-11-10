@@ -100,3 +100,4 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [094](094-l0-red-baseline.md) | L0 is red on main: four smoke tests fail on the harness, two CompilationTest cases on budgets | Open |
 | [095](095-callable-resolution-walks-stack.md) | A class-name callable walks the stack on every resolution (6–22 µs), and two of its results were wrong | Fixed |
 | [096](096-callable-deprecations-missing.md) | `self`, `parent` and `static` in a callable never raise PHP 8.2's deprecation | Open |
+| [097](097-builtins-behind-a-boundary.md) | A built-in function is a call out of the compiled code (≈ 22% of a hot render, no one above 2.4%), and a string key two more | Partly fixed 2026-11-10 (`ord`, `chr`, `array_key_exists`, the key); the rest Open |

@@ -43,8 +43,8 @@ public final class ArrayFunctions {
         });
         r.fn("array_filter", (context, a) -> filter(context, a, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
-        r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
-        r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
+        r.fn("array_key_exists", (context, a) -> keyExists(context, "array_key_exists", a));
+        r.fn("key_exists", (context, a) -> keyExists(context, "key_exists", a));
         r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array", "haystack"), Args.bool(a, 2, false)) != null);
         r.fn("array_search", a -> {
             Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search", "haystack"), Args.bool(a, 2, false));
@@ -692,14 +692,23 @@ public final class ArrayFunctions {
     }
 
     @TruffleBoundary
-    private static boolean keyExists(Object key, Object container) {
-        if (container instanceof PhpArray array) {
-            return array.containsKey(ArrayKey.of(key == null ? PhpNull.NULL : key));
+    /**
+     * array_key_exists (PHP_FUNCTION(array_key_exists)): an array only (objects went with PHP 8), under the key an
+     * element access would use; an array or an object is no key.
+     */
+    private static boolean keyExists(PhpContext context, String function, Object[] a) {
+        Args.arity(a, function, 2, 2);
+        Object key = Args.get(a, 0);
+        PhpArray array = Args.array(a, 1, function, "array");
+        if (key == PhpNull.NULL) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Using null as the key parameter for"
+                    + " array_key_exists() is deprecated, use an empty string instead"), SourceLocation.current());
+        } else if (key instanceof Double d && (!Double.isFinite(d) || (double) Convert.doubleToLong(d) != d)) {
+            ErrorFunctions.raise(context, ErrorFunctions.E_DEPRECATED, Str.of("Implicit conversion from float "
+                    + Convert.doubleToRepr(d) + " to int loses precision"), SourceLocation.current());
         }
-        if (container instanceof PhpObject object) {
-            return object.getProperty(Str.key(Convert.toStr(key))) != null;
-        }
-        throw new PhpError("TypeError", "array_key_exists(): Argument #2 ($array) must be of type array");
+        // any other type: "Cannot access offset of type T on array" (zend_illegal_container_offset)
+        return array.containsKey(ArrayKey.of(key));
     }
 
     @TruffleBoundary

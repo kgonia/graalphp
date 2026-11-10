@@ -6025,6 +6025,72 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    /** ord of a one-byte string: the byte. Other lengths and other types are the built-in's (it has things to say). */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Ord {
+        @Specialization(guards = "isOneByte(s)")
+        public static long string(CallInfo call, TruffleString s, @Cached TruffleString.ReadByteNode read) {
+            return read.execute(s, 0, Str.ENC);
+        }
+
+        static boolean isOneByte(TruffleString s) {
+            return s.byteLength(Str.ENC) == 1;
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
+        }
+    }
+
+    /** chr of a byte's int: its one-byte string. Other ints and other types are the built-in's. */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class Chr {
+        @Specialization(guards = {"code >= 0", "code <= 255"})
+        public static TruffleString code(CallInfo call, long code) {
+            return Str.singleByte((int) code);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object value, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, value);
+        }
+    }
+
+    /**
+     * array_key_exists of an int or string key in an array: the lookup isset() makes (ElementNodes.SlotCacheNode),
+     * true for a null element too.
+     */
+    @Operation
+    @ConstantOperand(type = CallInfo.class)
+    public static final class ArrayKeyExists {
+        @Specialization
+        public static boolean intKey(CallInfo call, long key, PhpArray array) {
+            return array.containsKey(key);
+        }
+
+        @Specialization
+        public static boolean stringKey(CallInfo call, TruffleString key, PhpArray array,
+                                        @Cached ElementNodes.ArrayKeyNode keyNode) {
+            return contains(array, keyNode.execute(key));
+        }
+
+        @TruffleBoundary
+        private static boolean contains(PhpArray array, Object key) {
+            return array.containsKey(key);
+        }
+
+        @Fallback
+        public static Object other(CallInfo call, Object key, Object array, @Bind Node node,
+                                   @Cached IndirectCallNode callNode) {
+            return builtin(callNode, node, call, key, array);
+        }
+    }
+
     /** ucfirst: unchanged unless the first byte is a lowercase ASCII letter. */
     @Operation
     @ConstantOperand(type = CallInfo.class)
