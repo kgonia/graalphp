@@ -211,6 +211,15 @@ final class CoreFunctions {
             }
             throw new PhpError("get_class(): Argument #1 ($object) must be of type object");
         });
+        // Compiled in place where a call names it; this is the function a namespace's unqualified call falls back
+        // to, or a dynamic call reaches: the calling code's called class (zend_get_called_scope).
+        r.fn("get_called_class", a -> {
+            Args.arity(a, "get_called_class", 0, 0);
+            if (!(Callables.callerArgument(PhpFunction.ARG_STATIC) instanceof PhpClass called)) {
+                throw new PhpError("Error", "get_called_class() must be called from within a class");
+            }
+            return Str.of(called.getName());
+        });
         r.fn("get_parent_class", (context, a) -> {
             Object target = Args.get(a, 0);
             // Z_PARAM_OBJ_OR_CLASS_NAME: a class name is autoloaded, and must name a class
@@ -273,8 +282,13 @@ final class CoreFunctions {
             boolean none = handler == null || handler == PhpNull.NULL;
             context.startBuffer(none ? null : handler, none ? null : Str.java(callableName(handler)),
                     Args.count(a) > 2 ? Convert.toLong(Args.get(a, 2))
-                            : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE);
+                            : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE,
+                    Args.count(a) > 1 ? Convert.toLong(Args.get(a, 1)) : 0);
             return true;
+        });
+        r.fn("ob_get_status", (context, a) -> {
+            Args.arity(a, "ob_get_status", 0, 1);
+            return context.bufferStatus(Args.bool(a, 0, false));
         });
         r.fn("ob_get_contents", (context, a) -> {
             TruffleString contents = context.bufferContents();
