@@ -172,11 +172,14 @@ final class CoreFunctions {
             if (callable == PhpNull.NULL) {
                 throw new PhpError("spl_autoload_register() without a callback (spl_autoload) is not supported");
             }
-            Callables.check(context, callable, new Callables.Parameter("spl_autoload_register", 1, true));
-            context.addAutoloader(callable, Args.bool(a, 2, false));
+            // resolved now, from this scope, and kept (autoload_func_info): the autoload may come from anywhere
+            Callables.Target target = Callables.parameter(context, callable,
+                    new Callables.Parameter("spl_autoload_register", 1, true));
+            context.addAutoloader(callable, target, Args.bool(a, 2, false));
             return Boolean.TRUE;
         });
-        r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Args.get(a, 0)));
+        r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Callables.parameter(context,
+                Args.get(a, 0), new Callables.Parameter("spl_autoload_unregister", 1, false))));
         r.fn("spl_autoload_functions", (context, a) -> PhpArray.list(context.autoloaders().toArray()));
         r.fn("method_exists", (context, a) -> methodExists(context, Args.get(a, 0), Args.str(a, 1)));
         r.fn("property_exists", (context, a) -> {

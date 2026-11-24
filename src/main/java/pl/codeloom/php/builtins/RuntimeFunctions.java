@@ -77,8 +77,11 @@ final class RuntimeFunctions {
         r.fn("exit", (context, a) -> exit(context, Args.get(a, 0, 0L)));
         r.fn("die", (context, a) -> exit(context, Args.get(a, 0, 0L)));
         r.fn("register_shutdown_function", (context, a) -> {
-            Callables.check(context, Args.get(a, 0), new Callables.Parameter("register_shutdown_function", 1, false));
-            context.addShutdownFunction(Args.get(a, 0), Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
+            // resolved now, from this scope, and kept (php-src's fci_cache): the shutdown runs from no scope
+            Callables.Target target = Callables.parameter(context, Args.get(a, 0),
+                    new Callables.Parameter("register_shutdown_function", 1, false));
+            context.addShutdownFunction(Args.get(a, 0), target,
+                    Arrays.copyOfRange(a, PhpFunction.ARG_FIRST + 1, a.length));
             return PhpNull.NULL;
         });
         r.fn("clone", (context, a) -> cloneObject(context, Args.get(a, 0), Args.get(a, 1, PhpNull.NULL)));
