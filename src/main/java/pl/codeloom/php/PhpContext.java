@@ -69,7 +69,7 @@ public final class PhpContext {
     private final int internalFunctions;
     private final int internalClasses;
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
-    private final List<Object> autoloaders = new java.util.ArrayList<>();
+    private final List<Autoloader> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
     /** The classes being declared (instantiated, not yet in the class table), by lowercase name. */
     private final Map<String, ClassTemplate> linking = new HashMap<>();
@@ -254,10 +254,11 @@ public final class PhpContext {
      * census (Census.audit), which counts them as holders.
      */
     public void censusHolders(java.util.function.BiConsumer<String, Object> holder) {
-        autoloaders.forEach(callable -> holder.accept("autoloader", callable));
-        for (Object[] entry : shutdownFunctions) {
-            for (int i = 0; i < entry.length; i++) {
-                holder.accept(i == 0 ? "shutdown function" : "shutdown function argument " + i, entry[i]);
+        autoloaders.forEach(autoloader -> holder.accept("autoloader", autoloader.callable()));
+        for (ShutdownFunction entry : shutdownFunctions) {
+            holder.accept("shutdown function", entry.callable());
+            for (int i = 0; i < entry.arguments().length; i++) {
+                holder.accept("shutdown function argument " + (i + 1), entry.arguments()[i]);
             }
         }
         for (OutputBuffer buffer : buffers) {
@@ -612,8 +613,8 @@ public final class PhpContext {
             return phpClass;
         }
         try {
-            for (Object autoloader : List.copyOf(autoloaders)) {
-                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, autoloader, Str.of(className)));
+            for (Autoloader autoloader : List.copyOf(autoloaders)) {
+                autoloader.target().callScalar(Str.of(className));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -641,34 +642,57 @@ public final class PhpContext {
         return name.startsWith("\\") ? name.substring(1) : name;
     }
 
-    /** spl_autoload_register(): false when the callable is registered already. */
+    /**
+     * A registered autoloader: the callable as given (spl_autoload_functions) and its target, resolved once from the
+     * registering scope (php-src's autoload_func_info, a zend_fcall_info_cache): a private method its class
+     * registered stays callable from whatever code triggers the autoload.
+     */
+    private record Autoloader(Object callable, Callables.Target target) {
+    }
+
+    /** spl_autoload_register(): false when the target is registered already (autoload_func_info_equals). */
     @TruffleBoundary
-    public boolean addAutoloader(Object callable, boolean prepend) {
-        if (autoloaders.contains(callable)) {
+    public boolean addAutoloader(Object callable, Callables.Target target, boolean prepend) {
+        if (indexOfAutoloader(target) >= 0) {
             return false;
         }
+        Autoloader autoloader = new Autoloader(callable, target);
         if (prepend) {
-            autoloaders.add(0, callable);
+            autoloaders.add(0, autoloader);
         } else {
-            autoloaders.add(callable);
+            autoloaders.add(autoloader);
         }
         pl.codeloom.php.runtime.Refcount.hold(callable);
         return true;
     }
 
+    /** spl_autoload_unregister(): the autoloader with the same target, resolved from the unregistering scope. */
     @TruffleBoundary
-    public boolean removeAutoloader(Object callable) {
-        int index = autoloaders.indexOf(callable);
+    public boolean removeAutoloader(Callables.Target target) {
+        int index = indexOfAutoloader(target);
         if (index < 0) {
             return false;
         }
-        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index));
+        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index).callable());
         return true;
+    }
+
+    private int indexOfAutoloader(Callables.Target target) {
+        for (int i = 0; i < autoloaders.size(); i++) {
+            if (autoloaders.get(i).target().equals(target)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @TruffleBoundary
     public List<Object> autoloaders() {
-        return List.copyOf(autoloaders);
+        List<Object> callables = new java.util.ArrayList<>(autoloaders.size());
+        for (Autoloader autoloader : autoloaders) {
+            callables.add(autoloader.callable());
+        }
+        return callables;
     }
 
     @TruffleBoundary
@@ -812,20 +836,25 @@ public final class PhpContext {
 
     // ---- lifecycle ----
 
-    /** register_shutdown_function's callables with their arguments, run when the script ends or exits. */
-    private final List<Object[]> shutdownFunctions = new java.util.ArrayList<>();
+    /**
+     * A register_shutdown_function() entry: the callable, its target resolved once from the registering scope
+     * (php-src keeps the zend_fcall_info_cache), and its arguments.
+     */
+    private record ShutdownFunction(Object callable, Callables.Target target, Object[] arguments) {
+    }
+
+    /** register_shutdown_function's entries, run when the script ends or exits. */
+    private final List<ShutdownFunction> shutdownFunctions = new java.util.ArrayList<>();
     /** The shutdown functions have started: exit() in one doesn't run them again. */
     private boolean shuttingDown;
 
     @TruffleBoundary
-    public void addShutdownFunction(Object callable, Object[] arguments) {
-        Object[] entry = new Object[arguments.length + 1];
-        entry[0] = callable;
-        System.arraycopy(arguments, 0, entry, 1, arguments.length);
-        for (Object value : entry) {
+    public void addShutdownFunction(Object callable, Callables.Target target, Object[] arguments) {
+        pl.codeloom.php.runtime.Refcount.hold(callable);
+        for (Object value : arguments) {
             pl.codeloom.php.runtime.Refcount.hold(value);
         }
-        shutdownFunctions.add(entry);
+        shutdownFunctions.add(new ShutdownFunction(callable, target, arguments));
     }
 
     /**
@@ -840,17 +869,17 @@ public final class PhpContext {
         shuttingDown = true;
         guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
-                Object[] entry = shutdownFunctions.get(i);
-                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, entry[0],
-                        Arrays.copyOfRange(entry, 1, entry.length)));
+                ShutdownFunction entry = shutdownFunctions.get(i);
+                entry.target().callScalar(entry.arguments().clone());
             }
         });
         // php_free_shutdown_functions: the entries let go once all ran
-        List<Object[]> ran = List.copyOf(shutdownFunctions);
+        List<ShutdownFunction> ran = List.copyOf(shutdownFunctions);
         shutdownFunctions.clear();
         guarded(() -> {
-            for (Object[] entry : ran) {
-                for (Object value : entry) {
+            for (ShutdownFunction entry : ran) {
+                pl.codeloom.php.runtime.Refcount.unhold(entry.callable());
+                for (Object value : entry.arguments()) {
                     pl.codeloom.php.runtime.Refcount.unhold(value);
                 }
             }
