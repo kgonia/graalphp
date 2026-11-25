@@ -1,0 +1,210 @@
+package pl.codeloom.php.runtime;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+
+/**
+ * A PHP reference: a shared box that several variables, array elements or properties point at. Slots that are
+ * references hold a PhpRef instead of the value; a PhpRef never holds another PhpRef.
+ *
+ * <p>bindings is php-src's refcount of the reference as far as the runtime knows it: the variables bound to it
+ * (locals, parameters, globals, properties, static variables, closure captures) and the array slots holding it,
+ * counted while their array has holders (PhpArray binds its references when it gains its first holder and
+ * releases them when it loses its last; a slot overwritten or removed releases its own). A reference only one
+ * array slot holds behaves as a value when that array is copied, as php-src does for a reference whose refcount
+ * fell to 1 (after `foreach ($a as &$v)` has moved on, or the function that bound it returned). A reference
+ * whose bindings all went away releases its array, as php-src frees it, until something binds it again. Holders the
+ * runtime can't see go away (an outer array no longer referenced, a reference no variable is bound to) leave
+ * counts higher, never lower: such a reference stays shared, as it would in php-src until the holder is freed.
+ */
+public final class PhpRef {
+    private Object value;
+    private int bindings;
+    /**
+     * Every binding has gone: php-src would have freed the reference, so it no longer holds its array (whose own
+     * references then lose this holder's count). Binding it again (an array that held it gains a holder) takes
+     * the array back.
+     */
+    private boolean released;
+
+    /** The ref counts as a holder of an array value, like any other slot. */
+    public PhpRef(Object value) {
+        if (value instanceof PhpArray array) {
+            array.addHolder();
+        }
+        Refcount.inc(value);
+        this.value = value;
+    }
+
+    /**
+     * A new reference nothing is bound to: a temporary php-src makes with ZVAL_NEW_REF (the value a function
+     * returning by reference returns when it has no place to return, a temporary iterated by reference). Like a
+     * reference whose last binding went, it holds its array only once something binds it.
+     */
+    public static PhpRef unbound(Object value) {
+        PhpRef ref = new PhpRef(null);
+        ref.value = value;
+        // like a released reference's value: counted once something binds it (takeBack)
+        ref.released = true;
+        return ref;
+    }
+
+    public Object get() {
+        return value;
+    }
+
+    /** Stores a value; arrays count this ref as one more holder. */
+    public void set(Object newValue) {
+        if (BootstrapCensus.ENABLED) BootstrapCensus.onRefWrite(this);
+        Object old = value;
+        boolean holds = !released;
+        if (holds && newValue instanceof PhpArray array) {
+            array.addHolder();
+        }
+        value = newValue;
+        if (holds && old instanceof PhpArray array && old != newValue) {
+            array.removeHolder();
+        }
+        if (holds && (newValue instanceof PhpObject || old instanceof PhpObject)) {
+            countObjects(newValue, old);
+        }
+    }
+
+    /**
+     * set()'s counts of objects, out of line: the callers that compile it (writes through a reference with no node
+     * of their own) mostly store arrays and scalars, and an inlined release is two boundary calls.
+     */
+    @TruffleBoundary
+    private static void countObjects(Object newValue, Object old) {
+        Refcount.inc(newValue);
+        Refcount.dec(old);
+    }
+
+    /**
+     * set() without its holder updates, for a caller that makes them (a node's profiled write): stores the value
+     * and returns the old one. Arrays count this ref as a holder while {@link #holdsArrays}.
+     */
+    public Object exchange(Object newValue) {
+        if (BootstrapCensus.ENABLED) BootstrapCensus.onRefWrite(this);
+        Object old = value;
+        value = newValue;
+        return old;
+    }
+
+    /** Whether the ref counts as a holder of the array it holds (it does until all its bindings went). */
+    public boolean holdsArrays() {
+        return !released;
+    }
+
+    /** The array in this ref, made exclusive (copied if shared) so it can be modified in place. */
+    public PhpArray arrayForWrite() {
+        Object current = value;
+        if (current instanceof PhpArray array) {
+            return array.isShared() ? separate(array) : array;
+        }
+        return null;
+    }
+
+    /**
+     * Out of line: the copy costs as much as the array is long, and inlined, its holder updates were a large part
+     * of compiled functions that write through a reference (`$q = &$this->query_vars; $q['x'] = ...`).
+     */
+    @TruffleBoundary
+    private PhpArray separate(PhpArray array) {
+        if (BootstrapCensus.ENABLED) BootstrapCensus.onRefWrite(this);
+        PhpArray copy = array.copy();
+        if (!released) {
+            copy.addHolder();
+            array.removeHolder();
+        }
+        value = copy;
+        return copy;
+    }
+
+    /** A variable is now bound to this reference, or an array element made it. */
+    public void bind() {
+        if (bindings++ == 0 && released) {
+            takeBack();
+        }
+    }
+
+    /** A variable bound to this reference was rebound, unset or went out of scope. */
+    public void unbind() {
+        if (bindings > 0 && --bindings == 0) {
+            release();
+        }
+    }
+
+    /** A temporary array that bound nothing dies: a reference no variable bound lets its value go. */
+    void releaseUnbound() {
+        if (bindings == 0 && !released) {
+            release();
+        }
+    }
+
+    /**
+     * A binding goes but the value keeps this reference's count (a returned array's references: the array is on its
+     * way to a holder, whose bind takes the binding back without counting the value again).
+     */
+    void unbindKeeping() {
+        if (bindings > 0) {
+            bindings--;
+        }
+    }
+
+    /**
+     * unbind for a reference whose array a function returns (its epilogue releases the variable while the value goes
+     * on to the caller): at its last binding the array loses this holder without giving its elements' counts up,
+     * as PhpArray.removeReturnedHolder.
+     */
+    @TruffleBoundary
+    public void unbindReturning() {
+        if (bindings > 0 && --bindings == 0) {
+            released = true;
+            if (value instanceof PhpArray array) {
+                array.removeReturnedHolder();
+            } else {
+                Refcount.dec(value);
+            }
+        }
+    }
+
+    /**
+     * Out of line: unbind is inlined wherever a variable is rebound or a frame releases its locals, and the
+     * release is the rare end of it.
+     */
+    @TruffleBoundary
+    private void release() {
+        released = true;
+        if (value instanceof PhpArray array) {
+            array.removeHolder();
+        }
+        Refcount.dec(value);
+    }
+
+    @TruffleBoundary
+    private void takeBack() {
+        released = false;
+        if (value instanceof PhpArray array) {
+            array.addHolder();
+        }
+        Refcount.inc(value);
+    }
+
+    /** More than one holder: php-src's refcount above 1, where var_dump marks the value with "&". */
+    public boolean isShared() {
+        return bindings > 1;
+    }
+
+    /**
+     * This reference as an element of a copy of source: the value if source's slot alone holds it (a slot counts
+     * only while its array has holders), else itself. A reference to the source array itself (`$a[] = &$a`) stays
+     * one, as in php-src.
+     */
+    public Object copyElement(PhpArray source, boolean sourceCounted) {
+        return bindings <= (sourceCounted ? 1 : 0) && value != source ? value : this;
+    }
+
+    public static Object deref(Object value) {
+        return value instanceof PhpRef ref ? ref.value : value;
+    }
+}

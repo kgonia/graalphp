@@ -1,0 +1,5 @@
+build/
+out/
+out-v2/
+out-v3/
+*-prompt.txt

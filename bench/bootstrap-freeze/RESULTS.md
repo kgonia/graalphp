@@ -1,0 +1,1704 @@
+# Bootstrap freeze results
+
+**PASSED** on CPUs 14–21. One container, one new JVM per phase.
+
+[Machine-readable results and configuration](out/20261125-142955-e49948/summary.json). [Raw response bodies keyed by SHA-256](out/20261125-142955-e49948/bodies). Times are milliseconds. Every distinct body is retained. Each changed body has a unified diff. The verifier records userSettings.time, the post ak_js_1 integer (0 through 250), and each relative time label. It checks each label against its datetime and the request interval before normalizing the text. JSON objects must have unique keys. It compares application header values in occurrence order and validates Content-Length against the raw body before accounting for variable-width fields.
+
+| Phase | Execution mode | Outcome | Requests by group | HTTP status counts | Body checks |
+|---|---|---|---|---|---|
+| [baseline](out/20261125-142955-e49948/baseline/server.log) | fallback-interpreter | pass | {'warmup': 30, 'parity': 3, 'timing': 60} | {'200': 93} | {'reference': 3, 'bytes': 60, 'normalized bytes': 30} |
+| [frozen](out/20261125-142955-e49948/frozen/server.log) | fallback-interpreter | pass | {'warmup': 30, 'parity': 3, 'timing': 60, 'isolation': 20, 'stress': 152} | {'200': 265} | {'bytes': 176, 'normalized bytes': 89} |
+| [rc-baseline](out/20261125-142955-e49948/rc-baseline/server.log) | fallback-interpreter | pass | {'rc': 3} | {'200': 3} | {'bytes': 2, 'normalized bytes': 1} |
+| [rc-frozen](out/20261125-142955-e49948/rc-frozen/server.log) | fallback-interpreter | pass | {'rc': 3} | {'200': 3} | {'bytes': 2, 'normalized bytes': 1} |
+| [heap-baseline](out/20261125-142955-e49948/heap-baseline/server.log) | fallback-interpreter | pass | {'warmup': 90, 'heap-1': 84, 'heap-4': 271, 'heap-8': 375} | {'200': 820} | {'bytes': 547, 'normalized bytes': 273} |
+| [heap-frozen](out/20261125-142955-e49948/heap-frozen/server.log) | fallback-interpreter | pass | {'warmup': 90, 'heap-1': 66, 'heap-4': 144, 'heap-8': 248} | {'200': 548} | {'bytes': 366, 'normalized bytes': 182} |
+
+| Route | Full bootstrap median / p95 | Restore median / p95 | Full HTTP median / p95 | Frozen HTTP median / p95 | Median HTTP speedup |
+|---|---:|---:|---:|---:|---:|
+| home | 240.819 / 282.227 | 11.000 / 16.350 | 599.737 / 709.730 | 367.579 / 460.528 | 1.63× |
+| post | 241.514 / 277.985 | 11.507 / 18.182 | 534.650 / 657.105 | 851.251 / 985.688 | 0.63× |
+| rest | 243.306 / 278.697 | 12.088 / 14.978 | 654.691 / 764.416 | 962.348 / 1073.741 | 0.68× |
+
+| Heap phase | Idle after GC (MiB) | 1 client (MiB/req) | 4 clients | 8 clients | Cgroup peak (MiB) |
+|---|---:|---:|---:|---:|---:|
+| heap-baseline | 211.26 | 14.94 | 14.49 | 13.26 | 1563.43 |
+| heap-frozen | 238.39 | 2.46 | -0.55 | -0.23 | 1481.85 |
+
+Each heap segment runs for 60 seconds. The per-request calculation uses full-GC samples with exactly the stated concurrency and the idle median from that segment. The two memory phases exercise the same three anonymous pages.
+
+Eight-client completions by worker: [19, 19, 19, 19, 19, 19, 19, 19].
+
+Distinct frozen post Akismet values observed: 73.
+
+## Refcount verification
+
+Each audit checks every zero. The per-phase evidence records every capture and request, including the object-ID cutoff for that request's snapshot.
+
+Counted-holder audit enabled in both JVMs: False.
+
+| Phase | Zeros checked | Capture hits | Request hits | Restored-object hits | New sites |
+|---|---:|---:|---:|---:|---:|
+| rc-baseline | 29163 | 0 | 412 | 0 | reference |
+| rc-frozen | 32929 | 300 | 262 | 0 | 0 |
+
+## Evidence
+
+- [baseline requests](out/20261125-142955-e49948/baseline/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/baseline/server.log)
+- [frozen requests](out/20261125-142955-e49948/frozen/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/frozen/server.log)
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4312344 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.996 plan_ms=148.255
+  - freeze ready variant=frontend build_total_ms=12379.126
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=21.584 plan_ms=42.107
+  - freeze ready variant=rest build_total_ms=803.115
+  - freeze option_reads epoch=0 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=9.086 plan_ms=30.230
+  - freeze ready variant=frontend build_total_ms=540.274
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.983 plan_ms=23.471
+  - freeze ready variant=rest build_total_ms=448.224
+  - freeze option_reads epoch=2 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=15.084 plan_ms=31.876
+  - freeze ready variant=frontend build_total_ms=444.860
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=12.702 plan_ms=25.124
+  - freeze ready variant=rest build_total_ms=374.211
+  - freeze option_reads epoch=4 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=18.773 plan_ms=40.790
+  - freeze ready variant=frontend build_total_ms=490.486
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=9.173 plan_ms=27.195
+  - freeze ready variant=rest build_total_ms=553.140
+  - freeze option_reads epoch=6 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.234 plan_ms=29.715
+  - freeze ready variant=frontend build_total_ms=360.587
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.417 plan_ms=33.914
+  - freeze ready variant=rest build_total_ms=397.739
+  - freeze option_reads epoch=8 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.882 plan_ms=18.194
+  - freeze ready variant=frontend build_total_ms=312.230
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=13.042 plan_ms=33.500
+  - freeze ready variant=rest build_total_ms=313.559
+  - freeze option_reads epoch=10 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=11.804 plan_ms=23.303
+  - freeze ready variant=frontend build_total_ms=297.645
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.374 plan_ms=20.911
+  - freeze ready variant=rest build_total_ms=317.369
+  - freeze option_reads epoch=12 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.349 plan_ms=17.262
+  - freeze ready variant=frontend build_total_ms=286.821
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=12.661 plan_ms=23.036
+  - freeze ready variant=rest build_total_ms=288.762
+  - freeze option_reads epoch=14 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.263 plan_ms=19.721
+  - freeze ready variant=frontend build_total_ms=280.018
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=14.692 plan_ms=26.406
+  - freeze ready variant=rest build_total_ms=284.655
+  - freeze option_reads epoch=16 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.343 plan_ms=23.458
+  - freeze ready variant=frontend build_total_ms=287.576
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.063 plan_ms=20.033
+  - freeze ready variant=rest build_total_ms=270.257
+  - freeze option_reads epoch=18 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.422 plan_ms=23.877
+  - freeze ready variant=frontend build_total_ms=280.383
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.474 plan_ms=21.443
+  - freeze ready variant=rest build_total_ms=288.120
+  - freeze option_reads epoch=20 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.059 plan_ms=19.822
+  - freeze ready variant=frontend build_total_ms=299.894
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.559 plan_ms=18.031
+  - freeze ready variant=rest build_total_ms=281.033
+  - freeze option_reads epoch=22 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.955 plan_ms=26.460
+  - freeze ready variant=frontend build_total_ms=271.626
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.118 plan_ms=19.646
+  - freeze ready variant=rest build_total_ms=303.336
+  - freeze option_reads epoch=24 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.405 plan_ms=20.828
+  - freeze ready variant=frontend build_total_ms=312.980
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.631 plan_ms=17.451
+  - freeze ready variant=rest build_total_ms=303.066
+  - freeze option_reads epoch=26 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.653 plan_ms=25.810
+  - freeze ready variant=frontend build_total_ms=296.418
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.154 plan_ms=20.979
+  - freeze ready variant=rest build_total_ms=290.350
+  - freeze option_reads epoch=28 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.995 plan_ms=19.287
+  - freeze ready variant=frontend build_total_ms=291.223
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.173 plan_ms=16.632
+  - freeze ready variant=rest build_total_ms=275.675
+  - freeze option_reads epoch=30 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.562 plan_ms=25.810
+  - freeze ready variant=frontend build_total_ms=258.573
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.010 plan_ms=19.112
+  - freeze ready variant=rest build_total_ms=272.843
+  - freeze option_reads epoch=32 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.125 plan_ms=19.048
+  - freeze ready variant=frontend build_total_ms=299.815
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.437 plan_ms=16.700
+  - freeze ready variant=rest build_total_ms=271.558
+  - freeze option_reads epoch=34 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.333 plan_ms=26.751
+  - freeze ready variant=frontend build_total_ms=277.798
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.384 plan_ms=19.964
+  - freeze ready variant=rest build_total_ms=315.281
+  - freeze option_reads epoch=36 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.018 plan_ms=18.978
+  - freeze ready variant=frontend build_total_ms=285.650
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.535 plan_ms=16.653
+  - freeze ready variant=rest build_total_ms=264.661
+  - freeze option_reads epoch=38 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=15.188 plan_ms=28.751
+  - freeze ready variant=frontend build_total_ms=283.552
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.113 plan_ms=19.293
+  - freeze ready variant=rest build_total_ms=289.862
+  - freeze option_reads epoch=40 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.004 plan_ms=18.876
+  - freeze ready variant=frontend build_total_ms=294.314
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.269 plan_ms=16.814
+  - freeze ready variant=rest build_total_ms=272.670
+  - freeze option_reads epoch=42 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=15.215 plan_ms=28.311
+  - freeze ready variant=frontend build_total_ms=284.616
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.731 plan_ms=27.419
+  - freeze ready variant=rest build_total_ms=309.805
+  - freeze option_reads epoch=44 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.402 plan_ms=20.378
+  - freeze ready variant=frontend build_total_ms=303.861
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.559 plan_ms=17.057
+  - freeze ready variant=rest build_total_ms=282.273
+  - freeze option_reads epoch=46 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.248 plan_ms=25.169
+  - freeze ready variant=frontend build_total_ms=268.554
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.584 plan_ms=20.694
+  - freeze ready variant=rest build_total_ms=290.539
+  - freeze option_reads epoch=48 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.151 plan_ms=17.486
+  - freeze ready variant=frontend build_total_ms=368.468
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.778 plan_ms=16.302
+  - freeze ready variant=rest build_total_ms=227.399
+  - freeze option_reads epoch=50 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.829 plan_ms=24.605
+  - freeze ready variant=frontend build_total_ms=256.526
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.947 plan_ms=19.852
+  - freeze ready variant=rest build_total_ms=280.569
+  - freeze option_reads epoch=52 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.814 plan_ms=18.212
+  - freeze ready variant=frontend build_total_ms=284.719
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.226 plan_ms=16.175
+  - freeze ready variant=rest build_total_ms=259.396
+  - freeze option_reads epoch=54 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.963 plan_ms=24.750
+  - freeze ready variant=frontend build_total_ms=262.589
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.376 plan_ms=19.810
+  - freeze ready variant=rest build_total_ms=283.841
+  - freeze option_reads epoch=56 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.219 plan_ms=18.805
+  - freeze ready variant=frontend build_total_ms=276.147
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.975 plan_ms=19.869
+  - freeze ready variant=rest build_total_ms=279.666
+  - freeze option_reads epoch=58 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.299 plan_ms=27.208
+  - freeze ready variant=frontend build_total_ms=288.553
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.157 plan_ms=21.982
+  - freeze ready variant=rest build_total_ms=300.183
+  - freeze option_reads epoch=60 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.706 plan_ms=23.061
+  - freeze ready variant=frontend build_total_ms=385.299
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.348 plan_ms=18.536
+  - freeze ready variant=rest build_total_ms=350.306
+  - freeze option_reads epoch=62 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.316 plan_ms=26.911
+  - freeze ready variant=frontend build_total_ms=288.800
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.210 plan_ms=22.429
+  - freeze ready variant=rest build_total_ms=334.884
+  - freeze option_reads epoch=64 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.416 plan_ms=20.211
+  - freeze ready variant=frontend build_total_ms=304.173
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.205 plan_ms=19.559
+  - freeze ready variant=rest build_total_ms=269.253
+  - freeze option_reads epoch=66 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=15.149 plan_ms=27.787
+  - freeze ready variant=frontend build_total_ms=270.004
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.353 plan_ms=20.069
+  - freeze ready variant=rest build_total_ms=291.830
+  - freeze option_reads epoch=68 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.963 plan_ms=21.839
+  - freeze ready variant=frontend build_total_ms=326.230
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.686 plan_ms=17.671
+  - freeze ready variant=rest build_total_ms=287.124
+  - freeze option_reads epoch=70 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.307 plan_ms=25.803
+  - freeze ready variant=frontend build_total_ms=262.752
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.019 plan_ms=19.050
+  - freeze ready variant=rest build_total_ms=284.013
+  - freeze option_reads epoch=72 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.882 plan_ms=18.803
+  - freeze ready variant=frontend build_total_ms=286.524
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.594 plan_ms=16.942
+  - freeze ready variant=rest build_total_ms=252.655
+  - freeze option_reads epoch=74 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.543 plan_ms=23.748
+  - freeze ready variant=frontend build_total_ms=252.867
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.017 plan_ms=19.232
+  - freeze ready variant=rest build_total_ms=261.938
+  - freeze option_reads epoch=76 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.905 plan_ms=19.160
+  - freeze ready variant=frontend build_total_ms=264.215
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.764 plan_ms=17.348
+  - freeze ready variant=rest build_total_ms=246.017
+  - freeze option_reads epoch=78 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.462 plan_ms=25.446
+  - freeze ready variant=frontend build_total_ms=251.170
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.384 plan_ms=20.184
+  - freeze ready variant=rest build_total_ms=261.862
+  - freeze option_reads epoch=80 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.403 plan_ms=18.657
+  - freeze ready variant=frontend build_total_ms=258.367
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.938 plan_ms=15.835
+  - freeze ready variant=rest build_total_ms=246.909
+  - freeze option_reads epoch=82 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.828 plan_ms=21.531
+  - freeze ready variant=frontend build_total_ms=245.655
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.378 plan_ms=20.480
+  - freeze ready variant=rest build_total_ms=271.942
+  - freeze option_reads epoch=84 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.171 plan_ms=15.934
+  - freeze ready variant=frontend build_total_ms=266.755
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.274 plan_ms=20.426
+  - freeze ready variant=rest build_total_ms=254.340
+  - freeze option_reads epoch=86 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=11.428 plan_ms=21.894
+  - freeze ready variant=frontend build_total_ms=261.688
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.257 plan_ms=19.640
+  - freeze ready variant=rest build_total_ms=273.140
+  - freeze option_reads epoch=88 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.768 plan_ms=17.911
+  - freeze ready variant=frontend build_total_ms=270.152
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.112 plan_ms=15.429
+  - freeze ready variant=rest build_total_ms=244.921
+  - freeze option_reads epoch=90 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=11.500 plan_ms=22.868
+  - freeze ready variant=frontend build_total_ms=257.752
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.858 plan_ms=18.819
+  - freeze ready variant=rest build_total_ms=260.088
+  - freeze option_reads epoch=92 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.577 plan_ms=17.265
+  - freeze ready variant=frontend build_total_ms=266.525
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.937 plan_ms=18.850
+  - freeze ready variant=rest build_total_ms=258.761
+  - freeze option_reads epoch=94 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.123 plan_ms=20.376
+  - freeze ready variant=frontend build_total_ms=254.239
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.252 plan_ms=19.536
+  - freeze ready variant=rest build_total_ms=275.022
+  - freeze option_reads epoch=96 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.991 plan_ms=22.539
+  - freeze ready variant=frontend build_total_ms=310.913
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.916 plan_ms=21.991
+  - freeze ready variant=rest build_total_ms=283.812
+  - freeze option_reads epoch=98 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.293 plan_ms=23.204
+  - freeze ready variant=frontend build_total_ms=296.847
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.424 plan_ms=20.438
+  - freeze ready variant=rest build_total_ms=299.028
+  - freeze option_reads epoch=100 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.935 plan_ms=18.356
+  - freeze ready variant=frontend build_total_ms=295.381
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=17.181 plan_ms=30.544
+  - freeze ready variant=rest build_total_ms=279.097
+  - freeze option_reads epoch=102 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=16.481 plan_ms=30.201
+  - freeze ready variant=frontend build_total_ms=378.002
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.799 plan_ms=16.578
+  - freeze ready variant=rest build_total_ms=259.393
+  - freeze option_reads epoch=104 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.233 plan_ms=16.178
+  - freeze ready variant=frontend build_total_ms=254.329
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.794 plan_ms=18.390
+  - freeze ready variant=rest build_total_ms=241.312
+  - freeze option_reads epoch=106 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=11.889 plan_ms=22.652
+  - freeze ready variant=frontend build_total_ms=261.971
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.114 plan_ms=19.687
+  - freeze ready variant=rest build_total_ms=269.078
+  - freeze option_reads epoch=108 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.937 plan_ms=21.507
+  - freeze ready variant=frontend build_total_ms=338.427
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.702 plan_ms=17.511
+  - freeze ready variant=rest build_total_ms=298.105
+  - freeze option_reads epoch=110 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.756 plan_ms=17.012
+  - freeze ready variant=frontend build_total_ms=258.003
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.119 plan_ms=19.367
+  - freeze ready variant=rest build_total_ms=271.819
+  - freeze option_reads epoch=112 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.884 plan_ms=18.914
+  - freeze ready variant=frontend build_total_ms=263.327
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.471 plan_ms=16.913
+  - freeze ready variant=rest build_total_ms=254.787
+  - freeze option_reads epoch=114 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.231 plan_ms=24.495
+  - freeze ready variant=frontend build_total_ms=254.994
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.306 plan_ms=21.268
+  - freeze ready variant=rest build_total_ms=276.095
+  - freeze option_reads epoch=116 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.818 plan_ms=18.728
+  - freeze ready variant=frontend build_total_ms=273.741
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.781 plan_ms=17.108
+  - freeze ready variant=rest build_total_ms=261.138
+  - freeze option_reads epoch=118 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.884 plan_ms=24.184
+  - freeze ready variant=frontend build_total_ms=252.545
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.839 plan_ms=18.517
+  - freeze ready variant=rest build_total_ms=264.587
+  - freeze option_reads epoch=120 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.947 plan_ms=18.782
+  - freeze ready variant=frontend build_total_ms=270.935
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.516 plan_ms=17.055
+  - freeze ready variant=rest build_total_ms=244.974
+  - freeze option_reads epoch=122 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=20.278 plan_ms=31.690
+  - freeze ready variant=frontend build_total_ms=255.647
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.092 plan_ms=18.901
+  - freeze ready variant=rest build_total_ms=271.272
+  - freeze option_reads epoch=124 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.846 plan_ms=18.574
+  - freeze ready variant=frontend build_total_ms=268.698
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.368 plan_ms=17.034
+  - freeze ready variant=rest build_total_ms=256.718
+  - freeze option_reads epoch=126 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.725 plan_ms=23.995
+  - freeze ready variant=frontend build_total_ms=245.487
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.069 plan_ms=19.226
+  - freeze ready variant=rest build_total_ms=263.884
+  - freeze option_reads epoch=128 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.767 plan_ms=18.552
+  - freeze ready variant=frontend build_total_ms=261.989
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.358 plan_ms=16.767
+  - freeze ready variant=rest build_total_ms=247.622
+  - freeze option_reads epoch=130 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.993 plan_ms=24.456
+  - freeze ready variant=frontend build_total_ms=239.060
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.808 plan_ms=18.800
+  - freeze ready variant=rest build_total_ms=262.920
+  - freeze option_reads epoch=132 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.896 plan_ms=19.106
+  - freeze ready variant=frontend build_total_ms=256.889
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.375 plan_ms=16.678
+  - freeze ready variant=rest build_total_ms=248.722
+  - freeze option_reads epoch=134 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=13.438 plan_ms=25.226
+  - freeze ready variant=frontend build_total_ms=244.455
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.799 plan_ms=18.633
+  - freeze ready variant=rest build_total_ms=263.141
+  - freeze option_reads epoch=136 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.496 plan_ms=24.132
+  - freeze ready variant=frontend build_total_ms=243.459
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.525 plan_ms=20.434
+  - freeze ready variant=rest build_total_ms=262.028
+  - freeze option_reads epoch=138 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=11.109 plan_ms=21.310
+  - freeze ready variant=frontend build_total_ms=245.736
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.650 plan_ms=21.015
+  - freeze ready variant=rest build_total_ms=254.109
+  - freeze option_reads epoch=140 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.439 plan_ms=20.161
+  - freeze ready variant=frontend build_total_ms=237.314
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.785 plan_ms=18.829
+  - freeze ready variant=rest build_total_ms=258.209
+  - freeze option_reads epoch=142 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.028 plan_ms=14.927
+  - freeze ready variant=frontend build_total_ms=240.784
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.939 plan_ms=18.803
+  - freeze ready variant=rest build_total_ms=234.985
+  - freeze option_reads epoch=144 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.925 plan_ms=18.875
+  - freeze ready variant=frontend build_total_ms=244.409
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=13.210 plan_ms=23.388
+  - freeze ready variant=rest build_total_ms=250.757
+  - freeze option_reads epoch=146 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.523 plan_ms=18.005
+  - freeze ready variant=frontend build_total_ms=240.136
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=14.995 plan_ms=25.251
+  - freeze ready variant=rest build_total_ms=254.282
+  - freeze option_reads epoch=148 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=12.501 plan_ms=24.730
+  - freeze ready variant=frontend build_total_ms=251.578
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.042 plan_ms=19.488
+  - freeze ready variant=rest build_total_ms=265.859
+  - freeze option_reads epoch=150 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.848 plan_ms=21.096
+  - freeze ready variant=frontend build_total_ms=259.211
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.546 plan_ms=20.454
+  - freeze ready variant=rest build_total_ms=278.292
+  - freeze option_reads epoch=152 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.149 plan_ms=21.708
+  - freeze ready variant=frontend build_total_ms=366.143
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=17.392 plan_ms=30.040
+  - freeze ready variant=rest build_total_ms=316.898
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.737 plan_ms=20.858
+  - freeze ready variant=frontend build_total_ms=329.521
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.384 plan_ms=20.294
+  - freeze ready variant=rest build_total_ms=272.169
+  - freeze option_reads epoch=164 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=24.833 plan_ms=40.512
+  - freeze ready variant=frontend build_total_ms=417.197
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=13.609 plan_ms=35.918
+  - freeze ready variant=rest build_total_ms=467.759
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.241 plan_ms=19.882
+  - freeze ready variant=frontend build_total_ms=353.662
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.187 plan_ms=19.200
+  - freeze ready variant=rest build_total_ms=268.207
+  - freeze option_reads epoch=174 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.804 plan_ms=23.437
+  - freeze ready variant=frontend build_total_ms=379.627
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.511 plan_ms=20.287
+  - freeze ready variant=rest build_total_ms=303.843
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.337 plan_ms=22.456
+  - freeze ready variant=frontend build_total_ms=294.109
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=9.653 plan_ms=25.742
+  - freeze ready variant=rest build_total_ms=345.851
+  - freeze option_reads epoch=183 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.083 plan_ms=19.239
+  - freeze ready variant=frontend build_total_ms=312.055
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.145 plan_ms=19.319
+  - freeze ready variant=rest build_total_ms=247.799
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=14.990 plan_ms=26.185
+  - freeze ready variant=frontend build_total_ms=259.517
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.197 plan_ms=19.827
+  - freeze ready variant=rest build_total_ms=271.244
+  - freeze option_reads epoch=195 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.243 plan_ms=22.705
+  - freeze ready variant=frontend build_total_ms=366.897
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.437 plan_ms=19.648
+  - freeze ready variant=rest build_total_ms=292.163
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.230 plan_ms=19.334
+  - freeze ready variant=frontend build_total_ms=260.946
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.184 plan_ms=19.130
+  - freeze ready variant=rest build_total_ms=240.209
+  - freeze option_reads epoch=205 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.424 plan_ms=20.292
+  - freeze ready variant=frontend build_total_ms=355.939
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.572 plan_ms=20.718
+  - freeze ready variant=rest build_total_ms=279.447
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.491 plan_ms=17.758
+  - freeze ready variant=frontend build_total_ms=266.869
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.800 plan_ms=18.198
+  - freeze ready variant=rest build_total_ms=248.353
+  - freeze option_reads epoch=215 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.499 plan_ms=19.696
+  - freeze ready variant=frontend build_total_ms=323.641
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.474 plan_ms=20.097
+  - freeze ready variant=rest build_total_ms=280.100
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.224 plan_ms=19.366
+  - freeze ready variant=frontend build_total_ms=270.528
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=17.824 plan_ms=28.524
+  - freeze ready variant=rest build_total_ms=279.756
+  - freeze option_reads epoch=226 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=18.229 plan_ms=31.095
+  - freeze ready variant=frontend build_total_ms=351.211
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.975 plan_ms=21.725
+  - freeze ready variant=rest build_total_ms=321.088
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.022 plan_ms=19.127
+  - freeze ready variant=frontend build_total_ms=264.613
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.000 plan_ms=21.144
+  - freeze ready variant=rest build_total_ms=258.302
+  - freeze option_reads epoch=236 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.749 plan_ms=20.620
+  - freeze ready variant=frontend build_total_ms=358.903
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.546 plan_ms=20.535
+  - freeze ready variant=rest build_total_ms=271.757
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.265 plan_ms=20.345
+  - freeze ready variant=frontend build_total_ms=258.711
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.913 plan_ms=18.853
+  - freeze ready variant=rest build_total_ms=245.734
+  - freeze option_reads epoch=246 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.687 plan_ms=20.833
+  - freeze ready variant=frontend build_total_ms=375.154
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.700 plan_ms=20.812
+  - freeze ready variant=rest build_total_ms=280.412
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.941 plan_ms=19.163
+  - freeze ready variant=frontend build_total_ms=253.143
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.016 plan_ms=18.932
+  - freeze ready variant=rest build_total_ms=246.207
+  - freeze option_reads epoch=258 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.665 plan_ms=21.884
+  - freeze ready variant=frontend build_total_ms=321.995
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.436 plan_ms=19.970
+  - freeze ready variant=rest build_total_ms=272.996
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.296 plan_ms=19.568
+  - freeze ready variant=frontend build_total_ms=261.656
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=16.742 plan_ms=27.457
+  - freeze ready variant=rest build_total_ms=263.082
+  - freeze option_reads epoch=268 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=19.011 plan_ms=32.040
+  - freeze ready variant=frontend build_total_ms=339.469
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.649 plan_ms=20.776
+  - freeze ready variant=rest build_total_ms=303.598
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.084 plan_ms=19.111
+  - freeze ready variant=frontend build_total_ms=259.170
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.046 plan_ms=19.460
+  - freeze ready variant=rest build_total_ms=250.210
+  - freeze option_reads epoch=278 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.424 plan_ms=19.197
+  - freeze ready variant=frontend build_total_ms=353.301
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.232 plan_ms=19.341
+  - freeze ready variant=rest build_total_ms=277.048
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.974 plan_ms=18.783
+  - freeze ready variant=frontend build_total_ms=255.305
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.919 plan_ms=18.848
+  - freeze ready variant=rest build_total_ms=249.553
+  - freeze option_reads epoch=290 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.194 plan_ms=21.892
+  - freeze ready variant=frontend build_total_ms=360.624
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.601 plan_ms=23.708
+  - freeze ready variant=rest build_total_ms=314.971
+  - freeze option_reads epoch=300 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.752 plan_ms=22.557
+  - freeze ready variant=frontend build_total_ms=371.582
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.797 plan_ms=21.458
+  - freeze ready variant=rest build_total_ms=309.107
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.416 plan_ms=20.225
+  - freeze ready variant=frontend build_total_ms=275.886
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.795 plan_ms=21.503
+  - freeze ready variant=rest build_total_ms=261.048
+  - freeze option_reads epoch=310 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.194 plan_ms=22.015
+  - freeze ready variant=frontend build_total_ms=347.248
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.279 plan_ms=19.184
+  - freeze ready variant=rest build_total_ms=285.114
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.524 plan_ms=19.908
+  - freeze ready variant=frontend build_total_ms=272.400
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.314 plan_ms=19.943
+  - freeze ready variant=rest build_total_ms=255.299
+  - freeze option_reads epoch=322 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.493 plan_ms=19.361
+  - freeze ready variant=frontend build_total_ms=340.509
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.480 plan_ms=19.796
+  - freeze ready variant=rest build_total_ms=269.492
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.011 plan_ms=19.318
+  - freeze ready variant=frontend build_total_ms=255.161
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=18.154 plan_ms=44.231
+  - freeze ready variant=rest build_total_ms=271.021
+  - freeze option_reads epoch=332 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.707 plan_ms=21.679
+  - freeze ready variant=frontend build_total_ms=368.993
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.342 plan_ms=19.458
+  - freeze ready variant=rest build_total_ms=279.681
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.129 plan_ms=18.977
+  - freeze ready variant=frontend build_total_ms=258.624
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.015 plan_ms=18.561
+  - freeze ready variant=rest build_total_ms=265.120
+  - freeze option_reads epoch=342 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.680 plan_ms=20.468
+  - freeze ready variant=frontend build_total_ms=288.455
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.415 plan_ms=19.988
+  - freeze ready variant=rest build_total_ms=261.491
+  - freeze option_reads epoch=354 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=15.473 plan_ms=28.728
+  - freeze ready variant=frontend build_total_ms=316.553
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.806 plan_ms=22.150
+  - freeze ready variant=rest build_total_ms=321.707
+  - freeze option_reads epoch=377 names=381 prefixes=1 policy=selective
+- [rc-baseline requests](out/20261125-142955-e49948/rc-baseline/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/rc-baseline/server.log)
+  - [D17 attribution by request and capture](out/20261125-142955-e49948/rc-baseline/d17.json)
+- [rc-frozen requests](out/20261125-142955-e49948/rc-frozen/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/rc-frozen/server.log)
+  - [D17 attribution by request and capture](out/20261125-142955-e49948/rc-frozen/d17.json)
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4312344 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.779 plan_ms=109.870
+  - freeze ready variant=frontend build_total_ms=17931.307
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=9.682 plan_ms=26.773
+  - freeze ready variant=rest build_total_ms=3686.002
+  - freeze option_reads epoch=0 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=19.424 plan_ms=42.399
+  - freeze ready variant=frontend build_total_ms=3529.208
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=16.062 plan_ms=31.214
+  - freeze ready variant=rest build_total_ms=3247.249
+  - freeze option_reads epoch=2 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=5.841 plan_ms=17.132
+  - freeze ready variant=frontend build_total_ms=2972.548
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.208 plan_ms=14.960
+  - freeze ready variant=rest build_total_ms=3056.128
+  - freeze option_reads epoch=4 names=381 prefixes=1 policy=selective
+- [heap-baseline requests](out/20261125-142955-e49948/heap-baseline/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/heap-baseline/server.log)
+  - GC.run confirmed: True. [Full-GC memory snapshot](out/20261125-142955-e49948/heap-baseline/idle.txt), [memory split](out/20261125-142955-e49948/heap-baseline/memsplit.json)
+  - [1-client probe analysis](out/20261125-142955-e49948/heap-baseline/heapprobe-1.txt)
+  - [4-client probe analysis](out/20261125-142955-e49948/heap-baseline/heapprobe-4.txt)
+  - [8-client probe analysis](out/20261125-142955-e49948/heap-baseline/heapprobe-8.txt)
+- [heap-frozen requests](out/20261125-142955-e49948/heap-frozen/requests.jsonl), [server diagnostics and snapshot build statistics](out/20261125-142955-e49948/heap-frozen/server.log)
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4312344 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=19.772 plan_ms=137.074
+  - freeze ready variant=frontend build_total_ms=12566.550
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=21.283 plan_ms=42.547
+  - freeze ready variant=rest build_total_ms=894.087
+  - freeze option_reads epoch=0 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=16.143 plan_ms=35.485
+  - freeze ready variant=frontend build_total_ms=516.668
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.661 plan_ms=23.289
+  - freeze ready variant=rest build_total_ms=571.649
+  - freeze option_reads epoch=2 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.294 plan_ms=25.135
+  - freeze ready variant=frontend build_total_ms=465.634
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.014 plan_ms=20.196
+  - freeze ready variant=rest build_total_ms=495.967
+  - freeze option_reads epoch=4 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.438 plan_ms=21.991
+  - freeze ready variant=frontend build_total_ms=523.646
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.765 plan_ms=25.438
+  - freeze ready variant=rest build_total_ms=471.040
+  - freeze option_reads epoch=6 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.987 plan_ms=23.693
+  - freeze ready variant=frontend build_total_ms=459.154
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.134 plan_ms=20.570
+  - freeze ready variant=rest build_total_ms=461.611
+  - freeze option_reads epoch=8 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=5.344 plan_ms=15.107
+  - freeze ready variant=frontend build_total_ms=608.083
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.799 plan_ms=19.312
+  - freeze ready variant=rest build_total_ms=356.716
+  - freeze option_reads epoch=10 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.161 plan_ms=20.032
+  - freeze ready variant=frontend build_total_ms=414.640
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.169 plan_ms=17.775
+  - freeze ready variant=rest build_total_ms=295.274
+  - freeze option_reads epoch=12 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.839 plan_ms=19.402
+  - freeze ready variant=frontend build_total_ms=402.384
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.882 plan_ms=19.462
+  - freeze ready variant=rest build_total_ms=361.289
+  - freeze option_reads epoch=14 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.533 plan_ms=21.194
+  - freeze ready variant=frontend build_total_ms=323.806
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.592 plan_ms=96.919
+  - freeze ready variant=rest build_total_ms=413.859
+  - freeze option_reads epoch=16 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.355 plan_ms=18.310
+  - freeze ready variant=frontend build_total_ms=348.123
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.754 plan_ms=19.343
+  - freeze ready variant=rest build_total_ms=346.697
+  - freeze option_reads epoch=18 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=116.595 plan_ms=129.402
+  - freeze ready variant=frontend build_total_ms=430.006
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.642 plan_ms=18.944
+  - freeze ready variant=rest build_total_ms=344.436
+  - freeze option_reads epoch=20 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.707 plan_ms=19.248
+  - freeze ready variant=frontend build_total_ms=386.253
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.561 plan_ms=18.717
+  - freeze ready variant=rest build_total_ms=336.831
+  - freeze option_reads epoch=22 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.062 plan_ms=96.070
+  - freeze ready variant=frontend build_total_ms=345.823
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.431 plan_ms=17.211
+  - freeze ready variant=rest build_total_ms=340.319
+  - freeze option_reads epoch=24 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.515 plan_ms=17.760
+  - freeze ready variant=frontend build_total_ms=361.685
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.586 plan_ms=21.443
+  - freeze ready variant=rest build_total_ms=336.985
+  - freeze option_reads epoch=26 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=76.463 plan_ms=88.401
+  - freeze ready variant=frontend build_total_ms=340.290
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.120 plan_ms=18.969
+  - freeze ready variant=rest build_total_ms=345.790
+  - freeze option_reads epoch=28 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.521 plan_ms=18.064
+  - freeze ready variant=frontend build_total_ms=369.458
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.532 plan_ms=18.026
+  - freeze ready variant=rest build_total_ms=333.019
+  - freeze option_reads epoch=30 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.024 plan_ms=19.861
+  - freeze ready variant=frontend build_total_ms=380.342
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.043 plan_ms=19.602
+  - freeze ready variant=rest build_total_ms=326.234
+  - freeze option_reads epoch=32 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=111.004 plan_ms=124.405
+  - freeze ready variant=frontend build_total_ms=424.416
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.435 plan_ms=16.586
+  - freeze ready variant=rest build_total_ms=338.079
+  - freeze option_reads epoch=34 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.356 plan_ms=17.774
+  - freeze ready variant=frontend build_total_ms=336.990
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.839 plan_ms=18.904
+  - freeze ready variant=rest build_total_ms=343.636
+  - freeze option_reads epoch=36 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.193 plan_ms=18.927
+  - freeze ready variant=frontend build_total_ms=332.167
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.445 plan_ms=20.749
+  - freeze ready variant=rest build_total_ms=333.231
+  - freeze option_reads epoch=38 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.196 plan_ms=16.567
+  - freeze ready variant=frontend build_total_ms=323.072
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.275 plan_ms=17.036
+  - freeze ready variant=rest build_total_ms=323.497
+  - freeze option_reads epoch=40 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.357 plan_ms=17.551
+  - freeze ready variant=frontend build_total_ms=351.350
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.691 plan_ms=18.241
+  - freeze ready variant=rest build_total_ms=327.213
+  - freeze option_reads epoch=42 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.708 plan_ms=18.402
+  - freeze ready variant=frontend build_total_ms=317.223
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.223 plan_ms=19.854
+  - freeze ready variant=rest build_total_ms=339.954
+  - freeze option_reads epoch=44 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.930 plan_ms=19.739
+  - freeze ready variant=frontend build_total_ms=335.765
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.700 plan_ms=22.416
+  - freeze ready variant=rest build_total_ms=326.072
+  - freeze option_reads epoch=46 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.331 plan_ms=20.445
+  - freeze ready variant=frontend build_total_ms=409.285
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.674 plan_ms=21.131
+  - freeze ready variant=rest build_total_ms=384.704
+  - freeze option_reads epoch=48 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.898 plan_ms=133.233
+  - freeze ready variant=frontend build_total_ms=446.879
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.118 plan_ms=19.234
+  - freeze ready variant=rest build_total_ms=359.656
+  - freeze option_reads epoch=50 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=145.375 plan_ms=162.152
+  - freeze ready variant=frontend build_total_ms=650.107
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.783 plan_ms=16.566
+  - freeze ready variant=rest build_total_ms=397.183
+  - freeze option_reads epoch=52 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.648 plan_ms=17.603
+  - freeze ready variant=frontend build_total_ms=334.266
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.689 plan_ms=18.536
+  - freeze ready variant=rest build_total_ms=349.274
+  - freeze option_reads epoch=54 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.606 plan_ms=18.196
+  - freeze ready variant=frontend build_total_ms=328.808
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.796 plan_ms=19.546
+  - freeze ready variant=rest build_total_ms=328.090
+  - freeze option_reads epoch=56 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.152 plan_ms=19.772
+  - freeze ready variant=frontend build_total_ms=327.164
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.954 plan_ms=19.194
+  - freeze ready variant=rest build_total_ms=323.214
+  - freeze option_reads epoch=58 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.185 plan_ms=17.231
+  - freeze ready variant=frontend build_total_ms=314.481
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.025 plan_ms=16.531
+  - freeze ready variant=rest build_total_ms=319.403
+  - freeze option_reads epoch=60 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.478 plan_ms=17.801
+  - freeze ready variant=frontend build_total_ms=364.967
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.517 plan_ms=17.309
+  - freeze ready variant=rest build_total_ms=332.535
+  - freeze option_reads epoch=62 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.472 plan_ms=17.952
+  - freeze ready variant=frontend build_total_ms=327.729
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.517 plan_ms=18.182
+  - freeze ready variant=rest build_total_ms=335.792
+  - freeze option_reads epoch=64 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.521 plan_ms=18.142
+  - freeze ready variant=frontend build_total_ms=324.435
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.596 plan_ms=18.482
+  - freeze ready variant=rest build_total_ms=331.261
+  - freeze option_reads epoch=66 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.884 plan_ms=19.306
+  - freeze ready variant=frontend build_total_ms=357.404
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.684 plan_ms=18.871
+  - freeze ready variant=rest build_total_ms=321.331
+  - freeze option_reads epoch=68 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.183 plan_ms=20.844
+  - freeze ready variant=frontend build_total_ms=325.865
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.871 plan_ms=19.173
+  - freeze ready variant=rest build_total_ms=330.582
+  - freeze option_reads epoch=70 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.375 plan_ms=16.841
+  - freeze ready variant=frontend build_total_ms=355.111
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.611 plan_ms=18.713
+  - freeze ready variant=rest build_total_ms=342.475
+  - freeze option_reads epoch=72 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.407 plan_ms=17.379
+  - freeze ready variant=frontend build_total_ms=350.112
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.399 plan_ms=17.829
+  - freeze ready variant=rest build_total_ms=322.422
+  - freeze option_reads epoch=74 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.522 plan_ms=18.006
+  - freeze ready variant=frontend build_total_ms=321.503
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.472 plan_ms=17.881
+  - freeze ready variant=rest build_total_ms=314.747
+  - freeze option_reads epoch=76 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.528 plan_ms=17.962
+  - freeze ready variant=frontend build_total_ms=323.019
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.329 plan_ms=17.766
+  - freeze ready variant=rest build_total_ms=322.388
+  - freeze option_reads epoch=78 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.019 plan_ms=19.652
+  - freeze ready variant=frontend build_total_ms=329.022
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.996 plan_ms=19.804
+  - freeze ready variant=rest build_total_ms=316.844
+  - freeze option_reads epoch=80 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.111 plan_ms=20.064
+  - freeze ready variant=frontend build_total_ms=308.336
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.779 plan_ms=19.131
+  - freeze ready variant=rest build_total_ms=322.218
+  - freeze option_reads epoch=82 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.529 plan_ms=17.081
+  - freeze ready variant=frontend build_total_ms=353.865
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.453 plan_ms=17.576
+  - freeze ready variant=rest build_total_ms=346.710
+  - freeze option_reads epoch=84 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.483 plan_ms=17.230
+  - freeze ready variant=frontend build_total_ms=322.479
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.342 plan_ms=17.266
+  - freeze ready variant=rest build_total_ms=321.329
+  - freeze option_reads epoch=86 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.679 plan_ms=18.472
+  - freeze ready variant=frontend build_total_ms=336.826
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.514 plan_ms=18.305
+  - freeze ready variant=rest build_total_ms=321.475
+  - freeze option_reads epoch=88 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.631 plan_ms=140.524
+  - freeze ready variant=frontend build_total_ms=473.108
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.327 plan_ms=19.890
+  - freeze ready variant=rest build_total_ms=391.014
+  - freeze option_reads epoch=90 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.095 plan_ms=20.359
+  - freeze ready variant=frontend build_total_ms=382.910
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.186 plan_ms=20.426
+  - freeze ready variant=rest build_total_ms=338.506
+  - freeze option_reads epoch=92 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=5.835 plan_ms=17.503
+  - freeze ready variant=frontend build_total_ms=395.125
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.063 plan_ms=17.495
+  - freeze ready variant=rest build_total_ms=293.912
+  - freeze option_reads epoch=94 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.694 plan_ms=144.582
+  - freeze ready variant=frontend build_total_ms=393.562
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.469 plan_ms=22.723
+  - freeze ready variant=rest build_total_ms=383.064
+  - freeze option_reads epoch=96 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.462 plan_ms=17.652
+  - freeze ready variant=frontend build_total_ms=331.306
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.424 plan_ms=17.413
+  - freeze ready variant=rest build_total_ms=325.182
+  - freeze option_reads epoch=98 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.609 plan_ms=18.049
+  - freeze ready variant=frontend build_total_ms=352.633
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.131 plan_ms=20.032
+  - freeze ready variant=rest build_total_ms=343.539
+  - freeze option_reads epoch=100 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.877 plan_ms=18.935
+  - freeze ready variant=frontend build_total_ms=317.513
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.798 plan_ms=19.064
+  - freeze ready variant=rest build_total_ms=313.282
+  - freeze option_reads epoch=102 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.355 plan_ms=20.501
+  - freeze ready variant=frontend build_total_ms=325.730
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.442 plan_ms=20.308
+  - freeze ready variant=rest build_total_ms=316.753
+  - freeze option_reads epoch=104 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.343 plan_ms=17.554
+  - freeze ready variant=frontend build_total_ms=364.954
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.218 plan_ms=16.647
+  - freeze ready variant=rest build_total_ms=331.141
+  - freeze option_reads epoch=106 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.571 plan_ms=18.049
+  - freeze ready variant=frontend build_total_ms=330.429
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.563 plan_ms=17.872
+  - freeze ready variant=rest build_total_ms=321.286
+  - freeze option_reads epoch=108 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.805 plan_ms=18.219
+  - freeze ready variant=frontend build_total_ms=354.397
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.426 plan_ms=17.568
+  - freeze ready variant=rest build_total_ms=323.051
+  - freeze option_reads epoch=110 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.606 plan_ms=18.199
+  - freeze ready variant=frontend build_total_ms=322.873
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.416 plan_ms=20.834
+  - freeze ready variant=rest build_total_ms=344.937
+  - freeze option_reads epoch=112 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.512 plan_ms=17.904
+  - freeze ready variant=frontend build_total_ms=318.513
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.860 plan_ms=19.391
+  - freeze ready variant=rest build_total_ms=314.123
+  - freeze option_reads epoch=114 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.185 plan_ms=19.963
+  - freeze ready variant=frontend build_total_ms=307.283
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.086 plan_ms=19.635
+  - freeze ready variant=rest build_total_ms=313.621
+  - freeze option_reads epoch=116 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.278 plan_ms=20.421
+  - freeze ready variant=frontend build_total_ms=309.029
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.175 plan_ms=19.351
+  - freeze ready variant=rest build_total_ms=310.256
+  - freeze option_reads epoch=118 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.564 plan_ms=17.498
+  - freeze ready variant=frontend build_total_ms=350.628
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.303 plan_ms=16.511
+  - freeze ready variant=rest build_total_ms=320.389
+  - freeze option_reads epoch=120 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.178 plan_ms=20.439
+  - freeze ready variant=frontend build_total_ms=303.603
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.071 plan_ms=20.129
+  - freeze ready variant=rest build_total_ms=312.872
+  - freeze option_reads epoch=122 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.346 plan_ms=16.923
+  - freeze ready variant=frontend build_total_ms=326.676
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.100 plan_ms=16.081
+  - freeze ready variant=rest build_total_ms=334.662
+  - freeze option_reads epoch=124 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.524 plan_ms=17.176
+  - freeze ready variant=frontend build_total_ms=369.528
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.200 plan_ms=16.868
+  - freeze ready variant=rest build_total_ms=332.128
+  - freeze option_reads epoch=126 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.486 plan_ms=18.013
+  - freeze ready variant=frontend build_total_ms=325.355
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.432 plan_ms=17.287
+  - freeze ready variant=rest build_total_ms=329.171
+  - freeze option_reads epoch=128 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.008 plan_ms=19.432
+  - freeze ready variant=frontend build_total_ms=381.520
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.379 plan_ms=20.651
+  - freeze ready variant=rest build_total_ms=362.877
+  - freeze option_reads epoch=130 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.930 plan_ms=19.538
+  - freeze ready variant=frontend build_total_ms=401.503
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.949 plan_ms=19.113
+  - freeze ready variant=rest build_total_ms=359.319
+  - freeze option_reads epoch=132 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.463 plan_ms=166.428
+  - freeze ready variant=frontend build_total_ms=571.101
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.494 plan_ms=22.656
+  - freeze ready variant=rest build_total_ms=470.618
+  - freeze option_reads epoch=134 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=5.794 plan_ms=16.228
+  - freeze ready variant=frontend build_total_ms=292.427
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.821 plan_ms=19.345
+  - freeze ready variant=rest build_total_ms=357.790
+  - freeze option_reads epoch=136 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.498 plan_ms=18.643
+  - freeze ready variant=frontend build_total_ms=267.609
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.310 plan_ms=17.635
+  - freeze ready variant=rest build_total_ms=293.012
+  - freeze option_reads epoch=138 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.390 plan_ms=20.452
+  - freeze ready variant=frontend build_total_ms=394.519
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=88.415 plan_ms=101.437
+  - freeze ready variant=rest build_total_ms=342.893
+  - freeze option_reads epoch=140 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.570 plan_ms=17.555
+  - freeze ready variant=frontend build_total_ms=359.582
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.401 plan_ms=17.929
+  - freeze ready variant=rest build_total_ms=348.313
+  - freeze option_reads epoch=142 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.607 plan_ms=18.276
+  - freeze ready variant=frontend build_total_ms=336.776
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.757 plan_ms=18.766
+  - freeze ready variant=rest build_total_ms=337.932
+  - freeze option_reads epoch=144 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.726 plan_ms=130.408
+  - freeze ready variant=frontend build_total_ms=448.796
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.075 plan_ms=19.587
+  - freeze ready variant=rest build_total_ms=378.130
+  - freeze option_reads epoch=146 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.117 plan_ms=19.573
+  - freeze ready variant=frontend build_total_ms=363.832
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.333 plan_ms=20.747
+  - freeze ready variant=rest build_total_ms=353.155
+  - freeze option_reads epoch=148 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.213 plan_ms=19.562
+  - freeze ready variant=frontend build_total_ms=387.176
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.193 plan_ms=19.959
+  - freeze ready variant=rest build_total_ms=361.469
+  - freeze option_reads epoch=150 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=10.064 plan_ms=23.115
+  - freeze ready variant=frontend build_total_ms=342.368
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.982 plan_ms=19.822
+  - freeze ready variant=rest build_total_ms=337.246
+  - freeze option_reads epoch=152 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.126 plan_ms=20.120
+  - freeze ready variant=frontend build_total_ms=326.924
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.481 plan_ms=21.407
+  - freeze ready variant=rest build_total_ms=323.386
+  - freeze option_reads epoch=154 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.146 plan_ms=18.664
+  - freeze ready variant=frontend build_total_ms=356.186
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.804 plan_ms=18.206
+  - freeze ready variant=rest build_total_ms=329.155
+  - freeze option_reads epoch=156 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.475 plan_ms=17.805
+  - freeze ready variant=frontend build_total_ms=354.293
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.366 plan_ms=17.669
+  - freeze ready variant=rest build_total_ms=322.934
+  - freeze option_reads epoch=158 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.819 plan_ms=19.417
+  - freeze ready variant=frontend build_total_ms=331.388
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.674 plan_ms=18.736
+  - freeze ready variant=rest build_total_ms=325.410
+  - freeze option_reads epoch=160 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.835 plan_ms=19.295
+  - freeze ready variant=frontend build_total_ms=353.501
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.946 plan_ms=19.125
+  - freeze ready variant=rest build_total_ms=314.618
+  - freeze option_reads epoch=162 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.214 plan_ms=21.180
+  - freeze ready variant=frontend build_total_ms=353.403
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.080 plan_ms=19.978
+  - freeze ready variant=rest build_total_ms=322.422
+  - freeze option_reads epoch=164 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.180 plan_ms=20.330
+  - freeze ready variant=frontend build_total_ms=304.388
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.916 plan_ms=19.480
+  - freeze ready variant=rest build_total_ms=316.063
+  - freeze option_reads epoch=166 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.289 plan_ms=17.022
+  - freeze ready variant=frontend build_total_ms=316.543
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.605 plan_ms=18.293
+  - freeze ready variant=rest build_total_ms=344.054
+  - freeze option_reads epoch=168 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.182 plan_ms=16.841
+  - freeze ready variant=frontend build_total_ms=349.201
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.421 plan_ms=18.073
+  - freeze ready variant=rest build_total_ms=321.047
+  - freeze option_reads epoch=170 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.787 plan_ms=18.962
+  - freeze ready variant=frontend build_total_ms=362.540
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.840 plan_ms=19.585
+  - freeze ready variant=rest build_total_ms=339.992
+  - freeze option_reads epoch=172 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.769 plan_ms=18.430
+  - freeze ready variant=frontend build_total_ms=469.240
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.185 plan_ms=19.397
+  - freeze ready variant=rest build_total_ms=377.382
+  - freeze option_reads epoch=174 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.305 plan_ms=19.864
+  - freeze ready variant=frontend build_total_ms=338.145
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.373 plan_ms=20.432
+  - freeze ready variant=rest build_total_ms=341.723
+  - freeze option_reads epoch=176 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=5.883 plan_ms=16.311
+  - freeze ready variant=frontend build_total_ms=310.086
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.309 plan_ms=17.849
+  - freeze ready variant=rest build_total_ms=295.676
+  - freeze option_reads epoch=178 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.403 plan_ms=18.562
+  - freeze ready variant=frontend build_total_ms=344.628
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.622 plan_ms=20.785
+  - freeze ready variant=rest build_total_ms=330.808
+  - freeze option_reads epoch=180 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.917 plan_ms=19.017
+  - freeze ready variant=frontend build_total_ms=331.791
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.376 plan_ms=20.880
+  - freeze ready variant=rest build_total_ms=337.473
+  - freeze option_reads epoch=182 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.503 plan_ms=17.676
+  - freeze ready variant=frontend build_total_ms=358.833
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.851 plan_ms=18.935
+  - freeze ready variant=rest build_total_ms=335.241
+  - freeze option_reads epoch=184 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.986 plan_ms=17.993
+  - freeze ready variant=frontend build_total_ms=347.877
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.715 plan_ms=18.353
+  - freeze ready variant=rest build_total_ms=316.761
+  - freeze option_reads epoch=186 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.846 plan_ms=18.752
+  - freeze ready variant=frontend build_total_ms=360.963
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.826 plan_ms=19.381
+  - freeze ready variant=rest build_total_ms=325.476
+  - freeze option_reads epoch=188 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.511 plan_ms=18.019
+  - freeze ready variant=frontend build_total_ms=349.590
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.794 plan_ms=18.992
+  - freeze ready variant=rest build_total_ms=319.305
+  - freeze option_reads epoch=190 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.812 plan_ms=18.985
+  - freeze ready variant=frontend build_total_ms=319.585
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.831 plan_ms=19.004
+  - freeze ready variant=rest build_total_ms=316.645
+  - freeze option_reads epoch=192 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.516 plan_ms=18.159
+  - freeze ready variant=frontend build_total_ms=345.369
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.912 plan_ms=19.462
+  - freeze ready variant=rest build_total_ms=328.291
+  - freeze option_reads epoch=194 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.230 plan_ms=19.821
+  - freeze ready variant=frontend build_total_ms=320.813
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.927 plan_ms=19.505
+  - freeze ready variant=rest build_total_ms=306.178
+  - freeze option_reads epoch=196 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.725 plan_ms=19.034
+  - freeze ready variant=frontend build_total_ms=303.125
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.850 plan_ms=19.175
+  - freeze ready variant=rest build_total_ms=308.416
+  - freeze option_reads epoch=198 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.169 plan_ms=20.044
+  - freeze ready variant=frontend build_total_ms=293.020
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.246 plan_ms=20.461
+  - freeze ready variant=rest build_total_ms=310.742
+  - freeze option_reads epoch=200 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.744 plan_ms=19.049
+  - freeze ready variant=frontend build_total_ms=314.408
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.691 plan_ms=19.173
+  - freeze ready variant=rest build_total_ms=298.864
+  - freeze option_reads epoch=202 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.370 plan_ms=20.522
+  - freeze ready variant=frontend build_total_ms=320.366
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.928 plan_ms=19.203
+  - freeze ready variant=rest build_total_ms=325.100
+  - freeze option_reads epoch=204 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.142 plan_ms=20.154
+  - freeze ready variant=frontend build_total_ms=244.549
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.091 plan_ms=19.962
+  - freeze ready variant=rest build_total_ms=301.448
+  - freeze option_reads epoch=206 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.440 plan_ms=17.192
+  - freeze ready variant=frontend build_total_ms=341.670
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.390 plan_ms=16.865
+  - freeze ready variant=rest build_total_ms=309.031
+  - freeze option_reads epoch=208 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.697 plan_ms=17.923
+  - freeze ready variant=frontend build_total_ms=390.174
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.803 plan_ms=18.680
+  - freeze ready variant=rest build_total_ms=335.604
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.711 plan_ms=18.576
+  - freeze ready variant=frontend build_total_ms=354.677
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.142 plan_ms=20.058
+  - freeze ready variant=rest build_total_ms=328.164
+  - freeze option_reads epoch=214 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.416 plan_ms=17.221
+  - freeze ready variant=frontend build_total_ms=345.000
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.606 plan_ms=17.922
+  - freeze ready variant=rest build_total_ms=335.681
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.427 plan_ms=17.245
+  - freeze ready variant=frontend build_total_ms=353.719
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.216 plan_ms=16.610
+  - freeze ready variant=rest build_total_ms=309.399
+  - freeze option_reads epoch=220 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.588 plan_ms=21.287
+  - freeze ready variant=frontend build_total_ms=402.536
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.151 plan_ms=19.946
+  - freeze ready variant=rest build_total_ms=333.523
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.039 plan_ms=19.655
+  - freeze ready variant=frontend build_total_ms=314.318
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=76.039 plan_ms=89.497
+  - freeze ready variant=rest build_total_ms=330.779
+  - freeze option_reads epoch=224 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.701 plan_ms=18.309
+  - freeze ready variant=frontend build_total_ms=387.002
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.684 plan_ms=18.386
+  - freeze ready variant=rest build_total_ms=335.366
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.072 plan_ms=18.972
+  - freeze ready variant=frontend build_total_ms=355.197
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.070 plan_ms=19.613
+  - freeze ready variant=rest build_total_ms=319.075
+  - freeze option_reads epoch=230 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.193 plan_ms=19.793
+  - freeze ready variant=frontend build_total_ms=365.911
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.057 plan_ms=19.464
+  - freeze ready variant=rest build_total_ms=319.102
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.217 plan_ms=20.121
+  - freeze ready variant=frontend build_total_ms=296.646
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.292 plan_ms=21.014
+  - freeze ready variant=rest build_total_ms=310.734
+  - freeze option_reads epoch=236 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.668 plan_ms=17.783
+  - freeze ready variant=frontend build_total_ms=380.159
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.001 plan_ms=18.919
+  - freeze ready variant=rest build_total_ms=334.296
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.261 plan_ms=17.241
+  - freeze ready variant=frontend build_total_ms=314.324
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.191 plan_ms=17.067
+  - freeze ready variant=rest build_total_ms=315.940
+  - freeze option_reads epoch=240 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=9.530 plan_ms=26.667
+  - freeze ready variant=frontend build_total_ms=476.480
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.232 plan_ms=82.921
+  - freeze ready variant=rest build_total_ms=337.290
+  - freeze option_reads epoch=246 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.097 plan_ms=20.381
+  - freeze ready variant=frontend build_total_ms=399.482
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.303 plan_ms=20.509
+  - freeze ready variant=rest build_total_ms=365.134
+  - freeze option_reads epoch=252 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.734 plan_ms=24.386
+  - freeze ready variant=frontend build_total_ms=427.444
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.862 plan_ms=21.686
+  - freeze ready variant=rest build_total_ms=1033.788
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.240 plan_ms=19.349
+  - freeze ready variant=frontend build_total_ms=368.026
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.330 plan_ms=22.300
+  - freeze ready variant=rest build_total_ms=395.765
+  - freeze option_reads epoch=256 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.648 plan_ms=17.630
+  - freeze ready variant=frontend build_total_ms=446.826
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.108 plan_ms=18.557
+  - freeze ready variant=rest build_total_ms=342.349
+  - freeze option_reads epoch=262 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.501 plan_ms=20.893
+  - freeze ready variant=frontend build_total_ms=421.190
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=10.926 plan_ms=105.070
+  - freeze ready variant=rest build_total_ms=451.866
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.723 plan_ms=21.078
+  - freeze ready variant=frontend build_total_ms=387.755
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.309 plan_ms=20.154
+  - freeze ready variant=rest build_total_ms=375.248
+  - freeze option_reads epoch=268 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.909 plan_ms=19.369
+  - freeze ready variant=frontend build_total_ms=482.312
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.043 plan_ms=18.751
+  - freeze ready variant=rest build_total_ms=355.757
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.164 plan_ms=19.611
+  - freeze ready variant=frontend build_total_ms=349.250
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.736 plan_ms=23.884
+  - freeze ready variant=rest build_total_ms=390.870
+  - freeze option_reads epoch=272 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.069 plan_ms=17.828
+  - freeze ready variant=frontend build_total_ms=362.310
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.338 plan_ms=17.615
+  - freeze ready variant=rest build_total_ms=288.049
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.113 plan_ms=16.612
+  - freeze ready variant=frontend build_total_ms=320.922
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.455 plan_ms=18.472
+  - freeze ready variant=rest build_total_ms=314.833
+  - freeze option_reads epoch=278 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.643 plan_ms=20.729
+  - freeze ready variant=frontend build_total_ms=354.110
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.814 plan_ms=18.981
+  - freeze ready variant=rest build_total_ms=343.168
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.911 plan_ms=19.679
+  - freeze ready variant=frontend build_total_ms=320.273
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.019 plan_ms=19.282
+  - freeze ready variant=rest build_total_ms=326.705
+  - freeze option_reads epoch=284 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.625 plan_ms=20.714
+  - freeze ready variant=frontend build_total_ms=407.915
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.110 plan_ms=20.349
+  - freeze ready variant=rest build_total_ms=347.223
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.968 plan_ms=19.718
+  - freeze ready variant=frontend build_total_ms=366.661
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.791 plan_ms=19.330
+  - freeze ready variant=rest build_total_ms=327.156
+  - freeze option_reads epoch=288 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.707 plan_ms=17.958
+  - freeze ready variant=frontend build_total_ms=380.585
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.633 plan_ms=17.997
+  - freeze ready variant=rest build_total_ms=342.839
+  - freeze option_reads epoch=294 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.473 plan_ms=20.998
+  - freeze ready variant=frontend build_total_ms=390.711
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.466 plan_ms=20.430
+  - freeze ready variant=rest build_total_ms=338.023
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.140 plan_ms=20.161
+  - freeze ready variant=frontend build_total_ms=372.206
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.829 plan_ms=18.988
+  - freeze ready variant=rest build_total_ms=324.960
+  - freeze option_reads epoch=300 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.722 plan_ms=18.176
+  - freeze ready variant=frontend build_total_ms=355.411
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.570 plan_ms=18.004
+  - freeze ready variant=rest build_total_ms=340.242
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.485 plan_ms=17.911
+  - freeze ready variant=frontend build_total_ms=348.495
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.651 plan_ms=20.796
+  - freeze ready variant=rest build_total_ms=325.611
+  - freeze option_reads epoch=304 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.752 plan_ms=18.302
+  - freeze ready variant=frontend build_total_ms=506.625
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.649 plan_ms=17.700
+  - freeze ready variant=rest build_total_ms=320.269
+  - freeze option_reads epoch=310 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.258 plan_ms=20.097
+  - freeze ready variant=frontend build_total_ms=370.440
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.496 plan_ms=20.728
+  - freeze ready variant=rest build_total_ms=339.554
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.225 plan_ms=19.818
+  - freeze ready variant=frontend build_total_ms=334.509
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.811 plan_ms=19.454
+  - freeze ready variant=rest build_total_ms=322.232
+  - freeze option_reads epoch=315 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.638 plan_ms=18.197
+  - freeze ready variant=frontend build_total_ms=350.757
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.379 plan_ms=17.380
+  - freeze ready variant=rest build_total_ms=326.925
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.912 plan_ms=18.861
+  - freeze ready variant=frontend build_total_ms=328.070
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.482 plan_ms=17.125
+  - freeze ready variant=rest build_total_ms=331.639
+  - freeze option_reads epoch=319 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.061 plan_ms=19.742
+  - freeze ready variant=frontend build_total_ms=358.439
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.899 plan_ms=18.945
+  - freeze ready variant=rest build_total_ms=318.943
+  - freeze option_reads epoch=324 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.749 plan_ms=17.899
+  - freeze ready variant=frontend build_total_ms=369.782
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.300 plan_ms=17.416
+  - freeze ready variant=rest build_total_ms=327.394
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.606 plan_ms=17.757
+  - freeze ready variant=frontend build_total_ms=356.605
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.580 plan_ms=18.230
+  - freeze ready variant=rest build_total_ms=337.691
+  - freeze option_reads epoch=330 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.513 plan_ms=20.106
+  - freeze ready variant=frontend build_total_ms=436.895
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.129 plan_ms=100.829
+  - freeze ready variant=rest build_total_ms=337.431
+  - freeze option_reads epoch=334 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.881 plan_ms=18.474
+  - freeze ready variant=frontend build_total_ms=350.547
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.529 plan_ms=17.541
+  - freeze ready variant=rest build_total_ms=328.933
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.431 plan_ms=17.464
+  - freeze ready variant=frontend build_total_ms=311.481
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.691 plan_ms=18.704
+  - freeze ready variant=rest build_total_ms=313.509
+  - freeze option_reads epoch=340 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.898 plan_ms=18.616
+  - freeze ready variant=frontend build_total_ms=367.281
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.905 plan_ms=19.248
+  - freeze ready variant=rest build_total_ms=318.837
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.935 plan_ms=19.489
+  - freeze ready variant=frontend build_total_ms=333.515
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.323 plan_ms=20.900
+  - freeze ready variant=rest build_total_ms=311.766
+  - freeze option_reads epoch=346 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.051 plan_ms=18.528
+  - freeze ready variant=frontend build_total_ms=394.220
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.405 plan_ms=17.135
+  - freeze ready variant=rest build_total_ms=329.077
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.734 plan_ms=18.908
+  - freeze ready variant=frontend build_total_ms=314.587
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.474 plan_ms=17.834
+  - freeze ready variant=rest build_total_ms=314.095
+  - freeze option_reads epoch=350 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.832 plan_ms=18.229
+  - freeze ready variant=frontend build_total_ms=373.490
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.843 plan_ms=18.805
+  - freeze ready variant=rest build_total_ms=318.695
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.000 plan_ms=19.839
+  - freeze ready variant=frontend build_total_ms=326.687
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.033 plan_ms=20.669
+  - freeze ready variant=rest build_total_ms=317.726
+  - freeze option_reads epoch=356 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.100 plan_ms=19.216
+  - freeze ready variant=frontend build_total_ms=375.368
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.656 plan_ms=20.921
+  - freeze ready variant=rest build_total_ms=371.862
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.437 plan_ms=20.446
+  - freeze ready variant=frontend build_total_ms=405.345
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.285 plan_ms=20.815
+  - freeze ready variant=rest build_total_ms=340.975
+  - freeze option_reads epoch=362 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.151 plan_ms=19.625
+  - freeze ready variant=frontend build_total_ms=409.630
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.191 plan_ms=20.109
+  - freeze ready variant=rest build_total_ms=354.128
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=9.202 plan_ms=25.865
+  - freeze ready variant=frontend build_total_ms=388.676
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.405 plan_ms=22.299
+  - freeze ready variant=rest build_total_ms=536.278
+  - freeze option_reads epoch=366 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.248 plan_ms=90.328
+  - freeze ready variant=frontend build_total_ms=321.804
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.244 plan_ms=17.778
+  - freeze ready variant=rest build_total_ms=213.075
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.295 plan_ms=17.415
+  - freeze ready variant=frontend build_total_ms=267.328
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.379 plan_ms=18.165
+  - freeze ready variant=rest build_total_ms=276.887
+  - freeze option_reads epoch=372 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=9.069 plan_ms=22.959
+  - freeze ready variant=frontend build_total_ms=503.804
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.534 plan_ms=17.539
+  - freeze ready variant=rest build_total_ms=349.606
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.288 plan_ms=16.957
+  - freeze ready variant=frontend build_total_ms=349.341
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.463 plan_ms=17.759
+  - freeze ready variant=rest build_total_ms=329.718
+  - freeze option_reads epoch=377 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.638 plan_ms=20.889
+  - freeze ready variant=frontend build_total_ms=373.026
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.197 plan_ms=20.158
+  - freeze ready variant=rest build_total_ms=328.628
+  - freeze option_reads epoch=381 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.823 plan_ms=18.253
+  - freeze ready variant=frontend build_total_ms=350.559
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.376 plan_ms=17.283
+  - freeze ready variant=rest build_total_ms=328.356
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.530 plan_ms=18.323
+  - freeze ready variant=frontend build_total_ms=352.508
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.453 plan_ms=17.742
+  - freeze ready variant=rest build_total_ms=322.923
+  - freeze option_reads epoch=386 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.079 plan_ms=19.503
+  - freeze ready variant=frontend build_total_ms=344.842
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.816 plan_ms=19.093
+  - freeze ready variant=rest build_total_ms=328.599
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.548 plan_ms=17.740
+  - freeze ready variant=frontend build_total_ms=304.597
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.843 plan_ms=18.856
+  - freeze ready variant=rest build_total_ms=312.194
+  - freeze option_reads epoch=392 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.906 plan_ms=18.843
+  - freeze ready variant=frontend build_total_ms=380.648
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.142 plan_ms=19.001
+  - freeze ready variant=rest build_total_ms=342.175
+  - freeze option_reads epoch=396 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.865 plan_ms=20.983
+  - freeze ready variant=frontend build_total_ms=446.703
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.407 plan_ms=22.585
+  - freeze ready variant=rest build_total_ms=450.048
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.383 plan_ms=22.148
+  - freeze ready variant=frontend build_total_ms=522.276
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=5.671 plan_ms=16.100
+  - freeze ready variant=rest build_total_ms=315.265
+  - freeze option_reads epoch=407 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=9.994 plan_ms=95.460
+  - freeze ready variant=frontend build_total_ms=542.572
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.658 plan_ms=17.251
+  - freeze ready variant=rest build_total_ms=351.733
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.704 plan_ms=18.157
+  - freeze ready variant=frontend build_total_ms=332.461
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.604 plan_ms=17.602
+  - freeze ready variant=rest build_total_ms=323.764
+  - freeze option_reads epoch=416 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=76.258 plan_ms=89.073
+  - freeze ready variant=frontend build_total_ms=511.034
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.565 plan_ms=17.651
+  - freeze ready variant=rest build_total_ms=351.602
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.139 plan_ms=18.820
+  - freeze ready variant=frontend build_total_ms=339.978
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.861 plan_ms=19.327
+  - freeze ready variant=rest build_total_ms=337.444
+  - freeze option_reads epoch=425 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.980 plan_ms=19.118
+  - freeze ready variant=frontend build_total_ms=537.546
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.572 plan_ms=18.380
+  - freeze ready variant=rest build_total_ms=342.331
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.635 plan_ms=18.212
+  - freeze ready variant=frontend build_total_ms=351.500
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.779 plan_ms=18.341
+  - freeze ready variant=rest build_total_ms=326.175
+  - freeze option_reads epoch=436 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.091 plan_ms=18.544
+  - freeze ready variant=frontend build_total_ms=426.582
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.021 plan_ms=18.851
+  - freeze ready variant=rest build_total_ms=343.740
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.808 plan_ms=18.777
+  - freeze ready variant=frontend build_total_ms=322.782
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.533 plan_ms=17.750
+  - freeze ready variant=rest build_total_ms=317.703
+  - freeze option_reads epoch=446 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.132 plan_ms=19.372
+  - freeze ready variant=frontend build_total_ms=551.323
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.489 plan_ms=18.233
+  - freeze ready variant=rest build_total_ms=340.984
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.484 plan_ms=18.221
+  - freeze ready variant=frontend build_total_ms=353.278
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.755 plan_ms=18.821
+  - freeze ready variant=rest build_total_ms=330.128
+  - freeze option_reads epoch=456 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.243 plan_ms=19.351
+  - freeze ready variant=frontend build_total_ms=423.796
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.336 plan_ms=19.543
+  - freeze ready variant=rest build_total_ms=346.012
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.597 plan_ms=17.379
+  - freeze ready variant=frontend build_total_ms=356.304
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.280 plan_ms=17.507
+  - freeze ready variant=rest build_total_ms=317.197
+  - freeze option_reads epoch=466 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.068 plan_ms=18.790
+  - freeze ready variant=frontend build_total_ms=549.694
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.700 plan_ms=18.671
+  - freeze ready variant=rest build_total_ms=348.834
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.657 plan_ms=18.096
+  - freeze ready variant=frontend build_total_ms=351.879
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.574 plan_ms=18.137
+  - freeze ready variant=rest build_total_ms=317.826
+  - freeze option_reads epoch=476 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=79.860 plan_ms=93.160
+  - freeze ready variant=frontend build_total_ms=472.196
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.474 plan_ms=17.840
+  - freeze ready variant=rest build_total_ms=338.543
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.536 plan_ms=17.318
+  - freeze ready variant=frontend build_total_ms=352.421
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.510 plan_ms=16.902
+  - freeze ready variant=rest build_total_ms=323.924
+  - freeze option_reads epoch=483 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.982 plan_ms=18.594
+  - freeze ready variant=frontend build_total_ms=573.972
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.777 plan_ms=18.647
+  - freeze ready variant=rest build_total_ms=330.853
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.413 plan_ms=17.377
+  - freeze ready variant=frontend build_total_ms=323.981
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.282 plan_ms=17.053
+  - freeze ready variant=rest build_total_ms=312.007
+  - freeze option_reads epoch=492 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.159 plan_ms=22.102
+  - freeze ready variant=frontend build_total_ms=393.224
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.940 plan_ms=96.367
+  - freeze ready variant=rest build_total_ms=414.695
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.413 plan_ms=91.648
+  - freeze ready variant=frontend build_total_ms=328.536
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.466 plan_ms=17.401
+  - freeze ready variant=rest build_total_ms=325.014
+  - freeze option_reads epoch=500 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.616 plan_ms=20.649
+  - freeze ready variant=frontend build_total_ms=401.893
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.474 plan_ms=20.362
+  - freeze ready variant=rest build_total_ms=341.400
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.199 plan_ms=20.310
+  - freeze ready variant=frontend build_total_ms=314.619
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.393 plan_ms=20.458
+  - freeze ready variant=rest build_total_ms=387.949
+  - freeze option_reads epoch=508 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.298 plan_ms=20.643
+  - freeze ready variant=frontend build_total_ms=468.787
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=81.192 plan_ms=94.677
+  - freeze ready variant=rest build_total_ms=405.636
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.662 plan_ms=75.890
+  - freeze ready variant=frontend build_total_ms=314.171
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.216 plan_ms=78.805
+  - freeze ready variant=rest build_total_ms=316.233
+  - freeze option_reads epoch=520 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.542 plan_ms=20.444
+  - freeze ready variant=frontend build_total_ms=408.322
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.018 plan_ms=19.609
+  - freeze ready variant=rest build_total_ms=339.369
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.154 plan_ms=20.217
+  - freeze ready variant=frontend build_total_ms=312.758
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.626 plan_ms=100.618
+  - freeze ready variant=rest build_total_ms=340.951
+  - freeze option_reads epoch=529 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.360 plan_ms=22.551
+  - freeze ready variant=frontend build_total_ms=494.445
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=8.532 plan_ms=22.652
+  - freeze ready variant=rest build_total_ms=395.060
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.809 plan_ms=94.454
+  - freeze ready variant=frontend build_total_ms=413.073
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.292 plan_ms=19.517
+  - freeze ready variant=rest build_total_ms=343.112
+  - freeze option_reads epoch=539 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.382 plan_ms=19.963
+  - freeze ready variant=frontend build_total_ms=498.708
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=13.007 plan_ms=28.380
+  - freeze ready variant=rest build_total_ms=457.574
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=8.825 plan_ms=105.400
+  - freeze ready variant=frontend build_total_ms=537.672
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.372 plan_ms=15.994
+  - freeze ready variant=rest build_total_ms=401.106
+  - freeze option_reads epoch=551 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.536 plan_ms=18.423
+  - freeze ready variant=frontend build_total_ms=299.907
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.268 plan_ms=22.884
+  - freeze ready variant=rest build_total_ms=297.884
+  - freeze option_reads epoch=561 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.468 plan_ms=19.578
+  - freeze ready variant=frontend build_total_ms=430.959
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.195 plan_ms=19.854
+  - freeze ready variant=rest build_total_ms=357.797
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.732 plan_ms=19.034
+  - freeze ready variant=frontend build_total_ms=329.234
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.415 plan_ms=19.858
+  - freeze ready variant=rest build_total_ms=330.522
+  - freeze option_reads epoch=570 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.640 plan_ms=21.422
+  - freeze ready variant=frontend build_total_ms=408.498
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.341 plan_ms=19.831
+  - freeze ready variant=rest build_total_ms=353.940
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.722 plan_ms=18.721
+  - freeze ready variant=frontend build_total_ms=328.800
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.508 plan_ms=19.925
+  - freeze ready variant=rest build_total_ms=317.899
+  - freeze option_reads epoch=582 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.343 plan_ms=19.678
+  - freeze ready variant=frontend build_total_ms=392.390
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.714 plan_ms=20.933
+  - freeze ready variant=rest build_total_ms=350.306
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.023 plan_ms=19.410
+  - freeze ready variant=frontend build_total_ms=338.329
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.397 plan_ms=20.747
+  - freeze ready variant=rest build_total_ms=333.838
+  - freeze option_reads epoch=592 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.317 plan_ms=20.068
+  - freeze ready variant=frontend build_total_ms=480.615
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.141 plan_ms=19.324
+  - freeze ready variant=rest build_total_ms=346.446
+  - freeze option_reads epoch=601 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.636 plan_ms=20.377
+  - freeze ready variant=frontend build_total_ms=430.745
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.042 plan_ms=19.105
+  - freeze ready variant=rest build_total_ms=345.063
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.973 plan_ms=18.816
+  - freeze ready variant=frontend build_total_ms=333.070
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.855 plan_ms=19.109
+  - freeze ready variant=rest build_total_ms=313.919
+  - freeze option_reads epoch=611 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.135 plan_ms=19.028
+  - freeze ready variant=frontend build_total_ms=441.623
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=7.202 plan_ms=20.198
+  - freeze ready variant=rest build_total_ms=340.765
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.284 plan_ms=20.511
+  - freeze ready variant=frontend build_total_ms=340.423
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.914 plan_ms=18.505
+  - freeze ready variant=rest build_total_ms=329.390
+  - freeze option_reads epoch=621 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.072 plan_ms=18.716
+  - freeze ready variant=frontend build_total_ms=385.434
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.529 plan_ms=17.757
+  - freeze ready variant=rest build_total_ms=340.877
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.410 plan_ms=17.360
+  - freeze ready variant=frontend build_total_ms=317.858
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.510 plan_ms=17.290
+  - freeze ready variant=rest build_total_ms=323.967
+  - freeze option_reads epoch=631 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.893 plan_ms=18.719
+  - freeze ready variant=frontend build_total_ms=442.008
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.712 plan_ms=18.318
+  - freeze ready variant=rest build_total_ms=340.163
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.947 plan_ms=19.032
+  - freeze ready variant=frontend build_total_ms=325.115
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.500 plan_ms=18.189
+  - freeze ready variant=rest build_total_ms=318.403
+  - freeze option_reads epoch=642 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.152 plan_ms=95.582
+  - freeze ready variant=frontend build_total_ms=477.261
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.728 plan_ms=18.576
+  - freeze ready variant=rest build_total_ms=351.093
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.374 plan_ms=17.114
+  - freeze ready variant=frontend build_total_ms=360.819
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.304 plan_ms=17.399
+  - freeze ready variant=rest build_total_ms=324.214
+  - freeze option_reads epoch=652 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6199 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.997 plan_ms=19.264
+  - freeze ready variant=frontend build_total_ms=539.848
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.862 plan_ms=18.475
+  - freeze ready variant=rest build_total_ms=343.573
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.633 plan_ms=18.037
+  - freeze ready variant=frontend build_total_ms=324.808
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.373 plan_ms=17.100
+  - freeze ready variant=rest build_total_ms=318.166
+  - freeze option_reads epoch=662 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.025 plan_ms=90.008
+  - freeze ready variant=frontend build_total_ms=473.752
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.481 plan_ms=16.952
+  - freeze ready variant=rest build_total_ms=334.511
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.428 plan_ms=17.217
+  - freeze ready variant=frontend build_total_ms=344.993
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.731 plan_ms=18.212
+  - freeze ready variant=rest build_total_ms=338.773
+  - freeze option_reads epoch=673 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=7.064 plan_ms=19.793
+  - freeze ready variant=frontend build_total_ms=572.532
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.584 plan_ms=17.836
+  - freeze ready variant=rest build_total_ms=341.317
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.277 plan_ms=16.876
+  - freeze ready variant=frontend build_total_ms=351.422
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.504 plan_ms=17.862
+  - freeze ready variant=rest build_total_ms=331.926
+  - freeze option_reads epoch=681 names=381 prefixes=1 policy=selective
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.626 plan_ms=17.543
+  - freeze ready variant=frontend build_total_ms=472.898
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.825 plan_ms=18.141
+  - freeze ready variant=rest build_total_ms=339.249
+  - freeze build snapshot_max_obj_id=6200 frozen_arrays=20851 estimated_array_bytes=4304216 C=2142 O=4512 L=384 R=924 A=5626 classify_freeze_ms=6.144 plan_ms=16.291
+  - freeze ready variant=frontend build_total_ms=318.852
+  - freeze build snapshot_max_obj_id=6233 frozen_arrays=20946 estimated_array_bytes=4312784 C=2165 O=4531 L=384 R=927 A=5650 classify_freeze_ms=6.398 plan_ms=17.365
+  - freeze ready variant=rest build_total_ms=319.138
+  - freeze option_reads epoch=690 names=381 prefixes=1 policy=selective
+  - GC.run confirmed: True. [Full-GC memory snapshot](out/20261125-142955-e49948/heap-frozen/idle.txt), [memory split](out/20261125-142955-e49948/heap-frozen/memsplit.json)
+  - [1-client probe analysis](out/20261125-142955-e49948/heap-frozen/heapprobe-1.txt)
+  - [4-client probe analysis](out/20261125-142955-e49948/heap-frozen/heapprobe-4.txt)
+  - [8-client probe analysis](out/20261125-142955-e49948/heap-frozen/heapprobe-8.txt)

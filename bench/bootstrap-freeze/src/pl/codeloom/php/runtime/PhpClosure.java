@@ -1,0 +1,260 @@
+package pl.codeloom.php.runtime;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * A Closure object's payload: the function, the bound $this and class scope, and the captured `use` variables
+ * (values for by-value captures, PhpRefs for by-reference ones), in the order of the function's capture list.
+ * The PhpObject of class Closure that PHP code sees wraps one of these.
+ */
+public final class PhpClosure {
+    private final PhpFunction function;
+    private final PhpObject boundThis;
+    private final PhpClass scope;
+    private final Object[] captured;
+    /** For a closure of a missing method made with `$o->m(...)`: function is __call or __callStatic, this the name. */
+    private final TruffleString magicName;
+    /** Made by Closure::fromCallable() of a __call stand-in: no variadic parameter, so no named arguments. */
+    private boolean magicFixed;
+    /** The class static:: names in the closure without a $this (zend_closure's called_scope). */
+    private final PhpClass calledScope;
+    /** var_dump's #n and spl_object_id(), numbered with the objects. */
+    private final int id;
+    /** A closure's own `static` variables (each closure object has its own), by name; null if it declares none. */
+    private final Map<String, PhpRef> statics;
+
+    public PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, Object[] captured) {
+        this(function, boundThis, scope, captured, null);
+    }
+
+    public PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, Object[] captured,
+                      TruffleString magicName) {
+        this(function, boundThis, scope, boundThis != null ? boundThis.getPhpClass() : scope, captured, magicName);
+    }
+
+    public PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,
+                      Object[] captured, TruffleString magicName) {
+        this(function, boundThis, scope, calledScope, captured, magicName, PhpContext.get(null).nextObjectId(),
+                function.getClosureVariables() != null && function.getClosureVariables().length > captured.length
+                        ? new HashMap<>() : null);
+    }
+
+    private PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,
+                       Object[] captured, TruffleString magicName, int id, Map<String, PhpRef> statics) {
+        this(function, boundThis, scope, calledScope, captured, magicName, id, statics, true);
+    }
+
+    private PhpClosure(PhpFunction function, PhpObject boundThis, PhpClass scope, PhpClass calledScope,
+                       Object[] captured, TruffleString magicName, int id, Map<String, PhpRef> statics,
+                       boolean counted) {
+        this.function = function;
+        this.boundThis = boundThis;
+        this.scope = scope;
+        this.calledScope = calledScope;
+        this.captured = captured;
+        this.magicName = magicName;
+        this.id = id;
+        this.statics = statics;
+        this.counted = counted;
+        if (counted && boundThis != null) {
+            // zend_create_closure: the closure holds its $this
+            boundThis.addRef();
+        }
+        if (Census.AUDIT && counted) {
+            Census.track(this);
+        }
+    }
+
+    // ---- reference count (wiki/destructors.md, P1): a Closure is an object php-src counts ----
+
+    /** The slots and owning temporaries holding the closure. */
+    private int rc;
+    /** Whether it counts: not the stand-in Closure::call makes for one call, which shares this one's captures. */
+    private final boolean counted;
+    /** Its captures, $this and statics were released (zend_closure_free_storage ran). */
+    private boolean freed;
+
+    private record ClosurePlan(PhpFunction function, Object self, Object scope, Object called, Object[] captures,
+                               TruffleString magicName, boolean magicFixed, int id, boolean counted, int rc,
+                               boolean freed, BootstrapSnapshot.Table<String,PhpRef> statics)
+            implements BootstrapSnapshot.Plan<PhpClosure> {
+        public PhpClosure allocate(BootstrapSnapshot.Frame f) {
+            // ObjectPlan installs the saved $this count after all closure constructors have run.
+            return new PhpClosure(function, (PhpObject) f.value(self), (PhpClass) f.value(scope),
+                    (PhpClass) f.value(called), new Object[captures.length], magicName, id,
+                    statics == null ? null : new HashMap<>(), counted);
+        }
+        public void fill(PhpClosure c, BootstrapSnapshot.Frame f) {
+            for (int i = 0; i < captures.length; i++) c.captured[i] = f.value(captures[i]);
+            if (statics != null) statics.fill(c.statics, f);
+            c.magicFixed = magicFixed;
+            c.rc = rc;
+            c.freed = freed;
+        }
+    }
+
+    BootstrapSnapshot.Plan<PhpClosure> snapshot(BootstrapSnapshot.Builder b) {
+        return new ClosurePlan(function, b.value(boundThis), b.value(scope), b.value(calledScope),
+                b.values(captured), magicName, magicFixed, id, counted, rc, freed,
+                statics == null ? null : b.table(statics));
+    }
+
+    public void addRef() {
+        rc++;
+    }
+
+    /** A slot or an owning temporary gives the closure up: at zero it releases what it holds. */
+    public void release() {
+        if (--rc == 0 && counted) {
+            free();
+        }
+    }
+
+    /** An owning temporary's count moves to the slot about to store it (no event), as PhpObject.disown. */
+    public void disown() {
+        rc--;
+    }
+
+    public int refcount() {
+        return rc;
+    }
+
+    boolean isFreed() {
+        return freed;
+    }
+
+    /** zend_closure_free_storage: the static variables, the captured values and $this let go. */
+    @TruffleBoundary
+    private void free() {
+        if (freed) {
+            return;
+        }
+        freed = true;
+        if (statics != null) {
+            for (PhpRef ref : statics.values()) {
+                ref.unbind();
+            }
+        }
+        for (Object value : captured) {
+            if (value instanceof PhpRef ref) {
+                ref.unbind();
+            } else if (value instanceof PhpArray array) {
+                array.removeHolder();
+            } else {
+                Refcount.dec(value);
+            }
+        }
+        if (boundThis != null) {
+            boundThis.release();
+        }
+    }
+
+    /** Whether the closure keeps static variables of its own: a closure (not a fake one) that declares some. */
+    public boolean hasStatics() {
+        return statics != null;
+    }
+
+    /** The closure's static variables' references, for the refcount census; empty if it has none. */
+    Iterable<PhpRef> staticRefs() {
+        return statics == null ? java.util.List.of() : statics.values();
+    }
+
+    /** The closure's `static $name`, or null before its first initialization. */
+    @TruffleBoundary
+    public PhpRef findStatic(String name) {
+        return statics.get(name);
+    }
+
+    @TruffleBoundary
+    public PhpRef createStatic(String name, Object initial) {
+        PhpRef ref = new PhpRef(initial);
+        ref.bind();
+        statics.put(name, ref);
+        return ref;
+    }
+
+    /** A copy of another closure's static variables' values (zend_create_closure_ex's zend_array_dup). */
+    @TruffleBoundary
+    public void copyStatics(PhpClosure from) {
+        if (statics != null && from.statics != null) {
+            for (Map.Entry<String, PhpRef> entry : from.statics.entrySet()) {
+                createStatic(entry.getKey(), entry.getValue().get());
+            }
+        }
+    }
+
+    /**
+     * A closure made where it is declared (ZEND_DECLARE_LAMBDA_FUNCTION), from the frame's $this and static class:
+     * its called scope is the $this's class, else the frame's static class; a static closure binds no $this.
+     */
+    public static PhpClosure declared(PhpFunction function, boolean isStatic, Object frameThis, Object frameStatic,
+                                      PhpClass scope, Object[] captured) {
+        PhpObject self = frameThis instanceof PhpObject object ? object : null;
+        PhpClass calledScope = self != null ? self.getPhpClass() : frameStatic instanceof PhpClass c ? c : null;
+        return new PhpClosure(function, isStatic ? null : self, scope, calledScope, captured, null);
+    }
+
+    /** The same closure bound to another $this and scope for one call (Closure::call): no new object. */
+    public PhpClosure rebound(PhpObject newThis, PhpClass newScope) {
+        PhpClosure rebound = new PhpClosure(function, newThis, newScope, newThis.getPhpClass(), captured, magicName,
+                id, statics, false);
+        rebound.magicFixed = magicFixed;
+        return rebound;
+    }
+
+    /**
+     * Closure::fromCallable() of a method __call stands in for: php-src's closure of it takes no named arguments
+     * (its zend_closure_call_magic has no variadic arg_info), unlike `$obj->missing(...)`'s, whose variadic
+     * parameter collects them.
+     */
+    public void fixMagicParameters() {
+        magicFixed = true;
+    }
+
+    /** Whether the closure's __call stand-in has a variadic parameter (see fixMagicParameters). */
+    public boolean isMagicVariadic() {
+        return !magicFixed;
+    }
+
+    /** The class static:: names in a call of the closure: its $this's, else its called scope. */
+    public PhpClass staticClass() {
+        return boundThis != null ? boundThis.getPhpClass() : calledScope;
+    }
+
+    public PhpClass getCalledScope() {
+        return calledScope;
+    }
+
+    public int id() {
+        return id;
+    }
+
+    public TruffleString getMagicName() {
+        return magicName;
+    }
+
+    public PhpFunction getFunction() {
+        return function;
+    }
+
+    public PhpObject getBoundThis() {
+        return boundThis;
+    }
+
+    public PhpClass getScope() {
+        return scope;
+    }
+
+    public int getCaptureCount() {
+        return captured.length;
+    }
+
+    public Object getCaptured(int index) {
+        return captured[index];
+    }
+}

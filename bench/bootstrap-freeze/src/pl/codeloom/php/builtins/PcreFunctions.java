@@ -1,0 +1,1346 @@
+package pl.codeloom.php.builtins;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.strings.TruffleString;
+import pl.codeloom.php.PhpContext;
+import pl.codeloom.php.ffi.NativeLibrary;
+import pl.codeloom.php.runtime.ByteBuilder;
+import pl.codeloom.php.runtime.Callables;
+import pl.codeloom.php.runtime.Convert;
+import pl.codeloom.php.runtime.NativeClock;
+import pl.codeloom.php.runtime.PhpArray;
+import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpNull;
+import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.SourceLocation;
+import pl.codeloom.php.runtime.Str;
+
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * preg_* on the system PCRE2 through FFM (D7), mirroring ext/pcre/php_pcre.c: the same delimiter and modifier
+ * parsing, a per-regex cache of compiled and JIT-ed patterns, the same empty-match stepping and error codes.
+ */
+public final class PcreFunctions {
+    PcreFunctions() {
+    }
+
+    // pcre2.h
+    private static final int CASELESS = 0x00000008;
+    private static final int DOLLAR_ENDONLY = 0x00000010;
+    private static final int DOTALL = 0x00000020;
+    private static final int DUPNAMES = 0x00000040;
+    private static final int EXTENDED = 0x00000080;
+    private static final int MULTILINE = 0x00000400;
+    private static final int NO_AUTO_CAPTURE = 0x00002000;
+    private static final int UCP = 0x00020000;
+    private static final int UNGREEDY = 0x00040000;
+    private static final int UTF = 0x00080000;
+    private static final int ANCHORED = 0x80000000;
+    private static final int NO_UTF_CHECK = 0x40000000;
+    private static final int NOTEMPTY_ATSTART = 0x00000008;
+    private static final int JIT_COMPLETE = 1;
+    private static final int INFO_CAPTURECOUNT = 4;
+    private static final int INFO_JITSIZE = 10;
+    private static final int NEVER_BACKSLASH_C = 0x00100000;
+    private static final int INFO_NAMECOUNT = 17;
+    private static final int INFO_NAMEENTRYSIZE = 18;
+    private static final int INFO_NAMETABLE = 19;
+    private static final int ERROR_NOMATCH = -1;
+    private static final int EXTRA_CASELESS_RESTRICT = 0x00000080;
+
+    // PHP's preg_* flags and preg_last_error() codes
+    private static final long PATTERN_ORDER = 1;
+    private static final long SET_ORDER = 2;
+    private static final long OFFSET_CAPTURE = 256;
+    private static final long UNMATCHED_AS_NULL = 512;
+    private static final long SPLIT_NO_EMPTY = 1;
+    private static final long SPLIT_DELIM_CAPTURE = 2;
+    private static final long SPLIT_OFFSET_CAPTURE = 4;
+    private static final String[] ERROR_MESSAGES = {"No error", "Internal error",
+            "Backtrack limit exhausted", "Recursion limit exhausted",
+            "Malformed UTF-8 characters, possibly incorrectly encoded",
+            "The offset did not correspond to the beginning of a valid UTF-8 code point", "JIT stack limit exhausted"};
+
+    /**
+     * Compiled patterns shared by every context of the engine, by regex string (php-src's per-process pcre
+     * cache, with its 4096-entry bound): a compiled pattern and its JIT code are read-only while matching, so
+     * threads share them. Past the bound a pattern is compiled for the context alone and freed with it.
+     */
+    public static final class Patterns {
+        private static final int LIMIT = 4096;
+        private final java.util.concurrent.ConcurrentHashMap<TruffleString, Compiled> compiled =
+                new java.util.concurrent.ConcurrentHashMap<>();
+    }
+
+    /** A pattern as compiled: the code, its group names, and how it was compiled. */
+    private record Compiled(MemorySegment code, boolean jit, boolean utf, int groups, TruffleString[] names,
+                            byte[] pattern, int options, boolean shared, boolean verbs) {
+    }
+
+    /** This context's view of the compiled patterns, by regex string, with their match blocks. */
+    private final Map<TruffleString, Regex> regexes = new HashMap<>();
+    /** This context's match context and JIT stack (PCRE2 needs one stack per thread matching), made on first use. */
+    private MemorySegment matchContext;
+    private MemorySegment jitStack;
+    /** Parsed preg_replace replacement strings. */
+    private final Map<TruffleString, Template> templates = new HashMap<>();
+    private final SubjectCache subjects = new SubjectCache();
+    int lastError; // PHP-visible status, captured separately from native pattern caches.
+
+    /** A compiled pattern with its group names and a reusable match block (php-src's mdata, guarded the same way). */
+    private static final class Regex {
+        final Compiled compiled;
+        final MemorySegment code;
+        /** JIT-compiled: matches without a UTF check go through pcre2_jit_match, as php-src does. */
+        final boolean jit;
+        final boolean utf;
+        final int groups;
+        final TruffleString[] names;
+        /** Whether there are named groups and no two share a name. */
+        final boolean namedDistinct;
+        /** Whether the pattern may have backtracking verbs, so a match may have a mark. */
+        final boolean verbs;
+        final MemorySegment matchData;
+        final MemorySegment ovector;
+        boolean matchDataInUse;
+        /** The pattern without delimiters and its compile options, for PcreRecorder. */
+        byte[] pattern;
+        int options;
+
+        Regex(Compiled compiled) {
+            this.compiled = compiled;
+            this.code = compiled.code();
+            this.jit = compiled.jit();
+            this.utf = compiled.utf();
+            this.groups = compiled.groups();
+            this.names = compiled.names();
+            java.util.Set<TruffleString> seen = new java.util.HashSet<>();
+            boolean distinct = true;
+            for (TruffleString name : names) {
+                distinct &= name == null || seen.add(name);
+            }
+            this.namedDistinct = !seen.isEmpty() && distinct;
+            this.verbs = compiled.verbs();
+            this.pattern = compiled.pattern();
+            this.options = compiled.options();
+            this.matchData = Native.createMatchData(code);
+            this.ovector = Native.ovector(matchData, groups);
+        }
+    }
+
+    /**
+     * Where subjects live in native memory, cached by the identity of their (never modified) byte arrays: the block
+     * parser and the tag processor call preg_match on one document thousands of times at growing offsets, and it is
+     * copied once. Entries own reusable native buffers, so a new subject costs a copy, not an allocation: a fresh
+     * Arena.ofAuto segment per subject cost ~6 us for a 10 KB post (zeroing, cleaner, reference processing), thirty
+     * times the match itself, and preg_replace chains produce a new subject per call. An entry in use by an outer
+     * call (a preg_replace_callback callback calling preg_* again) is never reused. Small subjects (most calls)
+     * skip the cache: they are copied into a free scratch buffer, slot -1 - index. Scratch buffers are leased and
+     * released one by one, not as a stack: a fiber suspended in a preg_replace_callback callback keeps its buffer
+     * while other code, or another fiber, matches and finishes.
+     *
+     * <p>Buffers come from automatic arenas, never shared ones: a downcall acquires and releases a shared
+     * arena's session around the call, which took a 13-byte match from 12 to 23 ns. They go with the context.
+     */
+    private static final class SubjectCache {
+        private static final int LARGE = 4096;
+        private MemorySegment[] scratch = new MemorySegment[4];
+        private boolean[] scratchInUse = new boolean[4];
+        private byte[][] subjects = new byte[8][];
+        private MemorySegment[] buffers = new MemorySegment[8];
+        private int[] users = new int[8];
+        /** Whether a match from offset 0 has found the entry's subject valid UTF-8 (php-src's IS_STR_VALID_UTF8). */
+        private boolean[] valid = new boolean[8];
+        private int next;
+
+        /** The entry holding the subject's native copy (copied in unless already there); release it after use. */
+        int acquire(byte[] subject) {
+            if (subject.length < LARGE) {
+                return acquireScratch(subject);
+            }
+            for (int i = 0; i < subjects.length; i++) {
+                if (subjects[i] == subject) {
+                    users[i]++;
+                    return i;
+                }
+            }
+            int slot = unusedSlot();
+            if (buffers[slot] == null || buffers[slot].byteSize() < subject.length) {
+                long size = Math.max(256, Integer.highestOneBit(Math.max(1, subject.length)) * 2L);
+                buffers[slot] = Arena.ofAuto().allocate(size);
+            }
+            MemorySegment.copy(subject, 0, buffers[slot], ValueLayout.JAVA_BYTE, 0, subject.length);
+            subjects[slot] = subject;
+            users[slot] = 1;
+            valid[slot] = false;
+            return slot;
+        }
+
+        private int acquireScratch(byte[] subject) {
+            int index = 0;
+            while (index < scratch.length && scratchInUse[index]) {
+                index++;
+            }
+            if (index == scratch.length) {
+                scratch = Arrays.copyOf(scratch, index * 2);
+                scratchInUse = Arrays.copyOf(scratchInUse, index * 2);
+            }
+            MemorySegment buffer = scratch[index];
+            if (buffer == null || buffer.byteSize() < subject.length) {
+                buffer = Arena.ofAuto().allocate(LARGE);
+                scratch[index] = buffer;
+            }
+            MemorySegment.copy(subject, 0, buffer, ValueLayout.JAVA_BYTE, 0, subject.length);
+            scratchInUse[index] = true;
+            return -1 - index;
+        }
+
+        MemorySegment segment(int slot) {
+            return slot >= 0 ? buffers[slot] : scratch[-1 - slot];
+        }
+
+        void release(int slot) {
+            if (slot >= 0) {
+                users[slot]--;
+            } else {
+                scratchInUse[-1 - slot] = false;
+            }
+        }
+
+        private int unusedSlot() {
+            for (int k = 0; k < users.length; k++) {
+                int i = (next + k) % users.length;
+                if (users[i] == 0) {
+                    next = (i + 1) % users.length;
+                    return i;
+                }
+            }
+            int slot = users.length;
+            subjects = Arrays.copyOf(subjects, slot * 2);
+            buffers = Arrays.copyOf(buffers, slot * 2);
+            users = Arrays.copyOf(users, slot * 2);
+            valid = Arrays.copyOf(valid, slot * 2);
+            next = slot + 1;
+            return slot;
+        }
+    }
+
+    /** One preg call's view of a subject (its native copy) and the current match block. */
+    private static final class Matcher implements AutoCloseable {
+        final Regex regex;
+        final byte[] subject;
+        final MemorySegment nativeSubject;
+        final int subjectSlot;
+        final MemorySegment matchData;
+        final MemorySegment ovector;
+        final boolean ownsMatchData;
+        final SubjectCache subjects;
+        final MemorySegment matchContext;
+
+        Matcher(PcreFunctions pcre, Regex regex, byte[] subject) {
+            this.regex = regex;
+            this.subject = subject;
+            this.subjects = pcre.subjects;
+            this.matchContext = pcre.matchContext();
+            this.subjectSlot = subjects.acquire(subject);
+            this.nativeSubject = subjects.segment(subjectSlot);
+            if (regex.matchDataInUse) {
+                ownsMatchData = true;
+                matchData = Native.createMatchData(regex.code);
+                ovector = Native.ovector(matchData, regex.groups);
+            } else {
+                ownsMatchData = false;
+                regex.matchDataInUse = true;
+                matchData = regex.matchData;
+                ovector = regex.ovector;
+            }
+        }
+
+        int match(long start, int options) {
+            if (PcreRecorder.ENABLED) {
+                PcreRecorder.match(regex, regex.pattern, regex.options, regex.jit, subject, subject.length, start,
+                        options);
+            }
+            int rc;
+            if (!NativeClock.ENABLED) {
+                rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                        matchContext);
+            } else {
+                long t0 = System.nanoTime();
+                rc = Native.match(regex.code, regex.jit, nativeSubject, subject.length, start, options, matchData,
+                        matchContext);
+                long t1 = System.nanoTime();
+                NativeClock.add(t1 - t0, System.nanoTime() - t1);
+            }
+            // PCRE2 checked the UTF-8 from offset 0 to the end and found no error: the whole subject is valid
+            if (start == 0 && (options & NO_UTF_CHECK) == 0 && (rc >= 0 || rc == ERROR_NOMATCH) && subjectSlot >= 0) {
+                subjects.valid[subjectSlot] = true;
+            }
+            return rc;
+        }
+
+        int start(int group) {
+            return offset(2 * group);
+        }
+
+        int end(int group) {
+            return offset(2 * group + 1);
+        }
+
+        private int offset(int index) {
+            long value = ovector.getAtIndex(ValueLayout.JAVA_LONG, index);
+            return value == -1 ? -1 : (int) value;
+        }
+
+        /**
+         * The options for a call's first match: a /u pattern lets PCRE2 check the UTF-8, unless the subject is known
+         * valid and start isn't inside a character (php-src's is_known_valid_utf8). Later matches don't check.
+         */
+        int firstOptions(long start) {
+            boolean known = regex.utf && subjectSlot >= 0 && subjects.valid[subjectSlot] && (start < subject.length
+                    ? (subject[(int) start] & 0xC0) != 0x80 : start == subject.length);
+            return regex.utf && !known ? 0 : NO_UTF_CHECK;
+        }
+
+        /** calc_unit_len: one byte, or one UTF-8 character in /u mode. */
+        int unitLength(int position) {
+            if (!regex.utf) {
+                return 1;
+            }
+            int end = position + 1;
+            while (end < subject.length && (subject[end] & 0xC0) == 0x80) {
+                end++;
+            }
+            return end - position;
+        }
+
+        @Override
+        public void close() {
+            if (ownsMatchData) {
+                Native.free(Native.MATCH_DATA_FREE, matchData);
+            } else {
+                regex.matchDataInUse = false;
+            }
+            subjects.release(subjectSlot);
+        }
+    }
+
+    private MemorySegment matchContext() {
+        MemorySegment context = matchContext;
+        if (context == null) {
+            jitStack = Native.jitStack();
+            context = Native.matchContext(jitStack);
+            matchContext = context;
+        }
+        return context;
+    }
+
+    /** Frees this context's native memory: match blocks, the match context, patterns not shared. */
+    void close() {
+        for (Regex regex : regexes.values()) {
+            Native.free(Native.MATCH_DATA_FREE, regex.matchData);
+            if (!regex.compiled.shared()) {
+                Native.free(Native.CODE_FREE, regex.code);
+            }
+        }
+        regexes.clear();
+        if (matchContext != null) {
+            Native.free(Native.MATCH_CONTEXT_FREE, matchContext);
+            Native.free(Native.JIT_STACK_FREE, jitStack);
+            matchContext = null;
+        }
+    }
+
+    /** This context's instance: its pattern caches and preg_last_error(). */
+    private static PcreFunctions pcre(PhpContext context) {
+        return context.builtinState().pcre;
+    }
+
+    /** Declares the preg_* functions; their state is the calling context's instance. */
+    static void register(Registry r) {
+        r.fn("preg_match", "001", (context, a) -> pcre(context).match(a, false));
+        r.fn("preg_match_all", "001", (context, a) -> pcre(context).match(a, true));
+        r.fn("preg_replace", "00001", (context, a) -> pcre(context).replace(context, a, false));
+        r.fn("preg_replace_callback", "00001", (context, a) -> pcre(context).replace(context, a, true));
+        r.fn("preg_split", (context, a) -> pcre(context).split(Args.string(context, a, 0, "preg_split", "pattern", false),
+                Args.string(context, a, 1, "preg_split", "subject", false), Args.lng(a, 2, -1), Args.lng(a, 3, 0)));
+        r.fn("preg_quote", a -> quote(Args.str(a, 0), Args.get(a, 1)));
+        r.fn("preg_grep", (context, a) -> pcre(context).grep(Args.string(context, a, 0, "preg_grep", "pattern", false),
+                Args.array(a, 1, "preg_grep", "array"), Args.lng(a, 2, 0)));
+        r.fn("preg_last_error", (context, a) -> (long) pcre(context).lastError);
+        r.fn("preg_last_error_msg", (context, a) -> Str.of(ERROR_MESSAGES[pcre(context).lastError]));
+    }
+
+    /** The measurement functions of bench/gate1/run.php (php.Debug). */
+    static void registerDebug(Registry r) {
+        r.fn("truffle_native_ns", a -> NativeClock.nanos());
+        if (PcreRecorder.ENABLED) {
+            r.fn("truffle_pcre_record", a -> {
+                PcreRecorder.section(Str.java(Args.str(a, 0)));
+                return PhpNull.NULL;
+            });
+        }
+    }
+
+    /** The parsed replacement string (cached; bounded, as one-off replacements would otherwise pile up). */
+    private Template template(TruffleString source) {
+        Template cached = templates.get(source);
+        if (cached == null) {
+            cached = Template.parse(Str.readBytes(source));
+            if (templates.size() > 4096) {
+                templates.clear();
+            }
+            templates.put(source, cached);
+        }
+        return cached;
+    }
+
+    // ---- compiling ----
+
+    /** A pattern php-src refuses to compile; the message is its warning's. */
+    private static final class BadPattern extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        BadPattern(String message) {
+            super(message, null, false, false);
+        }
+    }
+
+    /**
+     * pcre_get_compiled_regex_cache: the compiled pattern, or null (preg_last_error() PREG_INTERNAL_ERROR) for one
+     * that doesn't compile, after the function's warning.
+     */
+    private Regex compile(TruffleString regexString, String function) {
+        return compile(regexString, function, null);
+    }
+
+    /** compile; for a pattern that doesn't compile, warning[0] gets the message of php-src's warning instead. */
+    @TruffleBoundary
+    private Regex compile(TruffleString regexString, String function, String[] warning) {
+        Regex cached = regexes.get(regexString);
+        if (cached != null) {
+            return cached;
+        }
+        Patterns patterns = PhpContext.get(null).getLanguage().pcrePatterns();
+        Compiled compiled = patterns.compiled.get(regexString);
+        if (compiled == null) {
+            try {
+                compiled = compileNew(regexString, patterns.compiled.size() < Patterns.LIMIT);
+            } catch (BadPattern e) {
+                lastError = 1;
+                if (warning != null) {
+                    warning[0] = e.getMessage();
+                } else {
+                    ErrorFunctions.raise(PhpContext.get(null), ErrorFunctions.E_WARNING,
+                            Str.of(function + "(): " + e.getMessage()), SourceLocation.current());
+                }
+                return null;
+            }
+            if (compiled.shared()) {
+                Compiled raced = patterns.compiled.putIfAbsent(regexString, compiled);
+                if (raced != null) {
+                    Native.free(Native.CODE_FREE, compiled.code());
+                    compiled = raced;
+                }
+            }
+        }
+        Regex regex = new Regex(compiled);
+        regexes.put(regexString, regex);
+        return regex;
+    }
+
+    private static Compiled compileNew(TruffleString regexString, boolean shared) {
+        byte[] regex = Str.readBytes(regexString);
+        int p = 0;
+        while (p < regex.length && isSpace(regex[p])) {
+            p++;
+        }
+        if (p == regex.length) {
+            throw new BadPattern("Empty regular expression");
+        }
+        byte startDelimiter = regex[p];
+        if (Character.isLetterOrDigit(startDelimiter) || startDelimiter == '\\' || startDelimiter == 0) {
+            throw new BadPattern("Delimiter must not be alphanumeric, backslash, or NUL byte");
+        }
+        int bracket = "([{<".indexOf(startDelimiter);
+        byte endDelimiter = bracket >= 0 ? (byte) ")]}>".charAt(bracket) : startDelimiter;
+        int patternStart = ++p;
+        int depth = 1;
+        while (p < regex.length) {
+            if (regex[p] == '\\' && p + 1 < regex.length) {
+                p++;
+            } else if (regex[p] == endDelimiter && (bracket < 0 || --depth <= 0)) {
+                break;
+            } else if (bracket >= 0 && regex[p] == startDelimiter) {
+                depth++;
+            }
+            p++;
+        }
+        if (p >= regex.length) {
+            throw new BadPattern("No ending " + (bracket < 0 ? "" : "matching ") + "delimiter '" + (char) endDelimiter
+                    + "' found");
+        }
+        int patternEnd = p++;
+        int options = 0;
+        int extra = 0;
+        for (; p < regex.length; p++) {
+            switch (regex[p]) {
+                case 'i' -> options |= CASELESS;
+                case 'm' -> options |= MULTILINE;
+                case 's' -> options |= DOTALL;
+                case 'x' -> options |= EXTENDED;
+                case 'A' -> options |= ANCHORED;
+                case 'D' -> options |= DOLLAR_ENDONLY;
+                case 'U' -> options |= UNGREEDY;
+                case 'u' -> options |= UTF | UCP | NEVER_BACKSLASH_C;
+                case 'J' -> options |= DUPNAMES;
+                case 'n' -> options |= NO_AUTO_CAPTURE;
+                case 'r' -> extra |= EXTRA_CASELESS_RESTRICT;
+                case 'S', 'X', ' ', '\n', '\r' -> {
+                }
+                case 0 -> throw new BadPattern("NUL byte is not a valid modifier");
+                default -> throw new BadPattern("Unknown modifier '" + (char) regex[p] + "'");
+            }
+        }
+        byte[] pattern = new byte[patternEnd - patternStart];
+        System.arraycopy(regex, patternStart, pattern, 0, pattern.length);
+        long t0 = NativeClock.ENABLED ? System.nanoTime() : 0;
+        MemorySegment code = Native.compile(pattern, options, extra);
+        int groups = Native.info(code, INFO_CAPTURECOUNT) + 1;
+        boolean jit = Native.jitCompile(code);
+        if (NativeClock.ENABLED) {
+            NativeClock.addCompile(System.nanoTime() - t0);
+        }
+        return new Compiled(code, jit, (options & UTF) != 0, groups, Native.names(code, groups), pattern, options,
+                shared, StringFunctions.indexOf(pattern, new byte[]{'(', '*'}, 0, false) >= 0);
+    }
+
+    private static boolean isSpace(byte b) {
+        return b == ' ' || b >= 9 && b <= 13;
+    }
+
+    /** pcre_handle_exec_error: maps a PCRE2 match error to preg_last_error(). */
+    private void execError(int rc) {
+        if (rc == -47) {
+            lastError = 2;
+        } else if (rc == -53) {
+            lastError = 3;
+        } else if (rc <= -3 && rc >= -23) {
+            lastError = 4;
+        } else if (rc == -36) {
+            lastError = 5;
+        } else if (rc == -46) {
+            lastError = 6;
+        } else {
+            lastError = 1;
+        }
+    }
+
+    // ---- match values ----
+
+    private static Object matchValue(Matcher m, int group, long flags) {
+        int start = m.start(group);
+        if (start < 0) {
+            return (flags & UNMATCHED_AS_NULL) != 0 ? PhpNull.NULL : Str.EMPTY;
+        }
+        return Str.of(m.subject, start, m.end(group) - start);
+    }
+
+    private static Object entry(Matcher m, int group, boolean present, long flags) {
+        Object value = present ? matchValue(m, group, flags)
+                : (flags & UNMATCHED_AS_NULL) != 0 ? PhpNull.NULL : Str.EMPTY;
+        if ((flags & OFFSET_CAPTURE) == 0) {
+            return value;
+        }
+        return PhpArray.list(value, present ? (long) m.start(group) : -1L);
+    }
+
+    /**
+     * populate_subpat_array: groups up to the last one that matched, plus all of them with UNMATCHED_AS_NULL. With
+     * named groups of distinct names the hash is made at its size; a name used twice (?J) takes put()'s path.
+     */
+    private static PhpArray groups(Matcher m, int count, long flags) {
+        int last = (flags & UNMATCHED_AS_NULL) != 0 ? m.regex.groups : count;
+        if (m.regex.namedDistinct) {
+            TruffleString[] names = m.regex.names;
+            int entries = last;
+            for (int i = 0; i < last; i++) {
+                entries += names[i] != null ? 1 : 0;
+            }
+            PhpArray hash = PhpArray.ofHashCapacity(entries);
+            for (int i = 0; i < last; i++) {
+                Object value = entry(m, i, i < count, flags);
+                if (names[i] != null) {
+                    hash.addEntry(names[i], PhpArray.hashOf(names[i]), value);
+                }
+                long index = i;
+                hash.addEntry(index, PhpArray.hashOf(index), value);
+            }
+            return mark(m, hash);
+        }
+        PhpArray result = new PhpArray();
+        for (int i = 0; i < last; i++) {
+            Object value = entry(m, i, i < count, flags);
+            // add_named: of groups sharing a name (?J), the one that matched, else the first
+            if (m.regex.names[i] != null && (i < count && m.start(i) >= 0 || !result.containsKey(m.regex.names[i]))) {
+                result.put(m.regex.names[i], value);
+            }
+            result.append(value);
+        }
+        return mark(m, result);
+    }
+
+    private static final TruffleString MARK = Str.of("MARK");
+
+    /** The match's mark under "MARK", as populate_subpat_array adds it. */
+    private static PhpArray mark(Matcher m, PhpArray groups) {
+        TruffleString mark = m.regex.verbs ? Native.mark(m.matchData) : null;
+        if (mark != null) {
+            groups.put(MARK, mark);
+        }
+        return groups;
+    }
+
+    // ---- ext/filter's matches ----
+
+    /**
+     * FILTER_VALIDATE_REGEXP's and FILTER_VALIDATE_EMAIL's match (pcre_get_compiled_regex, then pcre2_match from
+     * the start with no options, so a /u pattern checks the subject's UTF-8): 1 on a match, 0 on none or a match
+     * error (which, unlike preg_*'s, leaves preg_last_error() alone), -1 when the pattern doesn't compile, with the
+     * message of php-src's warning in warning[0].
+     */
+    @TruffleBoundary
+    int filterMatch(TruffleString regexString, TruffleString subject, String[] warning) {
+        Regex regex = compile(regexString, null, warning);
+        if (regex == null) {
+            return -1;
+        }
+        try (Matcher m = new Matcher(this, regex, Str.readBytes(subject))) {
+            return m.match(0, 0) >= 0 ? 1 : 0;
+        }
+    }
+
+    // ---- preg_match / preg_match_all ----
+
+    @TruffleBoundary
+    private Object match(Object[] a, boolean global) {
+        String function = global ? "preg_match_all" : "preg_match";
+        PhpContext context = PhpContext.get(null);
+        TruffleString pattern = Args.string(context, a, 0, function, "pattern", false);
+        byte[] subject = Str.readBytes(Args.string(context, a, 1, function, "subject", false));
+        PhpRef matchesRef = Args.has(a, 2) ? Args.ref(a, 2) : null;
+        long flags = Args.has(a, 3) ? Args.integer(context, a, 3, function, "flags", "int") : 0;
+        long offset = Args.has(a, 4) ? Args.integer(context, a, 4, function, "offset", "int") : 0;
+        if (offset == Long.MIN_VALUE) {
+            throw new PhpError("ValueError", function + "(): Argument #5 ($offset) must be greater than "
+                    + Long.MIN_VALUE);
+        }
+        Regex regex = compile(pattern, function);
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
+        if (matchesRef != null) {
+            matchesRef.set(new PhpArray());
+        }
+        long order = global ? PATTERN_ORDER : 0;
+        if ((flags & 0xFF) != 0) {
+            order = flags & 0xFF;
+        }
+        if (global ? order < PATTERN_ORDER || order > SET_ORDER : order != 0) {
+            throw new PhpError("ValueError", function + "(): Argument #4 ($flags) must be a PREG_* constant");
+        }
+        flags &= ~0xFFL;
+        lastError = 0;
+        if (offset < 0) {
+            offset = Math.max(0, subject.length + offset);
+        }
+        if (offset > subject.length) {
+            lastError = 1;
+            if (matchesRef != null) {
+                matchesRef.set(new PhpArray());
+            }
+            return Boolean.FALSE;
+        }
+        PhpArray[] sets = null;
+        PhpArray marks = null;
+        PhpArray setOrder = null;
+        PhpArray single = null;
+        if (global && order == PATTERN_ORDER) {
+            sets = new PhpArray[regex.groups];
+            for (int i = 0; i < sets.length; i++) {
+                sets[i] = new PhpArray();
+            }
+        } else if (global) {
+            setOrder = new PhpArray();
+        }
+        long matched = 0;
+        try (Matcher m = new Matcher(this, regex, subject)) {
+            long start = offset;
+            int rc = m.match(start, m.firstOptions(start));
+            while (true) {
+                if (rc >= 0) {
+                    matched++;
+                    if (matchesRef != null) {
+                        if (sets != null) {
+                            for (int i = 0; i < sets.length; i++) {
+                                sets[i].append(entry(m, i, i < rc, flags));
+                            }
+                            TruffleString mark = regex.verbs ? Native.mark(m.matchData) : null;
+                            if (mark != null) {
+                                if (marks == null) {
+                                    marks = new PhpArray();
+                                }
+                                marks.put(matched - 1, mark);
+                            }
+                        } else if (setOrder != null) {
+                            setOrder.append(groups(m, rc, flags));
+                        } else {
+                            single = groups(m, rc, flags);
+                        }
+                    }
+                    if (!global) {
+                        break;
+                    }
+                    int matchStart = m.start(0);
+                    start = m.end(0);
+                    if (start == matchStart) {
+                        rc = m.match(start, NO_UTF_CHECK | NOTEMPTY_ATSTART | ANCHORED);
+                        if (rc >= 0) {
+                            continue;
+                        }
+                        if (rc != ERROR_NOMATCH) {
+                            execError(rc);
+                            break;
+                        }
+                        if (start >= subject.length) {
+                            break;
+                        }
+                        start += m.unitLength((int) start);
+                    }
+                } else if (rc == ERROR_NOMATCH) {
+                    break;
+                } else {
+                    execError(rc);
+                    break;
+                }
+                rc = m.match(start, NO_UTF_CHECK);
+            }
+        }
+        if (matchesRef != null) {
+            if (sets != null) {
+                PhpArray result = new PhpArray();
+                for (int i = 0; i < sets.length; i++) {
+                    if (regex.names[i] != null) {
+                        result.put(regex.names[i], sets[i]);
+                    }
+                    result.append(sets[i]);
+                }
+                if (marks != null) {
+                    result.put(MARK, marks);
+                }
+                matchesRef.set(result);
+            } else {
+                matchesRef.set(setOrder != null ? setOrder : single != null ? single : new PhpArray());
+            }
+        }
+        return lastError == 0 ? (Object) matched : Boolean.FALSE;
+    }
+
+    // ---- preg_replace / preg_replace_callback ----
+
+    @TruffleBoundary
+    private Object replace(PhpContext context, Object[] a, boolean callback) {
+        String function = callback ? "preg_replace_callback" : "preg_replace";
+        Object pattern = Args.arrayOrString(context, a, 0, function, "pattern");
+        Object replacement;
+        if (callback) {
+            // resolved once: every match calls the same target, whatever the callback calls in between
+            replacement = Callables.parameter(context, Args.get(a, 1),
+                    new Callables.Parameter("preg_replace_callback", 2, false));
+        } else {
+            replacement = Args.arrayOrString(context, a, 1, function, "replacement");
+        }
+        Object subject = Args.arrayOrString(context, a, 2, function, "subject");
+        long limit = Args.lng(a, 3, -1);
+        long flags = callback ? Args.lng(a, 5, 0) : 0;
+        if (replacement instanceof PhpArray && !(pattern instanceof PhpArray)) {
+            throw new PhpError("TypeError", "preg_replace(): Argument #1 ($pattern) must be of type array when "
+                    + "argument #2 ($replacement) is an array, string given");
+        }
+        if (limit < 0) {
+            limit = Long.MAX_VALUE;
+        }
+        long[] count = {0};
+        lastError = 0;
+        Object result;
+        if (subject instanceof PhpArray subjects) {
+            PhpArray out = new PhpArray();
+            for (int p = subjects.firstPosition(); p >= 0; p = subjects.nextPosition(p)) {
+                TruffleString replaced = replaceOne(context, function, pattern, replacement, callback,
+                        Convert.toStr(subjects.valueAt(p)), limit, flags, count);
+                if (replaced != null) {
+                    out.put(subjects.keyAt(p), replaced);
+                }
+            }
+            result = out;
+        } else {
+            TruffleString replaced = replaceOne(context, function, pattern, replacement, callback,
+                    (TruffleString) subject, limit, flags, count);
+            result = replaced == null ? PhpNull.NULL : replaced;
+        }
+        if (Args.has(a, 4)) {
+            Args.ref(a, 4).set(count[0]);
+        }
+        return result;
+    }
+
+    private TruffleString replaceOne(PhpContext context, String function, Object pattern, Object replacement,
+                                     boolean callback, TruffleString subject, long limit, long flags, long[] count) {
+        if (!(pattern instanceof PhpArray patterns)) {
+            Regex regex = compile((TruffleString) pattern, function);
+            return regex == null ? null
+                    : replaceWith(context, regex, replacement, callback, subject, limit, flags, count);
+        }
+        PhpArray replacements = !callback && replacement instanceof PhpArray array ? array : null;
+        int r = replacements == null ? -1 : replacements.firstPosition();
+        TruffleString current = subject;
+        for (int p = patterns.firstPosition(); p >= 0; p = patterns.nextPosition(p)) {
+            Object with = replacement;
+            if (replacements != null) {
+                with = r >= 0 ? replacements.valueAt(r) : Str.EMPTY;
+                r = r >= 0 ? replacements.nextPosition(r) : -1;
+            }
+            Regex regex = compile(Convert.toStr(patterns.valueAt(p)), function);
+            current = regex == null ? null
+                    : replaceWith(context, regex, with, callback, current, limit, flags, count);
+            if (current == null) {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    /** php_pcre_replace_impl and its callback twin; null on a match error. */
+    private TruffleString replaceWith(PhpContext context, Regex regex, Object replacement, boolean callback,
+                                             TruffleString subjectString, long limit, long flags, long[] count) {
+        byte[] subject = Str.readBytes(subjectString);
+        Template template = callback ? null : template(Convert.toStr(replacement));
+        ByteBuilder out = null;
+        try (Matcher m = new Matcher(this, regex, subject)) {
+            int lastEnd = 0;
+            long start = 0;
+            int rc = m.match(start, m.firstOptions(0));
+            while (true) {
+                if (rc >= 0 && limit > 0) {
+                    if (out == null) {
+                        out = ByteBuilder.borrow(subject.length);
+                    }
+                    count[0]++;
+                    int matchStart = m.start(0);
+                    int matchEnd = m.end(0);
+                    out.write(subject, lastEnd, matchStart - lastEnd);
+                    if (callback) {
+                        Object value = ((Callables.Target) replacement).call(groups(m, rc, flags));
+                        out.write(Convert.toStr(value));
+                    } else {
+                        template.expand(out, m, rc);
+                    }
+                    limit--;
+                    start = lastEnd = matchEnd;
+                    if (matchStart == matchEnd) {
+                        rc = m.match(start, NO_UTF_CHECK | NOTEMPTY_ATSTART | ANCHORED);
+                        if (rc >= 0 && limit > 0) {
+                            continue;
+                        }
+                        if (rc == ERROR_NOMATCH || rc >= 0) {
+                            if (start >= subject.length) {
+                                break;
+                            }
+                            start += m.unitLength((int) start);
+                        } else {
+                            execError(rc);
+                            return null;
+                        }
+                    }
+                } else if (rc == ERROR_NOMATCH || rc >= 0) {
+                    break;
+                } else {
+                    execError(rc);
+                    return null;
+                }
+                rc = m.match(start, NO_UTF_CHECK);
+            }
+            if (out == null) {
+                return subjectString;
+            }
+            out.write(subject, lastEnd, subject.length - lastEnd);
+            return out.toStr();
+        } finally {
+            if (out != null) {
+                out.release();
+            }
+        }
+    }
+
+    /**
+     * A replacement template parsed once: literal chunks and group references (\n, $n, ${n}, n up to 99, with
+     * php-src's preg_get_backref rules; a backslash before \ or $ makes it literal). ops holds a chunk length
+     * (>= 0, the next bytes of text) or -(group + 1).
+     */
+    private static final class Template {
+        final byte[] text;
+        final int[] ops;
+
+        private Template(byte[] text, int[] ops) {
+            this.text = text;
+            this.ops = ops;
+        }
+
+        static Template parse(byte[] template) {
+            ByteBuilder text = new ByteBuilder(template.length);
+            List<Integer> ops = new ArrayList<>();
+            int chunkStart = 0;
+            int i = 0;
+            boolean lastWasBackslash = false;
+            while (i < template.length) {
+                byte c = template[i];
+                if (c == '\\' || c == '$') {
+                    if (lastWasBackslash) {
+                        // \\ or \$: the escaping backslash (already in text) becomes this character
+                        text.setLast(c);
+                        i++;
+                        lastWasBackslash = false;
+                        continue;
+                    }
+                    int group = -1;
+                    int j = i + 1;
+                    boolean brace = c == '$' && j < template.length && template[j] == '{';
+                    if (brace) {
+                        j++;
+                    }
+                    if (i + 1 < template.length && j < template.length && isDigit(template[j])) {
+                        group = template[j++] - '0';
+                        if (j < template.length && isDigit(template[j])) {
+                            group = group * 10 + template[j++] - '0';
+                        }
+                        if (brace) {
+                            if (j < template.length && template[j] == '}') {
+                                j++;
+                            } else {
+                                group = -1;
+                            }
+                        }
+                    }
+                    if (group >= 0) {
+                        ops.add(text.size() - chunkStart);
+                        chunkStart = text.size();
+                        ops.add(-(group + 1));
+                        i = j;
+                        lastWasBackslash = false;
+                        continue;
+                    }
+                }
+                text.write(c);
+                i++;
+                lastWasBackslash = c == '\\';
+            }
+            ops.add(text.size() - chunkStart);
+            int[] opArray = new int[ops.size()];
+            for (int k = 0; k < opArray.length; k++) {
+                opArray[k] = ops.get(k);
+            }
+            return new Template(text.toByteArray(), opArray);
+        }
+
+        void expand(ByteBuilder out, Matcher m, int count) {
+            int position = 0;
+            for (int op : ops) {
+                if (op >= 0) {
+                    out.write(text, position, op);
+                    position += op;
+                } else {
+                    int group = -op - 1;
+                    if (group < count && m.start(group) >= 0) {
+                        out.write(m.subject, m.start(group), m.end(group) - m.start(group));
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean isDigit(byte b) {
+        return b >= '0' && b <= '9';
+    }
+
+    // ---- preg_split, preg_quote, preg_grep ----
+
+    @TruffleBoundary
+    private Object split(TruffleString pattern, TruffleString subjectString, long limit, long flags) {
+        Regex regex = compile(pattern, "preg_split");
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
+        byte[] subject = Str.readBytes(subjectString);
+        boolean noEmpty = (flags & SPLIT_NO_EMPTY) != 0;
+        boolean delimCapture = (flags & SPLIT_DELIM_CAPTURE) != 0;
+        boolean offsetCapture = (flags & SPLIT_OFFSET_CAPTURE) != 0;
+        if (limit == 0) {
+            limit = -1;
+        }
+        lastError = 0;
+        PhpArray result = new PhpArray();
+        int lastMatch = 0;
+        try (Matcher m = new Matcher(this, regex, subject)) {
+            long start = 0;
+            int options = m.firstOptions(0);
+            boolean retried = false;
+            int rc = 0;
+            while (limit == -1 || limit > 1) {
+                if (!retried) {
+                    rc = m.match(start, options);
+                    options = NO_UTF_CHECK;
+                }
+                retried = false;
+                if (rc == ERROR_NOMATCH) {
+                    break;
+                }
+                if (rc < 0) {
+                    execError(rc);
+                    return Boolean.FALSE;
+                }
+                int matchStart = m.start(0);
+                int matchEnd = m.end(0);
+                if (!noEmpty || matchStart != lastMatch) {
+                    addPiece(result, subject, lastMatch, matchStart, offsetCapture);
+                    if (limit != -1) {
+                        limit--;
+                    }
+                }
+                if (delimCapture) {
+                    for (int i = 1; i < rc; i++) {
+                        int s = m.start(i);
+                        int e = m.end(i);
+                        if (!noEmpty || s != e) {
+                            addPiece(result, subject, Math.max(s, 0), Math.max(e, 0), offsetCapture);
+                        }
+                    }
+                }
+                start = lastMatch = matchEnd;
+                if (matchStart == matchEnd) {
+                    if (limit != -1 && limit <= 1) {
+                        break;
+                    }
+                    rc = m.match(start, NO_UTF_CHECK | NOTEMPTY_ATSTART | ANCHORED);
+                    if (rc >= 0) {
+                        retried = true;
+                        continue;
+                    }
+                    if (rc != ERROR_NOMATCH) {
+                        execError(rc);
+                        return Boolean.FALSE;
+                    }
+                    if (start >= subject.length) {
+                        break;
+                    }
+                    start += m.unitLength((int) start);
+                }
+            }
+        }
+        if (!noEmpty || lastMatch < subject.length) {
+            addPiece(result, subject, lastMatch, subject.length, offsetCapture);
+        }
+        return result;
+    }
+
+    private static void addPiece(PhpArray result, byte[] subject, int from, int to, boolean offsetCapture) {
+        TruffleString piece = Str.of(subject, from, to - from);
+        result.append(offsetCapture ? PhpArray.list(piece, (long) from) : piece);
+    }
+
+    @TruffleBoundary
+    private static TruffleString quote(TruffleString text, Object delimiter) {
+        byte[] bytes = Str.readBytes(text);
+        int delim = -1;
+        if (delimiter != null && delimiter != PhpNull.NULL) {
+            TruffleString d = Convert.toStr(delimiter);
+            if (Str.length(d) > 0) {
+                delim = Str.byteAt(d, 0);
+            }
+        }
+        ByteBuilder out = new ByteBuilder(bytes.length + 8);
+        for (byte b : bytes) {
+            if (b == 0) {
+                out.write(new byte[]{'\\', '0', '0', '0'});
+                continue;
+            }
+            if (".\\+*?[^]$(){}=!<>|:-#".indexOf(b) >= 0 || (b & 0xFF) == delim) {
+                out.write('\\');
+            }
+            out.write(b);
+        }
+        return out.toStr();
+    }
+
+    @TruffleBoundary
+    private Object grep(TruffleString pattern, PhpArray input, long flags) {
+        Regex regex = compile(pattern, "preg_grep");
+        if (regex == null) {
+            return Boolean.FALSE;
+        }
+        boolean invert = (flags & 1) != 0;
+        lastError = 0;
+        PhpArray result = new PhpArray();
+        for (int p = input.firstPosition(); p >= 0; p = input.nextPosition(p)) {
+            Object value = input.valueAt(p);
+            int rc;
+            try (Matcher m = new Matcher(this, regex, Str.readBytes(Convert.toStr(value)))) {
+                rc = m.match(0, m.firstOptions(0));
+            }
+            if (rc < 0 && rc != ERROR_NOMATCH) {
+                execError(rc);
+                break;
+            }
+            if ((rc >= 0) != invert) {
+                result.putCopied(input.keyAt(p), input.copiedAt(p));
+            }
+        }
+        return result;
+    }
+
+    // ---- the PCRE2 library ----
+
+    /**
+     * Downcalls into libpcre2-8, through the project's one binding mechanism ({@link NativeLibrary}: bound handles
+     * on the JVM, constants in a native image). Set the library with -Dphp.pcre2=<path>; the default is the
+     * platform's name.
+     */
+    private static final class Native {
+        private static final NativeLibrary PCRE2 = NativeLibrary.named("php.pcre2", "libpcre2-8.so.0",
+                "libpcre2-8-0.dll");
+        /** PCRE2_SIZE. */
+        private static final ValueLayout SIZE = NativeLibrary.SIZE_T;
+        private static final MethodHandle COMPILE = handle("pcre2_compile_8", ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS, SIZE, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_COMPILE = handle("pcre2_jit_compile_8", ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
+        private static final MethodHandle MATCH_DATA = handle("pcre2_match_data_create_from_pattern_8",
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        /*
+         * The match downcalls are ordinary ones on subjects copied to native memory (SubjectCache). Critical
+         * downcalls were measured slower on WordPress (wiki/gate-1.md): on native subjects wpautop and wptexturize
+         * lost ~40% (the critical stub skips vzeroupper, so PCRE2's SSE code runs with dirty upper vector halves);
+         * on the Java arrays themselves preg_split and preg_match_all lost 2-3x (the GC pins the array per call).
+         */
+        private static final FunctionDescriptor MATCH_SIGNATURE = FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS, SIZE, SIZE, ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle MATCH = PCRE2.downcall("pcre2_match_8", MATCH_SIGNATURE);
+        /** pcre2_jit_match: the JIT fast path without pcre2_match's argument checks, as php-src calls it. */
+        private static final MethodHandle JIT_MATCH = PCRE2.downcall("pcre2_jit_match_8", MATCH_SIGNATURE);
+        private static final MethodHandle OVECTOR = handle("pcre2_get_ovector_pointer_8", ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle PATTERN_INFO = handle("pcre2_pattern_info_8", ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
+        private static final MethodHandle ERROR_MESSAGE = handle("pcre2_get_error_message_8", ValueLayout.JAVA_INT,
+                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, SIZE);
+        private static final MethodHandle MATCH_CONTEXT = handle("pcre2_match_context_create_8", ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        private static final MethodHandle SET_MATCH_LIMIT = handle("pcre2_set_match_limit_8", ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
+        private static final MethodHandle SET_DEPTH_LIMIT = handle("pcre2_set_depth_limit_8", ValueLayout.JAVA_INT,
+                ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
+        private static final MethodHandle JIT_STACK = handle("pcre2_jit_stack_create_8", ValueLayout.ADDRESS,
+                SIZE, SIZE, ValueLayout.ADDRESS);
+        private static final MethodHandle JIT_STACK_ASSIGN = PCRE2.downcall("pcre2_jit_stack_assign_8",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        private static final MethodHandle COMPILE_CONTEXT = handle("pcre2_compile_context_create_8",
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+        private static final MethodHandle SET_COMPILE_EXTRA_OPTIONS = handle("pcre2_set_compile_extra_options_8",
+                ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
+        private static final MethodHandle GET_MARK = handle("pcre2_get_mark_8", ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS);
+        static final MethodHandle COMPILE_CONTEXT_FREE = freeHandle("pcre2_compile_context_free_8");
+        static final MethodHandle CODE_FREE = freeHandle("pcre2_code_free_8");
+        static final MethodHandle MATCH_DATA_FREE = freeHandle("pcre2_match_data_free_8");
+        static final MethodHandle MATCH_CONTEXT_FREE = freeHandle("pcre2_match_context_free_8");
+        static final MethodHandle JIT_STACK_FREE = freeHandle("pcre2_jit_stack_free_8");
+
+        private static MethodHandle handle(String name, ValueLayout result, ValueLayout... arguments) {
+            return PCRE2.downcall(name, FunctionDescriptor.of(result, arguments));
+        }
+
+        private static MethodHandle freeHandle(String name) {
+            return PCRE2.downcall(name, FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+        }
+
+        static void free(MethodHandle free, MemorySegment pointer) {
+            try {
+                free.invokeExact(pointer);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** php-src's 32K..192K JIT stack; one per context, as only one thread matches with it at a time. */
+        static MemorySegment jitStack() {
+            try {
+                return (MemorySegment) JIT_STACK.invokeExact(32L * 1024, 192L * 1024, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** A match context with pcre.backtrack_limit and pcre.recursion_limit's defaults, matching on stack. */
+        static MemorySegment matchContext(MemorySegment stack) {
+            try {
+                MemorySegment context = (MemorySegment) MATCH_CONTEXT.invokeExact(MemorySegment.NULL);
+                int ignored = (int) SET_MATCH_LIMIT.invokeExact(context, 1_000_000);
+                ignored = (int) SET_DEPTH_LIMIT.invokeExact(context, 100_000);
+                JIT_STACK_ASSIGN.invokeExact(context, MemorySegment.NULL, stack);
+                return context;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        static MemorySegment compile(byte[] pattern, int options, int extra) {
+            MemorySegment context = MemorySegment.NULL;
+            try (Arena arena = Arena.ofConfined()) {
+                context = (MemorySegment) COMPILE_CONTEXT.invokeExact(MemorySegment.NULL);
+                int ignored = (int) SET_COMPILE_EXTRA_OPTIONS.invokeExact(context, extra);
+                MemorySegment source = arena.allocate(Math.max(1, pattern.length));
+                MemorySegment.copy(pattern, 0, source, ValueLayout.JAVA_BYTE, 0, pattern.length);
+                MemorySegment errorCode = arena.allocate(ValueLayout.JAVA_INT);
+                MemorySegment errorOffset = arena.allocate(ValueLayout.JAVA_LONG);
+                MemorySegment code = (MemorySegment) COMPILE.invokeExact(source, (long) pattern.length, options,
+                        errorCode, errorOffset, context);
+                if (code.equals(MemorySegment.NULL)) {
+                    MemorySegment message = arena.allocate(256);
+                    int error = errorCode.get(ValueLayout.JAVA_INT, 0);
+                    ignored = (int) ERROR_MESSAGE.invokeExact(error, message, 256L);
+                    // PCRE2_ERROR_BACKSLASH_C_CALLER_DISABLED: /u's PCRE2_NEVER_BACKSLASH_C
+                    throw new BadPattern("Compilation failed: " + (error == 183
+                            ? "using \\C is incompatible with the 'u' modifier" : message.getString(0)) + " at offset "
+                            + errorOffset.get(ValueLayout.JAVA_LONG, 0));
+                }
+                return code;
+            } catch (BadPattern e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            } finally {
+                free(COMPILE_CONTEXT_FREE, context);
+            }
+        }
+
+        /** JIT-compiles the pattern; false (with a warning) when JIT isn't available, so matching is interpreted. */
+        static boolean jitCompile(MemorySegment code) {
+            try (Arena arena = Arena.ofConfined()) {
+                int rc = (int) JIT_COMPILE.invokeExact(code, JIT_COMPLETE);
+                if (rc != 0) {
+                    System.err.println("warning: pcre2_jit_compile failed (" + rc + "), matching interpreted");
+                    return false;
+                }
+                // as php-src: JIT code only if there is some ((*NO_JIT) compiles none)
+                MemorySegment size = arena.allocate(ValueLayout.JAVA_LONG);
+                return (int) PATTERN_INFO.invokeExact(code, INFO_JITSIZE, size) == 0
+                        && size.get(ValueLayout.JAVA_LONG, 0) > 0;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        static int info(MemorySegment code, int what) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment where = arena.allocate(ValueLayout.JAVA_INT);
+                int rc = (int) PATTERN_INFO.invokeExact(code, what, where);
+                if (rc != 0) {
+                    throw new IllegalStateException("pcre2_pattern_info " + what + " failed: " + rc);
+                }
+                return where.get(ValueLayout.JAVA_INT, 0);
+            } catch (Throwable t) {
+                throw t instanceof RuntimeException e ? e : new IllegalStateException(t);
+            }
+        }
+
+        /** Group names by group number from the name table (entries: 2-byte big-endian number, NUL-ended name). */
+        static TruffleString[] names(MemorySegment code, int groups) {
+            TruffleString[] names = new TruffleString[groups];
+            int count = info(code, INFO_NAMECOUNT);
+            if (count == 0) {
+                return names;
+            }
+            int entrySize = info(code, INFO_NAMEENTRYSIZE);
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment where = arena.allocate(ValueLayout.ADDRESS);
+                int ignored = (int) PATTERN_INFO.invokeExact(code, INFO_NAMETABLE, where);
+                MemorySegment table = where.get(ValueLayout.ADDRESS, 0).reinterpret((long) count * entrySize);
+                for (int i = 0; i < count; i++) {
+                    long base = (long) i * entrySize;
+                    int group = (table.get(ValueLayout.JAVA_BYTE, base) & 0xFF) << 8
+                            | table.get(ValueLayout.JAVA_BYTE, base + 1) & 0xFF;
+                    names[group] = Str.of(table.getString(base + 2));
+                }
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+            return names;
+        }
+
+        static MemorySegment createMatchData(MemorySegment code) {
+            try {
+                return (MemorySegment) MATCH_DATA.invokeExact(code, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /** pcre2_get_mark: the last (*MARK) name the match passed, or null. */
+        static TruffleString mark(MemorySegment matchData) {
+            try {
+                MemorySegment mark = (MemorySegment) GET_MARK.invokeExact(matchData);
+                return mark.equals(MemorySegment.NULL) ? null : Str.of(mark.reinterpret(256).getString(0));
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        static MemorySegment ovector(MemorySegment matchData, int groups) {
+            try {
+                MemorySegment pointer = (MemorySegment) OVECTOR.invokeExact(matchData);
+                return pointer.reinterpret(16L * groups);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
+        /**
+         * One match. Like php-src, a JIT-compiled pattern matched with no options but NO_UTF_CHECK takes
+         * pcre2_jit_match; the first UTF-checked match and anchored retries after an empty match take pcre2_match.
+         */
+        static int match(MemorySegment code, boolean jit, MemorySegment subject, long length, long start,
+                         int options, MemorySegment matchData, MemorySegment matchContext) {
+            try {
+                if (jit && options == NO_UTF_CHECK) {
+                    return (int) JIT_MATCH.invokeExact(code, subject, length, start, options, matchData,
+                            matchContext);
+                }
+                return (int) MATCH.invokeExact(code, subject, length, start, options, matchData, matchContext);
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+    }
+}
