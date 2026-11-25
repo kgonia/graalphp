@@ -75,7 +75,22 @@ final class DateFunctions {
         r.fn("date_timezone_get", a -> method(a, "gettimezone"));
         r.fn("date_offset_get", a -> method(a, "getoffset"));
         r.fn("date_timezone_set", a -> method(a, "settimezone"));
-        r.fn("date_modify", a -> method(a, "modify"));
+        r.fn("date_modify", (context, a) -> {
+            try {
+                return method(a, "modify");
+            } catch (PhpThrowable e) {
+                // PHP 8.3: the method throws, the function warns with the same reason and returns false
+                PhpObject thrown = e.toThrowable(context);
+                if (!thrown.getPhpClass().getLowerName().equals("datemalformedstringexception")) {
+                    throw e;
+                }
+                String message = Str.java((TruffleString) thrown.getProperty("message"));
+                ErrorFunctions.raise(context, ErrorFunctions.E_WARNING,
+                        Str.of("date_modify(): " + message.substring(message.indexOf("::modify(): ") + 12)),
+                        pl.codeloom.php.runtime.SourceLocation.current());
+                return Boolean.FALSE;
+            }
+        });
         r.fn("date_add", a -> method(a, "add"));
         r.fn("date_sub", a -> method(a, "sub"));
         r.fn("date_diff", a -> method(a, "diff"));
@@ -93,6 +108,12 @@ final class DateFunctions {
             PhpZone zone = parseZone(Str.java(Args.str(a, 2)));
             return format(Args.str(a, 0), Args.lng(a, 1, 0), (int) Args.lng(a, 3, 0),
                     zone == null ? parseZone("UTC") : zone, true);
+        });
+        // date_modify(modifier, timestamp, zone): [timestamp, whether the time of day was set], or false
+        r.fn("truffle\\date_modify", a -> {
+            Parsed parsed = parseForModify(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0), zoneOf(a, 2));
+            return parsed == null ? (Object) Boolean.FALSE
+                    : PhpArray.list(new Object[] {parsed.epoch(), parsed.timeSet()});
         });
         r.fn("truffle\\date_parse", a -> {
             Long result = strtotime(Str.java(Args.str(a, 0)), Args.lng(a, 1, 0), zoneOf(a, 2));
@@ -726,10 +747,8 @@ final class DateFunctions {
     private static final Pattern RFC2822 = Pattern.compile(
             "(?:[A-Za-z]{3},\\s*)?(\\d{1,2})\\s+([A-Za-z]{3})[a-z]*\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*"
                     + "([+-]\\d{4}|GMT|UTC|Z)?");
-    private static final Pattern RELATIVE = Pattern.compile(
-            "([+-]?\\s*\\d+)\\s*(second|sec|minute|min|hour|day|week|fortnight|month|year)s?(\\s+ago)?");
 
-    /** The formats WordPress uses: ISO dates and times, RFC 2822, @timestamp, now/today/…, relative offsets. */
+    /** ISO dates and times, RFC 2822, @timestamp, and timelib's relative formats ({@link Relative}). */
     @TruffleBoundary
     static Long strtotime(String input, long base, ZoneId zone) {
         String text = Str.lower(input.trim());
@@ -758,46 +777,317 @@ final class DateFunctions {
                     rfc.group(6) == null ? 0 : Integer.parseInt(rfc.group(6)));
             return local.atZone(offsetOr(rfc.group(7), zone)).toEpochSecond();
         }
-        ZonedDateTime t = Instant.ofEpochSecond(base).atZone(zone);
-        String rest = text;
-        if (rest.startsWith("now")) {
-            rest = rest.substring(3).trim();
-        } else if (rest.startsWith("today") || rest.startsWith("midnight")) {
-            t = t.truncatedTo(ChronoUnit.DAYS);
-            rest = rest.substring(rest.startsWith("today") ? 5 : 8).trim();
-        } else if (rest.startsWith("tomorrow")) {
-            t = t.truncatedTo(ChronoUnit.DAYS).plusDays(1);
-            rest = rest.substring(8).trim();
-        } else if (rest.startsWith("yesterday")) {
-            t = t.truncatedTo(ChronoUnit.DAYS).minusDays(1);
-            rest = rest.substring(9).trim();
+        Parsed parsed = Relative.parse(text, base, zone, false);
+        return parsed == null ? null : parsed.epoch();
+    }
+
+    /** strtotime's result, and whether the string set the time of day (timelib's time, microseconds included). */
+    record Parsed(long epoch, boolean timeSet) {
+    }
+
+    /** strtotime for DateTime::modify: whether the time was set decides if the microseconds stay. */
+    @TruffleBoundary
+    static Parsed parseForModify(String input, long base, ZoneId zone) {
+        String text = Str.lower(input.trim());
+        Long whole = text.startsWith("@") || ISO.matcher(input.trim()).matches()
+                || RFC2822.matcher(input.trim()).matches() ? strtotime(input, base, zone) : null;
+        if (whole != null) {
+            return new Parsed(whole, true);
         }
-        Matcher relative = RELATIVE.matcher(rest);
-        int position = 0;
-        while (position < rest.length()) {
-            if (!relative.find(position) || relative.start() != position) {
-                return null;
+        // the object's zone and DST flag take part (tz->have_zone, tz->dst)
+        return text.isEmpty() ? null : Relative.parse(text, base, zone, true);
+    }
+
+    /**
+     * timelib's relative formats (parse_date.re), token by token: the keywords (now, today, midnight, noon,
+     * tomorrow, yesterday), a time of day (12-hour with a meridian, 24-hour), relative numbers with units, relative
+     * text (next, last, previous, this, first ... twelfth) with a unit or a weekday, "next week" and its kin,
+     * weekdays, "first/last day of" and "ago". Each token changes the state as timelib's rule does; then the state is
+     * applied as timelib_update_ts applies it: the weekday, the relative fields on the wall clock, first/last day of,
+     * normalised as timelib_do_normalize, the zone's offset resolved last (an overlap takes the earlier offset, a gap
+     * moves forward). A token timelib doesn't know, or a second time of day, is an error: null.
+     */
+    private static final class Relative {
+        private static final String DAYS = "sunday|monday|tuesday|wednesday|thursday|friday|saturday"
+                + "|sun|mon|tue|wed|thu|fri|sat";
+        /** timelib's reltextunit (without the sub-second units and weekday/weekdays), and 'week' or 'weeks'. */
+        private static final String UNIT = "(?:(?:second|sec|minute|min|hour|day|fortnight|forthnight|month|year)s?"
+                + "|weeks?|" + DAYS + ")(?![a-z])";
+        private static final Pattern FIRST_LAST_DAY_OF = Pattern.compile("(first|last) day of(?![a-z])");
+        private static final Pattern KEYWORD = Pattern.compile(
+                "(yesterday|today|tomorrow|midnight|noon|now)(?![a-z])");
+        private static final Pattern AGO = Pattern.compile("ago(?![a-z])");
+        private static final Pattern TIME12 = Pattern.compile(
+                "(0?[1-9]|1[0-2])(?:[:.]([0-5]?[0-9])(?:[:.]([0-5]?[0-9]|60))?)?[ \t]*([ap])\\.?m\\.?(?=$|[ \t])");
+        private static final Pattern TIME24 = Pattern.compile(
+                "t?([01]?[0-9]|2[0-4])[:.]([0-5]?[0-9])(?:[:.]([0-5]?[0-9]|60))?(?![0-9])");
+        private static final Pattern NUMBER = Pattern.compile("([+-]*)[ \t]*([0-9]{1,13})[ \t]*(" + UNIT + ")");
+        private static final Pattern TEXT_WEEK = Pattern.compile("(next|last|previous|this)[ \t]+week(?![a-z])");
+        private static final Pattern TEXT = Pattern.compile("(next|last|previous|this|first|second|third|fourth"
+                + "|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)[ \t]+(" + UNIT + ")");
+        private static final Pattern WEEKDAY = Pattern.compile("(" + DAYS + ")(?![a-z])");
+        private static final List<String> ORDINALS = List.of("first", "second", "third", "fourth", "fifth", "sixth",
+                "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth");
+
+        // the time of day: set by a keyword or a time, else the base's
+        private boolean timeSet;
+        private boolean haveTime;
+        private long hour;
+        private long minute;
+        private long second;
+        // timelib's relative fields
+        private long relYears;
+        private long relMonths;
+        private long relDays;
+        private long relHours;
+        private long relMinutes;
+        private long relSeconds;
+        private boolean haveWeekday;
+        private int weekday;
+        private int weekdayBehavior;
+        /** 0, or TIMELIB_SPECIAL_FIRST_DAY_OF_MONTH (1) or _LAST_ (2). */
+        private int firstLastDayOf;
+
+        /** haveZone: the base is a DateTime's, whose zone and DST flag resolve an overlap (DateTime::modify). */
+        static Parsed parse(String text, long base, ZoneId zone, boolean haveZone) {
+            Relative state = new Relative();
+            int position = 0;
+            while (true) {
+                // timelib skips spaces, tabs, commas and dots between tokens
+                while (position < text.length() && " \t,.".indexOf(text.charAt(position)) >= 0) {
+                    position++;
+                }
+                if (position >= text.length()) {
+                    break;
+                }
+                int next = state.token(text, position);
+                if (next < 0) {
+                    return null;
+                }
+                position = next;
             }
-            long amount = Long.parseLong(relative.group(1).replace(" ", "").replace("+", ""));
-            if (relative.group(3) != null) {
-                amount = -amount;
+            return new Parsed(state.apply(base, zone, haveZone), state.timeSet);
+        }
+
+        /** The token at position, applied; the position after it, or -1 for an error. */
+        private int token(String text, int position) {
+            Matcher m;
+            if ((m = at(FIRST_LAST_DAY_OF, text, position)) != null) {
+                firstLastDayOf = m.group(1).equals("first") ? 1 : 2;
+                return m.end();
             }
-            t = switch (relative.group(2)) {
-                case "sec", "second" -> t.plusSeconds(amount);
-                case "min", "minute" -> t.plusMinutes(amount);
-                case "hour" -> t.plusHours(amount);
-                case "day" -> t.plusDays(amount);
-                case "week" -> t.plusWeeks(amount);
-                case "fortnight" -> t.plusWeeks(2 * amount);
-                case "month" -> t.plusMonths(amount);
-                default -> t.plusYears(amount);
+            if ((m = at(KEYWORD, text, position)) != null) {
+                switch (m.group(1)) {
+                    case "yesterday" -> {
+                        unhaveTime();
+                        relDays = -1;
+                    }
+                    case "tomorrow" -> {
+                        unhaveTime();
+                        relDays = 1;
+                    }
+                    case "midnight", "today" -> unhaveTime();
+                    case "noon" -> {
+                        unhaveTime();
+                        haveTime = true;
+                        hour = 12;
+                    }
+                    default -> {
+                        // now: nothing
+                    }
+                }
+                return m.end();
+            }
+            if ((m = at(AGO, text, position)) != null) {
+                relYears = -relYears;
+                relMonths = -relMonths;
+                relDays = -relDays;
+                relHours = -relHours;
+                relMinutes = -relMinutes;
+                relSeconds = -relSeconds;
+                weekday = weekday == 0 ? -7 : -weekday;
+                return m.end();
+            }
+            if ((m = at(TIME12, text, position)) != null) {
+                if (!haveTime()) {
+                    return -1;
+                }
+                long h = Long.parseLong(m.group(1));
+                // timelib_meridian: 12am is 0, 12pm stays 12
+                hour = m.group(4).equals("a") ? h % 12 : h % 12 + 12;
+                minute = m.group(2) == null ? 0 : Long.parseLong(m.group(2));
+                second = m.group(3) == null ? 0 : Long.parseLong(m.group(3));
+                return m.end();
+            }
+            if ((m = at(TIME24, text, position)) != null) {
+                if (!haveTime()) {
+                    return -1;
+                }
+                hour = Long.parseLong(m.group(1));
+                minute = Long.parseLong(m.group(2));
+                second = m.group(3) == null ? 0 : Long.parseLong(m.group(3));
+                return m.end();
+            }
+            if ((m = at(NUMBER, text, position)) != null) {
+                // relnumber: each minus sign flips the sign
+                long amount = Long.parseLong(m.group(2));
+                for (int i = 0; i < m.group(1).length(); i++) {
+                    if (m.group(1).charAt(i) == '-') {
+                        amount = -amount;
+                    }
+                }
+                setRelative(amount, 0, m.group(3), true);
+                return m.end();
+            }
+            if ((m = at(TEXT_WEEK, text, position)) != null) {
+                setRelative(textAmount(m.group(1)), textBehavior(m.group(1)), "week", false);
+                weekdayBehavior = 2;
+                if (!haveWeekday) {
+                    haveWeekday = true;
+                    weekday = 1;
+                }
+                return m.end();
+            }
+            if ((m = at(TEXT, text, position)) != null) {
+                setRelative(textAmount(m.group(1)), textBehavior(m.group(1)), m.group(2), false);
+                return m.end();
+            }
+            if ((m = at(WEEKDAY, text, position)) != null) {
+                haveWeekday = true;
+                unhaveTime();
+                weekday = dayIndex(m.group(1));
+                if (weekdayBehavior != 2) {
+                    weekdayBehavior = 1;
+                }
+                return m.end();
+            }
+            return -1;
+        }
+
+        private static Matcher at(Pattern pattern, String text, int position) {
+            Matcher m = pattern.matcher(text);
+            m.region(position, text.length());
+            return m.lookingAt() ? m : null;
+        }
+
+        /** TIMELIB_UNHAVE_TIME: the time of day is midnight, and may be set again. */
+        private void unhaveTime() {
+            timeSet = true;
+            haveTime = false;
+            hour = 0;
+            minute = 0;
+            second = 0;
+        }
+
+        /** TIMELIB_HAVE_TIME: false for a second time of day ("Double time specification"). */
+        private boolean haveTime() {
+            if (haveTime) {
+                return false;
+            }
+            unhaveTime();
+            haveTime = true;
+            return true;
+        }
+
+        /** timelib_lookup_relative_text: last and previous -1, this 0, next 1, first ... twelfth 1 ... 12. */
+        private static long textAmount(String word) {
+            return switch (word) {
+                case "last", "previous" -> -1;
+                case "this" -> 0;
+                case "next" -> 1;
+                default -> ORDINALS.indexOf(word) + 1;
             };
-            position = relative.end();
-            while (position < rest.length() && rest.charAt(position) == ' ') {
-                position++;
+        }
+
+        private static int textBehavior(String word) {
+            return word.equals("this") ? 1 : 0;
+        }
+
+        /** timelib_set_relative: a unit's amount, or for a weekday, the weekday and the weeks before it. */
+        private void setRelative(long amount, int behavior, String unit, boolean keepTime) {
+            String u = unit.endsWith("s") && !unit.equals("days") && !isDay(unit) ? unit.substring(0, unit.length() - 1)
+                    : unit;
+            if (isDay(unit)) {
+                haveWeekday = true;
+                if (!keepTime) {
+                    unhaveTime();
+                }
+                relDays += (amount > 0 ? amount - 1 : amount) * 7;
+                weekday = dayIndex(unit);
+                weekdayBehavior = behavior;
+                return;
+            }
+            switch (u) {
+                case "sec", "second" -> relSeconds += amount;
+                case "min", "minute" -> relMinutes += amount;
+                case "hour" -> relHours += amount;
+                case "day", "days" -> relDays += amount;
+                case "week" -> relDays += 7 * amount;
+                case "fortnight", "forthnight" -> relDays += 14 * amount;
+                case "month" -> relMonths += amount;
+                default -> relYears += amount;
             }
         }
-        return t.toEpochSecond();
+
+        private static boolean isDay(String unit) {
+            return WEEKDAY.matcher(unit).matches();
+        }
+
+        /** 0 for Sunday ... 6 for Saturday, by the name's first three letters. */
+        private static int dayIndex(String name) {
+            return List.of("sun", "mon", "tue", "wed", "thu", "fri", "sat").indexOf(name.substring(0, 3));
+        }
+
+        /** timelib_update_ts: the base's wall clock in the zone, the state applied, the offset resolved. */
+        private long apply(long base, ZoneId zone, boolean haveZone) {
+            LocalDateTime local = Instant.ofEpochSecond(base).atZone(zone).toLocalDateTime();
+            long y = local.getYear();
+            long m = local.getMonthValue();
+            long d = local.getDayOfMonth();
+            long h = timeSet ? hour : local.getHour();
+            long i = timeSet ? minute : local.getMinute();
+            long s = timeSet ? second : local.getSecond();
+            if (haveWeekday) {
+                d += weekdayShift(local.toLocalDate().getDayOfWeek().getValue() % 7);
+            }
+            y += relYears;
+            m += relMonths;
+            d += relDays;
+            h += relHours;
+            i += relMinutes;
+            s += relSeconds;
+            if (firstLastDayOf == 1) {
+                d = 1;
+            } else if (firstLastDayOf == 2) {
+                d = 0;
+                m++;
+            }
+            // timelib_do_normalize: months into years, then days across months, the time of day carried in
+            LocalDateTime wall = LocalDate.of((int) (y + Math.floorDiv(m - 1, 12)), (int) Math.floorMod(m - 1, 12) + 1,
+                    1).plusDays(d - 1).atStartOfDay().plusSeconds(h * 3600 + i * 60 + s);
+            return localToEpoch(wall, zone, haveZone,
+                    haveZone && zone.getRules().isDaylightSavings(Instant.ofEpochSecond(base)));
+        }
+
+        /** do_adjust_for_weekday: the days to the weekday from a date on currentDow (0 Sunday). */
+        private long weekdayShift(int currentDow) {
+            int target = weekday;
+            if (weekdayBehavior == 2) {
+                // "this week" from a Sunday; "sunday this week" from another day
+                if (currentDow == 0 && target != 0) {
+                    target -= 7;
+                }
+                if (target == 0 && currentDow != 0) {
+                    target = 7;
+                }
+                return target - currentDow;
+            }
+            int difference = target - currentDow;
+            if (relDays < 0 && difference < 0 || relDays >= 0 && difference <= -weekdayBehavior) {
+                difference += 7;
+            }
+            return target >= 0 ? difference : -(7 - (Math.abs(target) - currentDow));
+        }
     }
 
     private static Long dateTime(Matcher m, ZoneId zone, int offsetGroup) {
@@ -806,10 +1096,62 @@ final class DateFunctions {
                     Integer.parseInt(m.group(3)));
             LocalTime time = m.group(4) == null ? LocalTime.MIDNIGHT : LocalTime.of(Integer.parseInt(m.group(4)),
                     Integer.parseInt(m.group(5)), m.group(6) == null ? 0 : Integer.parseInt(m.group(6)));
-            return date.atTime(time).atZone(offsetOr(m.group(offsetGroup), zone)).toEpochSecond();
+            return localToEpoch(date.atTime(time), offsetOr(m.group(offsetGroup), zone), false, false);
         } catch (DateTimeException e) {
             return null;
         }
+    }
+
+    /**
+     * timelib's do_adjust_timezone for a zone with rules: a wall-clock time to an instant. The wall time read as
+     * UTC gives the current offset, and that offset back gives the one after; with haveZone (a DateTime's own
+     * zone) and dst (its DST flag), a look two hours behind or ahead can pick the DST side of an overlap. A gap moves
+     * forward; an overlap without that look takes the later (standard) offset.
+     */
+    static long localToEpoch(LocalDateTime wall, ZoneId zone, boolean haveZone, boolean dst) {
+        java.time.zone.ZoneRules rules = zone.getRules();
+        if (rules.isFixedOffset()) {
+            return wall.toEpochSecond(rules.getOffset(Instant.EPOCH));
+        }
+        long sse = wall.toEpochSecond(ZoneOffset.UTC);
+        Instant currentAt = Instant.ofEpochSecond(sse);
+        long current = rules.getOffset(currentAt).getTotalSeconds();
+        boolean currentIsDst = rules.isDaylightSavings(currentAt);
+        long after = offsetAt(rules, sse - current);
+        long afterTransition = transitionAt(rules, sse - current);
+        long actual = after;
+        long actualTransition = afterTransition;
+        if (current == after && haveZone) {
+            if (current >= 0 && dst && !currentIsDst) {
+                // east of UTC: the wall time read as UTC has left DST before the actual time
+                long earlier = offsetAt(rules, sse - current - 7200);
+                if (earlier != after && sse - earlier < afterTransition) {
+                    actual = earlier;
+                    actualTransition = transitionAt(rules, sse - current - 7200);
+                }
+            } else if (current <= 0 && currentIsDst && !dst) {
+                // west of UTC: it leaves DST after the actual time
+                long later = offsetAt(rules, sse - current + 7200);
+                long laterTransition = transitionAt(rules, sse - current + 7200);
+                if (later != after && sse - later >= laterTransition) {
+                    actual = later;
+                    actualTransition = laterTransition;
+                }
+            }
+        }
+        boolean inTransition = actualTransition != Long.MIN_VALUE
+                && sse - actual >= actualTransition + (current - actual) && sse - actual < actualTransition;
+        return sse - (current != actual && !inTransition ? actual : current);
+    }
+
+    private static long offsetAt(java.time.zone.ZoneRules rules, long epoch) {
+        return rules.getOffset(Instant.ofEpochSecond(epoch)).getTotalSeconds();
+    }
+
+    /** The start of the zone period holding epoch (timelib's transition_time), or Long.MIN_VALUE before the first. */
+    private static long transitionAt(java.time.zone.ZoneRules rules, long epoch) {
+        java.time.zone.ZoneOffsetTransition previous = rules.previousTransition(Instant.ofEpochSecond(epoch, 1));
+        return previous == null ? Long.MIN_VALUE : previous.getInstant().getEpochSecond();
     }
 
     private static ZoneId offsetOr(String offset, ZoneId zone) {

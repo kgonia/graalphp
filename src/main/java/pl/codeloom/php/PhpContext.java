@@ -1192,7 +1192,9 @@ public final class PhpContext {
                 if (running != null) {
                     target.producedOutput = true;
                 }
-                target.bytes.write(Str.readBytes(s));
+                byte[] bytes = Str.readBytes(s);
+                target.grow(bytes.length, buffers.peek().chunkSize);
+                target.bytes.write(bytes);
             }
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());
@@ -1214,6 +1216,15 @@ public final class PhpContext {
      */
     private enum HandlerState { NEW, STARTED, DISABLED }
 
+    // ob_get_status's flags beyond the abilities (PHP_OUTPUT_HANDLER_USER, _STARTED, _DISABLED, _PROCESSED)
+    private static final long HANDLER_USER = 0x1;
+    private static final long HANDLER_STARTED = 0x1000;
+    private static final long HANDLER_DISABLED = 0x2000;
+    private static final long HANDLER_PROCESSED = 0x4000;
+    /** PHP_OUTPUT_HANDLER_ALIGNTO_SIZE and PHP_OUTPUT_HANDLER_DEFAULT_SIZE. */
+    private static final long ALIGN = 0x1000;
+    private static final long DEFAULT_SIZE = 0x4000;
+
     /** An ob_start() level: what was written to it, and the handler its contents pass through (or null). */
     private static final class OutputBuffer {
         final ByteBuilder bytes = new ByteBuilder();
@@ -1221,14 +1232,39 @@ public final class PhpContext {
         /** The handler's name (ob_list_handlers, the notices): its callable name, or "default output handler". */
         final String name;
         final long flags;
+        /** ob_start()'s chunk_size (php-src's handler->size); 0 for none. */
+        final long chunkSize;
+        /**
+         * The allocation php-src's buffer would have (handler->buffer.size), for ob_get_status's buffer_size: it
+         * starts at PHP_OUTPUT_HANDLER_INITBUF_SIZE and grows as php_output_handler_append grows it. The bytes
+         * themselves live in {@link #bytes}.
+         */
+        long size;
         HandlerState state = HandlerState.NEW;
+        /** PHP_OUTPUT_HANDLER_PROCESSED: the handler ran and didn't fail. */
+        boolean processed;
         /** PHP_OUTPUT_HANDLER_PRODUCED_OUTPUT: written to while a handler ran, which a handler may not do. */
         boolean producedOutput;
 
-        OutputBuffer(Object handler, String name, long flags) {
+        OutputBuffer(Object handler, String name, long flags, long chunkSize) {
             this.handler = handler;
             this.name = name;
             this.flags = flags;
+            this.chunkSize = chunkSize;
+            this.size = initialSize(chunkSize);
+        }
+
+        /** PHP_OUTPUT_HANDLER_INITBUF_SIZE: a size rounded up past the next 4 KB boundary, or 16 KB for none. */
+        static long initialSize(long size) {
+            return size > 1 ? size + ALIGN - size % ALIGN : DEFAULT_SIZE;
+        }
+
+        /** php_output_handler_append's growth before n bytes go in; activeChunk: the active handler's size. */
+        void grow(int n, long activeChunk) {
+            long free = size - bytes.size();
+            if (free <= n) {
+                size += Math.max(initialSize(activeChunk), initialSize(n - free));
+            }
         }
     }
 
@@ -1252,11 +1288,54 @@ public final class PhpContext {
      */
     @TruffleBoundary
     public void startBuffer(Object handler, String name, long flags) {
+        startBuffer(handler, name, flags, 0);
+    }
+
+    /** ob_start($handler, $chunk_size, $flags): chunkSize as given, a negative one taken as 0. */
+    @TruffleBoundary
+    public void startBuffer(Object handler, String name, long flags, long chunkSize) {
         if (running != null) {
             throw outputLocked("ob_start");
         }
         pl.codeloom.php.runtime.Refcount.hold(handler);
-        buffers.push(new OutputBuffer(handler, handler == null ? "default output handler" : name, flags));
+        buffers.push(new OutputBuffer(handler, handler == null ? "default output handler" : name, flags,
+                Math.max(chunkSize, 0)));
+    }
+
+    /**
+     * ob_get_status(): php_output_handler_status for the current buffer, or with full, for each level from the
+     * outermost; an empty array without buffers.
+     */
+    @TruffleBoundary
+    public PhpArray bufferStatus(boolean full) {
+        PhpArray result = new PhpArray();
+        if (buffers.isEmpty()) {
+            return result;
+        }
+        if (!full) {
+            return bufferStatus(buffers.peek(), buffers.size() - 1);
+        }
+        int level = 0;
+        for (java.util.Iterator<OutputBuffer> it = buffers.descendingIterator(); it.hasNext(); level++) {
+            result.append(bufferStatus(it.next(), level));
+        }
+        return result;
+    }
+
+    private static PhpArray bufferStatus(OutputBuffer buffer, int level) {
+        long flags = buffer.flags & 0xf0 | (buffer.handler == null ? 0 : HANDLER_USER)
+                | (buffer.state != HandlerState.NEW ? HANDLER_STARTED : 0)
+                | (buffer.state == HandlerState.DISABLED ? HANDLER_DISABLED : 0)
+                | (buffer.processed ? HANDLER_PROCESSED : 0);
+        PhpArray status = new PhpArray();
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("name")), Str.of(buffer.name));
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("type")), buffer.handler == null ? 0L : HANDLER_USER);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("flags")), flags);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("level")), (long) level);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("chunk_size")), buffer.chunkSize);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("buffer_size")), buffer.size);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("buffer_used")), (long) buffer.bytes.size());
+        return status;
     }
 
     /**
@@ -1327,6 +1406,7 @@ public final class PhpContext {
         if (buffer.handler == null) {
             // the default handler passes its buffer on
             buffer.state = HandlerState.STARTED;
+            buffer.processed = true;
             buffer.bytes.reset();
             return new Processed(contents, null);
         }
@@ -1351,11 +1431,13 @@ public final class PhpContext {
         }
         TruffleString output = null;
         if (result == Boolean.FALSE) {
-            // failed: from now on its buffer is passed by
+            // failed: from now on its buffer is passed by, and its allocation goes with the contents
             buffer.state = HandlerState.DISABLED;
             output = buffer.bytes.toStr();
+            buffer.size = 0;
         } else {
             buffer.state = HandlerState.STARTED;
+            buffer.processed = true;
             if (result != Boolean.TRUE) {
                 // converted while the handler counts as running: a warning goes into the buffer, which is emptied
                 TruffleString text = pl.codeloom.php.runtime.Convert.toStr(result);
