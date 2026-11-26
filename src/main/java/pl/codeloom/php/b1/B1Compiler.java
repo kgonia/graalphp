@@ -18,7 +18,15 @@ import static pl.codeloom.php.ir.AsciiCase.lower;
 /** Only the named vtable, its CV names and signature survive linking. */
 public final class B1Compiler {
     private B1Compiler() {}
-    public record CompiledFile(B1Callable entry, int lintedClasses, int outlinedHelperCount, int maxMethodBytes) {}
+    public record CompiledFile(B1Callable entry, int lintedClasses, int outlinedHelperCount, int maxMethodBytes,
+                               java.util.List<MethodSize> methods, String path, java.util.Map<String,B1Callable> functions,
+                               java.util.Map<String,B1RequestContext.ClassDef> classes) {
+        void install(B1RequestContext ctx) {
+            ctx.install(path,entry,functions,classes);
+            ctx.linked(lintedClasses,outlinedHelperCount,maxMethodBytes);
+        }
+    }
+    public record MethodSize(String function, String hiddenClass, String method, int bytes) {}
 
     public static CompiledFile compile(Path file, B1RequestContext ctx) throws IOException {
         return compile(PhpIrLowerer.lowerFile(file.toString(), Files.readAllBytes(file)), ctx);
@@ -55,6 +63,7 @@ public final class B1Compiler {
             }
         }
         var linked = new ArrayList<B1Callable>();
+        var sizes = new ArrayList<MethodSize>();
         for (var function : unit.functions()) {
             var emission = B1ClassFileEmitter.measured(B1CfgLowerer.lower(function, statementBound), maxMethodBytes);
             helpers += emission.helpers();
@@ -69,6 +78,7 @@ public final class B1Compiler {
                 boolean[] refs = new boolean[function.params().size()];
                 for (int i = 0; i < refs.length; i++) refs[i] = function.params().get(i).byRef();
                 var callable = (B1Callable)ctor.invoke(refs, function.locals().toArray(String[]::new));
+                callable.requiredParams = function.requiredParams();
                 callable.display = function.owner() == null ? function.name() : function.owner() + "::" + function.name();
                 callable.evalBody = eval && function.fileBody();
                 callable.scope = function.owner() == null ? null : lower(function.owner());
@@ -76,7 +86,12 @@ public final class B1Compiler {
                 callable.declaredLine = function.at().line();
                 callable.methodBudget = maxMethodBytes;
                 callable.variadic = !function.params().isEmpty() && function.params().getLast().variadic();
+                callable.strictTypes = unit.strictTypes();
                 callable.isStatic = function.isStatic();
+                for (var method : java.lang.classfile.ClassFile.of().parse(bytes).methods()) {
+                    sizes.add(new MethodSize(callable.display, callable.getClass().getName(), method.methodName().stringValue(),
+                            method.findAttribute(java.lang.classfile.Attributes.code()).orElseThrow().codeLength()));
+                }
                 linked.add(callable);
             } catch (RuntimeException | Error ex) { throw ex; }
             catch (Throwable ex) { throw new IllegalStateException("linking " + function.name(), ex); }
@@ -92,24 +107,24 @@ public final class B1Compiler {
         for (var cls : unit.classes()) {
             var methods = new HashMap<String, B1Callable>();
             for (int id : cls.methods()) methods.put(lower(unit.functions().get(id).name()), linked.get(id));
-            var defaults = new HashMap<String,Object>();
             var visibility = new HashMap<String,Integer>();
+            var properties = new HashMap<String,B1RequestContext.Property>();
+            var instance = new ArrayList<String>();
             for (var prop : cls.properties()) {
                 if (prop.visibility() != 1) visibility.put(prop.name(),prop.visibility());
-                Object initial = prop.initial() instanceof IrUnit.ArrayValue ? new pl.codeloom.php.b1.runtime.B1Array(0).freeze()
-                        : ((IrUnit.Literal)prop.initial()).value();
-                if (initial instanceof String str) initial = pl.codeloom.php.b1.runtime.B1Bytes.ofUtf8(str);
-                if (initial instanceof byte[] binary) initial = pl.codeloom.php.b1.runtime.B1Bytes.of(binary);
-                if (initial != null) defaults.put(prop.name(),initial);
+                Object initial = B1LiteralBlob.propertyDefault(prop.initial());
+                properties.put(prop.name(),new B1RequestContext.Property(prop.type(),prop.isStatic(),prop.initialized(),initial));
+                if (!prop.isStatic()) instance.add(prop.name());
             }
-            var definition = new B1RequestContext.ClassDef(cls.name(), cls.properties().stream().map(IrUnit.PropertyDef::name).toList(),
-                    methods, defaults, visibility, cls.at());
+            var definition = new B1RequestContext.ClassDef(cls.name(), instance,
+                    methods, visibility, properties, cls.at());
             if (statementBound.contains(cls.id())) lateClasses.put(cls.id(), definition);
             else classes.put(lower(cls.name()), definition);
         }
         linked.getFirst().statementClasses = java.util.Map.copyOf(lateClasses);
-        ctx.install(unit.file(), linked.getFirst(), functions, classes);
-        ctx.linked(linked.size(),helpers,max);
-        return new CompiledFile(linked.getFirst(), linked.size(), helpers, max);
+        var file = new CompiledFile(linked.getFirst(), linked.size(), helpers, max, java.util.List.copyOf(sizes),
+                unit.file(), java.util.Map.copyOf(functions), java.util.Map.copyOf(classes));
+        file.install(ctx);
+        return file;
     }
 }

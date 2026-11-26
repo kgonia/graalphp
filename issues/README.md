@@ -8,7 +8,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [002](002-by-ref-magic-get.md) | `&__get` and `&offsetGet` aren't written through | Fixed |
 | [003](003-class-early-binding.md) | Top-level classes aren't bound early | Fixed |
 | [004](004-generator-resume-reevaluates.md) | A resumed generator evaluates the yielding statement again | Fixed (every generator on bytecode since #44) |
-| [005](005-destructors.md) | Destructors never run | Open: decided, exact semantics (option A); prototype gaps in 036 |
+| [005](005-destructors.md) | Destructors never run | Fixed on B1 (`B1CycleCollector` + exact refcount + Zend shutdown); Truffle `gc_collect_cycles()` still open |
 | [006](006-compile-time-jump-checks.md) | Compile-time errors for jumps and try aren't raised | Fixed; the compile-time `continue` warnings open |
 | [007](007-goto-over-try-file-level.md) | A goto over a try at file level escapes as a Java exception | Fixed; a goto into an if, try or catch at the top level open |
 | [008](008-builtin-arity.md) | Built-in functions don't check their argument count | Fixed |
@@ -39,7 +39,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [033](033-unknown-named-zpp-order.md) | A variadic built-in refuses extra names before its fixed parameters' type errors | Open |
 | [034](034-mb-8bit-encoding.md) | mbstring functions refuse the 8bit encoding, so comments can't be posted | Open |
 | [035](035-lazy-parse-break-error.md) | The lazy parse reads `break_error_001`'s function body eagerly (`mvn test` fails on main) | Open |
-| [036](036-refcount-prototype-gaps.md) | Known gaps of the object refcount prototype (destructors) | Open (work for 005) |
+| [036](036-refcount-prototype-gaps.md) | Known gaps of the object refcount prototype (destructors) | Fixed on B1 (cycle GC, shutdown 3a/3b, trace args, `call_user_func_array`); Truffle cycle GC open |
 | [037](037-object-number-compare-notice.md) | Comparing an object with a number raises no notice | Open |
 | [038](038-string-offset-write.md) | Writing a string offset (`$s[i] = 'c'`) throws "Cannot use a scalar value as an array" | Open |
 | [039](039-private-property-shadowed.md) | A subclass's property hides its parent's private property in the parent's methods | Open |

@@ -49,7 +49,7 @@ class DualBackendContractTest {
         assertArrayEquals(expected, b1(file, 4));
         assertArrayEquals(expected, truffle(file, true));
         // Translate the same path again with an unsupported construct. The diagnostic must change.
-        Files.writeString(file, "<?php echo implode('', ['legacy']);");
+        Files.writeString(file, "<?php echo substr('a legacy', 2);");
         assertArrayEquals("legacy".getBytes(java.nio.charset.StandardCharsets.UTF_8), truffle(file, false));
     }
 

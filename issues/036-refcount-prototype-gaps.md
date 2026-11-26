@@ -1,8 +1,6 @@
 # 036: Known gaps of the object refcount prototype (destructors)
 
-**State:** Open. This is work in progress for issue 005, on the `destructors-merged` branch (PR #57, 1183d27):
-prototype A plus fixes, with B's profiled releases and `truffle_refcount` ported. The sections below were
-measured on 2026-11-06 and 2026-11-07. The status on 2026-11-08 is in [destructors.md](../wiki/destructors.md).
+**State:** Partially fixed — **closed on B1** for cycle collection (`B1CycleCollector`: shadow-RC Bacon-Rajan with 10k adaptive threshold, `inGcRoots` flag, throwing-destructor chaining), Zend iterative shutdown order (3a/3b), `call_user_func_array` arguments, ternary/coalesce ownership, and exception trace arguments (2026-11-26, Milestone B1 Week 2 Part A, 556/556 B `d17_fixture.php` parity + 49/49 stock JDK 25 fixtures). On **Truffle PHP** (secondary): work in progress from `destructors-merged` (PR #57, 1183d27); `gc_collect_cycles()` still returns `0`. The sections below were measured on 2026-11-06 and 2026-11-07. The status on 2026-11-08 is in [destructors.md](../wiki/destructors.md).
 
 **Left on 2026-11-08 (1183d27).** Fixtures match PHP 8.5, the fuzzer matches on 999 of 1000 programs, and the
 WordPress audit has no group. Each of the following is still required (D17):

@@ -12,7 +12,7 @@ public final class B1Thrown extends RuntimeException {
     }
 
     static boolean throwable(String type) { return switch (type) {
-        case "exception", "error", "typeerror", "argumentcounterror", "valueerror", "parseerror", "compileerror" -> true;
+        case "exception", "error", "typeerror", "argumentcounterror", "divisionbyzeroerror", "valueerror", "parseerror", "compileerror" -> true;
         default -> false;
     }; }
 

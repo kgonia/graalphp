@@ -179,7 +179,7 @@ public final class B1Lint {
             if (kind == Kind.EMITTED && name.startsWith("fragment")
                     && (owner.equals("pl/codeloom/php/b1/runtime/B1Frame") && target.equals("leave")
                     || owner.equals("pl/codeloom/php/b1/runtime/B1RequestContext")
-                    && (target.equals("pushFrame") || target.equals("popFrame"))))
+                    && (target.equals("pushFrame") || target.equals("popFrame") || target.equals("enter") || target.equals("pop"))))
                 errors.add("B1-10 outlined helper " + where + " must not call " + owner + "." + target);
             if (owner.equals("java/lang/Thread") && (target.equals("ofVirtual") || target.equals("startVirtualThread"))
                     || owner.equals("java/util/concurrent/Executors") && target.equals("newVirtualThreadPerTaskExecutor"))

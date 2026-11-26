@@ -8,6 +8,39 @@ import java.math.RoundingMode;
 public final class PhpFloatFormat {
     private PhpFloatFormat() {}
 
+    /** zend_dval_to_lval_slow on a 64-bit build. */
+    public static long wrapToLong(double value) {
+        double remainder = value % 0x1p64;
+        if (remainder >= 0x1p63) remainder -= 0x1p64;
+        else if (remainder < -0x1p63) remainder += 0x1p64;
+        return (long)remainder;
+    }
+
+    public static String doubleToRepr(double d) {
+        if (!Double.isFinite(d)) {
+            return Double.isNaN(d) ? "NAN" : d > 0 ? "INF" : "-INF";
+        }
+        if (d == 0) {
+            return 1 / d < 0 ? "-0" : "0";
+        }
+        double abs = Math.abs(d);
+        BigDecimal shortest = new BigDecimal(Double.toString(abs));
+        if (shortest.precision() == 2) {
+            // Double.toString picks among 1- and 2-digit decimals when one digit would do (4.9E-324); dtoa
+            // takes the 1-digit one closest to d
+            BigDecimal down = shortest.round(new MathContext(1, RoundingMode.FLOOR));
+            BigDecimal up = shortest.round(new MathContext(1, RoundingMode.CEILING));
+            boolean downOk = down.doubleValue() == abs;
+            boolean upOk = up.doubleValue() == abs;
+            if (downOk || upOk) {
+                BigDecimal exact = new BigDecimal(abs);
+                shortest = downOk && (!upOk || exact.subtract(down).compareTo(up.subtract(exact)) <= 0) ? down : up;
+            }
+        }
+        String digits = shortest.unscaledValue().toString();
+        return (d < 0 ? "-" : "") + gcvt(digits, shortest.precision() - shortest.scale(), 17);
+    }
+
     public static String formatDouble(double d, int precision) {
         if (Double.isNaN(d)) {
             return "NAN";

@@ -1,0 +1,26 @@
+
+Warning: A non-numeric value encountered in /fixtures/w2_audit_numeric.php on line 3
+2
+
+Warning: A non-numeric value encountered in /fixtures/w2_audit_numeric.php on line 3
+
+Deprecated: Implicit conversion from float-string "7.8z" to int loses precision in /fixtures/w2_audit_numeric.php on line 3
+2
+Unsupported operand types: stdClass % int
+Unsupported operand types: array % int
+Unsupported operand types: string % int
+Modulo by zero
+
+Warning: The float INF is not representable as an int, cast occurred in /fixtures/w2_audit_numeric.php on line 6
+0
+
+Warning: The float -INF is not representable as an int, cast occurred in /fixtures/w2_audit_numeric.php on line 7
+0
+
+Warning: The float 1.0E+19 is not representable as an int, cast occurred in /fixtures/w2_audit_numeric.php on line 8
+-8446744073709551616
+
+Warning: The float INF is not representable as an int, cast occurred in /fixtures/w2_audit_numeric.php on line 9
+0
+255/-5/63/0
+9223372036854775807/-9223372036854775808/0

@@ -80,10 +80,22 @@ public final class PhpIrLowerer {
             }
             if (n.is("AST_CLASS")) classNames.add(AsciiCase.lower(name(n)));
         }
+        boolean strict = false;
+        boolean first = true;
         var main = new Body(null);
+        main.reuseTemps = tree.size() >= IrUnit.LARGE_BODY_STATEMENTS;
         var code = new ArrayList<Statement>();
         for (Object item : tree.children()) {
             Ast node = node(item);
+            if (node.is("AST_DECLARE")) {
+                Ast entries = node.node("declares");
+                check(first && entries.size() == 1 && node.get("stmts") == null, node);
+                Ast entry = node(entries.child(0));
+                check("strict_types".equalsIgnoreCase(name(entry)) && entry.get("value") instanceof Long n && (n == 0 || n == 1), entry);
+                strict |= Long.valueOf(1).equals(entry.get("value"));
+                continue;
+            }
+            first = false;
             switch (node.kind) {
                 case "AST_FUNC_DECL" -> function(node, null);
                 case "AST_CLASS" -> {
@@ -91,13 +103,13 @@ public final class PhpIrLowerer {
                     var cls = classes.getLast();
                     code.add(new ClassDeclaration(cls.id(), cls.name(), cls.at()));
                 }
-                default -> code.add(main.statement(node));
+                default -> main.append(code,node);
             }
         }
         code = main.exposeLabels(code);
         functions.set(0, main.finish(0, file, tree, List.of(), code));
         for (IrFunction function : functions) checkTransfers(function.body(), Set.of(), 0);
-        return new IrUnit(file, functions, classes);
+        return new IrUnit(file, strict, functions, classes);
     }
 
     /** Accept branches within a list and exits to an enclosing list. PHP's remaining
@@ -139,13 +151,22 @@ public final class PhpIrLowerer {
                 check(seen.add(method) && !Set.of("__get", "__set", "__isset", "__unset", "__call").contains(method), member);
                 methods.add(function(member, name));
             } else {
-                check(member.is("AST_PROP_GROUP") && (member.flags == 1 || member.flags == 2 || member.flags == 4) && member.get("type") == null
+                check(member.is("AST_PROP_GROUP") && Set.of(1,2,4,17,18,20).contains(member.flags)
                         && member.get("attributes") == null, member);
                 for (Object element : member.node("props").children()) {
                     Ast prop = node(element);
                     check(prop.get("hooks") == null
                             && prop.get("docComment") == null && props.stream().noneMatch(p -> p.name().equals(name(prop))), prop);
-                    props.add(new PropertyDef(name(prop),member.flags,prop.node("default") != null && prop.node("default").is("AST_ARRAY") && prop.node("default").size() == 0 ? new ArrayValue(List.of()) : scalar(prop.get("default"))));
+                    Ast declared = member.node("type");
+                    boolean nullable = declared != null && declared.is("AST_NULLABLE_TYPE");
+                    String type = typeName(nullable ? declared.node("type") : declared,false);
+                    if (nullable) type = "?" + type;
+                    if ("callable".equals(type) || "?callable".equals(type)) throw new PhpCompileFatal(
+                            "Property " + name + "::$" + name(prop) + " cannot have type " + type, at(declared), "#0 {main}");
+                    Object value = prop.get("default");
+                    Expr initial = value instanceof Ast a && a.is("AST_ARRAY") ? literalArray(a,new int[1]) : scalar(value);
+                    props.add(new PropertyDef(name(prop), member.flags & 7, (member.flags & 16) != 0, type,
+                            initial, type == null || value != null));
                 }
             }
         }
@@ -183,12 +204,14 @@ public final class PhpIrLowerer {
             captures.add(new Capture(outer.local(var), body.local(var), use.flags == 1));
         }
         List<Statement> code;
+        Ast syntax = decl.body();
+        body.reuseTemps = syntax.size() >= IrUnit.LARGE_BODY_STATEMENTS;
         if (decl.is("AST_ARROW_FUNC")) {
-            check(decl.body().is("AST_RETURN"),decl);
-            code = List.of(body.statement(decl.body()));
+            check(syntax.is("AST_RETURN"),decl);
+            code = List.of(body.statement(syntax));
             // An arrow with free variables needs implicit by-value captures.
             check(body.locals.size() == params.size(),decl);
-        } else code = body.statements(decl.body());
+        } else code = body.statements(syntax);
         if (body.checkedReturn()) {
             var withEnd = new ArrayList<>(code);
             var empty = new ReleaseTemps(List.of());
@@ -207,6 +230,9 @@ public final class PhpIrLowerer {
         return switch (type.flags) {
             case 4 -> "int";
             case 6 -> "string";
+            case 7 -> "array";
+            case 12 -> "callable";
+            case 16 -> "mixed";
             case 14 -> { check(result,type); yield "void"; }
             default -> throw unsupported(type);
         };
@@ -220,12 +246,17 @@ public final class PhpIrLowerer {
             case "true" -> new Literal(true);
             case "false" -> new Literal(false);
             case "null" -> new Literal(null);
+            case "inf" -> { check("INF".equals(n.text("name")),n); yield new Literal(Double.POSITIVE_INFINITY); }
+            case "nan" -> { check("NAN".equals(n.text("name")),n); yield new Literal(Double.NaN); }
             case "php_int_max" -> new Literal(Long.MAX_VALUE);
             case "sort_numeric" -> new Literal(1L);
             default -> throw unsupported(n);
         };
-        if (n.is("AST_UNARY_OP") && n.flags == 262 && n.get("expr") instanceof Long number)
-            return new Literal(-number);
+        if (n.is("AST_UNARY_OP") && n.flags == 262) {
+            Object operand = scalar(n.get("expr")).value();
+            if (operand instanceof Long l) return new Literal(-l);
+            if (operand instanceof Double d) return new Literal(-d);
+        }
         throw unsupported(n);
     }
 
@@ -260,6 +291,7 @@ public final class PhpIrLowerer {
     private static Operator operator(Ast n) {
         return switch (n.flags) {
             case 1 -> Operator.ADD;
+            case 3 -> Operator.MUL;
             case 5 -> Operator.MOD;
             case 8 -> Operator.CONCAT;
             case 16 -> Operator.IDENTICAL;
@@ -286,6 +318,9 @@ public final class PhpIrLowerer {
         final List<TempKind> temps = new ArrayList<>();
         List<ReleaseTemp> releases;
         int labels;
+        boolean reuseTemps;
+        final java.util.EnumMap<TempKind,List<Integer>> reusable = new java.util.EnumMap<>(TempKind.class);
+        final int[] used = new int[TempKind.values().length];
 
         Body(String owner) { this.owner = owner; }
 
@@ -303,9 +338,15 @@ public final class PhpIrLowerer {
             return locals.size() - 1;
         }
 
+        void append(List<Statement> code, Ast n) {
+            if (n.is("AST_STMT_LIST")) {
+                for (Object child : n.children()) append(code,node(child));
+            } else code.add(statement(n));
+        }
+
         List<Statement> statements(Ast list) {
             var code = new ArrayList<Statement>();
-            for (Object item : list.children()) code.add(statement(node(item)));
+            for (Object item : list.children()) append(code,node(item));
             return List.copyOf(exposeLabels(code));
         }
 
@@ -334,7 +375,7 @@ public final class PhpIrLowerer {
         }
 
         Test test(Ast n, Object value) {
-            releases = new ArrayList<>();
+            beginOperands();
             Expr result = expr(value, false);
             return new Test(at(n), result, new ReleaseTemps(List.copyOf(releases)));
         }
@@ -349,9 +390,48 @@ public final class PhpIrLowerer {
 
         List<Statement> optionalList(Ast n) { return n == null ? List.of() : statements(n); }
 
+        Statement switchStatement(Ast n) {
+            // Dispatch once, then enter the selected arm. Literal cases use PHP's loose comparison.
+            // A one-iteration loop provides the switch break target, including nested break levels.
+            int subject = local("#switch" + labels++);
+            beginOperands();
+            Action save = new Write(subject,expr(n.get("cond"),false));
+            var cleanup = new ReleaseTemps(List.copyOf(releases));
+            var none = new ReleaseTemps(List.of());
+            var body = new ArrayList<Statement>();
+            var arms = new ArrayList<Statement>();
+            String done = "#switchEnd" + labels++, otherwise = done;
+            for (Object item : n.node("stmts").children()) {
+                Ast arm = node(item);
+                String label = "#case" + labels++;
+                if (arm.get("cond") == null) otherwise = label;
+                else body.add(new Branch(new Test(at(arm),new Binary(Operator.EQ,new Read(subject),scalar(arm.get("cond"))),none),
+                        List.of(new Jump(label)),List.of()));
+                arms.add(new Mark(label));
+                arms.add(new Region(at(arm),new Unset(new Read(subject),null),none,none));
+                arms.addAll(statements(arm.node("stmts")));
+            }
+            body.add(new Jump(otherwise));
+            body.addAll(arms);
+            body.add(new Mark(done));
+            body.add(new Region(at(n),new Unset(new Read(subject),null),none,none));
+            body.add(new LoopExit(false,1));
+            // continue targeting a switch emits a compiler diagnostic and is declined at file entry.
+            return new Loop(List.of(new Region(at(n),save,cleanup,cleanup)),new Test(at(n),new Literal(true),none),List.of(),body);
+        }
+
+        StaticProperty staticProperty(Ast n) {
+            Ast cls = n.node("class");
+            check(cls != null && cls.is("AST_NAME") && n.get("prop") instanceof String,n);
+            String name = "self".equalsIgnoreCase(name(cls)) ? owner : className(cls);
+            check(name != null,n);
+            return new StaticProperty(name,(String)n.get("prop"));
+        }
+
         Statement statement(Ast n) {
             switch (n.kind) {
                 case "AST_IF": return branch(n, 0);
+                case "AST_SWITCH": return switchStatement(n);
                 case "AST_LABEL": return new Mark(name(n));
                 case "AST_GOTO": return new Jump(n.text("label"));
                 case "AST_BREAK", "AST_CONTINUE": {
@@ -379,7 +459,7 @@ public final class PhpIrLowerer {
                 case "AST_FOREACH": {
                     Ast value = n.node("value"), key = n.node("key");
                     check(value.is("AST_VAR") && (key == null || key.is("AST_VAR")), n);
-                    return new Each(test(n, n.get("expr")), slot(TempKind.VALUE),
+                    return new Each(test(n, n.get("expr")), reserve(TempKind.VALUE),
                             key == null ? -1 : local(name(key)), local(name(value)), statements(n.node("stmts")));
                 }
             }
@@ -392,14 +472,20 @@ public final class PhpIrLowerer {
                     Ast types = handler.node("class");
                     check(types.size() == 1 && handler.node("var") != null, handler);
                     String type = className(node(types.child(0)));
-                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","parseerror","compileerror","valueerror").contains(AsciiCase.lower(type)), handler);
+                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","divisionbyzeroerror","parseerror","compileerror","valueerror").contains(AsciiCase.lower(type)), handler);
                     protectedBody = List.of(new TryCatch(labels++, at(n), protectedBody, type,
                             local(name(handler.node("var"))), statements(handler.node("stmts"))));
                 }
-                return n.node("finally") == null ? protectedBody.getFirst() : new Finally(protectedBody, statements(n.node("finally")), slot(TempKind.VALUE));
+                return n.node("finally") == null ? protectedBody.getFirst() : new Finally(protectedBody, statements(n.node("finally")), reserve(TempKind.VALUE));
             }
-            releases = new ArrayList<>();
+            beginOperands();
             Action action = switch (n.kind) {
+                case "AST_ASSIGN_REF" -> {
+                    Ast dest = n.node("var");
+                    Expr source = expr(n.get("expr"),false);
+                    check(dest.is("AST_VAR") && addressable(source),n);
+                    yield new Bind(local(name(dest)),source);
+                }
                 case "AST_GLOBAL" -> new Global(local(name(n.node("var"))));
                 case "AST_UNSET" -> {
                     Ast place = n.node("var");
@@ -419,11 +505,12 @@ public final class PhpIrLowerer {
                 case "AST_THROW" -> new Raise(expr(n.get("expr"), false));
                 case "AST_ASSIGN" -> {
                     Ast place = n.node("var");
+                    if (place.is("AST_STATIC_PROP")) yield new WriteStatic(staticProperty(place),expr(n.get("expr"),false));
                     if (place.is("AST_VAR")) yield new Write(local(name(place)), expr(n.get("expr"), false));
                     if (place.is("AST_DIM")) {
                         var path = new ArrayList<Ast>();
                         while (place != null && place.is("AST_DIM")) { path.addFirst(place); place = place.node("expr"); }
-                        check(place != null && (place.is("AST_VAR") || place.is("AST_PROP")), n);
+                        check(place != null && (place.is("AST_VAR") || place.is("AST_PROP") || place.is("AST_STATIC_PROP")), n);
                         var keys = new ArrayList<Expr>();
                         for (Ast dim : path) keys.add(dim.get("dim") == null ? null : expr(dim.get("dim"), false));
                         yield new WriteDim(expr(place,false), java.util.Collections.unmodifiableList(keys), hold(expr(n.get("expr"), false)));
@@ -436,6 +523,12 @@ public final class PhpIrLowerer {
                 case "AST_CALL", "AST_METHOD_CALL", "AST_NEW" -> new Evaluate(call(n, false, false));
                 case "AST_ASSIGN_OP" -> {
                     Ast place = n.node("var");
+                    if (n.flags == 260) {
+                        check(place.is("AST_DIM") && place.node("expr") != null && place.node("expr").is("AST_VAR")
+                                && place.get("dim") != null,n);
+                        yield new CoalesceDim(local(name(place.node("expr"))),hold(expr(place.get("dim"),false)),
+                                hold(expr(n.get("expr"),false)));
+                    }
                     check(place.is("AST_VAR") && (n.flags == 1 || n.flags == 8), n);
                     int id = local(name(place));
                     yield new Write(id, new Binary(operator(n), new Read(id), expr(n.get("expr"), false)));
@@ -469,6 +562,7 @@ public final class PhpIrLowerer {
                     yield owned(new ArrayValue(List.copyOf(items)));
                 }
                 case "AST_DIM" -> dim(n, false);
+                case "AST_STATIC_PROP" -> staticProperty(n);
                 case "AST_ISSET" -> {
                     Ast place = n.node("var");
                     if (place == null || !(place.is("AST_VAR") || place.is("AST_DIM") || place.is("AST_PROP"))) {
@@ -498,12 +592,12 @@ public final class PhpIrLowerer {
                 }
                 case "AST_PRE_INC", "AST_PRE_DEC", "AST_POST_INC", "AST_POST_DEC" -> {
                     Ast v = n.node("var");
-                    if (v.is("AST_PROP") || v.is("AST_DIM")) yield new IncrementPlace(expr(v,false),n.kind.endsWith("INC"),n.kind.startsWith("AST_PRE"));
+                    if (v.is("AST_PROP") || v.is("AST_DIM") || v.is("AST_STATIC_PROP")) yield new IncrementPlace(expr(v,false),n.kind.endsWith("INC"),n.kind.startsWith("AST_PRE"));
                     check(v.is("AST_VAR"), n);
                     yield new Increment(local(name(v)), n.kind.endsWith("INC"), n.kind.startsWith("AST_PRE"));
                 }
                 case "AST_CLOSURE", "AST_ARROW_FUNC" -> {
-                    check(n.flags == 16, n);
+                    check(n.flags == 16 || n.flags == 0, n);
                     int id = function(n, owner, this);
                     yield owned(new Closure(id, functions.get(id).captures()));
                 }
@@ -584,7 +678,22 @@ public final class PhpIrLowerer {
             return new StoreTemp(id, operand);
         }
 
+        void beginOperands() {
+            releases = new ArrayList<>();
+            java.util.Arrays.fill(used,0);
+        }
+
+        // Both exits of a region drain its operands. Reuse those physical slots in large
+        // frames, keeping the iterator and suspended-finally slots distinct across regions.
         int slot(TempKind kind) {
+            if (!reuseTemps) return reserve(kind);
+            var pool = reusable.computeIfAbsent(kind,k -> new ArrayList<>());
+            int i = used[kind.ordinal()]++;
+            if (i == pool.size()) pool.add(reserve(kind));
+            return pool.get(i);
+        }
+
+        int reserve(TempKind kind) {
             temps.add(kind);
             return temps.size() - 1;
         }
@@ -593,6 +702,7 @@ public final class PhpIrLowerer {
             return switch (e) {
                 case Read ignored -> true;
                 case Property ignored -> true;
+                case StaticProperty ignored -> true;
                 case Dim d -> addressable(d.base());
                 case Prepared p -> addressable(p.result());
                 case StoreTemp t -> t.value() instanceof Dim d && addressable(d);
@@ -638,7 +748,7 @@ public final class PhpIrLowerer {
                         return owned(new Forward(callback, expr(source,false), null, null));
                     }
                     // Frame-sensitive builtins and intrinsics have their own lowering in the legacy frontend.
-                    check(functionNames.contains(AsciiCase.lower(name)) || externalFunction.test(AsciiCase.lower(name)) || Set.of("set_exception_handler", "count", "strlen", "array_slice", "array_key_exists", "is_int", "is_string", "is_array", "str_repeat", "get_object_vars", "is_object", "spl_object_id", "array_keys", "ucfirst", "trim", "array_pop","array_unshift","ksort","next","current","str_replace").contains(AsciiCase.lower(name)), callee);
+                    check(functionNames.contains(AsciiCase.lower(name)) || externalFunction.test(AsciiCase.lower(name)) || Set.of("set_exception_handler", "count", "strlen", "array_slice", "array_key_exists", "is_int", "is_string", "is_array", "str_repeat", "get_object_vars", "is_object", "spl_object_id", "gc_collect_cycles","is_callable","is_numeric","intval","var_dump","strtolower","array_map","implode","array_keys", "ucfirst", "trim", "array_pop","array_unshift","ksort","next","current","str_replace").contains(AsciiCase.lower(name)), callee);
                     target = new Target(Dispatch.FUNCTION, name, null);
                 }
             }

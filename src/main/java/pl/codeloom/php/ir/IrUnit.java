@@ -3,7 +3,10 @@ package pl.codeloom.php.ir;
 import java.util.List;
 
 /** Backend-independent PHP operations. IDs index their owning unit or function. */
-public record IrUnit(String file, List<IrFunction> functions, List<IrClass> classes) {
+public record IrUnit(String file, boolean strictTypes, List<IrFunction> functions, List<IrClass> classes) {
+    /** Above this size, recycle statement operand slots and use the compact Truffle operations. */
+    public static final int LARGE_BODY_STATEMENTS = 48;
+
     public IrUnit {
         functions = List.copyOf(functions);
         classes = List.copyOf(classes);
@@ -11,11 +14,17 @@ public record IrUnit(String file, List<IrFunction> functions, List<IrClass> clas
 
     public record IrClass(int id, String name, IrSourceSpan at, int endLine, List<PropertyDef> properties,
                           List<Integer> methods) {}
-    public record PropertyDef(String name,int visibility,Expr initial) {}
+    public record PropertyDef(String name, int visibility, boolean isStatic, String type, Expr initial, boolean initialized) {}
     public record Capture(int outer, int inner, boolean byRef) {}
     public record Param(String name, boolean byRef, String type, boolean variadic, Expr defaultValue, IrSourceSpan at) {}
     public record IrFunction(int id, String owner, String name, IrSourceSpan at, int endLine, String returnType, List<Param> params,
                              boolean closure, boolean isStatic, List<Capture> captures, List<String> locals, List<TempKind> temps, List<Statement> body) {
+        public int requiredParams() {
+            for (int i = params.size()-1; i >= 0; i--) {
+                if (!params.get(i).variadic() && params.get(i).defaultValue() == null) return i + 1;
+            }
+            return 0;
+        }
         public boolean fileBody() { return id == 0; }
     }
 
@@ -39,6 +48,7 @@ public record IrUnit(String file, List<IrFunction> functions, List<IrClass> clas
 
     public sealed interface Action {}
     public record Write(int local, Expr value) implements Action {}
+    public record CoalesceDim(int local, Expr key, Expr value) implements Action {}
     public record WriteDim(Expr root, List<Expr> keys, Expr value) implements Action {
         public boolean early(int i) {
             Expr key = keys.get(i);
@@ -46,6 +56,9 @@ public record IrUnit(String file, List<IrFunction> functions, List<IrClass> clas
         }
     }
     public record Unset(Expr root, Expr key) implements Action {}
+    public record Bind(int local, Expr place) implements Action {}
+    public record WriteStatic(StaticProperty place, Expr value) implements Action {}
+    public record StaticProperty(String owner, String name) implements Expr {}
     public record Global(int local) implements Action {}
     public record WriteNamedProperty(Expr receiver, Expr name, Expr value) implements Action {}
     public record QuietProperty(Expr receiver, String name) implements Expr {}
@@ -61,7 +74,7 @@ public record IrUnit(String file, List<IrFunction> functions, List<IrClass> clas
     public record Read(int local) implements Expr {}
     public record This() implements Expr {}
     public record Property(Expr receiver, String name) implements Expr {}
-    public enum Operator { ADD, MOD, CONCAT, IDENTICAL, NOT_IDENTICAL, LT, LE, GT, GE, EQ, NE, AND, OR, COALESCE, ELVIS }
+    public enum Operator { ADD, MOD, CONCAT, IDENTICAL, NOT_IDENTICAL, LT, LE, GT, GE, EQ, NE, AND, OR, COALESCE, ELVIS, MUL }
     public record Item(Expr key, Expr value) {}
     public record ArrayValue(List<Item> items) implements Expr {}
     public record Prepared(List<StoreTemp> operands,Expr result) implements Expr {}

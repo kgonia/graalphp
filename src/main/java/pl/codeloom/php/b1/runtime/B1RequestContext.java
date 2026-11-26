@@ -23,7 +23,12 @@ public final class B1RequestContext {
     private final Map<String, B1Callable> functions = new HashMap<>();
     private final Map<String, B1Callable> files = new HashMap<>();
     private final Map<String, ClassDef> classes = new HashMap<>();
-    private final LinkedHashMap<String, B1Ref> globals = new LinkedHashMap<>();
+    private LinkedHashMap<String, B1Ref> globals = new LinkedHashMap<>();
+    final B1CycleCollector cycles = new B1CycleCollector();
+    public int gcRootCount() { return cycles.rootCount(); }
+    public long collectCycles() { return cycles.collect(this); }
+
+    private Map<String,B1Ref> staticProperties = new LinkedHashMap<>();
     private boolean abortDestructors;
     boolean destructorsAborted() { return abortDestructors; }
     private final LinkedHashSet<B1Object> destructibles = new LinkedHashSet<>();
@@ -34,15 +39,16 @@ public final class B1RequestContext {
     private B1Frame frame;
     private String exceptionHandler;
 
-    public record ClassDef(String name, List<String> props, Map<String, B1Callable> methods, Map<String, Object> defaults, Map<String,Integer> visibility, pl.codeloom.php.ir.IrSourceSpan declaration) {
+    public record Property(String type, boolean isStatic, boolean initialized, Object initial) {}
+    public record ClassDef(String name, List<String> props, Map<String, B1Callable> methods, Map<String,Integer> visibility, Map<String,Property> properties, pl.codeloom.php.ir.IrSourceSpan declaration) {
         public ClassDef(String name, List<String> props, Map<String, B1Callable> methods) {
             this(name, props, methods, Map.of(),Map.of(),null);
         }
         public ClassDef {
             props = List.copyOf(props);
             methods = Map.copyOf(methods);
-            defaults = Map.copyOf(defaults);
             visibility = Map.copyOf(visibility);
+            properties = Map.copyOf(properties);
         }
         @HotPath(lookup = true)
         B1Callable method(B1RequestContext ctx,String lower) { return methods.get(lower); }
@@ -54,11 +60,18 @@ public final class B1RequestContext {
         for (String method : List.of("__construct", "getMessage", "getLine", "getPrevious", "getFile", "getCode", "getTrace", "getTraceAsString")) {
             methods.put(pl.codeloom.php.ir.AsciiCase.lower(method), new ExceptionMethod(method));
         }
-        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "ValueError", "ParseError", "CompileError")) {
+        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "DivisionByZeroError", "ValueError", "ParseError", "CompileError")) {
             classes.put(pl.codeloom.php.ir.AsciiCase.lower(type), new ClassDef(type,
                     List.of("message", "file", "line", "code", "trace", "previous"), methods));
         }
         classes.put("stdclass", new ClassDef("stdClass", List.of(), Map.of()));
+        builtin("gc_collect_cycles",0);
+        builtin("var_dump",1,"value","values");
+        builtin("array_map",2,"callback","array","arrays");
+        builtin("implode",1,"separator","array");
+        builtin("strtolower",1,"string");
+        builtin("intval",1,"value","base");
+        for (String fn : List.of("is_callable","is_numeric")) builtin(fn,1,"value");
         builtin("count",1,"value","mode");
         builtin("strlen",1,"string");
         builtin("array_slice",2,"array","offset","length","preserve_keys");
@@ -93,6 +106,7 @@ public final class B1RequestContext {
         }
         private static boolean[] references(String name,int count) {
             boolean[] refs = new boolean[count];
+            if (count == 0) return refs;
             refs[0] = name.equals("ksort") || name.equals("array_pop") || name.equals("array_unshift") || name.equals("next");
             if (name.equals("str_replace")) refs[3] = true;
             return refs;
@@ -111,9 +125,22 @@ public final class B1RequestContext {
             return ctx.error("ArgumentCountError",name + "() expects " + limit + " " + expected + " argument"
                     + (expected == 1 ? "" : "s") + ", " + count + " given");
         }
-        @Override public Object invoke0(B1RequestContext ctx,B1Object self) { throw arityError(ctx,0); }
+        @Override public Object invoke0(B1RequestContext ctx,B1Object self) {
+            if (name.equals("gc_collect_cycles")) return ctx.collectCycles();
+            throw arityError(ctx,0);
+        }
         @Override public Object invoke1(B1RequestContext ctx, B1Object self, Object a) {
             return switch (name) {
+                case "is_callable" -> ctx.isCallable(a);
+                case "is_numeric" -> a instanceof Number || (a instanceof B1Bytes || a instanceof String) && ctx.number(a,false) != null;
+                case "var_dump" -> { new B1Dump(ctx).value(a,0); yield null; }
+                case "intval" -> ctx.castLong(a);
+                case "implode" -> implode(ctx,a,null);
+                case "strtolower" -> {
+                    byte[] bytes = stringParam(ctx,a).clone();
+                    for (int i = 0; i < bytes.length; i++) if (bytes[i] >= 'A' && bytes[i] <= 'Z') bytes[i] += 32;
+                    yield B1Bytes.of(bytes);
+                }
                 case "is_array" -> a instanceof B1Array;
                 case "is_string" -> a instanceof String || a instanceof B1Bytes;
                 case "is_int" -> a instanceof Long;
@@ -163,14 +190,155 @@ public final class B1RequestContext {
                     + type + ", " + ctx.argumentType(value) + " given");
         }
         private byte[] stringParam(B1RequestContext ctx,Object a) {
+            return stringParam(ctx,a,"string","string");
+        }
+        private byte[] stringParam(B1RequestContext ctx,Object a,String declaredType,String errorType) {
+            if (ctx.strict() && !(a instanceof B1Bytes || a instanceof String)) throw badType(ctx,a,1,errorType);
             if (a instanceof B1Array || a instanceof B1Closure || a instanceof B1Object obj && obj.method(ctx,"__tostring") == null)
-                throw badType(ctx,a,1,"string");
-            if (a == null) ctx.diagnostic("Deprecated",name + "(): Passing null to parameter #1 ($" + locals[0] + ") of type string is deprecated");
+                throw badType(ctx,a,1,errorType);
+            if (a == null) ctx.diagnostic("Deprecated",name + "(): Passing null to parameter #1 ($" + locals[0] + ") of type " + declaredType + " is deprecated");
             return ctx.stringBytes(a);
+        }
+        private static B1Bytes join(B1RequestContext ctx,byte[] sep,B1Array array) {
+            var out = new java.io.ByteArrayOutputStream();
+            for (int i = 0; i < array.size(); i++) {
+                if (i > 0) out.writeBytes(sep);
+                out.writeBytes(ctx.stringBytes(array.valueAt(i)));
+            }
+            return B1Bytes.of(out.toByteArray());
+        }
+        // Zend's frameless handlers have their own validation order for direct calls.
+        @Override public Object invokeFrameless1(B1RequestContext ctx,B1Object self,Object a) {
+            return implodeArray(ctx,null,a,null);
+        }
+        @Override public Object invokeFrameless2(B1RequestContext ctx,B1Object self,Object a,Object b) {
+            if (a instanceof B1Array) throw badType(ctx,a,1,"string");
+            return implodeArray(ctx,stringParam(ctx,a,"array|string","string"),a,b);
+        }
+
+        private Object implode(B1RequestContext ctx,Object first,Object second) {
+            byte[] separator = first instanceof B1Array ? null : stringParam(ctx,first,"array|string","array|string");
+            return implodeArray(ctx,separator,first,second);
+        }
+
+        private Object implodeArray(B1RequestContext ctx,byte[] separator,Object first,Object second) {
+            if (second == null) {
+                if (first instanceof B1Array pieces) return join(ctx,new byte[0],pieces);
+                throw ctx.error("TypeError","implode(): If argument #1 ($separator) is of type string, argument #2 ($array) must be of type array, null given");
+            }
+            B1Array pieces = array(ctx,second,2,"array","?array");
+            if (separator == null) throw badType(ctx,first,1,"string");
+            return join(ctx,separator,pieces);
+        }
+
+        private B1Thrown invalidCallback(B1RequestContext ctx,String reason) {
+            return ctx.error("TypeError","array_map(): Argument #1 ($callback) must be a valid callback or null, " + reason);
+        }
+        private B1Callable mapCallback(B1RequestContext ctx,Object callback) {
+            if (callback == null) return null;
+            if (ctx.isCallable(callback)) return ctx.callable(callback);
+            Object target, method;
+            if (callback instanceof String || callback instanceof B1Bytes) {
+                String fn = callback.toString();
+                int separator = fn.indexOf("::");
+                if (separator < 0) throw invalidCallback(ctx,"function \"" + fn + "\" not found or invalid function name");
+                target = fn.substring(0,separator);
+                method = fn.substring(separator+2);
+            } else if (callback instanceof B1Array pair) {
+                if (pair.size() != 2) throw invalidCallback(ctx,"array callback must have exactly two members");
+                if (!pair.contains(0L) || !pair.contains(1L)) throw invalidCallback(ctx,"array callback has to contain indices 0 and 1");
+                target = pair.get(0L);
+                method = pair.get(1L);
+            } else throw invalidCallback(ctx,"no array or string given");
+            if (!(target instanceof B1Object || target instanceof B1Bytes || target instanceof String))
+                throw invalidCallback(ctx,"first array member is not a valid class name or object");
+            if (!(method instanceof B1Bytes || method instanceof String))
+                throw invalidCallback(ctx,"second array member is not a valid method");
+            String owner = target instanceof B1Object obj ? ctx.typeName(obj) : target.toString();
+            ClassDef cls = findClass(ctx,ctx.folded(owner));
+            if (cls == null) throw invalidCallback(ctx,"class \"" + owner + "\" not found");
+            var fn = cls.method(ctx,ctx.folded(method.toString()));
+            if (fn == null) throw invalidCallback(ctx,"class " + cls.name() + " does not have a method \"" + method + "\"");
+            if (!fn.isStatic && !(target instanceof B1Object)) throw invalidCallback(ctx,"non-static method " + fn.display + "() cannot be called statically");
+            return fn;
+        }
+
+        private B1Array map(B1RequestContext ctx,Object callback,Object first,Object[] args) {
+            var fn = mapCallback(ctx,callback);
+            var input = new B1Array[args == null ? 1 : args.length-1];
+            input[0] = array(ctx,first,2,"array","array");
+            int length = input[0].size();
+            for (int i = 1; i < input.length; i++) {
+                if (!(args[i+1] instanceof B1Array extra)) throw ctx.error("TypeError","array_map(): Argument #"
+                        + (i+2) + " must be of type array, " + ctx.argumentType(args[i+1]) + " given");
+                input[i] = extra;
+                length = Math.max(length,extra.size());
+            }
+            if (fn == null && input.length == 1) return (B1Array)B1Object.retain(input[0]);
+            for (var array : input) array.retain();
+            B1Object.retain(callback);
+            var out = new B1Array(length);
+            Throwable pending = null;
+            try {
+                for (int i = 0; i < length; i++) {
+                    Object value = mapRow(ctx,callback,fn,input,i);
+                    try {
+                        if (input.length == 1) out.put(ctx,input[0].keyAt(i),value);
+                        else out.append(ctx,value);
+                    } finally { B1Object.release(ctx,value); }
+                }
+            } catch (Throwable ex) { pending = ex; }
+            for (var array : input) {
+                try { array.release(ctx); } catch (Throwable ex) { pending = B1Thrown.chain(ctx,ex,pending); }
+            }
+            try { B1Object.release(ctx,callback); } catch (Throwable ex) { pending = B1Thrown.chain(ctx,ex,pending); }
+            if (pending != null) {
+                try { out.release(ctx); } catch (Throwable ex) { pending = B1Thrown.chain(ctx,ex,pending); }
+                B1Thrown.propagate(pending);
+            }
+            return out;
+        }
+
+        private Object mapRow(B1RequestContext ctx,Object callback,B1Callable fn,B1Array[] input,int row) {
+            if (fn == null) {
+                var tuple = new B1Array(input.length);
+                for (var array : input) tuple.append(ctx,row < array.size() ? array.rawAt(row) : null);
+                return tuple;
+            }
+            B1Object receiver = ctx.receiver(callback);
+            B1Frame caller = ctx.frame;
+            boolean previous = caller.internalCall;
+            caller.internalCall = true;
+            try {
+                if (callback instanceof B1Closure closure) caller.nextClosure = closure;
+                if (input.length == 1) return fn.invoke1(ctx,receiver,fn.forwarded(ctx,input[0],row,0));
+                if (input.length == 2) return fn.invoke2(ctx,receiver,
+                        row < input[0].size() ? fn.forwarded(ctx,input[0],row,0) : null,
+                        row < input[1].size() ? fn.forwarded(ctx,input[1],row,1) : null);
+                Object[] values = new Object[input.length];
+                for (int i = 0; i < input.length; i++) {
+                    if (row < input[i].size()) values[i] = fn.forwarded(ctx,input[i],row,i);
+                }
+                return fn.invoke(ctx,receiver,values);
+            } finally { caller.internalCall = previous; }
         }
         @Override public Object invoke2(B1RequestContext ctx, B1Object self, Object a, Object b) {
             required(ctx,a,1);
-            if (name.equals("ksort")) { ((B1Ref)a).writable(ctx).sortKeys(ctx,b); return true; }
+            if (name.equals("var_dump")) {
+                var dump = new B1Dump(ctx);
+                dump.value(a,0);
+                dump.value(b,0);
+                return null;
+            }
+            if (name.equals("array_map")) return map(ctx,a,b,null);
+            if (name.equals("implode")) return implode(ctx,a,b);
+            if (name.equals("intval")) {
+                long base = ctx.integral(b,"intval()",2,"base");
+                if (base != 10 && (a instanceof String || a instanceof B1Bytes))
+                    return pl.codeloom.php.ir.PhpNumericString.parseBase(B1Bytes.bytes(a),(int)base);
+                return ctx.castLong(a);
+            }
+            if (name.equals("ksort")) { long flags = ctx.integral(b,"ksort()",2,"flags"); ((B1Ref)a).writable(ctx).sortKeys(ctx,flags); return true; }
             if (name.equals("array_unshift")) {
                 B1Ref ref = (B1Ref)a;
                 B1Array copy = new B1Array(1); copy.append(ctx,b);
@@ -230,6 +398,12 @@ public final class B1RequestContext {
             return array.slice(ctx,start,size,preserve != OMITTED && truth(preserve));
         }
         @Override public Object invoke(B1RequestContext ctx, B1Object self, Object[] args) {
+            if (name.equals("var_dump") && args.length > 0) {
+                var dump = new B1Dump(ctx);
+                for (var value : args) dump.value(value,0);
+                return null;
+            }
+            if (name.equals("array_map") && args.length > 2) return map(ctx,args[0],args[1],args);
             if (name.equals("str_replace") && args.length == 3) {
                 byte[] search = ctx.stringBytes(args[0]), replacement = ctx.stringBytes(args[1]), subject = ctx.stringBytes(args[2]);
                 var out = new java.io.ByteArrayOutputStream();
@@ -264,7 +438,23 @@ public final class B1RequestContext {
         }
         return target.callSlice(this,self,args,start,count);
     }
+    boolean isCallable(Object value) {
+        if (value instanceof B1Closure) return true;
+        if (value instanceof B1Bytes s) return functions.containsKey(s.symbolKey());
+        if (value instanceof String s) return functions.containsKey(folded(s));
+        if (value instanceof B1Object obj) return obj.method(this,"__invoke") != null;
+        if (value instanceof B1Array pair && pair.size() == 2 && pair.get(1L) instanceof B1Bytes name) {
+            Object recv = pair.get(0L);
+            if (recv instanceof B1Object obj) return obj.method(this,name.symbolKey()) != null;
+            if (recv instanceof B1Bytes cls) {
+                B1Callable fn = method(cls.symbolKey(),name.symbolKey());
+                return fn != null && fn.isStatic;
+            }
+        }
+        return false;
+    }
     public B1Callable callable(Object value) {
+        if (value instanceof B1Object obj) return resolve(obj,"__invoke","__invoke");
         if (value instanceof B1Closure closure) return closure.body;
         if (value instanceof B1Bytes name) return function(this, name.symbolKey());
         if (value instanceof String name) return function(this, folded(name));
@@ -279,6 +469,8 @@ public final class B1RequestContext {
         throw error("Error", "Value is not callable");
     }
     public B1Object receiver(Object value) {
+        if (value instanceof B1Closure closure) return closure.self;
+        if (value instanceof B1Object obj) return obj;
         return value instanceof B1Array pair && pair.get(0L) instanceof B1Object obj ? obj : null;
     }
     public B1Object allocateDynamic(Object name) {
@@ -457,6 +649,7 @@ public final class B1RequestContext {
         ClassDef cls = entry.statementClasses.get(id);
         ClassDef previous = classes.putIfAbsent(lowerName, cls);
         if (previous != null) throw redeclared("class " + cls.name(), previous.declaration(), cls.declaration());
+        initializeStatics(lowerName,cls);
     }
 
     /** Publish a fully linked unit to this request. PHP symbol keys have already been ASCII-folded. */
@@ -471,6 +664,7 @@ public final class B1RequestContext {
             }
         }
         classes.putAll(types);
+        types.forEach(this::initializeStatics);
         functions.putAll(declarations);
         files.put(path, entry);
     }
@@ -506,8 +700,7 @@ public final class B1RequestContext {
     public B1Object allocate(String lower, String name) {
         var cls = findClass(this, lower);
         if (cls == null) throw error("Error", "Class \"" + name + "\" not found");
-        var obj = new B1Object(acquireObjectId(), lower, cls);
-        for (var entry : cls.defaults.entrySet()) obj.initialize(this,entry.getKey(),entry.getValue());
+        var obj = new B1Object(this,acquireObjectId(), lower, cls);
         if (cls.methods.containsKey("__destruct")) destructibles.add(obj);
         if (B1Thrown.throwable(lower)) {
             obj.write(this, "line", frame == null ? 0L : (long) frame.line);
@@ -525,6 +718,7 @@ public final class B1RequestContext {
     public B1Frame enter(B1Callable fn, String file, String name, int temps, boolean top) {
         if (top && !fn.evalBody) for (String var : fn.locals) globals.putIfAbsent(var, null);
         frame = new B1Frame(frame, file, fn.evalBody ? "eval" : name, fn.locals, temps, top, fn.evalBody);
+        frame.strictTypes = fn.strictTypes;
         frame.staticCall = fn.isStatic;
         frame.scope = fn.evalBody && frame.caller != null ? frame.caller.scope : fn.scope;
         if (frame.caller != null) {
@@ -538,9 +732,58 @@ public final class B1RequestContext {
         if (frame != f) throw new IllegalStateException("unbalanced PHP frame");
         frame = f.caller;
     }
-    B1Ref removeGlobal(String name) { return globals.remove(name); }
+    long globalVersion;
+    B1Ref bindGlobal(String name,B1Ref slot) { globalVersion++; return globals.put(name,slot); }
+    B1Ref removeGlobal(String name) { globalVersion++; return globals.remove(name); }
     B1Ref global(String name) { return globals.computeIfAbsent(name, unused -> new B1Ref()); }
     public B1Ref findGlobal(String name) { return globals.get(name); }
+
+    private void initializeStatics(String owner,ClassDef cls) {
+        initializeStatics(staticProperties,owner,cls);
+    }
+
+    private void initializeStatics(Map<String,B1Ref> slots,String owner,ClassDef cls) {
+        cls.properties().forEach((name,p) -> {
+            if (p.isStatic()) {
+                String key = owner + "::$" + name;
+                B1Ref slot = slots.computeIfAbsent(key,k -> new B1Ref());
+                slot.declare(this,cls.name(),name,p);
+            }
+        });
+    }
+    public B1Ref staticProperty(String owner,String name) {
+        var cls = findClass(this,owner);
+        if (cls == null) throw error("Error","Class \"" + owner + "\" not found");
+        if (cls.visibility().containsKey(name) && !owner.equals(scope()))
+            throw error("Error","Cannot access " + (cls.visibility().get(name) == 2 ? "protected" : "private")
+                    + " property " + cls.name() + "::$" + name);
+        var slot = staticProperties.get(owner + "::$" + name);
+        Property declaration = cls.properties().get(name);
+        if (slot == null || declaration == null || !declaration.isStatic()) throw error("Error","Access to undeclared static property " + cls.name() + "::$" + name);
+        return slot;
+    }
+
+    /** Copy initialized data into an immutable image, rejecting objects and PHP aliases. */
+    public B1Snapshot freezePureData() { return B1Snapshot.capture(globals,staticProperties); }
+    /** Replace this idle request's data. Class and function definitions are linked by the request. */
+    public void restoreFrom(B1Snapshot snapshot) {
+        if (frame != null) throw new IllegalStateException("Cannot restore during PHP execution");
+        var nextGlobals = new LinkedHashMap<String,B1Ref>();
+        var nextStatics = new LinkedHashMap<String,B1Ref>();
+        classes.forEach((name,cls) -> initializeStatics(nextStatics,name,cls));
+        snapshot.restore(this,nextGlobals,nextStatics);
+        var oldGlobals = globals;
+        var oldStatics = staticProperties;
+        globals = nextGlobals;
+        staticProperties = nextStatics;
+        Throwable pending = null;
+        for (var slots : List.of(oldGlobals,oldStatics)) for (var old : slots.values()) {
+            if (old == null) continue;
+            try { old.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
+        }
+        B1Thrown.propagate(pending);
+    }
+    boolean strict() { return frame != null && !frame.internalCall && frame.strictTypes; }
 
     String scope() { return frame == null ? null : frame.scope; }
 
@@ -584,7 +827,7 @@ public final class B1RequestContext {
     }
     public static Object readProperty(Object receiver, B1RequestContext ctx, String name) {
         if (receiver instanceof B1Object obj) {
-            if (obj.has(name)) return obj.property(ctx,name).get();
+            if (obj.has(name)) return obj.property(ctx,name).readProperty(ctx);
             ctx.diagnostic("Warning", "Undefined property: " + ctx.typeName(obj) + "::$" + name);
         } else ctx.diagnostic("Warning", "Attempt to read property \"" + name + "\" on " + ctx.typeName(receiver));
         return null;
@@ -633,11 +876,11 @@ public final class B1RequestContext {
         return integral(value,function,index,name,"int");
     }
     private long integral(Object value, String function, int index, String name, String type) {
-        if (value == null) {
+        if (value == null && !strict()) {
             diagnostic("Deprecated",function + ": Passing null to parameter #" + index + " ($" + name + ") of type int is deprecated");
             return 0;
         }
-        Long n = integer(value);
+        Long n = strict() && !(value instanceof Long) ? null : integer(value);
         if (n == null) throw error("TypeError",function + ": Argument #" + index + " ($" + name +
                 ") must be of type " + type + ", " + argumentType(value) + " given");
         return n;
@@ -655,13 +898,51 @@ public final class B1RequestContext {
     }
 
     public Object castLong(Object value) {
-        Number n = number(value,true);
+        if (value instanceof B1Array a) return a.size() == 0 ? 0L : 1L;
+        if (value instanceof B1Object || value instanceof B1Closure) {
+            diagnostic("Warning","Object of class " + typeName(value) + " could not be converted to int");
+            return 1L;
+        }
+        Number n = value instanceof B1Bytes || value instanceof String
+                ? pl.codeloom.php.ir.PhpNumericString.parse(B1Bytes.bytes(value),true) : number(value,true);
+        if (n instanceof Double d) {
+            if (value instanceof Double) return floatToLong(d);
+            if (!Double.isFinite(d)) return 0L;
+        }
         return n == null ? 0L : n.longValue();
     }
+    public Object multiply(Object left,Object right) {
+        Number a = number(left,true), b = number(right,true);
+        if (a == null || b == null) throw error("TypeError","Unsupported operand types: " + typeName(left) + " * " + typeName(right));
+        if (a instanceof Long && b instanceof Long) {
+            try { return Math.multiplyExact(a.longValue(),b.longValue()); } catch (ArithmeticException overflow) { }
+        }
+        return a.doubleValue() * b.doubleValue();
+    }
+    private long floatToLong(double value) {
+        if (value >= -0x1p63 && value < 0x1p63) return (long)value;
+        diagnostic("Warning","The float " + string(value) + " is not representable as an int, cast occurred");
+        return pl.codeloom.php.ir.PhpFloatFormat.wrapToLong(value);
+    }
+    private long modOperand(Object value,Object a,Object b) {
+        Number n = number(value,true);
+        if (n == null) throw error("TypeError","Unsupported operand types: " + typeName(a) + " % " + typeName(b));
+        if (n instanceof Double d) {
+            boolean isFloat = value instanceof Double;
+            long integer = isFloat ? floatToLong(d) : Double.isFinite(d) ? d.longValue() : 0;
+            boolean inRange = d >= -0x1p63 && d < 0x1p63;
+            if ((!isFloat || inRange) && (!inRange || (double)integer != d)) {
+                String source = isFloat ? "float " + string(d) : "float-string \"" + value + "\"";
+                diagnostic("Deprecated","Implicit conversion from " + source + " to int loses precision");
+            }
+            return integer;
+        }
+        return n.longValue();
+    }
     public Object mod(Object a,Object b) {
-        long divisor = (long)castLong(b);
-        if (divisor == 0) throw error("Error","Modulo by zero");
-        return (long)castLong(a) % divisor;
+        long left = modOperand(a,a,b), divisor = modOperand(b,a,b);
+        if (divisor == 0) throw error("DivisionByZeroError","Modulo by zero");
+        return left % divisor;
     }
     public Object add(Object left, Object right) {
         Number a = number(left, true), b = number(right, true);
@@ -706,6 +987,11 @@ public final class B1RequestContext {
             if (slot == null) continue;
             try { slot.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this, ex, pending); }
         }
+        for (var slot : staticProperties.values()) {
+            try { slot.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
+        }
+        staticProperties.clear();
+        try { collectCycles(); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
         while (!destructibles.isEmpty()) {
             try { destructibles.getFirst().destruct(this); } catch (Throwable ex) { pending = B1Thrown.chain(this, ex, pending); }
         }

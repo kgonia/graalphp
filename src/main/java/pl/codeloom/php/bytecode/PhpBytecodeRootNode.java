@@ -237,6 +237,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** The hidden local of the extra arguments the frame took (TakeExtraArguments), or null. */
     @CompilationFinal private LocalAccessor extraArguments;
+    @CompilationFinal boolean compactIr;
     @CompilationFinal(dimensions = 1) pl.codeloom.php.ir.IrUnit.TempKind[] irTemps;
     /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesMoved = new boolean[0];
@@ -1863,7 +1864,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                    @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite,
                                    @Cached InlinedBranchProfile sharedArray,
                                    @Cached InlinedBranchProfile refArray,
-                                   @Cached InlinedBranchProfile createdArray) {
+                                   @Cached InlinedBranchProfile createdArray, @Bind PhpBytecodeRootNode root) {
             // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
             PhpArray held = null;
             if (value instanceof PhpArray array) {
@@ -1873,10 +1874,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             try {
                 Object base = variableForWrite(frame, variable, bytecode, node, sharedArray, refArray, createdArray);
-                int levels = append ? keys.length : keys.length - 1;
-                Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
-                ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
-                        objectWrite);
+                if (root.compactIr) compact(node,base,keys,append,value,toKey,write,objectWrite);
+                else writePath(node,base,keys,append,value,toKey,write,objectWrite);
             } catch (Throwable t) {
                 if (held != null) {
                     DimNode.letGo(held);
@@ -1887,6 +1886,19 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 held.removeHolder();
             }
             return value;
+        }
+        @TruffleBoundary
+        private static void compact(Node node,Object base,Object[] keys,boolean append,Object value,
+                                    ElementNodes.ArrayKeyNode toKey,ElementNodes.ElementWriteNode write,InlinedBranchProfile objectWrite) {
+            writePath(node,base,keys,append,value,toKey,write,objectWrite);
+        }
+
+        private static void writePath(Node node,Object base,Object[] keys,boolean append,Object value,
+                                      ElementNodes.ArrayKeyNode toKey,ElementNodes.ElementWriteNode write,InlinedBranchProfile objectWrite) {
+            int levels = append ? keys.length : keys.length - 1;
+            Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
+            ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
+                    objectWrite);
         }
     }
 
@@ -1902,7 +1914,23 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                            neverDefault = true) PropNode access,
                                    @Bind Node node, @Cached ElementNodes.ArrayKeyNode toKey,
                                    @Cached ElementNodes.ElementWriteNode write,
-                                   @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite) {
+                                   @Cached InlinedBranchProfile arrayWrite, @Cached InlinedBranchProfile objectWrite, @Bind PhpBytecodeRootNode root) {
+            if (root.compactIr) return compact(frame.getArguments(),site,append,value,object,keys,access,node,toKey,write,arrayWrite,objectWrite);
+            return writePath(frame.getArguments(),site,append,value,object,keys,access,node,toKey,write,arrayWrite,objectWrite);
+        }
+
+        @TruffleBoundary
+        private static Object compact(Object[] arguments, PropSite site, boolean append, Object value, Object object,
+                                      Object[] keys, PropNode access, Node node, ElementNodes.ArrayKeyNode toKey,
+                                      ElementNodes.ElementWriteNode write, InlinedBranchProfile arrayWrite,
+                                      InlinedBranchProfile objectWrite) {
+            return writePath(arguments,site,append,value,object,keys,access,node,toKey,write,arrayWrite,objectWrite);
+        }
+
+        private static Object writePath(Object[] arguments, PropSite site, boolean append, Object value, Object object,
+                                        Object[] keys, PropNode access, Node node, ElementNodes.ArrayKeyNode toKey,
+                                        ElementNodes.ElementWriteNode write, InlinedBranchProfile arrayWrite,
+                                        InlinedBranchProfile objectWrite) {
             String name = placeName(site, keys);
             keys = placeKeys(site, keys);
             // held while the containers are made writable, so `$a[k] = $a` copies $a first (DimNode.write)
@@ -1913,7 +1941,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 held.addHolder();
             }
             try {
-                Object base = propertyForWrite(frame, access, object, name);
+                Object base = access.containerForWriteOn(arguments, object, name);
                 int levels = append ? keys.length : keys.length - 1;
                 Object container = ElementChain.forWrite(node, base, keys, levels, toKey);
                 ElementChain.write(node, container, append ? ElementChain.APPEND : keys[levels], value, write,
@@ -2360,8 +2388,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object read(VirtualFrame frame, PropSite site, Object object,
                                   @Cached(value = "site.create()", uncached = "site.uncached()",
-                                          neverDefault = true) PropNode access) {
+                                          neverDefault = true) PropNode access, @Bind PhpBytecodeRootNode root) {
+            if (root.compactIr) return compact(access,frame.getArguments(),object,site.name);
             return access.read(frame.getArguments(), object, site.name);
+        }
+        @TruffleBoundary
+        private static Object compact(PropNode access,Object[] arguments,Object receiver,String name) {
+            return access.read(arguments,receiver,name);
         }
     }
 
@@ -3090,7 +3123,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class StoreTemp {
         @Specialization
         public static Object store(VirtualFrame frame, LocalAccessor temporary, int index, Object value, boolean owned,
-                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                   @Bind Node node, @Cached InlinedBranchProfile counted) {
             if (owned && (value instanceof PhpObject || value instanceof PhpClosure
                     || value instanceof PhpArray array && array.isTemporary())) {
                 root.temporaryHeld(index);
@@ -3117,14 +3151,72 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class IrStore {
         @Specialization
         public static Object store(VirtualFrame frame, LocalAccessor slot, int index, Object value, boolean owned,
-                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode,
+                                   @Bind Node node, @Cached InlinedBranchProfile counted) {
             if (value instanceof PhpObject || value instanceof PhpClosure || value instanceof PhpArray || value instanceof PhpRef) {
-                if (value instanceof PhpRef ref) ref.bind();
-                else if (!owned || value instanceof PhpArray) Refcount.hold(value);
+                counted.enter(node);
+                retainIrTemp(value,owned);
                 root.temporaryHeld(index);
                 slot.setObject(bytecode, frame, value);
             }
             return value;
+        }
+    }
+
+    @TruffleBoundary
+    private static void retainIrTemp(Object value,boolean owned) {
+        if (value instanceof PhpRef ref) ref.bind();
+        else if (!owned || value instanceof PhpArray) Refcount.hold(value);
+    }
+
+    @TruffleBoundary
+    private static void releaseIrTemp(Object held,boolean construction) {
+        if (construction) ((PhpObject)held).suppressDestructor();
+        if (held instanceof PhpRef ref) ref.unbind();
+        else Refcount.unhold(held);
+    }
+
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "quiet")
+    public static final class CompactElement {
+        @Specialization
+        @TruffleBoundary
+        public static Object get(boolean quiet,Object base,Object key,@Bind Node node,
+                                 @Cached ElementNodes.ElementReadNode read,@Cached ElementNodes.ElementIfSetNode isset) {
+            if (!quiet) return read.execute(base,key);
+            return base instanceof PhpArray a ? ElementIfSet.array(a,key,isset) : ElementIfSet.other(base,key,isset,node);
+        }
+    }
+
+    @Operation
+    public static final class UnwindRegion {
+        @Specialization
+        public static void unwind(VirtualFrame frame,Temporaries active,Object exception,
+                                  @Bind PhpBytecodeRootNode root,@Bind BytecodeNode bytecode) {
+            UnwindTemps.unwindFrame(frame.materialize(),active,(AbstractTruffleException)exception,root,bytecode);
+        }
+    }
+
+    @Operation
+    public static final class CompactTruth {
+        @Specialization @TruffleBoundary
+        public static boolean truth(Object value) { return Convert.toBool(value); }
+    }
+
+    @Operation
+    @ConstantOperand(type = boolean.class, name = "equal")
+    public static final class CompactIdentity {
+        @Specialization @TruffleBoundary
+        public static boolean compare(boolean equal,Object left,Object right) { return equal == Convert.strictEquals(left,right); }
+    }
+
+    /** Keep repeated string conversions in large methods within HotSpot's code installation limit. */
+    @Operation
+    public static final class CompactConcat {
+        @Specialization
+        @TruffleBoundary
+        public static TruffleString concat(Object a,Object b,@Bind Node node) {
+            return Str.concat(Convert.toStr(node,a),Convert.toStr(node,b));
         }
     }
 
@@ -3133,6 +3225,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     @ConstantOperand(type = Temporaries.class)
     public static final class TransferSends {
         @Specialization
+        @ExplodeLoop
         public static Object transfer(VirtualFrame frame, Temporaries slots, PhpFunction callee, Object last,
                                       @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
             if (callee.getBuiltin() == null && !MethodSite.byValue(callee)) {
@@ -3246,10 +3339,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 Object held = temporary.getObject(bytecode, frame);
                 temporary.clear(bytecode, frame);
                 if (root.irTemps != null) {
-                    if (root.irTemps[index] == pl.codeloom.php.ir.IrUnit.TempKind.CONSTRUCTION)
-                        ((PhpObject) held).suppressDestructor();
-                    if (held instanceof PhpRef ref) ref.unbind();
-                    else Refcount.unhold(held);
+                    releaseIrTemp(held,root.irTemps[index] == pl.codeloom.php.ir.IrUnit.TempKind.CONSTRUCTION);
                     return;
                 }
                 if (Refcount.AUDIT_POINTS) {
@@ -3284,7 +3374,12 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static void unwind(VirtualFrame frame, Temporaries temps, Object exception,
                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
-            var pending = (AbstractTruffleException) exception;
+            unwindFrame(frame.materialize(),temps,(AbstractTruffleException)exception,root,bytecode);
+        }
+
+        @TruffleBoundary
+        private static void unwindFrame(MaterializedFrame frame,Temporaries temps,AbstractTruffleException pending,
+                                        PhpBytecodeRootNode root,BytecodeNode bytecode) {
             for (int id : temps.indices) {
                 try {
                     ReleaseTemp.release(frame, root.temporaries[id], id, root, bytecode);

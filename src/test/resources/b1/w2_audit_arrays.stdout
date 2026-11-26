@@ -1,0 +1,17 @@
+1,2 vs 1,77
+1/3/5,/4/6,//7 vs 3,88
+0=1/3
+1=/4
+k
+array_map(): Argument #1 ($callback) must be a valid callback or null, function "no_such_fn" not found or invalid function name
+array_map(): Argument #1 ($callback) must be a valid callback or null, no array or string given
+array_map(): Argument #1 ($callback) must be a valid callback or null, array callback must have exactly two members
+array_map(): Argument #1 ($callback) must be a valid callback or null, class stdClass does not have a method "missing"
+array_map(): Argument #1 ($callback) must be a valid callback or null, class "MissingClass" not found
+array_map(): Argument #3 must be of type array, int given
+implode(): Argument #1 ($separator) must be of type string, array given
+implode(): Argument #2 ($array) must be of type ?array, string given
+implode(): If argument #1 ($separator) is of type string, argument #2 ($array) must be of type array, null given
+
+Deprecated: implode(): Passing null to parameter #1 ($separator) of type array|string is deprecated in /fixtures/w2_audit_arrays.php on line 18
+xy

@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 
 /** An insertion-ordered PHP array. Packed arrays store neither keys nor hash buckets. */
-public final class B1Array {
+public final class B1Array implements B1GcNode {
     static final String OCCUPIED = "Cannot add element to the array as the next element is already occupied";
     private Object[] values;
     private Object[] keys;
@@ -13,13 +13,27 @@ public final class B1Array {
     private long next;
     private int cursor;
     private boolean hasIntegerKey;
+    boolean inGcRoots;
     private int owners = 1;
     private boolean frozen;
 
     /** Condy roots and their children have process lifetime and can be read by concurrent requests. */
     public B1Array freeze() {
-        for (int i = 0; i < size; i++) if (values[i] instanceof B1Array a) a.freeze();
-        frozen = true;
+        if (frozen || size == 0) { frozen = true; return this; }
+        // Validate the literal graph before changing any of its arrays. Snapshots of live data
+        // use snapshot() instead, so the source request keeps ordinary writable arrays.
+        var graph = new java.util.LinkedHashSet<B1Array>();
+        var pending = new java.util.ArrayDeque<B1Array>();
+        pending.add(this);
+        while (!pending.isEmpty()) {
+            var array = pending.remove();
+            if (array.frozen || !graph.add(array)) continue;
+            for (int i = 0; i < array.size; i++) {
+                if (array.values[i] instanceof B1Array nested) pending.add(nested);
+                else B1Snapshot.requireScalar(array.values[i]);
+            }
+        }
+        for (var array : graph) array.frozen = true;
         return this;
     }
 
@@ -100,9 +114,18 @@ public final class B1Array {
         return this;
     }
 
+    public int gcCount() { return frozen ? -1 : owners; }
+    public void gcEdges(java.util.function.Consumer<Object> visit) {
+        for (int i = 0; i < size; i++) visit.accept(values[i]);
+    }
     void retain() { if (!frozen) owners++; }
     void release(B1RequestContext ctx) {
-        if (frozen || --owners != 0) return;
+        if (frozen) return;
+        int remaining = --owners;
+        if (ctx != null && inGcRoots != (remaining > 0)) ctx.cycles.dropped(ctx,this,remaining);
+        if (remaining == 0) clear(ctx);
+    }
+    void clear(B1RequestContext ctx) {
         Throwable pending = null;
         for (int i = 0; i < size; i++) {
             Object item = values[i];
@@ -110,10 +133,27 @@ public final class B1Array {
             try { B1Object.release(ctx, item); }
             catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
         }
+        size = 0;
         B1Thrown.propagate(pending);
+    }
+    B1Array snapshot(java.util.IdentityHashMap<B1Array,B1Array> copies) {
+        if (frozen) return this;
+        B1Array existing = copies.get(this);
+        if (existing != null) return existing;
+        B1Array copy = copyShape();
+        copies.put(this,copy);
+        for (int i = 0; i < size; i++) copy.values[i] = B1Snapshot.pure(values[i],copies);
+        copy.frozen = true;
+        return copy;
     }
     B1Array writable() {
         if (!frozen && owners == 1) return this;
+        B1Array copy = copyShape();
+        for (int i = 0; i < size; i++) copy.values[i] = B1Object.retain(values[i] instanceof B1Ref ref && !ref.shared() ? ref.get() : values[i]);
+        return copy;
+    }
+
+    private B1Array copyShape() {
         B1Array copy = new B1Array(size);
         copy.size = size;
         copy.next = next;
@@ -123,7 +163,6 @@ public final class B1Array {
             copy.keys = Arrays.copyOf(keys, size);
             copy.index = new HashMap<>(index);
         }
-        for (int i = 0; i < size; i++) copy.values[i] = B1Object.retain(values[i] instanceof B1Ref ref && !ref.shared() ? ref.get() : values[i]);
         return copy;
     }
 
@@ -161,6 +200,7 @@ public final class B1Array {
     }
 
     public void remove(B1RequestContext ctx, Object key) {
+        if (frozen) throw new IllegalStateException("Write to frozen array");
         int pos = position(key(key));
         if (pos < 0) return;
         if (keys == null) {

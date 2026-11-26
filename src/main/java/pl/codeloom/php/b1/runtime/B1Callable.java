@@ -4,8 +4,8 @@ package pl.codeloom.php.b1.runtime;
 public abstract class B1Callable {
     public static final Object OMITTED = new Object();
     private final boolean[] byRef;
-    public boolean isStatic, evalBody, variadic;
-    public int methodBudget;
+    public boolean strictTypes, isStatic, evalBody, variadic;
+    public int methodBudget, requiredParams;
     public String declaredFile, scope;
     public int declaredLine;
     public B1Callable[] siblings;
@@ -73,7 +73,7 @@ public abstract class B1Callable {
         }
         return invoke(ctx,self,java.util.Arrays.copyOf(values,highest));
     }
-    private Object forwarded(B1RequestContext ctx,B1Array args,int offset,int param) {
+    final Object forwarded(B1RequestContext ctx,B1Array args,int offset,int param) {
         if (byRef(param)) {
             if (args.rawAt(offset) instanceof B1Ref ref && ref.reference()) return ref;
             ctx.diagnostic("Warning",display + "(): Argument #" + (param+1) + " ($" + locals[param]
@@ -93,6 +93,9 @@ public abstract class B1Callable {
     }
     final int arity() { return byRef.length; }
     public final boolean byRef(int index) { return index < byRef.length && byRef[index]; }
+
+    public Object invokeFrameless1(B1RequestContext ctx,B1Object self,Object a) { return invoke1(ctx,self,a); }
+    public Object invokeFrameless2(B1RequestContext ctx,B1Object self,Object a,Object b) { return invoke2(ctx,self,a,b); }
 
     public abstract Object invoke0(B1RequestContext ctx, B1Object self);
     public abstract Object invoke1(B1RequestContext ctx, B1Object self, Object a);

@@ -1,6 +1,6 @@
 # 005: Destructors never run
 
-**State:** Open. Decided 2026-11-03: exact php-src semantics, option A ([D17](../wiki/decisions.md)); being built (status in [destructors.md](../wiki/destructors.md), gaps in issue 036)
+**State:** Fixed on **B1** (2026-11-26, Milestone B1 Week 2 Part A: exact refcounting + shadow-RC Bacon-Rajan cycle collector `B1CycleCollector` with 10k adaptive threshold + resurrection + Zend iterative `rc==1` reverse-globals & handle-order shutdown; verified 556/556 B against PHP 8.5.13 on `d17_fixture.php`). On **Truffle PHP** (secondary): refcounting & shutdown landed (#57/#59), `gc_collect_cycles()` still returns `0` (see [destructors.md](../wiki/destructors.md), [036](036-refcount-prototype-gaps.md)).
 
 **Symptom:** `__destruct` is never called: not when the last reference goes, not at the end of the script. A generator destroyed while suspended inside `try` doesn't run its `finally` blocks either:
 ```php

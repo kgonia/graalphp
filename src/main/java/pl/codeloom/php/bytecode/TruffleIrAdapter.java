@@ -56,6 +56,9 @@ public final class TruffleIrAdapter {
             case "?string" -> PhpType.STRING | PhpType.NULL;
             case "int" -> PhpType.INT;
             case "void" -> PhpType.VOID;
+            case "array" -> PhpType.ARRAY;
+            case "callable" -> PhpType.CALLABLE;
+            case "mixed" -> PhpType.MIXED;
             default -> throw new IllegalArgumentException(name);
         };
         return new PhpType(mask,new String[0],new String[0][],new String[0]);
@@ -64,6 +67,7 @@ public final class TruffleIrAdapter {
     public static PhpBytecodeRootNode translate(PhpLanguage language, Source source, IrUnit unit,
                                                 Map<String, PhpFunction> declarations, List<ClassTemplate> classes,
                                                 Set<ClassTemplate> linkedClasses, boolean eval) {
+        if (unit.strictTypes()) language.declareStrict(unit.file());
         var adapter = new TruffleIrAdapter(language, source);
         adapter.eval = eval;
         adapter.functions.add(null);
@@ -103,6 +107,7 @@ public final class TruffleIrAdapter {
 
     private final class Body {
         final IrFunction f;
+        final boolean compact;
         final PhpFunction.Param[] params;
         // The DSL may replay with source information. Site identity must survive replay.
         final Map<CacheKey, Object> constants = new HashMap<>();
@@ -112,7 +117,22 @@ public final class TruffleIrAdapter {
         int[] uncounted;
         int namedExtras = -1;
 
-        Body(IrFunction f, PhpFunction.Param[] params) { this.f = f; this.params = params; }
+        Body(IrFunction f, PhpFunction.Param[] params) {
+            this.f = f;
+            this.params = params;
+            compact = f.body().size() >= IrUnit.LARGE_BODY_STATEMENTS && straightLine(f.body());
+        }
+
+        // Compact operations trade per-iteration speed for a smaller compilation graph.
+        // Use them only for large acyclic bodies, whose sites execute at most once per call.
+        private static boolean straightLine(List<Statement> code) {
+            for (var statement : code) {
+                if (statement instanceof Branch branch) {
+                    if (!straightLine(branch.yes()) || !straightLine(branch.no())) return false;
+                } else if (!(statement instanceof Region)) return false;
+            }
+            return true;
+        }
 
         <T> T constant(Class<T> type,Object site,Supplier<T> make) {
             return type.cast(constants.computeIfAbsent(new CacheKey(type,site), ignored -> make.get()));
@@ -136,6 +156,7 @@ public final class TruffleIrAdapter {
                     variables, new LocalAccessor[0], f.owner());
             boolean[] moved = new boolean[f.temps().size()];
             root.initializeVariadic(namedExtras);
+            root.compactIr = compact;
             root.irTemps = f.temps().toArray(TempKind[]::new);
             root.initializeTemporaries(temporaries, moved, extra, uncounted);
             if (f.fileBody()) root.initializeFile(loops);
@@ -151,6 +172,12 @@ public final class TruffleIrAdapter {
             final List<Integer> borrowedOffsets = new ArrayList<>();
 
             Run(PhpBytecodeRootNodeGen.Builder b) { this.b = b; }
+
+            BytecodeLocal activeCleanup;
+
+            void setCleanup(ReleaseTemps cleanup) {
+                b.beginStoreLocal(activeCleanup); b.emitLoadConstant(indices(cleanup)); b.endStoreLocal();
+            }
 
             void emit() {
                 b.beginRoot();
@@ -198,7 +225,14 @@ public final class TruffleIrAdapter {
                     var cap = f.captures().get(i);
                     b.emitBindCapture(locals[cap.inner()], i, cap.byRef());
                 }
-                statements(f.body());
+                // One cold landing pad suffices when every exceptional edge leaves the function.
+                if (compact) {
+                    activeCleanup = b.createLocal();
+                    setCleanup(new ReleaseTemps(List.of()));
+                    b.beginTryCatch(); block(f.body());
+                    b.beginUnwindRegion(); b.emitLoadLocal(activeCleanup); b.emitLoadException(); b.endUnwindRegion();
+                    b.endTryCatch();
+                } else statements(f.body());
                 b.beginReturn();
                 b.emitLoadConstant(f.fileBody() && !eval ? (Object) 1L : PhpNull.NULL);
                 b.endReturn();
@@ -289,7 +323,8 @@ public final class TruffleIrAdapter {
                     if (statement instanceof TryCatch tc) { tryCatch(tc); continue; }
                     Region region = (Region) statement;
                     beginLine(region.at());
-                    boolean guarded = !region.exceptional().slots().isEmpty();
+                    if (activeCleanup != null) setCleanup(region.exceptional());
+                    boolean guarded = activeCleanup == null && !region.exceptional().slots().isEmpty();
                     if (guarded) { b.beginTryCatch(); b.beginBlock(); }
                     action(region.action(), region.normal());
                     if (!(region.action() instanceof Return)) release(region.normal());
@@ -306,20 +341,29 @@ public final class TruffleIrAdapter {
 
             void block(List<Statement> code) { b.beginBlock(); statements(code); b.endBlock(); }
 
+            void truth(Expr value) {
+                if (compact) { b.beginCompactTruth(); expr(value); b.endCompactTruth(); }
+                else { b.beginToBool(); expr(value); b.endToBool(); }
+            }
+
             void test(Test test) {
                 beginLine(test.at());
+                if (activeCleanup != null) { b.beginBlock(); setCleanup(test.cleanup()); }
                 if (test.cleanup().slots().isEmpty()) {
-                    b.beginToBool(); expr(test.value()); b.endToBool();
+                    truth(test.value());
                 } else {
                     b.beginBlock();
                     var condition = b.createLocal();
-                    b.beginTryCatch(); b.beginBlock();
-                    b.beginStoreLocal(condition); b.beginToBool(); expr(test.value()); b.endToBool(); b.endStoreLocal();
+                    if (activeCleanup == null) { b.beginTryCatch(); b.beginBlock(); }
+                    b.beginStoreLocal(condition); truth(test.value()); b.endStoreLocal();
                     release(test.cleanup());
-                    b.endBlock();
-                    b.beginUnwindTemps(indices(test.cleanup())); b.emitLoadException(); b.endUnwindTemps();
-                    b.endTryCatch(); b.emitLoadLocal(condition); b.endBlock();
+                    if (activeCleanup == null) {
+                        b.endBlock(); b.beginUnwindTemps(indices(test.cleanup())); b.emitLoadException(); b.endUnwindTemps();
+                        b.endTryCatch();
+                    }
+                    b.emitLoadLocal(condition); b.endBlock();
                 }
+                if (activeCleanup != null) b.endBlock();
                 endLine();
             }
             void loopBody(List<Statement> body, BytecodeLabel stop,List<Statement> step) {
@@ -467,6 +511,14 @@ public final class TruffleIrAdapter {
                     case Return(var value) -> returning(() -> expr(value),normal);
                     case Raise(var value) -> { b.beginThrow(); expr(value); b.endThrow(); }
                     case Write(var id, var value) -> write(id, () -> expr(value));
+                    case Bind(var id,var source) -> {
+                        if (f.fileBody()) {
+                            b.beginBindVariable(); place(source); literal(f.locals().get(id)); b.endBindVariable();
+                        } else { b.beginBindVar(locals[id]); place(source); b.endBindVar(); }
+                    }
+                    case WriteStatic(var p,var value) -> {
+                        b.beginWriteRef(); expr(value); place(p); b.endWriteRef();
+                    }
                     case Global(var id) -> { if (!f.fileBody()) b.emitGlobal(locals[id],f.locals().get(id)); }
                     case Unset(var root,var key) -> {
                         if (root instanceof Property p) {
@@ -484,6 +536,25 @@ public final class TruffleIrAdapter {
                     case WriteNamedProperty(var recv,var name,var value) -> {
                         b.beginWritePropNamed(prop(recv,null)); expr(value); b.beginPropName(); expr(name); b.endPropName(); expr(recv); b.endWritePropNamed();
                     }
+                    case CoalesceDim(var local,var key,var value) -> {
+                        b.beginBlock();
+                        var k = b.createLocal();
+                        borrowedOffsets.add(k.getLocalOffset());
+                        b.beginStoreLocal(k); expr(key); b.endStoreLocal();
+                        b.beginIfThen(); b.beginNot(); b.beginIsSetValue();
+                        if (compact) b.beginCompactElement(true); else b.beginElementIfSet();
+                        expr(new QuietRead(local)); b.emitLoadLocal(k);
+                        if (compact) b.endCompactElement(); else b.endElementIfSet();
+                        b.endIsSetValue(); b.endNot();
+                        if (f.fileBody()) {
+                            b.beginWriteRefNested(false);
+                            b.beginFetchForWrite(); expr(value); fileVariable(local,true); b.endFetchForWrite();
+                            b.emitLoadLocal(k); b.endWriteRefNested();
+                        } else {
+                            b.beginWriteNested(locals[local],false); expr(value); b.emitLoadLocal(k); b.endWriteNested();
+                        }
+                        b.endIfThen(); b.endBlock();
+                    }
                     case WriteDim dim -> {
                         var keys = dim.keys();
                         boolean append = keys.getLast() == null;
@@ -496,6 +567,8 @@ public final class TruffleIrAdapter {
                         }
                         if (dim.root() instanceof Property p) {
                             b.beginWritePropNested(prop(p.receiver(),p.name()),append); expr(dim.value()); expr(p.receiver());
+                        } else if (dim.root() instanceof StaticProperty p) {
+                            b.beginWriteRefNested(append); b.beginFetchForWrite(); expr(dim.value()); place(p); b.endFetchForWrite();
                         } else {
                             int root = ((Read)dim.root()).local();
                             if (f.fileBody()) {
@@ -508,7 +581,7 @@ public final class TruffleIrAdapter {
                             else if (early[i] != null) b.emitLoadLocal(early[i]); else expr(keys.get(i));
                         }
                         if (dim.root() instanceof Property) b.endWritePropNested();
-                        else if (f.fileBody()) b.endWriteRefNested(); else b.endWriteNested();
+                        else if (f.fileBody() || dim.root() instanceof StaticProperty) b.endWriteRefNested(); else b.endWriteNested();
                         b.endBlock();
                     }
                     case WriteProperty(var recv, var name, var value) -> {
@@ -552,6 +625,7 @@ public final class TruffleIrAdapter {
                         else { b.beginVariableValue(VariableVariableNode.IS); literal(f.locals().get(id)); b.endVariableValue(); }
                     }
                     case Dim(var base,var key,var quiet) -> {
+                        if (compact) { b.beginCompactElement(quiet); expr(base); expr(key); b.endCompactElement(); break; }
                         if (quiet) b.beginElementIfSet(); else b.beginReadElement();
                         expr(base); expr(key);
                         if (quiet) b.endElementIfSet(); else b.endReadElement();
@@ -574,9 +648,9 @@ public final class TruffleIrAdapter {
                         b.beginIncDecRef(up,prefix); place(p); b.endIncDecRef();
                     }
                     case IsSet(var e) -> { b.beginIsSetValue(); expr(e); b.endIsSetValue(); }
-                    case Not(var e) -> { b.beginNot(); b.beginToBool(); expr(e); b.endToBool(); b.endNot(); }
+                    case Not(var e) -> { b.beginNot(); truth(e); b.endNot(); }
                     case Choose(var cond,var yes,var no) -> {
-                        b.beginConditional(); b.beginToBool(); expr(cond); b.endToBool(); expr(yes); expr(no); b.endConditional();
+                        b.beginConditional(); truth(cond); expr(yes); expr(no); b.endConditional();
                     }
                     case Update(var id,var value) -> {
                         b.beginBlock(); write(id, () -> expr(value)); expr(new Read(id)); b.endBlock();
@@ -591,7 +665,8 @@ public final class TruffleIrAdapter {
                             for (int i = 0; i < flags.length; i++) flags[i] = closure.captures().get(i).byRef();
                             return flags;
                         });
-                        b.beginMakeClosure(functions.get(closure.id()),refs,true);
+                        var function = functions.get(closure.id());
+                        b.beginMakeClosure(function,refs,function.isStatic());
                         if (f.owner() == null) literal(null);
                         else b.emitResolveClass(constant(ClassSite.class,f.owner(), () -> new ClassSite(f.owner(), language.classId(Str.lower(f.owner())))));
                         for (var cap : closure.captures()) {
@@ -615,6 +690,7 @@ public final class TruffleIrAdapter {
                     case DynamicAllocate a -> { b.beginInstantiate(); b.beginClassOf(); expr(a.name()); b.endClassOf(); b.endInstantiate(); }
                     case This ignored -> b.emitReadThis();
                     case QuietProperty(var recv,var name) -> { b.beginReadPropIfSet(prop(recv,name)); expr(recv); b.endReadPropIfSet(); }
+                    case StaticProperty p -> staticProperty(p,false);
                     case Property(var recv, var name) -> { b.beginReadProp(prop(recv, name)); expr(recv); b.endReadProp(); }
                     case Binary binary -> {
                         var consumed = binary.consumed();
@@ -629,9 +705,10 @@ public final class TruffleIrAdapter {
                         switch (binary.op()) {
                             case ADD -> b.beginAdd();
                             case MOD -> b.beginMod();
-                            case CONCAT -> b.beginConcat();
-                            case IDENTICAL -> b.beginIdentical();
-                            case NOT_IDENTICAL -> b.beginNotIdentical();
+                            case MUL -> b.beginMul();
+                            case CONCAT -> { if (compact) b.beginCompactConcat(); else b.beginConcat(); }
+                            case IDENTICAL -> { if (compact) b.beginCompactIdentity(true); else b.beginIdentical(); }
+                            case NOT_IDENTICAL -> { if (compact) b.beginCompactIdentity(false); else b.beginNotIdentical(); }
                             case LT -> b.beginLess();
                             case LE -> b.beginLessEqual();
                             case GT -> b.beginGreater();
@@ -648,9 +725,10 @@ public final class TruffleIrAdapter {
                         switch (binary.op()) {
                             case ADD -> b.endAdd();
                             case MOD -> b.endMod();
-                            case CONCAT -> b.endConcat();
-                            case IDENTICAL -> b.endIdentical();
-                            case NOT_IDENTICAL -> b.endNotIdentical();
+                            case MUL -> b.endMul();
+                            case CONCAT -> { if (compact) b.endCompactConcat(); else b.endConcat(); }
+                            case IDENTICAL -> { if (compact) b.endCompactIdentity(); else b.endIdentical(); }
+                            case NOT_IDENTICAL -> { if (compact) b.endCompactIdentity(); else b.endNotIdentical(); }
                             case LT -> b.endLess();
                             case LE -> b.endLessEqual();
                             case GT -> b.endGreater();
@@ -709,6 +787,18 @@ public final class TruffleIrAdapter {
             void call(Call call, boolean keepRef) {
                 var t = call.target();
                 beginLine(call.at());
+                if (t.kind() == Dispatch.FUNCTION && call.args().size() == 1) {
+                    int intrinsic = switch (Str.lower(t.name())) {
+                        case "is_array" -> PhpBytecodeRootNode.TypeTest.ARRAY;
+                        case "is_int" -> PhpBytecodeRootNode.TypeTest.INT;
+                        case "is_string" -> PhpBytecodeRootNode.TypeTest.STRING;
+                        case "is_object" -> PhpBytecodeRootNode.TypeTest.OBJECT;
+                        default -> -1;
+                    };
+                    if (intrinsic >= 0) {
+                        b.beginTypeTest(intrinsic); expr(call.args().getFirst().value()); b.endTypeTest(); endLine(); return;
+                    }
+                }
                 if (t.kind() == Dispatch.DYNAMIC) {
                     b.beginCallValue(keepRef);
                     b.beginBindStackValue(); b.beginResolveCallable(); expr(t.receiver()); b.endResolveCallable();
@@ -772,7 +862,16 @@ public final class TruffleIrAdapter {
                         if (reference) place(result); else expr(result); b.endBlock();
             }
 
+            void staticProperty(StaticProperty p, boolean reference) {
+                var site = constant(StaticPropSite.class,p, () -> new StaticPropSite(Str.sourceKey(p.name()),
+                        f.owner() == null ? null : Str.lower(f.owner()),false));
+                if (reference) b.beginStaticPropRef(site); else b.beginReadStaticProp(site);
+                b.emitResolveClass(constant(ClassSite.class,p.owner(), () -> new ClassSite(p.owner(),language.classId(Str.lower(p.owner())))));
+                if (reference) b.endStaticPropRef(); else b.endReadStaticProp();
+            }
+
             void place(Expr p) {
+                if (p instanceof StaticProperty prop) { staticProperty(prop,true); return; }
                 if (p instanceof Prepared setup) { prepared(setup.operands(),setup.result(),true); return; }
                 if (p instanceof StoreTemp t) { place(t.value()); return; }
                 if (p instanceof Property prop) {

@@ -4,20 +4,26 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 /** A request-local instance. The registry tracks destructors independently of the JVM garbage collector. */
-public final class B1Object {
+public final class B1Object implements B1GcNode {
     final long id;
     final String type;
     private final B1RequestContext.ClassDef definition;
     private final LinkedHashMap<String, B1Ref> properties = new LinkedHashMap<>();
     private int count = 1; // NEW owns its result
+    boolean inGcRoots;
     private boolean destructed;
     boolean constructing = true;
 
-    B1Object(long id, String type, B1RequestContext.ClassDef definition) {
+    B1Object(B1RequestContext ctx,long id, String type, B1RequestContext.ClassDef definition) {
         this.id = id;
         this.type = type;
         this.definition = definition;
-        for (String name : definition.props()) properties.put(name, new B1Ref());
+        for (String name : definition.props()) {
+            B1Ref slot = new B1Ref();
+            properties.put(name,slot);
+            var prop = definition.properties().get(name);
+            if (prop != null) slot.declare(ctx,definition.name(),name,prop);
+        }
     }
 
     @HotPath(lookup = true)
@@ -37,14 +43,38 @@ public final class B1Object {
     }
     B1Array publicProperties(B1RequestContext ctx) {
         B1Array result = new B1Array(properties.size());
-        properties.forEach((name,ref) -> { if (accessible(ctx,name)) result.put(ctx,name,ref.get()); });
+        properties.forEach((name,ref) -> { if (ref.defined() && accessible(ctx,name)) result.put(ctx,name,ref.get()); });
         return result;
     }
-    public void write(B1RequestContext ctx, String name, Object value) {
-        property(ctx,name).set(ctx,value);
+    void dump(B1RequestContext ctx,B1Dump dump,int depth) {
+        var debug = method(ctx,"__debuginfo");
+        if (debug != null) {
+            Object result = debug.invoke0(ctx,this);
+            try {
+                if (result == null) ctx.echo("object(" + definition.name() + ")#" + id + " (0) {\n" + "  ".repeat(depth) + "}\n");
+                else if (result instanceof B1Array props) dump.object(definition.name(),id,props,depth);
+                else throw ctx.error("TypeError","__debuginfo() must return an array");
+            } finally { release(ctx,result); }
+            return;
+        }
+        long count = properties.values().stream().filter(B1Ref::defined).count();
+        ctx.echo("object(" + definition.name() + ")#" + id + " (" + count + ") {\n");
+        String indent = "  ".repeat(depth + 1);
+        properties.forEach((name,ref) -> {
+            if (!ref.defined() && !definition.properties().containsKey(name)) return;
+            String visibility = switch (definition.visibility().getOrDefault(name,1)) {
+                case 2 -> ":protected";
+                case 4 -> ":\"" + definition.name() + "\":private";
+                default -> "";
+            };
+            ctx.echo(indent + "[\"" + name + "\"" + visibility + "]=>\n");
+            if (ref.defined()) dump.value(ref,depth+1);
+            else ctx.echo(indent + "uninitialized(" + definition.properties().get(name).type() + ")\n");
+        });
+        ctx.echo("  ".repeat(depth) + "}\n");
     }
-    void initialize(B1RequestContext ctx,String name,Object value) {
-        properties.get(name).set(ctx,value);
+    public void write(B1RequestContext ctx, String name, Object value) {
+        property(ctx,name).setProperty(ctx,value);
     }
 
     public static Object retain(Object value) {
@@ -66,7 +96,10 @@ public final class B1Object {
         if (value instanceof List<?> list) releaseElements(ctx, list);
         if (value instanceof B1Object obj) {
             if (--obj.count < 0) throw new IllegalStateException("negative PHP refcount");
-            obj.disposeIfUnheld(ctx);
+            if (obj.count == 0) {
+                if (obj.inGcRoots) ctx.cycles.dropped(ctx,obj,0);
+                obj.disposeIfUnheld(ctx);
+            } else if (!obj.inGcRoots) ctx.cycles.dropped(ctx,obj,obj.count);
         }
     }
 
@@ -74,9 +107,18 @@ public final class B1Object {
         Throwable pending = null;
         for (Object item : elements) {
             try { release(ctx, item); }
-            catch (B1Thrown next) { pending = B1Thrown.chain(ctx, next, pending); }
+            catch (Throwable next) { pending = B1Thrown.chain(ctx, next, pending); }
         }
         B1Thrown.propagate(pending);
+    }
+
+    public int gcCount() { return count; }
+    public void gcEdges(java.util.function.Consumer<Object> visit) { properties.values().forEach(visit); }
+    void clear(B1RequestContext ctx) {
+        var slots = new java.util.ArrayList<>(properties.values());
+        slots.forEach(B1Ref::detachProperty);
+        properties.clear();
+        releaseElements(ctx,slots);
     }
 
     boolean uniquelyHeld() { return count == 1; }
@@ -86,9 +128,8 @@ public final class B1Object {
         Throwable pending = null;
         try { destruct(ctx); } catch (Throwable ex) { pending = ex; }
         if (count == 0) {
-            for (var prop : properties.values()) {
-                try { prop.set(ctx, null); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
-            }
+            try { clear(ctx); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
+            if (inGcRoots) ctx.cycles.dropped(ctx,this,0);
             ctx.releaseObjectId(id);
         }
         B1Thrown.propagate(pending);

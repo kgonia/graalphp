@@ -8,6 +8,31 @@ public final class PhpNumericString {
         return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == 0x0B || b == '\f';
     }
 
+    /** zend_strtol for intval with an explicit non-decimal base. Accumulate negative
+     * values so the most negative integer is representable; overflow saturates. */
+    public static long parseBase(byte[] bytes, int base) {
+        if (base != 0 && (base < 2 || base > 36)) return 0;
+        int i = 0;
+        while (i < bytes.length && isWhitespace(bytes[i])) i++;
+        boolean negative = i < bytes.length && bytes[i] == '-';
+        if (negative || i < bytes.length && bytes[i] == '+') i++;
+        if (i + 1 < bytes.length && bytes[i] == '0') {
+            int prefix = bytes[i+1] | 32;
+            int radix = prefix == 'x' ? 16 : prefix == 'b' ? 2 : 0;
+            if (radix != 0 && (base == 0 || base == radix)) { base = radix; i += 2; }
+        }
+        if (base == 0) base = i < bytes.length && bytes[i] == '0' ? 8 : 10;
+        long result = 0, limit = negative ? Long.MIN_VALUE : -Long.MAX_VALUE;
+        while (i < bytes.length) {
+            int digit = Character.digit(bytes[i++],base);
+            if (digit < 0) break;
+            if (result < limit / base || result * base < limit + digit)
+                return negative ? Long.MIN_VALUE : Long.MAX_VALUE;
+            result = result * base - digit;
+        }
+        return negative ? result : -result;
+    }
+
     /**
      * Parses a PHP numeric string as php-src's _is_numeric_string_ex does: optional leading whitespace, sign,
      * digits, fraction and exponent, optional trailing whitespace. Returns Long or Double, or null when the

@@ -12,6 +12,8 @@ public final class B1Frame {
     private final Object[] temps;
     private int[] outgoing = new int[0];
     private final boolean top, eval;
+    boolean strictTypes, internalCall;
+    private long globalVersion = -1;
     private java.util.LinkedHashMap<String, B1Ref> dynamic;
     private Object[] extras;
     private B1Callable discardedCall;
@@ -69,7 +71,7 @@ public final class B1Frame {
     public Object quiet(B1RequestContext ctx, int id) { return slot(ctx, id).get(); }
     public B1Ref reference(B1RequestContext ctx, int id) {
         B1Ref ref = slot(ctx, id);
-        ref.markReference();
+        ref.markReference(ctx);
         return ref;
     }
     public void bindCapture(B1RequestContext ctx, int id, int capture) {
@@ -94,8 +96,28 @@ public final class B1Frame {
         return true;
     }
     public B1Ref place(B1RequestContext ctx,int id) { return slot(ctx,id); }
+    public void bind(B1RequestContext ctx,int id,B1Ref next) {
+        next.markReference(ctx);
+        next.bind();
+        B1Ref old = replaceBinding(ctx,names[id],next);
+        if (old != null) old.unbind(ctx);
+    }
+
+    private B1Ref replaceBinding(B1RequestContext ctx,String name,B1Ref next) {
+        if (eval) return caller.replaceBinding(ctx,name,next);
+        if (top) return ctx.bindGlobal(name,next);
+        for (int i = 0; i < names.length; i++) if (name.equals(names[i])) {
+            B1Ref old = locals[i]; locals[i] = next; return old;
+        }
+        if (dynamic == null) dynamic = new java.util.LinkedHashMap<>();
+        return dynamic.put(name,next);
+    }
+
     public void bindGlobal(B1RequestContext ctx,int id) {
         B1Ref global = ctx.global(names[id]);
+        global.markReference(ctx);
+        if (top && !eval) return;
+        if (eval) { bind(ctx,id,global); return; }
         if (locals[id] == global) return;
         B1Ref old = locals[id]; global.bind(); locals[id] = global;
         if (old != null) old.unbind(ctx);
@@ -120,12 +142,28 @@ public final class B1Frame {
     }
 
     private B1Ref slot(B1RequestContext ctx, int id) {
-        if (locals[id] == null) locals[id] = top ? ctx.global(names[id]) : new B1Ref();
+        if (eval) return caller.symbol(ctx,names[id]);
+        if (top) {
+            refreshGlobalCache(ctx);
+            if (locals[id] == null) locals[id] = ctx.global(names[id]);
+            return locals[id];
+        }
+        if (locals[id] == null) locals[id] = new B1Ref();
         return locals[id];
     }
+    private void refreshGlobalCache(B1RequestContext ctx) {
+        if (globalVersion != ctx.globalVersion) {
+            java.util.Arrays.fill(locals, null);
+            globalVersion = ctx.globalVersion;
+        }
+    }
     public Object read(B1RequestContext ctx, int id) {
-        B1Ref ref = locals[id];
-        if (ref == null && top) ref = ctx.findGlobal(names[id]);
+        B1Ref ref;
+        if (top && !eval) {
+            refreshGlobalCache(ctx);
+            if (locals[id] == null) locals[id] = ctx.findGlobal(names[id]);
+            ref = locals[id];
+        } else ref = eval ? caller.symbol(ctx,names[id]) : locals[id];
         if (ref == null || !ref.defined()) { ctx.diagnostic("Warning", "Undefined variable $" + names[id]); return null; }
         return ref.get();
     }
@@ -133,7 +171,7 @@ public final class B1Frame {
     public Object send(B1RequestContext ctx, int id, B1Callable target, int index) {
         if (target != null && target.byRef(index)) {
             B1Ref slot = slot(ctx, id);
-            slot.markReference();
+            slot.markReference(ctx);
             return slot;
         }
         return read(ctx, id);
@@ -158,7 +196,7 @@ public final class B1Frame {
     }
 
     private void takeSend(B1RequestContext ctx, int index) {
-        if (caller != null && index < caller.outgoing.length && caller.outgoing[index] != 0) {
+        if (caller != null && !caller.internalCall && index < caller.outgoing.length && caller.outgoing[index] != 0) {
             int slot = caller.outgoing[index] - 1;
             caller.outgoing[index] = 0;
             caller.releaseTemp(ctx, slot);
@@ -203,24 +241,28 @@ public final class B1Frame {
         if (!supplied(id)) throw ctx.error("ArgumentCountError", "Too few arguments to function " + function
                 + "(), " + passed + " passed" + callerLocation() + (total == required ? " and exactly " : " and at least ") + required + " expected");
         Object value = locals[id].get();
-        if (type == null) return;
-        Object coerced = scalar(ctx,value,type);
+        if (type == null || type.equals("mixed")) return;
+        Object coerced = scalar(ctx,value,type,caller != null && !caller.internalCall && caller.strictTypes);
         if (coerced == null) throw ctx.error("TypeError",function + "(): Argument #" + (id+1)
                 + " ($" + names[id] + ") must be of type " + type + ", " + ctx.typeName(value) + " given"
-                + (caller == null ? "" : ", called" + callerLocation()));
+                + (caller == null || caller.internalCall ? "" : ", called" + callerLocation()));
         if (coerced != value) write(ctx,id,coerced);
     }
-    private Object scalar(B1RequestContext ctx,Object value,String type) {
-        if (type.equals("int")) return value instanceof Long ? value : ctx.integer(value);
+    static Object scalar(B1RequestContext ctx,Object value,String type,boolean strict) {
+        if (type.equals("array")) return value instanceof B1Array ? value : null;
+        if (type.equals("callable")) return ctx.isCallable(value) ? value : null;
+        if (type.equals("int")) return value instanceof Long ? value : strict ? null : ctx.integer(value);
         if (value instanceof B1Bytes || value instanceof String) return value;
+        if (strict) return null;
         if (value instanceof Number || value instanceof Boolean || value instanceof B1Object obj && obj.method(ctx,"__tostring") != null)
             return B1Bytes.of(ctx.stringBytes(value));
         return null;
     }
     public Object checkReturn(B1RequestContext ctx,String type,Object value,boolean missing) {
         if (!missing) {
+            if (type.equals("mixed")) return value;
             if (value == null && type.equals("?string")) return null;
-            Object accepted = scalar(ctx,value,type);
+            Object accepted = scalar(ctx,value,type,strictTypes);
             if (accepted != null) return accepted;
         }
         throw ctx.error("TypeError",function + "(): Return value must be of type " + type + ", "

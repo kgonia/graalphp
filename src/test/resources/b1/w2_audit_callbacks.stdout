@@ -1,0 +1,9 @@
+array(1) {
+  [0]=>
+  int(5)
+}
+1/5
+typed(): Argument #1 ($x) must be of type int, string given, called in /fixtures/w2_audit_callbacks.php on line 4
+typed(): Argument #1 ($x) must be of type int, string given
+str_repeat(): Argument #2 ($times) must be of type int, string given
+intval(): Argument #2 ($base) must be of type int, string given

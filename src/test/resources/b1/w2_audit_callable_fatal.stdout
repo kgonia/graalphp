@@ -1,0 +1,4 @@
+
+Fatal error: Property C::$p cannot have type callable in /fixtures/w2_audit_callable_fatal.php on line 3
+Stack trace:
+#0 {main}

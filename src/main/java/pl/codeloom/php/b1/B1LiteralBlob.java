@@ -124,6 +124,16 @@ public final class B1LiteralBlob {
             default -> throw new IOException("Invalid literal tag");
         };
     }
+    static Object decodedLiteral(byte[] bytes) throws IOException {
+        Object value = read(new DataInputStream(new ByteArrayInputStream(bytes)));
+        return value instanceof B1Array a ? a.freeze() : value;
+    }
+
+    static Object propertyDefault(Expr initial) {
+        try { return decodedLiteral(encode(initial)); }
+        catch (IOException ex) { throw new UncheckedIOException(ex); }
+    }
+
     public static Object indices(MethodHandles.Lookup lookup, String name, Class<?> type, int index)
             throws IllegalAccessException {
         byte[] data = MethodHandles.classDataAt(lookup, "_", byte[].class, index);
@@ -136,8 +146,6 @@ public final class B1LiteralBlob {
     }
     public static Object bootstrap(MethodHandles.Lookup lookup, String name, Class<?> type, int index)
             throws IOException, IllegalAccessException {
-        byte[] bytes = MethodHandles.classDataAt(lookup, "_", byte[].class, index);
-        Object value = read(new DataInputStream(new ByteArrayInputStream(bytes)));
-        return value instanceof B1Array a ? a.freeze() : value;
+        return decodedLiteral(MethodHandles.classDataAt(lookup, "_", byte[].class, index));
     }
 }

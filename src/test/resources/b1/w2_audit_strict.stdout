@@ -1,0 +1,1 @@
+{closure:/fixtures/w2_audit_strict.php:3}(): Argument #1 ($x) must be of type int, string given, called in /fixtures/w2_audit_strict.php on line 4

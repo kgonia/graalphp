@@ -8,9 +8,6 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.ir.PhpFloatFormat;
 
-import java.math.BigDecimal;
-import java.math.MathContext;
-import java.math.RoundingMode;
 import java.util.Objects;
 
 /**
@@ -103,17 +100,7 @@ public final class Convert {
 
     @TruffleBoundary
     private static long outOfRangeToLong(double d) {
-        if (!Double.isFinite(d)) {
-            return 0;
-        }
-        double twoPow64 = 18446744073709551616.0;
-        double dmod = d % twoPow64;
-        if (dmod < 0) {
-            dmod += twoPow64;
-        }
-        // (zend_long)(zend_ulong)dmod
-        return dmod >= 9.223372036854775807E18 ? (long) (dmod - 9.223372036854775807E18) + Long.MIN_VALUE
-                : (long) dmod;
+        return PhpFloatFormat.wrapToLong(d);
     }
 
     /** zval_get_long of a string: a float-looking number saturates (zend_dval_to_lval_cap), as strtol would. */
@@ -283,28 +270,7 @@ public final class Convert {
      */
     @TruffleBoundary
     public static String doubleToRepr(double d) {
-        if (!Double.isFinite(d)) {
-            return Double.isNaN(d) ? "NAN" : d > 0 ? "INF" : "-INF";
-        }
-        if (d == 0) {
-            return 1 / d < 0 ? "-0" : "0";
-        }
-        double abs = Math.abs(d);
-        BigDecimal shortest = new BigDecimal(Double.toString(abs));
-        if (shortest.precision() == 2) {
-            // Double.toString picks among 1- and 2-digit decimals when one digit would do (4.9E-324); dtoa
-            // takes the 1-digit one closest to d
-            BigDecimal down = shortest.round(new MathContext(1, RoundingMode.FLOOR));
-            BigDecimal up = shortest.round(new MathContext(1, RoundingMode.CEILING));
-            boolean downOk = down.doubleValue() == abs;
-            boolean upOk = up.doubleValue() == abs;
-            if (downOk || upOk) {
-                BigDecimal exact = new BigDecimal(abs);
-                shortest = downOk && (!upOk || exact.subtract(down).compareTo(up.subtract(exact)) <= 0) ? down : up;
-            }
-        }
-        String digits = shortest.unscaledValue().toString();
-        return (d < 0 ? "-" : "") + PhpFloatFormat.gcvt(digits, shortest.precision() - shortest.scale(), 17);
+        return PhpFloatFormat.doubleToRepr(d);
     }
 
     /**

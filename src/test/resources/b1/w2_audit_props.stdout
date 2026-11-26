@@ -1,0 +1,15 @@
+object(C)#1 (1) {
+  ["p"]=>
+  uninitialized(int)
+  ["maybe"]=>
+  uninitialized(?int)
+  ["plain"]=>
+  NULL
+}
+Cannot access uninitialized non-nullable property C::$p by reference
+plain
+plain
+1
+Cannot assign string to reference held by property C::$p of type int
+Cannot assign string to property C::$p of type int
+3/p,maybe,plain
