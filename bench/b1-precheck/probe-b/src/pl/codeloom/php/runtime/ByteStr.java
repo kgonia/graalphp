@@ -19,8 +19,9 @@ public final class ByteStr {
     }
 
     private final byte[] bytes;
+    private volatile ByteStr lower;
     private int hash;
-    private boolean hashComputed;
+    private volatile boolean hashComputed;
 
     private ByteStr(byte[] bytes) {
         this.bytes = bytes;
@@ -131,6 +132,13 @@ public final class ByteStr {
 
     /** PHP ASCII case-folding (zend_str_tolower). */
     public ByteStr toLowerAscii() {
+        ByteStr cached = lower;
+        return cached != null ? cached : cacheLowerAscii();
+    }
+
+    // Literal strings may be shared by requests. Only the first lookup needs the lock.
+    private synchronized ByteStr cacheLowerAscii() {
+        if (lower != null) return lower;
         byte[] b = bytes;
         int firstUpper = -1;
         for (int i = 0; i < b.length; i++) {
@@ -140,13 +148,15 @@ public final class ByteStr {
                 break;
             }
         }
-        if (firstUpper < 0) return this;
+        if (firstUpper < 0) return lower = this;
         byte[] out = b.clone();
         for (int i = firstUpper; i < out.length; i++) {
             int c = out[i] & 0xFF;
             if (c >= 'A' && c <= 'Z') out[i] = (byte) (c + 32);
         }
-        return new ByteStr(out);
+        ByteStr folded = new ByteStr(out);
+        folded.lower = folded;
+        return lower = folded;
     }
 
     public int indexOfDoubleColon() {

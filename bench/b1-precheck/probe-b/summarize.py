@@ -5,7 +5,7 @@ import re
 import statistics
 import sys
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else (Path(__file__).resolve().parent / "out-v3")
+OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else (Path(__file__).resolve().parent / "out-v4b")
 
 
 def read_text_auto(path: Path) -> str:

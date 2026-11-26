@@ -49,15 +49,21 @@ public final class PhpRequestContext {
     }
 
     private void registerCoreBuiltins() {
-        registerFunction(ByteStr.of("trim"), PhpCallable.of((ctx, args) -> {
-            int n = args.size();
-            if (n < 1 || n > 2) {
-                throw new PhpError("trim() expects 1 or 2 arguments, " + n + " given");
+        registerFunction(ByteStr.of("trim"), new PhpCallable() {
+            @Override Object invoke(PhpRequestContext ctx, PhpArray args) {
+                return switch (args.size()) {
+                    case 1 -> invoke1(ctx, args.get(0L));
+                    case 2 -> invoke2(ctx, args.get(0L), args.get(1L));
+                    default -> throw new PhpError("trim() expects 1 or 2 arguments, " + args.size() + " given");
+                };
             }
-            ByteStr v = ByteStr.toByteStr(args.get(0L));
-            if (n == 1) return v.trim();
-            return v.trim(ByteStr.toByteStr(args.get(1L)));
-        }));
+            @Override Object invoke1(PhpRequestContext ctx, Object a0) {
+                return ByteStr.toByteStr(a0).trim();
+            }
+            @Override Object invoke2(PhpRequestContext ctx, Object a0, Object a1) {
+                return ByteStr.toByteStr(a0).trim(ByteStr.toByteStr(a1));
+            }
+        });
         registerFunction(ByteStr.of("__return_true"), PhpCallable.of((ctx, args) -> Boolean.TRUE));
     }
 
@@ -70,8 +76,6 @@ public final class PhpRequestContext {
     }
 
     public PhpCallable findFunction(ByteStr name) {
-        PhpCallable fn = functions.get(name);
-        if (fn != null) return fn;
         return functions.get(name.toLowerAscii());
     }
 
@@ -82,8 +86,6 @@ public final class PhpRequestContext {
     }
 
     public PhpClass findClass(ByteStr name) {
-        PhpClass cls = classes.get(name);
-        if (cls != null) return cls;
         return classes.get(name.toLowerAscii());
     }
 
@@ -125,21 +127,103 @@ public final class PhpRequestContext {
      * ZERO closed-world switch(name) shortcuts!
      */
     public Object call(Object callable, PhpArray args) {
+        return dispatch(callable, -1, null, null, args);
+    }
+
+    public Object call0(Object callable) {
+        return dispatch(callable, 0, null, null, null);
+    }
+
+    public Object call1(Object callable, Object a0) {
+        return callFixed(callable, 1, a0, null);
+    }
+
+    public Object call2(Object callable, Object a0, Object a1) {
+        return callFixed(callable, 2, a0, a1);
+    }
+
+    private Object callFixed(Object callable, int arity, Object a0, Object a1) {
+        retainValue(a0);
+        retainValue(a1);
+        Object result = null;
+        Throwable primary = null;
+        try {
+            if (a0 instanceof PhpRef || a1 instanceof PhpRef) {
+                PhpArray args = arity == 1 ? PhpArray.list(a0) : PhpArray.list(a0, a1);
+                return result = callPacked(callable, args);
+            }
+            return result = dispatch(callable, arity, a0, a1, null);
+        } catch (RuntimeException | Error e) {
+            primary = e;
+            throw e;
+        } finally {
+            releaseCallArgs(a0, a1, result, primary);
+        }
+    }
+
+    private Object callPacked(Object callable, PhpArray args) {
+        args.addHolder();
+        Object result = null;
+        Throwable primary = null;
+        try {
+            return result = call(callable, args);
+        } catch (RuntimeException | Error e) {
+            primary = e;
+            throw e;
+        } finally {
+            releaseCallArgs(args, null, result, primary);
+        }
+    }
+
+    /** The caller holds args across dispatch. Only ordinary positional values can be unpacked. */
+    public Object callSlice(Object callable, PhpArray args, long take) {
+        int size = args.size();
+        if (take == 0 || (size == 0 && take >= 0)) return call0(callable);
+        long length = take < 0 ? Math.max(0L, size + take) : Math.min(take, size);
+        if (take > 0 && length <= 2 && !args.mayHaveArgumentRefs()) {
+            if (args.isPacked()) {
+                Object a0 = args.getLongKey(0L);
+                return length == 1 ? call1(callable, a0) : call2(callable, a0, args.getLongKey(1L));
+            }
+            int p0 = args.firstPosition();
+            if (args.keyAt(p0) instanceof Long) {
+                if (length == 1) return call1(callable, args.valueAt(p0));
+                int p1 = args.nextPosition(p0);
+                if (args.keyAt(p1) instanceof Long) return call2(callable, args.valueAt(p0), args.valueAt(p1));
+            }
+        }
+        if (take >= size && args.isPacked() && !args.mayHaveArgumentRefs()) return callPacked(callable, args);
+
+        PhpArray slice = owned(PhpArray.ofCapacity((int) length));
+        Object result = null;
+        Throwable primary = null;
+        try {
+            for (int p = args.firstPosition(); length > 0; p = args.nextPosition(p), --length) {
+                Object key = args.keyAt(p);
+                Object element = args.copiedAt(p);
+                if (key instanceof Long) slice.appendCopied(element);
+                else slice.putCopied(key, element);
+            }
+            return result = call(callable, slice);
+        } catch (RuntimeException | Error e) {
+            primary = e;
+            throw e;
+        } finally {
+            releaseCallArgs(slice, null, result, primary);
+        }
+    }
+
+    private Object dispatch(Object callable, int arity, Object a0, Object a1, PhpArray args) {
         if (callable instanceof PhpClosure closure) {
-            return closure.invoke(this, args);
+            return switch (arity) {
+                case 0 -> closure.invoke0(this);
+                case 1 -> closure.invoke1(this, a0);
+                case 2 -> closure.invoke2(this, a0, a1);
+                default -> closure.invoke(this, args);
+            };
         }
         if (callable instanceof ByteStr name) {
-            PhpCallable fn = findFunction(name);
-            if (fn != null) {
-                return fn.invoke(this, args);
-            }
-            int sep = name.indexOfDoubleColon();
-            if (sep > 0) {
-                ByteStr clsName = name.slice(0, sep);
-                ByteStr methodName = name.slice(sep + 2, name.length());
-                return callStatic(clsName, methodName, args);
-            }
-            throw new PhpError("Call to undefined function " + name + "()");
+            return invoke(resolveNamed(name), arity, a0, a1, args);
         }
         if (callable instanceof PhpArray pair) {
             Object target = pair.get(0L);
@@ -152,24 +236,50 @@ public final class PhpRequestContext {
                 if (m == null) {
                     throw new PhpError("Call to undefined method " + obj.phpClass.name + "::" + methodName + "()");
                 }
-                return m.invoke(this, obj, args);
+                return invoke(m, obj, arity, a0, a1, args);
             }
             if (target instanceof ByteStr clsName) {
-                return callStatic(clsName, methodName, args);
+                return invoke(resolveStatic(clsName, methodName), arity, a0, a1, args);
             }
             throw new PhpError("Invalid callable target");
         }
         if (callable instanceof PhpObject obj) {
             PhpInstanceMethod inv = obj.phpClass.invoker();
             if (inv != null) {
-                return inv.invoke(this, obj, args);
+                return invoke(inv, obj, arity, a0, a1, args);
             }
             throw new PhpError("Object of type " + obj.phpClass.name + " is not callable");
         }
         throw new PhpError("Value is not callable: " + callable);
     }
 
-    private Object callStatic(ByteStr clsName, ByteStr methodName, PhpArray args) {
+    private Object invoke(PhpCallable fn, int arity, Object a0, Object a1, PhpArray args) {
+        return switch (arity) {
+            case 0 -> fn.invoke0(this);
+            case 1 -> fn.invoke1(this, a0);
+            case 2 -> fn.invoke2(this, a0, a1);
+            default -> fn.invoke(this, args);
+        };
+    }
+
+    private Object invoke(PhpInstanceMethod method, PhpObject self, int arity, Object a0, Object a1, PhpArray args) {
+        return switch (arity) {
+            case 0 -> method.invoke0(this, self);
+            case 1 -> method.invoke1(this, self, a0);
+            case 2 -> method.invoke2(this, self, a0, a1);
+            default -> method.invoke(this, self, args);
+        };
+    }
+
+    private PhpCallable resolveNamed(ByteStr name) {
+        PhpCallable fn = findFunction(name);
+        if (fn != null) return fn;
+        int sep = name.indexOfDoubleColon();
+        if (sep > 0) return resolveStatic(name.slice(0, sep), name.slice(sep + 2, name.length()));
+        throw new PhpError("Call to undefined function " + name + "()");
+    }
+
+    private PhpCallable resolveStatic(ByteStr clsName, ByteStr methodName) {
         PhpClass cls = findClass(clsName);
         if (cls == null) {
             throw new PhpError("Class \"" + clsName + "\" not found");
@@ -178,7 +288,7 @@ public final class PhpRequestContext {
         if (m == null) {
             throw new PhpError("Call to undefined static method " + clsName + "::" + methodName + "()");
         }
-        return m.invoke(this, args);
+        return m;
     }
 
     void bufferRoot(PhpObject obj) {

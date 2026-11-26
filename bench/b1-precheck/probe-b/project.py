@@ -53,7 +53,7 @@ new_rem = """    public void removeHolder() {
         int count = holders;
         if (count > 0) {
             holders = count - 1;
-            if (count == 1 && (deep || gcOwner != null)) {
+            if (count == 1 && (holdsCounted || deep || gcOwner != null)) {
                 // one out-of-line call for both walks
                 lastHolderGone();
             } else if (count > 1 && (deep || gcOwner != null) && gcArrayIdx < 0) {
@@ -67,6 +67,41 @@ php_array = php_array.replace(old_rem, new_rem, 1)
 # The nested-array release fast paths bypass lastHolderGone. Returning an array
 # as a temporary and freezing it also end its time in the candidate buffer.
 for before, after in [
+    # Even a nested array of scalars must regain its original holder count at frame exit.
+    ("holders == 0 && deep", "holders == 0 && (holdsCounted || deep)"),
+    ("nested.holders == 1 && nested.deep && nested.holdsCounted", "nested.holders == 1 && nested.holdsCounted"),
+    ("    public static PhpArray list(Object... items)", """    public static PhpArray list(Object a0) {
+        PhpArray args = ofCapacity(1);
+        args.appendCopied(a0);
+        return args;
+    }
+
+    public static PhpArray list(Object a0, Object a1) {
+        PhpArray args = ofCapacity(2);
+        args.appendCopied(a0);
+        args.appendCopied(a1);
+        return args;
+    }
+
+    public static PhpArray list(Object... items)"""),
+    ("for (Object item : items) {\n            array.append(item);",
+     "for (Object item : items) {\n            array.appendCopied(item);"),
+    ("    public boolean isPacked()", "    boolean isPacked()"),
+    ("    public Object get(Object key)", """    public Object get(long key) {
+        return getLongKey(key);
+    }
+
+    Object getLongKey(long key) {
+        if (store instanceof Hash) return PhpRef.deref(hashGetLong(key));
+        if (key < 0 || key >= size) return null;
+        return valueAt((int) key);
+    }
+
+    boolean mayHaveArgumentRefs() {
+        return mayHoldRefs;
+    }
+
+    public Object get(Object key)"""),
     ("private void lastHolderGone() {", """private void lastHolderGone() {
         forgetGcOwner();"""),
     ("nested.holders = RELEASED;", "nested.markReleased();"),
@@ -81,6 +116,65 @@ for before, after in [
             if (count == 1 && mayHoldRefs)"""),
     ("holders = FROZEN;", """forgetGcOwner();
         holders = FROZEN;"""),
+    # Finish releasing sibling slots when one of their destructors throws. The
+    # normal and depth-limited traversals share the same leaf release operation.
+    ("private void releaseElements(int depth) {", """private void releaseElements(int depth) {
+        Throwable failure = null;"""),
+    ("releaseElement(packed[i], depth);", "failure = releaseElement(packed[i], depth, failure);"),
+    ("releaseElement(entries[2 * i + 1], depth);", "failure = releaseElement(entries[2 * i + 1], depth, failure);"),
+    ("""    }
+
+    private static void releaseElement(Object raw, int depth) {""", """        Values.throwCleanupFailure(failure);
+    }
+
+    private static Throwable releaseElement(Object raw, int depth, Throwable failure) {
+        try {
+            releaseElement(raw, depth);
+        } catch (RuntimeException | Error e) {
+            return Values.recordCleanupFailure(failure, e);
+        }
+        return failure;
+    }
+
+    private static void releaseElement(Object raw, int depth) {"""),
+    ("private void releaseDeep() {", """private void releaseDeep() {
+        Throwable failure = null;"""),
+    ("""                } else {
+                    nested.removeHolder();
+                }
+            } else if (raw instanceof PhpObject object) {
+                object.release();
+            } else if (raw instanceof PhpClosure closureValue) {
+                closureValue.release();
+            } else if (raw instanceof PhpRef ref) {
+                ref.unbind();
+            }
+        }
+    }""", """                    continue;
+                }
+            }
+            failure = releaseElement(raw, RELEASE_RECURSION, failure);
+        }
+        Values.throwCleanupFailure(failure);
+    }"""),
+    ("private void countReferences(boolean bind) {", """private void countReferences(boolean bind) {
+        Throwable failure = null;"""),
+    ("""                if (bind) {
+                    ref.bind();
+                } else {
+                    ref.unbind();
+                }
+            }
+        }
+    }""", """                if (bind) {
+                    ref.bind();
+                } else {
+                    failure = releaseElement(ref, 0, failure);
+                }
+            }
+        }
+        Values.throwCleanupFailure(failure);
+    }"""),
 ]:
     if before not in php_array:
         raise RuntimeError(f"Missing PhpArray projection anchor: {before}")
@@ -189,6 +283,14 @@ public final class ArrayKey {
 """
 (OUT / "ArrayKey.java").write_text(array_key, encoding="utf-8", newline="\n")
 
+# Reuse the runtime's PHP numeric-string parser without its Truffle dependencies.
+convert = strip_truffle((RUNTIME / "Convert.java").read_text(encoding="utf-8"))
+start = convert.index("    private static boolean isWhitespace(int b)")
+end = convert.index("    /** is_numeric()", start)
+(OUT / "NumericString.java").write_text(
+    "package pl.codeloom.php.runtime;\n\nfinal class NumericString {\n"
+    + convert[start:end] + "}\n", encoding="utf-8", newline="\n")
+
 # 4. MegaGenerated.java: HIGH-1 fix — 160 distinct JVM target classes matching hot.php eval() diversity!
 lines = [
     "package pl.codeloom.php.runtime;",
@@ -205,14 +307,31 @@ lines = [
     "",
 ]
 
-# 60 distinct function classes
-for i in range(60):
-    lines.append(f"    static final class HotFn{i} extends PhpCallable {{")
-    lines.append(f"        @Override public Object invoke(PhpRequestContext ctx, PhpArray args) {{ return (long) args.get(0L) + {i}L; }}")
+def emit_target(name, base, expression, arity=1):
+    """Emit both entry points from the same PHP body, including the instance receiver."""
+    params = "PhpRequestContext ctx"
+    actual = "ctx"
+    if base == "PhpInstanceMethod":
+        params += ", PhpObject self"
+        actual += ", self"
+    lines.append(f"    static final class {name} extends {base} {{")
+    if base == "PhpClosure":
+        lines.append(f"        {name}(PhpRequestContext ctx) {{ super(ctx, null); }}")
+    values = ", ".join(f"args.get({i}L)" for i in range(arity))
+    lines.append(f"        @Override Object invoke({params}, PhpArray args) {{")
+    lines.append(f'            if (args.size() < {arity}) throw new PhpError("Too few arguments to {name}");')
+    lines.append(f"            return invoke{arity}({actual}, {values});")
+    lines.append("        }")
+    if arity == 2:
+        lines.append(f'        @Override Object invoke1({params}, Object a0) {{ throw new PhpError("Too few arguments to {name}"); }}')
+    args = ", ".join(f"Object a{i}" for i in range(arity))
+    lines.append(f"        @Override Object invoke{arity}({params}, {args}) {{ return {expression}; }}")
     lines.append("    }")
-lines.append("    static final class HotFn0Override extends PhpCallable {")
-lines.append("        @Override public Object invoke(PhpRequestContext ctx, PhpArray args) { return (long) args.get(0L) + 100L; }")
-lines.append("    }")
+
+
+for i in range(60):
+    emit_target(f"HotFn{i}", "PhpCallable", f"Values.add(a0, {i}L)")
+emit_target("HotFn0Override", "PhpCallable", "Values.add(a0, 100L)")
 lines.append("")
 
 # 20 distinct HotC classes + 60 distinct method classes (a, b, s)
@@ -221,23 +340,14 @@ for i in range(20):
     lines.append(f"        long n = {i}L;")
     lines.append(f"        HotC{i}(PhpRequestContext ctx, PhpClass cls) {{ super(ctx, cls); }}")
     lines.append("    }")
-    lines.append(f"    static final class HotC{i}_a extends PhpInstanceMethod {{")
-    lines.append(f"        @Override public Object invoke(PhpRequestContext ctx, PhpObject self, PhpArray args) {{ return (long) args.get(0L) + ((HotC{i}) self).n; }}")
-    lines.append("    }")
-    lines.append(f"    static final class HotC{i}_b extends PhpInstanceMethod {{")
-    lines.append(f"        @Override public Object invoke(PhpRequestContext ctx, PhpObject self, PhpArray args) {{ return (long) args.get(0L) + (long) args.get(1L); }}")
-    lines.append("    }")
-    lines.append(f"    static final class HotC{i}_s extends PhpCallable {{")
-    lines.append(f"        @Override public Object invoke(PhpRequestContext ctx, PhpArray args) {{ return (long) args.get(0L) + 2L; }}")
-    lines.append("    }")
+    emit_target(f"HotC{i}_a", "PhpInstanceMethod", f"Values.add(a0, ((HotC{i}) self).n)")
+    emit_target(f"HotC{i}_b", "PhpInstanceMethod", "Values.add(a0, a1)", arity=2)
+    emit_target(f"HotC{i}_s", "PhpCallable", "Values.add(a0, 2L)")
 lines.append("")
 
 # 40 distinct closure subclasses
 for h in range(40):
-    lines.append(f"    static final class HotClosure{h} extends PhpClosure {{")
-    lines.append(f"        HotClosure{h}(PhpRequestContext ctx) {{ super(ctx, null); }}")
-    lines.append(f"        @Override Object invoke(PhpRequestContext ctx, PhpArray args) {{ return (long) args.get(0L) + {h}L; }}")
-    lines.append("    }")
+    emit_target(f"HotClosure{h}", "PhpClosure", f"Values.add(a0, {h}L)")
 lines.append("")
 
 # Registration helper
@@ -274,4 +384,4 @@ lines.append("}")
 lines.append("")
 
 (OUT / "MegaGenerated.java").write_text("\n".join(lines), encoding="utf-8", newline="\n")
-print("Projected PhpArray.java, PhpRef.java, ArrayKey.java, and MegaGenerated.java to", OUT)
+print("Projected PhpArray.java, PhpRef.java, ArrayKey.java, NumericString.java, and MegaGenerated.java to", OUT)

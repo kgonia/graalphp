@@ -28,6 +28,8 @@ Full Rev 3 benchmark tables, Codex adversarial review history, and kill-criteria
   - `HotOpenWorld.java` — `_wp_array_get`, `aget`, `post`, and 181-class `mega`.
   - `Corpus.java`, `Checks.java`, `ProbeBMain.java` — Gate 1 corpus loader, `D17` & Codex regression gate suite, CLI.
 - `php-ref/` — pinned PHP 8.5 reference scripts (`hot.php`, `hot-fns.php`, `d17_fixture.php`, `probe_env.php`).
+- `tools/B1Lint.java` — zero-dependency JDK 25 `java.lang.classfile` bytecode linter enforcing rules `B1-01..B1-07`
+  ([wiki/b1-lint.md](../../../wiki/b1-lint.md)).
 - `run-bench.ps1` / `summarize.py` — 5-round interleaved Linux Docker benchmark runner (`--cpuset-cpus 14-21`,
   cgroup `memory.peak`, paired solo + `CtxB` + `2ctx` timing, `[STEADY_START_MS, STEADY_END_MS]` `-XX:+LogCompilation`
   deopt windowing, and `-XX:NativeMemoryTracking=summary`).

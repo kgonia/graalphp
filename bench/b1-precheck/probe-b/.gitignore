@@ -2,4 +2,6 @@ build/
 out/
 out-v2/
 out-v3/
+out-v4/
+out-v4b/
 *-prompt.txt

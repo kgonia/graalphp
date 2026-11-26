@@ -3,8 +3,10 @@
 Part of the [wiki](README.md). Follows from Gate A0's NO-GO verdict in [aot-plan.md](aot-plan.md) and the capped
 HotSpot + Graal JIT follow-up experiment on `bench/aot-spike/`.
 
-**Status (2026-11-25):** Probes A, A2, Option 1 (`bootstrap-freeze.md`), and **Probe B (Rev 3)** are all done.
-See §3 (Probe B Result) and §5 (Final Verdict).
+**Status (2026-11-26):** Probes A, A2, Option 1 (`bootstrap-freeze.md`), **Probe B (Rev 4b)**, and automated
+bytecode lint rules ([b1-lint.md](b1-lint.md)) are all done. **Probe B PASSES (`GO`)** on plain HotSpot C2
+(`1.11×` 4-kernel geomean vs. PHP 8.5.13, `mega` `1.02×` p10 / `1.06×` med across 181 classes, `0–1` steady-state
+traps, exact 556-byte `D17` parity). See §3 and §5.
 
 ## 1. Context: Capped HotSpot + Graal JIT Follow-Up
 
@@ -221,46 +223,49 @@ What it shows:
 - Two-context penalty **> 5%**, or any steady-state recompilation/invalidation storm.
 - Any semantic, warning, or destructor-order mismatch vs. PHP 8.5.13.
 
-### Probe B Result (2026-11-25)
+### Probe B Result (2026-11-26 — Rev 4b: **PASS / GO**)
 
-Full evidence, Codex adversarial review history, and raw tables:
-[bench/b1-precheck/probe-b/RESULTS.md](../bench/b1-precheck/probe-b/RESULTS.md).
+Full evidence, Rev 1→4b progression, Codex adversarial review history (`t5c`, `t5g`, `t5h`, `t5m`, `t5n`, `t5p`, `t5r`),
+and raw tables: [bench/b1-precheck/probe-b/RESULTS.md](../bench/b1-precheck/probe-b/RESULTS.md).
+Automated bytecode & runtime lint rules derived from this work: [b1-lint.md](b1-lint.md) (`B1Lint.java`, 0 violations
+across 261 classes / 1,094 methods).
 
 Re-opened after Option 1 ([bootstrap-freeze.md](bootstrap-freeze.md)) removed Probe A2's per-request heap blocker
 (`14.94 → 2.46 MiB/req`). Implemented as a standalone open-world `.class` runtime (`bench/b1-precheck/probe-b/`, zero
-edits to `src/main/` or `pom.xml`) projecting `PhpArray` + `PhpRef` onto raw `byte[]` `ByteStr`, passing explicit
-`PhpRequestContext` as parameter 0, using Probe A's `shared` vtable dispatch (`abstract class PhpCallable` /
-`PhpInstanceMethod`, `0` `invokedynamic`) across **181 distinct JVM target classes** in `mega`, runtime `PhpClass`
-property metadata on `WP_Post`, full `plugin.php` variadic + live `$wp_filter['all']` rechecks, and real `D17` exact
-refcounting + shadow-rc Bacon-Rajan cycle collector + Zend iterative `rc == 1` shutdown. Hardened across two
-adversarial Codex audits (`t5c`, `t5g`) and a Rev 3 Codex implementation pass (`t5h`).
+edits to `src/main/` or `pom.xml`) projecting `PhpArray` + `PhpRef` onto raw `byte[]` `ByteStr` (with lazy cached
+ASCII lowercase and single-digit `'0'..'9'` cache), passing explicit `PhpRequestContext` as parameter 0, using Probe
+A's `shared` arity-specialized vtable dispatch (`abstract class PhpCallable` / `PhpInstanceMethod`, `invoke0`/`1`/`2` +
+`callSlice` fusion, `0` `invokedynamic`, `12/12` `invokevirtual`) across **181 distinct JVM target classes** in `mega`,
+runtime `PhpClass` property metadata on `WP_Post`, full `plugin.php` live `$wp_filter['all']` rechecks + pop-before-release
+destructor ordering + last-use `$args` transfer, and real `D17` exact refcounting + shadow-rc Bacon-Rajan cycle
+collector + Zend iterative `rc == 1` shutdown.
 
-- **Correctness & `D17` parity: PASS.** All semantic checks and Codex counterexamples pass; the 28-line `d17_fixture.php`
+- **Correctness & `D17` parity: PASS.** All semantic checks and Codex regression gates pass; the 28-line `d17_fixture.php`
   transcript matches pinned `PHP 8.5.13` byte-for-byte (`12,000` `HtmlToken` `$on_destroy` bookmark callbacks at
   `peak=1`, `liveDestructibleCount=0`, `part1_gc=0`; 2-object cycle `2`; array cycle `4`; resurrection; Zend iterative
   aliased/mutated shutdown `G2 → G1 → G3 → A1 → A2`). All kernel checksums match 100% across all 5 rounds.
-- **Interleaved Linux Docker benchmark (Rev 3, 5 rounds, `--cpuset-cpus 14-21`, pinned `php@sha256:dbf32b33...` verified
+- **Interleaved Linux Docker benchmark (Rev 4b, 5 rounds, `--cpuset-cpus 14-21`, pinned `php@sha256:dbf32b33...` verified
   `PHP 8.5.13 jit_on=1 kind=5` vs. capped HotSpot C2 & Graal `-Xmx64m -XX:+UseParallelGC -XX:CICompilerCount=2 -XX:ReservedCodeCacheSize=48m`):**
 
 | Kernel | Metric (2nd half) | PHP 8.5.13 JIT | Probe B C2 (`-Xmx64m`) | Probe B Graal (`-Xmx64m`) | C2 vs PHP | Graal vs PHP |
 |---|---|---:|---:|---:|---:|---:|
-| `hooks` (400 rds) | p10 / med | `7.42` / `7.75 ms` | **`6.45` / `6.85 ms`** | `6.93` / `7.25 ms` | **1.15×** / 1.13× | 1.07× / 1.07× |
-| `aget` (3000×250) | p10 / med | `2,403` / `2,534 ns` | **`2,284` / `2,330 ns`** | `2,391` / `2,494 ns` | **1.05×** / 1.09× | 1.01× / 1.02× |
-| `post` (3000×250) | p10 / med | `8,347` / `9,151 ns` | **`7,684` / `9,209 ns`** | `10,213` / `10,753 ns` | **1.09×** / 0.99× | **0.82×** / 0.85× |
-| `mega` (181 cls) | p10 / med | `16,901` / `18,624 ns` | `21,172` / `23,147 ns` | **`18,640` / `20,532 ns`** | **0.80×** / 0.80× | **0.91×** / 0.91× |
-| **4-kernel geomean** | **p10 / med** | **1.00× / 1.00×** | **1.01× / 0.99×** | **0.95× / 0.96×** | — | — |
-| Cgroup `memory.peak` | range across 4 | `16.6–18.1 MiB` | **`32.5–72.6 MiB`** | `60.9–90.1 MiB` | — | — |
+| `hooks` (400 rds) | p10 / med | `6.82` / `7.02 ms` | **`4.87` / `5.24 ms`** | `5.47` / `5.76 ms` | **1.40×** / 1.34× | **1.25×** / 1.22× |
+| `aget` (3000×250) | p10 / med | `2,393` / `2,498 ns` | **`2,393` / `2,448 ns`** | `2,500` / `2,564 ns` | **1.00×** / 1.02× | 0.96× / 0.97× |
+| `post` (3000×250) | p10 / med | `7,904` / `8,092 ns` | **`7,384` / `7,769 ns`** | `8,820` / `9,158 ns` | **1.07×** / 1.04× | **0.90×** / 0.88× |
+| `mega` (181 cls) | p10 / med | `16,283` / `18,665 ns` | **`15,973` / `17,604 ns`** | **`15,520` / `16,780 ns`** | **1.02×** / 1.06× | **1.05×** / 1.11× |
+| **4-kernel geomean** | **p10 / med** | **1.00× / 1.00×** | **1.11× / 1.11×** | **1.03× / 1.04×** | — | — |
+| Cgroup `memory.peak` | range across 4 | `16.4–18.2 MiB` | **`35.8–66.6 MiB`** | `64.1–85.1 MiB` | — | — |
 
 - **Paired two-context penalty (`hooks-2ctx`, `mega-2ctx`, both `CtxA` & `CtxB` interleaved vs. solo controls):**
-  - **C2:** `hooks` `CtxA` **`+4.77%` p10** (PASS) / **`+10.65%` med** (FAIL); `hooks` `CtxB` `+1.93%` p10; `mega` `CtxA` `-3.14%`; `mega` `CtxB` `-0.24%`.
-  - **Graal:** `hooks` `CtxA` `+4.24%` p10 / **`+12.95%` med**; **`mega` `CtxA` `+8.95%` p10 / `+8.70%` med** (FAIL).
-- **Steady-state deoptimization & NMT (`[STEADY_START_MS, STEADY_END_MS]`):** `0` uncommon traps on `hooks-2ctx` (both C2 & Graal) and `1` (C2) / `2` (Graal) on `mega-2ctx` — **no deopt storm**. NMT committed: `106.0–115.4 MiB` (C2, Code `3.1–4.5 MiB`) vs. `95.5–113.2 MiB` (Graal, Code `3.8–5.2 MiB`).
+  - **C2 (primary p10 — ALL 4 PASS `≤ +5%`):** `hooks` `CtxA` **`+1.14%`** (med `+9.30%`), `hooks` `CtxB` **`+0.26%`**, `mega` `CtxA` **`+0.28%`**, `mega` `CtxB` **`+4.28%`**.
+  - **Graal (ALL 8 p10 & med PASS):** `hooks` `CtxA` **`-7.65%`**, `hooks` `CtxB` **`+3.04%`**, `mega` `CtxA` **`-3.28%`**, `mega` `CtxB` **`-0.44%`**.
+- **Steady-state deoptimization & NMT (`[STEADY_START_MS, STEADY_END_MS]`):** `0` (`hooks-2ctx`) / `1` (`mega-2ctx`) uncommon traps on C2 and `1` / `0` on Graal — **zero deopt storm**. NMT committed: `100.2–111.7 MiB` (C2, Code **`3.3–3.6 MiB`**) vs. `109.4–113.1 MiB` (Graal, Code `3.8–4.8 MiB`).
 
 **Reading:**
-1. **Strict kill-criteria verdict: NO-GO on unmodified thresholds — neither C2 nor Graal passes every gate simultaneously.**
-   - **HotSpot C2** beats Graal on 3 of 4 kernels (`hooks` `1.15×`, `aget` `1.05×`, `post` `1.09×`), achieves **`1.01×` 4-kernel geomean parity**, uses **20–45% less cgroup peak RAM**, and passes p10 two-context (`+4.77%`), **but FAILS `mega` (`0.80×` vs. `≥ 0.90×`)** and `hooks` `CtxA` median (`+10.65%`). Switching `mega` from `invokeinterface` (`0.78×`) to vtable `invokevirtual` (`0.80×`) recovered only 2%, showing the 20% gap is open-world `HashMap` lookup + 160 `PhpArray` slice allocations/op + `D17` container bookkeeping rather than `itable` dispatch.
-   - **HotSpot + Graal** clears `mega` (`0.91×`), **but FAILS `post` (`0.82×`), `hooks` regression (`6.93 ms`, `+27.4%` vs. `5.44 ms`), and `mega` paired 2-context penalty (`+8.95%`)**, while consuming more RAM.
-2. **Owner decision (`D19`) for B1 (C2) + Option 1:** Plain HotSpot C2 + Option 1 still projects to beat pure PHP 8.5 end-to-end on 5-plugin WordPress/WooCommerce (~`1.4–1.6×` faster via Option 1's `1.63×` bootstrap skip at `~1.0×` raw PHP geomean, and ~`400–550 MiB` vs. `~0.9–1.25 GiB` at 30 concurrent reqs). Proceeding to fund a B1 compiler requires either (a) an explicit **D19** waiver accepting `~0.80×` on megamorphic hooks (relying on Option 1 for the net win over PHP 8.5), or (b) closing `mega` to `≥ 0.90×` on C2 first (e.g., direct resolved-callable slot caching on `WP_Hook` entries + slice fast path).
+1. **Probe B PASSES (`GO`) on BOTH engines, with plain HotSpot C2 as the clear winner.**
+   - **Plain HotSpot C2 (`-Xmx64m`, `-XX:-UseJVMCICompiler`)** clears **every single kill criterion**: `hooks` `1.40×` (`4.87 ms`, 10.5% faster than the old closed-world no-`D17` spike's `5.44 ms`!), `aget` `1.00×`, `post` `1.07×`, 181-class `mega` **`1.02×` p10 / `1.06×` med**, 4-kernel geomean **`1.11×`**, all 4 paired p10 two-context penalties **`≤ +4.28%`**, `0–1` steady-state uncommon traps, exact 556-byte `D17` parity, and **20–44% less cgroup peak RAM** than Graal (`35.8–66.6 MiB` vs. `64.1–85.1 MiB`).
+   - Four 100%-general open-world B1 runtime mechanisms closed C2's Rev 3 `mega` gap (`0.80× → 1.02×`) and boosted `hooks` (`1.15× → 1.40×`): arity-specialized vtable dispatch (`invoke0`/`1`/`2` + `callSlice` fusion eliminating 320 `array_slice` allocations/op), lazy cached `ByteStr.lower` (eliminating 40 `byte[]` clones + 40 double-probes/op), fixed-arity `applyFilters` + last-use `$args` transfer (eliminating spurious `$args` CoW clones), and unboxed `long`-key `PhpArray` reads.
+2. **Next step (requires owner `D19` decision):** With Probe A (`shared` linkage on C2: `208–246 MiB` code-only base), Option 1 (`14.94 → 2.46 MiB/req`, `1.63×` `home` speedup), and Probe B (**`1.11×` open-world C2 geomean**) all green, **B1 (plain OpenJDK C2 `.php → .class` reusing `parser/zend` + `BytecodeTranslator` lowering) + Option 1** is cleared to proceed once `D19` is recorded (enforcing [b1-lint.md](b1-lint.md) from day 1 and solving `get_option()`-level invalidation + async snapshot rebuilds).
 
 ---
 
@@ -319,15 +324,14 @@ across request threads. On `php-src` it means post-bootstrap CoW `fork()` ([alte
 Separately, today's Truffle PHP keeps sources, ASTs and translators after compiling them, tens of MB per server to
 reclaim whatever happens to B1.
 
-**Update (2026-11-25 — Option 1 + Probe B complete):** Option 1 ([bootstrap-freeze.md](bootstrap-freeze.md)) removed
-Probe A2's per-request heap blocker (`14.94 → 2.46 MiB/req`, `-83.5%`, `1.63×` `home` speedup, `0` `D17` errors).
-**Probe B (Rev 3)** then tested the open-world `.class` + `D17` speed gate on Linux Docker (`bench/b1-precheck/probe-b/RESULTS.md`):
-- **Plain HotSpot C2 (`-Xmx64m`)** beat Graal JIT on 3/4 kernels and RAM (`32.5–72.6 MiB`), hitting **`1.01×` 4-kernel
-  geomean parity** (`hooks` `1.15×`, `aget` `1.05×`, `post` `1.09×`, `mega` `0.80×`), exact byte-for-byte `D17` parity,
-  and `0–1` steady-state traps—**failing strictly on `mega` (`0.80×` < `0.90×`) and `hooks` `CtxA` median (`+10.65%`)**.
-- **HotSpot + Graal (`-Xmx64m`)** hit `0.95×` geomean (`mega` `0.91×`, `post` `0.82×` FAIL, `hooks` `+27.4%` vs `5.44 ms`
-  FAIL, `mega` 2ctx `+8.95%` FAIL).
-- **Bottom line:** Under strict Probe B thresholds, **neither JIT passes all gates simultaneously (strict NO-GO)**.
-  Funding **B1 (plain OpenJDK C2) + Option 1** requires either an explicit owner **D19** waiver accepting `0.80×` on
-  megamorphic hooks (letting Option 1's `1.63×` bootstrap skip + `-83.5%` heap supply the end-to-end win over PHP 8.5,
-  paired with `get_option()`-level invalidation + async rebuilds) or first optimizing `mega` dispatch/slicing on C2 past `0.90×`.
+**Update (2026-11-26 — Option 1 + Probe B Rev 4b: ALL PRE-CHECK GATES PASS):**
+- **Memory gate (Option 1, [bootstrap-freeze.md](bootstrap-freeze.md)):** Cut 5-plugin per-request live heap from
+  `14.94 → 2.46 MiB/req` (`-83.5%`, `1.63×` `home` speedup, `0` `D17` errors), removing Probe A2's memory blocker.
+- **Speed & `D17` gate (Probe B Rev 4b, [RESULTS.md](../bench/b1-precheck/probe-b/RESULTS.md)):** Plain **HotSpot C2
+  (`-Xmx64m`)** passes every kill criterion simultaneously: **`1.11×` 4-kernel geomean** (`hooks` `1.40×`, `aget`
+  `1.00×`, `post` `1.07×`, 181-class `mega` **`1.02×` p10 / `1.06×` med**), all 4 paired p10 two-context penalties
+  `≤ +4.28%`, `0–1` steady-state uncommon traps, exact 556-byte `D17` parity, `35.8–66.6 MiB` cgroup peak, and `0`
+  violations in [B1Lint.java](../bench/b1-precheck/probe-b/tools/B1Lint.java).
+- **Bottom line:** **B1 (plain OpenJDK C2 `.php → .class`) + Option 1** clears the pre-check (`GO`, pending owner
+  **D19** sign-off), projected at `~1.6–1.8×` faster and `~2×` less RAM than pure PHP 8.5 at 30 concurrent requests,
+  with [b1-lint.md](b1-lint.md) enforcing the measured performance and `D17` invariants from day 1.

@@ -2,6 +2,7 @@ package pl.codeloom.php.runtime;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 import static pl.codeloom.php.runtime.PhpNull.NULL;
@@ -692,6 +693,15 @@ final class Checks {
         equal(false, n1.equals(n2));
         equal(true, n1.equals(ByteStr.wrapOwned(new byte[]{'a', 0, 'b'})));
 
+        ByteStr mixed = ByteStr.wrapOwned(new byte[]{'A', 0, (byte) 0xff, 'z', 'Z'});
+        ByteStr folded = mixed.toLowerAscii();
+        ByteStr expected = ByteStr.wrapOwned(new byte[]{'a', 0, (byte) 0xff, 'z', 'z'});
+        equal(expected, folded);
+        equal(expected.hashCode(), folded.hashCode());
+        equal(true, folded == mixed.toLowerAscii());
+        equal(true, folded == folded.toLowerAscii());
+        equal((int) 'A', mixed.byteAt(0));
+
         for (long n = 0; n < 10; n++) equal(true, ByteStr.ofLong(n) == ByteStr.ofLong(n));
         for (long n : new long[] { Long.MIN_VALUE, -10, -1, 10, Long.MAX_VALUE }) {
             equal(ByteStr.of(Long.toString(n)), ByteStr.ofLong(n));
@@ -706,6 +716,441 @@ final class Checks {
         equal(0L, ArrayKey.ofString(ByteStr.of("0")));
         equal(ByteStr.of("-0"), ArrayKey.ofString(ByteStr.of("-0")));
         equal(ByteStr.of("01"), ArrayKey.ofString(ByteStr.of("01")));
+    }
+
+    private static void fixedArityDispatch() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        PhpObject item = new PhpObject(ctx, ctx.stdClassMeta) {};
+        PhpArray nested = owned(PhpArray.list(17L));
+        PhpError failure = new PhpError("callback failed");
+        PhpCallable.Body inspect = (c, args) -> {
+            equal(ctx, c);
+            if (args.size() == 0) return new PhpObject(c, c.stdClassMeta) {};
+            equal(item, args.get(0L));
+            equal(false, item.isFreed());
+            if (args.size() == 2) {
+                equal(nested, args.get(1L));
+                equal(true, nested.isShared());
+                throw failure;
+            }
+            item.addRef();
+            return item;
+        };
+        PhpCallable fn = PhpCallable.of(inspect);
+        ctx.registerFunction(ByteStr.of("CheckFn"), fn);
+        PhpClass cls = ctx.defineClass(ByteStr.of("CheckClass"));
+        PhpObject receiver = new PhpObject(ctx, cls) {};
+        PhpInstanceMethod method = PhpInstanceMethod.of((c, self, args) -> {
+            equal(receiver, self);
+            return inspect.invoke(c, args);
+        });
+        cls.addMethod(ByteStr.of("__invoke"), method);
+        cls.addMethod(ByteStr.of("method"), method);
+        cls.addStaticMethod(ByteStr.of("stat"), fn);
+        PhpClosure closure = new PhpClosure(ctx, null) {
+            @Override Object invoke(PhpRequestContext c, PhpArray args) { return inspect.invoke(c, args); }
+        };
+        PhpArray instancePair = owned(PhpArray.list(receiver, ByteStr.of("METHOD")));
+        PhpArray staticPair = owned(PhpArray.list(ByteStr.of("CHECKCLASS"), ByteStr.of("STAT")));
+        Object[] forms = {ByteStr.of("CHECKFN"), ByteStr.of("checkCLASS::StAt"), staticPair, instancePair, receiver, closure};
+        for (Object cb : forms) {
+            PhpObject fresh = (PhpObject) ctx.call0(cb);
+            releaseReturned(fresh);
+            equal(true, fresh.isFreed());
+            Object returned = ctx.call1(cb, item);
+            equal(item, returned);
+            equal(2, item.rc);
+            releaseReturned(returned);
+            try {
+                ctx.call2(cb, item, nested);
+                throw new AssertionError("Lost callback exception");
+            } catch (PhpError e) {
+                equal(failure, e);
+            }
+            equal(1, item.rc);
+            equal(1, nested.holderCount());
+        }
+        instancePair.removeHolder();
+        staticPair.removeHolder();
+        receiver.release();
+        closure.release();
+        item.release();
+        nested.removeHolder();
+        ctx.shutdown();
+    }
+
+    private static void sliceDispatch() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr name = ByteStr.of("slice");
+        PhpObject item = new PhpObject(ctx, ctx.stdClassMeta) {};
+        PhpArray nested = owned(PhpArray.list(item));
+        PhpArray args = owned(PhpArray.list(item, nested, 3L, 4L));
+        item.release();
+        nested.removeHolder();
+        ctx.registerFunction(name, new PhpCallable() {
+            @Override Object invoke0(PhpRequestContext c) { return 0L; }
+            @Override Object invoke1(PhpRequestContext c, Object a0) {
+                equal(item, a0);
+                equal(args.size() > 1 ? 3 : 2, item.rc); // Includes the fixed-arity parameter.
+                return 1L;
+            }
+            @Override Object invoke2(PhpRequestContext c, Object a0, Object a1) {
+                equal(item, a0);
+                equal(nested, a1);
+                equal(2, nested.holderCount()); // The slot and the parameter each hold the array.
+                return 2L;
+            }
+            @Override Object invoke(PhpRequestContext c, PhpArray frame) { return owned(frame); }
+        });
+        equal(0L, ctx.callSlice(name, args, 0));
+        equal(1L, ctx.callSlice(name, args, 1));
+        equal(2L, ctx.callSlice(name, args, 2));
+        PhpArray whole = (PhpArray) ctx.callSlice(name, args, Long.MAX_VALUE);
+        equal(4, whole.size());
+        equal(item, whole.get(0L));
+        equal(nested, whole.get(1L));
+        equal(3L, whole.get(2L));
+        equal(4L, whole.get(3L));
+        whole.removeHolder();
+        for (long take : new long[]{3L, -1L, Long.MIN_VALUE}) {
+            PhpArray slice = (PhpArray) ctx.callSlice(name, args, take);
+            equal(false, slice == args);
+            equal(take == Long.MIN_VALUE ? 0 : 3, slice.size());
+            if (slice.size() > 0) {
+                equal(nested, slice.get(1L));
+                equal(3L, slice.get(2L));
+            }
+            slice.removeHolder();
+            equal(2, item.rc);
+            equal(1, nested.holderCount());
+        }
+        args.remove(3L);
+        args.remove(2L);
+        equal(2L, ctx.callSlice(name, args, 9));
+        args.remove(1L);
+        // The sole remaining element owns item.
+        equal(1L, ctx.callSlice(name, args, 9));
+        args.remove(0L);
+        equal(0L, ctx.callSlice(name, args, 9));
+        args.removeHolder();
+        equal(true, item.isFreed());
+
+        ByteStr key = ByteStr.of("named");
+        PhpArray sparse = owned(new PhpArray());
+        sparse.put(9L, 1L);
+        sparse.put(42L, 2L);
+        sparse.remove(9L);
+        PhpRef ref = new PhpRef(3L);
+        ref.bind();
+        sparse.putRef(key, ref);
+        sparse.put(98L, 4L);
+        PhpArray sliced = (PhpArray) ctx.callSlice(name, sparse, 2);
+        equal(2, sliced.size());
+        equal(2L, sliced.get(0L));
+        equal(ref, sliced.getRaw(key));
+        sliced.put(key, 5L);
+        equal(5L, sparse.get(key));
+        sliced.removeHolder();
+        sparse.removeHolder();
+        ref.unbind();
+        ctx.shutdown();
+    }
+
+    private static void parameterLifetime(boolean slice, int arity) {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr name = ByteStr.of("clear_slots");
+        StringBuilder destroyed = new StringBuilder();
+        PhpClass cls = ctx.defineClass(ByteStr.of("Parameter"));
+        cls.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> {
+            destroyed.append(((CycleNode) self).name);
+            return NULL;
+        }));
+        PhpArray slots = owned(new PhpArray());
+        for (int i = 0; i < arity; i++) {
+            CycleNode node = new CycleNode(ctx, cls, ByteStr.ofLong(i));
+            slots.append(node);
+            node.release();
+        }
+        ctx.registerFunction(name, new PhpCallable() {
+            @Override Object invoke(PhpRequestContext c, PhpArray args) {
+                throw new AssertionError("Expected fixed-arity dispatch");
+            }
+            @Override Object invoke1(PhpRequestContext c, Object a0) {
+                slots.remove(0L);
+                equal(false, ((PhpObject) a0).isFreed());
+                return NULL;
+            }
+            @Override Object invoke2(PhpRequestContext c, Object a0, Object a1) {
+                slots.remove(1L);
+                invoke1(c, a0);
+                equal(false, ((PhpObject) a1).isFreed());
+                return NULL;
+            }
+        });
+        if (slice) ctx.callSlice(name, slots, arity);
+        else if (arity == 1) ctx.call1(name, slots.get(0L));
+        else ctx.call2(name, slots.get(0L), slots.get(1L));
+        equal(arity == 1 ? "0" : "10", destroyed.toString());
+        slots.removeHolder();
+        ctx.shutdown();
+    }
+
+    private static void sparsePositionalArguments() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr trim = ByteStr.of("trim");
+        PhpArray args = owned(assoc(9L, ByteStr.of(" x ")));
+        equal(ByteStr.of("x"), ctx.callSlice(trim, args, 1));
+        args.put(12L, ByteStr.of("x"));
+        equal(ByteStr.of(" x "), ctx.callSlice(trim, args, Long.MAX_VALUE));
+        args.put(9L, ByteStr.of("xx xx"));
+        equal(ByteStr.of(" "), ctx.callSlice(trim, args, 2));
+
+        // A referenced mask forces the full array entry point, even for two arguments.
+        PhpRef mask = new PhpRef(ByteStr.of("x"));
+        mask.bind();
+        args.putRef(12L, mask);
+        equal(ByteStr.of(" "), ctx.callSlice(trim, args, Long.MAX_VALUE));
+        args.removeHolder();
+        mask.unbind();
+
+        args = owned(assoc(91L, 1L, -8L, 2L, 0L, 3L, 5L, 4L));
+        ByteStr inspect = ByteStr.of("inspect_positions");
+        ctx.registerFunction(inspect, PhpCallable.of((c, frame) -> {
+            for (int i = 0; i < frame.size(); i++) {
+                equal((long) i + 1, frame.get((long) i));
+            }
+            return (long) frame.size();
+        }));
+        equal(3L, ctx.callSlice(inspect, args, 3));
+        equal(4L, ctx.callSlice(inspect, args, Long.MAX_VALUE));
+        args.removeHolder();
+        ctx.shutdown();
+    }
+
+    private static void hookPopBeforeDestruction(boolean action, boolean throwsBoth, boolean all) {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr key = ByteStr.of("extra");
+        ByteStr name = ByteStr.of("hook");
+        ByteStr cb = ByteStr.of("clear_global");
+        PhpError callbackFailure = new PhpError("cb");
+        PhpError destructorFailure = new PhpError("dtor");
+        PhpClass cls = ctx.defineClass(ByteStr.of("Extra"));
+        cls.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> {
+            equal(0, c.wpCurrentFilter.size());
+            if (throwsBoth) throw destructorFailure;
+            return NULL;
+        }));
+        PhpObject extra = new PhpObject(ctx, cls) {};
+        ctx.setGlobal(key, extra);
+        extra.release();
+        ctx.registerFunction(cb, PhpCallable.of((c, args) -> {
+            equal(1, c.wpCurrentFilter.size());
+            c.setGlobal(key, NULL);
+            equal(false, extra.isFreed());
+            if (throwsBoth) throw callbackFailure;
+            return 42L;
+        }));
+        HooksOpenWorld.addFilter(ctx, all ? HooksOpenWorld.ALL_KEY : name, cb, 10, 0);
+        try {
+            if (action) HooksOpenWorld.doAction(ctx, name, extra);
+            else equal(all ? 1L : 42L, HooksOpenWorld.applyFilters(ctx, name, 1L, extra));
+            if (throwsBoth) throw new AssertionError("Expected a throwing destructor");
+        } catch (PhpError e) {
+            equal(true, throwsBoth);
+            equal(destructorFailure, e);
+            equal(List.of(callbackFailure), List.of(e.getSuppressed()));
+        }
+        equal(true, extra.isFreed());
+        equal(0, ctx.wpCurrentFilter.size());
+        ctx.shutdown();
+    }
+
+    private static void callbackAndDestructorFailures() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr name = ByteStr.of("throw_cb");
+        ByteStr key = ByteStr.of("owner");
+        PhpError cb = new PhpError("cb");
+        PhpClass cls = ctx.defineClass(ByteStr.of("ThrowingParameter"));
+        cls.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> {
+            throw new PhpError("dtor");
+        }));
+        ctx.registerFunction(name, PhpCallable.of((c, args) -> {
+            c.setGlobal(key, NULL);
+            throw cb;
+        }));
+        PhpObject arg = new PhpObject(ctx, cls) {};
+        ctx.setGlobal(key, arg);
+        arg.release();
+        try {
+            ctx.call2(name, arg, arg);
+            throw new AssertionError("Expected argument cleanup to throw");
+        } catch (PhpError e) {
+            equal("dtor", e.getMessage());
+            equal(List.of(cb), List.of(e.getSuppressed()));
+        }
+        equal(true, arg.isFreed());
+
+        // A reference selects the packed wrapper. Both parameters still unwind in reverse order.
+        PhpError firstFailure = new PhpError("first");
+        PhpError secondFailure = new PhpError("second");
+        PhpClass pairClass = ctx.defineClass(ByteStr.of("ThrowingPair"));
+        PhpObject[] pair = new PhpObject[2];
+        pairClass.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> {
+            throw self == pair[0] ? firstFailure : secondFailure;
+        }));
+        pair[0] = new PhpObject(ctx, pairClass) {};
+        pair[1] = new PhpObject(ctx, pairClass) {};
+        PhpRef ref = new PhpRef(pair[1]);
+        pair[1].release();
+        ctx.setGlobal(key, pair[0]);
+        pair[0].release();
+        try {
+            ctx.call2(name, pair[0], ref);
+            throw new AssertionError("Expected both destructors to throw");
+        } catch (PhpError e) {
+            equal(firstFailure, e);
+            equal(List.of(secondFailure), List.of(e.getSuppressed()));
+            equal(List.of(cb), List.of(secondFailure.getSuppressed()));
+        }
+        equal(true, pair[0].isFreed());
+        equal(true, pair[1].isFreed());
+
+        // A value created in the callback can die specifically in the default wrapper's frame.
+        PhpCallable.Body body = (c, frame) -> {
+            PhpObject local = new PhpObject(c, cls) {};
+            frame.append(local);
+            local.release();
+            throw cb;
+        };
+        ctx.registerFunction(name, PhpCallable.of(body));
+        PhpClass invokable = ctx.defineClass(ByteStr.of("Invokable"));
+        invokable.addMethod(ByteStr.of("__invoke"), PhpInstanceMethod.of((c, self, frame) -> body.invoke(c, frame)));
+        PhpObject receiver = new PhpObject(ctx, invokable) {};
+        PhpClosure closure = new PhpClosure(ctx, null) {
+            @Override Object invoke(PhpRequestContext c, PhpArray frame) { return body.invoke(c, frame); }
+        };
+        for (Object target : new Object[]{name, receiver, closure}) {
+            try {
+                ctx.call1(target, 1L);
+                throw new AssertionError("Expected wrapper cleanup to throw");
+            } catch (PhpError e) {
+                equal("dtor", e.getMessage());
+                equal(List.of(cb), List.of(e.getSuppressed()));
+            }
+        }
+        PhpArray sparse = owned(assoc(7L, 1L, 9L, 2L, 12L, 3L));
+        try {
+            ctx.callSlice(name, sparse, 3);
+            throw new AssertionError("Expected slice cleanup to throw");
+        } catch (PhpError e) {
+            equal("dtor", e.getMessage());
+            equal(List.of(cb), List.of(e.getSuppressed()));
+        }
+        sparse.removeHolder();
+        closure.release();
+        receiver.release();
+        ctx.shutdown();
+    }
+
+    private static void throwingFrameCleanup() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        PhpError failure = new PhpError("frame destructor");
+        PhpClass cls = ctx.defineClass(ByteStr.of("FrameDestructor"));
+        cls.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> { throw failure; }));
+        PhpObject bomb = new PhpObject(ctx, cls) {};
+        PhpObject tail = new PhpObject(ctx, ctx.stdClassMeta) {};
+        ByteStr key = ByteStr.of("argument_source");
+        ctx.setGlobal(key, bomb);
+        bomb.release();
+        PhpObject[] result = {null};
+        ByteStr name = ByteStr.of("drop_source");
+        ctx.registerFunction(name, PhpCallable.of((c, args) -> {
+            c.setGlobal(key, NULL);
+            equal(false, bomb.isFreed());
+            result[0] = new PhpObject(c, c.stdClassMeta) {};
+            return PhpArray.list(result[0]);
+        }));
+        try {
+            ctx.call2(name, bomb, tail);
+            throw new AssertionError("Lost argument destructor exception");
+        } catch (PhpError e) {
+            equal(failure, e);
+        }
+        equal(true, bomb.isFreed());
+        equal(1, tail.rc);
+        equal(1, result[0].rc); // The undelivered return array released its element.
+        tail.release();
+        result[0].release();
+        ctx.shutdown();
+    }
+
+    private static void capturedHookArgs() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr name = ByteStr.of("capture_args");
+        ByteStr capture = ByteStr.of("capture");
+        ByteStr after = ByteStr.of("after");
+        ctx.registerFunction(capture, PhpCallable.of((c, args) -> {
+            equal(2, args.holderCount()); // Hook.applyFrame + callPacked each hold args during the callback
+            equal(10L, args.get(0L));
+            c.setGlobal(capture, args);
+            return 20L;
+        }));
+        ctx.registerFunction(after, PhpCallable.of((c, args) -> {
+            PhpArray snapshot = (PhpArray) c.getGlobal(capture);
+            equal(false, snapshot == args);
+            equal(10L, snapshot.get(0L));
+            equal(20L, args.get(0L));
+            return 30L;
+        }));
+        HooksOpenWorld.addFilter(ctx, name, capture, 1, 3);
+        HooksOpenWorld.addFilter(ctx, name, after, 2, 3);
+        equal(30L, HooksOpenWorld.applyFilters(ctx, name, 10L, 7L, 8L));
+        ctx.setGlobal(capture, NULL);
+        HooksOpenWorld.Hook hook = (HooksOpenWorld.Hook) ctx.wpFilter.get(name);
+        PhpArray moved = owned(PhpArray.list(0L, 7L, 8L));
+        equal(30L, hook.applyOwnedArgs(ctx, 10L, moved));
+        equal(moved, ctx.getGlobal(capture)); // First write took place in the original storage.
+        ctx.setGlobal(capture, NULL);
+        PhpArray borrowed = owned(PhpArray.list(0L, 7L, 8L));
+        equal(30L, hook.apply(ctx, 10L, borrowed));
+        equal(0L, borrowed.get(0L));
+        equal(false, borrowed == ctx.getGlobal(capture));
+        equal(1, borrowed.holderCount());
+        borrowed.removeHolder();
+        ctx.shutdown();
+    }
+
+    private static void variadicArgumentLifetime() {
+        PhpRequestContext ctx = new PhpRequestContext();
+        ByteStr name = ByteStr.of("late_filter");
+        PhpObject item = new PhpObject(ctx, ctx.stdClassMeta) {};
+        equal(1L, HooksOpenWorld.applyFilters(ctx, name, 1L, PhpArray.list(item)));
+        equal(1, item.rc);
+        HooksOpenWorld.doAction(ctx, name, PhpArray.list(item), PhpArray.list(item));
+        equal(1, item.rc);
+
+        ByteStr source = ByteStr.of("source");
+        ctx.setGlobal(source, item);
+        item.release();
+        ByteStr install = ByteStr.of("install");
+        ByteStr check = ByteStr.of("check_arg");
+        ctx.registerFunction(install, PhpCallable.of((c, args) -> {
+            equal(name, args.get(0L));
+            equal(item, args.get(2L));
+            c.setGlobal(source, NULL);
+            HooksOpenWorld.addFilter(c, name, check, 1, 2);
+            return NULL;
+        }));
+        ctx.registerFunction(check, PhpCallable.of((c, args) -> {
+            equal(item, args.get(1L));
+            equal(false, item.isFreed());
+            return 42L;
+        }));
+        HooksOpenWorld.addFilter(ctx, HooksOpenWorld.ALL_KEY, install, 1, 0);
+        equal(42L, HooksOpenWorld.applyFilters(ctx, name, 1L, item));
+        equal(true, item.isFreed());
+        equal(0, ctx.wpCurrentFilter.size());
+        ctx.shutdown();
     }
 
     private static void callbackSnapshotAndTrim() {
@@ -766,6 +1211,14 @@ final class Checks {
 
         // Verify HotOpenWorld.close() releases row and all 20 HotC objects cleanly
         HotOpenWorld hot = new HotOpenWorld(ctx, false);
+        ByteStr hotF0 = ByteStr.of("hot_f0");
+        equal(7L, ctx.call1(hotF0, ByteStr.of("7")));
+        equal(-20.0d, ctx.call1(hotF0, ByteStr.of(" -2e1 ")));
+        equal(1L, ctx.call1(hotF0, Boolean.TRUE));
+        equal(0L, ctx.call1(hotF0, NULL));
+        PhpArray method = owned(PhpArray.list(hot.hotObjects[0], HotOpenWorld.METHOD_B));
+        equal(9L, ctx.call2(method, ByteStr.of("2"), ByteStr.of("7")));
+        method.removeHolder();
         PhpObject sampleHotObj = hot.hotObjects[0];
         StdClass sampleRow = hot.row;
         hot.close();
@@ -820,6 +1273,57 @@ final class Checks {
         ctxB.shutdown();
     }
 
+    /** Regression tests for Codex t5r fallback edge cases (ref-bearing 2-arg slice, 3-arg doAction, float string add). */
+    private static void fallbackSliceAndFloatArithmetic() {
+        PhpRequestContext ctx = new PhpRequestContext();
+
+        // 1. Two-element packed array containing a PhpRef keeps the other object arg alive across clearing source slot
+        boolean[] freedDuringCall = {true};
+        CycleNode victim = new CycleNode(ctx, ctx.stdClassMeta, ByteStr.of("Victim"));
+        PhpArray refPair = owned(PhpArray.list(victim));
+        victim.release(); // refPair[0] is sole owner
+        PhpRef r = new PhpRef(1L);
+        refPair.putRef(1L, r);
+        ctx.registerFunction(ByteStr.of("clear_slot_0"), PhpCallable.of((c, args) -> {
+            PhpObject p0 = (PhpObject) args.get(0L);
+            refPair.put(0L, NULL); // clears caller's array slot 0
+            freedDuringCall[0] = p0.isFreed();
+            return NULL;
+        }));
+        ctx.callSlice(ByteStr.of("clear_slot_0"), refPair, 2);
+        equal(false, freedDuringCall[0]);
+        equal(true, victim.isFreed());
+        refPair.removeHolder();
+
+        // 2. 3-arg doAction callback removing sole owning slot does not destroy extra arg before outer pop
+        int[] depthOnDtor = {-1};
+        PhpClass watchCls = ctx.defineClass(ByteStr.of("ActionArgWatch"));
+        watchCls.addMethod(ByteStr.of("__destruct"), PhpInstanceMethod.of((c, self, args) -> {
+            depthOnDtor[0] = c.wpCurrentFilter.size();
+            return NULL;
+        }));
+        PhpObject argObj = new PhpObject(ctx, watchCls) {};
+        ctx.setGlobal(ByteStr.of("act_holder"), argObj);
+        argObj.release();
+        ctx.registerFunction(ByteStr.of("act3"), PhpCallable.of((c, args) -> {
+            c.setGlobal(ByteStr.of("act_holder"), NULL);
+            PhpArray localArgs = writable(owned(args));
+            localArgs.put(2L, NULL); // PHP CoW write on shared args must not destroy hook's outer args before pop!
+            localArgs.removeHolder();
+            return NULL;
+        }));
+        HooksOpenWorld.addFilter(ctx, ByteStr.of("act3_hook"), ByteStr.of("act3"), 10, 3);
+        HooksOpenWorld.doAction(ctx, ByteStr.of("act3_hook"), 1L, 2L, ctx.getGlobal(ByteStr.of("act_holder")));
+        equal(0, depthOnDtor[0]);
+
+        // 3. Float numeric-string arithmetic in MegaGenerated: hot_f0("7.5") == 7.5 (Double), hot_f0("7") == 7L
+        PhpObject[] hotObjs = MegaGenerated.registerAndCreate(ctx, false);
+        equal(7.5d, ctx.call1(ByteStr.of("hot_f0"), ByteStr.of("7.5")));
+        equal(7L, ctx.call1(ByteStr.of("hot_f0"), ByteStr.of("7")));
+        for (PhpObject o : hotObjs) o.release();
+        ctx.shutdown();
+    }
+
     static void runAll(Path corpus) throws Exception {
         byteStrChecks();
         codexCycleSafetyChecks();
@@ -827,11 +1331,29 @@ final class Checks {
         destructorReachability();
         referenceAndArrayCycles();
         hookReturnOwnership();
+        fixedArityDispatch();
+        sliceDispatch();
+        for (int arity = 1; arity <= 2; arity++) {
+            parameterLifetime(false, arity);
+            parameterLifetime(true, arity);
+        }
+        sparsePositionalArguments();
+        for (boolean action : new boolean[]{false, true}) {
+            for (boolean all : new boolean[]{false, true}) {
+                hookPopBeforeDestruction(action, false, all);
+                hookPopBeforeDestruction(action, true, all);
+            }
+        }
+        callbackAndDestructorFailures();
+        throwingFrameCleanup();
+        capturedHookArgs();
+        variadicArgumentLifetime();
         selfRemovingReceivers();
         reentrantDeclaredWrites();
         shutdownUnderMutation();
         callbackSnapshotAndTrim();
         declaredOwnershipAndHotClose();
+        fallbackSliceAndFloatArithmetic();
         if (corpus != null) {
             twoContextIsolation(corpus);
         }

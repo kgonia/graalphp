@@ -15,9 +15,30 @@ final class RefIteration {
     static void advanced(PhpArray a, int count) { throw new AssertionError("Unexpected RefIteration.advanced"); }
 }
 
-abstract class PhpCallable {
+/** Common calling convention for functions and closures, whose ownership differs. */
+abstract class PhpCallTarget {
     abstract Object invoke(PhpRequestContext ctx, PhpArray args);
 
+    Object invoke0(PhpRequestContext ctx) { return invoke(ctx, PhpRequestContext.EMPTY_ARGS); }
+    Object invoke1(PhpRequestContext ctx, Object a0) { return invokePacked(ctx, PhpArray.list(a0)); }
+    Object invoke2(PhpRequestContext ctx, Object a0, Object a1) { return invokePacked(ctx, PhpArray.list(a0, a1)); }
+
+    private Object invokePacked(PhpRequestContext ctx, PhpArray args) {
+        args.addHolder();
+        Object result = null;
+        Throwable primary = null;
+        try {
+            return result = invoke(ctx, args);
+        } catch (RuntimeException | Error e) {
+            primary = e;
+            throw e;
+        } finally {
+            Values.releaseCallArgs(args, null, result, primary);
+        }
+    }
+}
+
+abstract class PhpCallable extends PhpCallTarget {
     @FunctionalInterface
     interface Body {
         Object invoke(PhpRequestContext ctx, PhpArray args);
@@ -34,6 +55,24 @@ abstract class PhpCallable {
 
 abstract class PhpInstanceMethod {
     abstract Object invoke(PhpRequestContext ctx, PhpObject self, PhpArray args);
+
+    Object invoke0(PhpRequestContext ctx, PhpObject self) { return invoke(ctx, self, PhpRequestContext.EMPTY_ARGS); }
+    Object invoke1(PhpRequestContext ctx, PhpObject self, Object a0) { return invokePacked(ctx, self, PhpArray.list(a0)); }
+    Object invoke2(PhpRequestContext ctx, PhpObject self, Object a0, Object a1) { return invokePacked(ctx, self, PhpArray.list(a0, a1)); }
+
+    private Object invokePacked(PhpRequestContext ctx, PhpObject self, PhpArray args) {
+        args.addHolder();
+        Object result = null;
+        Throwable primary = null;
+        try {
+            return result = invoke(ctx, self, args);
+        } catch (RuntimeException | Error e) {
+            primary = e;
+            throw e;
+        } finally {
+            Values.releaseCallArgs(args, null, result, primary);
+        }
+    }
 
     @FunctionalInterface
     interface Body {
@@ -92,13 +131,11 @@ final class PhpClass {
     }
 
     PhpInstanceMethod findMethod(ByteStr methodName) {
-        PhpInstanceMethod m = instanceMethods.get(methodName);
-        return m != null ? m : instanceMethods.get(methodName.toLowerAscii());
+        return instanceMethods.get(methodName.toLowerAscii());
     }
 
     PhpCallable findStaticMethod(ByteStr methodName) {
-        PhpCallable m = staticMethods.get(methodName);
-        return m != null ? m : staticMethods.get(methodName.toLowerAscii());
+        return staticMethods.get(methodName.toLowerAscii());
     }
 
     boolean hasDestructor() {
@@ -230,7 +267,7 @@ abstract class PhpObject {
 }
 
 /** Real D17 refcounted PHP closure supporting by-ref and by-value captures. */
-abstract class PhpClosure {
+abstract class PhpClosure extends PhpCallTarget {
     final PhpRequestContext ctx;
     final long id;
     int rc = 1;
@@ -300,6 +337,53 @@ abstract class PhpClosure {
 }
 
 final class Values {
+    static Object add(Object left, long right) {
+        if (left instanceof Long l) return l + right;
+        return addSlow(left, right);
+    }
+
+    static Object add(Object left, Object right) {
+        if (left instanceof Long l && right instanceof Long r) return l + r;
+        return addSlow(left, right);
+    }
+
+    private static Object addSlow(Object left, Object right) {
+        Object ln = toNumber(left);
+        Object rn = toNumber(right);
+        if (ln instanceof Double || rn instanceof Double) {
+            double ld = ln instanceof Double d ? d : ((Long) ln).doubleValue();
+            double rd = rn instanceof Double d ? d : ((Long) rn).doubleValue();
+            return ld + rd;
+        }
+        return (Long) ln + (Long) rn;
+    }
+
+    private static Object toNumber(Object value) {
+        if (value instanceof Long || value instanceof Double) return value;
+        if (value instanceof ByteStr s) {
+            Object number = NumericString.parseNumber(s.rawBytes(), true);
+            if (number != null) return number;
+        }
+        if (value instanceof Boolean b) return b ? 1L : 0L;
+        if (value == PhpNull.NULL) return 0L;
+        throw new PhpError("Unsupported operand for numeric arithmetic");
+    }
+
+    static long toLong(Object value) {
+        return value instanceof Long l ? l : toLongSlow(value);
+    }
+
+    private static long toLongSlow(Object value) {
+        if (value instanceof ByteStr s) {
+            Object number = NumericString.parseNumber(s.rawBytes(), true);
+            if (number instanceof Long l) return l;
+            if (number instanceof Double d) return Double.isFinite(d) ? d.longValue() : 0L;
+        }
+        if (value instanceof Boolean b) return b ? 1L : 0L;
+        if (value == PhpNull.NULL) return 0L;
+        throw new PhpError("Unsupported operand for integer arithmetic");
+    }
+
     static PhpArray owned(PhpArray a) {
         a.addHolder();
         return a;
@@ -341,6 +425,47 @@ final class Values {
         } else {
             releaseValue(value);
         }
+    }
+
+    // If destroying the frame throws, the caller never receives the callback's return.
+    static void releaseCallArgs(Object a0, Object a1, Object result, Throwable primary) {
+        PhpArray temporary = result instanceof PhpArray a && a.holderCount() == 0 ? a : null;
+        if (temporary != null) temporary.addHolder();
+        Throwable failure = releaseWithThrown(a1, primary);
+        failure = releaseWithThrown(a0, failure);
+        if (failure != null) {
+            discardResult(result, failure);
+            throwCleanupFailure(failure);
+        }
+        if (temporary != null) temporary.removeReturnedHolder();
+    }
+
+    static Throwable releaseWithThrown(Object value, Throwable primary) {
+        try {
+            releaseValue(value);
+        } catch (RuntimeException | Error e) {
+            return recordCleanupFailure(primary, e);
+        }
+        return primary;
+    }
+
+    static void discardResult(Object result, Throwable primary) {
+        try {
+            releaseReturned(result);
+        } catch (RuntimeException | Error e) {
+            recordCleanupFailure(primary, e);
+            throw e;
+        }
+    }
+
+    static Throwable recordCleanupFailure(Throwable previous, Throwable failure) {
+        if (previous != null && previous != failure) failure.addSuppressed(previous);
+        return failure;
+    }
+
+    static void throwCleanupFailure(Throwable failure) {
+        if (failure instanceof Error e) throw e;
+        if (failure instanceof RuntimeException e) throw e;
     }
 
     static void releaseValue(Object value) {

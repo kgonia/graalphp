@@ -5,7 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path.Replace('\', '/')
-$outDir = "$PSScriptRoot/out-v3"
+$outRel = "bench/b1-precheck/probe-b/out-v4b"
+$outDir = "$root/$outRel"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 # Pinned image digest for PHP 8.5.13 + exact local image ID for probe-graal:25.4
@@ -16,7 +17,7 @@ $c2Flags = "-XX:-UseJVMCICompiler -Xmx64m -XX:+UseParallelGC -XX:CICompilerCount
 $graalFlags = "-XX:+UseJVMCICompiler -Xmx64m -XX:+UseParallelGC -XX:CICompilerCount=2 -XX:ReservedCodeCacheSize=48m -Djdk.graal.internal.MaxHeapSize=64m"
 $cp = "bench/b1-precheck/probe-b/build/classes"
 
-Write-Host "=== Probe B (Rev 3) Environment & Digest Verification ==="
+Write-Host "=== Probe B (Rev 4b) Environment & Digest Verification ==="
 $phpDigestActual = (docker image inspect --format '{{index .RepoDigests 0}}' $phpImage)
 $jvmIdActual = (docker image inspect --format '{{.Id}}' $jvmImage)
 if ($LASTEXITCODE -ne 0 -or $jvmIdActual -notmatch '^sha256:[0-9a-f]{64}$') { throw "Cannot resolve JVM image ID for $jvmImage" }
@@ -91,7 +92,7 @@ foreach ($engine in @("c2", "graal")) {
     $flags = if ($engine -eq "c2") { $c2Flags } else { $graalFlags }
     foreach ($k in @("hooks-2ctx", "mega-2ctx")) {
         $javaArgs = if ($k -eq "hooks-2ctx") { "hooks-2ctx 400 bench/gate1/corpus.php" } else { "mega-2ctx 3000" }
-        $logRel = "bench/b1-precheck/probe-b/out-v3/deopt_${k}_${engine}.xml"
+        $logRel = "$outRel/deopt_${k}_${engine}.xml"
         $outTxt = "$outDir/deopt_${k}_${engine}.txt"
         Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Deopt + NMT | $k | $engine"
         $cmd = "java $flags -XX:NativeMemoryTracking=summary -XX:+UnlockDiagnosticVMOptions -XX:+PrintNMTStatistics -XX:+LogCompilation -XX:LogFile=$logRel -cp $cp pl.codeloom.php.runtime.ProbeBMain $javaArgs"

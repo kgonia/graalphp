@@ -7,8 +7,8 @@ import static pl.codeloom.php.runtime.Values.*;
 /**
  * Open-world WordPress WP_Hook + plugin.php implementation:
  * - Explicit PhpRequestContext parameter 0 on every function and method
- * - Exact plugin.php:175-212 variadic $args + prepend($value) + live $wp_filter['all'] re-checks across user code
- * - Open-world ctx.call(...) dispatch (zero closed-world switch cheats)
+ * - Last-use transfer of positional arguments and live $wp_filter['all'] re-checks across user code
+ * - Open-world callable dispatch
  * - Real D17 exact refcounting including callback return ownership & exception-safe release
  * - Real ByteStr keys & values everywhere
  */
@@ -52,17 +52,41 @@ final class HooksOpenWorld {
     static void registerHooksDomain(PhpRequestContext ctx, boolean overridePluggable, ByteStr tag) {
         ctx.defineConstant(CONST_BENCH_TAG, tag);
         PhpClass benchCls = ctx.defineClass(BENCH_CALLBACKS_CLS);
-        benchCls.addMethod(SUFFIX_METHOD, PhpInstanceMethod.of((c, self, args) -> ((BenchCallbacks) self).suffix((ByteStr) args.get(0L))));
-        benchCls.addStaticMethod(WRAP_METHOD, PhpCallable.of((c, args) -> BenchCallbacks.wrap((ByteStr) args.get(0L), (long) args.get(1L))));
+        benchCls.addMethod(SUFFIX_METHOD, new PhpInstanceMethod() {
+            @Override Object invoke(PhpRequestContext c, PhpObject self, PhpArray args) {
+                return invoke1(c, self, args.get(0L));
+            }
+            @Override Object invoke1(PhpRequestContext c, PhpObject self, Object value) {
+                return ((BenchCallbacks) self).suffix((ByteStr) value);
+            }
+            @Override Object invoke2(PhpRequestContext c, PhpObject self, Object value, Object extra) {
+                return invoke1(c, self, value);
+            }
+        });
+        benchCls.addStaticMethod(WRAP_METHOD, new PhpCallable() {
+            @Override Object invoke(PhpRequestContext c, PhpArray args) {
+                if (args.size() < 2) throw new PhpError("Too few arguments to Bench_Callbacks::wrap");
+                return invoke2(c, args.get(0L), args.get(1L));
+            }
+            @Override Object invoke1(PhpRequestContext c, Object value) {
+                throw new PhpError("Too few arguments to Bench_Callbacks::wrap");
+            }
+            @Override Object invoke2(PhpRequestContext c, Object value, Object i) {
+                return BenchCallbacks.wrap((ByteStr) value, (long) i);
+            }
+        });
 
-        if (!overridePluggable) {
-            ctx.registerFunction(BENCH_UPPER_FIRST, PhpCallable.of((c, args) -> ((ByteStr) args.get(0L)).ucfirst()));
-        } else {
-            ctx.registerFunction(BENCH_UPPER_FIRST, PhpCallable.of((c, args) -> {
-                ByteStr prefix = (ByteStr) c.getConstant(CONST_BENCH_TAG);
-                return prefix.concat(((ByteStr) args.get(0L)).ucfirst());
-            }));
-        }
+        ctx.registerFunction(BENCH_UPPER_FIRST, overridePluggable ? new UpperFirst() {
+            @Override Object invoke1(PhpRequestContext c, Object value) {
+                return ((ByteStr) c.getConstant(CONST_BENCH_TAG)).concat(((ByteStr) value).ucfirst());
+            }
+        } : new UpperFirst());
+    }
+
+    private static class UpperFirst extends PhpCallable {
+        @Override Object invoke(PhpRequestContext c, PhpArray args) { return invoke1(c, args.get(0L)); }
+        @Override Object invoke1(PhpRequestContext c, Object value) { return ((ByteStr) value).ucfirst(); }
+        @Override Object invoke2(PhpRequestContext c, Object value, Object extra) { return invoke1(c, value); }
     }
 
     static ByteStr uniqueId(Object cb) {
@@ -197,97 +221,127 @@ final class HooksOpenWorld {
 
         private Object callEntry(PhpRequestContext ctx, PhpArray entry, PhpArray args, int numArgs) {
             long take = (long) entry.get(ACCEPTED_ARGS_KEY);
-            Object cb = entry.get(FUNCTION_KEY);
-            if (take == 0) return ownReturned(ctx.call(cb, PhpRequestContext.EMPTY_ARGS));
-            if (take >= numArgs) return ownReturned(ctx.call(cb, args));
-
-            long length = take < 0 ? Math.max(0L, numArgs + take) : take;
-            PhpArray slice = owned(new PhpArray());
-            Object result = null;
-            try {
-                try {
-                    for (int i = 0; i < length; ++i) slice.appendCopied(args.copiedAt(i));
-                    result = ownReturned(ctx.call(cb, slice));
-                } finally {
-                    slice.removeHolder();
-                }
-                return result;
-            } catch (RuntimeException | Error e) {
-                releaseReturned(result);
-                throw e;
-            }
+            if (take != 0 && take >= numArgs) take = Long.MAX_VALUE;
+            return ownReturned(ctx.callSlice(entry.get(FUNCTION_KEY), args, take));
         }
 
         /** The local $value owns the last callback result, also during the next action callback. */
         Object apply(PhpRequestContext ctx, Object initialValue, PhpArray callerArgs) {
-            Object value = initialValue;
-            retainValue(value);
-            if (callbacks.size() == 0) return value;
-            PhpArray args = owned(callerArgs);
-            long level = nesting++;
+            if (callbacks.size() == 0) {
+                retainValue(initialValue);
+                return initialValue;
+            }
+            return applyOwnedArgs(ctx, initialValue, owned(callerArgs));
+        }
+
+        /** Consumes one holder, including when there are no callbacks or user code throws. */
+        Object applyOwnedArgs(PhpRequestContext ctx, Object initialValue, PhpArray args) {
+            Object result = null;
+            Throwable primary = null;
             try {
-                try {
-                    iterations.put(level, priorities);
-                    int numArgs = args.size();
-                    do {
-                        Object priority = current((PhpArray) iterations.get(level));
-                        if (priority == Boolean.FALSE) break;
-                        currentPriority.put(level, priority);
-                        PhpArray group = owned((PhpArray) callbacks.get(priority));
-                        try {
-                            for (int p = group.firstPosition(); p >= 0; p = group.nextPosition(p)) {
-                                PhpArray entry = (PhpArray) group.valueAt(p);
-                                if (!doingAction) {
-                                    args = writable(args);
-                                    args.put(0L, value);
-                                }
-                                Object previous = value;
-                                value = callEntry(ctx, entry, args, numArgs);
-                                releaseReturned(previous);
-                            }
-                        } finally {
-                            group.removeHolder();
-                        }
-                    } while (next(iterations.arrayForWrite(level)) != Boolean.FALSE);
-                } finally {
-                    iterations.remove(level);
-                    currentPriority.remove(level);
-                    --nesting;
-                    args.removeHolder();
-                }
-                return value;
+                return result = applyFrame(ctx, initialValue, args);
             } catch (RuntimeException | Error e) {
-                releaseReturned(value);
+                primary = e;
                 throw e;
+            } finally {
+                releaseCallArgs(args, null, result, primary);
             }
         }
 
+        /** The caller owns frame through its epilogue. Only a separated local copy needs a holder here. */
+        private Object applyFrame(PhpRequestContext ctx, Object initialValue, PhpArray frame) {
+            Object value = initialValue;
+            retainValue(value);
+            if (callbacks.size() == 0) return value;
+            PhpArray args = frame;
+            Long level = nesting++;
+            Throwable failure = null;
+            try {
+                iterations.put(level, priorities);
+                int numArgs = args.size();
+                do {
+                    Object priority = current((PhpArray) iterations.get(level));
+                    if (priority == Boolean.FALSE) break;
+                    currentPriority.put(level, priority);
+                    PhpArray group = owned((PhpArray) callbacks.get(priority));
+                    Throwable callbackFailure = null;
+                    try {
+                        for (int p = group.firstPosition(); p >= 0; p = group.nextPosition(p)) {
+                            PhpArray entry = (PhpArray) group.valueAt(p);
+                            if (!doingAction) {
+                                if (args.isShared()) {
+                                    PhpArray copy = owned(args.copy());
+                                    if (args != frame) args.removeHolder();
+                                    args = copy;
+                                }
+                                args.put(0L, value);
+                            }
+                            Object previous = value;
+                            value = callEntry(ctx, entry, args, numArgs);
+                            releaseReturned(previous);
+                        }
+                    } catch (RuntimeException | Error e) {
+                        callbackFailure = e;
+                    }
+                    throwCleanupFailure(releaseWithThrown(group, callbackFailure));
+                } while (next(iterations.arrayForWrite(level)) != Boolean.FALSE);
+            } catch (RuntimeException | Error e) {
+                failure = e;
+            } finally {
+                iterations.remove(level);
+                currentPriority.remove(level);
+                --nesting;
+                if (args != frame) failure = releaseWithThrown(args, failure);
+            }
+            if (failure != null) {
+                discardResult(value, failure);
+                throwCleanupFailure(failure);
+            }
+            return value;
+        }
+
         void action(PhpRequestContext ctx, PhpArray args) {
+            actionOwnedArgs(ctx, owned(args));
+        }
+
+        void actionOwnedArgs(PhpRequestContext ctx, PhpArray args) {
+            Throwable failure = null;
+            try {
+                actionFrame(ctx, args);
+            } catch (RuntimeException | Error e) {
+                failure = e;
+            }
+            throwCleanupFailure(releaseWithThrown(args, failure));
+        }
+
+        private void actionFrame(PhpRequestContext ctx, PhpArray args) {
             doingAction = true;
             try {
-                releaseReturned(apply(ctx, ByteStr.EMPTY, args));
+                releaseReturned(applyFrame(ctx, ByteStr.EMPTY, args));
             } finally {
                 if (nesting == 0) doingAction = false;
             }
         }
 
         void doAllHook(PhpRequestContext ctx, PhpArray allArgs) {
-            long level = nesting++;
+            Long level = nesting++;
             iterations.put(level, priorities);
             try {
                 do {
                     Object priority = current((PhpArray) iterations.get(level));
                     if (priority == Boolean.FALSE) break;
                     PhpArray group = owned((PhpArray) callbacks.get(priority));
+                    Throwable failure = null;
                     try {
                         for (int p = group.firstPosition(); p >= 0; p = group.nextPosition(p)) {
                             PhpArray entry = (PhpArray) group.valueAt(p);
                             Object ret = ctx.call(entry.get(FUNCTION_KEY), allArgs);
                             releaseReturned(ret);
                         }
-                    } finally {
-                        group.removeHolder();
+                    } catch (RuntimeException | Error e) {
+                        failure = e;
                     }
+                    throwCleanupFailure(releaseWithThrown(group, failure));
                 } while (next(iterations.arrayForWrite(level)) != Boolean.FALSE);
             } finally {
                 iterations.remove(level);
@@ -323,82 +377,136 @@ final class HooksOpenWorld {
         counts.put(name, old == null ? 1L : (long) old + 1L);
     }
 
-    private static void callAll(PhpRequestContext ctx, ByteStr name, Object value, Object[] extra, boolean filter) {
-        Hook allHook = (Hook) ctx.wpFilter.get(ALL_KEY);
-        if (allHook == null) return;
-        ctx.wpCurrentFilter.append(name);
-        PhpArray allArgs = owned(new PhpArray());
+    private static void appendExtras(PhpArray args, int count, Object first, Object[] extra) {
+        if (extra != null) {
+            for (Object arg : extra) args.appendCopied(arg);
+        } else if (count == 1) {
+            args.appendCopied(first);
+        }
+    }
+
+    private static void callAll(PhpRequestContext ctx, Hook allHook, ByteStr name, Object value,
+                                boolean filter, int count, Object first, Object[] extra) {
+        PhpArray allArgs = owned(PhpArray.ofCapacity(count + (filter ? 2 : 1)));
+        Throwable failure = null;
+        allHook.addRef();
         try {
             allArgs.append(name);
             if (filter) allArgs.append(value);
-            for (Object arg : extra) allArgs.append(arg);
-            allHook.addRef();
-            try {
-                allHook.doAllHook(ctx, allArgs);
-            } finally {
-                allHook.release();
-            }
-        } finally {
-            allArgs.removeHolder();
+            appendExtras(allArgs, count, first, extra);
+            allHook.doAllHook(ctx, allArgs);
+        } catch (RuntimeException | Error e) {
+            failure = e;
         }
+        failure = releaseWithThrown(allHook, failure);
+        throwCleanupFailure(releaseWithThrown(allArgs, failure));
     }
 
-    /** Every successful return transfers one owning reference, including the no-filter path. */
+    static Object applyFilters(PhpRequestContext ctx, ByteStr name, Object value) {
+        return dispatchHook(ctx, name, value, true, 0, null, null);
+    }
+
+    static Object applyFilters(PhpRequestContext ctx, ByteStr name, Object value, Object extra1) {
+        return dispatchHook(ctx, name, value, true, 1, extra1, null);
+    }
+
     static Object applyFilters(PhpRequestContext ctx, ByteStr name, Object value, Object... extra) {
-        PhpArray args = owned(PhpArray.list(extra));
-        countCall(ctx.wpFilters, name);
-        Object filtered = value;
-        retainValue(filtered);
-        try {
-            try {
-                callAll(ctx, name, value, extra, true);
-                Hook hook = (Hook) ctx.wpFilter.get(name);
-                if (hook == null) {
-                    if (ctx.wpFilter.get(ALL_KEY) != null) ctx.wpCurrentFilter.pop();
-                } else {
-                    if (ctx.wpFilter.get(ALL_KEY) == null) ctx.wpCurrentFilter.append(name);
-                    args.prepend(value);
-                    hook.addRef();
-                    try {
-                        filtered = hook.apply(ctx, value, args);
-                        releaseValue(value);
-                    } finally {
-                        ctx.wpCurrentFilter.pop();
-                        hook.release();
-                    }
-                }
-            } finally {
-                args.removeHolder();
-            }
-            return filtered;
-        } catch (RuntimeException | Error e) {
-            releaseReturned(filtered);
-            throw e;
-        }
+        return dispatchHook(ctx, name, value, true, extra.length, null, extra);
+    }
+
+    static void doAction(PhpRequestContext ctx, ByteStr name) {
+        dispatchHook(ctx, name, ByteStr.EMPTY, false, 0, null, null);
+    }
+
+    static void doAction(PhpRequestContext ctx, ByteStr name, Object extra1) {
+        dispatchHook(ctx, name, ByteStr.EMPTY, false, 1, extra1, null);
     }
 
     static void doAction(PhpRequestContext ctx, ByteStr name, Object... extra) {
-        PhpArray args = owned(PhpArray.list(extra));
-        countCall(ctx.wpActions, name);
+        dispatchHook(ctx, name, ByteStr.EMPTY, false, extra.length, null, extra);
+    }
+
+    private static PhpArray namedArgs(Object value, boolean filter, int count, Object first, Object[] extra) {
+        PhpArray args = PhpArray.ofCapacity(count + (filter ? 1 : 0));
+        if (filter || count == 0) args.appendCopied(value);
+        appendExtras(args, count, first, extra);
+        return owned(args);
+    }
+
+    /** Scalarized variadic parameters own their values until the named frame takes them or the call exits. */
+    private static void retainExtras(int count, Object first, Object[] extra) {
+        if (extra != null) {
+            for (Object arg : extra) retainValue(arg);
+        } else if (count == 1) retainValue(first);
+    }
+
+    private static Throwable releaseExtras(int count, Object first, Object[] extra, Throwable failure) {
+        if (extra == null) {
+            return count == 1 ? releaseWithThrown(first, failure) : failure;
+        }
+        for (Object arg : extra) {
+            failure = releaseWithThrown(arg, failure);
+        }
+        return failure;
+    }
+
+    /** A filter returns an owning reference on both the named-hook and absent-hook paths. */
+    private static Object dispatchHook(PhpRequestContext ctx, ByteStr name, Object value, boolean filter,
+                                       int count, Object first, Object[] extra) {
+        countCall(filter ? ctx.wpFilters : ctx.wpActions, name);
+        retainValue(value);
+        Object result = null;
+        PhpArray args = null;
+        Hook receiver = null;
+        boolean pop = false;
+        boolean heldExtras = false;
+        Throwable failure = null;
         try {
-            callAll(ctx, name, null, extra, false);
+            Hook allHook = (Hook) ctx.wpFilter.get(ALL_KEY);
+            if (allHook != null) {
+                if (extra != null) extra = extra.clone();
+                retainExtras(count, first, extra);
+                heldExtras = true;
+                ctx.wpCurrentFilter.append(name);
+                pop = true;
+                callAll(ctx, allHook, name, value, filter, count, first, extra);
+                pop = ctx.wpFilter.get(ALL_KEY) != null;
+            }
             Hook hook = (Hook) ctx.wpFilter.get(name);
             if (hook == null) {
-                if (ctx.wpFilter.get(ALL_KEY) != null) ctx.wpCurrentFilter.pop();
-                return;
+                if (!heldExtras) {
+                    retainExtras(count, first, extra);
+                    heldExtras = true;
+                }
+                result = value;
+                value = null; // Transfer the input's owning reference to the caller.
+            } else {
+                if (!pop) ctx.wpCurrentFilter.append(name);
+                pop = true;
+                args = namedArgs(value, filter, count, first, extra);
+                if (heldExtras) {
+                    heldExtras = false;
+                    throwCleanupFailure(releaseExtras(count, first, extra, null));
+                }
+                hook.addRef();
+                receiver = hook;
+                if (filter) result = hook.applyFrame(ctx, value, args);
+                else hook.actionFrame(ctx, args);
             }
-            if (ctx.wpFilter.get(ALL_KEY) == null) ctx.wpCurrentFilter.append(name);
-            if (args.size() == 0) args.append(ByteStr.EMPTY);
-            hook.addRef();
-            try {
-                hook.action(ctx, args);
-            } finally {
-                ctx.wpCurrentFilter.pop();
-                hook.release();
-            }
+        } catch (RuntimeException | Error e) {
+            failure = e;
         } finally {
-            args.removeHolder();
+            if (pop) ctx.wpCurrentFilter.pop();
+            failure = releaseWithThrown(receiver, failure);
+            failure = releaseWithThrown(value, failure);
+            failure = releaseWithThrown(args, failure);
+            if (heldExtras) failure = releaseExtras(count, first, extra, failure);
         }
+        if (failure != null) {
+            discardResult(result, failure);
+            throwCleanupFailure(failure);
+        }
+        return result;
     }
 
     static PhpArray hooksKernel(PhpRequestContext ctx, PhpArray headings) {
@@ -420,7 +528,13 @@ final class HooksOpenWorld {
         PhpClosure collapseSpaces = new PhpClosure(ctx, null) {
             @Override
             Object invoke(PhpRequestContext c, PhpArray args) {
-                return ((ByteStr) args.get(0L)).replace(TWO_SPACES, ONE_SPACE);
+                return invoke1(c, args.get(0L));
+            }
+            @Override Object invoke1(PhpRequestContext c, Object value) {
+                return ((ByteStr) value).replace(TWO_SPACES, ONE_SPACE);
+            }
+            @Override Object invoke2(PhpRequestContext c, Object value, Object extra) {
+                return invoke1(c, value);
             }
         };
         addFilter(ctx, BENCH_TITLE, collapseSpaces, 30, 1);
@@ -429,8 +543,15 @@ final class HooksOpenWorld {
         PhpClosure nestedHook = new PhpClosure(ctx, seen) {
             @Override
             Object invoke(PhpRequestContext c, PhpArray args) {
-                ByteStr v = (ByteStr) args.get(0L);
-                long i = (long) args.get(1L);
+                if (args.size() < 2) throw new PhpError("Too few arguments to closure");
+                return invoke2(c, args.get(0L), args.get(1L));
+            }
+            @Override Object invoke1(PhpRequestContext c, Object value) {
+                throw new PhpError("Too few arguments to closure");
+            }
+            @Override Object invoke2(PhpRequestContext c, Object value, Object index) {
+                ByteStr v = (ByteStr) value;
+                long i = (long) index;
                 doAction(c, BENCH_SEEN, i);
                 return i % 7 == 0 ? applyFilters(c, BENCH_NESTED, v) : v;
             }
@@ -441,8 +562,14 @@ final class HooksOpenWorld {
         PhpClosure seenAcc = new PhpClosure(ctx, seen) {
             @Override
             Object invoke(PhpRequestContext c, PhpArray args) {
-                captureRef.set((long) captureRef.get() + (long) args.get(0L));
+                return invoke1(c, args.get(0L));
+            }
+            @Override Object invoke1(PhpRequestContext c, Object value) {
+                captureRef.set((long) captureRef.get() + (long) value);
                 return PhpNull.NULL;
+            }
+            @Override Object invoke2(PhpRequestContext c, Object value, Object extra) {
+                return invoke1(c, value);
             }
         };
         addFilter(ctx, BENCH_SEEN, seenAcc, 10, 1);
