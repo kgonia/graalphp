@@ -91,3 +91,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [085](085-native-resources-outlive-request.md) | Native resources outlive their request: a dropped socket's selector, `proc_open` children | Open |
 | [086](086-pcre-caches-unbounded.md) | PCRE caches never evict: one-off patterns stay for good, and a context's grow without bound | Open |
 | [087](087-uncancellable-waits-and-shared-statics.md) | Waits a cancel can't reach; diagnostics' shared state isn't thread-safe | Open |
+| [110](110-stored-callable-scope.md) | A private autoloader or shutdown function is checked again from the code that triggers it (Elementor fails) | Fixed |
+| [111](111-get-called-class-namespace.md) | `get_called_class()` in a namespace is an undefined function (Elementor fails) | Fixed |
+| [112](112-ob-get-status.md) | `ob_get_status()` is missing (Elementor fails) | Fixed |
+| [113](113-relative-date-formats.md) | Relative dates with a time of day, weekdays or "first day of" fail; hours aren't wall-clock (WooCommerce's Action Scheduler fails) | Fixed |

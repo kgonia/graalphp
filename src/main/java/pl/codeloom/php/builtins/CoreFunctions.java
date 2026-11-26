@@ -180,11 +180,14 @@ final class CoreFunctions {
             if (callable == PhpNull.NULL) {
                 throw new PhpError("spl_autoload_register() without a callback (spl_autoload) is not supported");
             }
-            Callables.check(context, callable, new Callables.Parameter("spl_autoload_register", 1, true));
-            context.addAutoloader(callable, Args.bool(a, 2, false));
+            // resolved now, from this scope, and kept (autoload_func_info): the autoload may come from anywhere
+            Callables.Target target = Callables.parameter(context, callable,
+                    new Callables.Parameter("spl_autoload_register", 1, true));
+            context.addAutoloader(callable, target, Args.bool(a, 2, false));
             return Boolean.TRUE;
         });
-        r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Args.get(a, 0)));
+        r.fn("spl_autoload_unregister", (context, a) -> context.removeAutoloader(Callables.parameter(context,
+                Args.get(a, 0), new Callables.Parameter("spl_autoload_unregister", 1, false))));
         r.fn("spl_autoload_functions", (context, a) -> PhpArray.list(context.autoloaders().toArray()));
         r.fn("method_exists", (context, a) -> methodExists(context, Args.get(a, 0), Args.str(a, 1)));
         r.fn("property_exists", (context, a) -> {
@@ -215,6 +218,15 @@ final class CoreFunctions {
                 throw Args.typeError("get_class", 1, "object", "object", target);
             }
             throw new PhpError("get_class(): Argument #1 ($object) must be of type object");
+        });
+        // Compiled in place where a call names it; this is the function a namespace's unqualified call falls back
+        // to, or a dynamic call reaches: the calling code's called class (zend_get_called_scope).
+        r.fn("get_called_class", a -> {
+            Args.arity(a, "get_called_class", 0, 0);
+            if (!(Callables.callerArgument(PhpFunction.ARG_STATIC) instanceof PhpClass called)) {
+                throw new PhpError("Error", "get_called_class() must be called from within a class");
+            }
+            return Str.of(called.getName());
         });
         r.fn("get_parent_class", (context, a) -> {
             Object target = Args.get(a, 0);
@@ -278,8 +290,13 @@ final class CoreFunctions {
             boolean none = handler == null || handler == PhpNull.NULL;
             context.startBuffer(none ? null : handler, none ? null : Str.java(callableName(handler)),
                     Args.count(a) > 2 ? Convert.toLong(Args.get(a, 2))
-                            : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE);
+                            : PhpContext.CLEANABLE | PhpContext.FLUSHABLE | PhpContext.REMOVABLE,
+                    Args.count(a) > 1 ? Convert.toLong(Args.get(a, 1)) : 0);
             return true;
+        });
+        r.fn("ob_get_status", (context, a) -> {
+            Args.arity(a, "ob_get_status", 0, 1);
+            return context.bufferStatus(Args.bool(a, 0, false));
         });
         r.fn("ob_get_contents", (context, a) -> {
             TruffleString contents = context.bufferContents();

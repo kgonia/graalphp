@@ -159,13 +159,16 @@ trait TruffleDateTime
             $microsecond, $this->zone);
     }
 
-    public function modify(string $modifier): static|false
+    public function modify(string $modifier): static
     {
-        $timestamp = \Truffle\date_parse($modifier, $this->timestamp, $this->zone);
-        if ($timestamp === false) {
-            return false;
+        // [timestamp, whether the time of day was set]: a set time has no microseconds (TIMELIB_HAVE_TIME)
+        $parsed = \Truffle\date_modify($modifier, $this->timestamp, $this->zone);
+        if ($parsed === false) {
+            // PHP 8.3's exception; the position and reason are timelib's for a word, not modelled for the rest
+            throw new DateMalformedStringException(static::class . "::modify(): Failed to parse time string ($modifier)"
+                . " at position 0 (" . substr($modifier, 0, 1) . "): The timezone could not be found in the database");
         }
-        return $this->with($timestamp, $this->microseconds, $this->zone);
+        return $this->with($parsed[0], $parsed[1] ? 0 : $this->microseconds, $this->zone);
     }
 
     public function add(DateInterval $interval): static

@@ -74,7 +74,7 @@ public final class PhpContext {
     private final int internalFunctions;
     private final int internalClasses;
     /** spl_autoload_register's callables, in calling order; and the classes being autoloaded now. */
-    private final List<Object> autoloaders = new java.util.ArrayList<>();
+    private final List<Autoloader> autoloaders = new java.util.ArrayList<>();
     private final Set<String> autoloading = new HashSet<>();
     /** The classes being declared (instantiated, not yet in the class table), by lowercase name. */
     private final Map<String, ClassTemplate> linking = new HashMap<>();
@@ -261,10 +261,11 @@ public final class PhpContext {
      * census (Census.audit), which counts them as holders.
      */
     public void censusHolders(java.util.function.BiConsumer<String, Object> holder) {
-        autoloaders.forEach(callable -> holder.accept("autoloader", callable));
-        for (Object[] entry : shutdownFunctions) {
-            for (int i = 0; i < entry.length; i++) {
-                holder.accept(i == 0 ? "shutdown function" : "shutdown function argument " + i, entry[i]);
+        autoloaders.forEach(autoloader -> holder.accept("autoloader", autoloader.callable()));
+        for (ShutdownFunction entry : shutdownFunctions) {
+            holder.accept("shutdown function", entry.callable());
+            for (int i = 0; i < entry.arguments().length; i++) {
+                holder.accept("shutdown function argument " + (i + 1), entry.arguments()[i]);
             }
         }
         for (OutputBuffer buffer : buffers) {
@@ -619,8 +620,8 @@ public final class PhpContext {
             return phpClass;
         }
         try {
-            for (Object autoloader : List.copyOf(autoloaders)) {
-                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, autoloader, Str.of(className)));
+            for (Autoloader autoloader : List.copyOf(autoloaders)) {
+                autoloader.target().callScalar(Str.of(className));
                 phpClass = classes.get(lowerName);
                 if (phpClass != null) {
                     return phpClass;
@@ -648,34 +649,57 @@ public final class PhpContext {
         return name.startsWith("\\") ? name.substring(1) : name;
     }
 
-    /** spl_autoload_register(): false when the callable is registered already. */
+    /**
+     * A registered autoloader: the callable as given (spl_autoload_functions) and its target, resolved once from the
+     * registering scope (php-src's autoload_func_info, a zend_fcall_info_cache): a private method its class
+     * registered stays callable from whatever code triggers the autoload.
+     */
+    private record Autoloader(Object callable, Callables.Target target) {
+    }
+
+    /** spl_autoload_register(): false when the target is registered already (autoload_func_info_equals). */
     @TruffleBoundary
-    public boolean addAutoloader(Object callable, boolean prepend) {
-        if (autoloaders.contains(callable)) {
+    public boolean addAutoloader(Object callable, Callables.Target target, boolean prepend) {
+        if (indexOfAutoloader(target) >= 0) {
             return false;
         }
+        Autoloader autoloader = new Autoloader(callable, target);
         if (prepend) {
-            autoloaders.add(0, callable);
+            autoloaders.add(0, autoloader);
         } else {
-            autoloaders.add(callable);
+            autoloaders.add(autoloader);
         }
         pl.codeloom.php.runtime.Refcount.hold(callable);
         return true;
     }
 
+    /** spl_autoload_unregister(): the autoloader with the same target, resolved from the unregistering scope. */
     @TruffleBoundary
-    public boolean removeAutoloader(Object callable) {
-        int index = autoloaders.indexOf(callable);
+    public boolean removeAutoloader(Callables.Target target) {
+        int index = indexOfAutoloader(target);
         if (index < 0) {
             return false;
         }
-        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index));
+        pl.codeloom.php.runtime.Refcount.unhold(autoloaders.remove(index).callable());
         return true;
+    }
+
+    private int indexOfAutoloader(Callables.Target target) {
+        for (int i = 0; i < autoloaders.size(); i++) {
+            if (autoloaders.get(i).target().equals(target)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @TruffleBoundary
     public List<Object> autoloaders() {
-        return List.copyOf(autoloaders);
+        List<Object> callables = new java.util.ArrayList<>(autoloaders.size());
+        for (Autoloader autoloader : autoloaders) {
+            callables.add(autoloader.callable());
+        }
+        return callables;
     }
 
     @TruffleBoundary
@@ -826,20 +850,25 @@ public final class PhpContext {
 
     // ---- lifecycle ----
 
-    /** register_shutdown_function's callables with their arguments, run when the script ends or exits. */
-    private final List<Object[]> shutdownFunctions = new java.util.ArrayList<>();
+    /**
+     * A register_shutdown_function() entry: the callable, its target resolved once from the registering scope
+     * (php-src keeps the zend_fcall_info_cache), and its arguments.
+     */
+    private record ShutdownFunction(Object callable, Callables.Target target, Object[] arguments) {
+    }
+
+    /** register_shutdown_function's entries, run when the script ends or exits. */
+    private final List<ShutdownFunction> shutdownFunctions = new java.util.ArrayList<>();
     /** The shutdown functions have started: exit() in one doesn't run them again. */
     private boolean shuttingDown;
 
     @TruffleBoundary
-    public void addShutdownFunction(Object callable, Object[] arguments) {
-        Object[] entry = new Object[arguments.length + 1];
-        entry[0] = callable;
-        System.arraycopy(arguments, 0, entry, 1, arguments.length);
-        for (Object value : entry) {
+    public void addShutdownFunction(Object callable, Callables.Target target, Object[] arguments) {
+        pl.codeloom.php.runtime.Refcount.hold(callable);
+        for (Object value : arguments) {
             pl.codeloom.php.runtime.Refcount.hold(value);
         }
-        shutdownFunctions.add(entry);
+        shutdownFunctions.add(new ShutdownFunction(callable, target, arguments));
     }
 
     /**
@@ -854,17 +883,17 @@ public final class PhpContext {
         shuttingDown = true;
         guarded(() -> {
             for (int i = 0; i < shutdownFunctions.size(); i++) {
-                Object[] entry = shutdownFunctions.get(i);
-                pl.codeloom.php.runtime.Refcount.done(Callables.call(this, entry[0],
-                        Arrays.copyOfRange(entry, 1, entry.length)));
+                ShutdownFunction entry = shutdownFunctions.get(i);
+                entry.target().callScalar(entry.arguments().clone());
             }
         });
         // php_free_shutdown_functions: the entries let go once all ran
-        List<Object[]> ran = List.copyOf(shutdownFunctions);
+        List<ShutdownFunction> ran = List.copyOf(shutdownFunctions);
         shutdownFunctions.clear();
         guarded(() -> {
-            for (Object[] entry : ran) {
-                for (Object value : entry) {
+            for (ShutdownFunction entry : ran) {
+                pl.codeloom.php.runtime.Refcount.unhold(entry.callable());
+                for (Object value : entry.arguments()) {
                     pl.codeloom.php.runtime.Refcount.unhold(value);
                 }
             }
@@ -1211,7 +1240,9 @@ public final class PhpContext {
                 if (running != null) {
                     target.producedOutput = true;
                 }
-                target.bytes.write(Str.readBytes(s));
+                byte[] bytes = Str.readBytes(s);
+                target.grow(bytes.length, buffers.peek().chunkSize);
+                target.bytes.write(bytes);
             }
         } catch (IOException e) {
             throw new PhpError("output failed: " + e.getMessage());
@@ -1233,6 +1264,15 @@ public final class PhpContext {
      */
     private enum HandlerState { NEW, STARTED, DISABLED }
 
+    // ob_get_status's flags beyond the abilities (PHP_OUTPUT_HANDLER_USER, _STARTED, _DISABLED, _PROCESSED)
+    private static final long HANDLER_USER = 0x1;
+    private static final long HANDLER_STARTED = 0x1000;
+    private static final long HANDLER_DISABLED = 0x2000;
+    private static final long HANDLER_PROCESSED = 0x4000;
+    /** PHP_OUTPUT_HANDLER_ALIGNTO_SIZE and PHP_OUTPUT_HANDLER_DEFAULT_SIZE. */
+    private static final long ALIGN = 0x1000;
+    private static final long DEFAULT_SIZE = 0x4000;
+
     /** An ob_start() level: what was written to it, and the handler its contents pass through (or null). */
     private static final class OutputBuffer {
         final ByteBuilder bytes = new ByteBuilder();
@@ -1240,14 +1280,39 @@ public final class PhpContext {
         /** The handler's name (ob_list_handlers, the notices): its callable name, or "default output handler". */
         final String name;
         final long flags;
+        /** ob_start()'s chunk_size (php-src's handler->size); 0 for none. */
+        final long chunkSize;
+        /**
+         * The allocation php-src's buffer would have (handler->buffer.size), for ob_get_status's buffer_size: it
+         * starts at PHP_OUTPUT_HANDLER_INITBUF_SIZE and grows as php_output_handler_append grows it. The bytes
+         * themselves live in {@link #bytes}.
+         */
+        long size;
         HandlerState state = HandlerState.NEW;
+        /** PHP_OUTPUT_HANDLER_PROCESSED: the handler ran and didn't fail. */
+        boolean processed;
         /** PHP_OUTPUT_HANDLER_PRODUCED_OUTPUT: written to while a handler ran, which a handler may not do. */
         boolean producedOutput;
 
-        OutputBuffer(Object handler, String name, long flags) {
+        OutputBuffer(Object handler, String name, long flags, long chunkSize) {
             this.handler = handler;
             this.name = name;
             this.flags = flags;
+            this.chunkSize = chunkSize;
+            this.size = initialSize(chunkSize);
+        }
+
+        /** PHP_OUTPUT_HANDLER_INITBUF_SIZE: a size rounded up past the next 4 KB boundary, or 16 KB for none. */
+        static long initialSize(long size) {
+            return size > 1 ? size + ALIGN - size % ALIGN : DEFAULT_SIZE;
+        }
+
+        /** php_output_handler_append's growth before n bytes go in; activeChunk: the active handler's size. */
+        void grow(int n, long activeChunk) {
+            long free = size - bytes.size();
+            if (free <= n) {
+                size += Math.max(initialSize(activeChunk), initialSize(n - free));
+            }
         }
     }
 
@@ -1271,11 +1336,54 @@ public final class PhpContext {
      */
     @TruffleBoundary
     public void startBuffer(Object handler, String name, long flags) {
+        startBuffer(handler, name, flags, 0);
+    }
+
+    /** ob_start($handler, $chunk_size, $flags): chunkSize as given, a negative one taken as 0. */
+    @TruffleBoundary
+    public void startBuffer(Object handler, String name, long flags, long chunkSize) {
         if (running != null) {
             throw outputLocked("ob_start");
         }
         pl.codeloom.php.runtime.Refcount.hold(handler);
-        buffers.push(new OutputBuffer(handler, handler == null ? "default output handler" : name, flags));
+        buffers.push(new OutputBuffer(handler, handler == null ? "default output handler" : name, flags,
+                Math.max(chunkSize, 0)));
+    }
+
+    /**
+     * ob_get_status(): php_output_handler_status for the current buffer, or with full, for each level from the
+     * outermost; an empty array without buffers.
+     */
+    @TruffleBoundary
+    public PhpArray bufferStatus(boolean full) {
+        PhpArray result = new PhpArray();
+        if (buffers.isEmpty()) {
+            return result;
+        }
+        if (!full) {
+            return bufferStatus(buffers.peek(), buffers.size() - 1);
+        }
+        int level = 0;
+        for (java.util.Iterator<OutputBuffer> it = buffers.descendingIterator(); it.hasNext(); level++) {
+            result.append(bufferStatus(it.next(), level));
+        }
+        return result;
+    }
+
+    private static PhpArray bufferStatus(OutputBuffer buffer, int level) {
+        long flags = buffer.flags & 0xf0 | (buffer.handler == null ? 0 : HANDLER_USER)
+                | (buffer.state != HandlerState.NEW ? HANDLER_STARTED : 0)
+                | (buffer.state == HandlerState.DISABLED ? HANDLER_DISABLED : 0)
+                | (buffer.processed ? HANDLER_PROCESSED : 0);
+        PhpArray status = new PhpArray();
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("name")), Str.of(buffer.name));
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("type")), buffer.handler == null ? 0L : HANDLER_USER);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("flags")), flags);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("level")), (long) level);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("chunk_size")), buffer.chunkSize);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("buffer_size")), buffer.size);
+        status.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of("buffer_used")), (long) buffer.bytes.size());
+        return status;
     }
 
     /**
@@ -1346,6 +1454,7 @@ public final class PhpContext {
         if (buffer.handler == null) {
             // the default handler passes its buffer on
             buffer.state = HandlerState.STARTED;
+            buffer.processed = true;
             buffer.bytes.reset();
             return new Processed(contents, null);
         }
@@ -1370,11 +1479,13 @@ public final class PhpContext {
         }
         TruffleString output = null;
         if (result == Boolean.FALSE) {
-            // failed: from now on its buffer is passed by
+            // failed: from now on its buffer is passed by, and its allocation goes with the contents
             buffer.state = HandlerState.DISABLED;
             output = buffer.bytes.toStr();
+            buffer.size = 0;
         } else {
             buffer.state = HandlerState.STARTED;
+            buffer.processed = true;
             if (result != Boolean.TRUE) {
                 // converted while the handler counts as running: a warning goes into the buffer, which is emptied
                 TruffleString text = pl.codeloom.php.runtime.Convert.toStr(result);
