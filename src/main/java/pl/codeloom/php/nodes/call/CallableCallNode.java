@@ -17,7 +17,7 @@ public final class CallableCallNode {
     public static Object[] arrayArguments(Object array) {
         if (!(array instanceof PhpArray list)) {
             CompilerDirectives.transferToInterpreter();
-            throw new PhpError("call_user_func_array(): Argument #2 ($args) must be of type array");
+            throw pl.codeloom.php.builtins.Args.typeError("call_user_func_array",2,"args","array",array);
         }
         return toValues(list);
     }

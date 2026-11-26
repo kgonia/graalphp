@@ -19,9 +19,9 @@ import java.util.Map;
  */
 public final class JumpChecks {
     /** php-src's E_COMPILE_ERROR: its message and the line it reports. */
-    static final class Failure extends RuntimeException {
+    public static final class Failure extends RuntimeException {
         private static final long serialVersionUID = 1L;
-        final int line;
+        public final int line;
         /** The compile's diagnostics before the error, which php-src reported before it. */
         transient List<Diagnostic> before = List.of();
 

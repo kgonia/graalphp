@@ -1,5 +1,5 @@
 <?php
-function forceFallback() { return []; }
+function forceFallback() { return array_fill(0, 0, null); }
 class Old { function __destruct() { echo "old\n"; throw new Exception("replacement"); } }
 class Payload { function __destruct() { echo "payload\n"; } }
 function fail($payload) { throw new Exception("caught"); }

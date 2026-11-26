@@ -43,15 +43,27 @@ public final class ArrayFunctions {
         });
         r.fn("array_filter", (context, a) -> filter(context, Args.array(a, 0, "array_filter"), Args.get(a, 1),
                 Args.lng(a, 2, 0)));
-        r.fn("array_key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
+        r.fn("array_key_exists", (ctx,a) -> {
+            Args.arity(a,"array_key_exists",2,2);
+            PhpArray array = Args.array(a,1,"array_key_exists","array");
+            Object key = Args.get(a,0);
+            if (key == PhpNull.NULL) ErrorFunctions.raise(ctx,ErrorFunctions.E_DEPRECATED,
+                    Str.of("Using null as the key parameter for array_key_exists() is deprecated, use an empty string instead"),SourceLocation.current());
+            return array.containsKey(ArrayKey.of(key));
+        });
         r.fn("key_exists", a -> keyExists(Args.get(a, 0), Args.get(a, 1)));
         r.fn("in_array", a -> search(Args.get(a, 0), Args.array(a, 1, "in_array", "haystack"), Args.bool(a, 2, false)) != null);
         r.fn("array_search", a -> {
             Object key = search(Args.get(a, 0), Args.array(a, 1, "array_search", "haystack"), Args.bool(a, 2, false));
             return key == null ? Boolean.FALSE : key;
         });
-        r.fn("array_slice", a -> slice(Args.array(a, 0, "array_slice"), Args.lng(a, 1, 0),
-                StringFunctions.lengthArg(a, 2), Args.bool(a, 3, false)));
+        r.fn("array_slice", (ctx,a) -> {
+            Args.arity(a,"array_slice",2,4);
+            PhpArray array = Args.array(a,0,"array_slice");
+            long offset = Args.integer(ctx,a,1,"array_slice","offset","int");
+            Long length = Args.get(a,2,PhpNull.NULL) == PhpNull.NULL ? null : Args.integer(ctx,a,2,"array_slice","length","?int");
+            return slice(array,offset,length,Args.has(a,3) && Args.bool(ctx,a,3,"array_slice","preserve_keys"));
+        });
         r.fn("array_splice", "1", a -> splice(a));
         r.fn("array_unique", a -> unique(Args.array(a, 0, "array_unique")));
         r.fn("array_diff", a -> diffOrIntersect(a, true));

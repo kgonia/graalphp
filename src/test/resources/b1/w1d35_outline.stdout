@@ -1,0 +1,26 @@
+body
+finally 2
+normal
+drop outer
+drop inner
+done
+finally 2
+drop outer
+drop inner
+override
+finally 2
+drop outer
+drop inner
+done
+finally 2
+drop outer
+drop inner
+second@22/first@17
+#0 /fixtures/w1d35_outline.php(30): route(3)
+#1 {main}
+replace
+drop pending result
+replacement
+replace
+drop pending result
+cancel

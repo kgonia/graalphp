@@ -2988,7 +2988,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class LiteralAppendRef {
         @Specialization
         public static PhpArray append(PhpArray array, PhpRef ref) {
-            array.putRef(array.nextIndex(), ref);
+            array.putRef(array.appendKey(), ref);
             return array;
         }
     }
@@ -4208,27 +4208,21 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         static final Callables.Parameter PARAMETER = new Callables.Parameter("call_user_func_array", 1, false);
 
         @Specialization(excludeForUncached = true)
-        public static Object cached(boolean keepRef, Object callable, Object args, @Bind Node node,
+        public static Object cached(boolean keepRef,Object callable,Object args,@Bind Node node,
                                     @Cached("create(PARAMETER, keepRef)") CallableDispatchNode dispatch) {
-            Object[] values = CallableCallNode.arrayArguments(args);
-            if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
-            }
-            return dispatch.execute(callable, values);
+            Object[] positional = CallableCallNode.arrayArguments(args);
+            if (positional != null) return dispatch.execute(callable,positional);
+            return call(keepRef,callable,args,node);
         }
-
         @Specialization(replaces = "cached")
-        public static Object uncached(boolean keepRef, Object callable, Object args, @Bind Node node) {
-            Object[] values = CallableCallNode.arrayArguments(args);
-            if (values == null) {
-                return callNamed(callable, (PhpArray) args, keepRef, node);
-            }
-            return callTarget(Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER), values, keepRef);
+        public static Object call(boolean keepRef,Object callable,Object args,@Bind Node node) {
+            if (!(args instanceof PhpArray array)) throw pl.codeloom.php.builtins.Args.typeError("call_user_func_array",2,"args","array",args);
+            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node),callable,PARAMETER);
+            return callArray(target,array,keepRef,node);
         }
 
         @TruffleBoundary
-        private static Object callNamed(Object callable, PhpArray args, boolean keepRef, Node node) {
-            Callables.Target target = Callables.resolveOrThrow(PhpContext.get(node), callable, PARAMETER);
+        private static Object callArray(Callables.Target target,PhpArray args,boolean keepRef,Node node) {
             Object[] frame = SpreadArguments.sendArray(target, args, node);
             return result(Backtrace.callFrom(node, () -> target.function().getCallTarget().call(frame)), keepRef);
         }
@@ -6465,10 +6459,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (p < 0) {
                 return false;
             }
+            valueWrites.writeLong(frame, value, bytecode, array.longAt(p));
             if (hasKey) {
                 keyWrites.writeLong(frame, key, bytecode, p);
             }
-                valueWrites.writeLong(frame, value, bytecode, array.longAt(p));
             position.setLong(bytecode, frame, array.nextPackedPosition(p));
             return true;
         }
@@ -6483,10 +6477,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (p < 0) {
                 return false;
             }
+            valueWrites.write(frame, value, bytecode, PhpRef.deref(array.packedAt(p)));
             if (hasKey) {
                 keyWrites.writeLong(frame, key, bytecode, p);
             }
-                valueWrites.write(frame, value, bytecode, PhpRef.deref(array.packedAt(p)));
             position.setLong(bytecode, frame, array.nextPackedPosition(p));
             return true;
         }
@@ -6500,10 +6494,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 if (p < 0) {
                 return false;
             }
+            valueWrites.write(frame, value, bytecode, PhpRef.deref(array.hashValueAt(p)));
             if (hasKey) {
                 keyWrites.write(frame, key, bytecode, array.hashKeyAt(p));
             }
-                valueWrites.write(frame, value, bytecode, PhpRef.deref(array.hashValueAt(p)));
             position.setLong(bytecode, frame, array.nextHashPosition(p));
             return true;
         }
@@ -6918,7 +6912,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         if (!(container instanceof PhpArray array)) {
             throw ElementChain.overloaded();
         }
-        array.putRef(append ? (Object) array.nextIndex() : toKey.execute(keys[levels]), ref);
+        array.putRef(append ? (Object) array.appendKey() : toKey.execute(keys[levels]), ref);
     }
 
     /** `$obj->$name = &place`: as BindProp, the name computed (PropName). */

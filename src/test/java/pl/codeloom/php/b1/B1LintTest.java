@@ -92,6 +92,45 @@ class B1LintTest {
         assertTrue(B1Lint.inspect(symbolic, B1Lint.Kind.EMITTED).stream().anyMatch(e -> e.startsWith("B1-08")));
     }
 
+    static final class IndirectLookup {
+        static Object read(java.util.Map<String,Object> map,String key) { return map.get(key); }
+    }
+
+    static final class BadBridge {
+        public Object invoke1(B1RequestContext ctx,pl.codeloom.php.b1.runtime.B1Object self,Object value) {
+            return wrap(value);
+        }
+        private Object wrap(Object value) { return new Object[]{value}; }
+        @HotPath(lookup = true)
+        static Object lookup(B1RequestContext ctx,java.util.Map<String,Object> map,String key) {
+            if (IndirectLookup.read(map,key) == null) return null;
+            return IndirectLookup.read(map,key);
+        }
+    }
+
+    @Test void followsDispatchAndLookupHelpers() throws Exception {
+        try (var stream = BadBridge.class.getResourceAsStream("B1LintTest$BadBridge.class")) {
+            var findings = B1Lint.inspect(stream.readAllBytes(),B1Lint.Kind.RUNTIME);
+            assertTrue(findings.stream().anyMatch(f -> f.startsWith("B1-06")));
+            assertTrue(findings.stream().anyMatch(f -> f.startsWith("B1-07")));
+        }
+    }
+
+    @Test void checksDebugOnlyDescriptorsAndGenericSignatures() {
+        for (boolean generic : new boolean[]{false,true}) {
+            byte[] bytes = ClassFile.of().build(SAMPLE,cb -> cb.withMethodBody("sample",
+                    MethodTypeDesc.of(CD_void,CD_Object),ACC_STATIC,c -> {
+                Label from = c.newBoundLabel();
+                c.nop();
+                Label to = c.newBoundLabel();
+                if (generic) c.localVariableType(0,"v",Signature.parseFrom("Ljava/util/List<Lcom/oracle/truffle/api/Node;>;"),from,to);
+                else c.localVariable(0,"v",ClassDesc.of("com.oracle.truffle.api.Node"),from,to);
+                c.return_();
+            }));
+            assertTrue(B1Lint.inspect(bytes,B1Lint.Kind.RUNTIME).stream().anyMatch(f -> f.startsWith("B1-08")));
+        }
+    }
+
     @Test void rejectsViolationsBeforeAnyClassIsDefined() {
         byte[] bytes = ClassFile.of().build(SAMPLE, cb -> {
             cb.withSuperclass(BASE);
@@ -132,5 +171,36 @@ class B1LintTest {
         assertTrue(instructions.contains(Opcode.LSTORE));
         assertTrue(instructions.contains(Opcode.LLOAD));
         assertDoesNotThrow(() -> B1Lint.requireClean(bytes, B1Lint.Kind.EMITTED));
+    }
+
+    static final class BadStaticAndVirtualThread {
+        static final java.util.HashMap<String, Object> LEAK = new java.util.HashMap<>();
+        static Thread spawn(Runnable r) { return Thread.ofVirtual().unstarted(r); }
+    }
+
+    @Test void enforcesB109ThroughB113() throws Exception {
+        // B1-11 & B1-13 on runtime class
+        try (var stream = BadStaticAndVirtualThread.class.getResourceAsStream("B1LintTest$BadStaticAndVirtualThread.class")) {
+            assertNotNull(stream);
+            var runtimeFindings = B1Lint.inspect(stream.readAllBytes(), B1Lint.Kind.RUNTIME);
+            assertTrue(runtimeFindings.stream().anyMatch(f -> f.startsWith("B1-11")));
+            assertTrue(runtimeFindings.stream().anyMatch(f -> f.startsWith("B1-13")));
+        }
+        // B1-09 (oversized inline string), B1-10 (outlined fragment calling leave/pushFrame), B1-12 (retained IR ref)
+        var frame = ClassDesc.of("pl.codeloom.php.b1.runtime.B1Frame");
+        var irUnit = ClassDesc.of("pl.codeloom.php.ir.IrUnit");
+        byte[] badEmitted = ClassFile.of().build(SAMPLE, cb -> {
+            cb.withSuperclass(BASE);
+            cb.withField("retained", irUnit, ACC_PRIVATE | ACC_FINAL);
+            cb.withMethodBody("fragment0", MethodTypeDesc.of(CD_Object, CTX, frame), ACC_PRIVATE | ACC_STATIC, c -> {
+                c.ldc("x".repeat(16_385)).pop();
+                c.aload(1).aconst_null().invokevirtual(frame, "leave", MethodTypeDesc.of(CD_void, CD_Object));
+                c.aconst_null().areturn();
+            });
+        });
+        var emittedFindings = B1Lint.inspect(badEmitted, B1Lint.Kind.EMITTED);
+        assertTrue(emittedFindings.stream().anyMatch(f -> f.startsWith("B1-09")));
+        assertTrue(emittedFindings.stream().anyMatch(f -> f.startsWith("B1-10")));
+        assertTrue(emittedFindings.stream().anyMatch(f -> f.startsWith("B1-12")));
     }
 }

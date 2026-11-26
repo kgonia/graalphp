@@ -7,49 +7,52 @@ import java.util.*;
 final class B1Exception {
     private B1Exception() {}
 
-    static Map<Long, Object> trace(B1Frame frame) {
-        var trace = new LinkedHashMap<Long, Object>();
+    static B1Array trace(B1RequestContext ctx,B1Frame frame) {
+        var trace = new B1Array(4);
         for (B1Frame f = frame; f != null && !f.isTop(); f = f.caller) {
-            var row = new LinkedHashMap<String, Object>();
+            var row = new B1Array(6);
             if (f.caller != null) {
-                row.put("file", f.caller.file);
-                row.put("line", (long) f.caller.line);
+                row.put(ctx,"file", f.caller.file);
+                row.put(ctx,"line", (long) f.caller.line);
             }
-            int scope = f.function.indexOf("::");
-            row.put("function", f.function.substring(scope < 0 ? 0 : scope + 2));
+            int scope = f.function.startsWith("{closure:") ? -1 : f.function.indexOf("::");
+            row.put(ctx,"function", f.function.substring(scope < 0 ? 0 : scope + 2));
             if (scope >= 0) {
-                row.put("class", f.function.substring(0, scope));
-                row.put("type", "->");
+                row.put(ctx,"class", f.function.substring(0, scope));
+                row.put(ctx,"type", f.staticCall ? "::" : "->");
             }
-            row.put("args", f.traceArguments());
-            trace.put((long)trace.size(), row);
+            B1Array args = f.traceArguments(ctx);
+            row.put(ctx,"args",args); B1Object.release(ctx,args);
+            trace.append(ctx,row); B1Object.release(ctx,row);
         }
         return trace;
     }
 
-    static String traceString(B1RequestContext ctx, Map<?, ?> trace) {
+    static String traceString(B1RequestContext ctx, B1Array trace) {
         var result = new StringBuilder();
         int n = 0;
-        for (Object entry : trace.values()) {
-            Map<?, ?> row = (Map<?, ?>) entry;
+        for (int i = 0; i < trace.size(); i++) {
+            B1Array row = (B1Array)trace.valueAt(i);
             result.append('#').append(n++).append(' ');
-            if (row.containsKey("file")) result.append(row.get("file")).append('(').append(row.get("line")).append("): ");
+            if (row.contains("file")) result.append(row.get("file")).append('(').append(row.get("line")).append("): ");
             else result.append("[internal function]: ");
-            if (row.containsKey("class")) result.append(row.get("class")).append(row.get("type"));
+            if (row.contains("class")) result.append(row.get("class")).append(row.get("type"));
             result.append(row.get("function")).append('(');
             var args = new StringJoiner(", ");
-            for (Object value : ((Map<?, ?>)row.get("args")).values()) {
-                args.add(value instanceof String str ? quoted(str)
+            B1Array values = (B1Array)row.get("args");
+            for (int j = 0; j < values.size(); j++) {
+                Object value = values.valueAt(j);
+                args.add(value instanceof String || value instanceof B1Bytes ? quoted(value)
                         : value instanceof B1Object ? "Object(" + ctx.typeName(value) + ")"
-                        : value instanceof Map ? "Array" : value == null ? "NULL" : value.toString());
+                        : value instanceof Map || value instanceof B1Array ? "Array" : value == null ? "NULL" : value.toString());
             }
             result.append(args).append(")\n");
         }
         return result.append('#').append(n).append(" {main}").toString();
     }
 
-    private static String quoted(String text) {
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+    private static String quoted(Object text) {
+        byte[] bytes = B1Bytes.bytes(text);
         var result = new StringBuilder("'");
         for (int i = 0; i < Math.min(15, bytes.length); i++) {
             int c = Byte.toUnsignedInt(bytes[i]);

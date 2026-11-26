@@ -44,11 +44,19 @@ final class CoreFunctions {
             Args.arity(a, "strlen", 1, 1);
             return (long) Str.length(Args.string(context, a, 0, "strlen", "string", false));
         });
-        r.fn("count", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
+        r.fn("count", (ctx,a) -> {
+            Args.arity(a,"count",1,2);
+            Object value = Args.get(a,0);
+            if (!(value instanceof PhpArray || value instanceof PhpObject o && o.getPhpClass().isSubclassOf("countable")))
+                throw Args.typeError("count",1,"value","Countable|array",value);
+            long mode = Args.has(a,1) ? Args.integer(ctx,a,1,"count","mode","int") : 0;
+            if (mode != 0 && mode != 1) throw new PhpError("ValueError","count(): Argument #2 ($mode) must be either COUNT_NORMAL or COUNT_RECURSIVE");
+            return count(value,mode);
+        });
         r.fn("sizeof", a -> count(Args.get(a, 0), Args.lng(a, 1, 0)));
-        r.fn("is_array", a -> Args.get(a, 0) instanceof PhpArray);
-        r.fn("is_string", a -> Args.get(a, 0) instanceof TruffleString);
-        r.fn("is_int", a -> Args.get(a, 0) instanceof Long);
+        r.fn("is_array", a -> { Args.arity(a,"is_array",1,1); return Args.get(a, 0) instanceof PhpArray; });
+        r.fn("is_string", a -> { Args.arity(a,"is_string",1,1); return Args.get(a, 0) instanceof TruffleString; });
+        r.fn("is_int", a -> { Args.arity(a,"is_int",1,1); return Args.get(a, 0) instanceof Long; });
         r.fn("is_integer", a -> Args.get(a, 0) instanceof Long);
         r.fn("is_long", a -> Args.get(a, 0) instanceof Long);
         r.fn("is_float", a -> Args.get(a, 0) instanceof Double);

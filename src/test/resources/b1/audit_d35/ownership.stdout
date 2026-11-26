@@ -1,0 +1,5 @@
+body coal first mark inner 
+Warning: Undefined array key 0 in /fixtures/audit_d35/ownership.php on line 12
+
+Warning: Trying to access array offset on null in /fixtures/audit_d35/ownership.php on line 12
+saved setup caught 0

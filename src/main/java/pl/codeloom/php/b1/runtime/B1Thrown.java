@@ -12,13 +12,14 @@ public final class B1Thrown extends RuntimeException {
     }
 
     static boolean throwable(String type) { return switch (type) {
-        case "exception", "error", "typeerror", "argumentcounterror" -> true;
+        case "exception", "error", "typeerror", "argumentcounterror", "valueerror", "parseerror", "compileerror" -> true;
         default -> false;
     }; }
 
     public static boolean matches(Throwable pending, String type) {
         return pending instanceof B1Thrown thrown && (thrown.exception.type.equals(type) || type.equals("throwable")
                 || type.equals("error") && !thrown.exception.type.equals("exception")
+                || type.equals("compileerror") && thrown.exception.type.equals("parseerror")
                 || type.equals("typeerror") && thrown.exception.type.equals("argumentcounterror"));
     }
 

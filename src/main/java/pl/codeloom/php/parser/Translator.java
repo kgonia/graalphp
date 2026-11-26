@@ -208,12 +208,13 @@ public final class Translator {
                 throw compileError(failure.line, failure.getMessage());
             }
         }
-        if (!internal && !eval && diagnostics.isEmpty()) {
+        if (!internal && diagnostics.isEmpty()) {
             try {
-                var unit = PhpIrLowerer.lowerFile(path, file);
+                var unit = PhpIrLowerer.lowerFile(path, file,eval);
                 var declarations = new LinkedHashMap<String, PhpFunction>();
                 var classes = new ArrayList<ClassTemplate>();
                 var linked = new HashSet<String>();
+                var early = new HashSet<ClassTemplate>();
                 for (Object item : file.children()) {
                     Ast node = (Ast) item;
                     if (node.is("AST_FUNC_DECL")) {
@@ -221,21 +222,21 @@ public final class Translator {
                         declarations.put(fn.getName(), fn);
                     } else if (node.is("AST_CLASS")) {
                         var cls = classTemplate(node, names.declared((String) node.get("name")));
-                        // IR classes have no parent. earlyBinding records only LINKED names in this set.
-                        earlyBinding(node, cls, linked);
-                        classes.add(cls);
-                        for (var member : cls.getMembers()) {
-                            if (member instanceof ClassTemplate.Method method)
-                                declarations.put(cls.getName() + "::" + method.function().getName(), method.function());
+                        if (earlyBinding(node, cls, linked) == LINKED &&
+                                (!eval || PhpContext.get(null).findClass(Str.lower(cls.getName())) == null)) {
+                            early.add(cls);
                         }
+                        classes.add(cls);
                     }
                 }
-                return TruffleIrAdapter.translate(language, source, unit, declarations, classes, linked);
+                return TruffleIrAdapter.translate(language, source, unit, declarations, classes, early, eval);
+            } catch (pl.codeloom.php.ir.PhpCompileFatal fatal) {
+                throw compileError(fatal.location.line(),fatal.getMessage());
             } catch (PhpIrLowerer.UnsupportedIr unsupported) {
                 // The legacy frontend handles the whole file, including its lazy function bodies.
             }
         }
-        TruffleIrAdapter.usedLegacy(path);
+        TruffleIrAdapter.usedLegacy(language,path);
         return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval,
                 List.copyOf(diagnostics));
     }

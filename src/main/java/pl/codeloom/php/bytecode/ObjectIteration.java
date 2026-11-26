@@ -88,24 +88,23 @@ final class ObjectIteration implements Refcount.Holder {
                 return false;
             }
             Object current = PhpRef.deref(ForeachNode.step(site, iterator, "current"));
-            if (hasKey) {
-                Object k = PhpRef.deref(ForeachNode.step(site, iterator, "key"));
-                keyWrites.write(frame, key, bytecode, k);
-                Refcount.dec(k);
+            Object k = null;
+            try {
+                if (hasKey) k = PhpRef.deref(ForeachNode.step(site,iterator,"key"));
+                valueWrites.write(frame,value,bytecode,current);
+                if (hasKey) keyWrites.write(frame,key,bytecode,k);
+            } finally {
+                Refcount.dec(current);
+                if (hasKey) Refcount.dec(k);
             }
-            valueWrites.write(frame, value, bytecode, current);
-            // the calls' own counts: the variables counted theirs
-            Refcount.dec(current);
             return true;
         }
         Object[] property = nextProperty();
         if (property == null) {
             return false;
         }
-        if (hasKey) {
-            keyWrites.write(frame, key, bytecode, property[0]);
-        }
         valueWrites.write(frame, value, bytecode, property[1]);
+        if (hasKey) keyWrites.write(frame, key, bytecode, property[0]);
         return true;
     }
 

@@ -78,6 +78,7 @@ public final class PhpArray implements TruffleObject {
 
     /** Next key for an append: one more than the largest int key ever used, as in php-src. */
     private long nextIndex;
+    private boolean hasIntegerKey;
 
     /** Internal pointer for current()/next()/reset(): a position, or -1 past the end. */
     private int pointer;
@@ -406,6 +407,7 @@ public final class PhpArray implements TruffleObject {
         PhpArray copy = new PhpArray();
         copy.size = size;
         copy.nextIndex = nextIndex;
+        copy.hasIntegerKey = hasIntegerKey;
         copy.pointer = pointer;
         copy.mayHoldRefs = mayHoldRefs;
         copy.holdsCounted = holdsCounted;
@@ -769,12 +771,9 @@ public final class PhpArray implements TruffleObject {
 
     @TruffleBoundary
     private void appendSlow(Object value) {
-        if (nextIndex == Long.MAX_VALUE && containsKey(Long.MAX_VALUE)) {
-            throw new PhpError("Cannot add element to the array as the next element is already occupied");
-        }
+        long key = appendKey();
         countIn(value);
         Hash hash = toHash();
-        long key = nextIndex;
         insert(hash, key, hash(key), value);
     }
 
@@ -787,6 +786,7 @@ public final class PhpArray implements TruffleObject {
         }
         packed[size++] = value;
         nextIndex = size;
+        hasIntegerKey = true;
     }
 
     private void pushLong(long value) {
@@ -797,6 +797,7 @@ public final class PhpArray implements TruffleObject {
         }
         longs[size++] = value;
         nextIndex = size;
+        hasIntegerKey = true;
     }
 
     /** Leaves the int strategy for Object[]; inline when empty, the usual case (an array built from scratch). */
@@ -930,12 +931,15 @@ public final class PhpArray implements TruffleObject {
     @TruffleBoundary
     public PhpRef appendRef() {
         PhpRef ref = new PhpRef(PhpNull.NULL);
-        long key = nextIndex;
-        putRef(key, ref);
-        if (nextIndex <= key) {
-            nextIndex = key + 1;
-        }
+        putRef(appendKey(), ref);
         return ref;
+    }
+
+    public long appendKey() {
+        if (nextIndex == Long.MAX_VALUE && containsKey(Long.MAX_VALUE)) {
+            throw new PhpError("Cannot add element to the array as the next element is already occupied");
+        }
+        return nextIndex;
     }
 
     public long nextIndex() {
@@ -945,6 +949,7 @@ public final class PhpArray implements TruffleObject {
     /** array_multisort's rebuilt hash: the next append's key is the element count, whatever the keys. */
     public void setNextIndex(long index) {
         nextIndex = index;
+        hasIntegerKey = true;
     }
 
     /**
@@ -1009,6 +1014,7 @@ public final class PhpArray implements TruffleObject {
                     longs[0] = number;
                     size++;
                     nextIndex = size;
+                    hasIntegerKey = true;
                     pointer = 0;
                     return;
                 }
@@ -1024,6 +1030,7 @@ public final class PhpArray implements TruffleObject {
             packed[0] = value;
             size++;
             nextIndex = size;
+            hasIntegerKey = true;
             pointer = 0;
             return;
         }
@@ -1062,6 +1069,7 @@ public final class PhpArray implements TruffleObject {
         store = rebuilt.store;
         size = rebuilt.size;
         nextIndex = rebuilt.nextIndex;
+        hasIntegerKey = rebuilt.hasIntegerKey;
         pointer = firstPosition();
         if (iterations != 0) {
             RefIteration.advanced(this, values.length);
@@ -1242,11 +1250,7 @@ public final class PhpArray implements TruffleObject {
     /** append, or a reference copiedAt kept at the next index. */
     public void appendCopied(Object element) {
         if (element instanceof PhpRef ref) {
-            long key = nextIndex;
-            putRef(key, ref);
-            if (nextIndex <= key) {
-                nextIndex = key + 1;
-            }
+            putRef(appendKey(), ref);
         } else {
             append(element);
         }
@@ -1389,7 +1393,8 @@ public final class PhpArray implements TruffleObject {
         countIn(value);
         ((Hash) store).add(key, h, value);
         size++;
-        if (key instanceof Long index && index >= nextIndex) {
+        if (key instanceof Long index && (!hasIntegerKey || index >= nextIndex)) {
+            hasIntegerKey = true;
             nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
         }
     }
@@ -1433,7 +1438,8 @@ public final class PhpArray implements TruffleObject {
         }
         target.add(key, h, value);
         size++;
-        if (key instanceof Long index && index >= nextIndex) {
+        if (key instanceof Long index && (!hasIntegerKey || index >= nextIndex)) {
+            hasIntegerKey = true;
             nextIndex = index == Long.MAX_VALUE ? Long.MAX_VALUE : index + 1;
         }
     }

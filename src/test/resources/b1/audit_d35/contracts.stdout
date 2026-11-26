@@ -1,0 +1,9 @@
+1ÿ
+3
+
+Warning: bump(): Argument #1 ($x) must be passed by reference, value given in /fixtures/audit_d35/contracts.php on line 6
+call_user_func_array(): Argument #2 ($args) must be of type array, int given
+strlen(): Argument #1 ($string) must be of type string, array given
+count() expects at least 1 argument, 0 given
+Cannot access offset of type array on array
+array_slice(): Argument #4 ($preserve_keys) must be of type bool, array given

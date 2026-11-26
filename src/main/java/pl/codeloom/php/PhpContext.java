@@ -874,6 +874,9 @@ public final class PhpContext {
     @TruffleBoundary
     public void trackDestructor(PhpObject object) { destructibles.add(object); }
     @TruffleBoundary
+    public int liveDestructibleCount() { return destructibles.size(); }
+
+    @TruffleBoundary
     public void forgetDestructor(PhpObject object) { destructibles.remove(object); }
 
     /** zend_objects_store_mark_destructed marks only the objects alive at the bailout. */

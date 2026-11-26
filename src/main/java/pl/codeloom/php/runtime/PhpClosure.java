@@ -110,23 +110,25 @@ public final class PhpClosure {
             return;
         }
         freed = true;
+        PhpThrowable pending = null;
         if (statics != null) {
             for (PhpRef ref : statics.values()) {
-                ref.unbind();
+                try { ref.unbind(); }
+                catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
             }
         }
         for (Object value : captured) {
-            if (value instanceof PhpRef ref) {
-                ref.unbind();
-            } else if (value instanceof PhpArray array) {
-                array.removeHolder();
-            } else {
-                Refcount.dec(value);
-            }
+            try {
+                if (value instanceof PhpRef ref) ref.unbind();
+                else if (value instanceof PhpArray array) array.removeHolder();
+                else Refcount.dec(value);
+            } catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
         }
         if (boundThis != null) {
-            boundThis.release();
+            try { boundThis.release(); }
+            catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
         }
+        if (pending != null) throw pending;
     }
 
     /** Whether the closure keeps static variables of its own: a closure (not a fake one) that declares some. */

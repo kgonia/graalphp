@@ -1,0 +1,4 @@
+
+Fatal error: Cannot use isset() on the result of an expression (you can use "null !== expression" instead) in /fixtures/audit_d35/fatal_isset.php on line 3
+Stack trace:
+#0 {main}

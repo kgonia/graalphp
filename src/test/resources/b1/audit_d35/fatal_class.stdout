@@ -1,0 +1,5 @@
+before declaration
+Fatal error: Cannot redeclare class Already (previously declared in /fixtures/audit_d35/fatal_class.php:2) in /fixtures/audit_d35/fatal_class.php(3) : eval()'d code on line 1
+Stack trace:
+#0 /fixtures/audit_d35/fatal_class.php(3): eval()
+#1 {main}
