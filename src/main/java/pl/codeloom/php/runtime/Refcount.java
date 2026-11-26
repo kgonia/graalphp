@@ -1,5 +1,7 @@
 package pl.codeloom.php.runtime;
 
+import pl.codeloom.php.PhpContext;
+
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
@@ -278,29 +280,19 @@ public final class Refcount {
                 || argument instanceof PhpClosure closure && closure.refcount() == 0 && !closure.isFreed();
     }
 
-    /** TakeExtraArguments: the arguments from `from` on that the call moved in, counted, or null if none. */
+    /** Copy extra zvals into the frame, including borrowed objects whose original slot may be overwritten. */
     @TruffleBoundary
     public static Object[] takeExtras(Object[] arguments, int from) {
         java.util.ArrayList<Object> taken = null;
         for (int i = from; i < arguments.length; i++) {
-            Object argument = arguments[i];
-            if (isMoved(argument)) {
-                inc(argument);
-                if (taken == null) {
-                    taken = new java.util.ArrayList<>();
-                }
-                taken.add(argument);
+            Object value = arguments[i];
+            if (value instanceof PhpObject || value instanceof PhpClosure || value instanceof PhpArray) {
+                hold(value);
+                if (taken == null) taken = new java.util.ArrayList<>();
+                taken.add(value);
             }
         }
         return taken == null ? null : taken.toArray();
-    }
-
-    /** The extra arguments a frame took, released in order at its end. */
-    @TruffleBoundary
-    public static void releaseExtras(Object[] taken) {
-        for (Object argument : taken) {
-            dec(argument);
-        }
     }
 
     @TruffleBoundary
@@ -409,6 +401,11 @@ public final class Refcount {
      */
     static final boolean DESTRUCTORS = !"false".equals(System.getProperty("php.rc.destructors"));
 
+    /** Called with a live object from the request's object store. */
+    public static void shutdownDestructor(PhpObject object) {
+        if (!object.isDestructorCalled()) destroy(object);
+    }
+
     /**
      * zend_objects_store_del: the destructor runs once, with the object held for its duration (GC_ADDREF); an object
      * the destructor stored somewhere (resurrected) lives on, else its properties are released, which can take what
@@ -419,7 +416,7 @@ public final class Refcount {
         PhpGenerator generator = object.getInternal() instanceof PhpGenerator g ? g : null;
         PhpFiber fiber = object.getInternal() instanceof PhpFiber f ? f : null;
         if (!object.markDestructorCalled()
-                && (generator != null || fiber != null || object.getPhpClass().findMethod("__destruct") != null)) {
+                && (generator != null || fiber != null || object.getPhpClass().hasDestructor())) {
             object.addRef();
             if (Census.AUDIT) {
                 Census.destroying(object, true);
@@ -433,7 +430,8 @@ public final class Refcount {
                     // zend_fiber_object_destroy: a suspended fiber unwinds, its finally blocks running
                     fiber.destroy();
                 } else {
-                    dec(object.callMethodOwned(null, "__destruct"));
+                    PhpContext.get(null).forgetDestructor(object);
+                    if (!object.isConstructing()) dec(object.callMethodOwned(null, "__destruct"));
                 }
             } catch (RuntimeException | Error e) {
                 // an Error too (a cancel, a stack overflow in a finally block): the counts below still settle
@@ -452,7 +450,11 @@ public final class Refcount {
             }
         }
         if (!object.markFreed()) {
-            freeProperties(object);
+            try { freeProperties(object); }
+            catch (PhpThrowable next) {
+                if (thrown instanceof PhpThrowable previous) next.duringUnwind(previous);
+                thrown = next;
+            }
             if (fiber != null) {
                 fiber.free();
             }
@@ -483,9 +485,12 @@ public final class Refcount {
             layout = FreeLayout.of(phpClass, shape);
             phpClass.freeLayout = layout;
         }
+        PhpThrowable pending = null;
         for (com.oracle.truffle.api.object.Location location : layout.locations) {
-            freeProperty(location.get(owner, shape));
+            try { freeProperty(location.get(owner, shape)); }
+            catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
         }
+        if (pending != null) throw pending;
     }
 
     /**

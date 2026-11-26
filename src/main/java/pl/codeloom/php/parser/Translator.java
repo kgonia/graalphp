@@ -7,6 +7,8 @@ import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.PhpLanguage;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.bytecode.DefinedSite;
+import pl.codeloom.php.bytecode.TruffleIrAdapter;
+import pl.codeloom.php.ir.PhpIrLowerer;
 import pl.codeloom.php.bytecode.PhpBytecodeRootNode;
 import pl.codeloom.php.nodes.expr.AssignNodes;
 import pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic;
@@ -132,7 +134,7 @@ public final class Translator {
     /** zend_compile_use: a class can't be imported under a reserved name. */
     void checkUse(int kind, Ast use, String name) {
         String alias = use.get("alias") instanceof String a ? a : name.substring(name.lastIndexOf('\\') + 1);
-        if (kind == 1 && RESERVED_CLASS_NAMES.contains(Str.lower(alias))) {
+        if (kind == 1 && Names.reservedClassName(Str.lower(alias))) {
             throw compileError(use.line, "Cannot use " + name + " as " + alias + " because '" + alias
                     + "' is a special class name");
         }
@@ -206,6 +208,34 @@ public final class Translator {
                 throw compileError(failure.line, failure.getMessage());
             }
         }
+        if (!internal && !eval && diagnostics.isEmpty()) {
+            try {
+                var unit = PhpIrLowerer.lowerFile(path, file);
+                var declarations = new LinkedHashMap<String, PhpFunction>();
+                var classes = new ArrayList<ClassTemplate>();
+                var linked = new HashSet<String>();
+                for (Object item : file.children()) {
+                    Ast node = (Ast) item;
+                    if (node.is("AST_FUNC_DECL")) {
+                        var fn = declareFunction(node, null);
+                        declarations.put(fn.getName(), fn);
+                    } else if (node.is("AST_CLASS")) {
+                        var cls = classTemplate(node, names.declared((String) node.get("name")));
+                        // IR classes have no parent. earlyBinding records only LINKED names in this set.
+                        earlyBinding(node, cls, linked);
+                        classes.add(cls);
+                        for (var member : cls.getMembers()) {
+                            if (member instanceof ClassTemplate.Method method)
+                                declarations.put(cls.getName() + "::" + method.function().getName(), method.function());
+                        }
+                    }
+                }
+                return TruffleIrAdapter.translate(language, source, unit, declarations, classes, linked);
+            } catch (PhpIrLowerer.UnsupportedIr unsupported) {
+                // The legacy frontend handles the whole file, including its lazy function bodies.
+            }
+        }
+        TruffleIrAdapter.usedLegacy(path);
         return BytecodeTranslator.translateFile(language, path, source, internal, file, reread, eval,
                 List.copyOf(diagnostics));
     }
@@ -758,7 +788,7 @@ public final class Translator {
             throw compileError(part.line, "'\\" + part.get("name") + "' is an invalid class name");
         }
         String last = Str.lower(resolved.substring(resolved.lastIndexOf('\\') + 1));
-        if (resolved.indexOf('\\') >= 0 && RESERVED_CLASS_NAMES.contains(last)) {
+        if (resolved.indexOf('\\') >= 0 && Names.reservedClassName(last)) {
             throw compileError(part.line, "Cannot use \"" + resolved + "\" as a type name as it is reserved");
         }
     }
@@ -1054,13 +1084,9 @@ public final class Translator {
         return classTemplate(classNode, name);
     }
 
-    /** zend_reserved_class_names. */
-    private static final Set<String> RESERVED_CLASS_NAMES = Set.of("bool", "false", "float", "int", "null",
-            "parent", "self", "static", "string", "true", "void", "never", "iterable", "object", "mixed");
-
     ClassTemplate classTemplate(Ast node, String name) {
         String unqualified = Str.lower(name.substring(name.lastIndexOf('\\') + 1));
-        if (node.get("name") != null && RESERVED_CLASS_NAMES.contains(unqualified)) {
+        if (node.get("name") != null && Names.reservedClassName(unqualified)) {
             throw compileError(node.line, "Cannot use \"" + node.get("name") + "\" as a class name as it is reserved");
         }
         if ((node.flags & CLASS_TRAIT) != 0) {

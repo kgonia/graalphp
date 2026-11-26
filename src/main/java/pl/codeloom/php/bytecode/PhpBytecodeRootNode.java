@@ -237,6 +237,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     /** The hidden local of the extra arguments the frame took (TakeExtraArguments), or null. */
     @CompilationFinal private LocalAccessor extraArguments;
+    @CompilationFinal(dimensions = 1) pl.codeloom.php.ir.IrUnit.TempKind[] irTemps;
     /** Which temporaries hold an argument the call takes (the translator's argumentTemporary). */
     @CompilationFinal(dimensions = 1) private boolean[] temporariesMoved = new boolean[0];
     /**
@@ -592,43 +593,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     /** releaseVariables on a return: the returned array, on its way to the caller, keeps its elements' counts. */
     @ExplodeLoop
     void releaseVariables(VirtualFrame frame, BytecodeNode bytecode, Object returned) {
-        for (int i = 0; i < variables.length; i++) {
-            LocalAccessor variable = variables[i];
-            if (!variable.isCleared(bytecode, frame)) {
-                Object value = variable.getObject(bytecode, frame);
-                if (Refcount.AUDIT_POINTS) {
-                    // a destructor this release runs may hold an audit point: the slot no longer holds the value
-                    variable.clear(bytecode, frame);
-                }
-                if (value instanceof PhpArray array) {
-                    released(i, RELEASED_ARRAY);
-                    if (array == returned) {
-                        array.removeReturnedHolder();
-                    } else {
-                        array.removeHolder();
-                    }
-                } else if (value instanceof PhpObject object) {
-                    released(i, RELEASED_OBJECT);
-                    object.release();
-                } else if (value instanceof PhpClosure closureValue) {
-                    released(i, RELEASED_CLOSURE);
-                    closureValue.release();
-                } else if (value instanceof PhpRef ref) {
-                    released(i, RELEASED_REF);
-                    if (returned != null && ref.get() == returned) {
-                        // `return $b` where $b is a reference: the array goes on to the caller, as above
-                        ref.unbindReturning();
-                    } else {
-                        ref.unbind();
-                    }
-                }
-            }
-        }
+        if (irTemps != null && !file) frame.getArguments()[PhpFunction.ARG_CLOSURE] = LEAVING_FRAME;
+        for (int i = 0; i < variables.length; i++) releaseVariable(frame, bytecode, returned, i);
         if (extraArguments != null && !extraArguments.isCleared(bytecode, frame)) {
             // after the variables, as php-src's zend_vm_stack_free_extra_args after i_free_compiled_variables
             Object[] taken = (Object[]) extraArguments.getObject(bytecode, frame);
             extraArguments.clear(bytecode, frame);
-            Refcount.releaseExtras(taken);
+            releaseExtras(taken);
         }
         for (int i = 0; i < temporaries.length; i++) {
             ReleaseTemp.release(frame, temporaries[i], i, this, bytecode);
@@ -641,6 +612,71 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 scopeLocal.clear(bytecode, frame);
             }
         }
+    }
+
+    private void releaseVariable(VirtualFrame frame, BytecodeNode bytecode, Object returned, int i) {
+        LocalAccessor variable = variables[i];
+        if (!variable.isCleared(bytecode, frame)) {
+            Object value = variable.getObject(bytecode, frame);
+            variable.clear(bytecode, frame);
+            if (value instanceof PhpArray array) {
+                released(i, RELEASED_ARRAY);
+                if (array == returned) {
+                    array.removeReturnedHolder();
+                } else {
+                    array.removeHolder();
+                }
+            } else if (value instanceof PhpObject object) {
+                released(i, RELEASED_OBJECT);
+                object.release();
+            } else if (value instanceof PhpClosure closureValue) {
+                released(i, RELEASED_CLOSURE);
+                closureValue.release();
+            } else if (value instanceof PhpRef ref) {
+                released(i, RELEASED_REF);
+                if (returned != null && ref.get() == returned) {
+                    // `return $b` where $b is a reference: the array goes on to the caller, as above
+                    ref.unbindReturning();
+                } else {
+                    ref.unbind();
+                }
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private void releaseExtras(Object[] taken) {
+        for (int i = 0; i < taken.length; i++) {
+            try { Refcount.unhold(taken[i]); }
+            catch (PhpThrowable thrown) { throw releaseExtraTail(taken, i + 1, thrown); }
+        }
+    }
+
+    @TruffleBoundary
+    private PhpThrowable releaseExtraTail(Object[] taken, int start, PhpThrowable pending) {
+        for (int i = start; i < taken.length; i++) {
+            try { Refcount.unhold(taken[i]); }
+            catch (PhpThrowable next) { chainDuringUnwind(next, pending); pending = next; }
+        }
+        return pending;
+    }
+
+    /** All live slots detach first. Reentry here after a throwing release resumes at the next live slot. */
+    @TruffleBoundary
+    private AbstractTruffleException drain(MaterializedFrame frame, BytecodeNode bytecode,
+                                            AbstractTruffleException pending) {
+        while (true) {
+            try { releaseVariables(frame, bytecode); return pending; }
+            catch (PhpThrowable next) { chainDuringUnwind(next, pending); pending = next; }
+        }
+    }
+
+    private AbstractTruffleException cancelReturn(MaterializedFrame frame, BytecodeNode bytecode,
+                                                  PhpThrowable thrown, Object returned) {
+        var pending = drain(frame, bytecode, thrown);
+        try { Refcount.unhold(returned); }
+        catch (PhpThrowable next) { chainDuringUnwind(next, pending); return next; }
+        return pending;
     }
 
     private void released(int variable, byte kind) {
@@ -708,6 +744,47 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
     // ---- function entry and exit ----
 
+    @Operation
+    @ConstantOperand(type = String[].class)
+    public static final class AttachGlobals {
+        @Specialization
+        public static void attach(VirtualFrame frame, String[] names, @Bind Node node) {
+            if (IncludeScope.of(frame) == null) PhpContext.get(node).attachGlobals(names);
+        }
+    }
+
+    // IR functions and methods have no closure. Their caller can request PHP's unused retval slot.
+    private static final Object LEAVING_FRAME = new Object();
+
+    public boolean leavingFrame(Frame frame) {
+        return irTemps != null && !file && frame.getArguments()[PhpFunction.ARG_CLOSURE] == LEAVING_FRAME;
+    }
+
+    private static final Object UNUSED_RESULT = new Object();
+
+    static void prepareReturn(boolean discard, com.oracle.truffle.api.CallTarget target, Object[] arguments) {
+        if (discard && target instanceof com.oracle.truffle.api.RootCallTarget root
+                && root.getRootNode() instanceof PhpBytecodeRootNode php && php.irTemps != null)
+            arguments[PhpFunction.ARG_CLOSURE] = UNUSED_RESULT;
+    }
+
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class)
+    public static final class VerifyIrParameter {
+        @Specialization
+        public static void verify(VirtualFrame frame, LocalAccessor local, int index, @Bind PhpBytecodeRootNode root,
+                                  @Bind BytecodeNode bytecode, @Bind Node node) {
+            if (!ArgumentGiven.given(frame, index)) throw FunctionRootNode.tooFewArguments(root.name, root.params,
+                    frame.getArguments().length - PhpFunction.ARG_FIRST);
+            var param = root.params[index];
+            if (param.declared() == null) return;
+            Object value = local.getObject(bytecode, frame);
+            Object accepted = FunctionRootNode.checkArgument(root.name, param, index, value, calledClass(frame), node);
+            if (accepted != value) Locals.Writes.getUncached().write(frame, local, bytecode, accepted);
+        }
+    }
+
     /** The value the function returns: the variables are released. */
     @EpilogReturn
     public static final class ReturnValue {
@@ -719,8 +796,14 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization
         public static Object array(VirtualFrame frame, PhpArray value, @Bind PhpBytecodeRootNode root,
                                    @Bind BytecodeNode bytecode) {
+            if (root.irTemps != null && frame.getArguments()[PhpFunction.ARG_CLOSURE] == UNUSED_RESULT) {
+                try { value.releaseTemporary(); root.releaseVariables(frame, bytecode); }
+                catch (PhpThrowable next) { throw root.drain(frame.materialize(), bytecode, next); }
+                return PhpNull.NULL;
+            }
             value.addHolder();
-            root.releaseVariables(frame, bytecode, value);
+            try { root.releaseVariables(frame, bytecode, value); }
+            catch (PhpThrowable next) { throw root.cancelReturn(frame.materialize(), bytecode, next, value); }
             value.removeReturnedHolder();
             return value;
         }
@@ -728,7 +811,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(guards = "!isArray(value)")
         public static Object other(VirtualFrame frame, Object value, @Bind PhpBytecodeRootNode root,
                                    @Bind BytecodeNode bytecode) {
-            root.releaseVariables(frame, bytecode, null);
+            if (root.irTemps != null && frame.getArguments()[PhpFunction.ARG_CLOSURE] == UNUSED_RESULT) {
+                try { Refcount.dec(value); }
+                catch (PhpThrowable next) { throw root.drain(frame.materialize(), bytecode, next); }
+                value = PhpNull.NULL;
+            }
+            try { root.releaseVariables(frame, bytecode, null); }
+            catch (PhpThrowable next) { throw root.cancelReturn(frame.materialize(), bytecode, next, value); }
             return value;
         }
 
@@ -845,7 +934,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 root.unwound = true;
             }
-            root.releaseVariables(frame, bytecode);
+            var pending = root.drain(frame.materialize(), bytecode, exception);
+            if (pending != exception) throw pending;
         }
     }
 
@@ -1004,17 +1094,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         @Specialization(replaces = "none")
         public static void take(VirtualFrame frame, LocalAccessor extras, int declared, @Bind BytecodeNode bytecode) {
             Object[] arguments = frame.getArguments();
-            // inline, the test for a moved argument (most extra arguments are a variable's value, or not counted);
-            // out of line, the taking from the first one on
-            for (int i = PhpFunction.ARG_FIRST + declared; i < arguments.length; i++) {
-                if (Refcount.isMoved(arguments[i])) {
-                    Object[] taken = Refcount.takeExtras(arguments, i);
-                    if (taken != null) {
-                        extras.setObject(bytecode, frame, taken);
-                    }
-                    return;
-                }
-            }
+            Object[] taken = Refcount.takeExtras(arguments, PhpFunction.ARG_FIRST + declared);
+            if (taken != null) extras.setObject(bytecode, frame, taken);
         }
     }
 
@@ -1249,7 +1330,6 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                            @Bind BytecodeNode bytecode, @Bind Node node,
                                            @Cached InlinedBranchProfile undefined,
                                            @Cached ToStrNode currentToStr, @Cached ToStrNode operandToStr,
-                                           @Cached TruffleString.ConcatNode concat,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
             Object stored = Locals.stored(frame, variable, bytecode);
             PhpThrowable pending = null;
@@ -1258,7 +1338,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 pending = undefinedForUpdate(node, variable, bytecode);
             }
             TruffleString left = currentToStr.execute(Variables.value(stored));
-            TruffleString result = concat.execute(left, operandToStr.execute(operand), Str.ENC, true);
+            // Straight-line concatenations share the out-of-line operation. Loops use AppendVar.
+            TruffleString result = Str.concat(left, operandToStr.execute(operand));
             writes.writeObject(frame, variable, bytecode, result);
             if (pending != null) {
                 throw pending;
@@ -1505,10 +1586,10 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static void concat(VirtualFrame frame, LocalAccessor variable, int op, Object operand,
                                   @Bind BytecodeNode bytecode, @Bind Node node,
                                   @Cached InlinedBranchProfile undefined, @Cached ToStrNode currentToStr,
-                                  @Cached ToStrNode operandToStr, @Cached TruffleString.ConcatNode concat,
+                                  @Cached ToStrNode operandToStr,
                 @Shared("writes") @Cached(neverDefault = true) Locals.Writes writes) {
             CompoundVar.concat(frame, variable, op, operand, bytecode, node, undefined, currentToStr, operandToStr,
-                    concat, writes);
+                    writes);
         }
 
         @ForceQuickening
@@ -3029,6 +3110,61 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         }
     }
 
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    @ConstantOperand(type = int.class, name = "index")
+    @ConstantOperand(type = boolean.class, name = "owned", specifyAtEnd = true)
+    public static final class IrStore {
+        @Specialization
+        public static Object store(VirtualFrame frame, LocalAccessor slot, int index, Object value, boolean owned,
+                                   @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            if (value instanceof PhpObject || value instanceof PhpClosure || value instanceof PhpArray || value instanceof PhpRef) {
+                if (value instanceof PhpRef ref) ref.bind();
+                else if (!owned || value instanceof PhpArray) Refcount.hold(value);
+                root.temporaryHeld(index);
+                slot.setObject(bytecode, frame, value);
+            }
+            return value;
+        }
+    }
+
+    /** All sends succeeded. RECV takes the parameter counts before entering the PHP body. */
+    @Operation
+    @ConstantOperand(type = Temporaries.class)
+    public static final class TransferSends {
+        @Specialization
+        public static Object transfer(VirtualFrame frame, Temporaries slots, PhpFunction callee, Object last,
+                                      @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            if (callee.getBuiltin() == null && !MethodSite.byValue(callee)) {
+                int end = slots.indices.length;
+                for (int i = 0; i < end; i++) {
+                    int id = slots.indices[i];
+                    var slot = root.temporaries[id];
+                    if (root.temporariesHeld[id] && !slot.isCleared(bytecode, frame)) {
+                        Object value = slot.getObject(bytecode, frame);
+                        // The reference container itself stays bound until the call returns.
+                        if (value instanceof PhpRef) continue;
+                        slot.clear(bytecode, frame);
+                        if (value instanceof PhpArray array) array.removeReturnedHolder();
+                        else Refcount.disown(value);
+                    }
+                }
+            }
+            return last;
+        }
+    }
+
+    @Operation
+    @ConstantOperand(type = LocalAccessor.class)
+    public static final class FinishConstruction {
+        @Specialization
+        public static PhpObject finish(VirtualFrame frame, LocalAccessor slot, PhpObject object, @Bind BytecodeNode bytecode) {
+            object.finishConstruction();
+            slot.clear(bytecode, frame);
+            return object;
+        }
+    }
+
     /**
      * An operation that used the owning temporaries of its operands (php-src's FREE_OP once the opcode computed its
      * result): they are released after it, before its value is used. kind:
@@ -3050,6 +3186,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static final int BORROWS = 1;
         public static final int PASSES = 2;
         public static final int TAKES = 3;
+        public static final int RETURNING = 4;
 
         @Specialization
         @ExplodeLoop
@@ -3059,6 +3196,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                     || value instanceof PhpClosure) || kind == TAKES && value instanceof PhpRef) {
                 return value;
             }
+            if (kind == RETURNING && value instanceof PhpArray array) array.addHolder();
             if (kind == TAKES) {
                 if (value instanceof PhpObject object) {
                     object.addRef();
@@ -3076,9 +3214,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                         && temporary.getObject(bytecode, frame) == value) {
                     continue;
                 }
-                ReleaseTemp.release(frame, temporary, index, root, bytecode);
+                if (kind == RETURNING) {
+                    try { ReleaseTemp.release(frame, temporary, index, root, bytecode); }
+                    catch (PhpThrowable thrown) {
+                        try { Refcount.unhold(value); }
+                        catch (PhpThrowable next) { chainDuringUnwind(next, thrown); throw next; }
+                        throw thrown;
+                    }
+                } else ReleaseTemp.release(frame, temporary, index, root, bytecode);
             }
-            if (kind == TAKES && value instanceof PhpArray array) {
+            if ((kind == TAKES || kind == RETURNING) && value instanceof PhpArray array) {
                 array.removeReturnedHolder();
             }
             return value;
@@ -3100,6 +3245,13 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             if (root.temporariesHeld[index] && !temporary.isCleared(bytecode, frame)) {
                 Object held = temporary.getObject(bytecode, frame);
                 temporary.clear(bytecode, frame);
+                if (root.irTemps != null) {
+                    if (root.irTemps[index] == pl.codeloom.php.ir.IrUnit.TempKind.CONSTRUCTION)
+                        ((PhpObject) held).suppressDestructor();
+                    if (held instanceof PhpRef ref) ref.unbind();
+                    else Refcount.unhold(held);
+                    return;
+                }
                 if (Refcount.AUDIT_POINTS) {
                     Refcount.unsent(held);
                 }
@@ -3123,6 +3275,31 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                 }
             }
         }
+    }
+
+    /** A D17 landing pad. A destructor may throw while an earlier argument's exception is in flight. */
+    @Operation
+    @ConstantOperand(type = Temporaries.class)
+    public static final class UnwindTemps {
+        @Specialization
+        public static void unwind(VirtualFrame frame, Temporaries temps, Object exception,
+                                  @Bind PhpBytecodeRootNode root, @Bind BytecodeNode bytecode) {
+            var pending = (AbstractTruffleException) exception;
+            for (int id : temps.indices) {
+                try {
+                    ReleaseTemp.release(frame, root.temporaries[id], id, root, bytecode);
+                } catch (PhpThrowable next) {
+                    chainDuringUnwind(next, pending);
+                    pending = next;
+                }
+            }
+            throw pending;
+        }
+    }
+
+    @TruffleBoundary
+    private static void chainDuringUnwind(PhpThrowable next, AbstractTruffleException pending) {
+        if (pending instanceof PhpThrowable previous) next.duringUnwind(previous);
     }
 
     /** A statement's end, emitted only with -Dphp.rc.audit.every=n: the count audit's point (Census.auditPoint). */
@@ -3287,6 +3464,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            prepareReturn(call.discardReturn, callNode.getCallTarget(), arguments);
             return callResult(callNode.call(arguments));
         }
 
@@ -3294,7 +3472,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object indirect(CallInfo call, PhpFunction function,
                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                       @Cached IndirectCallNode callNode) {
-            return callResult(callNode.call(function.getCallTarget(), arguments));
+            var target = function.getCallTarget();
+            prepareReturn(call.discardReturn, target, arguments);
+            return callResult(callNode.call(target, arguments));
         }
     }
 
@@ -3651,6 +3831,16 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
             }
             Refcount.toBuiltin(function, value);
             return value;
+        }
+    }
+
+    /** Before the send owns the result, copy a returned reference's value for a by-value parameter. */
+    @Operation
+    @ConstantOperand(type = int.class)
+    public static final class IrCallArgument {
+        @Specialization
+        public static Object prepare(int index, PhpFunction function, Object result) {
+            return function.isByRef(index) && !function.isPreferRef() ? result : callResult(result);
         }
     }
 
@@ -4722,6 +4912,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                     @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                     @Cached("function") PhpFunction cachedFunction,
                                     @Cached("create(cachedFunction.getCallTarget())") DirectCallNode callNode) {
+            prepareReturn(site.discardReturn, callNode.getCallTarget(), arguments);
             arguments[PhpFunction.ARG_THIS] = cachedFunction.isStatic() ? null : receiver;
             arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             if (site.receiver == MethodSite.COUNTED) {
@@ -4742,6 +4933,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static Object indirect(MethodSite site, boolean keepRef, PhpObject receiver, PhpFunction function,
                                       @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments,
                                       @Shared @Cached IndirectCallNode callNode) {
+            prepareReturn(site.discardReturn, function.getCallTarget(), arguments);
             arguments[PhpFunction.ARG_THIS] = function.isStatic() ? null : receiver;
             arguments[PhpFunction.ARG_STATIC] = receiver.getPhpClass();
             if (site.receiver == MethodSite.COUNTED) {
@@ -5347,6 +5539,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
 
         /** NEW's result: the temporary holds the object's first count, before the constructor runs. */
         private static PhpObject owned(PhpObject object) {
+            object.beginConstruction();
             object.addRef();
             return object;
         }
@@ -5384,7 +5577,8 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                        @Cached("create(cachedConstructor.getCallTarget())") DirectCallNode callNode) {
             arguments[PhpFunction.ARG_THIS] = object;
             arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
-            callNode.call(arguments);
+            prepareReturn(true, callNode.getCallTarget(), arguments);
+            discard(callNode.call(arguments));
             return object;
         }
 
@@ -5394,7 +5588,9 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
                                          @Cached IndirectCallNode callNode) {
             arguments[PhpFunction.ARG_THIS] = object;
             arguments[PhpFunction.ARG_STATIC] = object.getPhpClass();
-            callNode.call(constructor.getCallTarget(), arguments);
+            var target = constructor.getCallTarget();
+            prepareReturn(true, target, arguments);
+            discard(callNode.call(target, arguments));
             return object;
         }
 
@@ -5402,6 +5598,11 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
         public static PhpObject withoutConstructor(PhpObject object, PhpFunction constructor,
                                                    @Variadic(startOffset = PhpFunction.ARG_FIRST) Object[] arguments) {
             return object;
+        }
+
+        static void discard(Object result) {
+            if (result instanceof PhpArray array) array.releaseTemporary();
+            else Refcount.dec(result);
         }
 
         public static boolean isByValue(PhpFunction function) {
@@ -7086,9 +7287,7 @@ public abstract class PhpBytecodeRootNode extends RootNode implements BytecodeRo
     public static final class ReleaseInFlight {
         @Specialization
         public static void release(Object exception) {
-            if (exception instanceof PhpException thrown && thrown.takeCount()) {
-                Refcount.dec(thrown.getThrowable());
-            }
+            PhpException.releaseInFlight(exception);
         }
     }
 

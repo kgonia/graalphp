@@ -1,0 +1,4 @@
+/fixtures/trace.php:4:37:prior
+#0 /fixtures/trace.php(8): allocateException('message')
+#1 /fixtures/trace.php(12): Caller->run()
+#2 {main}

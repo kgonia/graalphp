@@ -31,6 +31,10 @@ public final class PhpException extends PhpThrowable {
         return held;
     }
 
+    public static void releaseInFlight(Object exception) {
+        if (exception instanceof PhpException thrown && thrown.takeCount()) Refcount.dec(thrown.throwable);
+    }
+
     @TruffleBoundary
     private static String messageOf(PhpObject throwable) {
         return String.valueOf(throwable.getProperty("message"));

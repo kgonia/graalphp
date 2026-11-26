@@ -177,6 +177,7 @@ public final class PhpClass {
     private Map<Object, String> casesByValue;
 
     @CompilationFinal private PhpFunction constructor;
+    @CompilationFinal private PhpFunction destructor;
 
     /**
      * The zend_object_handlers a built-in class replaces, as ext/curl's classes do: get_constructor's Error for
@@ -222,6 +223,7 @@ public final class PhpClass {
             hooks = parent.hooks == null ? null : new LinkedHashMap<>(parent.hooks);
             finalProperties = parent.finalProperties == null ? null : new HashSet<>(parent.finalProperties);
             constructor = parent.constructor;
+            destructor = parent.destructor;
         }
     }
 
@@ -299,6 +301,7 @@ public final class PhpClass {
         for (Map.Entry<String, PhpFunction> method : iface.methods.entrySet()) {
             methods.putIfAbsent(method.getKey(), method.getValue());
         }
+        if (destructor == null) destructor = iface.destructor;
     }
 
     /** Records a trait this class imports members from: the trait is part of the class's key. */
@@ -321,6 +324,8 @@ public final class PhpClass {
         methods.put(key, method);
         if (key.equals("__construct")) {
             constructor = method;
+        } else if (key.equals("__destruct")) {
+            destructor = method;
         }
     }
 
@@ -521,6 +526,8 @@ public final class PhpClass {
     public PhpFunction getConstructor() {
         return constructor;
     }
+
+    public boolean hasDestructor() { return destructor != null; }
 
     public void addConstant(String constantName, Object valueOrThunk) {
         addConstant(constantName, valueOrThunk, PropertyDecl.PUBLIC, null);

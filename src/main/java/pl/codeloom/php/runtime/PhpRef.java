@@ -16,9 +16,10 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * runtime can't see go away (an outer array no longer referenced, a reference no variable is bound to) leave
  * counts higher, never lower: such a reference stays shared, as it would in php-src until the holder is freed.
  */
-public final class PhpRef {
-    private Object value;
+public final class PhpRef extends pl.codeloom.php.ir.OwnedSlot<Void> {
     private int bindings;
+    private boolean wasReference;
+    public boolean wasReference() { return wasReference; }
     /**
      * Every binding has gone: php-src would have freed the reference, so it no longer holds its array (whose own
      * references then lose this holder's count). Binding it again (an array that held it gains a holder) takes
@@ -48,34 +49,25 @@ public final class PhpRef {
         return ref;
     }
 
-    public Object get() {
-        return value;
-    }
-
-    /** Stores a value; arrays count this ref as one more holder. */
-    public void set(Object newValue) {
-        Object old = value;
-        boolean holds = !released;
-        if (holds && newValue instanceof PhpArray array) {
-            array.addHolder();
-        }
-        value = newValue;
-        if (holds && old instanceof PhpArray array && old != newValue) {
-            array.removeHolder();
-        }
-        if (holds && (newValue instanceof PhpObject || old instanceof PhpObject)) {
-            countObjects(newValue, old);
-        }
-    }
-
-    /**
-     * set()'s counts of objects, out of line: the callers that compile it (writes through a reference with no node
-     * of their own) mostly store arrays and scalars, and an inlined release is two boundary calls.
-     */
     @TruffleBoundary
-    private static void countObjects(Object newValue, Object old) {
-        Refcount.inc(newValue);
-        Refcount.dec(old);
+    public void set(Object newValue) {
+        replace(null, newValue);
+    }
+
+    @Override
+    protected void retain(Void unused, Object value) {
+        if (!released) {
+            if (value instanceof PhpArray array) array.addHolder();
+            Refcount.inc(value);
+        }
+    }
+
+    @Override
+    protected void release(Void unused, Object value) {
+        if (!released) {
+            if (value instanceof PhpArray array) array.removeHolder();
+            Refcount.dec(value);
+        }
     }
 
     /**
@@ -119,6 +111,7 @@ public final class PhpRef {
 
     /** A variable is now bound to this reference, or an array element made it. */
     public void bind() {
+        if (bindings == 1) wasReference = true;
         if (bindings++ == 0 && released) {
             takeBack();
         }

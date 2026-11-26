@@ -1,0 +1,15 @@
+replaced
+consume:file
+drop:file
+body
+replaced
+consume:local
+drop:local
+body
+replaced
+consume:returned
+drop:returned
+body
+replaced
+method:receiver
+drop:receiver

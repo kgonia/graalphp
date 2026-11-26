@@ -1,0 +1,4 @@
+
+Fatal error: Cannot use "int" as a class name as it is reserved in /fixtures/reserved.php on line 2
+Stack trace:
+#0 {main}

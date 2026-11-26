@@ -17,9 +17,9 @@ public abstract class AstBody {
 
     /**
      * The compile-time diagnostics of the body, nested bodies too, as the check that left it unread found them
-     * (JumpChecks.passes); none if it wasn't checked so.
+     * (JumpChecks.passes), or null when the file check must examine the body.
      */
     public java.util.List<pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic> compileDiagnostics() {
-        return java.util.List.of();
+        return null;
     }
 }

@@ -1,0 +1,8 @@
+
+Warning: Undefined variable $missing in /fixtures/operations.php on line 4
+
+Warning: Undefined property: Box::$missing in /fixtures/operations.php on line 6
+café
+printable
+Object of class Box could not be converted to string
+9007199254740995

@@ -1,0 +1,4 @@
+drop:inner1
+drop:inner2
+drop:outer
+outer/inner2/inner1/boom

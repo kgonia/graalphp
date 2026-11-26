@@ -742,6 +742,9 @@ public final class BytecodeTranslator {
             names = declaredNames;
             constants = constantsTranslator();
             Ast statements = new Ast("AST_STMT_LIST", 0, file.line, file.endLine, body, null);
+            var namesInFile = new java.util.LinkedHashSet<String>();
+            collectVariables(statements, namesInFile);
+            if (!namesInFile.isEmpty()) b.emitAttachGlobals((String[]) made(() -> namesInFile.toArray(String[]::new)));
             entries(statements);
             if (entering != null) {
                 b.beginStoreLocal(entering);
@@ -1243,7 +1246,7 @@ public final class BytecodeTranslator {
                     case "AST_ASSIGN_OP" -> {
                         if (node.flags != 260) {
                             BytecodeLocal compounded = variable(target, "compound assignment to");
-                            if (node.flags == 8) {
+                            if (node.flags == 8 && !loops.isEmpty()) {
                                 b.beginAppendVarStatement(compounded, appender(compounded));
                                 expression(node.get("expr"));
                                 b.endAppendVarStatement();
@@ -2104,6 +2107,12 @@ public final class BytecodeTranslator {
             b.emitLoadLocal(thrown);
             b.endCatchMatches();
             b.beginBlock();
+            b.beginTryFinally(() -> {
+                b.beginReleaseInFlight();
+                b.emitLoadLocal(exception);
+                b.endReleaseInFlight();
+            });
+            b.beginBlock();
             if (target != null) {
                 b.beginWriteVarStatement(target);
                 b.emitLoadLocal(thrown);
@@ -2114,9 +2123,8 @@ public final class BytecodeTranslator {
                 kept.ref(true);
                 b.endWriteRef();
             }
-            b.beginReleaseInFlight();
-            b.emitLoadLocal(exception);
-            b.endReleaseInFlight();
+            b.endBlock();
+            b.endTryFinally();
             statements(handler.node("stmts"));
             b.endBlock();
             catchClauses(catches, index + 1, exception, thrown);
@@ -2622,7 +2630,7 @@ public final class BytecodeTranslator {
                         break;
                     }
                     BytecodeLocal compounded = variable(node.node("var"), "compound assignment to");
-                    if (node.flags == 8) {
+                    if (node.flags == 8 && !loops.isEmpty()) {
                         b.beginAppendVar(compounded, appender(compounded));
                         expression(node.get("expr"));
                         b.endAppendVar();
@@ -6375,38 +6383,20 @@ public final class BytecodeTranslator {
                 b.emitDeclareAnonymousClass(anonymous);
             }
             Ast args = node.node("args");
+            BytecodeLocal construction = temporary();
+            b.beginFinishConstruction(construction);
             NamedSite named = namedSite(args, true);
+            boolean spread = named == null && unpacks(args);
+            boolean needsCallee = named != null || spread || argumentsNeedCallee(args);
             if (named != null) {
                 b.beginConstructNamed(named);
-                b.beginBindStackValue();
-                b.beginInstantiate();
-                if (anonymous != null) {
-                    b.emitResolveClass(classSite(anonymous.getName()));
-                } else {
-                    classRef(node.get("class"));
-                }
-                b.endInstantiate();
-                StackValue object = b.endBindStackValue();
-                b.beginBindStackValue();
-                b.beginResolveConstructor();
-                b.emitLoadStackValue(object);
-                b.endResolveConstructor();
-                StackValue callee = b.endBindStackValue();
-                namedArguments(args, named, callee);
-                b.endConstructNamed();
-                if (anonymous != null) {
-                    b.endBlock();
-                }
-                return;
-            }
-            boolean spread = unpacks(args);
-            boolean needsCallee = spread || argumentsNeedCallee(args);
-            if (spread) {
+            } else if (spread) {
                 b.beginConstructSpread();
             } else {
                 b.beginConstruct();
             }
             b.beginBindStackValue();
+            b.beginStoreTemp(construction, tempIndex.get(construction));
             b.beginInstantiate();
             if (anonymous != null) {
                 b.emitResolveClass(classSite(anonymous.getName()));
@@ -6414,22 +6404,24 @@ public final class BytecodeTranslator {
                 classRef(node.get("class"));
             }
             b.endInstantiate();
+            b.endStoreTemp(true);
             StackValue object = b.endBindStackValue();
             StackValue calleeValue = callee(needsCallee, () -> {
                 b.beginResolveConstructor();
                 b.emitLoadStackValue(object);
                 b.endResolveConstructor();
             });
-            if (spread) {
+            if (named != null) {
+                namedArguments(args, named, calleeValue);
+                b.endConstructNamed();
+            } else if (spread) {
                 spreadArguments(args, calleeValue, true);
-            } else {
-                arguments(args, calleeValue, false);
-            }
-            if (spread) {
                 b.endConstructSpread();
             } else {
+                arguments(args, calleeValue, false);
                 b.endConstruct();
             }
+            b.endFinishConstruction();
             if (anonymous != null) {
                 b.endBlock();
             }

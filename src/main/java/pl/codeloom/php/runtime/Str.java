@@ -99,20 +99,7 @@ public final class Str {
      * String.toLowerCase would fold other letters too, and by the default locale.
      */
     public static String lower(String s) {
-        int i = 0;
-        while (i < s.length() && !(s.charAt(i) >= 'A' && s.charAt(i) <= 'Z')) {
-            i++;
-        }
-        if (i == s.length()) {
-            return s;
-        }
-        char[] chars = s.toCharArray();
-        for (; i < chars.length; i++) {
-            if (chars[i] >= 'A' && chars[i] <= 'Z') {
-                chars[i] += 'a' - 'A';
-            }
-        }
-        return new String(chars);
+        return pl.codeloom.php.ir.AsciiCase.lower(s);
     }
 
     /** Uppercases ASCII letters only (zend_str_toupper). */

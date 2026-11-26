@@ -387,6 +387,11 @@ public final class Builtins {
         return List.of(
                 registry.method("Exception", "__construct", false, arguments -> {
                     PhpObject self = (PhpObject) arguments[PhpFunction.ARG_THIS];
+                    Object previous = Args.has(arguments, 2) ? Args.get(arguments, 2) : PhpNull.NULL;
+                    if (previous != PhpNull.NULL && !(previous instanceof PhpObject obj && obj.getPhpClass().isSubclassOf("throwable"))) {
+                        String owner = self.getPhpClass().isSubclassOf("error") ? "Error" : "Exception";
+                        throw Args.typeError(owner + "::__construct", 3, "previous", "?Throwable", previous);
+                    }
                     if (Args.has(arguments, 0)) {
                         self.setProperty("message", Args.str(arguments, 0));
                     }

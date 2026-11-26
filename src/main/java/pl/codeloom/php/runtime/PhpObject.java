@@ -78,6 +78,9 @@ public final class PhpObject extends DynamicObject {
         super(shape);
         this.phpClass = phpClass;
         this.id = id;
+        if (Refcount.DESTRUCTORS && phpClass.hasDestructor()) {
+            PhpContext.get(null).trackDestructor(this);
+        }
         if (Census.AUDIT) {
             Census.track(this);
         }
@@ -85,6 +88,11 @@ public final class PhpObject extends DynamicObject {
 
     /** The reference count (see {@link Refcount}): the slots and owning temporaries holding this object. */
     private int rc;
+    private boolean constructing;
+
+    public void beginConstruction() { constructing = true; }
+    public void finishConstruction() { constructing = false; }
+    boolean isConstructing() { return constructing; }
     /** The cycle collector's state: 0, or {@link #BUFFERED} once the object was a possible root (php-src's GC_INFO). */
     private int gcInfo;
     private static final int BUFFERED = 1;
@@ -145,6 +153,11 @@ public final class PhpObject extends DynamicObject {
         boolean was = (gcInfo & DESTRUCTOR_CALLED) != 0;
         gcInfo |= DESTRUCTOR_CALLED;
         return was;
+    }
+
+    public void suppressDestructor() {
+        markDestructorCalled();
+        if (getPhpClass().hasDestructor()) pl.codeloom.php.PhpContext.get(null).forgetDestructor(this);
     }
 
     /** Whether its destructor ran or won't run. */
@@ -752,6 +765,10 @@ public final class PhpObject extends DynamicObject {
             throw new PhpError("Typed property " + PhpClass.printed(phpClass.declaringClassName(decl)) + "::$" + Str.keyText(name)
                     + " must not be accessed before initialization");
         }
+        pl.codeloom.php.builtins.ErrorFunctions.raise(pl.codeloom.php.PhpContext.get(site),
+                pl.codeloom.php.builtins.ErrorFunctions.E_WARNING,
+                Str.of("Undefined property: " + phpClass.getName() + "::$" + Str.keyText(name)),
+                site.getRootNode() == null ? SourceLocation.current() : SourceLocation.of(site));
         return PhpNull.NULL;
     }
 

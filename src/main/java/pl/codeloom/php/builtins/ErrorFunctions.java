@@ -11,6 +11,7 @@ import pl.codeloom.php.runtime.Convert;
 import pl.codeloom.php.runtime.PhpArray;
 import pl.codeloom.php.runtime.PhpBailout;
 import pl.codeloom.php.runtime.PhpError;
+import pl.codeloom.php.runtime.PhpException;
 import pl.codeloom.php.runtime.PhpNull;
 import pl.codeloom.php.runtime.PhpObject;
 import pl.codeloom.php.runtime.PhpRef;
@@ -158,6 +159,7 @@ public final class ErrorFunctions {
     public static PhpBailout fatal(PhpContext context, int type, TruffleString message, SourceLocation at, int skip) {
         assert (type & E_FATAL_ERRORS & NOT_USER_HANDLED) == type : type;
         report(context, type, message, at, fatalBacktrace(context, type, skip), false);
+        context.markDestructorsCalled();
         return new PhpBailout();
     }
 
@@ -172,6 +174,7 @@ public final class ErrorFunctions {
         exceptionError(context, pending.toThrowable(context), E_WARNING);
         context.errors().fatalBacktrace = null;
         report(context, type, message, at, null, false);
+        context.markDestructorsCalled();
         return new PhpBailout();
     }
 
@@ -246,6 +249,7 @@ public final class ErrorFunctions {
                 response.setStatus(500);
             }
             if (bail) {
+                context.markDestructorsCalled();
                 throw new PhpBailout();
             }
         }
@@ -335,16 +339,19 @@ public final class ErrorFunctions {
                 state.exceptionHandler = state.exceptionHandlers.pop();
             }
         } catch (PhpThrowable thrown) {
-            exceptionError(context, thrown.toThrowable(context), E_ERROR);
+            try { exceptionError(context, thrown.toThrowable(context), E_ERROR); }
+            finally { PhpException.releaseInFlight(thrown); }
         } catch (PhpBailout ended) {
             // reported where it was raised
+        } finally {
+            PhpException.releaseInFlight(exception);
         }
     }
 
-    /** An exception thrown out of code the runtime called with no PHP frame below (a shutdown function). */
-    @TruffleBoundary
-    public static void uncaughtInternal(PhpContext context, PhpThrowable exception) {
-        exceptionError(context, exception.toThrowable(context), E_ERROR);
+    public static boolean handleShutdownException(PhpContext context, PhpThrowable exception) {
+        if (context.errors().exceptionHandler == PhpNull.NULL) return false;
+        uncaught(context, exception);
+        return true;
     }
 
     /**

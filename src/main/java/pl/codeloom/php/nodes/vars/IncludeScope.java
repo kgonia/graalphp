@@ -33,7 +33,7 @@ public class IncludeScope {
     private final String classScope;
     private final Map<String, LocalVarNode> places = new HashMap<>();
     /** Variables of the call that the function has no slot for. */
-    private final Map<String, PhpRef> others = new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, PhpRef> others = new java.util.LinkedHashMap<>();
 
     public IncludeScope(MaterializedFrame frame, Map<String, Integer> slots, String classScope) {
         this.frame = frame;
@@ -201,9 +201,6 @@ public class IncludeScope {
     /** The call ends: the variables it has no slot for give up their values (php-src destroys the table). */
     @TruffleBoundary
     public void release() {
-        for (PhpRef ref : others.values()) {
-            ref.unbind();
-        }
-        others.clear();
+        while (!others.isEmpty()) others.pollFirstEntry().getValue().unbind();
     }
 }

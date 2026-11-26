@@ -20,7 +20,14 @@ public final class CallInfo implements Backtrace.CallSite {
     private final int site;
     private final boolean frameless;
 
+    final boolean discardReturn;
+
     public CallInfo(String displayName, int id, int fallbackId, int site, boolean frameless) {
+        this(displayName, id, fallbackId, site, frameless, false);
+    }
+
+    CallInfo(String displayName, int id, int fallbackId, int site, boolean frameless, boolean discardReturn) {
+        this.discardReturn = discardReturn;
         this.displayName = displayName;
         this.id = id;
         this.fallbackId = fallbackId;

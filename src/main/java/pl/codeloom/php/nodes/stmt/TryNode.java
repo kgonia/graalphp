@@ -20,27 +20,12 @@ public final class TryNode {
     public static void setPrevious(PhpContext context, PhpThrowable thrown, PhpThrowable pending) {
         PhpObject exception = thrown.toThrowable(context);
         PhpObject previous = pending.toThrowable(context);
-        if (exception == previous) {
-            return;
-        }
-        PhpObject current = exception;
-        do {
-            for (Object ancestor = previousOf(previous); ancestor instanceof PhpObject object;
-                 ancestor = previousOf(object)) {
-                if (object == current) {
-                    return;
-                }
-            }
-            if (!(previousOf(current) instanceof PhpObject next)) {
-                current.setProperty("previous", previous);
-                return;
-            }
-            current = next;
-        } while (current != previous);
+        PhpObject tail = pl.codeloom.php.ir.PhpExceptionChain.appendPoint(exception, previous, TryNode::previousOf);
+        if (tail != null) tail.setProperty("previous", previous);
     }
 
-    private static Object previousOf(PhpObject exception) {
-        return PhpRef.deref(exception.getProperty("previous"));
+    private static PhpObject previousOf(PhpObject exception) {
+        return PhpRef.deref(exception.getProperty("previous")) instanceof PhpObject obj ? obj : null;
     }
 
     @TruffleBoundary

@@ -45,7 +45,14 @@ public final class MethodSite {
         this(name, forwarding, UNCOUNTED);
     }
 
+    final boolean discardReturn;
+
     public MethodSite(String name, boolean forwarding, int receiver) {
+        this(name, forwarding, receiver, false);
+    }
+
+    MethodSite(String name, boolean forwarding, int receiver, boolean discardReturn) {
+        this.discardReturn = discardReturn;
         this.name = name;
         this.lowerName = Str.lower(name);
         this.calledName = Str.of(name);

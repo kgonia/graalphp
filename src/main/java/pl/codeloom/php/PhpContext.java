@@ -13,6 +13,7 @@ import pl.codeloom.php.builtins.Builtins;
 import pl.codeloom.php.builtins.ErrorFunctions;
 import pl.codeloom.php.builtins.Ini;
 import com.oracle.truffle.api.nodes.RootNode;
+import pl.codeloom.php.ir.D17Shutdown;
 import pl.codeloom.php.parser.Ast;
 import pl.codeloom.php.parser.AstReader;
 import pl.codeloom.php.parser.Translator;
@@ -27,6 +28,8 @@ import pl.codeloom.php.runtime.PhpError;
 import pl.codeloom.php.runtime.PhpFunction;
 import pl.codeloom.php.runtime.PhpGenerator;
 import pl.codeloom.php.runtime.PhpRef;
+import pl.codeloom.php.runtime.PhpObject;
+import pl.codeloom.php.runtime.Refcount;
 import pl.codeloom.php.runtime.PhpThrowable;
 import pl.codeloom.php.runtime.Phases;
 import pl.codeloom.php.runtime.RefIteration;
@@ -41,6 +44,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -110,7 +115,9 @@ public final class PhpContext {
     private final Map<String, String> constantNames = new HashMap<>();
     /** The defined constants by their name's language-level id (null: not defined here). */
     private Object[] constantSlots = new Object[256];
-    private final Map<String, PhpRef> globals = new HashMap<>();
+    private final LinkedHashMap<String, PhpRef> globals = new LinkedHashMap<>();
+    private final LinkedHashSet<PhpObject> destructibles = new LinkedHashSet<>();
+
     private final Set<String> included = new HashSet<>();
     /** The files whose compile diagnostics this request raised: OPcache compiles a file once and doesn't replay them. */
     private final Set<Object> compiled = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
@@ -763,6 +770,13 @@ public final class PhpContext {
 
     // ---- global variables ----
 
+    private final java.util.Set<String> attachedGlobals = new java.util.HashSet<>();
+
+    @TruffleBoundary
+    public void attachGlobals(String[] names) {
+        for (String name : names) if (attachedGlobals.add(name)) globals.putIfAbsent(name, null);
+    }
+
     private int globalsVersion;
 
     /** The global variable's reference, created (holding null) if absent: `global $x`, top-level code. */
@@ -792,7 +806,7 @@ public final class PhpContext {
 
     @TruffleBoundary
     public void unsetGlobal(String name) {
-        PhpRef old = globals.remove(name);
+        PhpRef old = attachedGlobals.contains(name) ? globals.put(name, null) : globals.remove(name);
         if (old != null) {
             old.unbind();
         }
@@ -857,6 +871,34 @@ public final class PhpContext {
         });
     }
 
+    @TruffleBoundary
+    public void trackDestructor(PhpObject object) { destructibles.add(object); }
+    @TruffleBoundary
+    public void forgetDestructor(PhpObject object) { destructibles.remove(object); }
+
+    /** zend_objects_store_mark_destructed marks only the objects alive at the bailout. */
+    @TruffleBoundary
+    public void markDestructorsCalled() {
+        while (!destructibles.isEmpty()) destructibles.removeFirst().suppressDestructor();
+    }
+
+    private void shutdownStep(Runnable step) {
+        try { step.run(); }
+        catch (PhpThrowable thrown) {
+            if (!ErrorFunctions.handleShutdownException(this, thrown)) {
+                markDestructorsCalled();
+                throw thrown;
+            }
+        }
+    }
+
+    private void shutdownDestructors() {
+        if (!destructibles.isEmpty()) D17Shutdown.destruct(globals,
+                ref -> !ref.wasReference() && ref.get() instanceof PhpObject o && o.refcount() == 1,
+                key -> shutdownStep(() -> unsetGlobal(key)), destructibles,
+                obj -> shutdownStep(() -> Refcount.shutdownDestructor(obj)));
+    }
+
     /** exit()/die(): shutdown functions run, output is flushed, and the context closes with the status. */
     @TruffleBoundary
     public void exit(int status) {
@@ -864,6 +906,7 @@ public final class PhpContext {
             pl.codeloom.php.runtime.Refcount.audit(this, "exit");
         }
         runShutdownFunctions();
+        guarded(this::shutdownDestructors);
         guarded(this::destroyGenerators);
         destroyFibers();
         endRequest();
@@ -881,6 +924,7 @@ public final class PhpContext {
             pl.codeloom.php.runtime.Refcount.audit(this, "end of script");
         }
         runShutdownFunctions();
+        guarded(this::shutdownDestructors);
         guarded(this::destroyGenerators);
         destroyFibers();
         // an output handler's exception at the end, as php-src's zend_try around php_output_end_all
@@ -899,7 +943,7 @@ public final class PhpContext {
         try {
             step.run();
         } catch (PhpThrowable e) {
-            ErrorFunctions.uncaughtInternal(this, e);
+            ErrorFunctions.uncaught(this, e);
         } catch (PhpBailout ended) {
             // reported where it was raised
         }
@@ -1125,6 +1169,7 @@ public final class PhpContext {
     public PhpArray globalsArray() {
         PhpArray array = new PhpArray();
         for (Map.Entry<String, PhpRef> global : globals.entrySet()) {
+            if (global.getValue() == null) continue;
             array.put(pl.codeloom.php.runtime.ArrayKey.of(Str.of(global.getKey())), global.getValue().get());
         }
         return array;

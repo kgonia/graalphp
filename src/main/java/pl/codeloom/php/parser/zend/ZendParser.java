@@ -155,17 +155,16 @@ public final class ZendParser {
             if (close == null) {
                 return null;
             }
-            List<CompilerGlobals.Diagnostic> diagnostics = List.of();
+            List<CompilerGlobals.Diagnostic> diagnostics = null;
             if (check) {
                 // the body as a tree, nested bodies too, while its php-src tree is at hand: one that fails is kept
-                // so, for the file's translation to report its error where php-src's compile reaches it; one that
+                // as an unchecked range, for translation to report its error where the compile reaches it; one that
                 // passes keeps its compile diagnostics for the file's
                 Object converted = PhpAst.convertBody(decl.kind, stmts, firstDeclId, null);
                 List<CompilerGlobals.Diagnostic> found = new java.util.ArrayList<>();
-                if (!JumpChecks.passes((Ast) converted, found)) {
-                    return converted;
+                if (JumpChecks.passes((Ast) converted, found)) {
+                    diagnostics = List.copyOf(found);
                 }
-                diagnostics = List.copyOf(found);
             }
             int from = charBase + offsets.charOffset(list.braceOffset);
             int to = charBase + offsets.charOffset(close + 1);

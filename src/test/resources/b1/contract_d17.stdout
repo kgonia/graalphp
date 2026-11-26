@@ -1,0 +1,9 @@
+enter:takeRef:normal_arg:10
+destroy:normal_arg
+after_normal:a=15:r=15
+destroy:aborted_arg
+caught:boom:line=20
+after_abort:a=15
+destroy:held1
+before_end
+destroy:held2

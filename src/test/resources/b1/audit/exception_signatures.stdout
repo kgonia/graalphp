@@ -1,0 +1,3 @@
+Call to undefined method Box::missingMethod()
+Exception::__construct(): Argument #3 ($previous) must be of type ?Throwable, int given
+Exception::getMessage() expects exactly 0 arguments, 1 given

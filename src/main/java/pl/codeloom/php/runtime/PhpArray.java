@@ -201,19 +201,23 @@ public final class PhpArray implements TruffleObject {
      */
     private void releaseElements(int depth) {
         // by layout, without rawAt's dispatch per element; longs and doubles hold nothing counted
+        PhpThrowable pending = null;
         Object elements = store;
         if (elements instanceof Object[] packed) {
             for (int i = 0; i < size; i++) {
-                releaseElement(packed[i], depth);
+                try { releaseElement(packed[i], depth); }
+                catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
             }
         } else if (elements instanceof Hash hash) {
             Object[] entries = hash.entries;
             for (int i = 0; i < hash.used; i++) {
                 if (entries[2 * i] != null) {
-                    releaseElement(entries[2 * i + 1], depth);
+                    try { releaseElement(entries[2 * i + 1], depth); }
+                    catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
                 }
             }
         }
+        if (pending != null) throw pending;
     }
 
     private static void releaseElement(Object raw, int depth) {
@@ -244,6 +248,7 @@ public final class PhpArray implements TruffleObject {
         java.util.ArrayDeque<int[]> positions = new java.util.ArrayDeque<>();
         arrays.push(this);
         positions.push(new int[]{firstPosition()});
+        PhpThrowable pending = null;
         while (!arrays.isEmpty()) {
             PhpArray array = arrays.peek();
             int[] position = positions.peek();
@@ -255,23 +260,16 @@ public final class PhpArray implements TruffleObject {
             }
             position[0] = array.nextPosition(p);
             Object raw = array.rawAt(p);
-            if (raw instanceof PhpArray nested) {
-                if (nested.holders == 1 && nested.deep && nested.holdsCounted) {
-                    // its last holder goes: released in place (removeHolder's lastHolderGone)
-                    nested.holders = RELEASED;
-                    arrays.push(nested);
-                    positions.push(new int[]{nested.firstPosition()});
-                } else {
-                    nested.removeHolder();
-                }
-            } else if (raw instanceof PhpObject object) {
-                object.release();
-            } else if (raw instanceof PhpClosure closureValue) {
-                closureValue.release();
-            } else if (raw instanceof PhpRef ref) {
-                ref.unbind();
+            if (raw instanceof PhpArray nested && nested.holders == 1 && nested.deep && nested.holdsCounted) {
+                nested.holders = RELEASED;
+                arrays.push(nested);
+                positions.push(new int[]{nested.firstPosition()});
+            } else {
+                try { releaseElement(raw, RELEASE_RECURSION); }
+                catch (PhpThrowable next) { pending = next.duringUnwind(pending); }
             }
         }
+        if (pending != null) throw pending;
     }
 
     @TruffleBoundary

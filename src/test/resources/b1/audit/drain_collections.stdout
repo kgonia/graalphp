@@ -1,0 +1,7 @@
+drop:a
+drop:b
+b/a
+drop:c
+drop:d
+d/c
+done

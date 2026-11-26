@@ -210,6 +210,12 @@ public final class PhpFunction {
         return copy;
     }
 
+    /** Select the body backend while the declaration and its defaults are still private to the compiler. */
+    public void setBodyBeforePublication(Supplier<RootCallTarget> body) {
+        if (callTarget != null) throw new IllegalStateException("function already compiled");
+        factory = body;
+    }
+
     public void setDefaults(Supplier<RootCallTarget> factory) {
         this.defaultsFactory = factory;
     }

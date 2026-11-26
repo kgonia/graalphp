@@ -1,6 +1,6 @@
 package pl.codeloom.php.parser;
 
-import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.parser.zend.CompilerGlobals;
 import pl.codeloom.php.parser.zend.CompilerGlobals.Diagnostic;
 
 import java.util.ArrayList;
@@ -68,7 +68,7 @@ public final class JumpChecks {
      * Checks a file's code, a function body left unread by the Java parser being one it checked when it parsed the
      * file ({@link #passes}); throws the first error, with the diagnostics before it. The compile's diagnostics.
      */
-    static List<Diagnostic> file(Ast file) {
+    public static List<Diagnostic> file(Ast file) {
         List<Diagnostic> diagnostics = new ArrayList<>();
         try {
             opArray(file, diagnostics);
@@ -133,7 +133,7 @@ public final class JumpChecks {
             case "AST_FUNC_DECL", "AST_METHOD", "AST_CLOSURE", "AST_ARROW_FUNC", "AST_PROPERTY_HOOK" -> {
                 visitChildren(node, "stmts");
                 Object stmts = node.get("stmts");
-                if (stmts instanceof Ast || stmts instanceof ExportBody) {
+                if (stmts instanceof Ast || stmts instanceof AstBody body && body.compileDiagnostics() == null) {
                     opArray(node.body(), diagnostics);
                 } else if (stmts instanceof AstBody unread) {
                     // checked when the Java parser left it, its diagnostics kept then
@@ -163,7 +163,7 @@ public final class JumpChecks {
                 finallies = outer;
             }
             case "AST_SHELL_EXEC" -> {
-                diagnostics.add(new Diagnostic(ErrorFunctions.E_DEPRECATED, BACKTICK, node.line));
+                diagnostics.add(new Diagnostic(CompilerGlobals.E_DEPRECATED, BACKTICK, node.line));
                 visitChildren(node, null);
             }
             case "AST_BREAK", "AST_CONTINUE" -> breakOrContinue(node);

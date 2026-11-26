@@ -1,6 +1,6 @@
 package pl.codeloom.php.parser;
 
-import pl.codeloom.php.runtime.Str;
+import pl.codeloom.php.ir.AsciiCase;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -10,7 +10,7 @@ import java.util.Map;
  * there. Immutable: a namespace or use statement makes a new one, so a function body translated later resolves
  * names as at its declaration.
  */
-final class Names {
+public final class Names {
     /** php-ast AST_NAME flags. */
     static final int NAME_FQ = 0;
     static final int NAME_RELATIVE = 2;
@@ -18,7 +18,13 @@ final class Names {
     static final int USE_FUNCTION = 2;
     static final int USE_CONST = 4;
 
-    static final Names GLOBAL = new Names("", Map.of(), Map.of(), Map.of());
+    /** zend_reserved_class_names. */
+    private static final java.util.Set<String> RESERVED_CLASS_NAMES = java.util.Set.of("bool", "false", "float", "int", "null",
+            "parent", "self", "static", "string", "true", "void", "never", "iterable", "object", "mixed");
+
+    public static boolean reservedClassName(String lowerName) { return RESERVED_CLASS_NAMES.contains(lowerName); }
+
+    public static final Names GLOBAL = new Names("", Map.of(), Map.of(), Map.of());
 
     private final String namespace;
     /** Lowercase alias to fully qualified name: classes, and namespaces for qualified names. */
@@ -50,12 +56,12 @@ final class Names {
         String name = stripSlash(target);
         String as = alias != null ? alias : name.substring(name.lastIndexOf('\\') + 1);
         if (kind == USE_FUNCTION) {
-            return new Names(namespace, classes, with(functions, Str.lower(as), name), constants);
+            return new Names(namespace, classes, with(functions, AsciiCase.lower(as), name), constants);
         }
         if (kind == USE_CONST) {
             return new Names(namespace, classes, functions, with(constants, as, name));
         }
-        return new Names(namespace, with(classes, Str.lower(as), name), functions, constants);
+        return new Names(namespace, with(classes, AsciiCase.lower(as), name), functions, constants);
     }
 
     private static Map<String, String> with(Map<String, String> map, String key, String value) {
@@ -65,12 +71,12 @@ final class Names {
     }
 
     /** A name declared here (function, class, constant): prefixed with the namespace. */
-    String declared(String name) {
+    public String declared(String name) {
         return namespace.isEmpty() ? name : namespace + "\\" + name;
     }
 
     /** A class name as written (self, parent and static stay as they are). */
-    String className(String text, int flags) {
+    public String className(String text, int flags) {
         String name = stripSlash(text);
         if (flags == NAME_FQ) {
             return name;
@@ -78,7 +84,7 @@ final class Names {
         if (flags == NAME_RELATIVE) {
             return declared(name);
         }
-        String lower = Str.lower(name);
+        String lower = AsciiCase.lower(name);
         if (lower.equals("self") || lower.equals("parent") || lower.equals("static")) {
             return name;
         }
@@ -89,7 +95,7 @@ final class Names {
      * A function or constant name as written: the fully qualified name, and for an unqualified name in a
      * namespace the global name PHP falls back to at run time (else null).
      */
-    String[] functionName(String text, int flags) {
+    public String[] functionName(String text, int flags) {
         return symbolName(text, flags, functions, true);
     }
 
@@ -108,7 +114,7 @@ final class Names {
         if (name.indexOf('\\') >= 0) {
             return new String[] {qualified(name), null};
         }
-        String imported = imports.get(caseless ? Str.lower(name) : name);
+        String imported = imports.get(caseless ? AsciiCase.lower(name) : name);
         if (imported != null) {
             return new String[] {imported, null};
         }
@@ -119,7 +125,7 @@ final class Names {
     private String qualified(String name) {
         int separator = name.indexOf('\\');
         String first = separator < 0 ? name : name.substring(0, separator);
-        String imported = classes.get(Str.lower(first));
+        String imported = classes.get(AsciiCase.lower(first));
         if (imported != null) {
             return separator < 0 ? imported : imported + name.substring(separator);
         }

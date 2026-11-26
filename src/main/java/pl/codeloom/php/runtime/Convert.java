@@ -6,6 +6,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.TruffleString;
 import pl.codeloom.php.PhpContext;
 import pl.codeloom.php.builtins.ErrorFunctions;
+import pl.codeloom.php.ir.PhpFloatFormat;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -206,78 +207,9 @@ public final class Convert {
 
     // ---- numeric strings ----
 
-    private static boolean isWhitespace(int b) {
-        return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == 0x0B || b == '\f';
-    }
-
-    /**
-     * Parses a PHP numeric string as php-src's _is_numeric_string_ex does: optional leading whitespace, sign,
-     * digits, fraction and exponent, optional trailing whitespace. Returns Long or Double, or null when the
-     * string isn't numeric. With allowTrailing, a numeric prefix followed by other bytes ("12abc") also counts,
-     * as in arithmetic and (int) casts.
-     */
     @TruffleBoundary
-    public static Object parseNumber(byte[] s, boolean allowTrailing) {
-        int n = s.length;
-        int i = 0;
-        while (i < n && isWhitespace(s[i])) {
-            i++;
-        }
-        int start = i;
-        if (i < n && (s[i] == '+' || s[i] == '-')) {
-            i++;
-        }
-        int digitsStart = i;
-        while (i < n && s[i] >= '0' && s[i] <= '9') {
-            i++;
-        }
-        int intDigits = i - digitsStart;
-        boolean isDouble = false;
-        int fracDigits = 0;
-        if (i < n && s[i] == '.') {
-            int j = i + 1;
-            while (j < n && s[j] >= '0' && s[j] <= '9') {
-                j++;
-            }
-            fracDigits = j - i - 1;
-            if (intDigits > 0 || fracDigits > 0) {
-                isDouble = true;
-                i = j;
-            }
-        }
-        if (intDigits == 0 && fracDigits == 0) {
-            return null;
-        }
-        if (i < n && (s[i] == 'e' || s[i] == 'E')) {
-            int j = i + 1;
-            if (j < n && (s[j] == '+' || s[j] == '-')) {
-                j++;
-            }
-            int expStart = j;
-            while (j < n && s[j] >= '0' && s[j] <= '9') {
-                j++;
-            }
-            if (j > expStart) {
-                isDouble = true;
-                i = j;
-            }
-        }
-        int end = i;
-        while (i < n && isWhitespace(s[i])) {
-            i++;
-        }
-        if (i < n && !allowTrailing) {
-            return null;
-        }
-        String text = new String(s, start, end - start, java.nio.charset.StandardCharsets.ISO_8859_1);
-        if (!isDouble) {
-            try {
-                return Long.parseLong(text.startsWith("+") ? text.substring(1) : text);
-            } catch (NumberFormatException overflow) {
-                return Double.parseDouble(text);
-            }
-        }
-        return Double.parseDouble(text);
+    public static Object parseNumber(byte[] bytes, boolean allowTrailing) {
+        return pl.codeloom.php.ir.PhpNumericString.parse(bytes, allowTrailing);
     }
 
     /** is_numeric() and the numeric-string test of comparisons: the whole string, whitespace allowed around. */
@@ -341,7 +273,7 @@ public final class Convert {
     /** A float as echo and string conversion print it: php-src's zend_gcvt with precision=14. */
     @TruffleBoundary
     public static String doubleToString(double d) {
-        return formatDouble(d, 14);
+        return PhpFloatFormat.formatDouble(d, 14);
     }
 
     /**
@@ -372,7 +304,7 @@ public final class Convert {
             }
         }
         String digits = shortest.unscaledValue().toString();
-        return (d < 0 ? "-" : "") + gcvt(digits, shortest.precision() - shortest.scale(), 17);
+        return (d < 0 ? "-" : "") + PhpFloatFormat.gcvt(digits, shortest.precision() - shortest.scale(), 17);
     }
 
     /**
@@ -381,7 +313,7 @@ public final class Convert {
      */
     @TruffleBoundary
     public static String gcvt(double d, int precision, char exponent) {
-        String text = precision < 0 ? doubleToRepr(d) : formatDouble(d, precision);
+        String text = precision < 0 ? doubleToRepr(d) : PhpFloatFormat.formatDouble(d, precision);
         return exponent == 'E' ? text : text.replace('E', exponent);
     }
 
@@ -390,49 +322,6 @@ public final class Convert {
     public static String doubleToExport(double d) {
         String repr = doubleToRepr(d);
         return Double.isFinite(d) && repr.indexOf('.') < 0 ? repr + ".0" : repr;
-    }
-
-    private static String formatDouble(double d, int precision) {
-        if (Double.isNaN(d)) {
-            return "NAN";
-        }
-        if (Double.isInfinite(d)) {
-            return d > 0 ? "INF" : "-INF";
-        }
-        if (d == 0) {
-            return 1 / d < 0 ? "-0" : "0";
-        }
-        BigDecimal rounded = new BigDecimal(Math.abs(d)).round(new MathContext(precision, RoundingMode.HALF_EVEN));
-        String digits = rounded.unscaledValue().toString();
-        int decimalPoint = rounded.precision() - rounded.scale();
-        return (d < 0 ? "-" : "") + gcvt(digits, decimalPoint, precision);
-    }
-
-    /**
-     * Lays out significant digits as zend_gcvt does: digits "d1d2..." with the decimal point after decimalPoint
-     * digits; exponential form ("1.0E+25") when decimalPoint < -3 or > ndigit.
-     */
-    private static String gcvt(String rawDigits, int decimalPoint, int ndigit) {
-        int significant = rawDigits.length();
-        while (significant > 0 && rawDigits.charAt(significant - 1) == '0') {
-            significant--;
-        }
-        String digits = significant == 0 ? "0" : rawDigits.substring(0, significant);
-        if (decimalPoint < -3 || decimalPoint > ndigit) {
-            StringBuilder out = new StringBuilder();
-            out.append(digits.charAt(0)).append('.');
-            out.append(digits.length() > 1 ? digits.substring(1) : "0");
-            int exponent = decimalPoint - 1;
-            out.append('E').append(exponent < 0 ? '-' : '+').append(Math.abs(exponent));
-            return out.toString();
-        }
-        if (decimalPoint <= 0) {
-            return "0." + "0".repeat(-decimalPoint) + digits;
-        }
-        if (digits.length() <= decimalPoint) {
-            return digits + "0".repeat(decimalPoint - digits.length());
-        }
-        return digits.substring(0, decimalPoint) + "." + digits.substring(decimalPoint);
     }
 
     // ---- comparisons ----

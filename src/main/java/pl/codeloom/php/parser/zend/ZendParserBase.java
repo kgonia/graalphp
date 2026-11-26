@@ -261,7 +261,7 @@ public abstract class ZendParserBase {
         }
         if (value instanceof Double d) {
             // zend_double_to_str: precision=14, PHP's default (and the runtime's)
-            return pl.codeloom.php.runtime.Convert.doubleToString(d).getBytes(StandardCharsets.US_ASCII);
+            return pl.codeloom.php.ir.PhpFloatFormat.formatDouble(d, 14).getBytes(StandardCharsets.US_ASCII);
         }
         return EMPTY;
     }

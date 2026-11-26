@@ -1,0 +1,8 @@
+f(): Argument #1 ($x) could not be passed by reference
+
+Notice: Only variables should be passed by reference in /fixtures/sends.php on line 7
+f:21
+f:9007199254740993
+9007199254740994
+Too few arguments to function f(), 1 passed in /fixtures/sends.php on line 11 and exactly 2 expected
+f(): Argument #1 ($x) must be of type int, Box given, called in /fixtures/sends.php on line 13

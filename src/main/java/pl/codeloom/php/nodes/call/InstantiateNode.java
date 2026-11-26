@@ -73,12 +73,6 @@ public abstract class InstantiateNode extends Node {
                 : phpClass.instantiate();
     }
 
-    /** Where a Throwable made here was made: this `new`'s statement. */
-    @TruffleBoundary
-    private SourceLocation location() {
-        return SourceLocation.of(this);
-    }
-
     /** A Throwable's trace: the calls leading to this `new`. */
     @TruffleBoundary
     private static PhpArray trace() {
@@ -92,6 +86,8 @@ public abstract class InstantiateNode extends Node {
     @ExplodeLoop
     private PhpObject initialize(PhpClass phpClass, String[] names, Object[] defaults, int[] flags,
                                  DynamicObjectLibrary[] puts, boolean throwable, DefaultKinds kinds) {
+        // Exception allocation already needs a stack walk. Keep its property initialization out of callers.
+        if (throwable) return instantiate(phpClass, this);
         PhpObject object = new PhpObject(phpClass.getRootShape(), phpClass, PhpContext.get(this).nextObjectId());
         for (int i = 0; i < puts.length; i++) {
             Object value = defaults[i];
@@ -114,9 +110,6 @@ public abstract class InstantiateNode extends Node {
             } else {
                 puts[i].put(object, names[i], value);
             }
-        }
-        if (throwable) {
-            PhpClass.initThrowable(object, location(), trace());
         }
         return object;
     }
