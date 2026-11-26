@@ -332,6 +332,7 @@ reclaim whatever happens to B1.
   `1.00×`, `post` `1.07×`, 181-class `mega` **`1.02×` p10 / `1.06×` med**), all 4 paired p10 two-context penalties
   `≤ +4.28%`, `0–1` steady-state uncommon traps, exact 556-byte `D17` parity, `35.8–66.6 MiB` cgroup peak, and `0`
   violations in [B1Lint.java](../bench/b1-precheck/probe-b/tools/B1Lint.java).
-- **Bottom line:** **B1 (plain OpenJDK C2 `.php → .class`) + Option 1** clears the pre-check (`GO`, pending owner
-  **D19** sign-off), projected at `~1.6–1.8×` faster and `~2×` less RAM than pure PHP 8.5 at 30 concurrent requests,
-  with [b1-lint.md](b1-lint.md) enforcing the measured performance and `D17` invariants from day 1.
+- **Bottom line:** **B1 (plain OpenJDK C2 `.php → .class`) + Option 1** clears the pre-check (`GO`, recorded as
+  **[D19](decisions.md)** on 2026-11-26 using `BytecodeTranslator` as the shared frontend for both `.php → .class`
+  (primary) and live Truffle PHP (secondary)), projected at `~1.6–1.8×` faster and `~2×` less RAM than pure PHP 8.5 at
+  30 concurrent requests, with [b1-lint.md](b1-lint.md) enforcing the measured performance and `D17` invariants from day 1.

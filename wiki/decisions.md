@@ -248,3 +248,36 @@ difference; there speed and memory come first.
 **Why:** the goal is a faster drop-in PHP (D1). Copying the reference interpreter's internals where nothing can
 observe them only costs speed and memory.
 
+## D19: primary target is `.php → .class` on HotSpot C2 + Option 1 via shared `BytecodeTranslator` frontend; live Truffle PHP is secondary (2026-11-26)
+**Decision:** Shift the primary architecture from live Truffle PE (D1/D2) to **Milestone B1: `.php → .class` bytecode
+running on plain OpenJDK HotSpot C2 (`-XX:-UseJVMCICompiler`) paired with Option 1's Zero-Barrier Pure-Data Hybrid
+Bootstrap Freeze** ([bootstrap-freeze.md](bootstrap-freeze.md)), enforced by [b1-lint.md](b1-lint.md) from day 1.
+**Live Truffle PHP remains supported as the secondary goal and reference runtime**, sharing the exact same frontend:
+
+- **Shared frontend (zero new PHP transpiler):** Keep `parser/zend` (`47.3k LOC`, D14) and `BytecodeTranslator`
+  (`7,391 LOC`, covering all PHP 8.5 & `D17` lowering semantics). Decouple `BytecodeTranslator` behind a clean
+  `PhpIrBuilder` interface (`~607` flat stack-machine `begin*`/`end*`/`emit*` calls) with two backends:
+  1. **Primary (`B1ClassFileBuilder`):** Emits standard JVM `.class` bytecode via JDK 25's `java.lang.classfile` API,
+     loaded via `Lookup.defineHiddenClass` (zero Truffle classes loaded at runtime), executing on plain OpenJDK
+     HotSpot C2 + Option 1 Freeze.
+  2. **Secondary (`TruffleBuilderAdapter`):** Thin 1-line delegation to `PhpBytecodeRootNodeGen.Builder`, preserving
+     live Truffle PHP execution and existing smoke / `.phpt` / WordPress checks without duplicating PHP lowering.
+
+**Why (all pre-check gates passed):**
+- **Truffle runtime memory & IR ceiling:** Probe A2 measured `522 MB` idle RssAnon for interpreter-only Truffle
+  (`~190 MB` retained sources/ASTs/bytecode), and full `D17` pushed `WP_Query::get_posts` past HotSpot's 640 KB code
+  install limit ([alternatives.md](alternatives.md), [b1-precheck.md](b1-precheck.md)).
+- **Probe A (`shared` linkage on C2):** `208–246 MiB` code-only base (`0/10` leaked plugin loaders on reload), whereas
+  per-site `invokedynamic` failed at `455 MiB`.
+- **Option 1 (post-bootstrap freeze):** Cut 5-plugin per-request live heap from `14.94 → 2.46 MiB/req` (`-83.5%`) and
+  sped `home` up `1.63×` with `0` restored-object `D17` errors ([bootstrap-freeze.md](bootstrap-freeze.md)).
+- **Probe B (Rev 4b, open-world `.class` + real `D17` + 181-class `mega`):** Plain HotSpot C2 (`-Xmx64m`) passed every
+  kill criterion simultaneously — **`1.11×` 4-kernel geomean vs. pinned PHP 8.5.13 JIT** (`hooks` `1.40×`, `aget`
+  `1.00×`, `post` `1.07×`, `mega` `1.02×` p10 / `1.06×` med), paired p10 two-context penalties `≤ +4.28%`, `0–1`
+  steady-state uncommon traps, exact 556-byte `D17` parity, `35.8–66.6 MiB` cgroup peak (20–44% less RAM than Graal),
+  and `0` `B1Lint` violations ([bench/b1-precheck/probe-b/RESULTS.md](../bench/b1-precheck/probe-b/RESULTS.md)).
+
+**Status:** Active — supersedes D1/D2's Truffle-only primary runtime while preserving live Truffle PHP as secondary.
+Next: Milestone B1 Week 1 (`PhpIrBuilder` frontend decoupling + `B1ClassFileBuilder` + projected runtime + Gate 1 &
+`hot.php` parity).
+

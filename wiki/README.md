@@ -1,6 +1,7 @@
-# Wiki: WordPress on GraalVM (Truffle PHP)
+# Wiki: WordPress on JVM (B1 `.php → .class` + Truffle PHP)
 
-**Goal:** GraalVM makes PHP code itself faster. WordPress and its plugins run unmodified on a PHP implementation written as a Truffle language, and beat PHP 8.4 with OPcache JIT. See [decisions.md](decisions.md), D1.
+**Primary Goal ([D19](decisions.md)):** Compile unmodified WordPress and plugins via `.php → .class` (`java.lang.classfile`) on **plain OpenJDK HotSpot C2 + Option 1 Bootstrap Freeze**, reusing `parser/zend` + `BytecodeTranslator` as the shared frontend, to beat PHP 8.5 (`php-fpm` + OPcache tracing JIT) on both speed and memory.
+**Secondary Goal ([D19](decisions.md)):** Preserve live hot-runtime Truffle PHP execution through the same shared `BytecodeTranslator` frontend. *(Original Truffle-only goal: [D1](decisions.md).)*
 
 ## Pages
 
