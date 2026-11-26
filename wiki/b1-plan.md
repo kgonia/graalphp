@@ -157,3 +157,12 @@ Codebase census (verified independently by both Fable 5.2 and Astra 6.2):
   `≤ 400 MiB`) → **served 5-plugin WordPress + WooCommerce** with **Option 1 Freeze** (`get_option()` read-set
   invalidation + async snapshot rebuilds) at `16 / 25 / 30` concurrent clients against the best `php-fpm` pool meeting
   the same throughput and p99 latency.
+
+---
+
+## 5. Progress & Test State Log
+
+| Milestone | Commit | Test & Verification State |
+|---|---|---|
+| **Week 1, Days 1–2** *(Dual-backend structured PHP IR seam + `TruffleIrAdapter` + Truffle-free B1 `.class` emitter + `B1Lint` `B1-01..B1-08`)* | `de97f19` | **DONE** (2 rounds of read-only adversarial audits passed): **90/90** Maven tests green on GraalVM 25.4.4.1.1 (**18/18** `CompilationTest`, **8/8** `ZendParserCorpusTest`); **24/24** PHP 8.5.13 differential fixtures byte-identical (`contract_d17.php` + 23 audit fixtures); **222/222** previously passing Truffle smoke tests green (`444/444` 1-ctx + 3-ctx shared comparisons, 0 regressions); **5,730 / 7,341** (`78.1%` strict, **5,841 / `79.6%`** lenient) php-src `.phpt` passing (`Zend/tests` `3,612/4,963`, `ext/standard` `1,681/1,891`, `ext/pcre` `133/145`, `ext/json` `67/78`, `tests/lang` `237/264`, **0** IR/adapter internal errors); standalone stock Temurin OpenJDK 25.0.4 (`-XX:-UseJVMCICompiler`, **0** Truffle JARs): **0** `B1Lint` violations, **0** Truffle classes loaded, **0** live destructibles, `166/166` B matching PHP 8.5.13. |
+| **Week 1, Days 3–5** *(Real Gate 1 kernels `hooks`/`aget`/`post`/`mega` + in-process `eval()` closure + `ConstantDynamic` side-blob literals + forced-threshold `goto`/`finally` outlining)* | *in progress* | Target: compile and execute real PHP kernels + `eval()` closure on plain OpenJDK 25.0.4 (`0` Truffle loads, `0` `B1Lint` violations), prove split-vs-unsplit `goto`/`finally`/`D17` outlining equivalence, and keep `mvn test` 100% green. |
