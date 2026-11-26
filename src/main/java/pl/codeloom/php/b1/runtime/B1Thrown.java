@@ -11,14 +11,20 @@ public final class B1Thrown extends RuntimeException {
         exception = (B1Object) B1Object.retain(obj);
     }
 
+    public static B1Thrown from(B1RequestContext ctx,Object value) {
+        if (value instanceof B1Object obj && throwable(obj.type)) return new B1Thrown(obj);
+        return ctx.error("Error","Can only throw objects that implement Throwable");
+    }
+
     static boolean throwable(String type) { return switch (type) {
-        case "exception", "error", "typeerror", "argumentcounterror", "divisionbyzeroerror", "valueerror", "parseerror", "compileerror" -> true;
+        case "exception", "closedgeneratorexception", "error", "typeerror", "argumentcounterror", "divisionbyzeroerror", "valueerror", "fibererror", "parseerror", "compileerror" -> true;
         default -> false;
     }; }
 
     public static boolean matches(Throwable pending, String type) {
         return pending instanceof B1Thrown thrown && (thrown.exception.type.equals(type) || type.equals("throwable")
-                || type.equals("error") && !thrown.exception.type.equals("exception")
+                || type.equals("exception") && thrown.exception.type.equals("closedgeneratorexception")
+                || type.equals("error") && !thrown.exception.type.equals("exception") && !thrown.exception.type.equals("closedgeneratorexception")
                 || type.equals("compileerror") && thrown.exception.type.equals("parseerror")
                 || type.equals("typeerror") && thrown.exception.type.equals("argumentcounterror"));
     }

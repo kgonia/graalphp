@@ -1,0 +1,48 @@
+created
+enter before
+0=1
+2
+sum 30
+make op
+mid
+op+sent
+drop op
+seven
+8=eight
+bool(false)
+int(30)
+a=A
+4=B
+make child
+key=child
+forward yes
+throw here
+caught boom
+inner finally
+drop child
+inner return returned
+outer finally
+parent
+make child
+abandon
+inner finally
+drop child
+outer finally
+enter abandon
+sum 7
+make op
+drop op
+end
+make yielded
+after yield
+value finally
+closed
+drop yielded
+make param
+still new
+drop param
+make child
+shutdown
+inner finally
+drop child
+outer finally

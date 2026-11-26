@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 /** A request-local instance. The registry tracks destructors independently of the JVM garbage collector. */
-public final class B1Object implements B1GcNode {
+public non-sealed class B1Object implements B1GcNode {
     final long id;
     final String type;
     private final B1RequestContext.ClassDef definition;
@@ -34,12 +34,19 @@ public final class B1Object implements B1GcNode {
     boolean accessible(B1RequestContext ctx,String name) {
         return !definition.visibility().containsKey(name) || type.equals(ctx.scope());
     }
+    boolean allowDynamicProperties() { return true; }
     public B1Ref property(B1RequestContext ctx,String name) {
         if (!accessible(ctx,name)) {
             String modifier = definition.visibility().get(name) == 2 ? "protected" : "private";
             throw ctx.error("Error","Cannot access " + modifier + " property " + definition.name() + "::$" + name);
         }
-        return properties.computeIfAbsent(name,unused -> new B1Ref());
+        B1Ref existing = properties.get(name);
+        if (existing != null) return existing;
+        if (!allowDynamicProperties())
+            throw ctx.error("Error","Cannot create dynamic property " + definition.name() + "::$" + name);
+        B1Ref created = new B1Ref();
+        properties.put(name,created);
+        return created;
     }
     B1Array publicProperties(B1RequestContext ctx) {
         B1Array result = new B1Array(properties.size());
@@ -90,6 +97,7 @@ public final class B1Object implements B1GcNode {
     public static void release(B1RequestContext ctx, Object value) {
         if (value instanceof B1Ref ref) ref.unbind(ctx);
         if (value instanceof B1Array a) a.release(ctx);
+        if (value instanceof B1Generator.Cursor it) release(ctx,it.generator);
         if (value instanceof B1Array.Cursor it) it.array.release(ctx);
         if (value instanceof B1Closure c) c.release(ctx);
         if (value instanceof java.util.Map<?, ?> map) releaseElements(ctx, map.values());

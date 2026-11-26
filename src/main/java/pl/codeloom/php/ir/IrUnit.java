@@ -18,7 +18,7 @@ public record IrUnit(String file, boolean strictTypes, List<IrFunction> function
     public record Capture(int outer, int inner, boolean byRef) {}
     public record Param(String name, boolean byRef, String type, boolean variadic, Expr defaultValue, IrSourceSpan at) {}
     public record IrFunction(int id, String owner, String name, IrSourceSpan at, int endLine, String returnType, List<Param> params,
-                             boolean closure, boolean isStatic, List<Capture> captures, List<String> locals, List<TempKind> temps, List<Statement> body) {
+                             boolean generator, boolean closure, boolean isStatic, List<Capture> captures, List<String> locals, List<TempKind> temps, List<Statement> body) {
         public int requiredParams() {
             for (int i = params.size()-1; i >= 0; i--) {
                 if (!params.get(i).variadic() && params.get(i).defaultValue() == null) return i + 1;
@@ -70,6 +70,7 @@ public record IrUnit(String file, boolean strictTypes, List<IrFunction> function
     public record Evaluate(Expr value) implements Action {}
 
     public sealed interface Expr {}
+    public record Yield(Expr key, Expr value, boolean delegate) implements Expr {}
     public record Literal(Object value) implements Expr {}
     public record Read(int local) implements Expr {}
     public record This() implements Expr {}
@@ -111,7 +112,7 @@ public record IrUnit(String file, boolean strictTypes, List<IrFunction> function
     public enum TempKind { VALUE, SEND, RECEIVER, CONSTRUCTION }
     public record StoreTemp(int id, Expr value) implements Expr {}
     public record Allocate(String className, IrSourceSpan at) implements Expr {}
-    public enum Dispatch { FUNCTION, METHOD, CONSTRUCTOR, DYNAMIC }
+    public enum Dispatch { FUNCTION, METHOD, CONSTRUCTOR, DYNAMIC, STATIC }
     /** Resolve before evaluating any arguments. A constructor receiver is the protected NEW temporary. */
     public record Target(Dispatch kind, String name, Expr receiver) {}
     /** A variable can bind to the resolved parameter by reference. Other operands send their value. */

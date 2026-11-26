@@ -1,0 +1,30 @@
+NULL
+bool(false)
+start resume bool(true)
+one
+bool(true)
+bool(true)
+ok
+again
+caught boom
+finally
+drop one
+bool(true)
+bool(false)
+done
+bool(false)
+start resume bool(true)
+two
+bool(true)
+bool(true)
+ok
+again
+caught boom
+finally
+drop two
+bool(true)
+bool(false)
+done
+closed finally
+drop closed
+end

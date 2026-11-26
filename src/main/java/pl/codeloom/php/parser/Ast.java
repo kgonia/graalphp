@@ -77,6 +77,37 @@ public final class Ast {
         return stmts instanceof Ast ast ? ast : null;
     }
 
+    /** Whether the code yields: a yield in it, not in a function, closure or class nested in it. */
+    public static boolean containsYield(Object value) {
+        if (!(value instanceof Ast node)) {
+            return false;
+        }
+        switch (node.kind) {
+            case "AST_YIELD":
+            case "AST_YIELD_FROM":
+                return true;
+            case "AST_CLOSURE":
+            case "AST_ARROW_FUNC":
+            case "AST_FUNC_DECL":
+            case "AST_CLASS":
+            case "AST_METHOD":
+                return false;
+            default:
+                break;
+        }
+        for (Object child : node.children()) {
+            if (containsYield(child)) {
+                return true;
+            }
+        }
+        for (Object child : node.namedValues()) {
+            if (containsYield(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Ast node(String name) {
         Object child = get(name);
         return child instanceof Ast ast ? ast : null;

@@ -7,9 +7,14 @@ import java.util.List;
 import java.util.Set;
 
 /** Per-function graph. Every protected block starts and ends with an empty JVM operand stack. */
-record B1Cfg(IrFunction function, int entry, int exit, List<Block> blocks, Set<Integer> longLocals) {
+record B1Cfg(IrFunction function, int entry, int exit, List<Block> blocks, Set<Integer> longLocals, int tempCount) {
     record Block(int label, Op op, int normal, int exceptional) {}
     sealed interface Op {}
+    record YieldPoint(Expr key, Expr value, boolean delegate) implements Op {}
+    record Receive(int slot) implements Op {}
+    record ResolveCall(Target target,int callee) implements Op {}
+    record SendCall(Argument arg,int index,int callee) implements Op {}
+    record InvokeCall(Call call,int callee,int result) implements Op {}
     record Enter() implements Op {}
     record Execute(IrSourceSpan at, Action action) implements Op {}
     record Declare(int id, String name, IrSourceSpan at) implements Op {}

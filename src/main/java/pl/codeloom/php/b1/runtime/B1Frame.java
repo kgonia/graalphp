@@ -2,7 +2,7 @@ package pl.codeloom.php.b1.runtime;
 
 /** Logical PHP frame. Generated code names CVs and live ranges by stable index. */
 public final class B1Frame {
-    final B1Frame caller;
+    B1Frame caller;
     public final String file, function;
     public int line;
     boolean staticCall;
@@ -30,6 +30,25 @@ public final class B1Frame {
         this.eval = eval;
         locals = new B1Ref[names.length];
         temps = new Object[ntemps];
+    }
+
+    public B1Generator generator;
+
+    void gcEdges(java.util.function.Consumer<Object> visit) {
+        for (var local : locals) visit.accept(local);
+        for (var temp : temps) {
+            if (temp instanceof B1Array.Cursor cursor) visit.accept(cursor.array);
+            else if (temp instanceof B1Generator.Cursor cursor) visit.accept(cursor.generator);
+            else visit.accept(temp);
+        }
+        if (extras != null) for (var extra : extras) visit.accept(extra);
+        if (dynamic != null) dynamic.values().forEach(visit);
+        visit.accept(result);
+        if (pending instanceof B1Thrown thrown) visit.accept(thrown.exception);
+        if (suspended != null) for (var exit : suspended) {
+            visit.accept(exit.result);
+            if (exit.pending instanceof B1Thrown thrown) visit.accept(thrown.exception);
+        }
     }
 
     public Throwable pending;
@@ -80,7 +99,8 @@ public final class B1Frame {
         else write(ctx, id, value);
     }
     public void startEach(B1RequestContext ctx, int iterator, Object subject) {
-        if (subject instanceof B1Array a) temps[iterator] = new B1Array.Cursor(a);
+        if (subject instanceof B1Generator gen) temps[iterator] = new B1Generator.Cursor(ctx,gen);
+        else if (subject instanceof B1Array a) temps[iterator] = new B1Array.Cursor(a);
         else if (subject instanceof B1Object obj) {
             B1Array properties = obj.publicProperties(ctx);
             temps[iterator] = new B1Array.Cursor(properties);
@@ -88,6 +108,12 @@ public final class B1Frame {
         } else ctx.diagnostic("Warning", "foreach() argument must be of type array|object, " + ctx.typeName(subject) + " given");
     }
     public boolean nextEach(B1RequestContext ctx, int iterator, int key, int value) {
+        if (temps[iterator] instanceof B1Generator.Cursor it) {
+            if (!it.advance(ctx)) return false;
+            write(ctx,value,it.generator.value());
+            if (key >= 0) write(ctx,key,it.generator.key());
+            return true;
+        }
         B1Array.Cursor cursor = (B1Array.Cursor) temps[iterator];
         if (cursor == null || cursor.pos == cursor.array.size()) return false;
         int pos = cursor.pos++;

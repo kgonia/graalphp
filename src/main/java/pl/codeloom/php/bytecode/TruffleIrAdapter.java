@@ -155,6 +155,7 @@ public final class TruffleIrAdapter {
                     section, params, IntStream.range(0, params.length).toArray(),type(f.returnType()),
                     variables, new LocalAccessor[0], f.owner());
             boolean[] moved = new boolean[f.temps().size()];
+            if (f.generator()) root.initializeGenerator(false,true);
             root.initializeVariadic(namedExtras);
             root.compactIr = compact;
             root.irTemps = f.temps().toArray(TempKind[]::new);
@@ -173,7 +174,7 @@ public final class TruffleIrAdapter {
 
             Run(PhpBytecodeRootNodeGen.Builder b) { this.b = b; }
 
-            BytecodeLocal activeCleanup;
+            BytecodeLocal activeCleanup, generator;
 
             void setCleanup(ReleaseTemps cleanup) {
                 b.beginStoreLocal(activeCleanup); b.emitLoadConstant(indices(cleanup)); b.endStoreLocal();
@@ -225,6 +226,7 @@ public final class TruffleIrAdapter {
                     var cap = f.captures().get(i);
                     b.emitBindCapture(locals[cap.inner()], i, cap.byRef());
                 }
+                if (f.generator()) { generator = b.createLocal(); b.emitGeneratorStart(generator); }
                 // One cold landing pad suffices when every exceptional edge leaves the function.
                 if (compact) {
                     activeCleanup = b.createLocal();
@@ -618,6 +620,17 @@ public final class TruffleIrAdapter {
 
             void expr(Expr expr) {
                 switch (expr) {
+                    case Yield(var key,var value,var delegate) -> {
+                        b.beginResumed(generator);
+                        if (delegate) {
+                            b.beginYieldFrom(generator); expr(value); b.endYieldFrom();
+                        } else {
+                            b.beginYieldValue(generator);
+                            if (key == null) b.emitLoadConstant(PhpGenerator.SUSPENDED); else expr(key);
+                            expr(value); b.endYieldValue();
+                        }
+                        b.endResumed();
+                    }
                     case Literal(var value) -> literal(value);
                     case Read(var id) -> { if (f.fileBody()) fileVariable(id, false); else b.emitReadVar(locals[id]); }
                     case QuietRead(var id) -> {
@@ -804,6 +817,15 @@ public final class TruffleIrAdapter {
                     b.beginBindStackValue(); b.beginResolveCallable(); expr(t.receiver()); b.endResolveCallable();
                     var target = b.endBindStackValue();
                     b.beginBindStackValue(); b.beginTargetFunction(); b.emitLoadStackValue(target); b.endTargetFunction();
+                } else if (t.kind() == Dispatch.STATIC) {
+                    String owner = (String)((Literal)t.receiver()).value();
+                    var site = constant(MethodSite.class,call, () -> new MethodSite(t.name(),false));
+                    b.beginCallStatic(site,keepRef);
+                    b.beginBindStackValue();
+                    b.emitResolveClass(constant(ClassSite.class,owner, () -> new ClassSite(owner,language.classId(Str.lower(owner)))));
+                    var cls = b.endBindStackValue();
+                    b.beginBindStackValue();
+                    b.beginResolveStaticMethod(site); b.emitLoadStackValue(cls); b.endResolveStaticMethod();
                 } else if (t.kind() == Dispatch.FUNCTION) {
                     CallInfo info = constant(CallInfo.class,call, () -> new CallInfo(t.name(), language.functionId(Str.lower(t.name())), -1, -1, false, call.discardReturn()));
                     b.beginCall(info);
@@ -843,6 +865,7 @@ public final class TruffleIrAdapter {
                 switch (t.kind()) {
                     case DYNAMIC -> b.endCallValue();
                     case FUNCTION -> b.endCall();
+                    case STATIC -> b.endCallStatic();
                     case METHOD -> b.endCallMethod();
                     case CONSTRUCTOR -> {
                         b.endConstruct();

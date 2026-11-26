@@ -34,7 +34,7 @@ One file per finding or problem, named `NNN-short-name.md`. Each records the sym
 | [028](028-autoload-invalid-name.md) | Autoloaders run for an empty or invalid class name | Fixed |
 | [029](029-reflection-attribute.md) | Attributes can't be read: no ReflectionAttribute | Open |
 | [030](030-assert-compiled-out.md) | assert() is compiled out (zend.assertions = -1), the reference runs it | Open |
-| [031](031-fiber.md) | No Fiber class | Open |
+| [031](031-fiber.md) | No Fiber class | Implemented on Truffle (68/103) & B1 (`B1Fiber`/`B1FiberThread`, `40/40` supported `.phpt`, FFM `qsort` suspension); `ReflectionFiber` open |
 | [032](032-sensitive-parameter.md) | #[\SensitiveParameter] doesn't redact arguments in traces | Open |
 | [033](033-unknown-named-zpp-order.md) | A variadic built-in refuses extra names before its fixed parameters' type errors | Open |
 | [034](034-mb-8bit-encoding.md) | mbstring functions refuse the 8bit encoding, so comments can't be posted | Open |

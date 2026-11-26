@@ -1,7 +1,6 @@
 # 031: No Fiber class
 
-**State:** In progress on branch `fiber` (2026-11-09): steps 1, 2 and 4 done in part, on platform threads (Design),
-`Zend/tests/fibers` at 68 of 103 (Status below).
+**State:** Implemented on both **Truffle** (`#60`, `Zend/tests/fibers` 68/103) and **B1** (2026-11-26, Milestone B1 Week 2 Part B: `B1Fiber` + pooled platform-thread `B1FiberThread` strictly honoring `B1-13` zero virtual threads, verified on FFM native `qsort` upcall suspension, `40/40` supported `Zend/tests/fibers` `.phpt` passing with `0` diffs on stock OpenJDK 25.0.4; `ReflectionFiber` & named-arg `Fiber::start` remaining for full parity).
 
 **Symptom:** `new Fiber(fn() => ...)` is "Class "Fiber" not found". With named arguments, `Fiber::start(b: 'B')`
 passes the names on to the fiber's function (Z_PARAM_VARIADIC_WITH_NAMED; `tests/smoke/named-args-fiber.php`,

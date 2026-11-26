@@ -306,37 +306,6 @@ public final class Translator {
 
     // ---- generators ----
 
-    /** Whether the code yields: a yield in it, not in a function, closure or class nested in it. */
-    static boolean containsYield(Object value) {
-        if (!(value instanceof Ast node)) {
-            return false;
-        }
-        switch (node.kind) {
-            case "AST_YIELD":
-            case "AST_YIELD_FROM":
-                return true;
-            case "AST_CLOSURE":
-            case "AST_ARROW_FUNC":
-            case "AST_FUNC_DECL":
-            case "AST_CLASS":
-            case "AST_METHOD":
-                return false;
-            default:
-                break;
-        }
-        for (Object child : node.children()) {
-            if (containsYield(child)) {
-                return true;
-            }
-        }
-        for (Object child : node.namedValues()) {
-            if (containsYield(child)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** A function or method call (zend_is_call): a function returning by reference gives its reference. */
     /**
      * Whether a place written (assigned, compound-assigned, incremented, unset) stands on a temporary: down its
@@ -938,7 +907,7 @@ public final class Translator {
         String display = owner == null ? name : owner.name() + "::" + name;
         Ast stmts = node.body();
         // an arrow function too: its body is a return of its expression, a generator's return when it yields
-        boolean generator = containsYield(stmts);
+        boolean generator = Ast.containsYield(stmts);
         if (generator && target.getDeclaredReturn() != null) {
             generatorReturn(stmts, target.getDeclaredReturn());
         }

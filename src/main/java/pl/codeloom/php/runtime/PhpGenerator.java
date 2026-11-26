@@ -200,9 +200,31 @@ public final class PhpGenerator {
                 largestIntKey = k;
             }
         }
-        value = yieldedValue;
+        setValue(yieldedValue);
         sendTarget = true;
         resumeValue = PhpNull.NULL;
+    }
+
+    @TruffleBoundary
+    private void setValue(Object next) {
+        Object old = value;
+        if (old == next) {
+            return;
+        }
+        Refcount.hold(next);
+        value = next;
+        Refcount.unhold(old);
+    }
+
+    @TruffleBoundary
+    private void setReturned(Object next) {
+        Object old = returned;
+        if (old == next) {
+            return;
+        }
+        Refcount.hold(next);
+        returned = next;
+        Refcount.unhold(old);
     }
 
     @TruffleBoundary
@@ -328,7 +350,7 @@ public final class PhpGenerator {
                 endValues();
                 return false;
             }
-            value = PhpRef.deref(array.valueAt(position));
+            setValue(PhpRef.deref(array.valueAt(position)));
             key = array.keyAt(position);
             valuesPosition = array.nextPosition(position);
             return true;
@@ -343,7 +365,7 @@ public final class PhpGenerator {
                 endValues();
                 return false;
             }
-            value = Refcount.borrowed(PhpRef.deref(iterator.callMethod("current")));
+            setValue(Refcount.borrowed(PhpRef.deref(iterator.callMethod("current"))));
             key = Refcount.borrowed(PhpRef.deref(iterator.callMethod("key")));
             return true;
         } catch (PhpThrowable e) {
@@ -431,7 +453,7 @@ public final class PhpGenerator {
                     return currentGenerator();
                 }
             } else {
-                newRoot.value = newRootParent.value;
+                newRoot.setValue(newRootParent.value);
                 newRoot.resumeValue = newRootParent.returned;
             }
         }
@@ -511,7 +533,7 @@ public final class PhpGenerator {
                 continue;
             }
             if (result != SUSPENDED) {
-                generator.returned = result;
+                generator.setReturned(result);
                 generator.close();
                 if (generator != this) {
                     delegator = this;
@@ -724,6 +746,11 @@ public final class PhpGenerator {
                 releaseFrame();
             }
             close();
+            try {
+                setValue(null);
+            } finally {
+                setReturned(null);
+            }
             return;
         }
         forcedClose = true;
@@ -736,6 +763,11 @@ public final class PhpGenerator {
         } finally {
             running = false;
             close();
+            try {
+                setValue(null);
+            } finally {
+                setReturned(null);
+            }
         }
     }
 }

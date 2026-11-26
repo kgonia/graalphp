@@ -20,6 +20,7 @@ public final class B1RequestContext {
         emitted += count; outlineHelpers += helpers; largestMethod = Math.max(largestMethod,max);
     }
     private final OutputStream output;
+    private final boolean displayErrors;
     private final Map<String, B1Callable> functions = new HashMap<>();
     private final Map<String, B1Callable> files = new HashMap<>();
     private final Map<String, ClassDef> classes = new HashMap<>();
@@ -37,6 +38,24 @@ public final class B1RequestContext {
     long acquireObjectId() { return freeObjectIds.isEmpty() ? nextObjectId++ : freeObjectIds.pop(); }
     void releaseObjectId(long id) { freeObjectIds.push(id); }
     private B1Frame frame;
+    final ClassDef generatorClass;
+    B1Fiber currentFiber;
+    private final ArrayDeque<B1FiberThread> idleFibers = new ArrayDeque<>();
+    private final ArrayList<B1FiberThread> fiberThreads = new ArrayList<>();
+
+    B1FiberThread acquireFiberThread() {
+        if (!idleFibers.isEmpty()) return idleFibers.pop();
+        var worker = new B1FiberThread();
+        fiberThreads.add(worker);
+        return worker;
+    }
+    void recycle(B1FiberThread worker) { idleFibers.push(worker); }
+    public int fiberThreadCount() { return fiberThreads.size(); }
+
+    B1Frame swapFrame(B1Frame next) { B1Frame previous = frame; frame = next; return previous; }
+    void attach(B1Frame resumed) { resumed.caller = frame; frame = resumed; }
+    <T extends B1Object> T track(T object) { destructibles.add(object); return object; }
+
     private String exceptionHandler;
 
     public record Property(String type, boolean isStatic, boolean initialized, Object initial) {}
@@ -54,17 +73,23 @@ public final class B1RequestContext {
         B1Callable method(B1RequestContext ctx,String lower) { return methods.get(lower); }
     }
 
-    public B1RequestContext(OutputStream output) {
+    public B1RequestContext(OutputStream output) { this(output,true); }
+    public B1RequestContext(OutputStream output,boolean displayErrors) {
+        this.displayErrors = displayErrors;
         this.output = output;
         var methods = new HashMap<String, B1Callable>();
-        for (String method : List.of("__construct", "getMessage", "getLine", "getPrevious", "getFile", "getCode", "getTrace", "getTraceAsString")) {
+        for (String method : List.of("__construct", "getMessage", "getLine", "getPrevious", "getFile", "getCode", "getTrace", "getTraceAsString", "__toString")) {
             methods.put(pl.codeloom.php.ir.AsciiCase.lower(method), new ExceptionMethod(method));
         }
-        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "DivisionByZeroError", "ValueError", "ParseError", "CompileError")) {
+        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "DivisionByZeroError", "ValueError", "ParseError", "CompileError", "FiberError", "ClosedGeneratorException")) {
             classes.put(pl.codeloom.php.ir.AsciiCase.lower(type), new ClassDef(type,
                     List.of("message", "file", "line", "code", "trace", "previous"), methods));
         }
         classes.put("stdclass", new ClassDef("stdClass", List.of(), Map.of()));
+        generatorClass = B1CoroutineMethod.definition("Generator","current","key","valid","rewind","next","send","throw","getreturn");
+        classes.put("generator",generatorClass);
+        classes.put("fiber",B1CoroutineMethod.definition("Fiber","__construct","start","resume","throw","getreturn","isstarted",
+                "issuspended","isrunning","isterminated","suspend","getcurrent"));
         builtin("gc_collect_cycles",0);
         builtin("var_dump",1,"value","values");
         builtin("array_map",2,"callback","array","arrays");
@@ -639,6 +664,7 @@ public final class B1RequestContext {
             if (count != 0) throw ctx.error("ArgumentCountError",owner + "::" + name
                     + "() expects exactly 0 arguments, " + count + " given");
             if (name.equals("getTraceAsString")) return B1Exception.traceString(ctx,(B1Array)self.read("trace"));
+            if (name.equals("__toString")) return B1Exception.format(ctx, self);
             return B1Object.retain(self.read(pl.codeloom.php.ir.AsciiCase.lower(name.substring(3))));
         }
     }
@@ -686,7 +712,7 @@ public final class B1RequestContext {
     }
     @HotPath(lookup = true)
     private static ClassDef findClass(B1RequestContext ctx, String lower) { return ctx.classes.get(lower); }
-    B1Callable method(String lowerClass,String lowerMethod) {
+    public B1Callable method(String lowerClass,String lowerMethod) {
         ClassDef def = findClass(this,lowerClass);
         return def == null ? null : def.method(this,lowerMethod);
     }
@@ -700,6 +726,8 @@ public final class B1RequestContext {
     public B1Object allocate(String lower, String name) {
         var cls = findClass(this, lower);
         if (cls == null) throw error("Error", "Class \"" + name + "\" not found");
+        if (lower.equals("fiber")) return track(new B1Fiber(this,cls));
+        if (lower.equals("generator")) throw error("Error","The \"Generator\" class is reserved for internal use and cannot be manually instantiated");
         var obj = new B1Object(this,acquireObjectId(), lower, cls);
         if (cls.methods.containsKey("__destruct")) destructibles.add(obj);
         if (B1Thrown.throwable(lower)) {
@@ -726,6 +754,7 @@ public final class B1RequestContext {
             frame.caller.nextClosure = null;
             if (fn.evalBody) frame.attachEval(this, frame.caller);
         }
+        if (frame.caller == null && currentFiber != null) frame.closure = currentFiber.entryClosure();
         return frame;
     }
     void pop(B1Frame f) {
@@ -819,6 +848,7 @@ public final class B1RequestContext {
     }
 
     void diagnostic(String level, String message) {
+        if (!displayErrors) return;
         echo("\n" + level + ": " + message + " in " + frame.file + " on line " + frame.line + "\n");
     }
 
@@ -995,6 +1025,10 @@ public final class B1RequestContext {
         while (!destructibles.isEmpty()) {
             try { destructibles.getFirst().destruct(this); } catch (Throwable ex) { pending = B1Thrown.chain(this, ex, pending); }
         }
+        for (var worker : fiberThreads) worker.retire();
+        for (var worker : fiberThreads) worker.join();
+        idleFibers.clear();
+        fiberThreads.clear();
         if (frame != null || liveDestructibleCount() != 0) throw new IllegalStateException("incomplete PHP shutdown");
         B1Thrown.propagate(pending);
     }

@@ -51,6 +51,27 @@ final class B1Exception {
         return result.append('#').append(n).append(" {main}").toString();
     }
 
+    static String format(B1RequestContext ctx, B1Object exception) {
+        var chain = new ArrayList<B1Object>();
+        for (Object cur = exception; cur instanceof B1Object obj && !chain.contains(obj); cur = obj.read("previous")) {
+            chain.add(obj);
+        }
+        var out = new StringBuilder();
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            if (out.length() > 0) out.append("\n\nNext ");
+            B1Object ex = chain.get(i);
+            String cls = ctx.typeName(ex);
+            String msg = ex.read("message") == null ? "" : ctx.string(ex.read("message"));
+            String file = ex.read("file") == null ? "" : ctx.string(ex.read("file"));
+            Object line = ex.read("line");
+            out.append(cls);
+            if (!msg.isEmpty()) out.append(": ").append(msg);
+            out.append(" in ").append(file).append(':').append(line == null ? 0 : line)
+                    .append("\nStack trace:\n").append(traceString(ctx, (B1Array) ex.read("trace")));
+        }
+        return out.toString();
+    }
+
     private static String quoted(Object text) {
         byte[] bytes = B1Bytes.bytes(text);
         var result = new StringBuilder("'");

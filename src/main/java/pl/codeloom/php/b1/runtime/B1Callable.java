@@ -97,6 +97,8 @@ public abstract class B1Callable {
     public Object invokeFrameless1(B1RequestContext ctx,B1Object self,Object a) { return invoke1(ctx,self,a); }
     public Object invokeFrameless2(B1RequestContext ctx,B1Object self,Object a,Object b) { return invoke2(ctx,self,a,b); }
 
+    public int resumeFrame(B1RequestContext ctx,B1Object self,B1Frame frame) { throw new IllegalStateException("Not a generator"); }
+
     public abstract Object invoke0(B1RequestContext ctx, B1Object self);
     public abstract Object invoke1(B1RequestContext ctx, B1Object self, Object a);
     public abstract Object invoke2(B1RequestContext ctx, B1Object self, Object a, Object b);

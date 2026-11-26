@@ -21,7 +21,9 @@ final class B1CfgLowerer {
         graph.marks(f.body(), jumps);
         int start = graph.sequence(f.body(), graph.exit, graph.exit, new Exits(graph.exit, List.of(), jumps));
         int entry = graph.block(new Enter(), start, graph.exit);
-        return new B1Cfg(f, entry, graph.exit, List.copyOf(graph.blocks), longLocals(f));
+        int temps = f.temps().size();
+        if (f.generator()) temps = new B1GeneratorLowerer(graph.blocks,temps).lower();
+        return new B1Cfg(f, entry, graph.exit, List.copyOf(graph.blocks), longLocals(f), temps);
     }
 
     private int block(Op op, int normal, int exceptional) {

@@ -53,7 +53,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Truffle-free compilation failed' }
 & $java -cp $classes pl.codeloom.php.b1.B1Lint (Join-Path $classes 'pl/codeloom/php/b1/runtime')
 if ($LASTEXITCODE -ne 0) { throw 'Runtime lint failed' }
 
-$cases = @('contract_d17','w1d35_aget','w1d35_hooks','w1d35_post','w1d35_eval_mega','w1d35_sideblob','w1d35_outline','w2_bound_closure','w2_gc','d17_fixture','large-function')
+$cases = @('contract_d17','w1d35_aget','w1d35_hooks','w1d35_post','w1d35_eval_mega','w1d35_sideblob','w1d35_outline','w2_bound_closure','w2_gc','w2b_generators','w2b_fibers','d17_fixture','large-function')
 $cases += @(Get-ChildItem $fixtures -Filter 'w2_audit_*.php' | Sort-Object Name | ForEach-Object BaseName)
 $cases += @(Get-ChildItem (Join-Path $fixtures 'audit_d35') -Filter '*.php' | Sort-Object Name | ForEach-Object { 'audit_d35/' + $_.BaseName })
 # These D17 contracts target both backends; the other audit files exercise legacy Truffle translation.
@@ -76,7 +76,7 @@ foreach ($name in $cases) {
     Capture 'docker' "run --rm -v ""${dir}:/fixtures:ro"" $PhpImage php /fixtures/$relative.php" $oracle $null $expectedExit
     $expected = [Convert]::ToBase64String([IO.File]::ReadAllBytes($oracle))
     if ($name -eq 'd17_fixture' -and (Get-Item $oracle).Length -ne 556) { throw 'Unexpected D17 transcript length' }
-    $budgets = if ($name -eq 'w1d35_outline') { 7500,220 } else { 7500 }
+    $budgets = if ($name -in 'w1d35_outline','w2b_generators') { 7500,220 } else { 7500 }
     foreach ($budget in $budgets) {
         $log = "$label-$budget.log"
         $report = Join-Path $work "$label-$budget.lint"

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 import static pl.codeloom.php.ir.IrUnit.*;
+import static pl.codeloom.php.parser.zend.derived.ZendConstants.ZEND_ACC_GENERATOR;
 
 /** The first file-level subset. A declined declaration or body declines the entire unit before publication. */
 public final class PhpIrLowerer {
@@ -179,10 +180,17 @@ public final class PhpIrLowerer {
 
     private int function(Ast decl, String owner, Body outer) {
         boolean closure = outer != null;
-        check((decl.flags == 0 || closure && decl.flags == 16 || owner != null && (decl.flags == 1 || decl.flags == 17)) && plainDeclaration(decl)
+        int flags = decl.flags & ~ZEND_ACC_GENERATOR;
+        check((flags == 0 || closure && flags == 16 || owner != null && (flags == 1 || flags == 17)) && plainDeclaration(decl)
                 && decl.get("stmts") != null, decl);
         var body = new Body(owner);
-        body.returnType = typeName(decl.node("returnType"),true);
+        Ast syntax = decl.body();
+        Ast declared = decl.node("returnType");
+        body.generator = (decl.flags & ZEND_ACC_GENERATOR) != 0 || declared != null && Ast.containsYield(syntax);
+        if (body.generator && declared != null) {
+            check(declared.is("AST_NAME") && Set.of("generator","iterator","traversable").contains(AsciiCase.lower(name(declared)))
+                    || declared.is("AST_TYPE") && Set.of(8,13,16).contains(declared.flags), declared);
+        } else body.returnType = typeName(declared,true);
         var params = new ArrayList<Param>();
         for (Object item : decl.node("params").children()) {
             Ast param = node(item);
@@ -204,7 +212,6 @@ public final class PhpIrLowerer {
             captures.add(new Capture(outer.local(var), body.local(var), use.flags == 1));
         }
         List<Statement> code;
-        Ast syntax = decl.body();
         body.reuseTemps = syntax.size() >= IrUnit.LARGE_BODY_STATEMENTS;
         if (decl.is("AST_ARROW_FUNC")) {
             check(syntax.is("AST_RETURN"),decl);
@@ -218,7 +225,7 @@ public final class PhpIrLowerer {
             withEnd.add(new Region(new IrSourceSpan(file,decl.endLine),new Return(new CheckedReturn(null,true)),empty,empty));
             code = List.copyOf(withEnd);
         }
-        functions.set(id, new IrFunction(id, owner, name, at(decl), decl.endLine, body.returnType,List.copyOf(params), closure,
+        functions.set(id, new IrFunction(id, owner, name, at(decl), decl.endLine, body.returnType,List.copyOf(params), body.generator, closure,
                 (decl.flags & 16) != 0, List.copyOf(captures), List.copyOf(body.locals), List.copyOf(body.temps), code));
         return id;
     }
@@ -313,6 +320,7 @@ public final class PhpIrLowerer {
         final String owner;
         String enclosing = file;
         String returnType;
+        boolean generator;
         boolean checkedReturn() { return returnType != null && !returnType.equals("void"); }
         final List<String> locals = new ArrayList<>();
         final List<TempKind> temps = new ArrayList<>();
@@ -325,7 +333,7 @@ public final class PhpIrLowerer {
         Body(String owner) { this.owner = owner; }
 
         IrFunction finish(int id, String name, Ast at, List<Param> params, List<Statement> body) {
-            return new IrFunction(id, owner, name, at(at), at.endLine,null, List.copyOf(params), false, false, List.of(), List.copyOf(locals),
+            return new IrFunction(id, owner, name, at(at), at.endLine,null, List.copyOf(params), false, false, false, List.of(), List.copyOf(locals),
                     List.copyOf(temps), List.copyOf(body));
         }
 
@@ -472,7 +480,7 @@ public final class PhpIrLowerer {
                     Ast types = handler.node("class");
                     check(types.size() == 1 && handler.node("var") != null, handler);
                     String type = className(node(types.child(0)));
-                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","divisionbyzeroerror","parseerror","compileerror","valueerror").contains(AsciiCase.lower(type)), handler);
+                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","divisionbyzeroerror","parseerror","compileerror","valueerror","fibererror","closedgeneratorexception").contains(AsciiCase.lower(type)), handler);
                     protectedBody = List.of(new TryCatch(labels++, at(n), protectedBody, type,
                             local(name(handler.node("var"))), statements(handler.node("stmts"))));
                 }
@@ -520,7 +528,7 @@ public final class PhpIrLowerer {
                         yield new WriteNamedProperty(receiver(place),expr(place.get("prop"),false),expr(n.get("expr"),false));
                     yield new WriteProperty(receiver(place), (String) place.get("prop"), expr(n.get("expr"), false));
                 }
-                case "AST_CALL", "AST_METHOD_CALL", "AST_NEW" -> new Evaluate(call(n, false, false));
+                case "AST_CALL", "AST_METHOD_CALL", "AST_STATIC_CALL", "AST_NEW" -> new Evaluate(call(n, false, false));
                 case "AST_ASSIGN_OP" -> {
                     Ast place = n.node("var");
                     if (n.flags == 260) {
@@ -549,6 +557,13 @@ public final class PhpIrLowerer {
             if (!(value instanceof Ast)) return value instanceof Boolean ? new Literal(value) : scalar(value);
             Ast n = node(value);
             return switch (n.kind) {
+                case "AST_YIELD", "AST_YIELD_FROM" -> {
+                    check(!enclosing.equals(file), n);
+                    generator = true;
+                    boolean from = n.is("AST_YIELD_FROM");
+                    yield owned(new Yield(n.get("key") == null ? null : expr(n.get("key"),false),
+                            expr(n.get(from ? "expr" : "value"),false),from));
+                }
                 case "AST_CONST" -> scalar(n);
                 case "AST_ARRAY" -> {
                     ArrayValue pure = largeLiteral(n);
@@ -597,7 +612,7 @@ public final class PhpIrLowerer {
                     yield new Increment(local(name(v)), n.kind.endsWith("INC"), n.kind.startsWith("AST_PRE"));
                 }
                 case "AST_CLOSURE", "AST_ARROW_FUNC" -> {
-                    check(n.flags == 16 || n.flags == 0, n);
+                    check((n.flags & ~(ZEND_ACC_GENERATOR | 16)) == 0, n);
                     int id = function(n, owner, this);
                     yield owned(new Closure(id, functions.get(id).captures()));
                 }
@@ -627,7 +642,7 @@ public final class PhpIrLowerer {
                     for (Object part : n.children()) result = new Binary(Operator.CONCAT, result, expr(part, false));
                     yield result;
                 }
-                case "AST_NEW", "AST_CALL", "AST_METHOD_CALL" -> call(n, argument, true);
+                case "AST_NEW", "AST_CALL", "AST_METHOD_CALL", "AST_STATIC_CALL" -> call(n, argument, true);
                 default -> throw unsupported(n);
             };
         }
@@ -719,9 +734,14 @@ public final class PhpIrLowerer {
                         new StoreTemp(slot(TempKind.CONSTRUCTION), new DynamicAllocate(expr(cls, false), at(n))));
                 else {
                     String name = className(cls);
-                    check(classNames.contains(AsciiCase.lower(name)) || externalClass.test(AsciiCase.lower(name)) || name.equalsIgnoreCase("Exception") || name.equalsIgnoreCase("stdClass"), n);
+                    check(classNames.contains(AsciiCase.lower(name)) || externalClass.test(AsciiCase.lower(name)) || name.equalsIgnoreCase("Fiber") || name.equalsIgnoreCase("Exception") || name.equalsIgnoreCase("stdClass"), n);
                     target = new Target(Dispatch.CONSTRUCTOR, name, new StoreTemp(slot(TempKind.CONSTRUCTION), new Allocate(name, at(n))));
                 }
+            } else if (n.is("AST_STATIC_CALL")) {
+                check(n.node("class") != null && n.node("class").is("AST_NAME")
+                        && className(n.node("class")).equalsIgnoreCase("Fiber") && n.get("method") instanceof String method
+                        && Set.of("suspend","getcurrent").contains(AsciiCase.lower(method)),n);
+                target = new Target(Dispatch.STATIC,(String)n.get("method"),new Literal("Fiber"));
             } else if (n.is("AST_METHOD_CALL")) {
                 check(n.get("method") instanceof String, n);
                 target = new Target(Dispatch.METHOD, (String) n.get("method"), new StoreTemp(slot(TempKind.RECEIVER), receiver(n)));

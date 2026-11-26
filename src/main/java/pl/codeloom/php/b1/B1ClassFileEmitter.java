@@ -55,7 +55,7 @@ final class B1ClassFileEmitter {
     // A first-pass method above the classfile u2 limit has no parsable Code attribute.
     // JDK 25 reports the measured length and the failing method while writing Code.
     private static final java.util.regex.Pattern CODE_OVERFLOW = java.util.regex.Pattern.compile(
-            "^Code length ([0-9]+) is outside the allowed range in (run|fragmentBlock([0-9]+))\\(");
+            "^Code length ([0-9]+) is outside the allowed range in (run|resumeBody|fragmentBlock([0-9]+))\\(");
 
     record Emission(byte[] bytes, List<byte[]> blobs, int helpers, int maxCode) {}
     static Emission measured(B1Cfg cfg, int limit) {
@@ -82,7 +82,7 @@ final class B1ClassFileEmitter {
                 max = Math.max(max,length);
                 if (length <= limit) continue;
                 String name = method.methodName().stringValue();
-                if (chunks.isEmpty() && name.equals("run")) next.add(new Chunk(1,cfg.blocks().size()));
+                if (chunks.isEmpty() && (name.equals("run") || name.equals("resumeBody"))) next.add(new Chunk(1,cfg.blocks().size()));
                 else if (name.startsWith("fragmentBlock")) {
                     split(next,fragmented,Integer.parseInt(name.substring("fragmentBlock".length())),length,limit);
                 } else throw new IllegalArgumentException(name + " requires " + length + " bytes (budget " + limit + ")");
@@ -142,7 +142,16 @@ final class B1ClassFileEmitter {
                 c.invokestatic(cls, "run", RUN).areturn();
                 });
             }
-            String dispatch = chunks.isEmpty() ? null : dispatcher(cb,cls,chunks);
+            String dispatch = chunks.isEmpty() ? (cfg.function().generator() ? "resumeBody" : null) : dispatcher(cb,cls,chunks);
+            if (cfg.function().generator() && chunks.isEmpty()) {
+                cb.withMethodBody(dispatch,STEP,ACC_PRIVATE | ACC_STATIC,c ->
+                        new Body(cfg,c,blobs,new Chunk(1,cfg.blocks().size()),fragments).emit(cls,null));
+            }
+            if (cfg.function().generator()) {
+                cb.withMethodBody("resumeFrame",sig(CD_int,CTX,OBJ,FRAME),ACC_PUBLIC,c ->
+                    c.aload(1).aload(2).aload(0).aconst_null().aconst_null().aconst_null().aload(3)
+                            .invokestatic(cls,dispatch,STEP).ireturn());
+            }
             cb.withMethodBody("run", RUN, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments).emit(cls,dispatch));
             for (var chunk : chunks) cb.withMethodBody("fragmentBlock" + chunk.first, STEP, ACC_PRIVATE | ACC_STATIC,
                     c -> new Body(cfg,c,blobs,chunk,fragments).emit(cls,null));
@@ -213,9 +222,18 @@ final class B1ClassFileEmitter {
 
         void emit(ClassDesc cls, String dispatcher) {
             if (chunk == null) {
-                c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name()).loadConstant(f.temps().size())
+                c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name()).loadConstant(cfg.tempCount())
                         .loadConstant(f.fileBody() ? 1 : 0)
                         .invokevirtual(CTX, "enter", sig(FRAME, CALLABLE, CD_String, CD_String, CD_int, CD_boolean)).astore(frame);
+                if (f.generator()) {
+                    // The entry block binds arguments and captures synchronously, even for an
+                    // unstarted generator. PHP starts the body only on its first iteration.
+                    c.aload(frame).loadConstant(cfg.entry()).putfield(FRAME,"pc",CD_int);
+                    step(c,cls,dispatcher,frame);
+                    c.aload(0).aload(1).aload(2).aload(frame)
+                            .invokestatic(runtime("B1Generator"),"create",sig(runtime("B1Generator"),CD_int,CTX,OBJ,CALLABLE,FRAME)).areturn();
+                    return;
+                }
                 fallthrough();
                 c.astore(result).aconst_null().astore(pending);
                 if (dispatcher != null) {
@@ -255,7 +273,41 @@ final class B1ClassFileEmitter {
                         c.aload(pending).aload(result).invokevirtual(FRAME, "leave", sig(CD_Object, CTX, CD_Throwable, CD_Object)).areturn();
                         continue;
                     }
-                    case B1Cfg.Enter ignored -> bind();
+                    case B1Cfg.Enter ignored -> {
+                        bind();
+                        if (f.generator()) { c.loadConstant(block.normal()).ireturn(); }
+                    }
+                    case B1Cfg.YieldPoint(var key,var value,var delegate) -> {
+                        saveFlight();
+                        c.aload(frame).getfield(FRAME,"generator",runtime("B1Generator")).aload(0);
+                        if (key == null) c.getstatic(CALLABLE,"OMITTED",CD_Object); else expr(key);
+                        expr(value); c.loadConstant(delegate ? 1 : 0).loadConstant(block.normal())
+                                .invokevirtual(runtime("B1Generator"),"pause",sig(CD_int,CTX,CD_Object,CD_Object,CD_boolean,CD_int)).ireturn();
+                    }
+                    case B1Cfg.Receive(var slot) -> {
+                        frameCtx(); c.loadConstant(slot).aload(frame).getfield(FRAME,"generator",runtime("B1Generator"))
+                                .invokevirtual(runtime("B1Generator"),"receive",sig(CD_Object)).iconst_1()
+                                .invokevirtual(FRAME,"storeTemp",sig(CD_Object,CTX,CD_int,CD_Object,CD_boolean)).pop();
+                    }
+                    case B1Cfg.ResolveCall(var target,var calleeSlot) -> {
+                        frameCtx(); c.loadConstant(calleeSlot);
+                        resolve(target,ref(),ref()); c.iconst_0().invokevirtual(FRAME,"storeTemp",sig(CD_Object,CTX,CD_int,CD_Object,CD_boolean)).pop();
+                    }
+                    case B1Cfg.SendCall(var arg,var index,var slot) -> send(arg,index,callee(slot));
+                    case B1Cfg.InvokeCall(var call,var slot,var dest) -> {
+                        frameCtx(); c.loadConstant(dest);
+                        Target t = call.target();
+                        int receiver = ref(), dynamic = ref();
+                        if (t.kind() == Dispatch.DYNAMIC) {
+                            expr(t.receiver()); c.astore(dynamic).aload(0).aload(dynamic).invokevirtual(CTX,"receiver",sig(OBJ,CD_Object));
+                        } else if (t.kind() == Dispatch.CONSTRUCTOR || t.kind() == Dispatch.METHOD) {
+                            c.aload(frame).loadConstant(((StoreTemp)t.receiver()).id()).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int)).checkcast(OBJ);
+                        } else c.aconst_null();
+                        c.astore(receiver);
+                        invoke(call,callee(slot),receiver,dynamic);
+                        c.iconst_1().invokevirtual(FRAME,"storeTemp",sig(CD_Object,CTX,CD_int,CD_Object,CD_boolean)).pop();
+                        cleanup(call.cleanup(),false);
+                    }
                     case B1Cfg.Pass ignored -> c.nop();
                     case B1Cfg.Suspend(var continuation) -> {
                         saveFlight();
@@ -472,8 +524,8 @@ final class B1ClassFileEmitter {
                     expr(value); c.invokestatic(OBJ, "retain", sig(CD_Object, CD_Object)).astore(result);
                 }
                 case Raise(var value) -> {
-                    expr(value); int val = ref(); c.astore(val).new_(THROWN).dup().aload(val)
-                            .invokespecial(THROWN, "<init>", sig(CD_void, CD_Object)).athrow();
+                    c.aload(0); expr(value);
+                    c.invokestatic(THROWN,"from",sig(THROWN,CTX,CD_Object)).athrow();
                 }
                 case Evaluate(var value) -> { expr(value); c.pop(); }
             }
@@ -562,6 +614,7 @@ final class B1ClassFileEmitter {
 
         void inline(Expr expr) {
             switch (expr) {
+                case Yield ignored -> throw new IllegalStateException("yield outside resume block");
                 case Literal(var value) -> literal(value);
                 case Read(var id) -> {
                     if (longs.containsKey(id)) { c.lload(longs.get(id)); boxLong(); }
@@ -703,7 +756,8 @@ final class B1ClassFileEmitter {
         }
 
         void send(Argument arg, int i, int callee) {
-            if (!(arg.value() instanceof StoreTemp)) { frameCtx(); c.loadConstant(arg.slot()); }
+            boolean stored = arg.value() instanceof StoreTemp || arg.value() instanceof LoadTemp t && t.id() == arg.slot();
+            if (!stored) { frameCtx(); c.loadConstant(arg.slot()); }
             if (arg.bindVariable() && !(arg.value() instanceof Read)) {
                 Label byValue = c.newLabel(), done = c.newLabel();
                 c.aload(callee).ifnull(byValue).aload(callee).loadConstant(i).invokevirtual(CALLABLE,"byRef",sig(CD_boolean,CD_int)).ifeq(byValue);
@@ -714,22 +768,21 @@ final class B1ClassFileEmitter {
             } else {
                 frameCtx(); c.aload(callee).loadConstant(i);
                 expr(arg.value());
-                c.loadConstant(arg.value() instanceof StoreTemp ? 1 : 0)
+                c.loadConstant(stored ? 1 : 0)
                         .invokevirtual(FRAME, "sendValue", sig(CD_Object, CTX, CALLABLE, CD_int, CD_Object, CD_boolean));
             }
-            if (!(arg.value() instanceof StoreTemp)) c.iconst_0()
+            if (!stored) c.iconst_0()
                     .invokevirtual(FRAME, "storeTemp", sig(CD_Object, CTX, CD_int, CD_Object, CD_boolean));
             c.pop();
         }
-        void call(Call call) {
-            Target t = call.target();
-            line(call.at().line());
-            int receiver = ref(), callee = ref();
-            int dynamic = ref();
+        void resolve(Target t,int receiver,int dynamic) {
             if (t.kind() == Dispatch.DYNAMIC) {
                 expr(t.receiver()); c.astore(dynamic);
                 c.aload(0).aload(dynamic).invokevirtual(CTX,"receiver",sig(OBJ,CD_Object)).astore(receiver);
                 c.aload(0).aload(dynamic).invokevirtual(CTX,"callable",sig(CALLABLE,CD_Object));
+            } else if (t.kind() == Dispatch.STATIC) {
+                c.aconst_null().astore(receiver).aload(0).ldc(lower((String)((Literal)t.receiver()).value())).ldc(lower(t.name()))
+                        .invokevirtual(CTX,"method",sig(CALLABLE,CD_String,CD_String));
             } else if (t.kind() == Dispatch.FUNCTION) {
                 c.aconst_null().astore(receiver).aload(0).ldc(lower(t.name())).invokestatic(CTX, "function", sig(CALLABLE, CTX, CD_String));
             } else {
@@ -738,6 +791,18 @@ final class B1ClassFileEmitter {
                 if (t.kind() == Dispatch.CONSTRUCTOR) c.invokevirtual(CTX, "constructor", sig(CALLABLE, OBJ));
                 else c.ldc(lower(t.name())).ldc(t.name()).invokevirtual(CTX, "resolve", sig(CALLABLE, OBJ, CD_String, CD_String));
             }
+        }
+
+        int callee(int slot) {
+            int local = ref();
+            c.aload(frame).loadConstant(slot).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int)).checkcast(CALLABLE).astore(local);
+            return local;
+        }
+
+        void call(Call call) {
+            line(call.at().line());
+            int receiver = ref(), callee = ref(), dynamic = ref();
+            resolve(call.target(),receiver,dynamic);
             c.astore(callee);
             int[] slots = call.args().stream().mapToInt(Argument::slot).toArray();
             if (fragment && slots.length > 2) {
@@ -745,6 +810,11 @@ final class B1ClassFileEmitter {
             } else {
                 for (int i = 0; i < slots.length; i++) send(call.args().get(i),i,callee);
             }
+            invoke(call,callee,receiver,dynamic);
+        }
+        void invoke(Call call,int callee,int receiver,int dynamic) {
+            Target t = call.target();
+            int[] slots = call.args().stream().mapToInt(Argument::slot).toArray();
             line(call.at().line());
             if (slots.length > 2) {
                 c.aload(frame).aload(callee); indices(slots);
