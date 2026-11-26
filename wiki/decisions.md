@@ -254,14 +254,51 @@ running on plain OpenJDK HotSpot C2 (`-XX:-UseJVMCICompiler`) paired with Option
 Bootstrap Freeze** ([bootstrap-freeze.md](bootstrap-freeze.md)), enforced by [b1-lint.md](b1-lint.md) from day 1.
 **Live Truffle PHP remains supported as the secondary goal and reference runtime**, sharing the exact same frontend:
 
-- **Shared frontend (zero new PHP transpiler):** Keep `parser/zend` (`47.3k LOC`, D14) and `BytecodeTranslator`
-  (`7,391 LOC`, covering all PHP 8.5 & `D17` lowering semantics). Decouple `BytecodeTranslator` behind a clean
-  `PhpIrBuilder` interface (`~607` flat stack-machine `begin*`/`end*`/`emit*` calls) with two backends:
-  1. **Primary (`B1ClassFileBuilder`):** Emits standard JVM `.class` bytecode via JDK 25's `java.lang.classfile` API,
-     loaded via `Lookup.defineHiddenClass` (zero Truffle classes loaded at runtime), executing on plain OpenJDK
-     HotSpot C2 + Option 1 Freeze.
-  2. **Secondary (`TruffleBuilderAdapter`):** Thin 1-line delegation to `PhpBytecodeRootNodeGen.Builder`, preserving
-     live Truffle PHP execution and existing smoke / `.phpt` / WordPress checks without duplicating PHP lowering.
+- **Shared frontend (zero new PHP transpiler):** Keep `parser/zend` (`47.3k LOC`, D14), `Translator` (`2,320 LOC`,
+  classes/declarations/closures), and `BytecodeTranslator` (`7,391 LOC`, covering all PHP 8.5 & `D17` lowering
+  semantics) as one shared PHP lowering frontend emitting **structured PHP operations** (explicit operands, `D17`
+  ownership transfers, source spans, and control regions) with **stable IDs** (no live Truffle objects across the seam)
+  into two backends:
+  1. **Primary (`B1` JVM backend):** Lowers one function at a time into a **small disposable per-function typed CFG**
+     (unboxed `long` inference, `yield` operand spilling, 2-pass `B1-01` outlining, binary-safe side-blob literals) →
+     `java.lang.classfile` → pre-definition `B1Lint` → `Lookup.defineHiddenClass` (zero Truffle classes loaded at
+     runtime, works both offline and in-process for `eval()`), dispatching across files via a named runtime base
+     (`CallableBase`) on plain OpenJDK HotSpot C2 + Option 1 Freeze.
+  2. **Secondary (`Truffle` backend):** Consumes the same structured ops via a thin forwarding adapter over
+     `PhpBytecodeRootNodeGen.Builder`, preserving live Truffle PHP execution and existing smoke / `.phpt` / WordPress
+     checks without duplicating PHP lowering.
+
+**Amendment (2026-11-26 — Independent Dual-Model Consultation: Fable 5.2 + Astra 6.2):**
+Both models independently reviewed the codebase and converged on six architectural refinements incorporated into
+[b1-plan.md](b1-plan.md):
+1. **No direct 1:1 streaming of the 607-method Truffle DSL builder into `java.lang.classfile`:** DSL-only idioms
+   (`BindStackValue`/`LoadStackValue`, `endStoreTemp(owned)`, replayed `finally` `Runnable`s, `@ShortCircuitOperation`,
+   `@Yield` + `Resumed`) plus B1's `long` local unboxing, `yield` operand spilling, and 2-pass `B1-01` outlining
+   require a small disposable per-function IR/CFG between the shared frontend and `ClassFile` emission.
+2. **Wider seam + stable IDs + runtime `eval()`:** Include `Translator.java` (`2,320 LOC`) alongside
+   `BytecodeTranslator.java`; replace live Truffle objects (`PropSite`, `CallInfo`, `PhpFunction`, `ClassTemplate`,
+   `LocalAccessor`, `TruffleString`) and `BytecodeParser` traversal-order `made()` side-channels with stable IDs and
+   backend-owned caches. Keep the Truffle-free compiler usable in-process for runtime `eval()` (`hot.php` defines
+   functions/classes/closures via `eval()`).
+3. **One shared Truffle-free core for `D17` & builtins (hybrid projection → shared core; no D16-style semantic fork):**
+   Projection (`project.py`) is restricted strictly to mechanical substitutions on an explicit allowlist to reach Gate 1
+   fast; all semantic fixes (including Probe B's `D17` fixes) belong in one shared Truffle-free core tested
+   differentially against PHP 8.5.13. Highest-leverage `src/main` cleanups: pass `PhpRequestContext` through
+   `Registry.fn` (`342/617` registrations already take explicit context), fold ~40 direct `TruffleString *Uncached`
+   calls into `Str`, and remove the `35` builtin + `34` runtime `PhpContext.get(null)` lookups incrementally. Keep
+   Truffle-only frame walking (`Backtrace`), `DynamicObject`/`Shape`, and `ContinuationRootNode` in the Truffle adapter.
+4. **Generators & Fibers:** Generators compile to an explicit state machine + heap resumable frame (saving resume PC,
+   live locals **and enclosing expression operands**, active cleanup regions, and `yield from` delegation — required for
+   `D17` ownership & abandonment cleanup). Fibers keep the existing platform-thread handoff (`FiberThread`) with explicit
+   `PhpRequestContext` (virtual threads pin on native curl callbacks).
+5. **CFG-based `B1-01` outlining:** Handle backward `goto` and multi-exit `finally` with one logical PHP frame and one
+   function epilog (outlined helpers must never trigger PHP function-exit cleanup); measure final `Code` bytes in 2
+   passes; verify on both `WP_Query::get_posts` and `large-function.php` plus a forced low-threshold split-vs-unsplit
+   differential test.
+6. **`B1Lint` & hidden-class contract:** Lint exact emitted `byte[]` before `defineHiddenClass`, drop Probe B
+   class/method-name hardcoding, enforce zero `com/oracle/truffle` references/classloads (`B1-08`), allow
+   `ConstantDynamic` for hidden-class `classData` side blobs, and verify hidden-class reload + request drain (using a
+   named dispatch base because hidden classes cannot be referenced by constant-pool name).
 
 **Why (all pre-check gates passed):**
 - **Truffle runtime memory & IR ceiling:** Probe A2 measured `522 MB` idle RssAnon for interpreter-only Truffle
@@ -278,6 +315,6 @@ Bootstrap Freeze** ([bootstrap-freeze.md](bootstrap-freeze.md)), enforced by [b1
   and `0` `B1Lint` violations ([bench/b1-precheck/probe-b/RESULTS.md](../bench/b1-precheck/probe-b/RESULTS.md)).
 
 **Status:** Active — supersedes D1/D2's Truffle-only primary runtime while preserving live Truffle PHP as secondary.
-Next: Milestone B1 Week 1 (`PhpIrBuilder` frontend decoupling + `B1ClassFileBuilder` + projected runtime + Gate 1 &
-`hot.php` parity).
+Execution plan: [b1-plan.md](b1-plan.md) (vertical slice first — real PHP-compiled `.class` benchmarked against Probe
+B's `1.11×` control and PHP 8.5.13 before expanding to all 276 ops).
 
