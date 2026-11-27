@@ -49,6 +49,8 @@ public final class B1Bytes {
         return negative ? value : -value;
     }
     public int length() { return bytes.length; }
+    /** A copy of the bytes, for hosts. */
+    public byte[] toByteArray() { return bytes.clone(); }
     boolean truth() { return bytes.length != 0 && !(bytes.length == 1 && bytes[0] == '0'); }
     @Override public int hashCode() { return hash; }
     @Override public boolean equals(Object other) { return other instanceof B1Bytes b && Arrays.equals(bytes, b.bytes); }

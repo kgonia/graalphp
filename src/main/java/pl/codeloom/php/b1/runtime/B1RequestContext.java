@@ -59,16 +59,23 @@ public final class B1RequestContext {
     private String exceptionHandler;
 
     public record Property(String type, boolean isStatic, boolean initialized, Object initial) {}
-    public record ClassDef(String name, List<String> props, Map<String, B1Callable> methods, Map<String,Integer> visibility, Map<String,Property> properties, pl.codeloom.php.ir.IrSourceSpan declaration) {
+    public record ClassDef(String name, List<String> props, Map<String, B1Callable> methods, Map<String,Integer> visibility, Map<String,Property> properties, pl.codeloom.php.ir.IrSourceSpan declaration,
+                           Set<String> interfaces, boolean allowDynamicProperties) {
         public ClassDef(String name, List<String> props, Map<String, B1Callable> methods) {
             this(name, props, methods, Map.of(),Map.of(),null);
+        }
+        public ClassDef(String name, List<String> props, Map<String, B1Callable> methods, Map<String,Integer> visibility,
+                        Map<String,Property> properties, pl.codeloom.php.ir.IrSourceSpan declaration) {
+            this(name, props, methods, visibility, properties, declaration, Set.of(), false);
         }
         public ClassDef {
             props = List.copyOf(props);
             methods = Map.copyOf(methods);
             visibility = Map.copyOf(visibility);
             properties = Map.copyOf(properties);
+            interfaces = Set.copyOf(interfaces);
         }
+        boolean magicAccess() { return methods.containsKey("__get") || methods.containsKey("__isset"); }
         @HotPath(lookup = true)
         B1Callable method(B1RequestContext ctx,String lower) { return methods.get(lower); }
     }
@@ -81,7 +88,7 @@ public final class B1RequestContext {
         for (String method : List.of("__construct", "getMessage", "getLine", "getPrevious", "getFile", "getCode", "getTrace", "getTraceAsString", "__toString")) {
             methods.put(pl.codeloom.php.ir.AsciiCase.lower(method), new ExceptionMethod(method));
         }
-        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "DivisionByZeroError", "ValueError", "ParseError", "CompileError", "FiberError", "ClosedGeneratorException")) {
+        for (String type : List.of("Exception", "Error", "TypeError", "ArgumentCountError", "ArithmeticError", "DivisionByZeroError", "ValueError", "ParseError", "CompileError", "FiberError", "ClosedGeneratorException")) {
             classes.put(pl.codeloom.php.ir.AsciiCase.lower(type), new ClassDef(type,
                     List.of("message", "file", "line", "code", "trace", "previous"), methods));
         }
@@ -115,6 +122,17 @@ public final class B1RequestContext {
         builtin("array_unshift",1,"array","values");
         builtin("next",1,"array");
         builtin("current",1,"array");
+        builtin("key",1,"array");
+        builtin("reset",1,"array");
+        builtin("is_null",1,"value");
+        builtin("array_fill",3,"start_index","count","value");
+        builtin("sqrt",1,"num");
+        builtin("max",1,"value","values");
+        builtin("min",1,"value","values");
+        builtin("sizeof",1,"value","mode");
+        builtin("sprintf",1,"format","values");
+        builtin("define",2,"constant_name","value","case_insensitive");
+        builtin("defined",1,"constant_name");
     }
 
     private void builtin(String name,int required,String... params) {
@@ -132,7 +150,7 @@ public final class B1RequestContext {
         private static boolean[] references(String name,int count) {
             boolean[] refs = new boolean[count];
             if (count == 0) return refs;
-            refs[0] = name.equals("ksort") || name.equals("array_pop") || name.equals("array_unshift") || name.equals("next");
+            refs[0] = name.equals("ksort") || name.equals("array_pop") || name.equals("array_unshift") || name.equals("next") || name.equals("reset");
             if (name.equals("str_replace")) refs[3] = true;
             return refs;
         }
@@ -194,6 +212,14 @@ public final class B1RequestContext {
                     yield B1Bytes.of(Arrays.copyOfRange(bytes,start,end));
                 }
                 case "current" -> array(ctx,a,1,"array","array").current();
+                case "key" -> array(ctx,a,1,"array","array").currentKey();
+                case "reset" -> B1Object.retain(((B1Ref)a).writable(ctx).rewind());
+                case "is_null" -> a == null;
+                case "defined" -> ctx.defined(B1Bytes.of(stringParam(ctx,a)).toString());
+                case "sqrt" -> Math.sqrt(floatParam(ctx,a,1,"num"));
+                case "max", "min" -> extreme(ctx,a,OMITTED,null);
+                case "sizeof" -> (long)array(ctx,a,1,"value","Countable|array").size();
+                case "sprintf" -> sprintf(ctx,a,null,0);
                 case "next" -> ((B1Ref)a).writable(ctx).advance();
                 case "array_pop" -> ((B1Ref)a).writable(ctx).pop(ctx);
                 case "array_keys" -> {
@@ -284,6 +310,8 @@ public final class B1RequestContext {
             if (cls == null) throw invalidCallback(ctx,"class \"" + owner + "\" not found");
             var fn = cls.method(ctx,ctx.folded(method.toString()));
             if (fn == null) throw invalidCallback(ctx,"class " + cls.name() + " does not have a method \"" + method + "\"");
+            if (!ctx.callableFromScope(fn))
+                throw invalidCallback(ctx,"cannot access " + (fn.visibility == 2 ? "protected" : "private") + " method " + fn.display + "()");
             if (!fn.isStatic && !(target instanceof B1Object)) throw invalidCallback(ctx,"non-static method " + fn.display + "() cannot be called statically");
             return fn;
         }
@@ -392,9 +420,12 @@ public final class B1RequestContext {
                 return array.contains(a);
             }
             if (name.equals("array_slice")) return slice(ctx,a,b,null,false);
-            if (name.equals("count")) {
+            if (name.equals("max") || name.equals("min")) return extreme(ctx,a,b,null);
+            if (name.equals("define")) return define(ctx,a,b,OMITTED);
+            if (name.equals("sprintf")) return sprintf(ctx,a,b,1);
+            if (name.equals("count") || name.equals("sizeof")) {
                 B1Array array = array(ctx,a,1,"value","Countable|array");
-                long mode = ctx.integral(b,"count()",2,"mode");
+                long mode = ctx.integral(b,name + "()",2,"mode");
                 if (mode == 0) return (long)array.size();
                 if (mode == 1) return recursiveSize(array);
                 throw ctx.error("ValueError","count(): Argument #2 ($mode) must be either COUNT_NORMAL or COUNT_RECURSIVE");
@@ -406,6 +437,83 @@ public final class B1RequestContext {
             for (int i = 0; i < array.size(); i++)
                 if (array.valueAt(i) instanceof B1Array nested) size += recursiveSize(nested);
             return size;
+        }
+        private double floatParam(B1RequestContext ctx,Object value,int index,String param) {
+            if (value instanceof Double d) return d;
+            if (value instanceof Long n) return n;
+            Object coerced = ctx.strict() ? null : value instanceof Boolean flag ? (flag ? 1.0 : 0.0)
+                    : value instanceof B1Bytes || value instanceof String ? pl.codeloom.php.ir.PhpNumericString.parse(B1Bytes.bytes(value),false) : null;
+            if (value == null && !ctx.strict()) {
+                ctx.diagnostic("Deprecated",name + "(): Passing null to parameter #" + index + " ($" + param + ") of type float is deprecated");
+                return 0;
+            }
+            if (coerced instanceof Number n) return n.doubleValue();
+            throw badType(ctx,value,index,"float");
+        }
+        /** max()/min(): zend_compare keeps the first of equal candidates. A second argument (null included)
+         * compares the arguments; only a single argument is the array of candidates. */
+        private Object extreme(B1RequestContext ctx,Object first,Object second,Object[] all) {
+            boolean max = name.equals("max");
+            Object best;
+            if (all == null && second == OMITTED) {
+                if (!(first instanceof B1Array values)) throw badType(ctx,first,1,"array");
+                if (values.size() == 0) throw ctx.error("ValueError",name + "(): Argument #1 ($value) must contain at least one element");
+                best = values.valueAt(0);
+                for (int i = 1; i < values.size(); i++) {
+                    int cmp = ctx.order(values.valueAt(i),best);
+                    if (max ? cmp > 0 : cmp < 0) best = values.valueAt(i);
+                }
+            } else if (all == null) {
+                // PHP 8.5's two-argument path: min() returns the right operand of equal ones, max() the left.
+                best = max ? (ctx.order(second,first) > 0 ? second : first) : (ctx.order(first,second) < 0 ? first : second);
+            } else {
+                best = all[0];
+                for (int i = 1; i < all.length; i++) {
+                    int cmp = ctx.order(all[i],best);
+                    if (max ? cmp > 0 : cmp < 0) best = all[i];
+                }
+            }
+            return B1Object.retain(best);
+        }
+        private B1Array fill(B1RequestContext ctx,Object start,Object count,Object value) {
+            long first = ctx.integral(start,"array_fill()",1,"start_index");
+            long n = ctx.integral(count,"array_fill()",2,"count");
+            if (n < 0) throw ctx.error("ValueError","array_fill(): Argument #2 ($count) must be greater than or equal to 0");
+            if (n >= Integer.MAX_VALUE) throw ctx.error("ValueError","array_fill(): Argument #2 ($count) is too large");
+            // PHP 8 numbers the keys on from start_index, negative or not; past PHP_INT_MAX the next key is occupied.
+            if (n > 0 && first > Long.MAX_VALUE - (n - 1)) throw ctx.error("Error",B1Array.OCCUPIED);
+            B1Array result = new B1Array((int)n);
+            for (long i = 0; i < n; i++) {
+                if (first == 0) result.append(ctx,value);
+                else result.put(ctx,i == 0 ? first : first + i,value);
+            }
+            return result;
+        }
+        /** define(string $constant_name, mixed $value, bool $case_insensitive = false): parameters, then the body. */
+        private Object define(B1RequestContext ctx,Object name,Object value,Object caseInsensitive) {
+            String constant = B1Bytes.of(stringParam(ctx,name)).toString();
+            boolean ci = caseInsensitive != OMITTED && boolParam(ctx,caseInsensitive,3);
+            return ctx.define(constant,value,ci);
+        }
+        private boolean boolParam(B1RequestContext ctx,Object value,int index) {
+            if (value instanceof Boolean flag) return flag;
+            if (ctx.strict() || value instanceof B1Array || value instanceof B1Object || value instanceof B1Closure)
+                throw badType(ctx,value,index,"bool");
+            if (value == null) {
+                ctx.diagnostic("Deprecated",name + "(): Passing null to parameter #" + index + " ($" + locals[index-1] + ") of type bool is deprecated");
+                return false;
+            }
+            return truth(value);
+        }
+        /** sprintf with no or one value: the arity-specialized B1Sprintf entries allocate no argument array (B1-06). */
+        private B1Bytes sprintf(B1RequestContext ctx,Object format,Object value,int count) {
+            if (format == OMITTED) throw arityError(ctx,0);
+            byte[] pattern = stringParam(ctx,format);
+            return B1Bytes.of(count == 0 ? B1Sprintf.format(ctx,pattern) : B1Sprintf.format(ctx,pattern,value));
+        }
+        private B1Bytes format(B1RequestContext ctx,Object format,Object[] values) {
+            if (format == OMITTED) throw arityError(ctx,0);
+            return B1Bytes.of(B1Sprintf.format(ctx,stringParam(ctx,format),values));
         }
         private B1Array array(B1RequestContext ctx, Object value, int index, String param, String type) {
             if (value instanceof B1Array array) return array;
@@ -429,6 +537,10 @@ public final class B1RequestContext {
                 return null;
             }
             if (name.equals("array_map") && args.length > 2) return map(ctx,args[0],args[1],args);
+            if (name.equals("array_fill") && args.length == 3) return fill(ctx,args[0],args[1],args[2]);
+            if (name.equals("define") && args.length == 3) { required(ctx,args[0],1); required(ctx,args[1],2); return define(ctx,args[0],args[1],args[2]); }
+            if ((name.equals("max") || name.equals("min")) && args.length > 2) return extreme(ctx,args[0],args[1],args);
+            if (name.equals("sprintf") && args.length > 2) return format(ctx,args[0],java.util.Arrays.copyOfRange(args,1,args.length));
             if (name.equals("str_replace") && args.length == 3) {
                 byte[] search = ctx.stringBytes(args[0]), replacement = ctx.stringBytes(args[1]), subject = ctx.stringBytes(args[2]);
                 var out = new java.io.ByteArrayOutputStream();
@@ -463,6 +575,11 @@ public final class B1RequestContext {
         }
         return target.callSlice(this,self,args,start,count);
     }
+    /** The B1 runtime stops a request which reaches PHP behaviour it does not implement, instead of deviating. */
+    public UnsupportedOperationException unsupported(String what) {
+        return new UnsupportedOperationException("B1 runtime does not implement " + what);
+    }
+
     boolean isCallable(Object value) {
         if (value instanceof B1Closure) return true;
         if (value instanceof B1Bytes s) return functions.containsKey(s.symbolKey());
@@ -470,10 +587,13 @@ public final class B1RequestContext {
         if (value instanceof B1Object obj) return obj.method(this,"__invoke") != null;
         if (value instanceof B1Array pair && pair.size() == 2 && pair.get(1L) instanceof B1Bytes name) {
             Object recv = pair.get(0L);
-            if (recv instanceof B1Object obj) return obj.method(this,name.symbolKey()) != null;
+            if (recv instanceof B1Object obj) {
+                B1Callable fn = obj.method(this,name.symbolKey());
+                return fn != null && callableFromScope(fn);
+            }
             if (recv instanceof B1Bytes cls) {
                 B1Callable fn = method(cls.symbolKey(),name.symbolKey());
-                return fn != null && fn.isStatic;
+                return fn != null && fn.isStatic && callableFromScope(fn);
             }
         }
         return false;
@@ -488,7 +608,7 @@ public final class B1RequestContext {
             if (receiver instanceof B1Object obj) return resolve(obj, name.symbolKey(), name.toString());
             if (receiver instanceof B1Bytes cls) {
                 B1Callable fn = method(cls.symbolKey(), name.symbolKey());
-                if (fn != null && fn.isStatic) return fn;
+                if (fn != null && fn.isStatic) { visible(fn); return fn; }
             }
         }
         throw error("Error", "Value is not callable");
@@ -502,8 +622,8 @@ public final class B1RequestContext {
         String cls = string(name);
         return allocate(name instanceof B1Bytes bytes ? bytes.symbolKey() : folded(cls), cls);
     }
-    public Object eval(Object code,B1Object self,int budget) {
-        return pl.codeloom.php.b1.B1Compiler.eval(this, stringBytes(code), new pl.codeloom.php.ir.IrSourceSpan(frame.file, frame.line),self,budget);
+    public Object eval(Object code,B1Object self,int budget,boolean extended) {
+        return pl.codeloom.php.b1.B1Compiler.eval(this, stringBytes(code), new pl.codeloom.php.ir.IrSourceSpan(frame.file, frame.line),self,budget,extended);
     }
     public static boolean truth(Object value) {
         if (value instanceof B1Bytes text) return text.truth();
@@ -518,6 +638,8 @@ public final class B1RequestContext {
             diagnostic("Deprecated","Automatic conversion of false to array is deprecated");
             return new B1Array(0);
         }
+        if (old instanceof B1Object obj && findClass(this,obj.type).interfaces().contains("arrayaccess"))
+            throw unsupported("ArrayAccess dimension writes");
         if (old instanceof B1Object) throw error("Error","Cannot use object of type " + typeName(old) + " as array");
         if (old instanceof B1Bytes || old instanceof String) throw error("Error","[] operator not supported for strings");
         throw error("Error","Cannot use a scalar value as an array");
@@ -550,6 +672,8 @@ public final class B1RequestContext {
             diagnostic("Warning","Uninitialized string offset " + offset);
             return B1Bytes.ofUtf8("");
         }
+        if (base instanceof B1Object obj && findClass(this,obj.type).interfaces().contains("arrayaccess"))
+            throw unsupported("ArrayAccess dimension reads");
         if (!quiet) diagnostic("Warning", "Trying to access array offset on " + typeName(base));
         return null;
     }
@@ -606,13 +730,13 @@ public final class B1RequestContext {
         };
     }
 
-    private int order(Object a, Object b) {
+    int order(Object a, Object b) {
         if (a == b) return 0;
         if (a instanceof Boolean || b instanceof Boolean) return Boolean.compare(truth(a),truth(b));
         if (a == null || b == null) {
             Object other = a == null ? b : a;
             int cmp = other instanceof String || other instanceof B1Bytes ? Integer.signum(stringBytes(other).length)
-                    : other instanceof Number n ? Double.compare(n.doubleValue(),0) : Boolean.compare(truth(other),false);
+                    : Boolean.compare(truth(other),false); // zend_compare: null against a number compares as bool
             return a == null ? -cmp : cmp;
         }
         if (a instanceof B1Array x && b instanceof B1Array y) {
@@ -631,6 +755,227 @@ public final class B1RequestContext {
         if (x instanceof Long && y instanceof Long) return Long.compare(x.longValue(),y.longValue());
         if (x != null && y != null) return Double.compare(x.doubleValue(),y.doubleValue());
         return Arrays.compareUnsigned(stringBytes(a),stringBytes(b));
+    }
+
+    public boolean instanceOf(Object value, String lower) {
+        if (value instanceof B1Closure) return lower.equals("closure");
+        if (!(value instanceof B1Object obj)) return false;
+        if (obj.type.equals(lower)) return true;
+        if (B1Thrown.throwable(obj.type)) return B1Thrown.subtype(obj.type,lower) || lower.equals("stringable");
+        if (obj instanceof B1Generator) return lower.equals("iterator") || lower.equals("traversable");
+        ClassDef def = findClass(this,obj.type);
+        return def != null && def.interfaces().contains(lower);
+    }
+
+    /** A static call: Class::method() or self::method(). */
+    public B1Callable staticMethod(String lowerClass, String lowerMethod, String cls, String method) {
+        ClassDef def = findClass(this,lowerClass);
+        if (def == null) throw error("Error","Class \"" + cls + "\" not found");
+        B1Callable fn = def.method(this,lowerMethod);
+        if (fn == null) throw error("Error","Call to undefined method " + def.name() + "::" + method + "()");
+        visible(fn);
+        return fn;
+    }
+    /** A non-static method called statically keeps a compatible $this; PHP 8 rejects every other case. */
+    public B1Object staticReceiver(B1Callable fn, B1Object self) {
+        if (fn.isStatic) return null;
+        if (self != null && self.type.equals(fn.scope)) return self;
+        throw error("Error","Non-static method " + fn.display + "() cannot be called statically");
+    }
+    private void visible(B1Callable fn) {
+        if (callableFromScope(fn)) return;
+        throw error("Error","Call to " + (fn.visibility == 2 ? "protected" : "private") + " method " + fn.display + "() from " + scopeName());
+    }
+    /** Without inheritance a protected method is callable from its own class only, like a private one. */
+    private boolean callableFromScope(B1Callable fn) { return fn.visibility == 1 || fn.scope.equals(scope()); }
+    private String scopeName() { return scope() == null ? "global scope" : "scope " + findClass(this,scope()).name(); }
+
+    public Object subtract(Object left, Object right) {
+        Number a = number(left, true), b = number(right, true);
+        if (a == null || b == null) throw error("TypeError", "Unsupported operand types: " + typeName(left) + " - " + typeName(right));
+        if (a instanceof Long && b instanceof Long) {
+            try { return Math.subtractExact(a.longValue(), b.longValue()); } catch (ArithmeticException overflow) { }
+        }
+        return a.doubleValue() - b.doubleValue();
+    }
+    public Object divide(Object left, Object right) {
+        Number a = number(left, true), b = number(right, true);
+        if (a == null || b == null) throw error("TypeError", "Unsupported operand types: " + typeName(left) + " / " + typeName(right));
+        if (b instanceof Long ? b.longValue() == 0 : b.doubleValue() == 0) throw error("DivisionByZeroError","Division by zero");
+        if (a instanceof Long x && b instanceof Long y) {
+            if (!(x == Long.MIN_VALUE && y == -1) && x % y == 0) return x / y;
+            return (double)x / (double)y;
+        }
+        return a.doubleValue() / b.doubleValue();
+    }
+    public Object shiftLeft(Object left, Object right) {
+        long a = integerOperand(left,left,right,"<<"), b = integerOperand(right,left,right,"<<");
+        if (b < 0) throw error("ArithmeticError","Bit shift by negative number");
+        return b >= 64 ? 0L : a << b;
+    }
+    public Object shiftRight(Object left, Object right) {
+        long a = integerOperand(left,left,right,">>"), b = integerOperand(right,left,right,">>");
+        if (b < 0) throw error("ArithmeticError","Bit shift by negative number");
+        return b >= 64 ? (a < 0 ? -1L : 0L) : a >> b;
+    }
+    public Object bitAnd(Object left, Object right) { return bitwise(left,right,'&'); }
+    public Object bitOr(Object left, Object right) { return bitwise(left,right,'|'); }
+    public Object bitXor(Object left, Object right) { return bitwise(left,right,'^'); }
+    private Object bitwise(Object left, Object right, char op) {
+        if ((left instanceof B1Bytes || left instanceof String) && (right instanceof B1Bytes || right instanceof String)) {
+            byte[] x = B1Bytes.bytes(left), y = B1Bytes.bytes(right);
+            byte[] longer = x.length >= y.length ? x : y;
+            byte[] out = op == '|' ? longer.clone() : new byte[Math.min(x.length,y.length)];
+            for (int i = 0; i < Math.min(x.length,y.length); i++)
+                out[i] = (byte)(op == '&' ? x[i] & y[i] : op == '|' ? x[i] | y[i] : x[i] ^ y[i]);
+            return B1Bytes.of(out);
+        }
+        String symbol = String.valueOf(op);
+        long a = integerOperand(left,left,right,symbol), b = integerOperand(right,left,right,symbol);
+        return op == '&' ? a & b : op == '|' ? a | b : a ^ b;
+    }
+    /** The binary operator of a compound assignment, by IR operator ordinal. */
+    public Object arithmetic(int opcode, Object left, Object right) {
+        return switch (OPERATORS[opcode]) {
+            case ADD -> add(left,right);
+            case SUB -> subtract(left,right);
+            case MUL -> multiply(left,right);
+            case DIV -> divide(left,right);
+            case MOD -> mod(left,right);
+            case CONCAT -> concat(left,right);
+            case SL -> shiftLeft(left,right);
+            case SR -> shiftRight(left,right);
+            case BW_AND -> bitAnd(left,right);
+            case BW_OR -> bitOr(left,right);
+            case BW_XOR -> bitXor(left,right);
+            default -> throw new IllegalArgumentException(OPERATORS[opcode].name());
+        };
+    }
+    static String describeKey(Object key) {
+        return key instanceof String || key instanceof B1Bytes ? "\"" + key + "\"" : String.valueOf(key);
+    }
+
+    private Map<String,Object> constants = new HashMap<>();
+    private final IdentityHashMap<B1Callable,LinkedHashMap<String,B1Ref>> staticVariables = new IdentityHashMap<>();
+    /** Restored function statics ({@link B1Snapshot#staticKey}) whose function has not run in this request yet. */
+    private Map<String,Map<String,Object>> unboundStatics = new HashMap<>();
+    Map<String,B1Ref> staticVariables(B1Callable fn) {
+        LinkedHashMap<String,B1Ref> slots = staticVariables.get(fn);
+        if (slots != null) return slots;
+        LinkedHashMap<String,B1Ref> created = new LinkedHashMap<>();
+        Map<String,Object> restored = unboundStatics.isEmpty() ? null : unboundStatics.remove(B1Snapshot.staticKey(fn));
+        if (restored != null) restored.forEach((name,value) -> {
+            B1Ref slot = new B1Ref();
+            slot.set(this,value);
+            created.put(name,slot);
+        });
+        staticVariables.put(fn,created);
+        return created;
+    }
+    /** Unbinds the function statics. Destructors that run meanwhile may bind new ones; those are drained as well. */
+    private Throwable dropStaticVariables(Throwable pending) {
+        while (!staticVariables.isEmpty()) {
+            LinkedHashMap<String,B1Ref> slots = staticVariables.remove(staticVariables.keySet().iterator().next());
+            while (!slots.isEmpty()) {
+                B1Ref slot = slots.pollFirstEntry().getValue();
+                try { slot.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
+            }
+        }
+        return pending;
+    }
+    /** Releases the defined constants, including any a destructor defines meanwhile. */
+    private Throwable dropConstants(Map<String,Object> table,Throwable pending) {
+        while (!table.isEmpty()) {
+            String name = table.keySet().iterator().next();
+            Object value = table.remove(name);
+            try { B1Object.release(this,value); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
+        }
+        return pending;
+    }
+    /** define()'s body (ZEND_FUNCTION(define), zend_register_constant). The name is kept as given: a leading
+     * backslash is part of it. Arrays are copied without references; objects are not modelled. */
+    Object define(String name, Object value, boolean caseInsensitive) {
+        if (name.contains("::")) throw error("ValueError","define(): Argument #1 ($constant_name) cannot be a class constant");
+        if (caseInsensitive) diagnostic("Warning","define(): Argument #3 ($case_insensitive) is ignored since declaration of case-insensitive constants is no longer supported");
+        if (value instanceof B1Object || value instanceof B1Closure) throw unsupported("object constants");
+        Object stored = value instanceof B1Array array
+                ? array.constantCopy(this,Collections.newSetFromMap(new IdentityHashMap<>())) : value;
+        if (constants.containsKey(name) || pl.codeloom.php.ir.PhpIrLowerer.foldedConstant(name)) {
+            diagnostic("Warning","Constant " + name + " already defined, this will be an error in PHP 9");
+            return false;
+        }
+        if (pl.codeloom.php.ir.PhpIrLowerer.builtinConstant(name)) throw unsupported("define() of a name PHP may define (" + name + ")");
+        constants.put(name, stored);
+        return true;
+    }
+    /** defined(): a lookup strips one leading backslash, as zend_get_constant_ex does. */
+    boolean defined(String name) {
+        if (name.startsWith("\\")) name = name.substring(1);
+        if (constants.containsKey(name) || pl.codeloom.php.ir.PhpIrLowerer.foldedConstant(name)) return true;
+        if (pl.codeloom.php.ir.PhpIrLowerer.builtinConstant(name)) throw unsupported("defined() of the engine constant " + name);
+        return false;
+    }
+    /** (array) and (float) casts. The result is owned by the caller. */
+    public Object convert(Object value, String type) {
+        if (type.equals("float")) {
+            if (value instanceof Double || value == null) return value == null ? 0.0 : value;
+            if (value instanceof Long n) return n.doubleValue();
+            if (value instanceof Boolean flag) return flag ? 1.0 : 0.0;
+            if (value instanceof B1Array array) return array.size() == 0 ? 0.0 : 1.0;
+            if (value instanceof B1Bytes || value instanceof String) {
+                Number n = pl.codeloom.php.ir.PhpNumericString.parse(B1Bytes.bytes(value),true);
+                return n == null ? 0.0 : n.doubleValue();
+            }
+            throw unsupported("(float) casts of objects");
+        }
+        if (value instanceof B1Array array) { array.retain(); return array; }
+        if (value == null) return new B1Array(0);
+        if (value instanceof B1Object || value instanceof B1Closure) throw unsupported("(array) casts of objects");
+        return new B1Array(1).append(this,value);
+    }
+    /** A constant this request defined. PHP's own constants are resolved when lowering, or not at all. */
+    public Object constant(String name) {
+        Object value = constants.get(name);
+        if (value == null && !constants.containsKey(name)) throw unsupported("the undefined (or engine) constant " + name);
+        return value;
+    }
+
+    // Host embedding: a benchmark or test drives linked PHP code without the CLI script lifecycle.
+    private pl.codeloom.php.b1.B1CodeCache code;
+    private final Set<String> included = new HashSet<>();
+    /** Contexts sharing a cache reuse each other's hidden classes for identical includes and evals. */
+    public void shareCode(pl.codeloom.php.b1.B1CodeCache cache) { code = cache; }
+    public pl.codeloom.php.b1.B1CodeCache codeCache() { return code; }
+    public boolean markIncluded(String realPath) { return included.add(realPath); }
+    public boolean wasIncluded(String realPath) { return included.contains(realPath); }
+    public boolean atTopLevel() { return frame != null && frame.isTop(); }
+    public Object include(Object path, int kind, int budget) {
+        return pl.codeloom.php.b1.B1Compiler.include(this, string(path), kind,
+                new pl.codeloom.php.ir.IrSourceSpan(frame.file, frame.line), budget);
+    }
+    /** Runs a linked file body like a CLI script, without the request shutdown. Returns the owned result. */
+    public Object execute(B1Callable entry) { return entry.invoke0(this, null); }
+    /** Calls a PHP callable from Java as an internal caller (like call_user_func). Returns the owned result. */
+    public Object callHost(Object value, Object... args) {
+        B1Callable target = callable(value);
+        B1Object self = receiver(value);
+        B1Frame host = new B1Frame(frame, "[host]", "{host}", new String[0], 0, false, false);
+        host.internalCall = true;
+        frame = host;
+        try {
+            if (value instanceof B1Closure closure) host.nextClosure = closure;
+            return switch (args.length) {
+                case 0 -> target.invoke0(this, self);
+                case 1 -> target.invoke1(this, self, args[0]);
+                case 2 -> target.invoke2(this, self, args[0], args[1]);
+                default -> target.invoke(this, self, args.clone());
+            };
+        } finally { pop(host); }
+    }
+    public void setGlobal(String name, Object value) { global(name).set(this, value); }
+    public Object globalValue(String name) {
+        B1Ref slot = globals.get(name);
+        return slot == null ? null : slot.get();
     }
 
     private static final class ExceptionMethod extends B1Callable {
@@ -719,9 +1064,16 @@ public final class B1RequestContext {
     public B1Callable resolve(B1Object recv, String lowerName, String name) {
         var target = recv.method(this,lowerName);
         if (target == null) throw error("Error", "Call to undefined method " + typeName(recv) + "::" + name + "()");
+        if (target.visibility != 1) visible(target);
         return target;
     }
-    public B1Callable constructor(B1Object recv) { return recv.method(this,"__construct"); }
+    /** zend_std_get_constructor: a non-public constructor is callable from its own class only. */
+    public B1Callable constructor(B1Object recv) {
+        B1Callable ctor = recv.method(this,"__construct");
+        if (ctor != null && !callableFromScope(ctor))
+            throw error("Error","Call to " + (ctor.visibility == 2 ? "protected" : "private") + " " + ctor.display + "() from " + scopeName());
+        return ctor;
+    }
 
     public B1Object allocate(String lower, String name) {
         var cls = findClass(this, lower);
@@ -793,7 +1145,9 @@ public final class B1RequestContext {
     }
 
     /** Copy initialized data into an immutable image, rejecting objects and PHP aliases. */
-    public B1Snapshot freezePureData() { return B1Snapshot.capture(globals,staticProperties); }
+    public B1Snapshot freezePureData() {
+        return B1Snapshot.capture(globals,staticProperties,staticVariables,unboundStatics,constants,included);
+    }
     /** Replace this idle request's data. Class and function definitions are linked by the request. */
     public void restoreFrom(B1Snapshot snapshot) {
         if (frame != null) throw new IllegalStateException("Cannot restore during PHP execution");
@@ -803,13 +1157,24 @@ public final class B1RequestContext {
         snapshot.restore(this,nextGlobals,nextStatics);
         var oldGlobals = globals;
         var oldStatics = staticProperties;
+        var oldConstants = constants;
+        var oldStaticVariables = new ArrayList<>(staticVariables.values());
         globals = nextGlobals;
         staticProperties = nextStatics;
+        staticVariables.clear();
+        unboundStatics = new HashMap<>(snapshot.staticVariables());
+        constants = new HashMap<>(snapshot.constants());
+        included.clear();
+        included.addAll(snapshot.included());
         Throwable pending = null;
         for (var slots : List.of(oldGlobals,oldStatics)) for (var old : slots.values()) {
             if (old == null) continue;
             try { old.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
         }
+        for (var slots : oldStaticVariables) for (var old : slots.values()) {
+            try { old.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
+        }
+        pending = dropConstants(oldConstants,pending);
         B1Thrown.propagate(pending);
     }
     boolean strict() { return frame != null && !frame.internalCall && frame.strictTypes; }
@@ -853,10 +1218,13 @@ public final class B1RequestContext {
     }
 
     public static Object quietProperty(Object receiver,B1RequestContext ctx,String name) {
+        if (receiver instanceof B1Object obj && !(obj.has(name) && obj.accessible(ctx,name)) && obj.magicAccess())
+            throw ctx.unsupported("__isset/__get dispatch");
         return receiver instanceof B1Object obj && obj.has(name) && obj.accessible(ctx,name) ? obj.read(name) : null;
     }
     public static Object readProperty(Object receiver, B1RequestContext ctx, String name) {
         if (receiver instanceof B1Object obj) {
+            if (!(obj.has(name) && obj.accessible(ctx,name)) && obj.magicAccess()) throw ctx.unsupported("__get dispatch");
             if (obj.has(name)) return obj.property(ctx,name).readProperty(ctx);
             ctx.diagnostic("Warning", "Undefined property: " + ctx.typeName(obj) + "::$" + name);
         } else ctx.diagnostic("Warning", "Attempt to read property \"" + name + "\" on " + ctx.typeName(receiver));
@@ -954,9 +1322,11 @@ public final class B1RequestContext {
         diagnostic("Warning","The float " + string(value) + " is not representable as an int, cast occurred");
         return pl.codeloom.php.ir.PhpFloatFormat.wrapToLong(value);
     }
-    private long modOperand(Object value,Object a,Object b) {
+    private long modOperand(Object value,Object a,Object b) { return integerOperand(value,a,b,"%"); }
+    /** zendi_try_get_long for the integer operators. */
+    private long integerOperand(Object value,Object a,Object b,String operator) {
         Number n = number(value,true);
-        if (n == null) throw error("TypeError","Unsupported operand types: " + typeName(a) + " % " + typeName(b));
+        if (n == null) throw error("TypeError","Unsupported operand types: " + typeName(a) + " " + operator + " " + typeName(b));
         if (n instanceof Double d) {
             boolean isFloat = value instanceof Double;
             long integer = isFloat ? floatToLong(d) : Double.isFinite(d) ? d.longValue() : 0;
@@ -1021,6 +1391,9 @@ public final class B1RequestContext {
             try { slot.unbind(this); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
         }
         staticProperties.clear();
+        pending = dropStaticVariables(pending);
+        unboundStatics = new HashMap<>();
+        pending = dropConstants(constants,pending);
         try { collectCycles(); } catch (Throwable ex) { pending = B1Thrown.chain(this,ex,pending); }
         while (!destructibles.isEmpty()) {
             try { destructibles.getFirst().destruct(this); } catch (Throwable ex) { pending = B1Thrown.chain(this, ex, pending); }

@@ -21,6 +21,11 @@ public final class PhpIrLowerer {
 
     private final String file;
     private boolean evalThis;
+    /** B1's language level: the Truffle subset plus constructs only the B1 backend implements. The Truffle
+     * entry points keep it off, so their IR coverage (and therefore their behaviour) is unchanged. */
+    private boolean extended;
+    /** With {@link #lowerB1Declarations}: the folded names of the top-level declarations to link. */
+    private Set<String> keep;
     private final List<IrFunction> functions = new ArrayList<>();
     private final List<IrClass> classes = new ArrayList<>();
     private final Set<String> functionNames = new HashSet<>();
@@ -58,6 +63,38 @@ public final class PhpIrLowerer {
         return lowerer.unit(parsed.ast());
     }
 
+    /** B1 language level for a whole file. Unknown functions and classes resolve at run time. */
+    public static IrUnit lowerB1File(String file, byte[] source, java.util.function.Predicate<String> functions,
+                                     java.util.function.Predicate<String> classes) {
+        return lowerB1(file,source,functions,classes,false,null);
+    }
+    public static IrUnit lowerB1Eval(String file, byte[] source, java.util.function.Predicate<String> functions,
+                                     java.util.function.Predicate<String> classes, boolean hasThis) {
+        return lowerB1(file,source,functions,classes,hasThis,null);
+    }
+    /** Links only the named top-level function and class declarations of an unmodified file. Its statements and
+     * other declarations are not part of the unit; calling one of those raises PHP's undefined-function error. */
+    public static IrUnit lowerB1Declarations(String file, byte[] source, Set<String> names) {
+        Set<String> folded = new HashSet<>();
+        for (String name : names) folded.add(AsciiCase.lower(name));
+        return lowerB1(file,source,ignored -> false,ignored -> false,false,folded);
+    }
+    private static IrUnit lowerB1(String file, byte[] source, java.util.function.Predicate<String> functions,
+                                  java.util.function.Predicate<String> classes, boolean hasThis, Set<String> keep) {
+        ZendParser.Result parsed = ZendParser.parse(source);
+        try {
+            if (!parsed.diagnostics().isEmpty() || !JumpChecks.file(parsed.ast()).isEmpty())
+                throw new UnsupportedIr("compile diagnostics");
+        } catch (JumpChecks.Failure failure) {
+            throw new PhpCompileFatal(failure.getMessage(),new IrSourceSpan(file,failure.line),"#0 {main}");
+        }
+        PhpIrLowerer lowerer = new PhpIrLowerer(file,functions,classes);
+        lowerer.evalThis = hasThis;
+        lowerer.extended = true;
+        lowerer.keep = keep;
+        return lowerer.unit(parsed.ast());
+    }
+
     /** The normal Truffle entry point has already run parser diagnostics and JumpChecks. */
     public static IrUnit lowerFile(String file, Ast checkedFile) {
         return lowerFile(file,checkedFile,false);
@@ -69,6 +106,14 @@ public final class PhpIrLowerer {
     }
 
     private IrUnit unit(Ast tree) {
+        if (keep != null) {
+            List<Object> kept = new ArrayList<>();
+            for (Object item : tree.children()) {
+                Ast n = node(item);
+                if ((n.is("AST_FUNC_DECL") || n.is("AST_CLASS")) && keep.contains(AsciiCase.lower(name(n)))) kept.add(n);
+            }
+            tree = new Ast(tree.kind,tree.flags,tree.line,tree.endLine,kept,null);
+        }
         functions.add(null); // function 0 is the file
         // PHP binds unconditional declarations before its first statement, including forward calls.
         for (Object item : tree.children()) {
@@ -138,18 +183,25 @@ public final class PhpIrLowerer {
     }
 
     private void classDecl(Ast decl) {
-        check((decl.flags == 0 || decl.flags == 32) && plainDeclaration(decl) && decl.get("extends") == null
-                && decl.get("implements") == null, decl);
+        Set<String> classAttributes = attributes(decl,Set.of("allowdynamicproperties"));
+        check((decl.flags == 0 || decl.flags == 32) && classAttributes != null && decl.get("extends") == null
+                && (decl.get("implements") == null || extended), decl);
         String name = Names.GLOBAL.declared(name(decl));
         check(!Names.reservedClassName(AsciiCase.lower(name)), decl);
         List<PropertyDef> props = new ArrayList<>();
         List<Integer> methods = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        Set<String> tentative = new HashSet<>();
         for (Object item : decl.node("stmts").children()) {
             Ast member = node(item);
             if (member.is("AST_METHOD")) {
                 String method = AsciiCase.lower(name(member));
-                check(seen.add(method) && !Set.of("__get", "__set", "__isset", "__unset", "__call").contains(method), member);
+                // B1 implements __get and __isset; the others need their own dispatch.
+                check(seen.add(method) && !Set.of("__set", "__unset", "__call").contains(method)
+                        && (extended || !Set.of("__get", "__isset").contains(method)), member);
+                Set<String> methodAttributes = attributes(member,Set.of("returntypewillchange"));
+                check(methodAttributes != null,member);
+                if (methodAttributes.contains("returntypewillchange")) tentative.add(method);
                 methods.add(function(member, name));
             } else {
                 check(member.is("AST_PROP_GROUP") && Set.of(1,2,4,17,18,20).contains(member.flags)
@@ -157,7 +209,7 @@ public final class PhpIrLowerer {
                 for (Object element : member.node("props").children()) {
                     Ast prop = node(element);
                     check(prop.get("hooks") == null
-                            && prop.get("docComment") == null && props.stream().noneMatch(p -> p.name().equals(name(prop))), prop);
+                            && (extended || prop.get("docComment") == null) && props.stream().noneMatch(p -> p.name().equals(name(prop))), prop);
                     Ast declared = member.node("type");
                     boolean nullable = declared != null && declared.is("AST_NULLABLE_TYPE");
                     String type = typeName(nullable ? declared.node("type") : declared,false);
@@ -171,7 +223,50 @@ public final class PhpIrLowerer {
                 }
             }
         }
-        classes.add(new IrClass(classes.size(), name, at(decl), decl.endLine, List.copyOf(props), List.copyOf(methods)));
+        List<String> interfaces = new ArrayList<>();
+        if (decl.get("implements") != null) for (Object item : decl.node("implements").children()) {
+            Ast type = node(item);
+            String iface = AsciiCase.lower(className(type));
+            java.util.Map<String,Integer> required = INTERFACE_METHODS.get(iface);
+            check(required != null && !interfaces.contains(iface), type);
+            // Accept only implementations PHP links without a diagnostic: every method present, untyped and
+            // marked #[ReturnTypeWillChange] (the interfaces declare tentative return types).
+            for (java.util.Map.Entry<String,Integer> entry : required.entrySet()) {
+                IrFunction method = methods.stream().map(functions::get)
+                        .filter(f -> f.name().equalsIgnoreCase(entry.getKey())).findFirst().orElse(null);
+                check(method != null && method.visibility() == 1 && !method.isStatic() && method.returnType() == null
+                        && tentative.contains(AsciiCase.lower(entry.getKey())) && method.params().size() == entry.getValue()
+                        && method.params().stream().allMatch(p -> p.type() == null && !p.byRef() && !p.variadic()
+                                && p.defaultValue() == null), type);
+            }
+            interfaces.add(iface);
+        }
+        if (interfaces.contains("iterator")) interfaces.add("traversable");
+        classes.add(new IrClass(classes.size(), name, at(decl), decl.endLine, List.copyOf(props), List.copyOf(methods),
+                List.copyOf(interfaces), classAttributes.contains("allowdynamicproperties")));
+    }
+
+    private static final java.util.Map<String,java.util.Map<String,Integer>> INTERFACE_METHODS = java.util.Map.of(
+            "iterator", java.util.Map.of("current",0,"next",0,"key",0,"valid",0,"rewind",0),
+            "arrayaccess", java.util.Map.of("offsetExists",1,"offsetGet",1,"offsetSet",2,"offsetUnset",1));
+
+    /** The folded names of a declaration's attributes, or null when it has others. Doc comments do not
+     * change execution and are ignored at the B1 level (Reflection is not part of it). */
+    private Set<String> attributes(Ast decl, Set<String> allowed) {
+        if (!extended) return plainDeclaration(decl) ? Set.of() : null;
+        Ast list = decl.node("attributes");
+        if (list == null) return Set.of();
+        Set<String> names = new HashSet<>();
+        for (Object group : list.children()) for (Object item : node(group).children()) {
+            Ast attribute = node(item);
+            Ast cls = attribute.node("class");
+            if (attribute.get("args") != null || cls == null || !cls.is("AST_NAME")) return null;
+            String folded = AsciiCase.lower(Names.GLOBAL.className(name(cls), cls.flags));
+            if (folded.startsWith("\\")) folded = folded.substring(1);
+            if (!allowed.contains(folded)) return null;
+            names.add(folded);
+        }
+        return names;
     }
 
     private int function(Ast decl, String owner) {
@@ -181,9 +276,15 @@ public final class PhpIrLowerer {
     private int function(Ast decl, String owner, Body outer) {
         boolean closure = outer != null;
         int flags = decl.flags & ~ZEND_ACC_GENERATOR;
-        check((flags == 0 || closure && flags == 16 || owner != null && (flags == 1 || flags == 17)) && plainDeclaration(decl)
-                && decl.get("stmts") != null, decl);
+        // Methods: one visibility bit (public 1, protected 2, private 4), optionally static (16) or final (32).
+        boolean method = owner != null && !closure && (extended ? (flags & ~(7 | 16 | 32)) == 0
+                && Integer.bitCount(flags & 7) == 1 : flags == 1 || flags == 17);
+        boolean plain = owner != null && !closure ? attributes(decl,Set.of("returntypewillchange")) != null
+                : attributes(decl,Set.of()) != null;
+        check((flags == 0 || closure && flags == 16 || method) && plain && decl.get("stmts") != null, decl);
         var body = new Body(owner);
+        body.closure = closure;
+        if (!closure) body.functionName = name(decl);
         Ast syntax = decl.body();
         Ast declared = decl.node("returnType");
         body.generator = (decl.flags & ZEND_ACC_GENERATOR) != 0 || declared != null && Ast.containsYield(syntax);
@@ -195,7 +296,7 @@ public final class PhpIrLowerer {
         for (Object item : decl.node("params").children()) {
             Ast param = node(item);
             Ast type = param.node("type");
-            check((param.flags & ~24) == 0 && plainDeclaration(param) && (param.flags != 16 || type == null),param);
+            check((param.flags & ~24) == 0 && attributes(param,Set.of()) != null && (param.flags != 16 || type == null),param);
             String name = name(param);
             check(body.local(name) == params.size(), param);
             params.add(new Param(name, (param.flags & 8) != 0, typeName(type,false), (param.flags & 16) != 0, defaultValue(param.get("default")), at(param)));
@@ -226,7 +327,8 @@ public final class PhpIrLowerer {
             code = List.copyOf(withEnd);
         }
         functions.set(id, new IrFunction(id, owner, name, at(decl), decl.endLine, body.returnType,List.copyOf(params), body.generator, closure,
-                (decl.flags & 16) != 0, List.copyOf(captures), List.copyOf(body.locals), List.copyOf(body.temps), code));
+                (decl.flags & 16) != 0, List.copyOf(captures), List.copyOf(body.locals), List.copyOf(body.temps), code,
+                method ? flags & 7 : 1));
         return id;
     }
 
@@ -295,7 +397,17 @@ public final class PhpIrLowerer {
         return scalar(value);
     }
 
-    private static Operator operator(Ast n) {
+    private Operator operator(Ast n) {
+        if (extended) switch (n.flags) {
+            case 2: return Operator.SUB;
+            case 4: return Operator.DIV;
+            case 6: return Operator.SL;
+            case 7: return Operator.SR;
+            case 9: return Operator.BW_OR;
+            case 10: return Operator.BW_AND;
+            case 11: return Operator.BW_XOR;
+            default: break;
+        }
         return switch (n.flags) {
             case 1 -> Operator.ADD;
             case 3 -> Operator.MUL;
@@ -319,6 +431,9 @@ public final class PhpIrLowerer {
     private final class Body {
         final String owner;
         String enclosing = file;
+        /** __FUNCTION__: the declared name; empty for the file body. */
+        String functionName = "";
+        boolean closure;
         String returnType;
         boolean generator;
         boolean checkedReturn() { return returnType != null && !returnType.equals("void"); }
@@ -466,6 +581,18 @@ public final class PhpIrLowerer {
                 }
                 case "AST_FOREACH": {
                     Ast value = n.node("value"), key = n.node("key");
+                    if (extended && value.is("AST_REF")) {
+                        // FE_RESET_RW: the source place is fetched for writing; each element becomes a reference.
+                        Ast target = value.node("var");
+                        check(target != null && target.is("AST_VAR") && !"this".equals(name(target))
+                                && (key == null || key.is("AST_VAR")), n);
+                        beginOperands();
+                        Expr source = expr(n.get("expr"), false);
+                        check(addressable(source) && !(source instanceof StoreTemp), n);
+                        Test test = new Test(at(n), new ByReference(source), new ReleaseTemps(List.copyOf(releases)));
+                        return new Each(test, reserve(TempKind.VALUE), key == null ? -1 : local(name(key)),
+                                local(name(target)), statements(n.node("stmts")));
+                    }
                     check(value.is("AST_VAR") && (key == null || key.is("AST_VAR")), n);
                     return new Each(test(n, n.get("expr")), reserve(TempKind.VALUE),
                             key == null ? -1 : local(name(key)), local(name(value)), statements(n.node("stmts")));
@@ -480,7 +607,9 @@ public final class PhpIrLowerer {
                     Ast types = handler.node("class");
                     check(types.size() == 1 && handler.node("var") != null, handler);
                     String type = className(node(types.child(0)));
-                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","divisionbyzeroerror","parseerror","compileerror","valueerror","fibererror","closedgeneratorexception").contains(AsciiCase.lower(type)), handler);
+                    // ArithmeticError (B1 raises it for negative shifts) is caught at the B1 level only.
+                    check(Set.of("exception", "throwable", "error", "typeerror", "argumentcounterror","divisionbyzeroerror","parseerror","compileerror","valueerror","fibererror","closedgeneratorexception").contains(AsciiCase.lower(type))
+                            || extended && AsciiCase.lower(type).equals("arithmeticerror"), handler);
                     protectedBody = List.of(new TryCatch(labels++, at(n), protectedBody, type,
                             local(name(handler.node("var"))), statements(handler.node("stmts"))));
                 }
@@ -495,9 +624,22 @@ public final class PhpIrLowerer {
                     yield new Bind(local(name(dest)),source);
                 }
                 case "AST_GLOBAL" -> new Global(local(name(n.node("var"))));
+                case "AST_STATIC" -> {
+                    // Function and method statics only: a closure's are per object, a file's per op_array.
+                    check(extended && !closure && !functionName.isEmpty() && n.node("var").is("AST_VAR"), n);
+                    int id = local(name(n.node("var")));
+                    yield new StaticVar(id, n.get("default") == null ? null : expr(n.get("default"), false));
+                }
                 case "AST_UNSET" -> {
                     Ast place = n.node("var");
                     if (place.is("AST_VAR")) yield new Unset(expr(place,false), null);
+                    if (extended && place.is("AST_DIM") && place.get("dim") != null && place.node("expr") != null
+                            && (place.node("expr").is("AST_DIM") || place.node("expr").is("AST_STATIC_PROP"))) {
+                        // FETCH_DIM_UNSET: containers on the path are separated but never created.
+                        Expr root = expr(place.get("expr"),false);
+                        check(addressable(root),place);
+                        yield new Unset(root,expr(place.get("dim"),false));
+                    }
                     check(place.is("AST_DIM") && (place.node("expr").is("AST_VAR") || place.node("expr").is("AST_PROP")) && place.get("dim") != null,place);
                     yield new Unset(expr(place.get("expr"),false),expr(place.get("dim"),false));
                 }
@@ -537,7 +679,8 @@ public final class PhpIrLowerer {
                         yield new CoalesceDim(local(name(place.node("expr"))),hold(expr(place.get("dim"),false)),
                                 hold(expr(n.get("expr"),false)));
                     }
-                    check(place.is("AST_VAR") && (n.flags == 1 || n.flags == 8), n);
+                    if (extended && !place.is("AST_VAR")) yield new Evaluate(updatePlace(n));
+                    check(place.is("AST_VAR") && (n.flags == 1 || n.flags == 8 || extended && n.flags >= 1 && n.flags <= 11), n);
                     int id = local(name(place));
                     yield new Write(id, new Binary(operator(n), new Read(id), expr(n.get("expr"), false)));
                 }
@@ -545,6 +688,29 @@ public final class PhpIrLowerer {
             };
             var cleanup = new ReleaseTemps(List.copyOf(releases));
             return new Region(at(n), action, cleanup, cleanup);
+        }
+
+        /** ZEND_ASSIGN_DIM_OP / ZEND_ASSIGN_OBJ_OP / ZEND_ASSIGN_STATIC_PROP_OP. */
+        Expr updatePlace(Ast n) {
+            Ast place = n.node("var");
+            check(n.flags >= 1 && n.flags <= 11, n);
+            Operator op = operator(n);
+            if (place.is("AST_PROP") || place.is("AST_STATIC_PROP")) {
+                check(place.is("AST_STATIC_PROP") || place.get("prop") instanceof String, n);
+                Expr root = place.is("AST_PROP") ? expr(place,false) : staticProperty(place);
+                return new UpdatePlace(root, List.of(), op, expr(n.get("expr"), false));
+            }
+            List<Ast> path = new ArrayList<>();
+            while (place != null && place.is("AST_DIM")) { path.addFirst(place); place = place.node("expr"); }
+            check(!path.isEmpty() && place != null && (place.is("AST_VAR") && !"this".equals(name(place))
+                    || place.is("AST_PROP") || place.is("AST_STATIC_PROP")), n);
+            List<Expr> keys = new ArrayList<>();
+            for (Ast dim : path) {
+                check(dim.get("dim") != null, dim);
+                Expr key = expr(dim.get("dim"), false);
+                keys.add(key instanceof Read || key instanceof Literal ? key : hold(key));
+            }
+            return new UpdatePlace(expr(place,false), List.copyOf(keys), op, expr(n.get("expr"), false));
         }
 
         Expr receiver(Ast n) {
@@ -564,15 +730,56 @@ public final class PhpIrLowerer {
                     yield owned(new Yield(n.get("key") == null ? null : expr(n.get("key"),false),
                             expr(n.get(from ? "expr" : "value"),false),from));
                 }
-                case "AST_CONST" -> scalar(n);
+                case "AST_CONST" -> {
+                    if (!extended) yield scalar(n);
+                    try { yield scalar(n); } catch (UnsupportedIr unknown) {
+                        String constant = n.text("name");
+                        if (constant.startsWith("\\")) constant = constant.substring(1);
+                        check(!constant.contains("\\") && !builtinConstant(constant), n);
+                        yield new Constant(constant);
+                    }
+                }
+                case "AST_ASSIGN" -> {
+                    // ZEND_ASSIGN's result is its own copy of the assigned value.
+                    Ast place = n.node("var");
+                    check(extended && place.is("AST_VAR") && !"this".equals(name(place)), n);
+                    int id = local(name(place));
+                    yield owned(new Assign(id, expr(n.get("expr"), false)));
+                }
+                case "AST_MAGIC_CONST" -> {
+                    // T_LINE, T_FILE, T_DIR; T_CLASS_C, T_METHOD_C and T_FUNC_C outside closures.
+                    check(extended && (n.flags >= 346 && n.flags <= 348
+                            || !closure && (n.flags == 349 || n.flags == 351 || n.flags == 352)), n);
+                    yield new Literal(switch (n.flags) {
+                        case 346 -> (Object)(long)n.line;
+                        case 347 -> file;
+                        case 348 -> dirname(file);
+                        case 349 -> owner == null ? "" : owner;
+                        case 351 -> functionName.isEmpty() || owner == null ? functionName : owner + "::" + functionName;
+                        default -> functionName;
+                    });
+                }
+                case "AST_INSTANCEOF" -> {
+                    Ast cls = n.node("class");
+                    check(extended && cls != null && cls.is("AST_NAME"), n);
+                    String type = "self".equalsIgnoreCase(name(cls)) ? owner : className(cls);
+                    check(type != null, n);
+                    yield new InstanceOf(binaryOperand(expr(n.get("expr"), false)), type);
+                }
                 case "AST_ARRAY" -> {
                     ArrayValue pure = largeLiteral(n);
                     if (pure != null) yield owned(pure);
                     var items = new ArrayList<Item>();
                     for (Object element : n.children()) {
                         Ast e = node(element);
-                        check(e.is("AST_ARRAY_ELEM") && e.flags == 0, e);
-                        items.add(new Item(e.get("key") == null ? null : expr(e.get("key"), false), expr(e.get("value"), false)));
+                        check(e.is("AST_ARRAY_ELEM") && (e.flags == 0 || extended && e.flags == 1), e);
+                        Expr key = e.get("key") == null ? null : expr(e.get("key"), false);
+                        Expr item = expr(e.get("value"), false);
+                        if (e.flags == 1) {
+                            check(addressable(item) && !(item instanceof StoreTemp), e);
+                            item = new ByReference(item);
+                        }
+                        items.add(new Item(key, item));
                     }
                     yield owned(new ArrayValue(List.copyOf(items)));
                 }
@@ -588,16 +795,27 @@ public final class PhpIrLowerer {
                 }
                 case "AST_EMPTY" -> new Not(quiet(n.get("expr")));
                 case "AST_CAST" -> {
+                    if (extended && n.flags == 18) yield new Not(new Not(expr(n.get("expr"),false)));
+                    if (extended && (n.flags == 5 || n.flags == 7))
+                        yield owned(new Convert(expr(n.get("expr"),false), n.flags == 5 ? "float" : "array"));
                     check(n.flags == 4 || n.flags == 6,n);
                     yield new Cast(expr(n.get("expr"),false),n.flags == 6);
                 }
                 case "AST_UNARY_OP" -> {
                     if (n.flags == 14) yield new Not(expr(n.get("expr"), false));
+                    if (extended && (n.flags == 261 || n.flags == 262)) {
+                        try { yield scalar(n); } catch (UnsupportedIr notConstant) {
+                            // zend_compile_unary_pm: ZEND_MUL by -1 (or 1).
+                            yield new Binary(Operator.MUL, binaryOperand(expr(n.get("expr"), false)),
+                                    new Literal(n.flags == 262 ? -1L : 1L));
+                        }
+                    }
                     yield scalar(n);
                 }
                 case "AST_ASSIGN_OP" -> {
                     Ast place = n.node("var");
-                    check(place.is("AST_VAR") && (n.flags == 1 || n.flags == 8),n);
+                    if (extended && !place.is("AST_VAR") && n.flags != 260) yield owned(updatePlace(n));
+                    check(place.is("AST_VAR") && (n.flags == 1 || n.flags == 8 || extended && n.flags >= 1 && n.flags <= 11),n);
                     int id = local(name(place));
                     yield new Update(id,new Binary(operator(n),new Read(id),expr(n.get("expr"),false)));
                 }
@@ -617,6 +835,10 @@ public final class PhpIrLowerer {
                     yield owned(new Closure(id, functions.get(id).captures()));
                 }
                 case "AST_INCLUDE_OR_EVAL" -> {
+                    if (extended && n.flags != 1) {
+                        check(n.flags == 2 || n.flags == 4 || n.flags == 8 || n.flags == 16, n);
+                        yield owned(new Include(expr(n.get("expr"), false), n.flags, at(n)));
+                    }
                     check(n.flags == 1, n);
                     yield owned(new Eval(expr(n.get("expr"), false), at(n)));
                 }
@@ -733,10 +955,17 @@ public final class PhpIrLowerer {
                 if (cls.is("AST_VAR")) target = new Target(Dispatch.CONSTRUCTOR, null,
                         new StoreTemp(slot(TempKind.CONSTRUCTION), new DynamicAllocate(expr(cls, false), at(n))));
                 else {
-                    String name = className(cls);
-                    check(classNames.contains(AsciiCase.lower(name)) || externalClass.test(AsciiCase.lower(name)) || name.equalsIgnoreCase("Fiber") || name.equalsIgnoreCase("Exception") || name.equalsIgnoreCase("stdClass"), n);
+                    String name = extended && cls.is("AST_NAME") && "self".equalsIgnoreCase(name(cls)) && owner != null ? owner : className(cls);
+                    check(extended || classNames.contains(AsciiCase.lower(name)) || externalClass.test(AsciiCase.lower(name)) || name.equalsIgnoreCase("Fiber") || name.equalsIgnoreCase("Exception") || name.equalsIgnoreCase("stdClass"), n);
                     target = new Target(Dispatch.CONSTRUCTOR, name, new StoreTemp(slot(TempKind.CONSTRUCTION), new Allocate(name, at(n))));
                 }
+            } else if (extended && n.is("AST_STATIC_CALL") && n.node("class") != null && n.node("class").is("AST_NAME")
+                    && n.get("method") instanceof String method
+                    && !("fiber".equalsIgnoreCase(name(n.node("class"))) && Set.of("suspend","getcurrent").contains(AsciiCase.lower(method)))) {
+                Ast cls = n.node("class");
+                String type = "self".equalsIgnoreCase(name(cls)) ? owner : className(cls);
+                check(type != null, n);
+                target = new Target(Dispatch.STATIC, method, new Literal(type));
             } else if (n.is("AST_STATIC_CALL")) {
                 check(n.node("class") != null && n.node("class").is("AST_NAME")
                         && className(n.node("class")).equalsIgnoreCase("Fiber") && n.get("method") instanceof String method
@@ -768,7 +997,8 @@ public final class PhpIrLowerer {
                         return owned(new Forward(callback, expr(source,false), null, null));
                     }
                     // Frame-sensitive builtins and intrinsics have their own lowering in the legacy frontend.
-                    check(functionNames.contains(AsciiCase.lower(name)) || externalFunction.test(AsciiCase.lower(name)) || Set.of("set_exception_handler", "count", "strlen", "array_slice", "array_key_exists", "is_int", "is_string", "is_array", "str_repeat", "get_object_vars", "is_object", "spl_object_id", "gc_collect_cycles","is_callable","is_numeric","intval","var_dump","strtolower","array_map","implode","array_keys", "ucfirst", "trim", "array_pop","array_unshift","ksort","next","current","str_replace").contains(AsciiCase.lower(name)), callee);
+                    check(functionNames.contains(AsciiCase.lower(name)) || externalFunction.test(AsciiCase.lower(name))
+                            || extended && !FRAME_SENSITIVE.contains(AsciiCase.lower(name)) || Set.of("set_exception_handler", "count", "strlen", "array_slice", "array_key_exists", "is_int", "is_string", "is_array", "str_repeat", "get_object_vars", "is_object", "spl_object_id", "gc_collect_cycles","is_callable","is_numeric","intval","var_dump","strtolower","array_map","implode","array_keys", "ucfirst", "trim", "array_pop","array_unshift","ksort","next","current","str_replace").contains(AsciiCase.lower(name)), callee);
                     target = new Target(Dispatch.FUNCTION, name, null);
                 }
             }
@@ -795,6 +1025,41 @@ public final class PhpIrLowerer {
             return new StoreTemp(result, new Call(target, List.copyOf(args), cleanup,
                     !used || target.kind() == Dispatch.CONSTRUCTOR, at(n)));
         }
+    }
+
+    /** Builtins that read or write the caller's frame; the legacy frontend lowers them specially. */
+    private static final Set<String> FRAME_SENSITIVE = Set.of("compact", "extract", "get_defined_vars", "func_get_args",
+            "func_num_args", "func_get_arg", "parse_str", "mb_parse_str", "get_called_class", "get_class",
+            "get_parent_class", "assert", "call_user_func", "forward_static_call", "forward_static_call_array");
+
+    /** The engine constants {@link #scalar} folds. Constant names are case-sensitive except true, false and null. */
+    public static boolean foldedConstant(String name) {
+        return switch (AsciiCase.lower(name)) {
+            case "true", "false", "null" -> true;
+            default -> name.equals("INF") || name.equals("NAN") || name.equals("PHP_INT_MAX") || name.equals("SORT_NUMERIC");
+        };
+    }
+
+    /** PHP's own constants are not modelled at the B1 level; a unit using one is declined, and the runtime stops
+     * a request that asks about one (defined(), define()) instead of answering for an engine it does not model. */
+    public static boolean builtinConstant(String name) {
+        for (String prefix : List.of("E_", "PHP_", "M_", "SORT_", "COUNT_", "JSON_", "PREG_", "ENT_", "LC_", "STR_", "ARRAY_",
+                "INI_", "DATE_", "FILTER_", "PATHINFO_", "SEEK_", "LOCK_", "FILE_", "GLOB_", "MB_", "ZEND_", "UPLOAD_", "CURL",
+                "PASSWORD_", "OPENSSL_", "LIBXML_", "XML_", "IMAGETYPE_", "IMG_", "CRYPT_", "HTML_", "DEBUG_", "CASE_",
+                "EXTR_", "PREG", "MT_RAND", "PHP", "DNS_", "LOG_", "STREAM_", "SQLITE", "MYSQLI_", "INTL_", "IDNA_", "ICONV_"))
+            if (name.startsWith(prefix)) return true;
+        return List.of("DIRECTORY_SEPARATOR", "PATH_SEPARATOR", "DEFAULT_INCLUDE_PATH", "PEAR_INSTALL_DIR", "PEAR_EXTENSION_DIR",
+                "STDIN", "STDOUT", "STDERR", "NAN", "INF", "UPLOAD_ERR_OK", "SID", "NULL", "TRUE", "FALSE").contains(name);
+    }
+
+    /** zend_dirname of a file name, as __DIR__ reports it. */
+    private static String dirname(String path) {
+        int end = path.length();
+        while (end > 1 && (path.charAt(end - 1) == '/' || path.charAt(end - 1) == '\\')) end--;
+        int slash = Math.max(path.lastIndexOf('/', end - 1), path.lastIndexOf('\\', end - 1));
+        if (slash < 0) return ".";
+        while (slash > 0 && (path.charAt(slash - 1) == '/' || path.charAt(slash - 1) == '\\')) slash--;
+        return slash == 0 ? path.substring(0, 1) : path.substring(0, slash);
     }
 
     private IrSourceSpan at(Ast n) { return new IrSourceSpan(file, n.line); }

@@ -17,16 +17,21 @@ public final class B1Thrown extends RuntimeException {
     }
 
     static boolean throwable(String type) { return switch (type) {
-        case "exception", "closedgeneratorexception", "error", "typeerror", "argumentcounterror", "divisionbyzeroerror", "valueerror", "fibererror", "parseerror", "compileerror" -> true;
+        case "exception", "closedgeneratorexception", "error", "typeerror", "argumentcounterror", "arithmeticerror", "divisionbyzeroerror", "valueerror", "fibererror", "parseerror", "compileerror" -> true;
         default -> false;
     }; }
 
     public static boolean matches(Throwable pending, String type) {
-        return pending instanceof B1Thrown thrown && (thrown.exception.type.equals(type) || type.equals("throwable")
-                || type.equals("exception") && thrown.exception.type.equals("closedgeneratorexception")
-                || type.equals("error") && !thrown.exception.type.equals("exception") && !thrown.exception.type.equals("closedgeneratorexception")
-                || type.equals("compileerror") && thrown.exception.type.equals("parseerror")
-                || type.equals("typeerror") && thrown.exception.type.equals("argumentcounterror"));
+        return pending instanceof B1Thrown thrown && subtype(thrown.exception.type,type);
+    }
+    /** The built-in Throwable hierarchy: whether instances of the folded class {@code type} are {@code target}s. */
+    static boolean subtype(String type, String target) {
+        return type.equals(target) || target.equals("throwable")
+                || target.equals("exception") && type.equals("closedgeneratorexception")
+                || target.equals("error") && !type.equals("exception") && !type.equals("closedgeneratorexception")
+                || target.equals("compileerror") && type.equals("parseerror")
+                || target.equals("arithmeticerror") && type.equals("divisionbyzeroerror")
+                || target.equals("typeerror") && type.equals("argumentcounterror");
     }
 
     public static Throwable chain(B1RequestContext ctx, Throwable next, Throwable previous) {

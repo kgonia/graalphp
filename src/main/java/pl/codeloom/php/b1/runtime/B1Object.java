@@ -35,6 +35,20 @@ public non-sealed class B1Object implements B1GcNode {
         return !definition.visibility().containsKey(name) || type.equals(ctx.scope());
     }
     boolean allowDynamicProperties() { return true; }
+    boolean magicAccess() { return definition.magicAccess(); }
+    /** FETCH_OBJ_RW: an undefined property is created, then reported. */
+    public B1Ref propertyRW(B1RequestContext ctx,String name) {
+        boolean existed = has(name) && accessible(ctx,name);
+        if (!existed && magicAccess()) throw ctx.unsupported("__get dispatch");
+        B1Ref ref = property(ctx,name);
+        if (!existed) ctx.diagnostic("Warning","Undefined property: " + definition.name() + "::$" + name);
+        return ref;
+    }
+    /** FETCH_OBJ_UNSET: an existing property, or null. */
+    public B1Ref existingProperty(B1RequestContext ctx,String name) {
+        if (!has(name)) return null;
+        return property(ctx,name);
+    }
     public B1Ref property(B1RequestContext ctx,String name) {
         if (!accessible(ctx,name)) {
             String modifier = definition.visibility().get(name) == 2 ? "protected" : "private";
@@ -44,6 +58,9 @@ public non-sealed class B1Object implements B1GcNode {
         if (existing != null) return existing;
         if (!allowDynamicProperties())
             throw ctx.error("Error","Cannot create dynamic property " + definition.name() + "::$" + name);
+        // PHP 8.2: user classes without #[AllowDynamicProperties] deprecate creation (stdClass allows it).
+        if (definition.declaration() != null && !definition.allowDynamicProperties())
+            ctx.diagnostic("Deprecated","Creation of dynamic property " + definition.name() + "::$" + name + " is deprecated");
         B1Ref created = new B1Ref();
         properties.put(name,created);
         return created;
@@ -99,6 +116,7 @@ public non-sealed class B1Object implements B1GcNode {
         if (value instanceof B1Array a) a.release(ctx);
         if (value instanceof B1Generator.Cursor it) release(ctx,it.generator);
         if (value instanceof B1Array.Cursor it) it.array.release(ctx);
+        if (value instanceof B1Array.RefCursor it) it.source.unbind(ctx);
         if (value instanceof B1Closure c) c.release(ctx);
         if (value instanceof java.util.Map<?, ?> map) releaseElements(ctx, map.values());
         if (value instanceof List<?> list) releaseElements(ctx, list);

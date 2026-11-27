@@ -119,6 +119,7 @@ final class B1GeneratorLowerer {
                 yield new Evaluate(new Literal(null));
             }
             case Global g -> g;
+            case StaticVar v -> new StaticVar(v.local(),v.init() == null ? null : expression(v.init()));
         };
     }
 
@@ -167,6 +168,19 @@ final class B1GeneratorLowerer {
             case Eval v -> new Eval(expression(v.code()),v.at());
             case Forward f -> new Forward(spill(expression(f.callable())),spill(expression(f.args())),
                     spill(expression(f.offset())),expression(f.length()));
+            // B1 language level (PhpIrLowerer.lowerB1*).
+            case Assign a -> new Assign(a.local(),expression(a.value()));
+            case InstanceOf i -> new InstanceOf(expression(i.value()),i.className());
+            case Convert c -> new Convert(expression(c.value()),c.type());
+            case Include i -> new Include(expression(i.path()),i.kind(),i.at());
+            case ByReference r -> new ByReference(address(r.place()));
+            case UpdatePlace u -> {
+                // The emitter's order: early keys, the value, then the RW fetches of the root and the path.
+                var keys = new ArrayList<Expr>(u.keys().size());
+                for (int i = 0; i < u.keys().size(); i++) keys.add(u.early(i) ? spill(expression(u.keys().get(i))) : u.keys().get(i));
+                Expr v = spill(expression(u.value()));
+                yield new UpdatePlace(hasYield(u.root()) ? address(u.root()) : u.root(),List.copyOf(keys),u.op(),v);
+            }
             default -> throw new IllegalStateException("Unhandled suspension in " + e);
         };
     }
@@ -229,7 +243,8 @@ final class B1GeneratorLowerer {
             boolean keyOwned = i.key() instanceof StoreTemp;
             boolean valOwned = i.value() instanceof StoreTemp;
             Expr k = spill(expression(i.key()));
-            Expr v = spill(expression(i.value()));
+            // A by-reference element stays a place: its operands are spilled, the fetch happens when the array is built.
+            Expr v = i.value() instanceof ByReference r ? new ByReference(address(r.place())) : spill(expression(i.value()));
             items.add(new Item(k,v));
             if (keyOwned && k instanceof LoadTemp kt) toRelease.add(new ReleaseTemp(kt.id()));
             if (valOwned && v instanceof LoadTemp vt) toRelease.add(new ReleaseTemp(vt.id()));

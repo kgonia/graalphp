@@ -9,10 +9,14 @@ public final class B1Ref extends OwnedSlot<B1RequestContext> implements B1GcNode
     boolean reference() { return reference; }
     public B1Ref asReference(B1RequestContext ctx) { markReference(ctx); return this; }
     void markReference(B1RequestContext ctx) {
-        if (!defined && type != null && !nullable()) throw ctx.error("Error",
-                "Cannot access uninitialized non-nullable property " + property + " by reference");
+        requireReferenceable(ctx);
         reference = true;
         defined = true;
+    }
+    /** FETCH_OBJ_W with ZEND_FETCH_REF: an uninitialized non-nullable typed property cannot be referenced. */
+    void requireReferenceable(B1RequestContext ctx) {
+        if (!defined && type != null && !nullable()) throw ctx.error("Error",
+                "Cannot access uninitialized non-nullable property " + property + " by reference");
     }
     private boolean nullable() { return type.equals("mixed") || type.startsWith("?"); }
     boolean inGcRoots;
@@ -54,6 +58,7 @@ public final class B1Ref extends OwnedSlot<B1RequestContext> implements B1GcNode
             if (array.contains(canonical)) writable(ctx).remove(ctx,canonical);
         } else if (base instanceof B1Bytes || base instanceof String)
             throw ctx.error("Error","Cannot unset string offsets");
+        else if (base instanceof B1Object obj && ctx.instanceOf(obj,"arrayaccess")) throw ctx.unsupported("ArrayAccess unset");
         else if (base instanceof B1Object) throw ctx.error("Error","Cannot use object of type " + ctx.typeName(base) + " as array");
     }
     public Object increment(B1RequestContext ctx,boolean up,boolean prefix) {
@@ -68,6 +73,41 @@ public final class B1Ref extends OwnedSlot<B1RequestContext> implements B1GcNode
             try { set(ctx,array); } finally { array.release(ctx); }
         }
         return array;
+    }
+    /** FETCH_DIM_RW of a compound assignment: an undefined key warns, then holds null. */
+    public B1Ref childRW(B1RequestContext ctx,Object key) {
+        if (get() instanceof B1Bytes || get() instanceof String) throw ctx.error("Error","Cannot use assign-op operators with string offsets");
+        B1Array array = writable(ctx);
+        Object canonical = ctx.arrayKey(key);
+        if (!array.contains(canonical)) ctx.diagnostic("Warning","Undefined array key " + B1RequestContext.describeKey(canonical));
+        return array.reference(ctx,canonical);
+    }
+    /** ZEND_ASSIGN_*_OP on this place. The result is a scalar or string owned by the place. */
+    public Object compound(B1RequestContext ctx,int opcode,Object value) {
+        Object result = ctx.arithmetic(opcode,readProperty(ctx),value);
+        set(ctx,result);
+        return result;
+    }
+    /** FETCH_DIM_UNSET: a missing container ends the path without creating anything. */
+    public static B1Ref unsetChild(B1Ref ref,B1RequestContext ctx,Object key) {
+        if (ref == null) return null;
+        Object base = ref.get();
+        if (base instanceof B1Array array) {
+            Object canonical = ctx.arrayKey(key);
+            return array.contains(canonical) ? ref.writable(ctx).reference(ctx,canonical) : null;
+        }
+        if (base instanceof B1Bytes || base instanceof String) throw ctx.error("Error","Cannot unset string offsets");
+        if (base instanceof B1Object obj && ctx.instanceOf(obj,"arrayaccess")) throw ctx.unsupported("ArrayAccess unset");
+        if (base instanceof B1Object) throw ctx.error("Error","Cannot use object of type " + ctx.typeName(base) + " as array");
+        return null;
+    }
+    public static void unsetElementOf(B1Ref ref,B1RequestContext ctx,Object key) {
+        if (ref != null) ref.unsetElement(ctx,key);
+    }
+    /** FETCH_DIM_W of a place that becomes a reference (foreach by reference, an array literal's &$a[k]). */
+    public B1Ref childRef(B1RequestContext ctx,Object key) {
+        if (get() instanceof B1Bytes || get() instanceof String) throw ctx.error("Error","Cannot create references to/from string offsets");
+        return child(ctx,key,false);
     }
     public B1Ref child(B1RequestContext ctx,Object key,boolean append) {
         if (!append && (get() instanceof B1Bytes || get() instanceof String)) throw ctx.error("Error","Cannot use string offset as an array");

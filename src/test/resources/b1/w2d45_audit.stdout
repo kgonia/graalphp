@@ -1,0 +1,125 @@
+1
+dim-op 15
+yielded 2
+float(2.5)
+yielded 3
+assign second second
+yielded 4
+by-ref item changed item
+yielded 5
+bool(true)
+yielded 6
+foreach 3,6
+yielded 7
+keyed via-key
+done
+1 20
+1 7
+9 y 2
+int(5)
+NULL
+int(-5)
+NULL
+array(2) {
+  [0]=>
+  int(1)
+  [1]=>
+  int(2)
+}
+NULL
+float(0)
+NULL
+NULL
+int(0)
+NULL
+string(0) ""
+int(0)
+NULL
+max(): Argument #1 ($value) must be of type array, null given
+{-5:"v",-4:"v",-3:"v"}{-1:0,0:0,1:0}{9223372036854775806:1,9223372036854775807:1}
+Cannot add element to the array as the next element is already occupied
+Cannot add element to the array as the next element is already occupied
+{9223372036854775807:"last"}0
+reenter
+payload q-null
+payload destroyed
+after
+
+Warning: Undefined variable $undefinedSource in /fixtures/w2d45_audit.php on line 71
+
+Warning: foreach() argument must be of type array|object, null given in /fixtures/w2d45_audit.php on line 71
+bool(false)
+Cannot access uninitialized non-nullable property Typed::$list by reference
+
+Warning: foreach() argument must be of type array|object, null given in /fixtures/w2d45_audit.php on line 78
+
+Deprecated: Creation of dynamic property Typed::$dynamic is deprecated in /fixtures/w2d45_audit.php on line 80
+
+Warning: foreach() argument must be of type array|object, null given in /fixtures/w2d45_audit.php on line 80
+
+Warning: foreach() argument must be of type array|object, null given in /fixtures/w2d45_audit.php on line 83
+
+Warning: foreach() argument must be of type array|object, null given in /fixtures/w2d45_audit.php on line 85
+{missing:,a:{b:}}
+Cannot create references to/from string offsets
+Cannot create references to/from string offsets
+bool(false)
+bool(false)
+array_map(): Argument #1 ($callback) must be a valid callback or null, cannot access private method Vis::hidden()
+array_map(): Argument #1 ($callback) must be a valid callback or null, cannot access private method Vis::inst()
+Call to private Vis::__construct() from global scope
+{0:true,1:true,2:"hidden"}
+Bit shift by negative number
+Division by zero
+
+Warning: define(): Argument #3 ($case_insensitive) is ignored since declaration of case-insensitive constants is no longer supported in /fixtures/w2d45_audit.php on line 115
+bool(true)
+bool(true)
+bool(true)
+bool(false)
+bool(false)
+
+Warning: Constant W2A_CI already defined, this will be an error in PHP 9 in /fixtures/w2d45_audit.php on line 116
+bool(false)
+int(1)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(false)
+1 1 2
+
+Deprecated: defined(): Passing null to parameter #1 ($constant_name) of type string is deprecated in /fixtures/w2d45_audit.php on line 124
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+define(): Argument #1 ($constant_name) cannot be a class constant
+define(): Argument #1 ($constant_name) must be of type string, array given
+defined(): Argument #1 ($constant_name) must be of type string, array given
+define(): Argument #3 ($case_insensitive) must be of type bool, array given
+[A|B|C|D][abc||ab|4]
+Argument number specifier must be greater than zero and less than 2147483647
+Argument number specifier must be greater than zero and less than 2147483647
+Argument number specifier must be greater than zero and less than 2147483647
+Width must be between 0 and 2147483647
+Width must be between 0 and 2147483647
+Precision must be between 0 and 2147483647
+Precision must be between 0 and 2147483647
+2147483647 arguments are required, 2 given
+
+Warning: Object of class Probe could not be converted to float in /fixtures/w2d45_audit.php on line 135
+1.0 none b-a
+
+Deprecated: Creation of dynamic property Bag::$n is deprecated in /fixtures/w2d45_audit.php on line 140
+
+Warning: Undefined property: Bag::$n in /fixtures/w2d45_audit.php on line 140
+
+Deprecated: Creation of dynamic property Bag::$m is deprecated in /fixtures/w2d45_audit.php on line 141
+
+Warning: Undefined property: Bag::$m in /fixtures/w2d45_audit.php on line 141
+
+Warning: Undefined array key "k" in /fixtures/w2d45_audit.php on line 141
+1{k:"x"}
+end

@@ -6,6 +6,10 @@ public abstract class B1Callable {
     private final boolean[] byRef;
     public boolean strictTypes, isStatic, evalBody, variadic;
     public int methodBudget, requiredParams;
+    /** 1 public, 2 protected, 4 private (ZEND_ACC_* bits). */
+    public int visibility = 1;
+    /** The unit was lowered at the B1 language level; its evals are too. */
+    public boolean extendedLanguage;
     public String declaredFile, scope;
     public int declaredLine;
     public B1Callable[] siblings;

@@ -509,6 +509,7 @@ public final class TruffleIrAdapter {
 
             void action(Action action, ReleaseTemps normal) {
                 switch (action) {
+                    case StaticVar ignored -> throw new IllegalStateException("B1-only IR: " + action);
                     case Echo(var value) -> { b.beginEcho(); expr(value); b.endEcho(); }
                     case Return(var value) -> returning(() -> expr(value),normal);
                     case Raise(var value) -> { b.beginThrow(); expr(value); b.endThrow(); }
@@ -620,6 +621,14 @@ public final class TruffleIrAdapter {
 
             void expr(Expr expr) {
                 switch (expr) {
+                    // The Truffle entry points never lower at the B1 language level (PhpIrLowerer.lowerB1*).
+                    case Assign ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case InstanceOf ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case UpdatePlace ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case ByReference ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case Include ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case Constant ignored -> throw new IllegalStateException("B1-only IR: " + expr);
+                    case IrUnit.Convert ignored -> throw new IllegalStateException("B1-only IR: " + expr);
                     case Yield(var key,var value,var delegate) -> {
                         b.beginResumed(generator);
                         if (delegate) {
@@ -732,6 +741,8 @@ public final class TruffleIrAdapter {
                             case OR -> b.beginOr();
                             case COALESCE -> b.beginCoalesce();
                             case ELVIS -> b.beginElvis();
+                            // SUB and later exist only at the B1 language level (PhpIrLowerer.lowerB1*).
+                            default -> throw new IllegalStateException("B1-only IR operator: " + binary.op());
                         }
                         expr(binary.left());
                         if (right == null) expr(binary.right()); else b.emitLoadLocal(right);
@@ -752,6 +763,7 @@ public final class TruffleIrAdapter {
                             case OR -> b.endOr();
                             case COALESCE -> b.endCoalesce();
                             case ELVIS -> b.endElvis();
+                            default -> throw new IllegalStateException("B1-only IR operator: " + binary.op());
                         }
                         b.endBlock();
                         if (!consumed.slots().isEmpty()) b.endReleaseAfter(indices(consumed), binary.preservesValue() ? PhpBytecodeRootNode.ReleaseAfter.PASSES : PhpBytecodeRootNode.ReleaseAfter.CONSUMES);

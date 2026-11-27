@@ -114,6 +114,18 @@ public final class B1Array implements B1GcNode {
         return this;
     }
 
+    /** ZEND_ADD_ARRAY_ELEMENT with a key: a duplicate key replaces the earlier element, reference or not,
+     * so neither a reference in a reference nor a write through the earlier alias is made. */
+    public B1Array putInit(B1RequestContext ctx, Object k, Object value) {
+        Object canonical = ctx.arrayKey(k);
+        int pos = position(canonical);
+        if (pos < 0) return put(ctx, canonical, value);
+        Object old = values[pos];
+        values[pos] = B1Object.retain(value);
+        B1Object.release(ctx, old);
+        return this;
+    }
+
     public int gcCount() { return frozen ? -1 : owners; }
     public void gcEdges(java.util.function.Consumer<Object> visit) {
         for (int i = 0; i < size; i++) visit.accept(values[i]);
@@ -143,6 +155,22 @@ public final class B1Array implements B1GcNode {
         B1Array copy = copyShape();
         copies.put(this,copy);
         for (int i = 0; i < size; i++) copy.values[i] = B1Snapshot.pure(values[i],copies);
+        copy.frozen = true;
+        return copy;
+    }
+    /** define()'s copy_constant_array: references become their values, so a constant holds no live alias. The
+     * copy is immutable like the constant (frozen); a write to a variable holding it separates. */
+    B1Array constantCopy(B1RequestContext ctx, java.util.Set<B1Array> path) {
+        if (frozen) return this;
+        if (!path.add(this)) throw ctx.error("ValueError","define(): Argument #2 ($value) cannot be a recursive array");
+        B1Array copy = copyShape();
+        for (int i = 0; i < size; i++) {
+            Object value = values[i] instanceof B1Ref ref ? ref.get() : values[i];
+            if (value instanceof B1Array nested) value = nested.constantCopy(ctx,path);
+            else if (value instanceof B1Object || value instanceof B1Closure) throw ctx.unsupported("objects in constants");
+            copy.values[i] = value;
+        }
+        path.remove(this);
         copy.frozen = true;
         return copy;
     }
@@ -179,6 +207,8 @@ public final class B1Array implements B1GcNode {
     }
 
     Object current() { return cursor < size ? valueAt(cursor) : false; }
+    Object currentKey() { return cursor < size ? keyAt(cursor) : null; }
+    Object rewind() { cursor = 0; return current(); }
     Object advance() { if (cursor < size) cursor++; return current(); }
     Object pop(B1RequestContext ctx) {
         if (size == 0) return null;
@@ -222,6 +252,15 @@ public final class B1Array implements B1GcNode {
         final B1Array array;
         int pos;
         Cursor(B1Array array) { this.array = array; array.retain(); }
+    }
+
+    /** FE_RESET_RW's iterator: a counted binding of the iterated place. Each step re-reads the array the
+     * place holds; a structural change behind the cursor is refused rather than iterated inexactly. */
+    static final class RefCursor {
+        final B1Ref source;
+        int pos;
+        Object lastKey;
+        RefCursor(B1Ref source) { this.source = source; source.bind(); }
     }
 
     boolean packed() { return index == null; }

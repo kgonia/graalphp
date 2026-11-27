@@ -38,6 +38,7 @@ public final class B1Frame {
         if (!top) for (var local : locals) visit.accept(local);
         for (var temp : temps) {
             if (temp instanceof B1Array.Cursor cursor) visit.accept(cursor.array);
+            else if (temp instanceof B1Array.RefCursor cursor) visit.accept(cursor.source);
             else if (temp instanceof B1Generator.Cursor cursor) visit.accept(cursor.generator);
             else visit.accept(temp);
         }
@@ -102,12 +103,36 @@ public final class B1Frame {
         if (subject instanceof B1Generator gen) temps[iterator] = new B1Generator.Cursor(ctx,gen);
         else if (subject instanceof B1Array a) temps[iterator] = new B1Array.Cursor(a);
         else if (subject instanceof B1Object obj) {
+            if (ctx.instanceOf(obj,"traversable")) throw ctx.unsupported("foreach over Traversable objects");
             B1Array properties = obj.publicProperties(ctx);
             temps[iterator] = new B1Array.Cursor(properties);
             properties.release(ctx);
         } else ctx.diagnostic("Warning", "foreach() argument must be of type array|object, " + ctx.typeName(subject) + " given");
     }
+    /** FE_RESET_RW: the place becomes a reference held by the iterator; its array is separated per step. */
+    public void startEachRef(B1RequestContext ctx, int iterator, B1Ref source) {
+        source.requireReferenceable(ctx);
+        Object subject = source.get();
+        if (subject instanceof B1Array) {
+            source.markReference(ctx);
+            temps[iterator] = new B1Array.RefCursor(source);
+        } else if (subject instanceof B1Object) throw ctx.unsupported("foreach by reference over objects");
+        else ctx.diagnostic("Warning", "foreach() argument must be of type array|object, " + ctx.typeName(subject) + " given");
+    }
+    private boolean nextEachRef(B1RequestContext ctx, B1Array.RefCursor it, int key, int value) {
+        if (!(it.source.get() instanceof B1Array)) return false;
+        B1Array array = it.source.writable(ctx);
+        if (it.pos > 0 && (it.pos > array.size() || !it.lastKey.equals(array.keyAt(it.pos - 1))))
+            throw ctx.unsupported("structural changes behind a by-reference foreach");
+        if (it.pos == array.size()) return false;
+        Object k = array.keyAt(it.pos++);
+        it.lastKey = k;
+        bind(ctx, value, array.reference(ctx, k));
+        if (key >= 0) write(ctx, key, k);
+        return true;
+    }
     public boolean nextEach(B1RequestContext ctx, int iterator, int key, int value) {
+        if (temps[iterator] instanceof B1Array.RefCursor it) return nextEachRef(ctx, it, key, value);
         if (temps[iterator] instanceof B1Generator.Cursor it) {
             if (!it.advance(ctx)) return false;
             write(ctx,value,it.generator.value());
@@ -122,6 +147,12 @@ public final class B1Frame {
         return true;
     }
     public B1Ref place(B1RequestContext ctx,int id) { return slot(ctx,id); }
+    /** FETCH_DIM_RW / ASSIGN_OP container: an undefined CV warns, then exists. */
+    public B1Ref placeRW(B1RequestContext ctx,int id) {
+        B1Ref ref = slot(ctx,id);
+        if (!ref.defined()) ctx.diagnostic("Warning", "Undefined variable $" + names[id]);
+        return ref;
+    }
     public void bind(B1RequestContext ctx,int id,B1Ref next) {
         next.markReference(ctx);
         next.bind();
@@ -147,6 +178,18 @@ public final class B1Frame {
         if (locals[id] == global) return;
         B1Ref old = locals[id]; global.bind(); locals[id] = global;
         if (old != null) old.unbind(ctx);
+    }
+    /** ZEND_BIND_STATIC: the CV becomes a reference to the request's static slot. True when it was just created. */
+    public boolean bindStatic(B1RequestContext ctx, int id, B1Callable fn) {
+        java.util.Map<String, B1Ref> map = ctx.staticVariables(fn);
+        B1Ref slot = map.get(names[id]);
+        boolean created = slot == null;
+        if (created) map.put(names[id], slot = new B1Ref());
+        slot.markReference(ctx);
+        if (locals[id] == slot) return created;
+        B1Ref old = locals[id]; slot.bind(); locals[id] = slot;
+        if (old != null) old.unbind(ctx);
+        return created;
     }
     public void unset(B1RequestContext ctx, int id) {
         if (eval) { caller.unsetSymbol(ctx,names[id]); locals[id] = caller.symbol(ctx,names[id]); return; }
@@ -194,6 +237,19 @@ public final class B1Frame {
         return ref.get();
     }
     public void write(B1RequestContext ctx, int id, Object value) { slot(ctx, id).set(ctx, value); }
+    /** ZEND_ASSIGN used as a value. The result is retained before the write, whose release of the old value can
+     * run a destructor that overwrites the CV again. Owned by the caller. */
+    public Object assign(B1RequestContext ctx, int id, Object value) {
+        B1Object.retain(value);
+        try {
+            write(ctx, id, value);
+        } catch (Throwable ex) {
+            Throwable pending = ex;
+            try { B1Object.release(ctx, value); } catch (Throwable next) { pending = B1Thrown.chain(ctx, next, pending); }
+            B1Thrown.propagate(pending);
+        }
+        return value;
+    }
     public Object send(B1RequestContext ctx, int id, B1Callable target, int index) {
         if (target != null && target.byRef(index)) {
             B1Ref slot = slot(ctx, id);
