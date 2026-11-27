@@ -31,11 +31,16 @@ final class B1ClassFileEmitter {
             ClassDesc.of(B1LiteralBlob.class.getName()), "indices", CD_Object, CD_int);
     private static final ClassDesc ARGS = CD_Object.arrayType(), BOOLS = CD_boolean.arrayType(), NAMES = CD_String.arrayType();
     private static final MethodTypeDesc RUN = sig(CD_Object, CTX, OBJ, CALLABLE, ARGS, CD_Object, CD_Object);
+    /** A fast function's run: a third fixed argument (invoke3), no step helpers. */
+    private static final MethodTypeDesc RUN3 = sig(CD_Object, CTX, OBJ, CALLABLE, ARGS, CD_Object, CD_Object, CD_Object);
     private static final MethodTypeDesc STEP = sig(CD_int, CTX, OBJ, CALLABLE, ARGS, CD_Object, CD_Object, FRAME);
     private static final MethodTypeDesc VALUE = STEP.changeReturnType(CD_Object);
     private static final MethodTypeDesc CTOR = sig(CD_void, BOOLS, NAMES);
 
     static MethodTypeDesc sig(ClassDesc ret, ClassDesc... args) { return MethodTypeDesc.of(ret, args); }
+    /** Process-wide ids of folded symbol names: hidden classes are shared by every context of a code cache, and
+     * each context resolves a call site's id into its own table. */
+
     private static MethodTypeDesc fixed(int n) {
         var args = new ClassDesc[n + 2];
         java.util.Arrays.fill(args, CD_Object);
@@ -48,33 +53,38 @@ final class B1ClassFileEmitter {
         return emit(cfg, new ArrayList<>());
     }
     static byte[] emit(B1Cfg cfg, List<byte[]> blobs) {
-        return build(cfg, blobs, List.of(), Set.of());
+        return build(cfg, blobs, List.of(), Set.of(), new B1Symbols());
     }
 
     record Chunk(int first, int end) {}
     // A first-pass method above the classfile u2 limit has no parsable Code attribute.
     // JDK 25 reports the measured length and the failing method while writing Code.
     private static final java.util.regex.Pattern CODE_OVERFLOW = java.util.regex.Pattern.compile(
-            "^Code length ([0-9]+) is outside the allowed range in (run|resumeBody|fragmentBlock([0-9]+))\\(");
+            "^Code length ([0-9]+) is outside the allowed range in (runFiber|run|resumeBody|fragmentBlock([0-9]+))\\(");
 
     record Emission(byte[] bytes, List<byte[]> blobs, int helpers, int maxCode) {}
-    static Emission measured(B1Cfg cfg, int limit) {
+    static Emission measured(B1Cfg cfg, int limit) { return measured(cfg, limit, new B1Symbols()); }
+    static Emission measured(B1Cfg cfg, int limit, B1Symbols symbols) {
         if (limit <= 0 || limit > 7500) throw new IllegalArgumentException("Invalid bytecode budget " + limit);
         var chunks = new ArrayList<Chunk>();
         var fragmented = new HashSet<Integer>();
+        boolean noFast = false;
         while (true) {
             var blobs = new ArrayList<byte[]>();
             byte[] bytes;
-            try { bytes = build(cfg, blobs, chunks, fragmented); }
+            try { bytes = build(cfg, blobs, chunks, fragmented, symbols, noFast); }
             catch (IllegalArgumentException ex) {
                 var match = CODE_OVERFLOW.matcher(String.valueOf(ex.getMessage()));
                 if (!match.find()) throw ex;
-                if (chunks.isEmpty()) chunks.add(new Chunk(1,cfg.blocks().size()));
+                // A fast function whose frame body (for fibers) does not fit stays on frames altogether.
+                if (match.group(2).equals("runFiber")) noFast = true;
+                else if (chunks.isEmpty()) chunks.add(new Chunk(1,cfg.blocks().size()));
                 else if (match.group(3) != null) split(chunks, fragmented, Integer.parseInt(match.group(3)), Integer.parseInt(match.group(1)), limit);
                 else throw ex;
                 continue;
             }
             var next = new ArrayList<>(chunks);
+            boolean retry = false;
             int max = 0, helpers = 0;
             for (var method : ClassFile.of().parse(bytes).methods()) {
                 int length = method.findAttribute(Attributes.code()).orElseThrow().codeLength();
@@ -82,13 +92,14 @@ final class B1ClassFileEmitter {
                 max = Math.max(max,length);
                 if (length <= limit) continue;
                 String name = method.methodName().stringValue();
-                if (chunks.isEmpty() && (name.equals("run") || name.equals("resumeBody"))) next.add(new Chunk(1,cfg.blocks().size()));
+                if (name.equals("runFiber")) { noFast = true; retry = true; }
+                else if (chunks.isEmpty() && (name.equals("run") || name.equals("resumeBody"))) next.add(new Chunk(1,cfg.blocks().size()));
                 else if (name.startsWith("fragmentBlock")) {
                     split(next,fragmented,Integer.parseInt(name.substring("fragmentBlock".length())),length,limit);
                 } else throw new IllegalArgumentException(name + " requires " + length + " bytes (budget " + limit + ")");
             }
             if (max <= limit) return new Emission(bytes, blobs, helpers, max);
-            chunks = next;
+            if (!retry) chunks = next;
         }
     }
 
@@ -125,24 +136,34 @@ final class B1ClassFileEmitter {
         for (int i = 0; i < 6; i++) c.aload(i);
         c.aload(frame).invokestatic(cls,name,STEP);
     }
-    private static byte[] build(B1Cfg cfg, List<byte[]> blobs, List<Chunk> chunks, Set<Integer> fragmented) {
+    private static byte[] build(B1Cfg cfg, List<byte[]> blobs, List<Chunk> chunks, Set<Integer> fragmented, B1Symbols symbols) {
+        return build(cfg, blobs, chunks, fragmented, symbols, false);
+    }
+    private static byte[] build(B1Cfg cfg, List<byte[]> blobs, List<Chunk> chunks, Set<Integer> fragmented, B1Symbols symbols,
+                                boolean noFast) {
         ClassDesc cls = ClassDesc.of("pl.codeloom.php.b1.Compiled" + cfg.function().id());
-        var fragments = new Fragments(cls,fragmented);
+        var fragments = new Fragments(cls,fragmented,symbols);
         return ClassFile.of().build(cls, cb -> {
             cb.withFlags(ACC_FINAL | ACC_SUPER).withSuperclass(CALLABLE);
             cb.withMethodBody("<init>", CTOR, ACC_PUBLIC, c ->
                     c.aload(0).aload(1).aload(2).invokespecial(CALLABLE, "<init>", CTOR).return_());
-            cb.withMethodBody("invoke", sig(CD_Object, CTX, OBJ, ARGS), ACC_PUBLIC, c ->
-                    c.aload(1).aload(2).aload(0).aload(3).aconst_null().aconst_null().invokestatic(cls, "run", RUN).areturn());
-            for (int n = 0; n <= 2; n++) {
+            String dispatch = chunks.isEmpty() ? (cfg.function().generator() ? "resumeBody" : null) : dispatcher(cb,cls,chunks);
+            boolean fast = !noFast && dispatch == null && fastEligible(cfg);
+            MethodTypeDesc run = fast ? RUN3 : RUN;
+            int fixedArgs = fast ? 3 : 2;
+            cb.withMethodBody("invoke", sig(CD_Object, CTX, OBJ, ARGS), ACC_PUBLIC, c -> {
+                c.aload(1).aload(2).aload(0).aload(3);
+                for (int i = 0; i < fixedArgs; i++) c.aconst_null();
+                c.invokestatic(cls, "run", run).areturn();
+            });
+            for (int n = 0; n <= fixedArgs; n++) {
                 int arity = n;
                 cb.withMethodBody("invoke" + arity, fixed(arity), ACC_PUBLIC, c -> {
                 c.aload(1).aload(2).aload(0).aconst_null();
-                for (int i = 0; i < 2; i++) { if (i < arity) c.aload(3 + i); else c.getstatic(CALLABLE,"OMITTED",CD_Object); }
-                c.invokestatic(cls, "run", RUN).areturn();
+                for (int i = 0; i < fixedArgs; i++) { if (i < arity) c.aload(3 + i); else c.getstatic(CALLABLE,"OMITTED",CD_Object); }
+                c.invokestatic(cls, "run", run).areturn();
                 });
             }
-            String dispatch = chunks.isEmpty() ? (cfg.function().generator() ? "resumeBody" : null) : dispatcher(cb,cls,chunks);
             if (cfg.function().generator() && chunks.isEmpty()) {
                 cb.withMethodBody(dispatch,STEP,ACC_PRIVATE | ACC_STATIC,c ->
                         new Body(cfg,c,blobs,new Chunk(1,cfg.blocks().size()),fragments).emit(cls,null));
@@ -152,7 +173,10 @@ final class B1ClassFileEmitter {
                     c.aload(1).aload(2).aload(0).aconst_null().aconst_null().aconst_null().aload(3)
                             .invokestatic(cls,dispatch,STEP).ireturn());
             }
-            cb.withMethodBody("run", RUN, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments).emit(cls,dispatch));
+            cb.withMethodBody("run", run, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments,fast).emit(cls,dispatch));
+            // Inside a fiber a frame can be parked with the fiber: the cycle collector must see its CVs and
+            // temporaries, so a fast function runs its frame-based body there.
+            if (fast) cb.withMethodBody("runFiber", RUN, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments,false).emit(cls,null));
             for (var chunk : chunks) cb.withMethodBody("fragmentBlock" + chunk.first, STEP, ACC_PRIVATE | ACC_STATIC,
                     c -> new Body(cfg,c,blobs,chunk,fragments).emit(cls,null));
             for (int i = 0; i < fragments.methods.size(); i++) {
@@ -166,6 +190,38 @@ final class B1ClassFileEmitter {
         });
     }
 
+    /** A function whose CVs and temporaries can live in JVM locals: nothing addresses them by name or across
+     * suspensions (no eval, include, generator, static variables or by-reference places of this extended set). */
+    static boolean fastEligible(B1Cfg cfg) {
+        IrFunction f = cfg.function();
+        if (f.generator() || f.fileBody() || Boolean.getBoolean("b1.slow")) return false;
+        for (var block : cfg.blocks()) {
+            switch (block.op()) {
+                case B1Cfg.YieldPoint ignored -> { return false; }
+                case B1Cfg.Receive ignored -> { return false; }
+                case B1Cfg.ResolveCall ignored -> { return false; }
+                case B1Cfg.SendCall ignored -> { return false; }
+                case B1Cfg.InvokeCall ignored -> { return false; }
+                default -> {}
+            }
+        }
+        return f.body().stream().allMatch(B1ClassFileEmitter::fastNode);
+    }
+    private static boolean fastNode(Object node) {
+        if (node == null) return true;
+        if (node instanceof Eval || node instanceof Include || node instanceof ByReference || node instanceof Yield
+                || node instanceof StaticVar) return false;
+        if (node instanceof List<?> list) return list.stream().allMatch(B1ClassFileEmitter::fastNode);
+        if (node instanceof Record record) {
+            for (var component : record.getClass().getRecordComponents()) {
+                try {
+                    if (!fastNode(component.getAccessor().invoke(record))) return false;
+                } catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+            }
+        }
+        return true;
+    }
+
     /** Oversized single blocks factor their expression trees at value boundaries. All PHP
      * owners stay in the original frame, including sends in progress and protected receivers. */
     private static final class Fragments {
@@ -174,7 +230,8 @@ final class B1ClassFileEmitter {
         record Helper(String name, MethodTypeDesc signature, java.util.function.Consumer<Body> emit) {}
         final List<Helper> methods = new ArrayList<>();
         final Map<Expr,String> ids = new IdentityHashMap<>();
-        Fragments(ClassDesc cls, Set<Integer> blocks) { this.cls = cls; this.blocks = blocks; }
+        final B1Symbols symbols;
+        Fragments(ClassDesc cls, Set<Integer> blocks, B1Symbols symbols) { this.cls = cls; this.blocks = blocks; this.symbols = symbols; }
         String helper(MethodTypeDesc type, java.util.function.Consumer<Body> emit) {
             String name = "fragment" + methods.size();
             methods.add(new Helper(name,type,emit));
@@ -199,7 +256,15 @@ final class B1ClassFileEmitter {
         final Fragments fragments;
         boolean fragment;
         final java.util.Set<Integer> edges = new java.util.TreeSet<>();
+        /** Fast mode: CV i lives in JVM local cvs[i], temporary i in temps[i]. */
+        final boolean fast;
+        final int[] cvs, temps;
+        int scratchValue, scratchOld;
         Body(B1Cfg cfg, CodeBuilder c, List<byte[]> blobs, Chunk chunk, Fragments fragments) {
+            this(cfg,c,blobs,chunk,fragments,false);
+        }
+        Body(B1Cfg cfg, CodeBuilder c, List<byte[]> blobs, Chunk chunk, Fragments fragments, boolean fast) {
+            this.fast = fast;
             this.fragments = fragments;
             this.chunk = chunk;
             this.blobs = blobs;
@@ -210,8 +275,61 @@ final class B1ClassFileEmitter {
             labels = new Label[chunk != null && chunk.end == 0 ? 0 : cfg.blocks().size()];
             handlers = new Label[labels.length];
             for (int i = 0; i < labels.length; i++) labels[i] = c.newLabel();
+            cvs = new int[fast ? f.locals().size() : 0];
+            temps = new int[fast ? cfg.tempCount() : 0];
+            for (int i = 0; i < cvs.length; i++) cvs[i] = ref();
+            for (int i = 0; i < temps.length; i++) temps[i] = ref();
+            if (fast) { scratchValue = ref(); scratchOld = ref(); }
+            if (fast) for (var block : cfg.blocks()) if (block.op() instanceof B1Cfg.StartEach(var each))
+                positions.putIfAbsent(each.iterator(), c.allocateLocal(TypeKind.INT));
         }
+        /** Fast foreach: the position of each array iterator temporary. */
+        final Map<Integer,Integer> positions = new HashMap<>();
         int ref() { return c.allocateLocal(TypeKind.REFERENCE); }
+        /** The id of a folded symbol in the registry this unit is linked with. */
+        int sym(String folded) { return fragments.symbols.of(folded); }
+
+        // ---- fast-mode CV and temporary primitives
+        boolean isParam(int id) { return id < f.params().size(); }
+        /** The new CV object on the stack becomes CV id (and the parameter's trace mirror). */
+        void setCv(int id) {
+            c.astore(cvs[id]);
+            if (isParam(id)) mirror(id);
+        }
+        void mirror(int id) {
+            if (id < 4) c.aload(frame).aload(cvs[id]).putfield(FRAME,"m" + id,CD_Object);
+            else c.aload(frame).loadConstant(id).aload(cvs[id]).invokevirtual(FRAME,"mirror",sig(CD_void,CD_int,CD_Object));
+        }
+        void readCv(int id) {
+            c.aload(0).aload(cvs[id]).aload(frame).loadConstant(id).invokestatic(FRAME,"read",sig(CD_Object,CTX,CD_Object,FRAME,CD_int));
+        }
+        void quietCv(int id) { c.aload(cvs[id]).invokestatic(FRAME,"quiet",sig(CD_Object,CD_Object)); }
+        /** Writes the borrowed value on the stack into CV id. */
+        void writeCv(int id) {
+            c.astore(scratchValue);
+            c.aload(cvs[id]).astore(scratchOld);
+            c.aload(0).aload(scratchOld).aload(scratchValue).invokestatic(FRAME,"store",sig(CD_Object,CTX,CD_Object,CD_Object));
+            setCv(id);
+            c.aload(0).aload(scratchOld).aload(cvs[id]).invokestatic(FRAME,"drop",sig(CD_void,CTX,CD_Object,CD_Object));
+        }
+        /** Pushes CV id as a place (boxed into its own binding). */
+        void placeCv(int id) {
+            c.aload(cvs[id]).invokestatic(FRAME,"box",sig(REF,CD_Object)).dup();
+            setCv(id);
+        }
+        /** The value on the stack is stored into temporary id and stays on the stack. */
+        void storeTempFast(int id, boolean owned) {
+            c.loadConstant(owned ? 1 : 0).invokestatic(FRAME,"temp",sig(CD_Object,CD_Object,CD_boolean)).dup().astore(temps[id]);
+        }
+        void loadTemp(int id) {
+            if (fast) c.aload(temps[id]);
+            else c.aload(frame).loadConstant(id).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int));
+        }
+        void releaseTempFast(int id, boolean unwind) {
+            c.aload(0).aload(temps[id]).aconst_null().astore(temps[id]);
+            if (unwind) c.aload(pending).invokestatic(FRAME,"unwindOwned",sig(CD_Throwable,CTX,CD_Object,CD_Throwable)).astore(pending);
+            else c.invokestatic(FRAME,"releaseOwned",sig(CD_void,CTX,CD_Object));
+        }
         void frameCtx() { c.aload(frame).aload(0); }
         Label target(int id) {
             if (chunk != null && (id < chunk.first || id >= chunk.end)) edges.add(id);
@@ -221,7 +339,32 @@ final class B1ClassFileEmitter {
         void line(int line) { c.aload(frame).loadConstant(line).putfield(FRAME, "line", CD_int); }
 
         void emit(ClassDesc cls, String dispatcher) {
-            if (chunk == null) {
+            if (chunk == null && fast) {
+                Label notFiber = c.newLabel(), packed = c.newLabel();
+                c.aload(0).invokevirtual(CTX,"inFiber",sig(CD_boolean)).ifeq(notFiber);
+                c.aload(3).ifnonnull(packed).aload(6).getstatic(CALLABLE,"OMITTED",CD_Object).if_acmpeq(packed);
+                c.aload(0).aload(1).aload(2).aload(4).aload(5).aload(6)
+                        .invokestatic(FRAME,"arguments",sig(CD_Object.arrayType(),CD_Object,CD_Object,CD_Object));
+                c.aconst_null().aconst_null().invokestatic(cls,"runFiber",RUN).areturn();
+                c.labelBinding(packed);
+                for (int i = 0; i < 6; i++) c.aload(i);
+                c.invokestatic(cls,"runFiber",RUN).areturn();
+                c.labelBinding(notFiber);
+                c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name())
+                        .invokevirtual(CTX, "enterFast", sig(FRAME, CALLABLE, CD_String, CD_String)).astore(frame);
+                for (int cv : cvs) c.getstatic(FRAME,"UNDEF",CD_Object).astore(cv);
+                for (int t : temps) c.aconst_null().astore(t);
+                for (int p : positions.values()) c.iconst_0().istore(p);
+                c.aconst_null().astore(scratchValue).aconst_null().astore(scratchOld);
+                for (int id : cfg.longLocals()) {
+                    int slot = c.allocateLocal(TypeKind.LONG);
+                    longs.put(id, slot);
+                    c.lconst_0().lstore(slot);
+                }
+                fallthrough();
+                c.astore(result).aconst_null().astore(pending);
+                go(cfg.entry());
+            } else if (chunk == null) {
                 c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name()).loadConstant(cfg.tempCount())
                         .loadConstant(f.fileBody() ? 1 : 0)
                         .invokevirtual(CTX, "enter", sig(FRAME, CALLABLE, CD_String, CD_String, CD_int, CD_boolean)).astore(frame);
@@ -268,6 +411,23 @@ final class B1ClassFileEmitter {
                 Label start = labels[block.label()];
                 c.labelBinding(start);
                 switch (block.op()) {
+                    case B1Cfg.Leave ignored when fast -> {
+                        // Every statement releases its temporaries on both exits (IR Region/Test cleanups), so only
+                        // the CVs remain: released in order after the frame is unlinked.
+                        if (cvs.length <= 3) {
+                            c.aload(frame).aload(0).aload(pending).aload(result);
+                            var params = new ArrayList<ClassDesc>(List.of(CTX, CD_Throwable, CD_Object));
+                            for (int cv : cvs) { c.aload(cv); params.add(CD_Object); }
+                            c.invokevirtual(FRAME,"leave" + cvs.length,MethodTypeDesc.of(CD_Object,params)).areturn();
+                            continue;
+                        }
+                        c.aload(frame).aload(0).aload(pending).aload(result)
+                                .invokevirtual(FRAME,"beginLeave",sig(CD_Throwable,CTX,CD_Throwable,CD_Object)).astore(pending);
+                        for (int cv : cvs) c.aload(0).aload(cv).aload(pending)
+                                .invokestatic(FRAME,"unwindOwned",sig(CD_Throwable,CTX,CD_Object,CD_Throwable)).astore(pending);
+                        c.aload(frame).aload(0).aload(pending).invokevirtual(FRAME,"endLeave",sig(CD_Object,CTX,CD_Throwable)).areturn();
+                        continue;
+                    }
                     case B1Cfg.Leave ignored -> {
                         frameCtx();
                         c.aload(pending).aload(result).invokevirtual(FRAME, "leave", sig(CD_Object, CTX, CD_Throwable, CD_Object)).areturn();
@@ -341,6 +501,37 @@ final class B1ClassFileEmitter {
                         line(test.at().line()); truth(test.value()); cleanup(test.cleanup(),false);
                         c.ifeq(target(no));
                     }
+                    case B1Cfg.StartEach(var each) when fast -> {
+                        line(each.source().at().line());
+                        c.aload(0); expr(each.source().value());
+                        c.invokestatic(FRAME,"startEachFast",sig(CD_Object,CTX,CD_Object)).astore(temps[each.iterator()]);
+                        c.iconst_0().istore(positions.get(each.iterator()));
+                        cleanup(each.source().cleanup(),false);
+                    }
+                    case B1Cfg.NextEach(var each, var end) when fast -> {
+                        int it = temps[each.iterator()], pos = positions.get(each.iterator());
+                        Label generic = c.newLabel(), more = c.newLabel(), done = c.newLabel();
+                        c.aload(it).instanceOf(ARRAY).ifeq(generic);
+                        c.iload(pos).aload(it).checkcast(ARRAY).invokevirtual(ARRAY,"size",sig(CD_int)).if_icmpge(target(end));
+                        c.aload(it).checkcast(ARRAY).iload(pos).invokevirtual(ARRAY,"valueAt",sig(CD_Object,CD_int));
+                        c.iinc(pos,1);
+                        writeCv(each.value());
+                        if (each.key() >= 0) {
+                            c.aload(it).checkcast(ARRAY).iload(pos).iconst_1().isub().invokevirtual(ARRAY,"keyAt",sig(CD_Object,CD_int));
+                            writeCv(each.key());
+                        }
+                        c.goto_(done);
+                        c.labelBinding(generic);
+                        c.aload(0).aload(it).invokestatic(FRAME,"nextValue",sig(CD_Object,CTX,CD_Object)).dup()
+                                .getstatic(FRAME,"UNDEF",CD_Object);
+                        c.if_acmpne(more).pop().goto_(target(end)).labelBinding(more);
+                        writeCv(each.value());
+                        if (each.key() >= 0) {
+                            c.aload(it).invokestatic(FRAME,"currentKey",sig(CD_Object,CD_Object));
+                            writeCv(each.key());
+                        }
+                        c.labelBinding(done);
+                    }
                     case B1Cfg.StartEach(var each) -> {
                         line(each.source().at().line()); frameCtx(); c.loadConstant(each.iterator());
                         if (each.source().value() instanceof ByReference(var source)) {
@@ -366,10 +557,19 @@ final class B1ClassFileEmitter {
                     case B1Cfg.Catch(var type, var id) -> {
                         c.aload(pending).ldc(lower(type)).invokestatic(THROWN, "matches", sig(CD_boolean, CD_Throwable, CD_String))
                                 .ifeq(target(block.exceptional()));
+                        if (fast) {
+                            c.aload(cvs[id]).astore(scratchOld);
+                            c.aload(0).aload(scratchOld).aload(pending).checkcast(THROWN)
+                                    .invokestatic(FRAME,"caught",sig(CD_Object,CTX,CD_Object,THROWN));
+                            setCv(id);
+                            c.aconst_null().astore(pending);
+                            c.aload(0).aload(scratchOld).aload(cvs[id]).invokestatic(FRAME,"drop",sig(CD_void,CTX,CD_Object,CD_Object));
+                        } else {
                         frameCtx();
                         c.loadConstant(id).aload(pending).checkcast(THROWN)
                                 .invokevirtual(FRAME, "takeException", sig(CD_void, CTX, CD_int, THROWN))
                                 .aconst_null().astore(pending);
+                        }
                         // A return cancelled by a throwing cleanup no longer owns its protected value.
                         c.aload(0).aload(result);
                         fallthrough();
@@ -414,6 +614,7 @@ final class B1ClassFileEmitter {
         }
 
         void bind() {
+            if (fast) { bindFast(); return; }
             line(f.at().line());
             frameCtx();
             c.aload(2).aload(3).aload(4).aload(5).invokevirtual(FRAME, "bindArguments",
@@ -423,6 +624,59 @@ final class B1ClassFileEmitter {
             else for (int i = 0; i < f.params().size(); i++) parameter(i,required);
             if (fragment) range(CALLABLE,2,0,f.captures().size(),4,(body,i,ignored) -> body.bindCapture(i));
             else for (int i = 0; i < f.captures().size(); i++) bindCapture(i);
+        }
+
+        void bindFast() {
+            line(f.at().line());
+            Label general = c.newLabel(), bound = c.newLabel();
+            c.aload(frame).aload(0).aload(2).aload(3).aload(4).aload(5).aload(6).invokevirtual(FRAME,"bindFast",
+                    sig(CD_boolean, CTX, CALLABLE, ARGS, CD_Object, CD_Object, CD_Object)).ifeq(general);
+            // Positional fixed-arity call: argument i is local 4 + i.
+            for (int i = 0; i < f.params().size(); i++) {
+                if (f.params().get(i).variadic()) continue;
+                if (i >= 3) { c.getstatic(FRAME,"UNDEF",CD_Object).astore(cvs[i]); continue; }
+                Label omitted = c.newLabel(), store = c.newLabel();
+                c.aload(4 + i).getstatic(CALLABLE,"OMITTED",CD_Object).if_acmpeq(omitted);
+                if (f.params().get(i).byRef()) c.aload(frame).aload(4 + i).invokevirtual(FRAME,"takeRef",sig(CD_Object,CD_Object));
+                else c.aload(frame).aload(0).aload(4 + i).invokevirtual(FRAME,"take",sig(CD_Object,CTX,CD_Object));
+                c.goto_(store).labelBinding(omitted).getstatic(FRAME,"UNDEF",CD_Object).labelBinding(store).astore(cvs[i]);
+                if (i < 4) mirror(i);
+            }
+            c.goto_(bound).labelBinding(general);
+            for (int i = 0; i < f.params().size(); i++) {
+                if (f.params().get(i).variadic()) continue;
+                c.aload(frame).aload(0).aload(2).loadConstant(i).aload(3).aload(4).aload(5).aload(6)
+                        .invokevirtual(FRAME,"param",sig(CD_Object,CTX,CALLABLE,CD_int,ARGS,CD_Object,CD_Object,CD_Object)).astore(cvs[i]);
+            }
+            c.labelBinding(bound);
+            c.aload(frame).aload(0).invokevirtual(FRAME,"bound",sig(CD_void,CTX));
+            int required = f.requiredParams();
+            for (int i = 0; i < f.params().size(); i++) {
+                Param p = f.params().get(i);
+                line(p.at().line());
+                if (p.variadic()) {
+                    c.aload(frame).aload(0).loadConstant(i).invokevirtual(FRAME,"variadicFast",sig(CD_Object,CTX,CD_int)).astore(cvs[i]);
+                    continue;
+                }
+                Label checked = c.newLabel();
+                if (p.defaultValue() != null) {
+                    Label given = c.newLabel();
+                    c.aload(cvs[i]).getstatic(FRAME,"UNDEF",CD_Object).if_acmpne(given);
+                    expr(p.defaultValue());
+                    if (!(p.defaultValue() instanceof ArrayValue)) c.invokestatic(OBJ,"retain",sig(CD_Object,CD_Object));
+                    c.astore(cvs[i]);
+                    mirror(i); // a parameter skipped by named arguments reports its default in traces
+                    c.goto_(checked).labelBinding(given);
+                }
+                if (p.type() == null) c.aload(cvs[i]).getstatic(FRAME,"UNDEF",CD_Object).if_acmpne(checked);
+                c.aload(frame).aload(0).aload(cvs[i]).loadConstant(i).loadConstant(required).loadConstant(f.params().size());
+                if (p.type() == null) c.aconst_null(); else c.ldc(p.type());
+                c.invokevirtual(FRAME,"checkFast",sig(CD_Object,CTX,CD_Object,CD_int,CD_int,CD_int,CD_String)).astore(cvs[i]);
+                c.labelBinding(checked);
+            }
+            for (int i = 0; i < f.captures().size(); i++) {
+                c.aload(frame).loadConstant(i).invokevirtual(FRAME,"captured",sig(CD_Object,CD_int)).astore(cvs[f.captures().get(i).inner()]);
+            }
         }
 
         void bindCapture(int i) {
@@ -455,6 +709,10 @@ final class B1ClassFileEmitter {
         }
 
         void cleanup(ReleaseTemps temps, boolean unwind) {
+            if (fast) {
+                for (ReleaseTemp t : temps.slots()) releaseTempFast(t.id(), unwind);
+                return;
+            }
             if (temps.slots().size() > 6) {
                 frameCtx();
                 indices(temps.slots().stream().mapToInt(ReleaseTemp::id).toArray());
@@ -475,6 +733,7 @@ final class B1ClassFileEmitter {
         void action(Action action) {
             switch (action) {
                 case Echo(var value) -> { c.aload(0); expr(value); c.invokevirtual(CTX, "echo", sig(CD_void, CD_Object)); }
+                case Write(var id, var value) when fast && !longs.containsKey(id) -> { expr(value); writeCv(id); }
                 case Write(var id, var value) -> {
                     if (longs.containsKey(id)) {
                         c.loadConstant((Long)((Literal)value).value()).lstore(longs.get(id));
@@ -482,6 +741,13 @@ final class B1ClassFileEmitter {
                         frameCtx(); c.loadConstant(id); expr(value);
                         c.invokevirtual(FRAME, "write", sig(CD_void, CTX, CD_int, CD_Object));
                     }
+                }
+                case Bind(var id,var source) when fast -> {
+                    place(source); c.astore(scratchValue);
+                    c.aload(cvs[id]).astore(scratchOld);
+                    c.aload(0).aload(scratchValue).invokestatic(FRAME,"bindRef",sig(REF,CTX,REF));
+                    setCv(id);
+                    c.aload(0).aload(scratchOld).invokestatic(FRAME,"releaseOwned",sig(CD_void,CTX,CD_Object));
                 }
                 case Bind(var id,var source) -> {
                     frameCtx(); c.loadConstant(id); place(source);
@@ -491,12 +757,25 @@ final class B1ClassFileEmitter {
                     place(p); c.aload(0); expr(value);
                     c.invokevirtual(runtime("B1Ref"),"setProperty",sig(CD_void,CTX,CD_Object));
                 }
+                case Global(var id) when fast -> {
+                    c.aload(cvs[id]).astore(scratchOld);
+                    c.aload(0).aload(scratchOld).aload(frame).loadConstant(id).loadConstant(sym("$" + f.locals().get(id)))
+                            .invokestatic(FRAME,"globalFast",sig(CD_Object,CTX,CD_Object,FRAME,CD_int,CD_int));
+                    setCv(id);
+                    c.aload(0).aload(scratchOld).aload(cvs[id]).invokestatic(FRAME,"drop",sig(CD_void,CTX,CD_Object,CD_Object));
+                }
                 case Global(var id) -> { frameCtx(); c.loadConstant(id).invokevirtual(FRAME,"bindGlobal",sig(CD_void,CTX,CD_int)); }
                 case StaticVar(var id,var init) -> {
                     Label bound = c.newLabel();
                     frameCtx(); c.loadConstant(id).aload(2).invokevirtual(FRAME,"bindStatic",sig(CD_boolean,CTX,CD_int,CALLABLE)).ifeq(bound);
                     if (init != null) { frameCtx(); c.loadConstant(id); expr(init); c.invokevirtual(FRAME,"write",sig(CD_void,CTX,CD_int,CD_Object)); }
                     c.labelBinding(bound);
+                }
+                case Unset(var root,var key) when fast && key == null -> {
+                    int id = ((Read)root).local();
+                    c.aload(cvs[id]).astore(scratchOld);
+                    c.getstatic(FRAME,"UNDEF",CD_Object); setCv(id);
+                    c.aload(0).aload(scratchOld).invokestatic(FRAME,"releaseOwned",sig(CD_void,CTX,CD_Object));
                 }
                 case Unset(var root,var key) -> {
                     if (key == null) { frameCtx(); c.loadConstant(((Read)root).local()).invokevirtual(FRAME,"unset",sig(CD_void,CTX,CD_int)); }
@@ -507,15 +786,26 @@ final class B1ClassFileEmitter {
                     else { place(root); c.aload(0); expr(key); c.invokevirtual(runtime("B1Ref"),"unsetElement",sig(CD_void,CTX,CD_Object)); }
                 }
                 case WriteNamedProperty(var recv,var name,var value) -> {
-                    expr(recv); c.checkcast(OBJ).aload(0).aload(0); expr(name);
-                    c.invokevirtual(CTX,"string",sig(CD_String,CD_Object)); expr(value);
-                    c.invokevirtual(OBJ,"write",sig(CD_void,CTX,CD_String,CD_Object));
+                    // ZEND_ASSIGN_OBJ: computed operands are evaluated first and owned by their temporaries; CV and
+                    // property-chain operands are fetched when the assignment executes, after the value (PHP's
+                    // delayed fetches), so the value's side effects cannot free an operand still in use.
+                    boolean deferRecv = delayable(recv), deferName = delayable(name);
+                    int r = -1, n = -1, v = ref();
+                    if (deferRecv) recv = held(recv); else { r = ref(); expr(recv); c.astore(r); }
+                    if (deferName) name = held(name); else { n = ref(); expr(name); c.astore(n); }
+                    expr(value); c.astore(v);
+                    if (deferRecv) expr(recv); else c.aload(r);
+                    c.checkcast(OBJ).aload(0);
+                    if (deferName) expr(name); else c.aload(n);
+                    c.aload(v).invokevirtual(OBJ,"writeNamed",sig(CD_void,CTX,CD_Object,CD_Object));
                 }
                 case CoalesceDim(var local,var key,var value) -> {
                     int k = ref(), v = ref();
                     Label present = c.newLabel();
-                    expr(key); c.astore(k).aload(0); frameCtx();
-                    c.loadConstant(local).invokevirtual(FRAME,"quiet",sig(CD_Object,CTX,CD_int)).aload(k).iconst_1()
+                    expr(key); c.astore(k).aload(0);
+                    if (fast) quietCv(local);
+                    else { frameCtx(); c.loadConstant(local).invokevirtual(FRAME,"quiet",sig(CD_Object,CTX,CD_int)); }
+                    c.aload(k).iconst_1()
                             .invokevirtual(CTX,"dim",sig(CD_Object,CD_Object,CD_Object,CD_boolean)).ifnonnull(present);
                     expr(value); c.astore(v);
                     place(new Read(local)); c.aload(0).aload(k).iconst_0().aload(v)
@@ -544,7 +834,8 @@ final class B1ClassFileEmitter {
                 case WriteProperty(var recv, var name, var value) -> {
                     expr(value); int val = ref(); c.astore(val);
                     expr(recv); c.checkcast(OBJ).aload(0).ldc(name).aload(val)
-                            .invokevirtual(OBJ, "write", sig(CD_void, CTX, CD_String, CD_Object));
+                            .loadConstant(sym("->" + name)).swap()
+                            .invokevirtual(OBJ, "writeAt", sig(CD_void, CTX, CD_String, CD_int, CD_Object));
                 }
                 case Return(var value) -> {
                     expr(value); c.invokestatic(OBJ, "retain", sig(CD_Object, CD_Object)).astore(result);
@@ -566,16 +857,20 @@ final class B1ClassFileEmitter {
             else if (value instanceof byte[] || value instanceof String text && text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > B1LiteralBlob.BYTE_THRESHOLD) blob(new Literal(value),CD_Object);
             else c.ldc(java.lang.constant.DynamicConstantDesc.ofNamed(TEXT_BOOTSTRAP,"text",runtime("B1Bytes"),(String)value));
         }
+        /** The index of a blob in this class; an identical blob (the same literal in the fiber body) is shared. */
+        int blobIndex(byte[] data) {
+            for (int i = 0; i < blobs.size(); i++) if (java.util.Arrays.equals(blobs.get(i), data)) return i;
+            blobs.add(data);
+            return blobs.size() - 1;
+        }
         void blob(Expr e, ClassDesc type) {
-            int index = blobs.size();
-            blobs.add(B1LiteralBlob.encode(e));
+            int index = blobIndex(B1LiteralBlob.encode(e));
             c.ldc(java.lang.constant.DynamicConstantDesc.ofNamed(LITERAL_BOOTSTRAP,"literal",type,index));
         }
         void indices(int[] slots) {
             var bytes = java.nio.ByteBuffer.allocate(slots.length * Integer.BYTES);
             bytes.asIntBuffer().put(slots);
-            int index = blobs.size();
-            blobs.add(bytes.array());
+            int index = blobIndex(bytes.array());
             c.ldc(java.lang.constant.DynamicConstantDesc.ofNamed(INDICES_BOOTSTRAP,"indices",INTS,index));
         }
         /** Partition list-shaped operations too. This keeps a single variadic call, parameter
@@ -596,7 +891,58 @@ final class B1ClassFileEmitter {
             for (int i = 0; i < 6; i++) c.aload(i);
             c.aload(frame).aload(carrier).invokestatic(fragments.cls,name,signature);
         }
-        void truth(Expr e) { expr(e); c.invokestatic(CTX,"truth",sig(CD_boolean,CD_Object)); }
+        /** Pushes the PHP truth of e as a JVM boolean. Boolean-shaped expressions skip the Boolean box. */
+        void truth(Expr e) {
+            if (!fragment) {
+                switch (e) {
+                    case Not(var inner) -> { truth(inner); c.iconst_1().ixor(); return; }
+                    case IsSet(var inner) -> { expr(inner); c.invokestatic(ClassDesc.of("java.util.Objects"),"nonNull",sig(CD_boolean,CD_Object)); return; }
+                    case Binary b when b.op() == Operator.AND || b.op() == Operator.OR -> {
+                        Label done = c.newLabel();
+                        truth(b.left()); c.dup();
+                        if (b.op() == Operator.AND) c.ifeq(done); else c.ifne(done);
+                        c.pop(); truth(b.right()); c.labelBinding(done);
+                        return;
+                    }
+                    case Binary b when b.op() == Operator.IDENTICAL || b.op() == Operator.NOT_IDENTICAL || b.op() == Operator.LT
+                            || b.op() == Operator.LE || b.op() == Operator.GT || b.op() == Operator.GE
+                            || b.op() == Operator.EQ || b.op() == Operator.NE -> {
+                        boolean identity = b.op() == Operator.IDENTICAL || b.op() == Operator.NOT_IDENTICAL;
+                        if (!identity) c.aload(0);
+                        if (b.deferredLeft()) { expr(b.right()); expr(b.left()); c.swap(); }
+                        else { expr(b.left()); expr(b.right()); }
+                        if (identity) {
+                            c.invokestatic(CTX,"identicalTest",sig(CD_boolean,CD_Object,CD_Object));
+                            if (b.op() == Operator.NOT_IDENTICAL) c.iconst_1().ixor();
+                        } else c.loadConstant(b.op().ordinal()).invokevirtual(CTX,"test",sig(CD_boolean,CD_Object,CD_Object,CD_int));
+                        cleanup(b.consumed(), false);
+                        return;
+                    }
+                    case StoreTemp(var id, Call call) when typeTest(call) != null -> {
+                        line(call.at().line());
+                        expr(call.args().getFirst().value());
+                        switch (typeTest(call)) {
+                            case "is_array" -> c.instanceOf(ARRAY);
+                            case "is_int" -> c.instanceOf(CD_Long);
+                            case "is_null" -> c.invokestatic(ClassDesc.of("java.util.Objects"),"isNull",sig(CD_boolean,CD_Object));
+                            case "is_string" -> c.invokestatic(runtime("B1Builtins"),"isString",sig(CD_boolean,CD_Object));
+                            default -> c.invokestatic(runtime("B1Builtins"),"isObject",sig(CD_boolean,CD_Object));
+                        }
+                        // The call frees its sent operands before the condition goes on (new D() destructs here).
+                        cleanup(call.cleanup(), false);
+                        return;
+                    }
+                    default -> {}
+                }
+            }
+            expr(e); c.invokestatic(CTX,"truth",sig(CD_boolean,CD_Object));
+        }
+        /** is_array/is_string/is_int/is_null/is_object of one by-value operand: a type test without a result temporary. */
+        static String typeTest(Call call) {
+            if (call.target().kind() != Dispatch.FUNCTION || call.args().size() != 1) return null;
+            String name = lower(call.target().name());
+            return switch (name) { case "is_array", "is_string", "is_int", "is_null", "is_object" -> name; default -> null; };
+        }
         void bool() { c.invokestatic(CD_Boolean,"valueOf",sig(CD_Boolean,CD_boolean)); }
         void array(ArrayValue a, int slot) {
             if (B1LiteralBlob.useBlob(a)) {
@@ -605,7 +951,8 @@ final class B1ClassFileEmitter {
                 return;
             }
             c.new_(ARRAY).dup().loadConstant(a.items().size()).invokespecial(ARRAY,"<init>",sig(CD_void,CD_int));
-            if (slot >= 0) {
+            if (slot >= 0 && fast) c.dup().astore(temps[slot]);
+            else if (slot >= 0) {
                 int partial = ref();
                 c.astore(partial);
                 frameCtx(); c.loadConstant(slot).aload(partial).iconst_1()
@@ -644,21 +991,36 @@ final class B1ClassFileEmitter {
             switch (expr) {
                 case Yield ignored -> throw new IllegalStateException("yield outside resume block");
                 case Literal(var value) -> literal(value);
+                case Read(var id) when fast && !longs.containsKey(id) -> readCv(id);
                 case Read(var id) -> {
                     if (longs.containsKey(id)) { c.lload(longs.get(id)); boxLong(); }
                     else { frameCtx(); c.loadConstant(id).invokevirtual(FRAME, "read", sig(CD_Object, CTX, CD_int)); }
                 }
                 case Prepared(var operands,var result) -> { for (var temp : operands) { expr(temp); c.pop(); } expr(result); }
-                case LoadTemp(var id) -> c.aload(frame).loadConstant(id).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int));
+                case LoadTemp(var id) -> loadTemp(id);
                 case ArrayValue a -> array(a,-1);
+                case QuietRead(var id) when fast -> quietCv(id);
                 case QuietRead(var id) -> { frameCtx(); c.loadConstant(id).invokevirtual(FRAME,"quiet",sig(CD_Object,CTX,CD_int)); }
                 case Dim(var base,var key,var quiet) -> {
                     c.aload(0); expr(base); expr(key);
                     c.loadConstant(quiet ? 1 : 0).invokevirtual(CTX,"dim",sig(CD_Object,CD_Object,CD_Object,CD_boolean));
                 }
+                case Update(var id,var value) when fast -> {
+                    int saved = ref();
+                    expr(value); c.dup().astore(saved);
+                    writeCv(id); c.aload(saved);
+                }
                 case Update(var id,var value) -> {
                     frameCtx(); c.loadConstant(id); expr(value);
                     int saved = ref(); c.dup().astore(saved).invokevirtual(FRAME,"write",sig(CD_void,CTX,CD_int,CD_Object)).aload(saved);
+                }
+                case Increment(var id, var up, var prefix) when fast -> {
+                    int old = ref(), next = ref();
+                    readCv(id); c.astore(old);
+                    c.aload(0).aload(old).loadConstant(up ? 1L : -1L); boxLong();
+                    c.invokevirtual(CTX,"add",sig(CD_Object,CD_Object,CD_Object)).astore(next);
+                    c.aload(next); writeCv(id);
+                    c.aload(prefix ? next : old);
                 }
                 case Increment(var id, var up, var prefix) -> {
                     frameCtx(); c.loadConstant(id).loadConstant(up ? 1 : 0).loadConstant(prefix ? 1 : 0)
@@ -689,9 +1051,16 @@ final class B1ClassFileEmitter {
                     int closure = ref(); c.astore(closure);
                     RangeItem capture = (body,i,carrier) -> {
                         var cap = captures.get(i);
-                        body.c.aload(carrier).loadConstant(i); body.frameCtx(); body.c.loadConstant(cap.outer());
-                        if (cap.byRef()) body.c.invokevirtual(FRAME,"reference",sig(runtime("B1Ref"),CTX,CD_int));
-                        else body.c.invokevirtual(FRAME,"read",sig(CD_Object,CTX,CD_int));
+                        body.c.aload(carrier).loadConstant(i);
+                        if (body.fast) {
+                            if (cap.byRef()) { body.c.aload(0); body.placeCv(cap.outer()); body.c.invokestatic(FRAME,"reference",sig(REF,CTX,REF)); }
+                            else body.readCv(cap.outer());
+                        }
+                        else {
+                            body.frameCtx(); body.c.loadConstant(cap.outer());
+                            if (cap.byRef()) body.c.invokevirtual(FRAME,"reference",sig(runtime("B1Ref"),CTX,CD_int));
+                            else body.c.invokevirtual(FRAME,"read",sig(CD_Object,CTX,CD_int));
+                        }
                         body.c.invokevirtual(CLOSURE,"capture",sig(CLOSURE,CD_int,CD_Object)).pop();
                     };
                     if (fragment) range(CLOSURE,closure,0,captures.size(),4,capture);
@@ -714,6 +1083,15 @@ final class B1ClassFileEmitter {
                     c.loadConstant(kind).aload(2).getfield(CALLABLE,"methodBudget",CD_int)
                             .invokevirtual(CTX,"include",sig(CD_Object,CD_Object,CD_int,CD_int));
                 }
+                case Assign(var id,var value) when fast -> {
+                    int value0 = ref();
+                    expr(value); c.dup().astore(value0).invokestatic(OBJ,"retain",sig(CD_Object,CD_Object)).pop();
+                    c.aload(cvs[id]).astore(scratchOld);
+                    c.aload(0).aload(scratchOld).aload(value0).invokestatic(FRAME,"assignStore",sig(CD_Object,CTX,CD_Object,CD_Object));
+                    setCv(id);
+                    c.aload(0).aload(scratchOld).aload(cvs[id]).aload(value0)
+                            .invokestatic(FRAME,"assigned",sig(CD_Object,CTX,CD_Object,CD_Object,CD_Object));
+                }
                 case Assign(var id,var value) -> {
                     frameCtx(); c.loadConstant(id); expr(value);
                     c.invokevirtual(FRAME,"assign",sig(CD_Object,CTX,CD_int,CD_Object));
@@ -729,10 +1107,12 @@ final class B1ClassFileEmitter {
                 case This ignored -> c.aload(1);
                 case StaticProperty p -> { place(p); c.aload(0).invokevirtual(runtime("B1Ref"),"readProperty",sig(CD_Object,CTX)); }
                 case QuietProperty(var recv,var name) -> {
-                    expr(recv); c.aload(0).ldc(name).invokestatic(CTX,"quietProperty",sig(CD_Object,CD_Object,CTX,CD_String));
+                    expr(recv); c.aload(0).ldc(name).loadConstant(sym("->" + name))
+                            .invokestatic(CTX,"quietProperty",sig(CD_Object,CD_Object,CTX,CD_String,CD_int));
                 }
                 case Property(var recv, var name) -> {
-                    expr(recv); c.aload(0).ldc(name).invokestatic(CTX, "readProperty", sig(CD_Object, CD_Object, CTX, CD_String));
+                    expr(recv); c.aload(0).ldc(name).loadConstant(sym("->" + name))
+                            .invokestatic(CTX, "readProperty", sig(CD_Object, CD_Object, CTX, CD_String, CD_int));
                 }
                 case Binary binary -> {
                     Operator op = binary.op();
@@ -767,6 +1147,11 @@ final class B1ClassFileEmitter {
                     };
                     if (op == Operator.MOD || op == Operator.MUL) c.invokevirtual(CTX,op == Operator.MOD ? "mod" : "multiply",sig(CD_Object,CD_Object,CD_Object));
                     else if (arithmetic != null) c.invokevirtual(CTX,arithmetic,sig(CD_Object,CD_Object,CD_Object));
+                    else if (op == Operator.IDENTICAL || op == Operator.NOT_IDENTICAL) {
+                        c.loadConstant(op == Operator.IDENTICAL ? 1 : 0).invokestatic(CTX,"identical",sig(CD_Object,CD_Object,CD_Object,CD_boolean));
+                        // the context loaded first is not needed by the static form
+                        c.swap().pop();
+                    }
                     else if (op != Operator.ADD && op != Operator.CONCAT) c.loadConstant(op.ordinal())
                             .invokevirtual(CTX,"compare",sig(CD_Object,CD_Object,CD_Object,CD_int));
                     else c.invokevirtual(CTX, binary.op() == Operator.ADD ? "add" : "concat", sig(CD_Object, CD_Object, CD_Object));
@@ -775,6 +1160,13 @@ final class B1ClassFileEmitter {
                 case StoreTemp(var id, var value) -> {
                     if (value instanceof ArrayValue array && !B1LiteralBlob.useBlob(array)) {
                         array(array,id);
+                        break;
+                    }
+                    boolean owned = value instanceof Call || value instanceof Allocate || value instanceof DynamicAllocate || value instanceof Eval || value instanceof Include || value instanceof Convert || value instanceof Assign || value instanceof Forward || value instanceof PassedArguments || value instanceof Closure || value instanceof ArrayValue;
+                    if (fast) {
+                        expr(value); storeTempFast(id, owned);
+                        if (value instanceof Call call) cleanup(call.cleanup(), false);
+                        if (value instanceof Binary b && b.preservesValue()) cleanup(b.consumed(),false);
                         break;
                     }
                     frameCtx(); c.loadConstant(id); expr(value);
@@ -798,6 +1190,8 @@ final class B1ClassFileEmitter {
             } else if (root instanceof StoreTemp t) place(t.value());
             else if (root instanceof StaticProperty p) {
                 c.aload(0).ldc(lower(p.owner())).ldc(p.name()).invokevirtual(CTX,"staticProperty",sig(runtime("B1Ref"),CD_String,CD_String));
+            } else if (root instanceof Read local && fast) {
+                placeCv(local.local());
             } else if (root instanceof Read local) {
                 frameCtx(); c.loadConstant(local.local()).invokevirtual(FRAME,"place",sig(runtime("B1Ref"),CTX,CD_int));
             } else if (root instanceof Dim dim) {
@@ -805,7 +1199,8 @@ final class B1ClassFileEmitter {
                         .invokevirtual(runtime("B1Ref"),"child",sig(runtime("B1Ref"),CTX,CD_Object,CD_boolean));
             } else {
                 Property prop = (Property)root;
-                expr(prop.receiver()); c.checkcast(OBJ).aload(0).ldc(prop.name()).invokevirtual(OBJ,"property",sig(runtime("B1Ref"),CTX,CD_String));
+                expr(prop.receiver()); c.checkcast(OBJ).aload(0).ldc(prop.name()).loadConstant(sym("->" + prop.name()))
+                        .invokevirtual(OBJ,"propertyAt",sig(runtime("B1Ref"),CTX,CD_String,CD_int));
             }
         }
 
@@ -832,7 +1227,10 @@ final class B1ClassFileEmitter {
                 if (u.early(i)) { expr(keys.get(i)); early[i] = ref(); c.astore(early[i]); }
             }
             expr(u.value()); int v = ref(); c.astore(v);
-            if (u.root() instanceof Read local) {
+            if (u.root() instanceof Read local && fast) {
+                c.aload(0); placeCv(local.local()); c.aload(frame).loadConstant(local.local())
+                        .invokestatic(FRAME,"boxRW",sig(REF,CTX,REF,FRAME,CD_int));
+            } else if (u.root() instanceof Read local) {
                 frameCtx(); c.loadConstant(local.local()).invokevirtual(FRAME,"placeRW",sig(REF,CTX,CD_int));
             } else if (u.root() instanceof Property prop) {
                 expr(prop.receiver()); c.checkcast(OBJ).aload(0).ldc(prop.name()).invokevirtual(OBJ,"propertyRW",sig(REF,CTX,CD_String));
@@ -868,7 +1266,28 @@ final class B1ClassFileEmitter {
             return t.receiver() instanceof Literal(var cls) && "fiber".equalsIgnoreCase((String)cls);
         }
 
+        void sendFast(Argument arg, int i, int callee) {
+            boolean stored = arg.value() instanceof StoreTemp || arg.value() instanceof LoadTemp t && t.id() == arg.slot();
+            if (arg.bindVariable()) {
+                Label byValue = c.newLabel(), done = c.newLabel();
+                c.aload(callee).ifnull(byValue).aload(callee).loadConstant(i).invokevirtual(CALLABLE,"byRef",sig(CD_boolean,CD_int)).ifeq(byValue);
+                c.aload(0);
+                if (arg.value() instanceof Read local) placeCv(local.local()); else place(arg.value());
+                c.invokestatic(FRAME,"reference",sig(REF,CTX,REF));
+                c.goto_(done).labelBinding(byValue);
+                expr(arg.value());
+                c.labelBinding(done);
+            } else {
+                frameCtx(); c.aload(callee).loadConstant(i);
+                expr(arg.value());
+                c.loadConstant(stored ? 1 : 0)
+                        .invokevirtual(FRAME, "sendValue", sig(CD_Object, CTX, CALLABLE, CD_int, CD_Object, CD_boolean));
+            }
+            if (!stored) storeTempFast(arg.slot(), false);
+            c.pop();
+        }
         void send(Argument arg, int i, int callee) {
+            if (fast) { sendFast(arg,i,callee); return; }
             boolean stored = arg.value() instanceof StoreTemp || arg.value() instanceof LoadTemp t && t.id() == arg.slot();
             if (!stored) { frameCtx(); c.loadConstant(arg.slot()); }
             if (arg.bindVariable() && !(arg.value() instanceof Read)) {
@@ -903,12 +1322,14 @@ final class B1ClassFileEmitter {
                 c.aconst_null().astore(receiver).aload(0).ldc(lower((String)((Literal)t.receiver()).value())).ldc(lower(t.name()))
                         .invokevirtual(CTX,"method",sig(CALLABLE,CD_String,CD_String));
             } else if (t.kind() == Dispatch.FUNCTION) {
-                c.aconst_null().astore(receiver).aload(0).ldc(lower(t.name())).invokestatic(CTX, "function", sig(CALLABLE, CTX, CD_String));
+                c.aconst_null().astore(receiver).aload(0).ldc(lower(t.name())).loadConstant(sym(lower(t.name())))
+                        .invokestatic(CTX, "function", sig(CALLABLE, CTX, CD_String, CD_int));
             } else {
                 expr(t.receiver());
                 c.checkcast(OBJ).astore(receiver).aload(0).aload(receiver);
                 if (t.kind() == Dispatch.CONSTRUCTOR) c.invokevirtual(CTX, "constructor", sig(CALLABLE, OBJ));
-                else c.ldc(lower(t.name())).ldc(t.name()).invokevirtual(CTX, "resolve", sig(CALLABLE, OBJ, CD_String, CD_String));
+                else c.ldc(lower(t.name())).ldc(t.name()).loadConstant(sym(lower(t.name())))
+                        .invokevirtual(CTX, "resolve", sig(CALLABLE, OBJ, CD_String, CD_String, CD_int));
             }
         }
 
@@ -918,7 +1339,57 @@ final class B1ClassFileEmitter {
             return local;
         }
 
+        /** Global builtins called by name bind statically (PHP forbids redeclaring them): name -> arity, by-ref first. */
+        static final Map<String,int[]> INTRINSICS = Map.ofEntries(
+                Map.entry("is_array",new int[]{1,0}), Map.entry("is_string",new int[]{1,0}), Map.entry("is_int",new int[]{1,0}),
+                Map.entry("is_null",new int[]{1,0}), Map.entry("is_object",new int[]{1,0}), Map.entry("count",new int[]{1,0}),
+                Map.entry("sizeof",new int[]{1,0}), Map.entry("strlen",new int[]{1,0}), Map.entry("trim",new int[]{1,0}),
+                Map.entry("ucfirst",new int[]{1,0}), Map.entry("current",new int[]{1,0}), Map.entry("key",new int[]{1,0}),
+                Map.entry("get_object_vars",new int[]{1,0}), Map.entry("array_key_exists",new int[]{2,0}),
+                Map.entry("str_replace",new int[]{3,0}), Map.entry("next",new int[]{1,1}), Map.entry("reset",new int[]{1,1}),
+                Map.entry("array_pop",new int[]{1,1}), Map.entry("array_unshift",new int[]{2,1}));
+        /** Operands PHP fetches lazily (delayed oplines): CVs, $this, literals and property/dimension chains of them. */
+        static boolean delayable(Expr e) { return pl.codeloom.php.ir.PhpIrLowerer.delayable(e); }
+        /** Evaluates the held keys of a delayed chain now and returns the fetch to emit later. */
+        Expr held(Expr delayed) {
+            if (!(delayed instanceof Prepared p)) return delayed;
+            for (var temp : p.operands()) { expr(temp); c.pop(); }
+            return p.result();
+        }
+        /** Operands whose evaluation cannot change a CV an earlier operand borrowed. */
+        static boolean pure(Expr e) {
+            return e instanceof Read || e instanceof QuietRead || e instanceof Literal || e instanceof This
+                    || e instanceof LoadTemp || e instanceof StoreTemp t && pure(t.value());
+        }
+        boolean intrinsic(Call call) {
+            Target t = call.target();
+            if (t.kind() != Dispatch.FUNCTION) return false;
+            String name = lower(t.name());
+            int[] spec = INTRINSICS.get(name);
+            var args = call.args();
+            if (spec == null || args.size() != spec[0] || spec[1] == 1 && !args.getFirst().bindVariable()) return false;
+            for (int i = 1; i < args.size(); i++) if (!pure(args.get(i).value())) return false;
+            line(call.at().line());
+            c.aload(0);
+            for (int i = 0; i < args.size(); i++) {
+                Expr value = args.get(i).value();
+                if (i == 0 && spec[1] == 1) {
+                    c.aload(0);
+                    if (value instanceof Read local && fast) placeCv(local.local());
+                    else if (value instanceof Read local) { frameCtx(); c.loadConstant(local.local()).invokevirtual(FRAME,"place",sig(REF,CTX,CD_int)); }
+                    else place(value);
+                    c.invokestatic(FRAME,"reference",sig(REF,CTX,REF));
+                } else expr(value);
+            }
+            var params = new ClassDesc[args.size() + 1];
+            java.util.Arrays.fill(params, CD_Object);
+            params[0] = CTX;
+            c.invokestatic(runtime("B1Builtins"), name, sig(CD_Object, params));
+            return true;
+        }
+
         void call(Call call) {
+            if (intrinsic(call)) return;
             line(call.at().line());
             int receiver = ref(), callee = ref(), dynamic = ref();
             resolve(call.target(),receiver,dynamic);
@@ -935,7 +1406,8 @@ final class B1ClassFileEmitter {
             Target t = call.target();
             int[] slots = call.args().stream().mapToInt(Argument::slot).toArray();
             line(call.at().line());
-            if (slots.length > 2) {
+            if (fast) { /* the move protocol replaces outgoing registrations */ }
+            else if (slots.length > 2) {
                 c.aload(frame).aload(callee); indices(slots);
                 c.invokevirtual(FRAME,"outgoingAll",sig(CD_void,CALLABLE,INTS));
             } else for (int i = 0; i < slots.length; i++) {
@@ -946,7 +1418,8 @@ final class B1ClassFileEmitter {
                     .invokevirtual(FRAME, "discardCallResult", sig(CD_void, CALLABLE));
             Label noCtor = c.newLabel(), done = c.newLabel();
             if (t.kind() == Dispatch.CONSTRUCTOR) {
-                frameCtx(); c.loadConstant(((StoreTemp)t.receiver()).id()).aload(receiver);
+                if (fast) c.aload(0).aload(receiver);
+                else { frameCtx(); c.loadConstant(((StoreTemp)t.receiver()).id()).aload(receiver); }
                 c.aload(callee).ifnull(noCtor);
             }
             if (t.kind() == Dispatch.DYNAMIC) {
@@ -955,16 +1428,32 @@ final class B1ClassFileEmitter {
                         .putfield(FRAME,"nextClosure",CLOSURE).labelBinding(other);
             }
             c.aload(callee).aload(0).aload(receiver);
-            if (slots.length <= 2) {
-                for (int slot : slots) c.aload(frame).loadConstant(slot).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int));
-                boolean frameless = t.kind() == Dispatch.FUNCTION && slots.length > 0 && t.name().equalsIgnoreCase("implode");
-                c.invokevirtual(CALLABLE, (frameless ? "invokeFrameless" : "invoke") + slots.length, fixed(slots.length));
+            if (slots.length <= 3) {
+                for (int slot : slots) loadTemp(slot);
+            } else if (fast) {
+                c.loadConstant(slots.length).anewarray(CD_Object);
+                for (int i = 0; i < slots.length; i++) { c.dup().loadConstant(i); loadTemp(slots[i]); c.aastore(); }
             } else {
                 c.aload(frame); indices(slots);
                 c.invokevirtual(FRAME,"arguments",sig(ARGS,INTS));
-                c.invokevirtual(CALLABLE, "invoke", sig(CD_Object, CTX, OBJ, ARGS));
             }
-            if (t.kind() == Dispatch.CONSTRUCTOR) {
+            if (fast && slots.length > 0) {
+                // Move: a generated callee owns the sent values from its entry on; a builtin borrows them.
+                Label borrowed = c.newLabel();
+                c.aload(callee).getfield(CALLABLE,"consumes",CD_boolean).ifeq(borrowed);
+                for (int slot : slots) c.aconst_null().astore(temps[slot]);
+                c.aload(0).aload(callee).putfield(CTX,"moved",CALLABLE);
+                c.labelBinding(borrowed);
+            }
+            if (slots.length <= 3) {
+                boolean frameless = t.kind() == Dispatch.FUNCTION && slots.length > 0 && slots.length < 3 && t.name().equalsIgnoreCase("implode");
+                c.invokevirtual(CALLABLE, (frameless ? "invokeFrameless" : "invoke") + slots.length, fixed(slots.length));
+            } else c.invokevirtual(CALLABLE, "invoke", sig(CD_Object, CTX, OBJ, ARGS));
+            if (t.kind() == Dispatch.CONSTRUCTOR && fast) {
+                c.goto_(done).labelBinding(noCtor).aconst_null().labelBinding(done)
+                        .invokestatic(FRAME, "constructedFast", sig(CD_Object, CTX, OBJ, CD_Object));
+                c.aconst_null().astore(temps[((StoreTemp)t.receiver()).id()]);
+            } else if (t.kind() == Dispatch.CONSTRUCTOR) {
                 c.goto_(done).labelBinding(noCtor).aconst_null().labelBinding(done)
                         .invokevirtual(FRAME, "constructed", sig(CD_Object, CTX, CD_int, OBJ, CD_Object));
             }

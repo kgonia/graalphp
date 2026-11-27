@@ -6,6 +6,8 @@ import pl.codeloom.php.ir.OwnedSlot;
 public final class B1Ref extends OwnedSlot<B1RequestContext> implements B1GcNode {
     private boolean defined, reference;
     boolean defined() { return defined; }
+    /** Takes ownership of a value without counting it again (boxing a fast CV). */
+    void adopt(Object owned) { value = owned; defined = true; }
     boolean reference() { return reference; }
     public B1Ref asReference(B1RequestContext ctx) { markReference(ctx); return this; }
     void markReference(B1RequestContext ctx) {
@@ -20,6 +22,7 @@ public final class B1Ref extends OwnedSlot<B1RequestContext> implements B1GcNode
     }
     private boolean nullable() { return type.equals("mixed") || type.startsWith("?"); }
     boolean inGcRoots;
+    int gcSlot = -1;
     private int bindings = 1;
 
     private String type, property;

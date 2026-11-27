@@ -7,7 +7,9 @@ import java.util.LinkedHashSet;
 
 /** Bacon-Rajan trial deletion. Trial counts never change live owners while PHP destructors run. */
 final class B1CycleCollector {
-    private final LinkedHashSet<B1GcNode> roots = new LinkedHashSet<>();
+    /** Possible roots in insertion order. A removed root leaves a null hole that compaction reclaims. */
+    private B1GcNode[] buffer = new B1GcNode[64];
+    private int used, live;
     private static final int DEFAULT_THRESHOLD = 10_000;
     private int gcThreshold = DEFAULT_THRESHOLD;
     private boolean active;
@@ -17,17 +19,41 @@ final class B1CycleCollector {
         boolean candidate = count > 0;
         B1GcNode.markRoot(node, candidate);
         if (!candidate) {
-            roots.remove(node);
+            int slot = B1GcNode.slot(node);
+            if (slot >= 0) { buffer[slot] = null; B1GcNode.slot(node,-1); live--; }
         } else {
-            roots.add(node);
-            if (roots.size() >= gcThreshold && !active) {
+            if (B1GcNode.slot(node) >= 0) return;
+            if (used == buffer.length) compact();
+            buffer[used] = node;
+            B1GcNode.slot(node,used++);
+            live++;
+            if (live >= gcThreshold && !active) {
                 long collected = collect(ctx);
                 if (collected < 100) gcThreshold = Math.min(gcThreshold + DEFAULT_THRESHOLD, 1_000_000);
                 else gcThreshold = Math.max(gcThreshold - DEFAULT_THRESHOLD, DEFAULT_THRESHOLD);
             }
         }
     }
-    int rootCount() { return roots.size(); }
+    int rootCount() { return live; }
+
+    private void compact() {
+        if (live < used / 2) {
+            int to = 0;
+            for (int i = 0; i < used; i++) {
+                B1GcNode node = buffer[i];
+                if (node == null) continue;
+                buffer[to] = node;
+                B1GcNode.slot(node,to++);
+            }
+            java.util.Arrays.fill(buffer,to,used,null);
+            used = to;
+        } else buffer = java.util.Arrays.copyOf(buffer,buffer.length * 2);
+    }
+    private java.util.List<B1GcNode> roots() {
+        var list = new ArrayList<B1GcNode>(live);
+        for (int i = 0; i < used; i++) if (buffer[i] != null) list.add(buffer[i]);
+        return list;
+    }
 
     private static LinkedHashSet<B1GcNode> discover(Iterable<B1GcNode> roots) {
         var graph = new LinkedHashSet<B1GcNode>();
@@ -60,12 +86,14 @@ final class B1CycleCollector {
     }
 
     long collect(B1RequestContext ctx) {
-        if (active || roots.isEmpty()) return 0;
+        if (active || live == 0) return 0;
         active = true;
         try {
+            var roots = roots();
             var white = garbage(discover(roots),0);
-            for (var root : roots) B1GcNode.markRoot(root, false);
-            roots.clear();
+            for (var root : roots) { B1GcNode.markRoot(root, false); B1GcNode.slot(root,-1); }
+            java.util.Arrays.fill(buffer,0,used,null);
+            used = live = 0;
             return collectWhite(ctx,white);
         } finally { active = false; }
     }

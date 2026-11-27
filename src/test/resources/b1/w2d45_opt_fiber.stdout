@@ -1,0 +1,13 @@
+parked a
+unset
+collected Node a gone
+some
+parked b
+resumed with go
+returned b
+collected Node b gone
+some
+123
+456
+51
+end

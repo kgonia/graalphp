@@ -12,6 +12,22 @@ sealed interface B1GcNode permits B1Array, B1Closure, B1Object, B1Ref {
             case B1Ref r -> r.inGcRoots = inGcRoots;
         }
     }
+    static int slot(B1GcNode node) {
+        return switch (node) {
+            case B1Array a -> a.gcSlot;
+            case B1Closure c -> c.gcSlot;
+            case B1Object o -> o.gcSlot;
+            case B1Ref r -> r.gcSlot;
+        };
+    }
+    static void slot(B1GcNode node, int slot) {
+        switch (node) {
+            case B1Array a -> a.gcSlot = slot;
+            case B1Closure c -> c.gcSlot = slot;
+            case B1Object o -> o.gcSlot = slot;
+            case B1Ref r -> r.gcSlot = slot;
+        }
+    }
     static int count(B1GcNode node) {
         return switch (node) {
             case B1Array a -> a.gcCount();

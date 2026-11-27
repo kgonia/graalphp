@@ -17,6 +17,9 @@ public final class B1CodeCache {
     private final ConcurrentHashMap<String, IrUnit> units = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Key, B1Compiler.CompiledFile> linked = new ConcurrentHashMap<>();
     private final AtomicLong hits = new AtomicLong(), misses = new AtomicLong();
+    private final B1Symbols symbols = new B1Symbols();
+    /** The symbol registry of every unit linked through this cache. */
+    public B1Symbols symbols() { return symbols; }
 
     IrUnit unit(String file, String source, Supplier<IrUnit> lower) {
         return units.computeIfAbsent(file + '\0' + source, ignored -> lower.get());

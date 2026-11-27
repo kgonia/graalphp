@@ -7,6 +7,7 @@ public final class B1Closure implements B1GcNode {
     private final Object[] captures;
     B1Object self;
     boolean inGcRoots;
+    int gcSlot = -1;
     private int owners = 1;
     public B1Closure(B1RequestContext ctx, B1Callable body, int count) { this(ctx,body,count,null); }
     public B1Closure(B1RequestContext ctx, B1Callable body, int count, B1Object self) {

@@ -1,0 +1,28 @@
+Box1 gone
+Val gone
+toString p
+Name p gone
+after convert
+dropO1
+Box2 gone
+after receiver
+Box4 gone
+clearArr
+after element: 6 z
+dropS1
+toString n1
+Name n1 gone
+array(2) {
+  [0]=>
+  string(2) "id"
+  [1]=>
+  string(2) "n1"
+}
+Box5 gone
+strlen: destruct 1 <- toString 1
+str_replace: destruct 2 <- toString 2
+trim: destruct 3 <- toString 3
+Box6 gone
+Box3 gone
+Name n2 gone
+end

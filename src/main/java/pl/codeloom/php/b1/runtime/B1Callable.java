@@ -15,6 +15,8 @@ public abstract class B1Callable {
     public B1Callable[] siblings;
     public java.util.Map<Integer,B1RequestContext.ClassDef> statementClasses = java.util.Map.of();
     public String display;
+    /** Generated callables take ownership of arguments a moving caller passes (see B1RequestContext.moved). */
+    public boolean consumes;
 
     @HotPath
     public final Object callSlice(B1RequestContext ctx, B1Object self, B1Array args, int offset, int length) {
@@ -22,6 +24,7 @@ public abstract class B1Callable {
             case 0 -> invoke0(ctx, self);
             case 1 -> invoke1(ctx, self, forwarded(ctx,args,offset,0));
             case 2 -> invoke2(ctx, self, forwarded(ctx,args,offset,0), forwarded(ctx,args,offset+1,1));
+            case 3 -> invoke3(ctx, self, forwarded(ctx,args,offset,0), forwarded(ctx,args,offset+1,1), forwarded(ctx,args,offset+2,2));
             default -> invoke(ctx, self, arguments(ctx,args, offset, length));
         };
     }
@@ -107,4 +110,8 @@ public abstract class B1Callable {
     public abstract Object invoke1(B1RequestContext ctx, B1Object self, Object a);
     public abstract Object invoke2(B1RequestContext ctx, B1Object self, Object a, Object b);
     public abstract Object invoke(B1RequestContext ctx, B1Object self, Object[] args);
+    /** Three positional arguments. Generated fast functions take them without an argument array. */
+    public Object invoke3(B1RequestContext ctx, B1Object self, Object a, Object b, Object c) {
+        return invoke(ctx, self, new Object[]{a, b, c});
+    }
 }

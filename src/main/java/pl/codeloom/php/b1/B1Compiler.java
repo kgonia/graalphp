@@ -133,9 +133,10 @@ public final class B1Compiler {
                                         String sourceKey) {
         Set<Integer> statementBound = statementBound(unit, ctx);
         B1CodeCache cache = ctx.codeCache();
-        CompiledFile file = cache == null || sourceKey == null ? link(unit,statementBound,maxMethodBytes,eval,extended)
+        B1Symbols symbols = ctx.symbols();
+        CompiledFile file = cache == null || sourceKey == null ? link(unit,statementBound,maxMethodBytes,eval,extended,symbols)
                 : cache.linked(new B1CodeCache.Key(unit.file(),sourceKey,maxMethodBytes,eval,extended,Set.copyOf(statementBound)),
-                        () -> link(unit,statementBound,maxMethodBytes,eval,extended));
+                        () -> link(unit,statementBound,maxMethodBytes,eval,extended,symbols));
         file.install(ctx);
         return file;
     }
@@ -154,16 +155,22 @@ public final class B1Compiler {
         return statementBound;
     }
 
-    private static CompiledFile link(IrUnit unit, Set<Integer> statementBound, int maxMethodBytes, boolean eval, boolean extended) {
+    private static CompiledFile link(IrUnit unit, Set<Integer> statementBound, int maxMethodBytes, boolean eval, boolean extended,
+                                     B1Symbols symbols) {
         int helpers = 0, max = 0;
         var linked = new ArrayList<B1Callable>();
         var sizes = new ArrayList<MethodSize>();
         for (var function : unit.functions()) {
-            var emission = B1ClassFileEmitter.measured(B1CfgLowerer.lower(function, statementBound), maxMethodBytes);
+            var emission = B1ClassFileEmitter.measured(B1CfgLowerer.lower(function, statementBound), maxMethodBytes, symbols);
             helpers += emission.helpers();
             max = Math.max(max,emission.maxCode());
             byte[] bytes = emission.bytes();
             B1Lint.requireClean(bytes, B1Lint.Kind.EMITTED);
+            String dump = System.getProperty("b1.dump");
+            if (dump != null && function.name().matches(dump)) {
+                try { Files.write(Path.of(System.getProperty("java.io.tmpdir"), "b1dump-" + function.name().replaceAll("[^A-Za-z0-9_]","_") + ".class"), bytes); }
+                catch (IOException ex) { throw new UncheckedIOException(ex); }
+            }
             try {
                 var lookup = emission.blobs().isEmpty() ? MethodHandles.lookup().defineHiddenClass(bytes, false)
                         : MethodHandles.lookup().defineHiddenClassWithClassData(bytes, java.util.List.copyOf(emission.blobs()), false);
@@ -184,6 +191,7 @@ public final class B1Compiler {
                 callable.isStatic = function.isStatic();
                 callable.visibility = function.visibility();
                 callable.extendedLanguage = extended;
+                callable.consumes = true;
                 for (var method : java.lang.classfile.ClassFile.of().parse(bytes).methods()) {
                     sizes.add(new MethodSize(callable.display, callable.getClass().getName(), method.methodName().stringValue(),
                             method.findAttribute(java.lang.classfile.Attributes.code()).orElseThrow().codeLength()));
@@ -196,13 +204,13 @@ public final class B1Compiler {
         for (var callable : siblings) callable.siblings = siblings;
         var functions = new HashMap<String, B1Callable>();
         for (var f : unit.functions()) {
-            if (!f.fileBody() && !f.closure() && f.owner() == null) functions.put(lower(f.name()), linked.get(f.id()));
+            if (!f.fileBody() && !f.closure() && f.owner() == null) functions.put(lower(f.name()).intern(), linked.get(f.id()));
         }
         var classes = new HashMap<String, B1RequestContext.ClassDef>();
         var lateClasses = new HashMap<Integer, B1RequestContext.ClassDef>();
         for (var cls : unit.classes()) {
             var methods = new HashMap<String, B1Callable>();
-            for (int id : cls.methods()) methods.put(lower(unit.functions().get(id).name()), linked.get(id));
+            for (int id : cls.methods()) methods.put(lower(unit.functions().get(id).name()).intern(), linked.get(id));
             var visibility = new HashMap<String,Integer>();
             var properties = new HashMap<String,B1RequestContext.Property>();
             var instance = new ArrayList<String>();
@@ -215,7 +223,7 @@ public final class B1Compiler {
             var definition = new B1RequestContext.ClassDef(cls.name(), instance,
                     methods, visibility, properties, cls.at(), Set.copyOf(cls.interfaces()), cls.allowDynamicProperties());
             if (statementBound.contains(cls.id())) lateClasses.put(cls.id(), definition);
-            else classes.put(lower(cls.name()), definition);
+            else classes.put(lower(cls.name()).intern(), definition);
         }
         linked.getFirst().statementClasses = java.util.Map.copyOf(lateClasses);
         return new CompiledFile(linked.getFirst(), linked.size(), helpers, max, java.util.List.copyOf(sizes),

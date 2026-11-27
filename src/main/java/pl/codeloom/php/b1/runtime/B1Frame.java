@@ -10,7 +10,8 @@ public final class B1Frame {
     private final String[] names;
     private final B1Ref[] locals;
     private final Object[] temps;
-    private int[] outgoing = new int[0];
+    private static final int[] NO_SENDS = {};
+    private int[] outgoing = NO_SENDS;
     private final boolean top, eval;
     boolean strictTypes, internalCall;
     private long globalVersion = -1;
@@ -28,13 +29,338 @@ public final class B1Frame {
         this.names = names;
         this.top = top;
         this.eval = eval;
-        locals = new B1Ref[names.length];
-        temps = new Object[ntemps];
+        fast = ntemps < 0;
+        locals = fast ? null : new B1Ref[names.length];
+        temps = fast ? null : new Object[ntemps];
+    }
+
+    // ------------------------------------------------------------------ fast frames
+    // A fast frame's CVs and temporaries live in the generated method's JVM locals. A CV local holds UNDEF, a
+    // plain value it owns, or (once the CV is a reference or a written place) a B1Ref binding it owns. The frame
+    // keeps the call metadata: caller, line, scope, the passed arguments' current values (mirrors, for traces and
+    // func_get_args) and extra arguments.
+    /** An undefined CV in a fast frame's JVM local. Never a PHP value. */
+    public static final Object UNDEF = new Object();
+    final boolean fast;
+    private boolean moved;
+    // m0..m3: the first parameters' trace mirrors (public: generated code stores them directly).
+    private Object[] mirrors;
+    private int sent;
+
+    /** Binds the call: consumes a mover's ownership, records extras. Parameters follow with {@link #param}. */
+    /** Returns true when the call is positional within the fixed arguments: the generated code then binds each
+     * parameter from its argument with {@link #take}. Otherwise it calls {@link #param}. */
+    public boolean bindFast(B1RequestContext ctx, B1Callable fn, Object[] args, Object first, Object second, Object third) {
+        boolean move = ctx.moved == fn;
+        if (move) ctx.moved = null;
+        moved = move;
+        B1Frame from = caller;
+        if (from != null && from.discardedCall != null) {
+            discardReturn = from.discardedCall == fn;
+            from.discardedCall = null;
+        }
+        if (args == null && !(first instanceof B1Callable.ShortNamed)) {
+            // Up to the last passed argument: a named call can skip a leading parameter (OMITTED, then a value).
+            int count = third != B1Callable.OMITTED ? 3 : second != B1Callable.OMITTED ? 2 : first != B1Callable.OMITTED ? 1 : 0;
+            int arity = fn.arity() - (fn.variadic ? 1 : 0);
+            sent = count;
+            if (count <= arity && fn.arity() <= 4) { passed = count; return true; }
+        }
+        bindSlow(ctx, fn, args, first, second, third);
+        return false;
+    }
+    /** A passed positional argument becomes the CV's own value (moved, or counted again). */
+    public Object take(B1RequestContext ctx, Object value) {
+        if (value instanceof B1Ref ref) {
+            // A value forwarded as a binding: the parameter holds the referenced value.
+            Object plain = B1Object.retain(ref.get());
+            if (moved) ref.unbind(ctx);
+            return plain;
+        }
+        if (!moved) B1Object.retain(value);
+        return value;
+    }
+    /** A by-reference parameter shares the passed binding. */
+    public Object takeRef(Object value) {
+        if (!moved) B1Object.retain(value);
+        return value;
+    }
+    public Object m0, m1, m2, m3;
+    private void bindSlow(B1RequestContext ctx, B1Callable fn, Object[] args, Object first, Object second, Object third) {
+        B1Callable.ShortNamed named = first instanceof B1Callable.ShortNamed values ? values : null;
+        if (named != null) moved = false;
+        int count = named != null ? named.count() : args != null ? args.length : third != B1Callable.OMITTED ? 3
+                : second != B1Callable.OMITTED ? 2 : first != B1Callable.OMITTED ? 1 : 0;
+        passed = Math.min(count,fn.arity() - (fn.variadic ? 1 : 0));
+        sent = count;
+        if (count > passed) {
+            extras = args == null ? new Object[count - passed] : java.util.Arrays.copyOfRange(args, passed, count);
+            for (int i = 0; i < extras.length; i++) {
+                if (args == null) extras[i] = switch (passed + i) { case 0 -> first; case 1 -> second; default -> third; };
+                if (!moved) B1Object.retain(extras[i]);
+            }
+        }
+        if (fn.arity() > 4) mirrors = new Object[fn.arity() - 4];
+    }
+    /** The owned CV value of parameter i, or UNDEF when it was not passed. */
+    public Object param(B1RequestContext ctx, B1Callable fn, int i, Object[] args, Object first, Object second, Object third) {
+        if (i >= passed) return UNDEF;
+        Object value = first instanceof B1Callable.ShortNamed named ? named.at(i) : args != null ? args[i]
+                : i == 0 ? first : i == 1 ? second : third;
+        if (value == B1Callable.OMITTED) return UNDEF;
+        if (value instanceof B1Ref ref) {
+            if (!moved) ref.bind();
+            if (!fn.byRef(i)) {
+                // A value forwarded as a binding: the parameter holds the referenced value.
+                Object plain = B1Object.retain(ref.get());
+                ref.unbind(ctx);
+                mirror(i, plain);
+                return plain;
+            }
+        } else if (!moved) B1Object.retain(value);
+        mirror(i, value);
+        return value;
+    }
+    /** After the parameters own their values: an old-mode caller's outgoing temporaries are released. */
+    public void bound(B1RequestContext ctx) {
+        if (!moved && caller != null && caller.outgoing.length != 0) for (int i = 0; i < sent; i++) takeSend(ctx, i);
+    }
+    /** Records the current CV of parameter i for traces and func_get_args. */
+    public void mirror(int i, Object local) {
+        switch (i) {
+            case 0 -> m0 = local;
+            case 1 -> m1 = local;
+            case 2 -> m2 = local;
+            case 3 -> m3 = local;
+            default -> mirrors[i - 4] = local;
+        }
+    }
+    private Object mirrored(int i) {
+        Object v = switch (i) { case 0 -> m0; case 1 -> m1; case 2 -> m2; case 3 -> m3; default -> mirrors[i - 4]; };
+        if (v instanceof B1Ref ref) return ref.get();
+        return v == UNDEF ? null : v;
+    }
+    /** The variadic parameter's array of the extra arguments, as an owned CV. */
+    public Object variadicFast(B1RequestContext ctx, int id) {
+        B1Array args = new B1Array(extras == null ? 0 : extras.length);
+        if (extras != null) for (Object extra : extras) args.append(ctx,extra);
+        mirror(id, args);
+        return args;
+    }
+    /** ZEND_RECV's checks on a fast CV. Returns the CV, replaced when a scalar parameter was coerced. */
+    public Object checkFast(B1RequestContext ctx, Object local, int id, int required, int total, String type) {
+        if (local == UNDEF) throw ctx.error("ArgumentCountError", "Too few arguments to function " + function
+                + "(), " + passed + " passed" + callerLocation() + (total == required ? " and exactly " : " and at least ") + required + " expected");
+        if (type == null || type.equals("mixed")) return local;
+        Object value = local instanceof B1Ref ref ? ref.get() : local;
+        Object coerced = scalar(ctx,value,type,caller != null && !caller.internalCall && caller.strictTypes);
+        if (coerced == null) throw ctx.error("TypeError",function + "(): Argument #" + (id+1)
+                + " ($" + names[id] + ") must be of type " + type + ", " + ctx.typeName(value) + " given"
+                + (caller == null || caller.internalCall ? "" : ", called" + callerLocation()));
+        if (coerced == value) return local;
+        Object next = store(ctx, local, coerced);
+        mirror(id, next);
+        drop(ctx, local, next);
+        return next;
+    }
+
+    /** A closure's captured zval for its CV: a binding is shared, a value counted again. */
+    public Object captured(int i) {
+        Object value = closure.capture(i);
+        if (value instanceof B1Ref ref) { ref.bind(); return ref; }
+        return B1Object.retain(value);
+    }
+    /** A temporary takes its value: a binding counts as a binding, a borrowed value is counted. */
+    public static Object temp(Object value, boolean owned) {
+        if (value instanceof B1Ref ref) ref.bind();
+        else if (!owned) B1Object.retain(value);
+        return value;
+    }
+    /** =& : the place becomes a reference held by the CV too. */
+    public static B1Ref bindRef(B1RequestContext ctx, B1Ref place) {
+        place.markReference(ctx);
+        place.bind();
+        return place;
+    }
+    /** global $x: the CV binds the request's global slot. */
+    public static Object globalFast(B1RequestContext ctx, Object local, B1Frame frame, int id, int symbol) {
+        B1Ref global = ctx.globalAt(frame.names[id], symbol);
+        global.markReference(ctx);
+        if (local != global) global.bind();
+        return global;
+    }
+    /** catch (T $e): the CV takes the thrown zval. */
+    public static Object caught(B1RequestContext ctx, Object local, B1Thrown thrown) {
+        B1Object exception = thrown.exception;
+        if (!(local instanceof B1Ref ref)) return exception;
+        try { ref.set(ctx, exception); } finally { B1Object.release(ctx, exception); }
+        return ref;
+    }
+    /** ZEND_ASSIGN used as a value, after the CV changed: drops the old CV; on failure the result is released. */
+    public static Object assigned(B1RequestContext ctx, Object old, Object next, Object result) {
+        try { drop(ctx, old, next); }
+        catch (Throwable ex) {
+            Throwable pending = ex;
+            try { B1Object.release(ctx, result); } catch (Throwable more) { pending = B1Thrown.chain(ctx, more, pending); }
+            B1Thrown.propagate(pending);
+        }
+        return result;
+    }
+    /** The NEW result leaves its construction region. */
+    public static Object constructedFast(B1RequestContext ctx, B1Object self, Object ctorResult) {
+        self.constructing = false;
+        B1Object.release(ctx, ctorResult);
+        return self;
+    }
+
+    /** Read of a fast CV: its value, or null with the undefined-variable warning. */
+    public static Object read(B1RequestContext ctx, Object local, B1Frame frame, int id) {
+        if (local instanceof B1Ref ref) return ref.defined() ? ref.get() : undefined(ctx, frame, id);
+        return local != UNDEF ? local : undefined(ctx, frame, id);
+    }
+    private static Object undefined(B1RequestContext ctx, B1Frame frame, int id) {
+        ctx.diagnostic("Warning", "Undefined variable $" + frame.names[id]);
+        return null;
+    }
+    /** isset/?? read of a fast CV. */
+    public static Object quiet(Object local) {
+        if (local instanceof B1Ref ref) return ref.get();
+        return local == UNDEF ? null : local;
+    }
+    /** The new CV after writing a borrowed value. The old CV is dropped afterwards with {@link #drop}. */
+    public static Object store(B1RequestContext ctx, Object local, Object value) {
+        if (local instanceof B1Ref ref) return storeRef(ctx, ref, value);
+        return B1Object.retain(value);
+    }
+    private static Object storeRef(B1RequestContext ctx, B1Ref ref, Object value) { ref.set(ctx, value); return ref; }
+    /** Three fixed arguments as an argument array (a fast function entered inside a fiber runs on frames). */
+    public static Object[] arguments(Object a, Object b, Object c) { return new Object[]{a, b, c}; }
+    /** store() for ZEND_ASSIGN used as a value: the caller counted the result first; a failed write releases it. */
+    public static Object assignStore(B1RequestContext ctx, Object local, Object value) {
+        try { return store(ctx, local, value); }
+        catch (Throwable ex) {
+            Throwable pending = ex;
+            try { B1Object.release(ctx, value); } catch (Throwable more) { pending = B1Thrown.chain(ctx, more, pending); }
+            B1Thrown.propagate(pending);
+            throw ex;
+        }
+    }
+    /** Releases the previous CV once the new one is in place (a destructor can run). */
+    public static void drop(B1RequestContext ctx, Object old, Object next) {
+        if (old != next && old != UNDEF) B1Object.release(ctx, old);
+    }
+    /** The CV as a place: wraps a plain or undefined CV in its own binding, which the CV then holds. */
+    public static B1Ref box(Object local) {
+        if (local instanceof B1Ref ref) return ref;
+        B1Ref ref = new B1Ref();
+        if (local != UNDEF) ref.adopt(local);
+        return ref;
+    }
+    /** FETCH_DIM_RW / ASSIGN_OP container: an undefined CV warns, then exists. */
+    public static B1Ref boxRW(B1RequestContext ctx, B1Ref ref, B1Frame frame, int id) {
+        if (!ref.defined()) ctx.diagnostic("Warning", "Undefined variable $" + frame.names[id]);
+        return ref;
+    }
+    /** A by-reference send or capture of a boxed CV: the CV becomes a reference. */
+    public static B1Ref reference(B1RequestContext ctx, B1Ref place) {
+        place.markReference(ctx);
+        return place;
+    }
+    /** Owned values (CVs and temporaries): release, or chain into the pending exception while unwinding. */
+    public static void releaseOwned(B1RequestContext ctx, Object value) {
+        if (value != null && value != UNDEF) B1Object.release(ctx, value);
+    }
+    public static Throwable unwindOwned(B1RequestContext ctx, Object value, Throwable pending) {
+        if (value == null || value == UNDEF || value instanceof Long || value instanceof B1Bytes) return pending;
+        return unwindSlow(ctx, value, pending);
+    }
+    private static Throwable unwindSlow(B1RequestContext ctx, Object value, Throwable pending) {
+        try { B1Object.release(ctx, value); return pending; }
+        catch (Throwable ex) { return B1Thrown.chain(ctx, ex, pending); }
+    }
+    /** FE_RESET_R into a fast iterator temporary. */
+    public static Object startEachFast(B1RequestContext ctx, Object subject) {
+        // An array iterator is the retained array itself; the generated code keeps the position.
+        if (subject instanceof B1Array a) { a.retain(); return a; }
+        if (subject instanceof B1Generator gen) return new B1Generator.Cursor(ctx,gen);
+        if (subject instanceof B1Object obj) {
+            if (ctx.instanceOf(obj,"traversable")) throw ctx.unsupported("foreach over Traversable objects");
+            return obj.publicProperties(ctx);
+        }
+        ctx.diagnostic("Warning", "foreach() argument must be of type array|object, " + ctx.typeName(subject) + " given");
+        return null;
+    }
+    /** FE_FETCH_R: the next (borrowed) value, or UNDEF at the end. */
+    public static Object nextValue(B1RequestContext ctx, Object iterator) {
+        if (iterator instanceof B1Array.Cursor cursor) {
+            if (cursor.pos == cursor.array.size()) return UNDEF;
+            return cursor.array.valueAt(cursor.pos++);
+        }
+        if (iterator instanceof B1Generator.Cursor it) return it.advance(ctx) ? it.generator.value() : UNDEF;
+        return UNDEF;
+    }
+    public static Object currentKey(Object iterator) {
+        if (iterator instanceof B1Array.Cursor cursor) return cursor.array.keyAt(cursor.pos - 1);
+        return ((B1Generator.Cursor)iterator).generator.key();
+    }
+    /** The leave of a fast frame, first half: the unused result is released, then the frame is unlinked.
+     * The generated code then releases its CVs and temporaries, and calls {@link #endLeave}. */
+    public Throwable beginLeave(B1RequestContext ctx, Throwable pending, Object returned) {
+        result = returned;
+        if (discardReturn && pending == null) {
+            result = null;
+            try { B1Object.release(ctx, returned); } catch (Throwable ex) { pending = ex; }
+        }
+        ctx.pop(this);
+        return pending;
+    }
+    /** Leave with the function's (up to three) CVs, in order. */
+    public Object leave0(B1RequestContext ctx, Throwable pending, Object returned) {
+        return endLeave(ctx, beginLeave(ctx, pending, returned));
+    }
+    public Object leave1(B1RequestContext ctx, Throwable pending, Object returned, Object a) {
+        pending = beginLeave(ctx, pending, returned);
+        return endLeave(ctx, unwindOwned(ctx, a, pending));
+    }
+    public Object leave2(B1RequestContext ctx, Throwable pending, Object returned, Object a, Object b) {
+        pending = beginLeave(ctx, pending, returned);
+        pending = unwindOwned(ctx, a, pending);
+        return endLeave(ctx, unwindOwned(ctx, b, pending));
+    }
+    public Object leave3(B1RequestContext ctx, Throwable pending, Object returned, Object a, Object b, Object c) {
+        pending = beginLeave(ctx, pending, returned);
+        pending = unwindOwned(ctx, a, pending);
+        pending = unwindOwned(ctx, b, pending);
+        return endLeave(ctx, unwindOwned(ctx, c, pending));
+    }
+    public Object endLeave(B1RequestContext ctx, Throwable pending) {
+        if (pending == null && extras == null) {
+            Object returned = result;
+            result = null;
+            return returned;
+        }
+        return endLeaveSlow(ctx, pending);
+    }
+    private Object endLeaveSlow(B1RequestContext ctx, Throwable pending) {
+        if (extras != null) for (Object extra : extras) {
+            try { B1Object.release(ctx, extra); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
+        }
+        Object returned = result;
+        result = null;
+        if (pending != null) {
+            try { B1Object.release(ctx, returned); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
+        }
+        B1Thrown.propagate(pending);
+        return returned;
     }
 
     public B1Generator generator;
 
     void gcEdges(java.util.function.Consumer<Object> visit) {
+        if (fast) {
+            if (extras != null) for (var extra : extras) visit.accept(extra);
+            return;
+        }
         if (!top) for (var local : locals) visit.accept(local);
         for (var temp : temps) {
             if (temp instanceof B1Array.Cursor cursor) visit.accept(cursor.array);
@@ -287,28 +613,39 @@ public final class B1Frame {
 
     /** Transfer every passed zval before RECV can raise. Traces include later parameters and extras. */
     public void bindArguments(B1RequestContext ctx, B1Callable fn, Object[] args, Object first, Object second) {
+        boolean moved = ctx.moved == fn && !(first instanceof B1Callable.ShortNamed);
+        if (ctx.moved == fn) ctx.moved = null;
         if (caller != null) {
             discardReturn = caller.discardedCall == fn;
             caller.discardedCall = null;
         }
         B1Callable.ShortNamed named = first instanceof B1Callable.ShortNamed values ? values : null;
-        int count = named != null ? named.count() : args != null ? args.length : first == B1Callable.OMITTED ? 0 : second == B1Callable.OMITTED ? 1 : 2;
+        int count = named != null ? named.count() : args != null ? args.length
+                : second != B1Callable.OMITTED ? 2 : first != B1Callable.OMITTED ? 1 : 0;
         passed = Math.min(count,fn.arity() - (fn.variadic ? 1 : 0));
         for (int i = 0; i < passed; i++) {
             Object value = named != null ? named.at(i) : args != null ? args[i] : i == 0 ? first : second;
             if (value == B1Callable.OMITTED) continue;
             if (fn.byRef(i) && value instanceof B1Ref ref) {
-                ref.bind();
+                if (!moved) ref.bind();
                 locals[i] = ref;
-            } else write(ctx, i, value);
-            takeSend(ctx, i);
+            } else if (moved && value instanceof B1Ref ref) {
+                write(ctx, i, ref.get());
+                ref.unbind(ctx);
+            } else {
+                write(ctx, i, value);
+                if (moved) B1Object.release(ctx, value);
+            }
+            if (!moved) takeSend(ctx, i);
         }
         if (count > passed) {
             extras = args == null ? new Object[count - passed] : java.util.Arrays.copyOfRange(args, passed, count);
             for (int i = 0; i < extras.length; i++) {
                 if (args == null) extras[i] = passed + i == 0 ? first : second;
-                B1Object.retain(extras[i]);
-                takeSend(ctx, passed + i);
+                if (!moved) {
+                    B1Object.retain(extras[i]);
+                    takeSend(ctx, passed + i);
+                }
             }
         }
     }
@@ -356,7 +693,8 @@ public final class B1Frame {
     boolean isTop() { return top && !eval; }
     public B1Array traceArguments(B1RequestContext ctx) {
         var args = new B1Array(passed + (extras == null ? 0 : extras.length));
-        for (int i = 0; i < passed; i++) args.append(ctx, locals[i] == null ? null : locals[i].get());
+        if (fast) for (int i = 0; i < passed; i++) args.append(ctx, mirrored(i));
+        else for (int i = 0; i < passed; i++) args.append(ctx, locals[i] == null ? null : locals[i].get());
         if (extras != null) for (Object extra : extras) args.append(ctx, extra);
         return args;
     }

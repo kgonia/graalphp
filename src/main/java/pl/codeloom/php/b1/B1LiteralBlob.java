@@ -15,7 +15,8 @@ public final class B1LiteralBlob {
 
     static boolean useBlob(ArrayValue array) {
         int count = weight(array);
-        return count >= 0 && (count >= 16 || encodedSize(array) > BYTE_THRESHOLD);
+        // Every all-literal array is an immutable condy root (IS_ARRAY_IMMUTABLE): no per-evaluation allocation.
+        return count >= 0;
     }
 
     private static long encodedSize(Expr e) {
@@ -63,13 +64,21 @@ public final class B1LiteralBlob {
                 int count = a.items().size();
                 for (Item item : a.items()) {
                     int nested = weight(item.value());
-                    if (nested < 0 || item.key() != null && weight(item.key()) < 0) yield -1;
+                    if (nested < 0 || item.key() != null && (weight(item.key()) < 0 || !exactKey(item.key()))) yield -1;
                     count += nested;
                 }
                 yield count;
             }
             default -> -1;
         };
+    }
+    /** A float key converts silently only when it is integral and within zend_long; any other float key must reach
+     * the runtime, which reports the precision loss. */
+    private static boolean exactKey(Expr key) {
+        Expr k = key instanceof StoreTemp t ? t.value() : key;
+        if (!(k instanceof Literal(Object value) && value instanceof Double d)) return true;
+        double x = d;
+        return x >= -0x1p63 && x < 0x1p63 && (double)(long)x == x;
     }
     static byte[] encode(Expr e) {
         var bytes = new ByteArrayOutputStream();
@@ -108,7 +117,7 @@ public final class B1LiteralBlob {
             case 2 -> true;
             case 3 -> in.readLong();
             case 4 -> in.readDouble();
-            case 5 -> B1Bytes.of(in.readNBytes(in.readInt()));
+            case 5 -> intern(B1Bytes.of(in.readNBytes(in.readInt())));
             case 6 -> {
                 int count = in.readInt();
                 var a = new B1Array(count);
@@ -142,7 +151,24 @@ public final class B1LiteralBlob {
         return slots;
     }
     public static Object text(MethodHandles.Lookup lookup, String name, Class<?> type, String text) {
-        return B1Bytes.ofUtf8(text);
+        return intern(B1Bytes.ofUtf8(text));
+    }
+    /** Literal strings are immutable and shared by every request: one instance per byte content, so array keys
+     * from literals compare by identity first (as PHP's interned strings do). Bounded by the loaded code. */
+    // Weak both ways: a literal no longer referenced by any linked class (a retired reload or eval) is reclaimed.
+    private static final java.util.WeakHashMap<B1Bytes,java.lang.ref.WeakReference<B1Bytes>> INTERNED = new java.util.WeakHashMap<>();
+    static B1Bytes intern(B1Bytes literal) {
+        synchronized (INTERNED) {
+            var ref = INTERNED.get(literal);
+            B1Bytes existing = ref == null ? null : ref.get();
+            if (existing != null) return existing;
+            INTERNED.put(literal, new java.lang.ref.WeakReference<>(literal));
+            return literal;
+        }
+    }
+    /** Interned literals still reachable, for reload tests. */
+    static int internedCount() {
+        synchronized (INTERNED) { return (int)INTERNED.values().stream().filter(r -> r.get() != null).count(); }
     }
     public static Object bootstrap(MethodHandles.Lookup lookup, String name, Class<?> type, int index)
             throws IOException, IllegalAccessException {

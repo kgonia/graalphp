@@ -1,0 +1,43 @@
+array(3) {
+  [0]=>
+  array(2) {
+    [0]=>
+    int(1)
+    [1]=>
+    int(2)
+  }
+  [1]=>
+  int(1)
+  [2]=>
+  int(2)
+}
+array(2) {
+  [0]=>
+  array(1) {
+    [0]=>
+    int(7)
+  }
+  [1]=>
+  int(7)
+}
+toString 1
+S1 gone
+4
+after strlen
+toString 2
+S2 gone
+a X b
+after str_replace
+toString 3
+S3 gone
+str3|
+after trim
+D1 gone
+side
+both
+D2 gone
+side
+bool(true)
+D3 gone
+side
+end

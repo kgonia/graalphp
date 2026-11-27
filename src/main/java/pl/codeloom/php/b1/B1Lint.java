@@ -200,7 +200,7 @@ public final class B1Lint {
             }
             if (call.opcode() == Opcode.INVOKESTATIC && call.type().stringValue().contains("L" + BASE + ";")
                     && call.type().stringValue().endsWith(")Ljava/lang/Object;")
-                    && !(kind == Kind.EMITTED && owner.equals(cls) && (target.equals("run") || target.startsWith("fragment"))))
+                    && !(kind == Kind.EMITTED && owner.equals(cls) && (target.equals("run") || target.equals("runFiber") || target.startsWith("fragment"))))
                 errors.add("B1-03 static callable dispatch in " + where);
             if (!hotCode) continue;
             if (owner.equals("java/lang/StringBuilder") || owner.equals("java/lang/String") &&

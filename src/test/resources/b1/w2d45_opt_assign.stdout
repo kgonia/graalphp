@@ -1,0 +1,20 @@
+Dtor1 gone
+caught: Cannot assign Dtor to reference held by property H::$typedInt of type int
+after assign
+Dtor2 gone
+caught: Cannot create dynamic property Generator::$prop
+after generator
+Dtor3 gone
+caught: Cannot create dynamic property Fiber::$prop
+after fiber
+Box1 gone
+dropK
+int(2)
+NULL
+string(1) "v"
+Box2 gone
+dropK
+Box3 gone
+after computed
+end
+Box2 gone

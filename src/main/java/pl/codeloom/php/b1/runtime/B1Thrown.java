@@ -47,6 +47,14 @@ public final class B1Thrown extends RuntimeException {
         return next;
     }
 
+    /** Releases a held value after an operation, chaining a throw from a destructor onto the operation's own
+     * pending throw (PHP sets the earlier exception as the newer one's previous). Returns the throw to propagate. */
+    static Throwable released(B1RequestContext ctx, Object value, Throwable pending) {
+        try { B1Object.release(ctx, value); }
+        catch (Throwable ex) { return chain(ctx, ex, pending); }
+        return pending;
+    }
+
     static void propagate(Throwable t) {
         if (t instanceof RuntimeException ex) throw ex;
         if (t instanceof Error ex) throw ex;

@@ -40,6 +40,22 @@ public final class PhpIrLowerer {
         this.externalClass = externalClass;
     }
 
+    /** Operands PHP fetches lazily (delayed oplines): CVs, $this, literals and property/dimension chains of them.
+     * Evaluating anything else first and using it later needs a temporary that owns it. */
+    public static boolean delayable(Expr e) {
+        return switch (e) {
+            case Read ignored -> true;
+            case QuietRead ignored -> true;
+            case This ignored -> true;
+            case Literal ignored -> true;
+            case Property p -> delayable(p.receiver());
+            case Dim d -> delayable(d.base()) && delayable(d.key());
+            case LoadTemp ignored -> true;
+            // A dimension chain whose computed keys are already held: the keys run first, the fetch is delayed.
+            case Prepared p -> delayable(p.result());
+            default -> false;
+        };
+    }
     public static IrUnit lowerFile(String file, byte[] source) {
         return lowerFile(file, source, ignored -> false, ignored -> false);
     }
@@ -666,8 +682,13 @@ public final class PhpIrLowerer {
                         yield new WriteDim(expr(place,false), java.util.Collections.unmodifiableList(keys), hold(expr(n.get("expr"), false)));
                     }
                     check(place.is("AST_PROP"), place);
-                    if (!(place.get("prop") instanceof String))
-                        yield new WriteNamedProperty(receiver(place),expr(place.get("prop"),false),expr(n.get("expr"),false));
+                    if (!(place.get("prop") instanceof String)) {
+                        // ZEND_ASSIGN_OBJ: a receiver or name computed before the value is owned by a temporary, so
+                        // the value's side effects cannot free it; CVs and chains of them are fetched after the value.
+                        Expr recv = receiver(place), name = expr(place.get("prop"),false);
+                        yield new WriteNamedProperty(delayable(recv) ? recv : hold(recv), delayable(name) ? name : hold(name),
+                                expr(n.get("expr"),false));
+                    }
                     yield new WriteProperty(receiver(place), (String) place.get("prop"), expr(n.get("expr"), false));
                 }
                 case "AST_CALL", "AST_METHOD_CALL", "AST_STATIC_CALL", "AST_NEW" -> new Evaluate(call(n, false, false));
