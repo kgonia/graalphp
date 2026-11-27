@@ -277,12 +277,19 @@ final class B1ClassFileEmitter {
                         bind();
                         if (f.generator()) { c.loadConstant(block.normal()).ireturn(); }
                     }
-                    case B1Cfg.YieldPoint(var key,var value,var delegate) -> {
+                    case B1Cfg.YieldPoint(var key,var value,var delegate,var clean) -> {
                         saveFlight();
                         c.aload(frame).getfield(FRAME,"generator",runtime("B1Generator")).aload(0);
                         if (key == null) c.getstatic(CALLABLE,"OMITTED",CD_Object); else expr(key);
                         expr(value); c.loadConstant(delegate ? 1 : 0).loadConstant(block.normal())
-                                .invokevirtual(runtime("B1Generator"),"pause",sig(CD_int,CTX,CD_Object,CD_Object,CD_boolean,CD_int)).ireturn();
+                                .invokevirtual(runtime("B1Generator"),"pause",sig(CD_int,CTX,CD_Object,CD_Object,CD_boolean,CD_int));
+                        if (!clean.slots().isEmpty()) {
+                            int status = c.allocateLocal(TypeKind.INT);
+                            c.istore(status);
+                            cleanup(clean,false);
+                            c.iload(status);
+                        }
+                        c.ireturn();
                     }
                     case B1Cfg.Receive(var slot) -> {
                         frameCtx(); c.loadConstant(slot).aload(frame).getfield(FRAME,"generator",runtime("B1Generator"))

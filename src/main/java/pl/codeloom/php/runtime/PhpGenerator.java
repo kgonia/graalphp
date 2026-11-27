@@ -216,14 +216,25 @@ public final class PhpGenerator {
         Refcount.unhold(old);
     }
 
+    /**
+     * Takes an already-owned return value produced by a finished generator body. Under Truffle, {@code PhpObject}
+     * and {@code PhpClosure} returns already transfer +1 refcount, while {@code PhpArray} drops its epilogue holder
+     * via {@code removeReturnedHolder()} and needs a new holder here.
+     */
     @TruffleBoundary
-    private void setReturned(Object next) {
+    private void takeReturned(Object next) {
         Object old = returned;
-        if (old == next) {
-            return;
+        if (next instanceof PhpArray array) {
+            array.addHolder();
         }
-        Refcount.hold(next);
         returned = next;
+        Refcount.unhold(old);
+    }
+
+    @TruffleBoundary
+    private void clearReturned() {
+        Object old = returned;
+        returned = null;
         Refcount.unhold(old);
     }
 
@@ -533,7 +544,7 @@ public final class PhpGenerator {
                 continue;
             }
             if (result != SUSPENDED) {
-                generator.setReturned(result);
+                generator.takeReturned(result);
                 generator.close();
                 if (generator != this) {
                     delegator = this;
@@ -749,7 +760,7 @@ public final class PhpGenerator {
             try {
                 setValue(null);
             } finally {
-                setReturned(null);
+                clearReturned();
             }
             return;
         }
@@ -766,7 +777,7 @@ public final class PhpGenerator {
             try {
                 setValue(null);
             } finally {
-                setReturned(null);
+                clearReturned();
             }
         }
     }

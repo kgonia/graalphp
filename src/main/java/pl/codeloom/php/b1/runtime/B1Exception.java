@@ -51,25 +51,39 @@ final class B1Exception {
         return result.append('#').append(n).append(" {main}").toString();
     }
 
-    static String format(B1RequestContext ctx, B1Object exception) {
+    static B1Bytes format(B1RequestContext ctx, B1Object exception) {
         var chain = new ArrayList<B1Object>();
-        for (Object cur = exception; cur instanceof B1Object obj && !chain.contains(obj); cur = obj.read("previous")) {
+        for (Object cur = exception; cur instanceof B1Object obj && B1Thrown.throwable(obj.type) && !chain.contains(obj); cur = obj.read("previous")) {
             chain.add(obj);
         }
-        var out = new StringBuilder();
+        var out = new java.io.ByteArrayOutputStream();
         for (int i = chain.size() - 1; i >= 0; i--) {
-            if (out.length() > 0) out.append("\n\nNext ");
+            if (out.size() > 0) out.writeBytes("\n\nNext ".getBytes(StandardCharsets.UTF_8));
             B1Object ex = chain.get(i);
             String cls = ctx.typeName(ex);
-            String msg = ex.read("message") == null ? "" : ctx.string(ex.read("message"));
-            String file = ex.read("file") == null ? "" : ctx.string(ex.read("file"));
-            Object line = ex.read("line");
-            out.append(cls);
-            if (!msg.isEmpty()) out.append(": ").append(msg);
-            out.append(" in ").append(file).append(':').append(line == null ? 0 : line)
-                    .append("\nStack trace:\n").append(traceString(ctx, (B1Array) ex.read("trace")));
+            Object rawMsg = ex.read("message");
+            byte[] msgBytes = rawMsg == null ? new byte[0] : B1Bytes.bytes(rawMsg instanceof B1Bytes || rawMsg instanceof String ? rawMsg : ctx.string(rawMsg));
+            String msgStr = new String(msgBytes, StandardCharsets.ISO_8859_1);
+            Object rawFile = ex.read("file");
+            byte[] fileBytes = rawFile == null ? new byte[0] : B1Bytes.bytes(rawFile instanceof B1Bytes || rawFile instanceof String ? rawFile : ctx.string(rawFile));
+            Object rawLine = ex.read("line");
+            long line = rawLine == null ? 0L : (Long) ctx.castLong(rawLine);
+            Object rawTrace = ex.read("trace");
+            if (!(rawTrace instanceof B1Array traceArr)) {
+                throw ctx.error("TypeError", "Trace is not an array");
+            }
+            out.writeBytes(cls.getBytes(StandardCharsets.UTF_8));
+            if (msgBytes.length > 0) {
+                out.writeBytes(": ".getBytes(StandardCharsets.UTF_8));
+                out.writeBytes(msgBytes);
+            }
+            boolean andDefined = ("TypeError".equals(cls) || "ArgumentCountError".equals(cls)) && msgStr.contains(", called in ");
+            out.writeBytes((andDefined ? " and defined in " : " in ").getBytes(StandardCharsets.UTF_8));
+            out.writeBytes(fileBytes);
+            out.writeBytes((":" + line + "\nStack trace:\n").getBytes(StandardCharsets.UTF_8));
+            out.writeBytes(traceString(ctx, traceArr).getBytes(StandardCharsets.UTF_8));
         }
-        return out.toString();
+        return B1Bytes.of(out.toByteArray());
     }
 
     private static String quoted(Object text) {

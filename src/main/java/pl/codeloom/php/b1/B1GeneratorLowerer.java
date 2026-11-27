@@ -136,46 +136,20 @@ final class B1GeneratorLowerer {
     private Expr expression(Expr e) {
         if (!hasYield(e)) return e;
         return switch (e) {
-            case Yield y -> {
-                Expr key = spill(expression(y.key()));
-                emit(new YieldPoint(key,expression(y.value()),y.delegate()));
-                int dest = slot();
-                emit(new Receive(dest));
-                yield new LoadTemp(dest);
-            }
+            case Yield y -> yieldExpr(y,slot());
+            case StoreTemp t when t.value() instanceof Yield y -> yieldExpr(y,t.id());
             case StoreTemp t when t.value() instanceof Call call -> call(call,t.id());
+            case StoreTemp t when t.value() instanceof ArrayValue a -> arrayValue(a,t.id());
+            case StoreTemp t when t.value() instanceof Binary b -> binary(b,t.id());
+            case StoreTemp t when t.value() instanceof Choose c -> chooseExpr(c,t.id());
             case StoreTemp t -> new StoreTemp(t.id(),expression(t.value()));
-            case Binary b -> {
-                if (b.preservesValue() || b.op() == Operator.AND || b.op() == Operator.OR) {
-                    Expr left = spill(expression(b.left()));
-                    Expr cond = b.op() == Operator.COALESCE ? new IsSet(left) : left;
-                    yield switch (b.op()) {
-                        case AND -> choose(cond,new Not(new Not(b.right())),new Literal(false));
-                        case OR -> choose(cond,new Literal(true),new Not(new Not(b.right())));
-                        default -> choose(cond,left,b.right());
-                    };
-                }
-                boolean leftOwned = b.left() instanceof StoreTemp;
-                Expr left = b.deferredLeft() ? b.left() : spill(expression(b.left()));
-                Expr right = expression(b.right());
-                if (leftOwned && left instanceof LoadTemp lt) {
-                    int res = slot();
-                    emit(new Execute(at,new Evaluate(new StoreTemp(res,new Binary(b.op(),left,right)))));
-                    emit(new Cleanup(new ReleaseTemps(List.of(new ReleaseTemp(lt.id()))),false));
-                    yield new LoadTemp(res);
-                }
-                yield new Binary(b.op(),left,right);
-            }
-            case Choose c -> choose(expression(c.test()),c.yes(),c.no());
+            case Binary b -> binary(b,-1);
+            case Choose c -> chooseExpr(c,slot());
             case Call call -> call(call,slot());
             case Property p -> new Property(expression(p.receiver()),p.name());
             case QuietProperty p -> new QuietProperty(expression(p.receiver()),p.name());
             case Dim d -> new Dim(spill(expression(d.base())),expression(d.key()),d.quiet());
-            case ArrayValue a -> {
-                var items = new ArrayList<Item>();
-                for (var i : a.items()) items.add(new Item(spill(expression(i.key())),spill(expression(i.value()))));
-                yield new ArrayValue(items);
-            }
+            case ArrayValue a -> arrayValue(a,-1);
             case Prepared p -> {
                 for (var t : p.operands()) spill(expression(t));
                 yield expression(p.result());
@@ -197,9 +171,105 @@ final class B1GeneratorLowerer {
         };
     }
 
-    private Expr choose(Expr cond,Expr yes,Expr no) {
-        int left = label(), right = label(), done = label(), dest = slot();
-        set(cursor,new TestBranch(new Test(at,cond,EMPTY),right),left,handler);
+    private Expr yieldExpr(Yield y,int dest) {
+        boolean keyOwned = y.key() instanceof StoreTemp;
+        boolean valOwned = y.value() instanceof StoreTemp;
+        Expr key = spill(expression(y.key()));
+        Expr val = expression(y.value());
+        var toRelease = new ArrayList<ReleaseTemp>(2);
+        if (keyOwned && key instanceof LoadTemp kt) toRelease.add(new ReleaseTemp(kt.id()));
+        else if (key instanceof StoreTemp kt) { trackScratch(kt.id()); toRelease.add(new ReleaseTemp(kt.id())); }
+        if (valOwned && val instanceof LoadTemp vt) toRelease.add(new ReleaseTemp(vt.id()));
+        else if (val instanceof StoreTemp vt) { trackScratch(vt.id()); toRelease.add(new ReleaseTemp(vt.id())); }
+        ReleaseTemps clean = toRelease.isEmpty() ? EMPTY : new ReleaseTemps(List.copyOf(toRelease));
+        emit(new YieldPoint(key,val,y.delegate(),clean));
+        trackScratch(dest);
+        emit(new Receive(dest));
+        return new LoadTemp(dest);
+    }
+
+    private Expr binary(Binary b,int target) {
+        if (b.preservesValue() || b.op() == Operator.AND || b.op() == Operator.OR) {
+            Expr rawLeft = b.left();
+            Expr left = spill(expression(rawLeft));
+            Expr cond = b.op() == Operator.COALESCE ? new IsSet(left) : left;
+            int dest = target >= 0 ? target : slot();
+            if (target >= 0) trackScratch(dest);
+            boolean releaseLeft = !(rawLeft instanceof LoadTemp) && left instanceof LoadTemp;
+            ReleaseTemps condClean = !b.preservesValue() && releaseLeft
+                    ? new ReleaseTemps(List.of(new ReleaseTemp(((LoadTemp)left).id()))) : EMPTY;
+            return switch (b.op()) {
+                case AND -> choose(cond,new Not(new Not(b.right())),new Literal(false),condClean,dest);
+                case OR -> choose(cond,new Literal(true),new Not(new Not(b.right())),condClean,dest);
+                default -> choose(cond,left,b.right(),EMPTY,dest);
+            };
+        }
+        boolean leftOwned = b.left() instanceof StoreTemp;
+        boolean rightOwned = b.right() instanceof StoreTemp;
+        Expr left = b.deferredLeft() ? b.left() : spill(expression(b.left()));
+        Expr right = expression(b.right());
+        var toRelease = new ArrayList<ReleaseTemp>(2);
+        if (leftOwned && left instanceof LoadTemp lt) toRelease.add(new ReleaseTemp(lt.id()));
+        if (rightOwned && right instanceof LoadTemp rt) toRelease.add(new ReleaseTemp(rt.id()));
+        Expr result = new Binary(b.op(),left,right);
+        if (!toRelease.isEmpty()) {
+            int res = target >= 0 ? target : slot();
+            if (target >= 0) trackScratch(res);
+            emit(new Execute(at,new Evaluate(new StoreTemp(res,result))));
+            emit(new Cleanup(new ReleaseTemps(List.copyOf(toRelease)),false));
+            return new LoadTemp(res);
+        }
+        return target >= 0 ? new StoreTemp(target,result) : result;
+    }
+
+    private Expr arrayValue(ArrayValue a,int target) {
+        var items = new ArrayList<Item>(a.items().size());
+        var toRelease = new ArrayList<ReleaseTemp>();
+        for (var i : a.items()) {
+            boolean keyOwned = i.key() instanceof StoreTemp;
+            boolean valOwned = i.value() instanceof StoreTemp;
+            Expr k = spill(expression(i.key()));
+            Expr v = spill(expression(i.value()));
+            items.add(new Item(k,v));
+            if (keyOwned && k instanceof LoadTemp kt) toRelease.add(new ReleaseTemp(kt.id()));
+            if (valOwned && v instanceof LoadTemp vt) toRelease.add(new ReleaseTemp(vt.id()));
+        }
+        Expr built = new ArrayValue(items);
+        if (!toRelease.isEmpty()) {
+            int res = target >= 0 ? target : slot();
+            if (target >= 0) trackScratch(res);
+            emit(new Execute(at,new Evaluate(new StoreTemp(res,built))));
+            emit(new Cleanup(new ReleaseTemps(List.copyOf(toRelease)),false));
+            return new LoadTemp(res);
+        }
+        return target >= 0 ? new StoreTemp(target,built) : built;
+    }
+
+    private void collectCondTemps(Expr raw,Expr lowered,List<ReleaseTemp> out) {
+        if (raw instanceof StoreTemp st) {
+            trackScratch(st.id());
+            out.add(new ReleaseTemp(st.id()));
+        } else if (raw instanceof Not n && lowered instanceof Not ln) {
+            collectCondTemps(n.value(),ln.value(),out);
+        } else if (raw instanceof IsSet i && lowered instanceof IsSet li) {
+            collectCondTemps(i.value(),li.value(),out);
+        } else if (!(raw instanceof LoadTemp) && lowered instanceof LoadTemp lt) {
+            out.add(new ReleaseTemp(lt.id()));
+        }
+    }
+
+    private Expr chooseExpr(Choose c,int dest) {
+        trackScratch(dest);
+        Expr cond = expression(c.test());
+        var condTemps = new ArrayList<ReleaseTemp>(1);
+        collectCondTemps(c.test(),cond,condTemps);
+        ReleaseTemps condClean = condTemps.isEmpty() ? EMPTY : new ReleaseTemps(List.copyOf(condTemps));
+        return choose(cond,c.yes(),c.no(),condClean,dest);
+    }
+
+    private Expr choose(Expr cond,Expr yes,Expr no,ReleaseTemps condClean,int dest) {
+        int left = label(), right = label(), done = label();
+        set(cursor,new TestBranch(new Test(at,cond,condClean),right),left,handler);
         cursor = left;
         Expr yesExpr = expression(yes);
         if (yesExpr instanceof StoreTemp yt) trackScratch(yt.id());

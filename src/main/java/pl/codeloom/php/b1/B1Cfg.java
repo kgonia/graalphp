@@ -10,7 +10,7 @@ import java.util.Set;
 record B1Cfg(IrFunction function, int entry, int exit, List<Block> blocks, Set<Integer> longLocals, int tempCount) {
     record Block(int label, Op op, int normal, int exceptional) {}
     sealed interface Op {}
-    record YieldPoint(Expr key, Expr value, boolean delegate) implements Op {}
+    record YieldPoint(Expr key, Expr value, boolean delegate, ReleaseTemps cleanup) implements Op {}
     record Receive(int slot) implements Op {}
     record ResolveCall(Target target,int callee) implements Op {}
     record SendCall(Argument arg,int index,int callee) implements Op {}

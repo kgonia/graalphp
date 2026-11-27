@@ -188,99 +188,200 @@ class WeekTwoPartBTest {
         assertTrue(Files.readString(log).contains("total pass=1 unsupported=1 diff=1 error=0 timeout=1"),() -> log.toString());
     }
 
-    @Test @Timeout(30) void opusAuditGeneratorAndFiberRegressions() {
-        // 1. Cyclic yield from throws instead of hanging
-        // 2. Spilled call result across yield inside loop is freed before next statement
-        // 3. Generator and Fiber forbid dynamic properties
-        // 4. Sent value is not leaked when ClosedGeneratorException is injected
-        // 5. RUNNING generator inside suspended Fiber does not double-count frame in cycle GC
+    @Test @Timeout(30) void opusAuditGeneratorAndFiberRegressions() throws Exception {
+        // 1. Suspended-chain cyclic yield from + child RUNNING leaves parent open/valid
+        // 2. Intra-statement & across-yield D17 timing: eat(yield), 1 === mk(yield) + step(),
+        //    mk('lhs') === (yield) + step(), mk('c') && (yield), mk('t') ? (yield) : 2, eatArr([mk('e'), yield])
+        // 3. Generator & Fiber forbid dynamic props (write, by-ref, ++, read, isset)
+        // 4. Sent value is not leaked when rewound outer generator's delegate is aborted before send()
+        // 5. RUNNING generator inside suspended Fiber in a GC root cycle does not double-decrement $box
         String php = """
                 <?php
                 class Track {
                     public $name;
+                    public $f;
                     function __construct($n) { $this->name = $n; }
                     function __destruct() { echo "drop:", $this->name, "\\n"; }
                 }
                 function mk($n) { return new Track($n); }
-                function cycA($h) { yield from $h->b; }
-                function cycB($h) { yield from $h->a; }
+
+                // 1a. Suspended 2-node cyclic yield from (exercising g.leaf() == this)
+                function cyc1($h) { yield 'a'; yield from $h->b; }
+                function cyc2($h) { yield from $h->a; }
                 $h = new stdClass();
-                $h->a = cycA($h);
-                $h->b = cycB($h);
+                $h->a = cyc1($h);
+                $h->b = cyc2($h);
+                $h->b->rewind(); // b suspends delegating to a (suspended at yield 'a')
                 try {
-                    $h->a->next();
-                    $h->b->next();
-                    $h->b->current();
+                    $h->a->next(); // a runs, hits yield from $h->b where $h->b is SUSPENDED with leaf() == a
                 } catch (Error $e) {
-                    echo "cyc:", $e->getMessage(), "\\n";
+                    echo "cyc_susp:", $e->getMessage(), "\\n";
                 }
                 unset($h);
 
-                function spillLoop() {
-                    $i = 0;
-                    while ($i < 2) {
-                        $s = mk('s' . $i) === (yield $i);
-                        echo "after:", $i, "\\n";
-                        $i = $i + 1;
-                    }
+                // 1b. Child RUNNING does not close parent delegating generator, and throw() into RUNNING does not leak $ex
+                function runInner($h) {
+                    yield 1;
+                    try { $h->outer->next(); } catch (Error $e) { echo "run_err:", $e->getMessage(), "\\n"; }
+                    $ex = new Exception("run_throw");
+                    $ex->box = mk("ex_box");
+                    try { $h->outer->throw($ex); } catch (Error $e) { echo "run_throw_err:", $e->getMessage(), "\\n"; }
+                    unset($ex);
+                    echo "after_ex_unset\\n";
+                    $ex2 = new Exception("self_throw");
+                    $ex2->box = mk("self_ex_box");
+                    try { $h->inner->throw($ex2); } catch (Error $e) { echo "self_throw_err:", $e->getMessage(), "\\n"; }
+                    unset($ex2);
+                    echo "after_ex2_unset\\n";
+                    yield 2;
                 }
-                $g = spillLoop();
-                $g->rewind();
-                $g->send(0);
-                $g->send(1);
-                unset($g);
+                function runOuter($in) { yield from $in; }
+                $rh = new stdClass();
+                $rin = runInner($rh);
+                $rh->inner = $rin;
+                $rh->outer = runOuter($rin);
+                $rh->outer->rewind();
+                $rin->next();
+                echo "outer_valid:", ($rh->outer->valid() ? "true" : "false"), ":", $rh->outer->current(), "\\n";
+                unset($rh, $rin);
 
-                try {
-                    $g2 = spillLoop();
-                    $g2->prop = 1;
-                } catch (Error $e) {
-                    echo "gdyn:", $e->getMessage(), "\\n";
+                // 2. Intra-statement & across-yield D17 timing (exact PHP 8.5.13 parity)
+                function eat($x) { echo "eat_in\\n"; $x = null; echo "eat_out\\n"; }
+                function step() { echo "step\\n"; return 0; }
+                function retInner() { yield 'in'; return mk('ret_eat'); }
+                function eatYieldFrom() { eat(yield from retInner()); }
+                $gy = eatYieldFrom();
+                $gy->rewind();
+                $gy->next();
+                unset($gy);
+
+                function gTiming() {
+                    eat(yield 'eat');
+                    $x = (mk('lhs') === (yield 'lhs')) + step();
+                    $y = (1 === mk(yield 'rhs')) + step();
+                    $z = mk('and_cond') && (yield 'and');
+                    $w = mk('tern_cond') ? (yield 'tern') : 2;
+                    eat([mk('arr_elem'), yield 'arr']);
                 }
+                $gt = gTiming();
+                $gt->rewind();
+                $gt->send(mk('sent_eat'));
+                $gt->send(0);
+                $gt->send('rhs_obj');
+                echo "before_and_send\\n";
+                $gt->send(true);
+                echo "before_tern_send\\n";
+                $gt->send(1);
+                $gt->send(0);
+                unset($gt);
+
+                // 3. Generator and Fiber dynamic properties (write, by-ref, inc, isset)
+                $g2 = gTiming();
+                try { $g2->prop = 1; } catch (Error $e) { echo "gdyn_w:", $e->getMessage(), "\\n"; }
+                try { $r = &$g2->prop; } catch (Error $e) { echo "gdyn_ref:", $e->getMessage(), "\\n"; }
+                try { $g2->prop++; } catch (Error $e) { echo "gdyn_inc:", $e->getMessage(), "\\n"; }
+                echo "gdyn_isset:", (isset($g2->prop) ? "1" : "0"), "\\n";
                 unset($g2);
-                try {
-                    $f = new Fiber(static function () {});
-                    $f->prop = 1;
-                } catch (Error $e) {
-                    echo "fdyn:", $e->getMessage(), "\\n";
-                }
+                $f = new Fiber(static function () {});
+                try { $f->prop = 1; } catch (Error $e) { echo "fdyn_w:", $e->getMessage(), "\\n"; }
+                try { $rf = &$f->prop; } catch (Error $e) { echo "fdyn_ref:", $e->getMessage(), "\\n"; }
                 unset($f);
 
-                function deadInner() { throw new Exception('x'); yield 1; }
-                function outerDead($in) { yield from $in; }
-                $in = deadInner();
-                try { $in->next(); } catch (Exception $e) {}
-                $out = outerDead($in);
-                try { $out->send(mk('sent_leak')); } catch (Throwable $e) { echo "sent_err\\n"; }
+                // 4. Sent value not leaked when already-rewound outer's delegate aborts before send()
+                function abortableInner() { yield 'first'; throw new Exception('boom'); }
+                function outerAbort($in) { yield from $in; }
+                $in = abortableInner();
+                $out = outerAbort($in);
+                $out->rewind(); // outer is now SUSPENDED delegating to $in
+                try { $in->next(); } catch (Exception $e) {} // $in aborts directly
+                try { $out->send(mk('sent_leak')); } catch (Throwable $e) { echo "sent_err:", $e->getMessage(), "\\n"; }
                 unset($out, $in);
 
-                $live = mk('live_fiber_gen');
+                // 5. RUNNING generator inside suspended Fiber in GC root cycle does NOT prematurely destroy $box
                 function genInFiber($v) {
                     $local = $v;
                     Fiber::suspend('paused');
                     yield $local->name;
                 }
-                $f2 = new Fiber(static function () use ($live) {
-                    $gg = genInFiber($live);
+                $box = mk('gc_box');
+                $f2 = new Fiber(static function () use ($box) {
+                    $gg = genInFiber($box);
                     return $gg->current();
                 });
+                $box->f = $f2; // cycle: $box -> $f2 -> closure/gen frame -> $box
                 $f2->start();
+                unset($f2); // puts $f2 in GC roots while $box still has external ref
                 gc_collect_cycles();
-                $f2->resume();
-                echo "res:", $f2->getReturn(), "\\n";
-                unset($f2, $live);
+                echo "after_gc\\n";
+                $box->f->resume();
+                echo "res:", $box->f->getReturn(), "\\n";
+                $box->f = null;
+                unset($box);
                 """;
         var out = new ByteArrayOutputStream();
         var ctx = new B1RequestContext(out);
         var file = B1Compiler.compile(PhpIrLowerer.lowerFile("w2b_audit.php", php.getBytes(StandardCharsets.UTF_8)), ctx);
         ctx.runScript(file.entry());
         String actual = out.toString(StandardCharsets.UTF_8);
-        assertTrue(actual.contains("cyc:Impossible to yield from the Generator being currently run\n"), actual);
-        assertTrue(actual.contains("drop:s0\nafter:0\ndrop:s1\nafter:1\n"), actual);
-        assertTrue(actual.contains("gdyn:Cannot create dynamic property Generator::$prop\n"), actual);
-        assertTrue(actual.contains("fdyn:Cannot create dynamic property Fiber::$prop\n"), actual);
-        assertTrue(actual.contains("drop:sent_leak\nsent_err\n") || actual.contains("sent_err\ndrop:sent_leak\n"), actual);
-        assertTrue(actual.contains("res:live_fiber_gen\ndrop:live_fiber_gen\n"), actual);
+        assertTrue(actual.contains("cyc_susp:Impossible to yield from the Generator being currently run\n"), actual);
+        assertTrue(actual.contains("run_err:Cannot resume an already running generator\n"
+                + "run_throw_err:Cannot resume an already running generator\n"
+                + "drop:ex_box\nafter_ex_unset\n"
+                + "self_throw_err:Cannot resume an already running generator\n"
+                + "drop:self_ex_box\nafter_ex2_unset\n"
+                + "outer_valid:true:2\n"), actual);
+        assertTrue(actual.contains("eat_in\ndrop:ret_eat\neat_out\n"), actual);
+        assertTrue(actual.contains("eat_in\neat_out\ndrop:sent_eat\n"), actual);
+        assertTrue(actual.contains("drop:lhs\nstep\n"), actual);
+        assertTrue(actual.contains("drop:rhs_obj\nstep\n"), actual);
+        assertTrue(actual.contains("drop:and_cond\nbefore_and_send\n"), actual);
+        assertTrue(actual.contains("drop:tern_cond\nbefore_tern_send\n"), actual);
+        assertTrue(actual.contains("eat_in\ndrop:arr_elem\neat_out\n"), actual);
+        assertTrue(actual.contains("gdyn_w:Cannot create dynamic property Generator::$prop\n"), actual);
+        assertTrue(actual.contains("gdyn_ref:Cannot create dynamic property Generator::$prop\n"), actual);
+        assertTrue(actual.contains("gdyn_inc:Cannot create dynamic property Generator::$prop\n"), actual);
+        assertTrue(actual.contains("gdyn_isset:0\n"), actual);
+        assertTrue(actual.contains("fdyn_w:Cannot create dynamic property Fiber::$prop\n"), actual);
+        assertTrue(actual.contains("fdyn_ref:Cannot create dynamic property Fiber::$prop\n"), actual);
+        assertTrue(actual.contains("sent_err:Generator yielded from aborted, no return value available\n"), actual);
+        assertTrue(actual.contains("drop:sent_leak\n"), actual);
+        assertTrue(actual.contains("after_gc\nres:gc_box\ndrop:gc_box\n"), actual);
         assertEquals(0, ctx.liveDestructibleCount());
         assertEquals(0, ctx.gcRootCount());
+
+        // 6. Truffle & B1 parity on generator returning a destructible object (no double-refcount leak)
+        String retPhp = """
+                <?php
+                class Box { function __destruct() { echo "drop\\n"; } }
+                function g() { yield 1; return new Box(); }
+                $g = g(); $g->rewind(); $g->next();
+                echo "before\\n";
+                unset($g);
+                echo "after\\n";
+                """;
+        String expectedRet = "before\ndrop\nafter\n";
+        var b1Out = new ByteArrayOutputStream();
+        var b1Ctx = new B1RequestContext(b1Out);
+        var b1File = B1Compiler.compile(PhpIrLowerer.lowerFile("w2b_gen_ret.php", retPhp.getBytes(StandardCharsets.UTF_8)), b1Ctx);
+        b1Ctx.runScript(b1File.entry());
+        assertEquals(expectedRet, b1Out.toString(StandardCharsets.UTF_8));
+        assertEquals(0, b1Ctx.liveDestructibleCount());
+        assertEquals(expectedRet, runTruffle("w2b_gen_ret.php", retPhp));
+    }
+
+    private static String runTruffle(String name, String code) throws Exception {
+        Path script = Files.createTempFile("truffle_" + name + "_", ".php");
+        try {
+            Files.writeString(script, code, StandardCharsets.UTF_8);
+            var out = new ByteArrayOutputStream();
+            try (var engine = Context.newBuilder("php").allowAllAccess(true).allowExperimentalOptions(true)
+                    .option("php.Parser", "java").out(out).err(out)
+                    .arguments("php", new String[] { script.toString() }).build()) {
+                engine.eval(Source.newBuilder("php", script.toFile()).build());
+            }
+            return out.toString(StandardCharsets.UTF_8);
+        } finally {
+            Files.deleteIfExists(script);
+        }
     }
 }

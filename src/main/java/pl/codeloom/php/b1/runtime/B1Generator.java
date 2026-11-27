@@ -121,9 +121,17 @@ public final class B1Generator extends B1Object {
         };
     }
 
+    private static void failRunning(B1RequestContext ctx,Throwable thrown) {
+        Throwable err = ctx.error("Error","Cannot resume an already running generator");
+        if (thrown instanceof B1Thrown bt) {
+            try { release(ctx,bt.exception); } catch (Throwable rel) { err = B1Thrown.chain(ctx,rel,err); }
+        }
+        B1Thrown.propagate(err);
+    }
+
     private void advance(B1RequestContext ctx,Object input,Throwable thrown) {
         if (state == State.CLOSED) { B1Thrown.propagate(thrown); return; }
-        if (state == State.RUNNING) throw ctx.error("Error","Cannot resume an already running generator");
+        if (state == State.RUNNING) { failRunning(ctx,thrown); return; }
         // Walk the delegation chain on the heap. A yield-from chain adds PHP frames
         // to the trace but does not consume a Java call frame per generator.
         var callers = new java.util.ArrayDeque<B1Generator>();
@@ -132,10 +140,12 @@ public final class B1Generator extends B1Object {
         active.enter(ctx);
         try {
             for (;;) {
+                if (!active.closing && active.delegate instanceof B1Generator child && child.state == State.RUNNING) {
+                    failRunning(ctx,thrown);
+                }
                 boolean yielded = false;
                 try {
                     if (!active.closing && active.delegate instanceof B1Generator child) {
-                        if (child.state == State.RUNNING) throw ctx.error("Error","Cannot resume an already running generator");
                         if (initial && child.state == State.SUSPENDED) break;
                         if (child.state != State.CLOSED) {
                             callers.push(active);
@@ -208,14 +218,19 @@ public final class B1Generator extends B1Object {
         frame = null;
         state = State.CLOSED;
         done.generator = null;
+        Throwable pending = null;
         try {
             result = done.leave(ctx,failure,ret);
             returned = !closing;
+        } catch (Throwable ex) {
+            pending = ex;
         } finally {
+            try { dropDelegate(ctx); } catch (Throwable ex) { pending = B1Thrown.chain(ctx,ex,pending); }
             Object owner = self;
             self = null;
-            release(ctx,owner);
+            try { release(ctx,owner); } catch (Throwable ex) { pending = B1Thrown.chain(ctx,ex,pending); }
         }
+        B1Thrown.propagate(pending);
     }
 
     @Override void dump(B1RequestContext ctx,B1Dump dump,int depth) {

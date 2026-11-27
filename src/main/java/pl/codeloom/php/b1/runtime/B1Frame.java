@@ -35,7 +35,7 @@ public final class B1Frame {
     public B1Generator generator;
 
     void gcEdges(java.util.function.Consumer<Object> visit) {
-        for (var local : locals) visit.accept(local);
+        if (!top) for (var local : locals) visit.accept(local);
         for (var temp : temps) {
             if (temp instanceof B1Array.Cursor cursor) visit.accept(cursor.array);
             else if (temp instanceof B1Generator.Cursor cursor) visit.accept(cursor.generator);
