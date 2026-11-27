@@ -10,6 +10,7 @@ import java.util.*;
 public final class B1RequestContext {
     private static final pl.codeloom.php.ir.IrUnit.Operator[] OPERATORS = pl.codeloom.php.ir.IrUnit.Operator.values();
     private final Map<String, String> foldedNames = new HashMap<>();
+    /** Folded names, cached per request. Not interned: runtime names are compared with equals. */
     public String folded(String name) { return foldedNames.computeIfAbsent(name, pl.codeloom.php.ir.AsciiCase::lower); }
     private int emitted;
     public int lintedClasses() { return emitted; }
@@ -42,7 +43,69 @@ public final class B1RequestContext {
         if (freeObjectCount == freeObjectIds.length) freeObjectIds = Arrays.copyOf(freeObjectIds, freeObjectCount * 2);
         freeObjectIds[freeObjectCount++] = id;
     }
-    private B1Frame frame;
+    /** The innermost materialized PHP frame. Read it through {@link #frame()}: a deferred leaf call is above it. */
+    private B1Frame current;
+
+    // ------------------------------------------------------------------ leaf calls
+    // A leaf function (B1ClassFileEmitter leaf mode: no PHP calls, no references to its CVs, exact positional
+    // arguments) starts without a frame. It records only itself, its current line and its parameters' values here.
+    // Whatever needs the frame chain (a diagnostic, an error and its trace, a destructor or any other PHP call)
+    // reads it through frame(), which first builds the leaf's frame exactly as an ordinary fast entry would have.
+    /** The deferred leaf call, or null. Never two: a leaf calls no PHP code before its frame exists. */
+    private B1Callable leaf;
+    private int leafLine;
+    private Object leafA0, leafA1, leafA2;
+
+    /** The current PHP frame (a deferred leaf call gets its frame first). */
+    B1Frame frame() {
+        if (leaf != null) materializeLeaf();
+        return current;
+    }
+    private void materializeLeaf() {
+        B1Callable fn = leaf;
+        leaf = null;
+        B1Frame f = enterFast(fn, fn.declaredFile, fn.display);
+        f.materialized(leafLine, fn.arity(), leafA0, leafA1, leafA2);
+        leafA0 = leafA1 = leafA2 = null;
+    }
+    /** A leaf call's entry. -1: this call takes the ordinary frame path (a frame-based caller's sends, a fiber).
+     * Otherwise flags: 1 the caller moved its arguments, 2 the caller discards the result. */
+    public int enterLeaf(B1Callable fn) {
+        B1Frame caller = current;
+        if (leaf != null || currentFiber != null || caller != null && caller.hasOutgoing()) return -1;
+        int flags = 0;
+        if (moved == fn) { moved = null; flags = 1; }
+        if (caller != null) {
+            caller.nextClosure = null;
+            if (caller.takeDiscard(fn)) flags |= 2;
+        }
+        leafLine = fn.declaredLine;
+        leaf = fn;
+        return flags;
+    }
+    /** Parameter i's entry value (its trace argument) of the leaf call being entered. */
+    public void leafArgument(int i, Object value) {
+        switch (i) { case 0 -> leafA0 = value; case 1 -> leafA1 = value; default -> leafA2 = value; }
+    }
+    /** A leaf call's parameter changed: its trace argument follows, wherever the call's state lives now. */
+    public void leafMirror(Object value, int i, B1Callable fn) {
+        if (leaf == fn) leafArgument(i, value);
+        else current.mirror(i, value);
+    }
+    /** A leaf call's current line. */
+    public void leafLine(int line, B1Callable fn) {
+        if (leaf == fn) leafLine = line;
+        else current.line = line;
+    }
+    /** The leaf call leaves: null when it never needed a frame (it is unlinked now), else its frame. */
+    public B1Frame leafFrame(B1Callable fn) {
+        if (leaf == fn) {
+            leaf = null;
+            leafA0 = leafA1 = leafA2 = null;
+            return null;
+        }
+        return current;
+    }
     /** The callee about to receive owned arguments (set by a moving caller, cleared by the callee's entry). */
     public B1Callable moved;
     final ClassDef generatorClass;
@@ -61,8 +124,8 @@ public final class B1RequestContext {
     void recycle(B1FiberThread worker) { idleFibers.push(worker); }
     public int fiberThreadCount() { return fiberThreads.size(); }
 
-    B1Frame swapFrame(B1Frame next) { B1Frame previous = frame; frame = next; return previous; }
-    void attach(B1Frame resumed) { resumed.caller = frame; frame = resumed; }
+    B1Frame swapFrame(B1Frame next) { B1Frame previous = frame(); current = next; return previous; }
+    void attach(B1Frame resumed) { resumed.caller = frame(); current = resumed; }
     <T extends B1Object> T track(T object) { destructibles.add(object); return object; }
 
     private String exceptionHandler;
@@ -376,7 +439,7 @@ public final class B1RequestContext {
                 return tuple;
             }
             B1Object receiver = ctx.receiver(callback);
-            B1Frame caller = ctx.frame;
+            B1Frame caller = ctx.frame();
             boolean previous = caller.internalCall;
             caller.internalCall = true;
             try {
@@ -585,7 +648,7 @@ public final class B1RequestContext {
             }
             if (value instanceof B1Bytes name) return function(this, name.symbolKey(), name.symbol(this)).callSlice(this, null, args, start, count);
             if (value instanceof B1Closure closure) {
-                frame.nextClosure = closure;
+                frame().nextClosure = closure;
                 return closure.body.callSlice(this, closure.self, args, start, count);
             }
             if (value instanceof B1Array pair && pair.size() == 2 && pair.get(1L) instanceof B1Bytes name) {
@@ -604,7 +667,7 @@ public final class B1RequestContext {
         int count = args.sliceLength(start,lengthValue == null ? Long.MAX_VALUE : integral(lengthValue,"array_slice()",3,"length","?int"));
         B1Callable target = callable(value);
         B1Object self = receiver(value);
-        if (value instanceof B1Closure closure) frame.nextClosure = closure;
+        if (value instanceof B1Closure closure) frame().nextClosure = closure;
         if (!args.packed()) {
             for (int i = start; i < start + count; i++) {
                 if (args.keyAt(i) instanceof B1Bytes) return target.named(this,self,args,start,count);
@@ -661,7 +724,7 @@ public final class B1RequestContext {
         return allocate(name instanceof B1Bytes bytes ? bytes.symbolKey() : folded(cls), cls);
     }
     public Object eval(Object code,B1Object self,int budget,boolean extended) {
-        return pl.codeloom.php.b1.B1Compiler.eval(this, stringBytes(code), new pl.codeloom.php.ir.IrSourceSpan(frame.file, frame.line),self,budget,extended);
+        return pl.codeloom.php.b1.B1Compiler.eval(this, stringBytes(code), new pl.codeloom.php.ir.IrSourceSpan(frame().file, current.line),self,budget,extended);
     }
     public static boolean truth(Object value) {
         if (value instanceof Boolean flag) return flag;
@@ -1096,10 +1159,10 @@ public final class B1RequestContext {
     public pl.codeloom.php.b1.B1CodeCache codeCache() { return code; }
     public boolean markIncluded(String realPath) { return included.add(realPath); }
     public boolean wasIncluded(String realPath) { return included.contains(realPath); }
-    public boolean atTopLevel() { return frame != null && frame.isTop(); }
+    public boolean atTopLevel() { return frame() != null && current.isTop(); }
     public Object include(Object path, int kind, int budget) {
         return pl.codeloom.php.b1.B1Compiler.include(this, string(path), kind,
-                new pl.codeloom.php.ir.IrSourceSpan(frame.file, frame.line), budget);
+                new pl.codeloom.php.ir.IrSourceSpan(frame().file, current.line), budget);
     }
     /** Runs a linked file body like a CLI script, without the request shutdown. Returns the owned result. */
     public Object execute(B1Callable entry) { return entry.invoke0(this, null); }
@@ -1107,9 +1170,9 @@ public final class B1RequestContext {
     public Object callHost(Object value, Object... args) {
         B1Callable target = callable(value);
         B1Object self = receiver(value);
-        B1Frame host = new B1Frame(frame, "[host]", "{host}", new String[0], 0, false, false);
+        B1Frame host = new B1Frame(frame(), "[host]", "{host}", new String[0], 0, false, false);
         host.internalCall = true;
-        frame = host;
+        current = host;
         try {
             if (value instanceof B1Closure closure) host.nextClosure = closure;
             return switch (args.length) {
@@ -1189,7 +1252,7 @@ public final class B1RequestContext {
     }
     private pl.codeloom.php.ir.PhpCompileFatal redeclared(String name,pl.codeloom.php.ir.IrSourceSpan previous,
                                                            pl.codeloom.php.ir.IrSourceSpan at) {
-        B1Array trace = B1Exception.trace(this,frame);
+        B1Array trace = B1Exception.trace(this,frame());
         try {
             String message = "Cannot redeclare " + name + (previous == null ? "" : " (previously declared in " +
                     previous.file() + ":" + previous.line() + ")");
@@ -1285,12 +1348,17 @@ public final class B1RequestContext {
             return slot;
         }
         MethodSites(List<String> props, Map<String,Integer> visibilities, Map<String,Property> properties) {
+            this(props, visibilities, properties, java.util.function.UnaryOperator.identity());
+        }
+        /** A layout whose property-name keys come from {@code intern} (the compiler's literal strings). */
+        public MethodSites(List<String> props, Map<String,Integer> visibilities, Map<String,Property> properties,
+                           java.util.function.UnaryOperator<B1Bytes> intern) {
             int n = props.size();
             names = new String[n]; keys = new B1Bytes[n]; declarations = new Property[n]; visibility = new int[n];
             for (int i = 0; i < n; i++) {
                 String name = props.get(i).intern();
                 names[i] = name;
-                keys[i] = B1Bytes.ofUtf8(name);
+                keys[i] = intern.apply(B1Bytes.ofUtf8(name));
                 declarations[i] = properties.get(name);
                 visibility[i] = visibilities.getOrDefault(name, 1);
                 index.put(name, i);
@@ -1353,10 +1421,11 @@ public final class B1RequestContext {
         var obj = new B1Object(this,acquireObjectId(), lower, cls);
         if (cls.methods.containsKey("__destruct")) destructibles.add(obj);
         if (B1Thrown.throwable(lower)) {
-            obj.write(this, "line", frame == null ? 0L : (long) frame.line);
-            obj.write(this, "file", frame == null ? "" : frame.file);
+            B1Frame at = frame();
+            obj.write(this, "line", at == null ? 0L : (long) at.line);
+            obj.write(this, "file", at == null ? "" : at.file);
             obj.write(this, "code", 0L);
-            B1Array trace = B1Exception.trace(this,frame);
+            B1Array trace = B1Exception.trace(this,at);
             obj.write(this, "trace",trace);
             B1Object.release(this,trace);
         }
@@ -1371,24 +1440,26 @@ public final class B1RequestContext {
     private int fastDepth;
     /** A fast frame: CVs and temporaries live in the generated method. */
     public B1Frame enterFast(B1Callable fn, String file, String name) {
+        // First: reading the caller can build a deferred leaf call's frame, which takes the pool slot below ours.
+        B1Frame caller = frame();
         B1Frame[] pool = fastFrames;
         int depth = fastDepth;
         if (depth == pool.length) pool = fastFrames = java.util.Arrays.copyOf(pool, depth * 2);
         B1Frame f = pool[depth];
         if (f == null) f = pool[depth] = B1Frame.pooled();
         fastDepth = depth + 1;
-        B1Frame caller = frame;
         f.reenter(caller, file, name, fn);
         if (caller != null) {
             f.closure = caller.nextClosure;
             caller.nextClosure = null;
         } else if (currentFiber != null) f.closure = currentFiber.entryClosure();
-        frame = f;
+        current = f;
         return f;
     }
     public B1Frame enter(B1Callable fn, String file, String name, int temps, boolean top) {
         if (top && !fn.evalBody) for (String var : fn.locals) globals.putIfAbsent(var, null);
-        frame = new B1Frame(frame, file, fn.evalBody ? "eval" : name, fn.locals, temps, top, fn.evalBody);
+        B1Frame frame = new B1Frame(frame(), file, fn.evalBody ? "eval" : name, fn.locals, temps, top, fn.evalBody);
+        current = frame;
         frame.strictTypes = fn.strictTypes;
         frame.staticCall = fn.isStatic;
         frame.scope = fn.evalBody && frame.caller != null ? frame.caller.scope : fn.scope;
@@ -1401,8 +1472,8 @@ public final class B1RequestContext {
         return frame;
     }
     void pop(B1Frame f) {
-        if (frame != f) throw new IllegalStateException("unbalanced PHP frame");
-        frame = f.caller;
+        if (current != f || leaf != null) throw new IllegalStateException("unbalanced PHP frame");
+        current = f.caller;
     }
     /** The fast frame finished leaving (after its CVs were destructed): its pool slot is free again. */
     void release(B1Frame f) {
@@ -1462,7 +1533,7 @@ public final class B1RequestContext {
     }
     /** Replace this idle request's data. Class and function definitions are linked by the request. */
     public void restoreFrom(B1Snapshot snapshot) {
-        if (frame != null) throw new IllegalStateException("Cannot restore during PHP execution");
+        if (current != null || leaf != null) throw new IllegalStateException("Cannot restore during PHP execution");
         var nextGlobals = new LinkedHashMap<String,B1Ref>();
         var nextStatics = new LinkedHashMap<String,B1Ref>();
         classes.forEach((name,cls) -> initializeStatics(nextStatics,name,cls));
@@ -1490,9 +1561,15 @@ public final class B1RequestContext {
         pending = dropConstants(oldConstants,pending);
         B1Thrown.propagate(pending);
     }
-    boolean strict() { return frame != null && !frame.internalCall && frame.strictTypes; }
+    boolean strict() {
+        if (leaf != null) return leaf.strictTypes;
+        return current != null && !current.internalCall && current.strictTypes;
+    }
 
-    String scope() { return frame == null ? null : frame.scope; }
+    String scope() {
+        if (leaf != null) return leaf.scope;
+        return current == null ? null : current.scope;
+    }
 
     public void echo(Object value) {
         try { output.write(stringBytes(value)); }
@@ -1527,7 +1604,8 @@ public final class B1RequestContext {
 
     void diagnostic(String level, String message) {
         if (!displayErrors) return;
-        echo("\n" + level + ": " + message + " in " + frame.file + " on line " + frame.line + "\n");
+        B1Frame at = frame();
+        echo("\n" + level + ": " + message + " in " + at.file + " on line " + at.line + "\n");
     }
 
     /** isset/?? on $recv->name at a call site. */
@@ -1759,7 +1837,7 @@ public final class B1RequestContext {
         for (var worker : fiberThreads) worker.join();
         idleFibers.clear();
         fiberThreads.clear();
-        if (frame != null || fastDepth != 0 || liveDestructibleCount() != 0) throw new IllegalStateException("incomplete PHP shutdown");
+        if (current != null || leaf != null || fastDepth != 0 || liveDestructibleCount() != 0) throw new IllegalStateException("incomplete PHP shutdown");
         B1Thrown.propagate(pending);
     }
 }

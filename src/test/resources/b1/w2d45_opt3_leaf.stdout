@@ -1,0 +1,27 @@
+3
+3.5
+
+Warning: Undefined variable $missing in /fixtures/w2d45_opt3_leaf.php on line 21
+x|
+
+Warning: A non-numeric value encountered in /fixtures/w2d45_opt3_leaf.php on line 23
+7
+TypeError: Unsupported operand types: array + int @25
+Modulo by zero @30
+  #0 intdiv_like(10,0) line 28
+  #1 trace_me(10,0) line 43
+drop param
+replaced
+after drop
+drop local
+  #0 __destruct(0)
+  #1 drop_in_leaf(1)
+after drop
+hidden!
+drop method
+11 3
+42 x-y
+drop discarded
+discarded
+0 2 4 
+done

@@ -49,6 +49,7 @@ final class B1ClassFileEmitter {
         return sig(CD_Object, args);
     }
 
+    private static final java.util.concurrent.atomic.AtomicInteger PROFILE_SEQ = new java.util.concurrent.atomic.AtomicInteger();
     static byte[] emit(B1Cfg cfg) {
         return emit(cfg, new ArrayList<>());
     }
@@ -60,7 +61,7 @@ final class B1ClassFileEmitter {
     // A first-pass method above the classfile u2 limit has no parsable Code attribute.
     // JDK 25 reports the measured length and the failing method while writing Code.
     private static final java.util.regex.Pattern CODE_OVERFLOW = java.util.regex.Pattern.compile(
-            "^Code length ([0-9]+) is outside the allowed range in (runFiber|run|resumeBody|fragmentBlock([0-9]+))\\(");
+            "^Code length ([0-9]+) is outside the allowed range in (runFiber|runLeaf|run|resumeBody|fragmentBlock([0-9]+))\\(");
 
     record Emission(byte[] bytes, List<byte[]> blobs, int helpers, int maxCode) {}
     static Emission measured(B1Cfg cfg, int limit) { return measured(cfg, limit, new B1Symbols()); }
@@ -68,20 +69,26 @@ final class B1ClassFileEmitter {
         if (limit <= 0 || limit > 7500) throw new IllegalArgumentException("Invalid bytecode budget " + limit);
         var chunks = new ArrayList<Chunk>();
         var fragmented = new HashSet<Integer>();
-        boolean noFast = false;
+        boolean noFast = false, noLeaf = false;
+        int leafPad = 0;
         while (true) {
             var blobs = new ArrayList<byte[]>();
             byte[] bytes;
-            try { bytes = build(cfg, blobs, chunks, fragmented, symbols, noFast); }
+            try { bytes = build(cfg, blobs, chunks, fragmented, symbols, noFast, noLeaf, leafPad); }
             catch (IllegalArgumentException ex) {
                 var match = CODE_OVERFLOW.matcher(String.valueOf(ex.getMessage()));
                 if (!match.find()) throw ex;
                 // A fast function whose frame body (for fibers) does not fit stays on frames altogether.
                 if (match.group(2).equals("runFiber")) noFast = true;
+                else if (match.group(2).equals("runLeaf")) noLeaf = true;
                 else if (chunks.isEmpty()) chunks.add(new Chunk(1,cfg.blocks().size()));
                 else if (match.group(3) != null) split(chunks, fragmented, Integer.parseInt(match.group(3)), Integer.parseInt(match.group(1)), limit);
                 else throw ex;
                 continue;
+            }
+            if (leafPad == 0) {
+                int leaf = leafLength(bytes);
+                if (leaf > 0 && leaf < LEAF_INLINE_LIMIT) { leafPad = LEAF_INLINE_LIMIT - leaf; continue; }
             }
             var next = new ArrayList<>(chunks);
             boolean retry = false;
@@ -93,6 +100,7 @@ final class B1ClassFileEmitter {
                 if (length <= limit) continue;
                 String name = method.methodName().stringValue();
                 if (name.equals("runFiber")) { noFast = true; retry = true; }
+                else if (name.equals("runLeaf")) { noLeaf = true; retry = true; }
                 else if (chunks.isEmpty() && (name.equals("run") || name.equals("resumeBody"))) next.add(new Chunk(1,cfg.blocks().size()));
                 else if (name.startsWith("fragmentBlock")) {
                     split(next,fragmented,Integer.parseInt(name.substring("fragmentBlock".length())),length,limit);
@@ -101,6 +109,17 @@ final class B1ClassFileEmitter {
             if (max <= limit) return new Emission(bytes, blobs, helpers, max);
             if (!retry) chunks = next;
         }
+    }
+
+    /** C2 inlines a hot callee of up to FreqInlineSize (325) bytecodes into its caller. A leaf body inlined into
+     * a large caller gets what is left of the caller's inlining budget (DesiredMethodLimit), and its own runtime
+     * helpers then stay calls: spectralnorm's k0_A ran twice as slow inlined into k0_Av as compiled alone. A
+     * shorter leaf body is padded (with unreachable code) to this size, so it always compiles as its own unit. */
+    static final int LEAF_INLINE_LIMIT = 326;
+    private static int leafLength(byte[] bytes) {
+        for (var method : ClassFile.of().parse(bytes).methods())
+            if (method.methodName().stringValue().equals("runLeaf")) return method.findAttribute(Attributes.code()).orElseThrow().codeLength();
+        return 0;
     }
 
     private static void split(List<Chunk> chunks, Set<Integer> fragmented, int start, int length, int limit) {
@@ -137,12 +156,15 @@ final class B1ClassFileEmitter {
         c.aload(frame).invokestatic(cls,name,STEP);
     }
     private static byte[] build(B1Cfg cfg, List<byte[]> blobs, List<Chunk> chunks, Set<Integer> fragmented, B1Symbols symbols) {
-        return build(cfg, blobs, chunks, fragmented, symbols, false);
+        return build(cfg, blobs, chunks, fragmented, symbols, false, false, 0);
     }
     private static byte[] build(B1Cfg cfg, List<byte[]> blobs, List<Chunk> chunks, Set<Integer> fragmented, B1Symbols symbols,
-                                boolean noFast) {
-        ClassDesc cls = ClassDesc.of("pl.codeloom.php.b1.Compiled" + cfg.function().id());
+                                boolean noFast, boolean noLeaf, int leafPad) {
+        ClassDesc cls = ClassDesc.of(B1Compiler.PROFILE_CLASSES ? "pl.codeloom.php.b1.P" + PROFILE_SEQ.incrementAndGet() + "_"
+                + (cfg.function().owner() == null ? "" : cfg.function().owner() + "__") + cfg.function().name().replaceAll("[^A-Za-z0-9_]", "_")
+                : "pl.codeloom.php.b1.Compiled" + cfg.function().id());
         var fragments = new Fragments(cls,fragmented,symbols);
+        fragments.leafPad = leafPad;
         return ClassFile.of().build(cls, cb -> {
             cb.withFlags(ACC_FINAL | ACC_SUPER).withSuperclass(CALLABLE);
             cb.withMethodBody("<init>", CTOR, ACC_PUBLIC, c ->
@@ -151,6 +173,8 @@ final class B1ClassFileEmitter {
             boolean fast = !noFast && dispatch == null && fastEligible(cfg);
             MethodTypeDesc run = fast ? RUN3 : RUN;
             int fixedArgs = fast ? 3 : 2;
+            boolean leaf = fast && !noLeaf && fragmented.isEmpty() && leafEligible(cfg);
+            int params = cfg.function().params().size();
             cb.withMethodBody("invoke", sig(CD_Object, CTX, OBJ, ARGS), ACC_PUBLIC, c -> {
                 c.aload(1).aload(2).aload(0).aload(3);
                 for (int i = 0; i < fixedArgs; i++) c.aconst_null();
@@ -159,6 +183,15 @@ final class B1ClassFileEmitter {
             for (int n = 0; n <= fixedArgs; n++) {
                 int arity = n;
                 cb.withMethodBody("invoke" + arity, fixed(arity), ACC_PUBLIC, c -> {
+                if (leaf && arity == params) {
+                    // Exactly the parameters, positionally: the leaf entry (which can still decline, see enterLeaf).
+                    Label ordinary = c.newLabel();
+                    for (int i = 0; i < arity; i++) c.aload(3 + i).invokestatic(CALLABLE,"positional",sig(CD_boolean,CD_Object)).ifeq(ordinary);
+                    c.aload(1).aload(2).aload(0).aconst_null();
+                    for (int i = 0; i < fixedArgs; i++) { if (i < arity) c.aload(3 + i); else c.getstatic(CALLABLE,"OMITTED",CD_Object); }
+                    c.invokestatic(cls, "runLeaf", run).areturn();
+                    c.labelBinding(ordinary);
+                }
                 c.aload(1).aload(2).aload(0).aconst_null();
                 for (int i = 0; i < fixedArgs; i++) { if (i < arity) c.aload(3 + i); else c.getstatic(CALLABLE,"OMITTED",CD_Object); }
                 c.invokestatic(cls, "run", run).areturn();
@@ -166,28 +199,112 @@ final class B1ClassFileEmitter {
             }
             if (cfg.function().generator() && chunks.isEmpty()) {
                 cb.withMethodBody(dispatch,STEP,ACC_PRIVATE | ACC_STATIC,c ->
-                        new Body(cfg,c,blobs,new Chunk(1,cfg.blocks().size()),fragments).emit(cls,null));
+                        body(c,cls,in -> new Body(cfg,in,blobs,new Chunk(1,cfg.blocks().size()),fragments),b -> b.emit(cls,null)));
             }
             if (cfg.function().generator()) {
                 cb.withMethodBody("resumeFrame",sig(CD_int,CTX,OBJ,FRAME),ACC_PUBLIC,c ->
                     c.aload(1).aload(2).aload(0).aconst_null().aconst_null().aconst_null().aload(3)
                             .invokestatic(cls,dispatch,STEP).ireturn());
             }
-            cb.withMethodBody("run", run, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments,fast).emit(cls,dispatch));
+            cb.withMethodBody("run", run, ACC_PRIVATE | ACC_STATIC, c -> body(c,cls,in -> new Body(cfg,in,blobs,null,fragments,fast),b -> b.emit(cls,dispatch)));
             // Inside a fiber a frame can be parked with the fiber: the cycle collector must see its CVs and
             // temporaries, so a fast function runs its frame-based body there.
-            if (fast) cb.withMethodBody("runFiber", RUN, ACC_PRIVATE | ACC_STATIC, c -> new Body(cfg,c,blobs,null,fragments,false).emit(cls,null));
+            if (fast) cb.withMethodBody("runFiber", RUN, ACC_PRIVATE | ACC_STATIC, c -> body(c,cls,in -> new Body(cfg,in,blobs,null,fragments,false),b -> b.emit(cls,null)));
+            if (leaf) cb.withMethodBody("runLeaf", RUN3, ACC_PRIVATE | ACC_STATIC, c -> body(c,cls,in -> new Body(cfg,in,blobs,null,fragments,true,true),b -> b.emit(cls,null)));
             for (var chunk : chunks) cb.withMethodBody("fragmentBlock" + chunk.first, STEP, ACC_PRIVATE | ACC_STATIC,
-                    c -> new Body(cfg,c,blobs,chunk,fragments).emit(cls,null));
+                    c -> body(c,cls,in -> new Body(cfg,in,blobs,chunk,fragments),b -> b.emit(cls,null)));
             for (int i = 0; i < fragments.methods.size(); i++) {
                 var method = fragments.methods.get(i);
-                cb.withMethodBody(method.name(),method.signature(),ACC_PRIVATE | ACC_STATIC,c -> {
-                    var body = new Body(cfg,c,blobs,new Chunk(0,0),fragments);
-                    body.fragment = true;
-                    method.emit().accept(body);
-                });
+                cb.withMethodBody(method.name(),method.signature(),ACC_PRIVATE | ACC_STATIC,c ->
+                    body(c,cls,in -> new Body(cfg,in,blobs,new Chunk(0,0),fragments),body -> {
+                        body.fragment = true;
+                        method.emit().accept(body);
+                    }));
             }
         });
+    }
+
+    /** Emits a Body through its line-store transform (see {@link LineStores}). */
+    private static void body(CodeBuilder outer, ClassDesc cls, java.util.function.Function<CodeBuilder,Body> make,
+                             java.util.function.Consumer<Body> emit) {
+        var lines = new LineStores(cls);
+        outer.transforming(lines, in -> {
+            Body body = make.apply(in);
+            body.lines = lines;
+            lines.frame = body.frame;
+            // A chunk or fragment receives the frame as a parameter; run() activates once enter/enterFast stored it.
+            lines.active = body.chunk != null;
+            emit.accept(body);
+        });
+    }
+
+    /** Lazy {@code frame.line} stores. PHP observes the current line only from inside a call (diagnostics, traces,
+     * a callee's "called in" location, destructors), so line(n) only records it and the store is emitted before
+     * the next call that can observe it. Every control transfer and merge point also stores a pending line, so
+     * at each label frame.line holds exactly what eager stores would have left there. */
+    static final class LineStores implements CodeTransform {
+        static final int NONE = Integer.MIN_VALUE;
+        final ClassDesc cls;
+        int frame;
+        boolean active;
+        /** A leaf body: its line lives in the context until its frame exists (B1RequestContext.leafLine). */
+        boolean leaf;
+        /** The line frame.line holds here (NONE: unknown), and the line it should hold (NONE: it already does). */
+        int known = NONE, want = NONE;
+        /** Labels that are no merge points: block starts reached only by fall-through, ends of exception ranges. */
+        final Set<Label> transparent = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        LineStores(ClassDesc cls) { this.cls = cls; }
+
+        void flush(CodeBuilder b) {
+            if (!active || want == NONE) return;
+            if (want != known) {
+                if (leaf) b.aload(0).loadConstant(want).aload(2).invokevirtual(CTX, "leafLine", sig(CD_void, CD_int, CALLABLE));
+                else b.aload(frame).loadConstant(want).putfield(FRAME, "line", CD_int);
+                known = want;
+            }
+            want = NONE;
+        }
+        /** Instructions emitted so far (an exception range must not be empty). */
+        int emitted;
+        @Override public void accept(CodeBuilder b, CodeElement e) {
+            if (e instanceof Instruction) emitted++;
+            switch (e) {
+                case java.lang.classfile.instruction.LabelTarget t -> {
+                    if (!transparent.contains(t.label())) {
+                        flush(b);
+                        known = NONE;
+                    }
+                    b.with(e);
+                }
+                case java.lang.classfile.instruction.InvokeInstruction i -> {
+                    if (!pure(i)) flush(b);
+                    b.with(e);
+                    // A helper of this class (fragment, region, fiber body) can store lines of its own.
+                    if (i.owner().asSymbol().equals(cls)) known = NONE;
+                }
+                case java.lang.classfile.instruction.BranchInstruction ignored -> { flush(b); b.with(e); }
+                case java.lang.classfile.instruction.TableSwitchInstruction ignored -> { flush(b); b.with(e); }
+                case java.lang.classfile.instruction.LookupSwitchInstruction ignored -> { flush(b); b.with(e); }
+                case java.lang.classfile.instruction.ReturnInstruction ignored -> { flush(b); b.with(e); }
+                case java.lang.classfile.instruction.ThrowInstruction ignored -> { flush(b); b.with(e); }
+                default -> b.with(e);
+            }
+        }
+        /** Runtime calls that can neither report, throw a PHP error, nor run PHP code. */
+        private static final Set<String> PURE = Set.of("java/lang/Long.valueOf", "java/lang/Double.valueOf",
+                "java/lang/Boolean.valueOf", "java/util/Objects.nonNull", "java/util/Objects.isNull",
+                "pl/codeloom/php/b1/runtime/B1Object.retain", "pl/codeloom/php/b1/runtime/B1Frame.quiet",
+                "pl/codeloom/php/b1/runtime/B1Frame.box", "pl/codeloom/php/b1/runtime/B1RequestContext.truth",
+                "pl/codeloom/php/b1/runtime/B1RequestContext.identicalTest", "pl/codeloom/php/b1/runtime/B1Builtins.isString",
+                "pl/codeloom/php/b1/runtime/B1Builtins.isObject", "pl/codeloom/php/b1/runtime/B1RequestContext.inFiber",
+                "pl/codeloom/php/b1/runtime/B1RequestContext.leafArgument", "pl/codeloom/php/b1/runtime/B1RequestContext.leafMirror",
+                "pl/codeloom/php/b1/runtime/B1Callable.positional");
+        private static boolean pure(java.lang.classfile.instruction.InvokeInstruction i) {
+            String key = i.owner().asInternalName() + "." + i.name().stringValue();
+            // The static B1Frame.temp(Object,boolean) counts a value; the instance temp(int) only reads a slot.
+            if (key.equals("pl/codeloom/php/b1/runtime/B1Frame.temp")) return true;
+            return PURE.contains(key);
+        }
     }
 
     /** A function whose CVs and temporaries can live in JVM locals: nothing addresses them by name or across
@@ -206,6 +323,296 @@ final class B1ClassFileEmitter {
             }
         }
         return f.body().stream().allMatch(B1ClassFileEmitter::fastNode);
+    }
+    /** A leaf function runs without a frame until something needs one (B1RequestContext.enterLeaf): up to three
+     * plain untyped parameters, no captures or return type, and a body that calls no PHP code (only intrinsics),
+     * never addresses its CVs by name and has no try/finally. Bounded in size: the leaf body is a second copy. */
+    static boolean leafEligible(B1Cfg cfg) {
+        IrFunction f = cfg.function();
+        if (Boolean.getBoolean("b1.noLeaf") || f.params().size() > 3 || !f.captures().isEmpty() || f.returnType() != null
+                || cfg.blocks().size() > 160) return false;
+        for (Param p : f.params()) if (p.byRef() || p.variadic() || p.type() != null) return false;
+        return f.body().stream().allMatch(B1ClassFileEmitter::leafNode);
+    }
+    private static final Set<Class<?>> LEAF_NODES = Set.of(Region.class, Branch.class, Loop.class, Each.class, Jump.class,
+            Mark.class, LoopExit.class, Test.class, ReleaseTemps.class, ReleaseTemp.class, Item.class, Argument.class,
+            Target.class, pl.codeloom.php.ir.IrSourceSpan.class,
+            Write.class, Return.class, Evaluate.class, Echo.class, WriteProperty.class, WriteNamedProperty.class,
+            WriteDim.class, Unset.class, CoalesceDim.class,
+            Literal.class, Read.class, QuietRead.class, LoadTemp.class, StoreTemp.class, Prepared.class, ArrayValue.class,
+            Dim.class, IsSet.class, Not.class, Choose.class, Update.class, Cast.class, Increment.class, IncrementPlace.class,
+            Binary.class, Property.class, QuietProperty.class, This.class, Assign.class, InstanceOf.class, Constant.class);
+    private static boolean leafNode(Object node) {
+        if (node == null) return true;
+        if (node instanceof List<?> list) return list.stream().allMatch(B1ClassFileEmitter::leafNode);
+        if (!(node instanceof Record record)) return true;
+        if (node instanceof Call call) { if (!Body.intrinsicCall(call)) return false; }
+        else if (!LEAF_NODES.contains(node.getClass())) return false;
+        for (var component : record.getClass().getRecordComponents()) {
+            try {
+                if (!leafNode(component.getAccessor().invoke(record))) return false;
+            } catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+        }
+        return true;
+    }
+    /** An expression whose value is never counted (null, bool, int, float or string): retaining or releasing it
+     * does nothing, so a temporary holding only such values needs neither. */
+    static boolean scalar(Expr e) {
+        return switch (e) {
+            case Literal ignored -> true;
+            case IsSet ignored -> true;
+            case Not ignored -> true;
+            case InstanceOf ignored -> true;
+            case Cast ignored -> true;
+            case Increment ignored -> true;
+            case IncrementPlace ignored -> true;
+            // + also unions arrays; ?? and ?: pass an operand through.
+            case Binary b -> b.op() != Operator.ADD && !b.preservesValue();
+            case Update u -> scalar(u.value());
+            case Assign a -> scalar(a.value());
+            case Choose c -> scalar(c.yes()) && scalar(c.no());
+            case Call call when Body.intrinsicCall(call) -> switch (lower(call.target().name())) {
+                case "count", "sizeof", "strlen", "is_array", "is_string", "is_int", "is_null", "is_object",
+                     "array_key_exists", "trim", "ucfirst", "key" -> true;
+                default -> false;
+            };
+            default -> false;
+        };
+    }
+    /** The temporaries that can hold a counted value: written by a non-scalar StoreTemp, a send, or an iterator.
+     * The rest hold scalars only, whose stores and releases emit nothing. */
+    static Set<Integer> countedTemps(IrFunction f) {
+        var counted = new HashSet<Integer>();
+        for (int i = 0; i < f.temps().size(); i++) if (f.temps().get(i) != TempKind.VALUE) counted.add(i);
+        countedTemps(f.body(), counted);
+        return counted;
+    }
+    private static void countedTemps(Object node, Set<Integer> counted) {
+        if (node instanceof List<?> list) { for (var item : list) countedTemps(item, counted); return; }
+        if (!(node instanceof Record record)) return;
+        switch (node) {
+            case StoreTemp t when !scalar(t.value()) -> counted.add(t.id());
+            case Argument a when a.bindVariable() || !scalar(a.value()) -> counted.add(a.slot());
+            case Each e -> counted.add(e.iterator());
+            default -> {}
+        }
+        for (var component : record.getClass().getRecordComponents()) {
+            try { countedTemps(component.getAccessor().invoke(record), counted); }
+            catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+        }
+    }
+    /** CVs that can come to hold a binding (B1Ref): by-reference parameters and captures, =&, global, static, and
+     * every CV a place is fetched from (dimension writes, by-reference sends and array items, ++ and op= on
+     * dimensions). Every other CV holds UNDEF or a plain value. */
+    static Set<Integer> boxableCvs(IrFunction f) {
+        var boxable = new HashSet<Integer>();
+        for (int i = 0; i < f.params().size(); i++) if (f.params().get(i).byRef()) boxable.add(i);
+        for (var capture : f.captures()) if (capture.byRef()) boxable.add(capture.inner());
+        boxableCvs(f.body(), boxable);
+        return boxable;
+    }
+    private static void boxableCvs(Object node, Set<Integer> boxable) {
+        if (node instanceof List<?> list) { for (var item : list) boxableCvs(item, boxable); return; }
+        if (!(node instanceof Record record)) return;
+        switch (node) {
+            case Bind b -> { boxable.add(b.local()); placeRoot(b.place(), boxable); }
+            case Global g -> boxable.add(g.local());
+            case StaticVar v -> boxable.add(v.local());
+            case CoalesceDim d -> boxable.add(d.local());
+            case Unset u when u.key() != null -> placeRoot(u.root(), boxable);
+            case WriteDim d -> placeRoot(d.root(), boxable);
+            case IncrementPlace p -> placeRoot(p.place(), boxable);
+            case UpdatePlace u -> placeRoot(u.root(), boxable);
+            case ByReference r -> placeRoot(r.place(), boxable);
+            case Argument a when a.bindVariable() -> placeRoot(a.value(), boxable);
+            case Closure c -> { for (var capture : c.captures()) if (capture.byRef()) boxable.add(capture.outer()); }
+            default -> {}
+        }
+        for (var component : record.getClass().getRecordComponents()) {
+            try { boxableCvs(component.getAccessor().invoke(record), boxable); }
+            catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+        }
+    }
+    private static void placeRoot(Expr e, Set<Integer> boxable) {
+        switch (e) {
+            case Prepared p -> placeRoot(p.result(), boxable);
+            case StoreTemp t -> placeRoot(t.value(), boxable);
+            case Dim d -> placeRoot(d.base(), boxable);
+            case Read r -> boxable.add(r.local());
+            case QuietRead r -> boxable.add(r.local());
+            default -> {}
+        }
+    }
+    /** Per block: the CVs definitely assigned (not UNDEF) on entry. A must-analysis over every CFG edge; only
+     * whole statements assign (Write, a top-level assignment), plus foreach and catch bindings; unset removes. */
+    static java.util.BitSet[] definedCvs(B1Cfg cfg) {
+        var blocks = cfg.blocks();
+        int n = blocks.size(), cvs = cfg.function().locals().size();
+        var in = new java.util.BitSet[n];
+        for (var block : blocks) {
+            // A finally region resumes suspended exits later: no facts there.
+            if (block.op() instanceof B1Cfg.Suspend || block.op() instanceof B1Cfg.Resume || block.op() instanceof B1Cfg.Cancel) {
+                for (int i = 0; i < n; i++) in[i] = new java.util.BitSet();
+                return in;
+            }
+        }
+        for (int i = 0; i < n; i++) { in[i] = new java.util.BitSet(); in[i].set(0, cvs); }
+        in[cfg.entry()].clear();
+        var work = new java.util.ArrayDeque<Integer>();
+        for (int i = 0; i < n; i++) work.add(i);
+        var queued = new boolean[n];
+        java.util.Arrays.fill(queued, true);
+        while (!work.isEmpty()) {
+            int id = work.poll();
+            queued[id] = false;
+            var block = blocks.get(id);
+            var entry = in[id];
+            var out = (java.util.BitSet) entry.clone();
+            var kept = (java.util.BitSet) entry.clone();
+            switch (block.op()) {
+                case B1Cfg.Enter ignored -> {
+                    IrFunction f = cfg.function();
+                    for (int i = 0; i < f.params().size(); i++) out.set(i);
+                    for (var capture : f.captures()) out.set(capture.inner());
+                }
+                case B1Cfg.Execute(var at, var action) -> {
+                    switch (action) {
+                        case Write w -> { out.set(w.local()); assignedChain(w.value(), out); }
+                        case Evaluate(Assign a) -> { out.set(a.local()); assignedChain(a.value(), out); }
+                        case Evaluate(Update u) -> out.set(u.local());
+                        case Evaluate(Increment i) -> out.set(i.local());
+                        case Unset(Read r, var key) when key == null -> { out.clear(r.local()); kept.clear(r.local()); }
+                        default -> {}
+                    }
+                }
+                case B1Cfg.Catch(var type, var local) -> out.set(local);
+                default -> {}
+            }
+            if (block.normal() >= 0) {
+                var normal = out;
+                if (block.op() instanceof B1Cfg.NextEach(var each, var end)) {
+                    normal = (java.util.BitSet) entry.clone();
+                    normal.set(each.value());
+                    if (each.key() >= 0) normal.set(each.key());
+                }
+                flow(in, block.normal(), normal, work, queued);
+            }
+            if (block.exceptional() >= 0) flow(in, block.exceptional(), kept, work, queued);
+            switch (block.op()) {
+                case B1Cfg.TestBranch(var test, var no) -> flow(in, no, out, work, queued);
+                case B1Cfg.NextEach(var each, var end) -> flow(in, end, entry, work, queued);
+                default -> {}
+            }
+        }
+        return in;
+    }
+    /** $a = $b = $c = v: the nested assignments of a completed statement's value happened too. */
+    private static void assignedChain(Expr value, java.util.BitSet out) {
+        while (true) {
+            if (value instanceof StoreTemp(var temp, var inner)) value = inner;
+            else if (value instanceof Assign(var id, var inner)) { out.set(id); value = inner; }
+            else return;
+        }
+    }
+    private static void flow(java.util.BitSet[] in, int target, java.util.BitSet state, java.util.ArrayDeque<Integer> work, boolean[] queued) {
+        var next = (java.util.BitSet) in[target].clone();
+        next.and(state);
+        if (next.equals(in[target])) return;
+        in[target] = next;
+        if (!queued[target]) { queued[target] = true; work.add(target); }
+    }
+    // ---------------------------------------------------------------- unboxed float CVs
+    // PHP's + - * / with a float operand yield a float or throw (an array or object operand, division by zero),
+    // whatever the other operand is. A CV whose every write is such an expression, that is read only where it is
+    // definitely assigned and is never addressed (no reference, no isset/++/unset/foreach/catch binding), always
+    // holds a float: it lives in a JVM double local. Float-only arithmetic on such operands is emitted as JVM
+    // double arithmetic; the rest still runs through the runtime helper, whose (float) result is unboxed.
+    record Doubles(Set<Integer> cvs, Set<Integer> loadedTemps) {
+        static final Doubles NONE = new Doubles(Set.of(), Set.of());
+        /** Statically a float: a float literal, a float CV, or float arithmetic. */
+        boolean of(Expr e) {
+            return switch (e) {
+                case Literal(var value) -> value instanceof Double;
+                case Read(var id) -> cvs.contains(id);
+                case StoreTemp(var id, var value) -> !loadedTemps.contains(id) && of(value);
+                case Binary b -> arithmetic(b.op()) && (of(b.left()) || of(b.right()));
+                case Choose ch -> of(ch.yes()) && of(ch.no());
+                case Assign(var id, var value) -> cvs.contains(id);
+                case Update(var id, var value) -> cvs.contains(id);
+                default -> false;
+            };
+        }
+        /** A double operand: statically a float, or an int literal (converted at compile time). */
+        boolean operand(Expr e) { return of(e) || e instanceof Literal(Long n); }
+        /** Float arithmetic computed with a JVM double operation: both operands are double operands (each one
+         * computes itself, through the runtime only where it has to). */
+        boolean direct(Binary b) {
+            return arithmetic(b.op()) && operand(b.left()) && operand(b.right()) && (of(b.left()) || of(b.right()));
+        }
+        static boolean arithmetic(Operator op) {
+            return op == Operator.ADD || op == Operator.SUB || op == Operator.MUL || op == Operator.DIV;
+        }
+    }
+    static Doubles doubleCvs(B1Cfg cfg, Set<Integer> boxable, java.util.BitSet[] defined) {
+        IrFunction f = cfg.function();
+        if (Boolean.getBoolean("b1.noDoubles") || defined == null) return Doubles.NONE;
+        var candidates = new HashSet<Integer>();
+        for (int i = f.params().size(); i < f.locals().size(); i++) candidates.add(i);
+        candidates.removeAll(boxable);
+        candidates.removeAll(cfg.longLocals());
+        for (var capture : f.captures()) candidates.remove(capture.inner());
+        var loaded = new HashSet<Integer>();
+        var writes = new HashMap<Integer, List<Expr>>();
+        doubleUses(f.body(), candidates, loaded, writes);
+        // Each read must see an assigned CV (an undefined one reads as null, with a warning).
+        for (var block : cfg.blocks()) {
+            var reads = new HashSet<Integer>();
+            cvReads(block.op(), reads);
+            for (int id : reads) if (!defined[block.label()].get(id)) candidates.remove(id);
+        }
+        candidates.removeIf(id -> !writes.containsKey(id));
+        while (true) {
+            var typed = new Doubles(Set.copyOf(candidates), Set.copyOf(loaded));
+            if (!candidates.removeIf(id -> !writes.get(id).stream().allMatch(typed::of))) return typed;
+        }
+    }
+    /** Collects the writes of candidate CVs, drops the ones used in any other way, and the LoadTemp slots. */
+    private static void doubleUses(Object node, Set<Integer> candidates, Set<Integer> loaded, Map<Integer, List<Expr>> writes) {
+        if (node instanceof List<?> list) { for (var item : list) doubleUses(item, candidates, loaded, writes); return; }
+        if (!(node instanceof Record record)) return;
+        switch (node) {
+            case Write(var id, var value) -> writes.computeIfAbsent(id, k -> new ArrayList<>()).add(value);
+            case Assign(var id, var value) -> writes.computeIfAbsent(id, k -> new ArrayList<>()).add(value);
+            case Update(var id, var value) -> writes.computeIfAbsent(id, k -> new ArrayList<>()).add(value);
+            case LoadTemp(var id) -> loaded.add(id);
+            case QuietRead(var id) -> candidates.remove(id);
+            case Increment(var id, var up, var prefix) -> candidates.remove(id);
+            case Unset(Read(var id), var key) -> candidates.remove(id);
+            case Each e -> { candidates.remove(e.value()); candidates.remove(e.key()); }
+            case TryCatch t -> candidates.remove(t.variable());
+            case CoalesceDim d -> candidates.remove(d.local());
+            default -> {}
+        }
+        for (var component : record.getClass().getRecordComponents()) {
+            try { doubleUses(component.getAccessor().invoke(record), candidates, loaded, writes); }
+            catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+        }
+    }
+    /** The CVs a CFG operation reads (an op= reads its target, a closure its by-value captures). */
+    private static void cvReads(Object node, Set<Integer> reads) {
+        if (node instanceof List<?> list) { for (var item : list) cvReads(item, reads); return; }
+        if (!(node instanceof Record record)) return;
+        if (node instanceof Read(var id)) reads.add(id);
+        if (node instanceof Update(var id, var value)) reads.add(id);
+        // use ($v) reads $v when the closure is created (an undefined one warns and captures null).
+        if (node instanceof Capture cap && !cap.byRef()) reads.add(cap.outer());
+        // A foreach body is lowered into its own blocks; its operation carries only the source.
+        if (node instanceof B1Cfg.StartEach(var each)) { cvReads(each.source(), reads); return; }
+        if (node instanceof B1Cfg.NextEach) return;
+        for (var component : record.getClass().getRecordComponents()) {
+            try { cvReads(component.getAccessor().invoke(record), reads); }
+            catch (ReflectiveOperationException ex) { throw new IllegalStateException(ex); }
+        }
     }
     private static boolean fastNode(Object node) {
         if (node == null) return true;
@@ -231,6 +638,8 @@ final class B1ClassFileEmitter {
         final List<Helper> methods = new ArrayList<>();
         final Map<Expr,String> ids = new IdentityHashMap<>();
         final B1Symbols symbols;
+        /** Unreachable bytes appended to runLeaf (see LEAF_INLINE_LIMIT). */
+        int leafPad;
         Fragments(ClassDesc cls, Set<Integer> blocks, B1Symbols symbols) { this.cls = cls; this.blocks = blocks; this.symbols = symbols; }
         String helper(MethodTypeDesc type, java.util.function.Consumer<Body> emit) {
             String name = "fragment" + methods.size();
@@ -260,11 +669,35 @@ final class B1ClassFileEmitter {
         final boolean fast;
         final int[] cvs, temps;
         int scratchValue, scratchOld;
+        LineStores lines;
         Body(B1Cfg cfg, CodeBuilder c, List<byte[]> blobs, Chunk chunk, Fragments fragments) {
             this(cfg,c,blobs,chunk,fragments,false);
         }
+        /** Leaf mode (runLeaf): a fast body entered without a frame; {@code frame} stays null unless it materialized. */
+        final boolean leaf;
+        int flags = -1;
+        /** Fast mode: temporaries that can hold counted values (the others are never retained or released). */
+        Set<Integer> counted = Set.of();
+        /** Fast mode: CVs that can hold a binding, and per block the CVs definitely assigned on entry. A plain,
+         * assigned CV is read straight from its local. */
+        Set<Integer> boxable = Set.of();
+        java.util.BitSet[] defined;
+        java.util.BitSet here = new java.util.BitSet();
+        /** Fast mode: the float CVs and their double locals. */
+        Doubles doubles = Doubles.NONE;
+        final Map<Integer,Integer> doubleSlots = new HashMap<>();
         Body(B1Cfg cfg, CodeBuilder c, List<byte[]> blobs, Chunk chunk, Fragments fragments, boolean fast) {
+            this(cfg,c,blobs,chunk,fragments,fast,false);
+        }
+        Body(B1Cfg cfg, CodeBuilder c, List<byte[]> blobs, Chunk chunk, Fragments fragments, boolean fast, boolean leaf) {
             this.fast = fast;
+            this.leaf = leaf;
+            if (fast) {
+                counted = countedTemps(cfg.function());
+                boxable = boxableCvs(cfg.function());
+                defined = definedCvs(cfg);
+                doubles = doubleCvs(cfg, boxable, defined);
+            }
             this.fragments = fragments;
             this.chunk = chunk;
             this.blobs = blobs;
@@ -297,13 +730,82 @@ final class B1ClassFileEmitter {
             if (isParam(id)) mirror(id);
         }
         void mirror(int id) {
+            if (leaf) { c.aload(0).aload(cvs[id]).loadConstant(id).aload(2).invokevirtual(CTX,"leafMirror",sig(CD_void,CD_Object,CD_int,CALLABLE)); return; }
             if (id < 4) c.aload(frame).aload(cvs[id]).putfield(FRAME,"m" + id,CD_Object);
             else c.aload(frame).loadConstant(id).aload(cvs[id]).invokevirtual(FRAME,"mirror",sig(CD_void,CD_int,CD_Object));
         }
+        boolean plain(int id) { return !boxable.contains(id) && here.get(id); }
+        void initDoubles() {
+            for (int id : doubles.cvs()) {
+                int slot = c.allocateLocal(TypeKind.DOUBLE);
+                doubleSlots.put(id, slot);
+                c.dconst_0().dstore(slot);
+            }
+        }
+        void boxDouble() { c.invokestatic(CD_Double,"valueOf",sig(CD_Double,CD_double)); }
+        /** Pushes a float-typed expression (or an int literal) as a JVM double. */
+        void emitDouble(Expr e) {
+            switch (e) {
+                case Literal(Long n) -> c.loadConstant((double) n);
+                case Literal(Double d) -> c.loadConstant(d);
+                case Read(var id) -> c.dload(doubleSlots.get(id));
+                case StoreTemp(var id, var value) -> emitDouble(value);
+                case Assign(var id, var value) -> { emitDouble(value); c.dup2().dstore(doubleSlots.get(id)); }
+                case Update(var id, var value) -> { emitDouble(value); c.dup2().dstore(doubleSlots.get(id)); }
+                case Choose(var test, var yes, var no) -> {
+                    Label otherwise = c.newLabel(), done = c.newLabel();
+                    truth(test); c.ifeq(otherwise); emitDouble(yes); c.goto_(done).labelBinding(otherwise); emitDouble(no); c.labelBinding(done);
+                }
+                case Binary b when doubles.direct(b) -> {
+                    doubleOperands(b);
+                    switch (b.op()) {
+                        case ADD -> c.dadd();
+                        case SUB -> c.dsub();
+                        case MUL -> c.dmul();
+                        default -> {
+                            // Division by (signed) zero raises DivisionByZeroError: the runtime helper reports it.
+                            int divisor = c.allocateLocal(TypeKind.DOUBLE), dividend = c.allocateLocal(TypeKind.DOUBLE);
+                            Label nonzero = c.newLabel(), done = c.newLabel();
+                            c.dstore(divisor).dstore(dividend);
+                            c.dload(divisor).dconst_0().dcmpl().ifne(nonzero);
+                            c.aload(0).dload(dividend); boxDouble(); c.dload(divisor); boxDouble();
+                            c.invokevirtual(CTX,"divide",sig(CD_Object,CD_Object,CD_Object)).checkcast(CD_Double)
+                                    .invokevirtual(CD_Double,"doubleValue",sig(CD_double)).goto_(done);
+                            c.labelBinding(nonzero).dload(dividend).dload(divisor).ddiv().labelBinding(done);
+                        }
+                    }
+                }
+                case Binary b -> { binary(b); c.checkcast(CD_Double).invokevirtual(CD_Double,"doubleValue",sig(CD_double)); }
+                default -> throw new IllegalStateException("not a float expression: " + e);
+            }
+        }
+        /** Pushes both operands as JVM doubles. A deferred left CV is read after the right operand (which may
+         * assign it), as PHP does; a double cannot be swapped on the stack, so the right one waits in a local. */
+        void doubleOperands(Binary b) {
+            if (!b.deferredLeft()) { emitDouble(b.left()); emitDouble(b.right()); return; }
+            int right = c.allocateLocal(TypeKind.DOUBLE);
+            emitDouble(b.right()); c.dstore(right);
+            emitDouble(b.left()); c.dload(right);
+        }
+        /** A float CV, an assignment to one (these have no object form) or pure float arithmetic. */
+        boolean floatNode(Expr e) {
+            return switch (e) {
+                case Read(var id) -> doubleSlots.containsKey(id);
+                case Assign(var id, var value) -> doubleSlots.containsKey(id);
+                case Update(var id, var value) -> doubleSlots.containsKey(id);
+                case Binary b -> doubles.direct(b);
+                default -> false;
+            };
+        }
         void readCv(int id) {
+            if (doubleSlots.containsKey(id)) { c.dload(doubleSlots.get(id)); boxDouble(); return; }
+            if (plain(id)) { c.aload(cvs[id]); return; }
             c.aload(0).aload(cvs[id]).aload(frame).loadConstant(id).invokestatic(FRAME,"read",sig(CD_Object,CTX,CD_Object,FRAME,CD_int));
         }
-        void quietCv(int id) { c.aload(cvs[id]).invokestatic(FRAME,"quiet",sig(CD_Object,CD_Object)); }
+        void quietCv(int id) {
+            if (plain(id)) { c.aload(cvs[id]); return; }
+            c.aload(cvs[id]).invokestatic(FRAME,"quiet",sig(CD_Object,CD_Object));
+        }
         /** Writes the borrowed value on the stack into CV id. */
         void writeCv(int id) {
             c.astore(scratchValue);
@@ -319,6 +821,7 @@ final class B1ClassFileEmitter {
         }
         /** The value on the stack is stored into temporary id and stays on the stack. */
         void storeTempFast(int id, boolean owned) {
+            if (!counted.contains(id)) { c.dup().astore(temps[id]); return; }
             c.loadConstant(owned ? 1 : 0).invokestatic(FRAME,"temp",sig(CD_Object,CD_Object,CD_boolean)).dup().astore(temps[id]);
         }
         void loadTemp(int id) {
@@ -326,6 +829,7 @@ final class B1ClassFileEmitter {
             else c.aload(frame).loadConstant(id).invokevirtual(FRAME,"temp",sig(CD_Object,CD_int));
         }
         void releaseTempFast(int id, boolean unwind) {
+            if (!counted.contains(id)) return;
             c.aload(0).aload(temps[id]).aconst_null().astore(temps[id]);
             if (unwind) c.aload(pending).invokestatic(FRAME,"unwindOwned",sig(CD_Throwable,CTX,CD_Object,CD_Throwable)).astore(pending);
             else c.invokestatic(FRAME,"releaseOwned",sig(CD_void,CTX,CD_Object));
@@ -336,10 +840,37 @@ final class B1ClassFileEmitter {
             return labels[id];
         }
         void go(int id) { c.goto_(target(id)); }
-        void line(int line) { c.aload(frame).loadConstant(line).putfield(FRAME, "line", CD_int); }
+        void line(int line) {
+            lines.want = line;
+            if (B1Compiler.PROFILE_CLASSES) c.lineNumber(line); // profilers attribute generated code to PHP lines
+        }
 
         void emit(ClassDesc cls, String dispatcher) {
-            if (chunk == null && fast) {
+            if (chunk == null && leaf) {
+                Label entered = c.newLabel();
+                flags = c.allocateLocal(TypeKind.INT);
+                c.aload(0).aload(2).invokevirtual(CTX,"enterLeaf",sig(CD_int,CALLABLE)).dup().istore(flags).ifge(entered);
+                for (int i = 0; i < 7; i++) c.aload(i);
+                c.invokestatic(cls,"run",RUN3).areturn();
+                c.labelBinding(entered);
+                c.aconst_null().astore(frame);
+                lines.leaf = true;
+                lines.active = true;
+                lines.known = f.at().line(); // enterLeaf starts the call at its declaration line
+                for (int cv : cvs) c.getstatic(FRAME,"UNDEF",CD_Object).astore(cv);
+                for (int t : temps) c.aconst_null().astore(t);
+                for (int p : positions.values()) c.iconst_0().istore(p);
+                c.aconst_null().astore(scratchValue).aconst_null().astore(scratchOld);
+                for (int id : cfg.longLocals()) {
+                    int slot = c.allocateLocal(TypeKind.LONG);
+                    longs.put(id, slot);
+                    c.lconst_0().lstore(slot);
+                }
+                initDoubles();
+                fallthrough();
+                c.astore(result).aconst_null().astore(pending);
+                fallInto = cfg.entry();
+            } else if (chunk == null && fast) {
                 Label notFiber = c.newLabel(), packed = c.newLabel();
                 c.aload(0).invokevirtual(CTX,"inFiber",sig(CD_boolean)).ifeq(notFiber);
                 c.aload(3).ifnonnull(packed).aload(6).getstatic(CALLABLE,"OMITTED",CD_Object).if_acmpeq(packed);
@@ -352,6 +883,7 @@ final class B1ClassFileEmitter {
                 c.labelBinding(notFiber);
                 c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name())
                         .invokevirtual(CTX, "enterFast", sig(FRAME, CALLABLE, CD_String, CD_String)).astore(frame);
+                lines.active = true;
                 for (int cv : cvs) c.getstatic(FRAME,"UNDEF",CD_Object).astore(cv);
                 for (int t : temps) c.aconst_null().astore(t);
                 for (int p : positions.values()) c.iconst_0().istore(p);
@@ -361,13 +893,15 @@ final class B1ClassFileEmitter {
                     longs.put(id, slot);
                     c.lconst_0().lstore(slot);
                 }
+                initDoubles();
                 fallthrough();
                 c.astore(result).aconst_null().astore(pending);
-                go(cfg.entry());
+                fallInto = cfg.entry();
             } else if (chunk == null) {
                 c.aload(0).aload(2).ldc(f.at().file()).ldc(f.owner() == null ? f.name() : f.owner() + "::" + f.name()).loadConstant(cfg.tempCount())
                         .loadConstant(f.fileBody() ? 1 : 0)
                         .invokevirtual(CTX, "enter", sig(FRAME, CALLABLE, CD_String, CD_String, CD_int, CD_boolean)).astore(frame);
+                lines.active = true;
                 if (f.generator()) {
                     // The entry block binds arguments and captures synchronously, even for an
                     // unstarted generator. PHP starts the body only on its first iteration.
@@ -395,7 +929,7 @@ final class B1ClassFileEmitter {
                     longs.put(id, slot);
                     c.lconst_0().lstore(slot);
                 }
-                go(cfg.entry());
+                fallInto = cfg.entry();
             } else {
                 c.aload(frame).getfield(FRAME,"result",CD_Object).astore(result);
                 c.aload(frame).getfield(FRAME,"pending",CD_Throwable).astore(pending);
@@ -405,27 +939,51 @@ final class B1ClassFileEmitter {
                     c.aload(frame).getfield(FRAME,"pc",CD_int).tableswitch(chunk.first,chunk.end-1,labels[chunk.first],cases);
                 }
             }
-            for (var block : cfg.blocks().reversed()) {
-                if (chunk != null && (block.label() < chunk.first || block.label() >= chunk.end)) continue;
+            List<B1Cfg.Block> order = emissionOrder();
+            int[] incoming = incoming();
+            // A chunk's tableswitch reaches each of its blocks.
+            boolean dispatched = chunk != null && chunk.end - chunk.first > 1;
+            if (fallInto >= 0) {
+                if (order.isEmpty() || order.getFirst().label() != fallInto) go(fallInto);
+                else if (incoming[fallInto] == 1) lines.transparent.add(labels[fallInto]);
+            }
+            for (int k = 0; k < order.size(); k++) {
+                var block = order.get(k);
+                int next = k + 1 < order.size() ? order.get(k + 1).label() : -1;
                 fragment = fragments.blocks.contains(block.label());
+                here = defined == null ? new java.util.BitSet() : defined[block.label()];
                 Label start = labels[block.label()];
+                // Adjacent blocks unwinding to the same handler share one exception-table range. Leave and Resume
+                // run unprotected; an empty Pass block can neither throw nor end a range.
+                boolean neutral = block.op() instanceof B1Cfg.Pass;
+                if (block.op() instanceof B1Cfg.Leave || block.op() instanceof B1Cfg.Resume) closeRange();
+                else if (!neutral && rangeTarget != block.exceptional()) {
+                    closeRange();
+                    rangeStart = start;
+                    rangeTarget = block.exceptional();
+                }
                 c.labelBinding(start);
+                int before = lines.emitted;
                 switch (block.op()) {
-                    case B1Cfg.Leave ignored when fast -> {
-                        // Every statement releases its temporaries on both exits (IR Region/Test cleanups), so only
-                        // the CVs remain: released in order after the frame is unlinked.
-                        if (cvs.length <= 3) {
-                            c.aload(frame).aload(0).aload(pending).aload(result);
-                            var params = new ArrayList<ClassDesc>(List.of(CTX, CD_Throwable, CD_Object));
-                            for (int cv : cvs) { c.aload(cv); params.add(CD_Object); }
-                            c.invokevirtual(FRAME,"leave" + cvs.length,MethodTypeDesc.of(CD_Object,params)).areturn();
-                            continue;
-                        }
-                        c.aload(frame).aload(0).aload(pending).aload(result)
-                                .invokevirtual(FRAME,"beginLeave",sig(CD_Throwable,CTX,CD_Throwable,CD_Object)).astore(pending);
+                    case B1Cfg.Leave ignored when leaf -> {
+                        // The caller's discard first (beginLeave's order), then: never materialized, the call is
+                        // unlinked and its CVs released here; otherwise its frame leaves as a fast frame does.
+                        Label kept = c.newLabel(), deferred = c.newLabel();
+                        c.iload(flags).iconst_2().iand().ifeq(kept).aload(pending).ifnonnull(kept);
+                        c.aload(0).aload(result).invokestatic(FRAME,"discarded",sig(CD_Throwable,CTX,CD_Object)).astore(pending)
+                                .aconst_null().astore(result);
+                        c.labelBinding(kept);
+                        c.aload(0).aload(2).invokevirtual(CTX,"leafFrame",sig(FRAME,CALLABLE)).astore(frame);
+                        c.aload(frame).ifnull(deferred);
+                        fastLeave();
+                        c.labelBinding(deferred);
                         for (int cv : cvs) c.aload(0).aload(cv).aload(pending)
                                 .invokestatic(FRAME,"unwindOwned",sig(CD_Throwable,CTX,CD_Object,CD_Throwable)).astore(pending);
-                        c.aload(frame).aload(0).aload(pending).invokevirtual(FRAME,"endLeave",sig(CD_Object,CTX,CD_Throwable)).areturn();
+                        c.aload(0).aload(pending).aload(result).invokestatic(FRAME,"leafResult",sig(CD_Object,CTX,CD_Throwable,CD_Object)).areturn();
+                        continue;
+                    }
+                    case B1Cfg.Leave ignored when fast -> {
+                        fastLeave();
                         continue;
                     }
                     case B1Cfg.Leave ignored -> {
@@ -478,7 +1036,7 @@ final class B1ClassFileEmitter {
                         c.iconst_1().invokevirtual(FRAME,"storeTemp",sig(CD_Object,CTX,CD_int,CD_Object,CD_boolean)).pop();
                         cleanup(call.cleanup(),false);
                     }
-                    case B1Cfg.Pass ignored -> c.nop();
+                    case B1Cfg.Pass ignored -> {}
                     case B1Cfg.Suspend(var continuation) -> {
                         saveFlight();
                         c.aload(frame).loadConstant(continuation).invokevirtual(FRAME,"suspend",sig(CD_void,CD_int));
@@ -576,24 +1134,90 @@ final class B1ClassFileEmitter {
                         c.astore(result).invokestatic(OBJ, "release", sig(CD_void, CTX, CD_Object));
                     }
                 }
-                Label end = c.newBoundLabel();
-                int target = block.exceptional();
-                if (handlers[target] == null) handlers[target] = c.newLabel();
-                c.exceptionCatchAll(start, end, handlers[target]);
-                go(block.normal());
+                if (!neutral) {
+                    if (lines.emitted == before) c.nop();
+                    rangeEnd = c.newBoundLabel();
+                    lines.transparent.add(rangeEnd);
+                    int target = block.exceptional();
+                    if (handlers[target] == null) handlers[target] = c.newLabel();
+                }
+                if (block.normal() != next) go(block.normal());
+                else if (!dispatched && incoming[next] == 1) lines.transparent.add(labels[next]);
             }
+            closeRange();
             for (int i = 0; i < handlers.length; i++) {
                 if (handlers[i] != null) {
                     c.labelBinding(handlers[i]).astore(pending);
                     go(i);
                 }
             }
+            if (leaf && chunk == null) for (int i = 0; i < fragments.leafPad; i++) c.nop();
             if (chunk != null && !edges.isEmpty()) {
                 Label save = c.newLabel();
                 for (int id : edges) c.labelBinding(labels[id]).loadConstant(id).goto_(save);
                 c.labelBinding(save).aload(frame).aload(result).putfield(FRAME,"result",CD_Object);
                 c.aload(frame).aload(pending).putfield(FRAME,"pending",CD_Throwable).ireturn();
             }
+        }
+
+        /** The prologue's jump to the entry block (-1: none); it falls through when the entry is emitted first. */
+        int fallInto = -1;
+        Label rangeStart, rangeEnd;
+        int rangeTarget = -1;
+        void closeRange() {
+            if (rangeStart != null && rangeEnd != null) c.exceptionCatchAll(rangeStart, rangeEnd, handlers[rangeTarget]);
+            rangeStart = rangeEnd = null;
+            rangeTarget = -1;
+        }
+        /** This body's blocks with each one's normal successor placed right after it where possible, so the
+         * edge falls through instead of jumping. */
+        List<B1Cfg.Block> emissionOrder() {
+            var blocks = cfg.blocks();
+            var placed = new boolean[blocks.size()];
+            var order = new ArrayList<B1Cfg.Block>();
+            for (var first : blocks.reversed()) {
+                for (var block = first; block != null && !placed[block.label()] && inChunk(block.label());
+                     block = block.normal() >= 0 ? blocks.get(block.normal()) : null) {
+                    placed[block.label()] = true;
+                    order.add(block);
+                }
+            }
+            return order;
+        }
+        boolean inChunk(int label) { return chunk == null || label >= chunk.first && label < chunk.end; }
+        /** Static count of the jumps that can reach each block (an overestimate only makes fewer labels transparent). */
+        int[] incoming() {
+            int[] count = new int[cfg.blocks().size()];
+            count[cfg.entry()]++;
+            for (var block : cfg.blocks()) {
+                if (block.normal() >= 0) count[block.normal()]++;
+                if (block.exceptional() >= 0) count[block.exceptional()] += 2;
+                switch (block.op()) {
+                    case B1Cfg.TestBranch(var test, var no) -> count[no]++;
+                    case B1Cfg.NextEach(var each, var end) -> count[end]++;
+                    case B1Cfg.Resume(var targets) -> { for (int t : targets) count[t] += 2; }
+                    case B1Cfg.Suspend(var continuation) -> count[continuation] += 2;
+                    default -> {}
+                }
+            }
+            return count;
+        }
+
+        /** A fast frame's leave. Every statement releases its temporaries on both exits (IR Region/Test cleanups),
+         * so only the CVs remain: released in order after the frame is unlinked. */
+        void fastLeave() {
+            if (cvs.length <= 3) {
+                c.aload(frame).aload(0).aload(pending).aload(result);
+                var params = new ArrayList<ClassDesc>(List.of(CTX, CD_Throwable, CD_Object));
+                for (int cv : cvs) { c.aload(cv); params.add(CD_Object); }
+                c.invokevirtual(FRAME,"leave" + cvs.length,MethodTypeDesc.of(CD_Object,params)).areturn();
+                return;
+            }
+            c.aload(frame).aload(0).aload(pending).aload(result)
+                    .invokevirtual(FRAME,"beginLeave",sig(CD_Throwable,CTX,CD_Throwable,CD_Object)).astore(pending);
+            for (int cv : cvs) c.aload(0).aload(cv).aload(pending)
+                    .invokestatic(FRAME,"unwindOwned",sig(CD_Throwable,CTX,CD_Object,CD_Throwable)).astore(pending);
+            c.aload(frame).aload(0).aload(pending).invokevirtual(FRAME,"endLeave",sig(CD_Object,CTX,CD_Throwable)).areturn();
         }
 
         void fallthrough() {
@@ -614,6 +1238,7 @@ final class B1ClassFileEmitter {
         }
 
         void bind() {
+            if (leaf) { bindLeaf(); return; }
             if (fast) { bindFast(); return; }
             line(f.at().line());
             frameCtx();
@@ -624,6 +1249,15 @@ final class B1ClassFileEmitter {
             else for (int i = 0; i < f.params().size(); i++) parameter(i,required);
             if (fragment) range(CALLABLE,2,0,f.captures().size(),4,(body,i,ignored) -> body.bindCapture(i));
             else for (int i = 0; i < f.captures().size(); i++) bindCapture(i);
+        }
+
+        /** A leaf call's exactly passed, untyped parameters take their arguments. */
+        void bindLeaf() {
+            line(f.at().line());
+            for (int i = 0; i < f.params().size(); i++) {
+                c.aload(0).aload(4 + i).iload(flags).invokestatic(FRAME,"takeArgument",sig(CD_Object,CTX,CD_Object,CD_int)).astore(cvs[i]);
+                c.aload(0).loadConstant(i).aload(cvs[i]).invokevirtual(CTX,"leafArgument",sig(CD_void,CD_int,CD_Object));
+            }
         }
 
         void bindFast() {
@@ -733,6 +1367,7 @@ final class B1ClassFileEmitter {
         void action(Action action) {
             switch (action) {
                 case Echo(var value) -> { c.aload(0); expr(value); c.invokevirtual(CTX, "echo", sig(CD_void, CD_Object)); }
+                case Write(var id, var value) when doubleSlots.containsKey(id) -> { emitDouble(value); c.dstore(doubleSlots.get(id)); }
                 case Write(var id, var value) when fast && !longs.containsKey(id) -> { expr(value); writeCv(id); }
                 case Write(var id, var value) -> {
                     if (longs.containsKey(id)) {
@@ -838,7 +1473,9 @@ final class B1ClassFileEmitter {
                             .invokevirtual(OBJ, "writeAt", sig(CD_void, CTX, CD_String, CD_int, CD_Object));
                 }
                 case Return(var value) -> {
-                    expr(value); c.invokestatic(OBJ, "retain", sig(CD_Object, CD_Object)).astore(result);
+                    expr(value);
+                    if (!scalar(value)) c.invokestatic(OBJ, "retain", sig(CD_Object, CD_Object));
+                    c.astore(result);
                 }
                 case Raise(var value) -> {
                     c.aload(0); expr(value);
@@ -904,6 +1541,23 @@ final class B1ClassFileEmitter {
                         c.pop(); truth(b.right()); c.labelBinding(done);
                         return;
                     }
+                    case Binary b when doubleComparison(b) -> {
+                        // NaN compares false (unequal): dcmpg for < and <=, dcmpl otherwise.
+                        Label yes = c.newLabel(), done = c.newLabel();
+                        doubleOperands(b);
+                        boolean lower = b.op() == Operator.LT || b.op() == Operator.LE;
+                        if (lower) c.dcmpg(); else c.dcmpl();
+                        switch (b.op()) {
+                            case LT -> c.iflt(yes);
+                            case LE -> c.ifle(yes);
+                            case GT -> c.ifgt(yes);
+                            case GE -> c.ifge(yes);
+                            case EQ, IDENTICAL -> c.ifeq(yes);
+                            default -> c.ifne(yes);
+                        }
+                        c.iconst_0().goto_(done).labelBinding(yes).iconst_1().labelBinding(done);
+                        return;
+                    }
                     case Binary b when b.op() == Operator.IDENTICAL || b.op() == Operator.NOT_IDENTICAL || b.op() == Operator.LT
                             || b.op() == Operator.LE || b.op() == Operator.GT || b.op() == Operator.GE
                             || b.op() == Operator.EQ || b.op() == Operator.NE -> {
@@ -936,6 +1590,15 @@ final class B1ClassFileEmitter {
                 }
             }
             expr(e); c.invokestatic(CTX,"truth",sig(CD_boolean,CD_Object));
+        }
+        /** A comparison of float operands (=== needs both to be floats; the others compare an int as a float). */
+        boolean doubleComparison(Binary b) {
+            if (doubleSlots.isEmpty() || !doubles.operand(b.left()) || !doubles.operand(b.right())) return false;
+            return switch (b.op()) {
+                case LT, LE, GT, GE, EQ, NE -> doubles.of(b.left()) || doubles.of(b.right());
+                case IDENTICAL, NOT_IDENTICAL -> doubles.of(b.left()) && doubles.of(b.right());
+                default -> false;
+            };
         }
         /** is_array/is_string/is_int/is_null/is_object of one by-value operand: a type test without a result temporary. */
         static String typeTest(Call call) {
@@ -988,6 +1651,10 @@ final class B1ClassFileEmitter {
         }
 
         void inline(Expr expr) {
+            if (!doubleSlots.isEmpty() && floatNode(expr)) {
+                emitDouble(expr); boxDouble();
+                return;
+            }
             switch (expr) {
                 case Yield ignored -> throw new IllegalStateException("yield outside resume block");
                 case Literal(var value) -> literal(value);
@@ -1028,6 +1695,11 @@ final class B1ClassFileEmitter {
                 }
                 case Cast(var value,var string) -> {
                     c.aload(0); expr(value); c.invokevirtual(CTX,string ? "string" : "castLong",sig(string ? CD_String : CD_Object,CD_Object));
+                }
+                case IncrementPlace(Property(var recv, var name),var up,var prefix) -> {
+                    expr(recv); c.checkcast(OBJ).aload(0).ldc(name).loadConstant(sym("->" + name))
+                            .loadConstant(up ? 1 : 0).loadConstant(prefix ? 1 : 0)
+                            .invokevirtual(OBJ,"incrementAt",sig(CD_Object,CTX,CD_String,CD_int,CD_boolean,CD_boolean));
                 }
                 case IncrementPlace(var p,var up,var prefix) -> {
                     place(p); c.aload(0).loadConstant(up ? 1 : 0).loadConstant(prefix ? 1 : 0)
@@ -1114,49 +1786,7 @@ final class B1ClassFileEmitter {
                     expr(recv); c.aload(0).ldc(name).loadConstant(sym("->" + name))
                             .invokestatic(CTX, "readProperty", sig(CD_Object, CD_Object, CTX, CD_String, CD_int));
                 }
-                case Binary binary -> {
-                    Operator op = binary.op();
-                    if (op == Operator.AND || op == Operator.OR) {
-                        Label done = c.newLabel();
-                        truth(binary.left()); c.dup();
-                        if (op == Operator.AND) c.ifeq(done); else c.ifne(done);
-                        c.pop(); truth(binary.right()); c.labelBinding(done); bool();
-                        break;
-                    }
-                    if (binary.preservesValue()) {
-                        Label done = c.newLabel();
-                        expr(binary.left()); c.dup();
-                        if (op == Operator.COALESCE) c.ifnonnull(done);
-                        else c.invokestatic(CTX,"truth",sig(CD_boolean,CD_Object)).ifne(done);
-                        c.pop(); expr(binary.right()); c.labelBinding(done);
-                        break;
-                    }
-                    c.aload(0);
-                    if (binary.deferredLeft()) {
-                        expr(binary.right());
-                        expr(binary.left());
-                        c.swap();
-                    } else {
-                        expr(binary.left());
-                        expr(binary.right());
-                    }
-                    String arithmetic = switch (op) {
-                        case SUB -> "subtract"; case DIV -> "divide"; case SL -> "shiftLeft"; case SR -> "shiftRight";
-                        case BW_AND -> "bitAnd"; case BW_OR -> "bitOr"; case BW_XOR -> "bitXor";
-                        default -> null;
-                    };
-                    if (op == Operator.MOD || op == Operator.MUL) c.invokevirtual(CTX,op == Operator.MOD ? "mod" : "multiply",sig(CD_Object,CD_Object,CD_Object));
-                    else if (arithmetic != null) c.invokevirtual(CTX,arithmetic,sig(CD_Object,CD_Object,CD_Object));
-                    else if (op == Operator.IDENTICAL || op == Operator.NOT_IDENTICAL) {
-                        c.loadConstant(op == Operator.IDENTICAL ? 1 : 0).invokestatic(CTX,"identical",sig(CD_Object,CD_Object,CD_Object,CD_boolean));
-                        // the context loaded first is not needed by the static form
-                        c.swap().pop();
-                    }
-                    else if (op != Operator.ADD && op != Operator.CONCAT) c.loadConstant(op.ordinal())
-                            .invokevirtual(CTX,"compare",sig(CD_Object,CD_Object,CD_Object,CD_int));
-                    else c.invokevirtual(CTX, binary.op() == Operator.ADD ? "add" : "concat", sig(CD_Object, CD_Object, CD_Object));
-                    cleanup(binary.consumed(), false);
-                }
+                case Binary binary -> binary(binary);
                 case StoreTemp(var id, var value) -> {
                     if (value instanceof ArrayValue array && !B1LiteralBlob.useBlob(array)) {
                         array(array,id);
@@ -1181,6 +1811,50 @@ final class B1ClassFileEmitter {
                 }
                 case Call call -> call(call);
             }
+        }
+
+        void binary(Binary binary) {
+                Operator op = binary.op();
+                if (op == Operator.AND || op == Operator.OR) {
+                    Label done = c.newLabel();
+                    truth(binary.left()); c.dup();
+                    if (op == Operator.AND) c.ifeq(done); else c.ifne(done);
+                    c.pop(); truth(binary.right()); c.labelBinding(done); bool();
+                    return;
+                }
+                if (binary.preservesValue()) {
+                    Label done = c.newLabel();
+                    expr(binary.left()); c.dup();
+                    if (op == Operator.COALESCE) c.ifnonnull(done);
+                    else c.invokestatic(CTX,"truth",sig(CD_boolean,CD_Object)).ifne(done);
+                    c.pop(); expr(binary.right()); c.labelBinding(done);
+                    return;
+                }
+                c.aload(0);
+                if (binary.deferredLeft()) {
+                    expr(binary.right());
+                    expr(binary.left());
+                    c.swap();
+                } else {
+                    expr(binary.left());
+                    expr(binary.right());
+                }
+                String arithmetic = switch (op) {
+                    case SUB -> "subtract"; case DIV -> "divide"; case SL -> "shiftLeft"; case SR -> "shiftRight";
+                    case BW_AND -> "bitAnd"; case BW_OR -> "bitOr"; case BW_XOR -> "bitXor";
+                    default -> null;
+                };
+                if (op == Operator.MOD || op == Operator.MUL) c.invokevirtual(CTX,op == Operator.MOD ? "mod" : "multiply",sig(CD_Object,CD_Object,CD_Object));
+                else if (arithmetic != null) c.invokevirtual(CTX,arithmetic,sig(CD_Object,CD_Object,CD_Object));
+                else if (op == Operator.IDENTICAL || op == Operator.NOT_IDENTICAL) {
+                    c.loadConstant(op == Operator.IDENTICAL ? 1 : 0).invokestatic(CTX,"identical",sig(CD_Object,CD_Object,CD_Object,CD_boolean));
+                    // the context loaded first is not needed by the static form
+                    c.swap().pop();
+                }
+                else if (op != Operator.ADD && op != Operator.CONCAT) c.loadConstant(op.ordinal())
+                        .invokevirtual(CTX,"compare",sig(CD_Object,CD_Object,CD_Object,CD_int));
+                else c.invokevirtual(CTX, binary.op() == Operator.ADD ? "add" : "concat", sig(CD_Object, CD_Object, CD_Object));
+                cleanup(binary.consumed(), false);
         }
 
         void place(Expr root) {
@@ -1361,14 +2035,22 @@ final class B1ClassFileEmitter {
             return e instanceof Read || e instanceof QuietRead || e instanceof Literal || e instanceof This
                     || e instanceof LoadTemp || e instanceof StoreTemp t && pure(t.value());
         }
-        boolean intrinsic(Call call) {
+        /** A global builtin call bound statically (INTRINSICS). */
+        static boolean intrinsicCall(Call call) {
             Target t = call.target();
             if (t.kind() != Dispatch.FUNCTION) return false;
-            String name = lower(t.name());
-            int[] spec = INTRINSICS.get(name);
+            int[] spec = INTRINSICS.get(lower(t.name()));
             var args = call.args();
             if (spec == null || args.size() != spec[0] || spec[1] == 1 && !args.getFirst().bindVariable()) return false;
             for (int i = 1; i < args.size(); i++) if (!pure(args.get(i).value())) return false;
+            return true;
+        }
+        boolean intrinsic(Call call) {
+            if (!intrinsicCall(call)) return false;
+            Target t = call.target();
+            String name = lower(t.name());
+            int[] spec = INTRINSICS.get(name);
+            var args = call.args();
             line(call.at().line());
             c.aload(0);
             for (int i = 0; i < args.size(); i++) {

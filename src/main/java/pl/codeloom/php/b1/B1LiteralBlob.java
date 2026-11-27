@@ -145,7 +145,7 @@ public final class B1LiteralBlob {
 
     public static Object indices(MethodHandles.Lookup lookup, String name, Class<?> type, int index)
             throws IllegalAccessException {
-        byte[] data = MethodHandles.classDataAt(lookup, "_", byte[].class, index);
+        byte[] data = classData(lookup, index);
         int[] slots = new int[data.length / Integer.BYTES];
         java.nio.ByteBuffer.wrap(data).asIntBuffer().get(slots);
         return slots;
@@ -154,7 +154,8 @@ public final class B1LiteralBlob {
         return intern(B1Bytes.ofUtf8(text));
     }
     /** Literal strings are immutable and shared by every request: one instance per byte content, so array keys
-     * from literals compare by identity first (as PHP's interned strings do). Bounded by the loaded code. */
+     * from literals compare by identity first (as PHP's interned strings do). Declared property names join them
+     * (B1Compiler), so $obj->$name with a literal name finds its slot by identity too. Bounded by the loaded code. */
     // Weak both ways: a literal no longer referenced by any linked class (a retired reload or eval) is reclaimed.
     private static final java.util.WeakHashMap<B1Bytes,java.lang.ref.WeakReference<B1Bytes>> INTERNED = new java.util.WeakHashMap<>();
     static B1Bytes intern(B1Bytes literal) {
@@ -172,6 +173,14 @@ public final class B1LiteralBlob {
     }
     public static Object bootstrap(MethodHandles.Lookup lookup, String name, Class<?> type, int index)
             throws IOException, IllegalAccessException {
-        return decodedLiteral(MethodHandles.classDataAt(lookup, "_", byte[].class, index));
+        return decodedLiteral(classData(lookup, index));
+    }
+    /** Blobs of classes defined by B1Compiler's profiling mode (ordinary classes have no class data). Weak keys:
+     * an unloaded class (eval, reload) takes its blobs with it. */
+    static final java.util.Map<Class<?>, java.util.List<byte[]>> PROFILE_DATA =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private static byte[] classData(MethodHandles.Lookup lookup, int index) throws IllegalAccessException {
+        if (!lookup.lookupClass().isHidden()) return PROFILE_DATA.get(lookup.lookupClass()).get(index);
+        return MethodHandles.classDataAt(lookup, "_", byte[].class, index);
     }
 }

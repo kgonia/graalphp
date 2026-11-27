@@ -1,0 +1,14 @@
+3.1405926538398
+FFFFFTFTTTT
+-0 zero INF -INF nan -0
+0.375 3
+DivisionByZeroError: Division by zero @35
+Division by zero
+10 0
+
+Warning: A non-numeric value encountered in /fixtures/w2d45_opt3_float.php on line 40
+10 0
+Unsupported operand types: float * array @40
+Unsupported operand types: float * string
+0.75 0.75 eq
+50 -0.173444 -0.076556

@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static pl.codeloom.php.ir.AsciiCase.lower;
@@ -155,6 +156,18 @@ public final class B1Compiler {
         return statementBound;
     }
 
+    /** -Db1.profileClasses=true (profiling only): generated classes become ordinary classes named after their PHP
+     * function, each in its own loader, so profilers that skip hidden frames (JFR) attribute samples to them. */
+    static final boolean PROFILE_CLASSES = Boolean.getBoolean("b1.profileClasses");
+    private static MethodHandles.Lookup profileClass(byte[] bytes, List<byte[]> blobs) throws IllegalAccessException {
+        var loader = new ClassLoader(B1Compiler.class.getClassLoader()) {
+            Class<?> define() { return defineClass(null, bytes, 0, bytes.length); }
+        };
+        Class<?> cls = loader.define();
+        B1LiteralBlob.PROFILE_DATA.put(cls, List.copyOf(blobs));
+        return MethodHandles.privateLookupIn(cls, MethodHandles.lookup());
+    }
+
     private static CompiledFile link(IrUnit unit, Set<Integer> statementBound, int maxMethodBytes, boolean eval, boolean extended,
                                      B1Symbols symbols) {
         int helpers = 0, max = 0;
@@ -172,7 +185,8 @@ public final class B1Compiler {
                 catch (IOException ex) { throw new UncheckedIOException(ex); }
             }
             try {
-                var lookup = emission.blobs().isEmpty() ? MethodHandles.lookup().defineHiddenClass(bytes, false)
+                var lookup = PROFILE_CLASSES ? profileClass(bytes, emission.blobs())
+                        : emission.blobs().isEmpty() ? MethodHandles.lookup().defineHiddenClass(bytes, false)
                         : MethodHandles.lookup().defineHiddenClassWithClassData(bytes, java.util.List.copyOf(emission.blobs()), false);
                 var ctor = lookup.findConstructor(lookup.lookupClass(),
                         MethodType.methodType(void.class, boolean[].class, String[].class));
@@ -182,7 +196,8 @@ public final class B1Compiler {
                 callable.requiredParams = function.requiredParams();
                 callable.display = function.owner() == null ? function.name() : function.owner() + "::" + function.name();
                 callable.evalBody = eval && function.fileBody();
-                callable.scope = function.owner() == null ? null : lower(function.owner());
+                // Interned: a private member's visibility test then succeeds on String identity.
+                callable.scope = function.owner() == null ? null : lower(function.owner()).intern();
                 callable.declaredFile = function.at().file();
                 callable.declaredLine = function.at().line();
                 callable.methodBudget = maxMethodBytes;
@@ -221,7 +236,8 @@ public final class B1Compiler {
                 if (!prop.isStatic()) instance.add(prop.name());
             }
             var definition = new B1RequestContext.ClassDef(cls.name(), instance,
-                    methods, visibility, properties, cls.at(), Set.copyOf(cls.interfaces()), cls.allowDynamicProperties());
+                    methods, visibility, properties, cls.at(), Set.copyOf(cls.interfaces()), cls.allowDynamicProperties(),
+                    new B1RequestContext.MethodSites(instance, visibility, properties, B1LiteralBlob::intern));
             if (statementBound.contains(cls.id())) lateClasses.put(cls.id(), definition);
             else classes.put(lower(cls.name()).intern(), definition);
         }

@@ -99,6 +99,8 @@ public abstract class B1Callable {
         this.locals = locals.clone();
     }
     final int arity() { return byRef.length; }
+    /** A positional argument a leaf call can take as it is (no skipped parameter, no named arguments). */
+    public static boolean positional(Object argument) { return argument != OMITTED && !(argument instanceof ShortNamed); }
     public final boolean byRef(int index) { return index < byRef.length && byRef[index]; }
 
     public Object invokeFrameless1(B1RequestContext ctx,B1Object self,Object a) { return invoke1(ctx,self,a); }

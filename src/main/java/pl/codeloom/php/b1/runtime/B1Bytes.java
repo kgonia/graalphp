@@ -5,12 +5,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /** An immutable PHP byte string. Hashes and symbol-table keys survive repeated dispatches.
- * Instances can be shared between requests (literals, caches): every lazily cached field is a benign race. */
+ * Instances can be shared between requests (literals, caches): every lazily cached field is a benign race. The
+ * cached values are immutable objects published through their final fields (String, Long, this, SymbolId), so
+ * the fields need no volatile: a racing reader sees null (and computes the same value) or a complete one. */
 public final class B1Bytes {
     private final byte[] bytes;
     private final int hash;
-    private volatile String name, lower;
-    private volatile Object arrayKey;
+    private String name, lower;
+    private Object arrayKey;
 
     static final B1Bytes EMPTY = new B1Bytes(new byte[0]);
     private static final B1Bytes[] SMALL_INTS = new B1Bytes[256];
@@ -46,7 +48,7 @@ public final class B1Bytes {
     }
     /** The folded name's id in the last symbol registry that asked (an immutable pair, published whole). A
      * registry holds names only; another registry's request recomputes and replaces the pair. */
-    private volatile SymbolId symbol;
+    private SymbolId symbol;
     private record SymbolId(pl.codeloom.php.b1.B1Symbols registry, int id) {}
     int symbol(B1RequestContext ctx) {
         var registry = ctx.symbols();

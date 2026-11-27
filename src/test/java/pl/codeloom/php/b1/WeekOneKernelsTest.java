@@ -153,7 +153,10 @@ class WeekOneKernelsTest {
                         && ldc.constantEntry() instanceof ConstantDynamicEntry dynamic
                         && dynamic.asSymbol().bootstrapMethod().methodName().equals("bootstrap")
                         && dynamic.typeSymbol().displayName().equals("B1Array")));
-        assertTrue(emission.maxCode() < 256);
+        // The literal is no bytecode. (A leaf function's runLeaf is padded with unreachable code to C2's inline
+        // limit, B1ClassFileEmitter.LEAF_INLINE_LIMIT; its executable part is smaller than run's.)
+        assertTrue(model.methods().stream().filter(m -> !m.methodName().equalsString("runLeaf"))
+                .mapToInt(m -> m.findAttribute(java.lang.classfile.Attributes.code()).orElseThrow().codeLength()).max().orElseThrow() < 256);
     }
 
     @Test void runtimeDispatchAndSliceFusionAreLintClean() throws Exception {

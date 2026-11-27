@@ -21,6 +21,43 @@ public final class B1Frame {
     private boolean discardReturn;
 
     public void discardCallResult(B1Callable target) { discardedCall = target; }
+    /** A callee's entry takes the caller's discard request: true when it was made for that callee. */
+    boolean takeDiscard(B1Callable fn) {
+        B1Callable target = discardedCall;
+        if (target == null) return false;
+        discardedCall = null;
+        return target == fn;
+    }
+    /** A frame-based caller registered sends that its callee's entry releases (bound()). */
+    boolean hasOutgoing() { return outgoing.length != 0; }
+    /** The frame of a leaf call, built when something first needed it: what its entry recorded so far. */
+    void materialized(int line, int arity, Object a0, Object a1, Object a2) {
+        this.line = line;
+        passed = sent = arity;
+        m0 = a0; m1 = a1; m2 = a2;
+    }
+    /** A leaf call's positional argument becomes its CV (flags of B1RequestContext.enterLeaf: 1 moved). */
+    public static Object takeArgument(B1RequestContext ctx, Object value, int flags) {
+        if (value instanceof B1Ref ref) {
+            Object plain = B1Object.retain(ref.get());
+            if ((flags & 1) != 0) ref.unbind(ctx);
+            return plain;
+        }
+        if ((flags & 1) == 0) B1Object.retain(value);
+        return value;
+    }
+    /** The unused result of a call whose caller discards it; a failing release becomes the pending throw. */
+    public static Throwable discarded(B1RequestContext ctx, Object value) {
+        try { B1Object.release(ctx, value); return null; }
+        catch (Throwable ex) { return ex; }
+    }
+    /** The end of a leaf call that never needed its frame, after its CVs: endLeave without a frame. */
+    public static Object leafResult(B1RequestContext ctx, Throwable pending, Object result) {
+        if (pending == null) return result;
+        try { B1Object.release(ctx, result); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
+        B1Thrown.propagate(pending);
+        return result;
+    }
 
     B1Frame(B1Frame caller, String file, String function, String[] names, int ntemps, boolean top, boolean eval) {
         this.caller = caller;
@@ -260,7 +297,8 @@ public final class B1Frame {
         return undefined(ctx, frame, id);
     }
     private static Object undefined(B1RequestContext ctx, B1Frame frame, int id) {
-        ctx.diagnostic("Warning", "Undefined variable $" + frame.names[id]);
+        // A leaf call passes no frame: the diagnostic builds it, and it is then the current one.
+        ctx.diagnostic("Warning", "Undefined variable $" + (frame != null ? frame : ctx.frame()).names[id]);
         return null;
     }
     /** isset/?? read of a fast CV. */

@@ -122,6 +122,21 @@ public non-sealed class B1Object implements B1GcNode {
         if (i >= 0 && visible(ctx, i)) return box(slots, i);
         return property(ctx, name);
     }
+    /** ++/-- of $obj->name at a call site. A declared, visible property holding an int that does not overflow
+     * changes in place; the property stays a plain slot (it is not boxed into a place). Everything else takes the
+     * place path, as PHP's ZEND_PRE_INC_OBJ / POST_INC_OBJ do. */
+    public Object incrementAt(B1RequestContext ctx, String name, int symbol, boolean up, boolean prefix) {
+        int i = layout.slotAt(name, symbol);
+        if (i >= 0 && slots[i] instanceof Long old && visible(ctx, i)) {
+            long x = old;
+            if (up ? x != Long.MAX_VALUE : x != Long.MIN_VALUE) {
+                Long next = up ? x + 1 : x - 1;
+                slots[i] = next;
+                return prefix ? next : old;
+            }
+        }
+        return propertyAt(ctx, name, symbol).increment(ctx, up, prefix);
+    }
     /** $obj->name = value at a call site. */
     public void writeAt(B1RequestContext ctx, String name, int symbol, Object value) {
         int i = layout.slotAt(name, symbol);

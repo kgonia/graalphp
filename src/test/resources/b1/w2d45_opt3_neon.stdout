@@ -1,0 +1,27 @@
+1abc 1abc
+
+Deprecated: Implicit conversion from float 1.5 to int loses precision in /fixtures/w2d45_opt3_neon.php on line 12
+1
+int(2)
+int(7)
+int(5)
+int(24)
+int(3)
+int(1)
+int(1)
+float(20)
+float(0)
+float(100)
+float(1)
+float(0)
+float(6)
+eq ge same
+float(20)
+float(3)
+
+Warning: Undefined variable $d in /fixtures/w2d45_opt3_neon.php on line 47
+NULL
+1
+
+Warning: Undefined variable $d in /fixtures/w2d45_opt3_neon.php on line 53
+NULL,0.5,1.5
